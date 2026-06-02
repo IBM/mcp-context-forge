@@ -12313,7 +12313,6 @@ async def admin_discover_oauth(
 @require_permission("gateways.create", allow_admin_bypass=False)
 async def admin_add_gateway(
     request: Request,
-    gateway_data: Optional[GatewayCreate] = None,
     db: Session = Depends(get_db),
     user: dict[str, Any] = Depends(get_current_user_with_permissions),
 ) -> JSONResponse:
@@ -12356,17 +12355,17 @@ async def admin_add_gateway(
     LOGGER.debug(f"User {get_user_email(user)} is adding a new gateway")
 
     # Parse request data (supports both JSON and form-data)
-    if gateway_data is None:
+    try:
         data = await _parse_gateway_data_from_request(request)
-        team_id = data.get("team_id")
-        if team_id and isinstance(team_id, str):
-            team_id = team_id.strip() or None
-        visibility = str(data.get("visibility", "private"))
-    else:
-        # JSON request with Pydantic model
-        data = gateway_data.model_dump(exclude_unset=True)
-        team_id = data.get("team_id")
-        visibility = str(data.get("visibility", "private"))
+    except HTTPException:
+        raise
+    except Exception as e:
+        return ORJSONResponse(content={"message": f"Invalid request data: {e}", "success": False}, status_code=400)
+
+    team_id = data.get("team_id")
+    if team_id and isinstance(team_id, str):
+        team_id = team_id.strip() or None
+    visibility = str(data.get("visibility", "private"))
 
     _check_public_visibility_allowed(visibility, team_id=team_id)
 
@@ -12406,9 +12405,6 @@ async def admin_add_gateway(
 
         # Create GatewayCreate model from data
         gateway = GatewayCreate(**data)
-    except KeyError as e:
-        # Convert KeyError to ValidationError-like response
-        return ORJSONResponse(content={"message": f"Missing required field: {e}", "success": False}, status_code=422)
 
     except ValidationError as ex:
         # --- Getting only the custom message from the ValueError ---
@@ -12490,7 +12486,6 @@ async def admin_add_gateway(
 async def admin_update_gateway_rest(
     gateway_id: str,
     request: Request,
-    gateway_data: Optional[GatewayUpdate] = None,
     db: Session = Depends(get_db),
     user: dict[str, Any] = Depends(get_current_user_with_permissions),
 ) -> JSONResponse:
@@ -12520,17 +12515,17 @@ async def admin_update_gateway_rest(
     LOGGER.debug(f"User {get_user_email(user)} is updating gateway ID {gateway_id}")
 
     # Parse request data (supports both JSON and form-data)
-    if gateway_data is None:
+    try:
         data = await _parse_gateway_data_from_request(request)
-        team_id = data.get("team_id")
-        if team_id and isinstance(team_id, str):
-            team_id = team_id.strip() or None
-        visibility = str(data.get("visibility", "private"))
-    else:
-        # JSON request with Pydantic model
-        data = gateway_data.model_dump(exclude_unset=True)
-        team_id = data.get("team_id")
-        visibility = str(data.get("visibility", "private"))
+    except HTTPException:
+        raise
+    except Exception as e:
+        return ORJSONResponse(content={"message": f"Invalid request data: {e}", "success": False}, status_code=400)
+
+    team_id = data.get("team_id")
+    if team_id and isinstance(team_id, str):
+        team_id = team_id.strip() or None
+    visibility = str(data.get("visibility", "private"))
 
     _check_public_visibility_allowed(visibility, team_id=team_id)
 
@@ -12550,18 +12545,26 @@ async def admin_update_gateway_rest(
 
         user_email = get_user_email(user)
 
+        # Fetch existing gateway to preserve owner_email and team_id
+        existing_gateway = db.get(DbGateway, gateway_id)
+        if not existing_gateway:
+            return ORJSONResponse(content={"message": "Gateway not found", "success": False}, status_code=404)
+
+        # Preserve existing owner_email (don't transfer ownership)
+        existing_owner = getattr(existing_gateway, "owner_email", None)
+        if existing_owner:
+            data["owner_email"] = existing_owner
+
         # Preserve existing gateway's team_id when no explicit team_id is provided
         if not team_id:
-            existing_gateway = db.get(DbGateway, gateway_id)
-            existing_team = getattr(existing_gateway, "team_id", None) if existing_gateway else None
+            existing_team = getattr(existing_gateway, "team_id", None)
             if isinstance(existing_team, str) and existing_team:
                 team_id = existing_team
 
         team_service = TeamManagementService(db)
         team_id = await team_service.verify_team_for_user(user_email, team_id)
 
-        # Add ownership fields
-        data["owner_email"] = user_email
+        # Set team_id (but not owner_email, which was preserved above)
         data["team_id"] = team_id
 
         # Create GatewayUpdate model from data
@@ -12587,6 +12590,8 @@ async def admin_update_gateway_rest(
         return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
     except HTTPException:
         raise
+    except GatewayNotFoundError as e:
+        return ORJSONResponse(content={"message": str(e), "success": False}, status_code=404)
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
@@ -12603,13 +12608,13 @@ async def admin_update_gateway_rest(
 
 
 # RESTful DELETE endpoint for gateway deletion
-@admin_router.delete("/gateways/{gateway_id}", response_model=None)
+@admin_router.delete("/gateways/{gateway_id}", response_model=None, status_code=204)
 @require_permission("gateways.delete", allow_admin_bypass=False)
 async def admin_delete_gateway_rest(
     gateway_id: str,
     db: Session = Depends(get_db),
     user: dict[str, Any] = Depends(get_current_user_with_permissions),
-) -> JSONResponse:
+) -> Response:
     """Delete a gateway via REST API (DELETE).
 
     Args:
@@ -12618,20 +12623,19 @@ async def admin_delete_gateway_rest(
         user: Authenticated user.
 
     Returns:
-        JSON response with success status and message.
+        204 No Content on success, or error response with appropriate status code.
     """
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} is deleting gateway ID {gateway_id}")
 
     try:
         await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
-        return ORJSONResponse(
-            content={"message": "Gateway deleted successfully!", "success": True},
-            status_code=200,
-        )
+        return Response(status_code=204)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting gateway {gateway_id}: {e}")
         return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
+    except GatewayNotFoundError as e:
+        return ORJSONResponse(content={"message": str(e), "success": False}, status_code=404)
     except Exception as e:
         LOGGER.error(f"Error deleting gateway: {e}")
         return ORJSONResponse(

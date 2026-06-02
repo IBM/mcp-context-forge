@@ -194,21 +194,22 @@ class GatewayAPITester:
             print(f"❌ Error: {e}")
             return False
 
-    async def test_json_vs_form_endpoints(self) -> bool:
-        """Test that JSON endpoint works and form endpoint is separate."""
+    async def test_form_data_acceptance(self) -> bool:
+        """Test that the endpoint accepts both JSON and form-data."""
         print("\n" + "="*60)
-        print("TEST 4: Verify JSON-only REST Endpoint Behavior")
+        print("TEST 4: Verify Form-Data Acceptance")
         print("="*60)
 
-        # Test that form data to REST endpoint returns 422 (expected behavior)
+        # Test that form data to REST endpoint is accepted (backward compatibility)
         form_data = {
             "name": "test-form-gateway",
             "url": "http://httpbin.org/delay/0",
             "transport": "SSE",
-            "description": "Test gateway created via form data"
+            "description": "Test gateway created via form data",
+            "skip_initialization": "true"
         }
 
-        print(f"\n📤 Sending form data to JSON-only endpoint (should fail with 422)")
+        print(f"\n📤 Sending form data to endpoint (should succeed)")
         print(f"📦 Form Data: {form_data}")
 
         try:
@@ -225,13 +226,26 @@ class GatewayAPITester:
                 )
 
                 print(f"\n📥 Response Status: {response.status_code}")
+                print(f"📥 Response Body: {response.text}")
 
-                if response.status_code == 422:
-                    print("✅ Correctly rejected form data (JSON-only endpoint working as expected)")
-                    return True
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("success"):
+                        print("✅ Form data accepted successfully (backward compatibility maintained)")
+                        # Clean up the created gateway if we got an ID
+                        if "gateway_id" in data:
+                            gateway_id = data["gateway_id"]
+                            await client.delete(
+                                f"{self.base_url}/admin/gateways/{gateway_id}",
+                                headers={"Authorization": f"Bearer {self.token}"} if self.token else {},
+                                timeout=10.0
+                            )
+                        return True
+                    else:
+                        print(f"❌ Form data rejected: {data.get('message')}")
+                        return False
                 else:
-                    print(f"❌ Unexpected status code: {response.status_code} (expected 422)")
-                    print(f"📥 Response Body: {response.text}")
+                    print(f"❌ Unexpected status code: {response.status_code}")
                     return False
 
         except Exception as e:
@@ -273,9 +287,9 @@ class GatewayAPITester:
             results.append(("Update Gateway (JSON)", False))
             results.append(("Delete Gateway", False))
 
-        # Test 4: JSON-only endpoint behavior
-        result4 = await self.test_json_vs_form_endpoints()
-        results.append(("JSON-only Endpoint Behavior", result4))
+        # Test 4: Form-data acceptance
+        result4 = await self.test_form_data_acceptance()
+        results.append(("Form-Data Acceptance", result4))
 
         # Print summary
         print("\n" + "="*60)

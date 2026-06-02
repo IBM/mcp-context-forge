@@ -3183,7 +3183,7 @@ class TestAdminGatewayRoutes:
             mock_request.form = AsyncMock(return_value=form_data)
             mock_request.headers = {"content-type": "multipart/form-data"}
 
-            result = await admin_add_gateway(mock_request, None, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
             assert isinstance(result, JSONResponse)
             assert result.status_code == 200
 
@@ -3201,7 +3201,7 @@ class TestAdminGatewayRoutes:
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.headers = {"content-type": "multipart/form-data"}
 
-        result = await admin_add_gateway(mock_request, None, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, JSONResponse)
         assert result.status_code == 200
 
@@ -3213,7 +3213,7 @@ class TestAdminGatewayRoutes:
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.headers = {"content-type": "multipart/form-data"}
 
-        result = await admin_add_gateway(mock_request, None, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 502
@@ -3230,7 +3230,7 @@ class TestAdminGatewayRoutes:
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.headers = {"content-type": "multipart/form-data"}
 
-        result = await admin_add_gateway(mock_request, None, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 422
@@ -6244,7 +6244,7 @@ class TestOAuthFunctionality:
             mock_encryption.encrypt_secret_async = AsyncMock(return_value="encrypted-secret")
             mock_get_encryption.return_value = mock_encryption
 
-            result = await admin_add_gateway(mock_request, None, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
             assert isinstance(result, JSONResponse)
             body = json.loads(result.body)
@@ -6263,7 +6263,7 @@ class TestOAuthFunctionality:
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.headers = {"content-type": "multipart/form-data"}
 
-        result = await admin_add_gateway(mock_request, None, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
         assert isinstance(result, JSONResponse)
         # Should still succeed but oauth_config will be None due to JSON error
@@ -6297,7 +6297,7 @@ class TestOAuthFunctionality:
                 "federation_source": None,
             }
 
-            result = await admin_add_gateway(mock_request, None, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
             assert isinstance(result, JSONResponse)
             body = json.loads(result.body)
@@ -6432,7 +6432,7 @@ class TestOAuthFunctionality:
                 "federation_source": None,
             }
 
-            result = await admin_add_gateway(mock_request, None, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
             assert isinstance(result, JSONResponse)
             assert result.status_code == 200
 
@@ -6481,7 +6481,7 @@ class TestOAuthFunctionality:
                 "federation_source": None,
             }
 
-            result = await admin_add_gateway(mock_request, None, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
             assert isinstance(result, JSONResponse)
             assert result.status_code == 200
 
@@ -6520,7 +6520,7 @@ class TestOAuthFunctionality:
                 "federation_source": None,
             }
 
-            result = await admin_add_gateway(mock_request, None, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
             assert isinstance(result, JSONResponse)
             assert result.status_code == 200
 
@@ -6551,7 +6551,7 @@ class TestOAuthFunctionality:
                 "federation_source": None,
             }
 
-            result = await admin_add_gateway(mock_request, None, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
             assert isinstance(result, JSONResponse)
             assert result.status_code == 200
 
@@ -6695,7 +6695,7 @@ class TestOAuthFunctionality:
                 "federation_source": None,
             }
 
-            result = await admin_add_gateway(mock_request, None, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
             assert isinstance(result, JSONResponse)
             assert result.status_code == 200
 
@@ -6728,7 +6728,7 @@ class TestOAuthFunctionality:
                 "federation_source": None,
             }
 
-            result = await admin_add_gateway(mock_request, None, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
             assert isinstance(result, JSONResponse)
             assert result.status_code == 200
 
@@ -6752,7 +6752,7 @@ class TestOAuthFunctionality:
 
         mock_request.headers = {"content-type": "multipart/form-data"}
 
-        result = await admin_add_gateway(mock_request, None, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, JSONResponse)
         assert result.status_code == 422
         body = json.loads(result.body)
@@ -6791,7 +6791,7 @@ class TestOAuthFunctionality:
 
         for exc, expected in cases:
             mock_register_gateway.side_effect = exc
-            response = await admin_add_gateway(mock_request, None, mock_db, user={"email": "test-user", "db": mock_db})
+            response = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
             assert response.status_code == expected
 
     @patch.object(GatewayService, "update_gateway")
@@ -6832,7 +6832,7 @@ class TestOAuthFunctionality:
         mock_request.json = AsyncMock(side_effect=ValueError("Invalid JSON"))
 
         with pytest.raises(HTTPException) as exc_info:
-            await admin_add_gateway(mock_request, None, mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
         assert exc_info.value.status_code == 400
         assert "Invalid JSON body" in str(exc_info.value.detail)
@@ -6859,7 +6859,7 @@ class TestOAuthFunctionality:
                 "federation_source": None,
             }
 
-            result = await admin_add_gateway(mock_request, None, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
             assert isinstance(result, JSONResponse)
             body = json.loads(result.body)
@@ -6875,7 +6875,7 @@ class TestOAuthFunctionality:
         mock_request.headers = {"content-type": "text/plain"}
 
         with pytest.raises(HTTPException) as exc_info:
-            await admin_add_gateway(mock_request, None, mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
         assert exc_info.value.status_code == 415
         assert "Unsupported content type" in str(exc_info.value.detail)
@@ -6888,6 +6888,7 @@ class TestOAuthFunctionality:
         # Mock existing gateway
         existing_gateway = MagicMock()
         existing_gateway.team_id = "team-123"
+        existing_gateway.owner_email = "original-owner@example.com"
         mock_db.get = MagicMock(return_value=existing_gateway)
 
         form_data = FakeForm({
@@ -6914,7 +6915,6 @@ class TestOAuthFunctionality:
             result = await admin_update_gateway_rest(
                 "gateway-123",
                 mock_request,
-                None,
                 mock_db,
                 user={"email": "test-user", "db": mock_db}
             )
@@ -6943,7 +6943,7 @@ class TestPassthroughHeadersParsing:
 
         mock_request.headers = {"content-type": "multipart/form-data"}
 
-        result = await admin_add_gateway(mock_request, None, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
@@ -6962,7 +6962,7 @@ class TestPassthroughHeadersParsing:
 
         mock_request.headers = {"content-type": "multipart/form-data"}
 
-        result = await admin_add_gateway(mock_request, None, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
@@ -6988,7 +6988,7 @@ class TestPassthroughHeadersParsing:
 
         mock_request.headers = {"content-type": "multipart/form-data"}
 
-        result = await admin_add_gateway(mock_request, None, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
@@ -7015,13 +7015,14 @@ class TestErrorHandlingPaths:
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.headers = {"content-type": "multipart/form-data"}
 
-        result = await admin_add_gateway(mock_request, None, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 422
         body = json.loads(result.body)
         assert body["success"] is False
-        assert "required" in body["message"].lower() or "missing" in body["message"].lower()
+        # Verify Pydantic ValidationError message format (field validation errors)
+        assert "field required" in body["message"].lower() or "missing" in body["message"].lower()
 
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_runtime_error(self, mock_register_gateway, mock_request, mock_db):
@@ -7033,7 +7034,7 @@ class TestErrorHandlingPaths:
 
         mock_request.headers = {"content-type": "multipart/form-data"}
 
-        result = await admin_add_gateway(mock_request, None, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 500
@@ -7051,7 +7052,7 @@ class TestErrorHandlingPaths:
 
         mock_request.headers = {"content-type": "multipart/form-data"}
 
-        result = await admin_add_gateway(mock_request, None, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 422
@@ -7069,7 +7070,7 @@ class TestErrorHandlingPaths:
 
         mock_request.headers = {"content-type": "multipart/form-data"}
 
-        result = await admin_add_gateway(mock_request, None, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 500
@@ -7096,7 +7097,7 @@ class TestErrorHandlingPaths:
         with patch("mcpgateway.admin.GatewayCreate") as mock_gateway_create:
             mock_gateway_create.side_effect = validation_error
 
-            result = await admin_add_gateway(mock_request, None, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
             assert isinstance(result, JSONResponse)
             assert result.status_code == 422
@@ -23160,7 +23161,7 @@ class TestPublicVisibilityGuard:
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.headers = {"content-type": "multipart/form-data"}
         with pytest.raises(HTTPException) as exc_info:
-            await admin_add_gateway(mock_request, None, mock_db, user={"email": "u@e.com", "db": mock_db})
+            await admin_add_gateway(mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
         assert exc_info.value.status_code == 422
 
     @pytest.mark.asyncio
@@ -23254,7 +23255,7 @@ class TestPublicVisibilityGuard:
         form_data = FakeForm({"name": "G", "url": "http://g", "visibility": "public"})
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.headers = {"content-type": "multipart/form-data"}
-        result = await admin_add_gateway(mock_request, None, mock_db, user={"email": "u@e.com", "db": mock_db})
+        result = await admin_add_gateway(mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
         assert result.status_code != 422
 
     @pytest.mark.asyncio
