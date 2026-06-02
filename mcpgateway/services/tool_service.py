@@ -3124,6 +3124,7 @@ class ToolService(BaseService):
         requesting_user_is_admin: bool = False,
         requesting_user_team_roles: Optional[Dict[str, str]] = None,
         token_teams: Optional[List[str]] = None,
+        include_metrics: bool = True,
     ) -> ToolRead:
         """
         Retrieve a tool by its ID with access control.
@@ -3140,6 +3141,7 @@ class ToolService(BaseService):
                 ``[]`` means public-only scope. ``[...]`` means team-scoped.
                 This is kept separate from ``requesting_user_team_roles`` to avoid the Layer 1
                 visibility check silently widening a scoped token to full DB team membership.
+            include_metrics (bool): Whether to include metrics in the response. Defaults to True.
 
         Returns:
             ToolRead: The tool object.
@@ -3193,6 +3195,7 @@ class ToolService(BaseService):
 
         tool_read = self.convert_tool_to_read(
             tool,
+            include_metrics=include_metrics,
             requesting_user_email=requesting_user_email,
             requesting_user_is_admin=requesting_user_is_admin,
             requesting_user_team_roles=requesting_user_team_roles,
@@ -4371,6 +4374,7 @@ class ToolService(BaseService):
         # ═══════════════════════════════════════════════════════════════════════════
         # First-Party
         from mcpgateway.transports.context import request_headers_var  # pylint: disable=import-outside-toplevel
+
         if request_headers:
             request_headers_var.set(request_headers)
         # ═══════════════════════════════════════════════════════════════════════════
