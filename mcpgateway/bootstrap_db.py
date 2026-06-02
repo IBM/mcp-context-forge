@@ -773,13 +773,19 @@ async def bootstrap_resource_assignments(conn: Connection) -> None:
                         try:
                             db.commit()
                             assigned_count += 1
-                        except IntegrityError as ie:
+                        except IntegrityError:
                             # Another worker assigned this resource first - rollback and continue
                             db.rollback()
+                            
+                            # Clean up batch_assigned to prevent false conflicts in subsequent iterations
+                            if original_value is not None:
+                                final_value = getattr(resource, field)
+                                batch_assigned.discard(final_value)
+                            
                             logger.debug(
                                 f"Skipping {SecurityValidator.sanitize_log_message(resource_name)} "
                                 f"'{SecurityValidator.sanitize_log_message(str(getattr(resource, field)))}' "
-                                f"- already assigned by concurrent worker: {SecurityValidator.sanitize_log_message(str(ie))}"
+                                f"- already assigned by concurrent worker"
                             )
                             continue
 
