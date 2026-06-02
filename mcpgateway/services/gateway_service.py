@@ -2017,8 +2017,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         user_teams = await team_service.get_user_teams(user_email)
         team_ids = [team.id for team in user_teams]
 
-        # Use joinedload to eager load email_team relationship (avoids N+1 queries)
-        query = select(DbGateway).options(joinedload(DbGateway.email_team))
+        # Use joinedload/selectinload to eager load relationships for capability counts (avoids N+1 queries)
+        query = select(DbGateway).options(
+            joinedload(DbGateway.email_team),
+            selectinload(DbGateway.tools),
+            selectinload(DbGateway.prompts),
+            selectinload(DbGateway.resources),
+        )
 
         # Apply active/inactive filter
         if not include_inactive:
@@ -4639,9 +4644,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway_dict["version"] = getattr(gateway, "version", None)
         gateway_dict["team"] = getattr(gateway, "team", None)
 
-        gateway_dict["tool_count"] = len(getattr(gateway, "tools", []))
-        gateway_dict["prompt_count"] = len(getattr(gateway, "prompts", []))
-        gateway_dict["resource_count"] = len(getattr(gateway, "resources", []))
+        # Populate from the eagerly-loaded tools relationship when available, this helps to log or fail in the else condition if needed in future.
+        gateway_dict["tool_count"] = len(gateway.tools) if gateway.__dict__.get("tools") else 0
+        gateway_dict["prompt_count"] = len(gateway.prompts) if gateway.__dict__.get("prompts") else 0
+        gateway_dict["resource_count"] = len(gateway.resources) if gateway.__dict__.get("resources") else 0
 
         return GatewayRead.model_validate(gateway_dict).masked()
 
