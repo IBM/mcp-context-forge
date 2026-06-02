@@ -11,7 +11,7 @@ export const handlers = [
       email === "test@example.com" &&
       password === "password123" // pragma: allowlist secret
     ) {
-      return HttpResponse.json({
+        return HttpResponse.json({
         user: {
           email: "test@example.com",
           full_name: "Test User",
@@ -21,7 +21,7 @@ export const handlers = [
           email_verified: true,
           password_change_required: false,
         },
-        csrf_token: "mock-csrf-token",
+        mcpgateway_csrf_token: "mock-csrf-token",
       });
     }
 
