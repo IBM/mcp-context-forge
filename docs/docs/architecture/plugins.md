@@ -154,9 +154,6 @@ plugins:
 
   - name: "PIIFilterPlugin"                    # Unique plugin identifier
     kind: "cpex_pii_filter.PIIFilterPlugin"  # Plugin class path
-    description: "Detects and masks PII"       # Human-readable description
-    version: "1.0.0"                          # Plugin version
-    author: "Security Team"                   # Plugin author
     hooks:                                    # Hook registration
 
       - "prompt_pre_fetch"

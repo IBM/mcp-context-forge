@@ -34,13 +34,29 @@ ARG ENABLE_RUST_MCP_RMCP=false
 # Note: Container must have SYS_PTRACE capability for attaching to processes
 # See docs/docs/development/profiling.md for detailed usage
 ARG ENABLE_PROFILING=false
+# Base image overrides — defaults to UBI 10; pass UBI 9 values for FedRAMP builds
+#
+# FedRAMP/Dreadnought deployments MUST override these with images pulled from
+# an approved internal registry.
+# Public registry defaults (registry.access.redhat.com) are for standard builds only.
+#
+# Example (Dreadnought):
+#   docker build -f Containerfile.lite \
+#     --build-arg ENABLE_FIPS=true \
+#     --build-arg UBI_BASE=<internal-registry>/ubi9/ubi:latest \
+#     --build-arg NODEJS_IMAGE=<internal-registry>/ubi9/nodejs-20:latest \
+#     --build-arg UBI_MINIMAL=<internal-registry>/ubi9/ubi-minimal:latest \
+#     .
+ARG UBI_BASE=registry.access.redhat.com/ubi10/ubi:10.1-1778562845
+ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:10.1-1778561468
+ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:10.1-1778576723
 
 ###############################################################################
 # Rust builder stage - builds Rust MCP runtime and local native extensions
 # To build WITH Rust: docker build --build-arg ENABLE_RUST=true -f Containerfile.lite .
 # To build WITHOUT Rust (default): docker build -f Containerfile.lite .
 ###############################################################################
-FROM registry.access.redhat.com/ubi10:10.2-1777462922 AS rust-builder
+FROM ${UBI_BASE} AS rust-builder
 ARG PYTHON_VERSION=3.12
 ARG ENABLE_RUST
 ARG ENABLE_RUST_MCP_RMCP
@@ -142,7 +158,7 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
 # Node.js builder stage - builds Tailwind CSS
 ###############################################################################
 # Use official Red Hat UBI10 Node.js 24 image
-FROM registry.access.redhat.com/ubi10/nodejs-24:10.2-1777538395 AS node-builder
+FROM ${NODEJS_IMAGE} AS node-builder
 
 USER root
 RUN mkdir -p /build && chown 1001:0 /build && chmod g=u /build
@@ -163,7 +179,7 @@ RUN npm ci && \
 ###########################
 # Frontend builder stage
 ###########################
-FROM registry.access.redhat.com/ubi10/nodejs-24:10.2-1777538395 AS frontend-builder
+FROM ${NODEJS_IMAGE} AS frontend-builder
 WORKDIR /opt/app-root/src
 
 # Copy package.json and package-lock.json
@@ -188,7 +204,7 @@ RUN npm run vite:build
 ###########################
 # Builder stage
 ###########################
-FROM registry.access.redhat.com/ubi10:10.2-1777462922 AS builder
+FROM ${UBI_BASE} AS builder
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
 ARG PYTHON_VERSION
@@ -204,7 +220,7 @@ ARG GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'
 # hadolint ignore=DL3041
 RUN set -euo pipefail \
     && dnf upgrade -y \
-    && dnf install -y \
+    && dnf install -y --allowerasing \
         python${PYTHON_VERSION} \
         python${PYTHON_VERSION}-devel \
         binutils openssl-devel gcc postgresql-devel gcc-c++ curl libpq-devel \
@@ -337,9 +353,10 @@ RUN python3 -OO -m compileall -x 'cpex/templates' -q /app/.venv /app/mcpgateway 
 ###########################
 # Final runtime stage
 ###########################
-# Using ubi10-minimal for cross-platform compatibility
+# Runtime base: UBI 10 by default; override UBI_MINIMAL build-arg to ubi9/ubi-minimal:latest for FedRAMP builds
 # hadolint ignore=DL3006
-FROM registry.access.redhat.com/ubi10/ubi-minimal:10.2-1777462752 AS runtime
+FROM ${UBI_MINIMAL} AS runtime
+ARG ENABLE_FIPS=false
 
 ARG PYTHON_VERSION=3.12
 ARG ENABLE_RUST=false
@@ -415,6 +432,33 @@ WORKDIR /app
 # Expose application port
 # ----------------------------------------------------------------------------
 EXPOSE 4444
+
+# hadolint ignore=DL3041
+# FedRAMP compliance block — only active when ENABLE_FIPS=true
+# Resolves findings: 1 (FIPS policy), 2+3 (SSH ciphers/MACs via FIPS), 7 (init perms), 8 (rootfiles), 9 (SSH RekeyLimit)
+RUN if [ "$ENABLE_FIPS" = "true" ]; then \
+        if ! grep -q "release 9" /etc/redhat-release 2>/dev/null; then \
+            echo "ERROR: ENABLE_FIPS=true requires UBI 9 base images (UBI_MINIMAL must be ubi9/ubi-minimal)" >&2; \
+            exit 1; \
+        fi; \
+        microdnf install -y crypto-policies crypto-policies-scripts rootfiles \
+        && microdnf clean all \
+        && update-crypto-policies --set FIPS \
+        && mkdir -p /etc/ssh/ssh_config.d /etc/tmpfiles.d \
+        && echo "RekeyLimit 512M 1h" > /etc/ssh/ssh_config.d/02-rekey-limit.conf \
+        && printf '%s\n' \
+            'C /root/.bash_logout  0740 root root - /usr/share/rootfiles/.bash_logout' \
+            'C /root/.bash_profile 0740 root root - /usr/share/rootfiles/.bash_profile' \
+            'C /root/.bashrc       0740 root root - /usr/share/rootfiles/.bashrc' \
+            'C /root/.cshrc        0740 root root - /usr/share/rootfiles/.cshrc' \
+            'C /root/.tcshrc       0740 root root - /usr/share/rootfiles/.tcshrc' \
+            > /etc/tmpfiles.d/rootfiles.conf \
+        && install -m 0740 /dev/null /root/.bash_profile \
+        && install -m 0740 /dev/null /root/.bashrc \
+        && install -m 0740 /dev/null /root/.bash_logout; \
+    else \
+        echo "ENABLE_FIPS=false — skipping FedRAMP compliance block"; \
+    fi
 
 # ----------------------------------------------------------------------------
 # Run as non-root user (10001:10001)

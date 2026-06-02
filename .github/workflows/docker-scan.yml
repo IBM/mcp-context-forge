@@ -112,6 +112,30 @@ jobs:
           cache-from: type=gha,scope=containerfile-lite-amd64
           cache-to: type=gha,mode=max,scope=containerfile-lite-amd64
 
+      - name: Build image locally (FIPS enabled)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: Containerfile.lite
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: ${{ env.IMAGE_NAME }}:fedramp-validate
+          build-args: |
+            ENABLE_FIPS=true
+            PYTHON_VERSION=3.11
+            UBI_BASE=registry.access.redhat.com/ubi9/ubi:latest
+            NODEJS_IMAGE=registry.access.redhat.com/ubi9/nodejs-20:latest
+            UBI_MINIMAL=registry.access.redhat.com/ubi9/ubi-minimal@sha256:6ea809bdd8164f8b2b607e38f01b14c374a15bdfbc74fcd0155161512dd4e00e
+
+      - name: FedRAMP post-build compliance validation
+        run: |
+          docker run --rm \
+            --user root \
+            --entrypoint /bin/bash \
+            ${{ env.IMAGE_NAME }}:fedramp-validate \
+            -c "$(cat scripts/fedramp-validate.sh)"
+
       - name: Generate SBOM (Syft)
         run: |
           docker run --rm \
