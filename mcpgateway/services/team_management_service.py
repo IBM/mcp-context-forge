@@ -63,13 +63,13 @@ def _team_from_dict(d: Dict[str, Any]) -> EmailTeam:
     return EmailTeam(
         id=d["id"],
         name=d["name"],
-        slug=d["slug"],
+        slug=d.get("slug", ""),
         description=d.get("description"),
-        created_by=d["created_by"],
-        is_personal=d["is_personal"],
-        visibility=d["visibility"],
+        created_by=d.get("created_by", ""),
+        is_personal=d.get("is_personal", False),
+        visibility=d.get("visibility", "public"),
         max_members=d.get("max_members"),
-        is_active=d["is_active"],
+        is_active=d.get("is_active", True),
         created_at=datetime.fromisoformat(d["created_at"]) if d.get("created_at") else None,
         updated_at=datetime.fromisoformat(d["updated_at"]) if d.get("updated_at") else None,
     )
