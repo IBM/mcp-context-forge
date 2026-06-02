@@ -218,9 +218,7 @@ class TestOAuthAudienceParameter:
             }
 
             # Test authorization URL generation
-            auth_url = oauth_manager._create_authorization_url_with_pkce(
-                credentials=credentials, state="atlassian-state", code_challenge="challenge", code_challenge_method="S256"
-            )
+            auth_url = oauth_manager._create_authorization_url_with_pkce(credentials=credentials, state="atlassian-state", code_challenge="challenge", code_challenge_method="S256")
 
             assert "audience=api.atlassian.com" in auth_url
             assert "scope=read%3Ajira-work+write%3Ajira-work+read%3Aconfluence-content.all" in auth_url
@@ -253,6 +251,88 @@ class TestOAuthAudienceParameter:
             result = await oauth_manager._client_credentials_flow(credentials=credentials)
 
             assert result == "auth0-token"
+
+    def test_validate_audience_with_valid_uri(self, oauth_manager):
+        """Test audience validation with valid URI format."""
+        credentials = {"audience": "https://api.example.com"}
+        result = oauth_manager._validate_and_extract_audience(credentials)
+        assert result == "https://api.example.com"
+
+    def test_validate_audience_with_valid_hostname(self, oauth_manager):
+        """Test audience validation with valid hostname format."""
+        credentials = {"audience": "api.atlassian.com"}
+        result = oauth_manager._validate_and_extract_audience(credentials)
+        assert result == "api.atlassian.com"
+
+    def test_validate_audience_strips_whitespace(self, oauth_manager):
+        """Test that audience validation strips leading/trailing whitespace."""
+        credentials = {"audience": "  api.example.com  "}
+        result = oauth_manager._validate_and_extract_audience(credentials)
+        assert result == "api.example.com"
+
+    def test_validate_audience_rejects_empty_string(self, oauth_manager):
+        """Test that empty string audience returns None."""
+        credentials = {"audience": ""}
+        result = oauth_manager._validate_and_extract_audience(credentials)
+        assert result is None
+
+    def test_validate_audience_rejects_whitespace_only(self, oauth_manager):
+        """Test that whitespace-only audience returns None."""
+        credentials = {"audience": "   "}
+        result = oauth_manager._validate_and_extract_audience(credentials)
+        assert result is None
+
+    def test_validate_audience_rejects_invalid_characters(self, oauth_manager):
+        """Test that audience with control characters is rejected."""
+        import pytest
+
+        credentials = {"audience": "api.example.com\nmalicious"}
+        with pytest.raises(ValueError, match="Invalid audience format"):
+            oauth_manager._validate_and_extract_audience(credentials)
+
+    def test_validate_audience_rejects_too_long(self, oauth_manager):
+        """Test that audience exceeding max length is rejected."""
+        import pytest
+
+        credentials = {"audience": "a" * 513}  # Max is 512
+        with pytest.raises(ValueError, match="Audience parameter too long"):
+            oauth_manager._validate_and_extract_audience(credentials)
+
+    def test_validate_audience_missing_returns_none(self, oauth_manager):
+        """Test that missing audience returns None."""
+        credentials = {}
+        result = oauth_manager._validate_and_extract_audience(credentials)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_token_exchange_with_audience_and_resource(self, oauth_manager):
+        """Test that token exchange can include both audience and resource parameters."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "application/json"}
+        mock_response.json.return_value = {"access_token": "test-token", "token_type": "Bearer", "expires_in": 3600}
+
+        with patch.object(oauth_manager, "_post_token_request", new_callable=AsyncMock, return_value=mock_response):
+            credentials = {
+                "client_id": "test-client",
+                "client_secret": "test-secret",
+                "token_url": "https://auth.example.com/token",
+                "redirect_uri": "https://gateway.example.com/callback",
+                "audience": "https://my-api.example.com",
+                "resource": "https://mcp-server.example.com",
+                "scopes": ["read"],
+            }
+
+            result = await oauth_manager._exchange_code_for_tokens(credentials=credentials, code="auth-code", code_verifier="verifier")
+
+            # Verify both parameters are in the request
+            oauth_manager._post_token_request.assert_called_once()
+            call_args = oauth_manager._post_token_request.call_args
+            token_data = call_args[0][1]
+
+            assert token_data["audience"] == "https://my-api.example.com"
+            assert token_data["resource"] == "https://mcp-server.example.com"
+            assert result["access_token"] == "test-token"
 
             # Verify audience was sent
             call_args = oauth_manager._post_token_request.call_args
