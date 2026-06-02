@@ -55,5 +55,6 @@ This page tracks all significant design decisions made for ContextForge project,
 | 0050  | Defer Generic Cluster-Wide Settings Propagation Framework | Accepted | Architecture | 2026-04-18 |
 | 0051  | Swappable MCP Ingress Mount                          | Accepted | Architecture | 2026-04-18 |
 | 0052  | GET /mcp Stream and Server-Initiated Request Correlation | Proposed | MCP Protocol | 2026-04-19 |
+| 0053  | Generic MCP Extension Framework                      | Proposed | MCP Protocol   | 2026-05-29 |
 
 > ✳️ Add new decisions chronologically and link to them from this table.
