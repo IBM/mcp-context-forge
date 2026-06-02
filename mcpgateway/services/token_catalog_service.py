@@ -986,7 +986,24 @@ class TokenCatalogService:
             >>> service = TokenCatalogService(None)  # Would use real DB session
             >>> # Returns bool: True if token is revoked
         """
+        try:
+            from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+            cached = await auth_cache.is_token_revoked(jti)
+            if cached is not None:
+                return cached
+        except Exception as cache_error:
+            logger.debug(f"Auth cache revocation check failed, falling back to DB: {cache_error}")
+
         revocation = self.db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti)).scalar_one_or_none()
+
+        if revocation is None:
+            try:
+                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+                await auth_cache.set_not_revoked(jti)
+            except Exception:
+                pass
 
         return revocation is not None
 
@@ -1201,8 +1218,29 @@ class TokenCatalogService:
             >>> service = TokenCatalogService(None)  # Would use real DB session
             >>> # Returns Optional[TokenRevocation] if token is revoked
         """
+        try:
+            from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+            cached = await auth_cache.is_token_revoked(jti)
+            if cached is False:
+                return None
+            # cached is True: still need DB for full ORM object (revoked_by, reason, revoked_at)
+            # cached is None: cache miss — fall through to DB
+        except Exception as cache_error:
+            logger.debug(f"Auth cache revocation check failed, falling back to DB: {cache_error}")
+
         result = self.db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti))
-        return result.scalar_one_or_none()
+        revocation = result.scalar_one_or_none()
+
+        if revocation is None:
+            try:
+                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+                await auth_cache.set_not_revoked(jti)
+            except Exception:
+                pass
+
+        return revocation
 
     async def get_token_revocations_batch(self, jtis: List[str]) -> Dict[str, TokenRevocation]:
         """Get token revocation information for multiple JTIs in a single query.
