@@ -1739,7 +1739,7 @@ class TestMainAdditionalBranches:
 
     @pytest.mark.asyncio
     async def test_main_fast_path_already_at_head(self, mock_settings):
-        """skip_migration=False, already at head: skips advisory lock, commits (lines 820, 827)."""
+        """skip_migration=False, already at head: skips migration but still acquires lock for bootstrap (lines 867, 868)."""
         mock_settings.mcpgateway_skip_migrations = False
         mock_engine, mock_conn = self._make_engine_cm()
 
@@ -1748,6 +1748,7 @@ class TestMainAdditionalBranches:
             patch("importlib.resources.files") as mock_files,
             patch("mcpgateway.bootstrap_db.Config", return_value=MagicMock(attributes={})),
             patch("mcpgateway.bootstrap_db.alembic_at_head", return_value=True),
+            patch("mcpgateway.bootstrap_db.advisory_lock") as mock_advisory_lock,
             patch("mcpgateway.bootstrap_db.normalize_team_visibility", return_value=0),
             patch("mcpgateway.bootstrap_db.bootstrap_admin_user", new=AsyncMock()) as mock_admin,
             patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()) as mock_roles,
@@ -1756,8 +1757,10 @@ class TestMainAdditionalBranches:
             patch("mcpgateway.bootstrap_db.logger") as mock_logger,
         ):
             mock_files.return_value.joinpath.return_value = "alembic.ini"
+            mock_advisory_lock.return_value.__enter__ = Mock(return_value=None)
+            mock_advisory_lock.return_value.__exit__ = Mock(return_value=None)
             await main()
-            mock_logger.info.assert_any_call("Schema already at Alembic head; skipping migration lock")
+            mock_logger.info.assert_any_call("Schema already at Alembic head; skipping migration, acquiring lock for bootstrap")
             mock_conn.commit.assert_called()
             mock_admin.assert_called_once()
             mock_roles.assert_called_once()
