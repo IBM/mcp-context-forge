@@ -1,9 +1,8 @@
 <!doctype html>
 <html
   lang="en"
-  x-data="{ darkMode: (() => { try { return JSON.parse(localStorage.getItem('darkMode') || 'false') } catch(e) { window.Admin?.logRestrictedContext?.(e); return false } })() }"
+  x-data="appRoot"
   x-bind:class="darkMode ? 'dark' : ''"
-  x-init="$watch('darkMode', val => { try { localStorage.setItem('darkMode', val) } catch(e) { window.Admin?.logRestrictedContext?.(e); } })"
 >
   <head>
     <meta charset="UTF-8" />
@@ -153,88 +152,6 @@
         }
         tokenInput.value = csrfToken;
       });
-
-      // Helper function to get pagination parameters from URL (namespaced per table)
-      function getPaginationParams(tableName) {
-        const urlParams = new URLSearchParams(window.location.search);
-        const prefix = tableName + '_';
-        return {
-          page: Math.max(1, parseInt(urlParams.get(prefix + 'page'), 10) || 1),
-          perPage: Math.max(1, parseInt(urlParams.get(prefix + 'size'), 10) || 10),
-          includeInactive: urlParams.get(prefix + 'inactive')
-        };
-      }
-
-      // Helper function to build table URL with pagination params (namespaced per table)
-      // URL state takes precedence over checkbox state for shareability
-      function buildTableUrl(tableName, baseUrl, additionalParams = {}) {
-        const params = getPaginationParams(tableName);
-        const urlParams = new URLSearchParams(window.location.search);
-        const prefix = tableName + '_';
-        const url = new URL(baseUrl, window.location.origin);
-        url.searchParams.set('page', params.page);
-        url.searchParams.set('per_page', params.perPage);
-
-        // Add additional parameters, but URL state takes precedence for include_inactive
-        for (const [key, value] of Object.entries(additionalParams)) {
-          if (key === 'include_inactive' && params.includeInactive !== null) {
-            // URL state overrides checkbox state for shareability
-            url.searchParams.set('include_inactive', params.includeInactive);
-          } else if (value !== null && value !== undefined && value !== '') {
-            url.searchParams.set(key, value);
-          }
-        }
-
-        // If include_inactive wasn't in additionalParams but is in URL, still use it
-        if (!additionalParams.hasOwnProperty('include_inactive') && params.includeInactive !== null) {
-          url.searchParams.set('include_inactive', params.includeInactive);
-        }
-
-        // Preserve namespaced search state for shareable URLs
-        const namespacedQuery = urlParams.get(prefix + 'q');
-        const namespacedTags = urlParams.get(prefix + 'tags');
-        if (namespacedQuery) {
-          url.searchParams.set('q', namespacedQuery);
-        }
-        if (namespacedTags) {
-          url.searchParams.set('tags', namespacedTags);
-        }
-
-        return url.pathname + url.search;
-      }
-
-      // Sync checkbox state from URL on page load (for shareable links)
-      function syncCheckboxFromUrl(tableName, checkboxId) {
-        const params = getPaginationParams(tableName);
-        const urlParams = new URLSearchParams(window.location.search);
-        if (params.includeInactive !== null) {
-          const checkbox = document.getElementById(checkboxId);
-          if (checkbox) {
-            checkbox.checked = params.includeInactive === 'true';
-          }
-        } else if (urlParams.has('include_inactive')) {
-          const checkbox = document.getElementById(checkboxId);
-          if (checkbox) {
-            checkbox.checked = urlParams.get('include_inactive') === 'true';
-          }
-        }
-      }
-
-      // Update URL when checkbox is toggled (namespaced)
-      // Also resets page to 1 since HTMX reloads from page 1 when filter changes
-      // Preserves params from other tables to avoid mixing/overwriting
-      function updateInactiveUrlState(tableName, checked) {
-        const currentUrl = new URL(window.location.href);
-        const newParams = new URLSearchParams(currentUrl.searchParams);
-        const prefix = tableName + '_';
-
-        // Update current table's params only
-        newParams.set(prefix + 'inactive', checked.toString());
-        newParams.set(prefix + 'page', '1');  // Reset to page 1 when filter changes
-
-        const newUrl = currentUrl.pathname + '?' + newParams.toString() + currentUrl.hash;
-        window.Admin?.safeReplaceState?.({}, '', newUrl);
-      }
     </script>
 
     <!-- Password Validator (shared utility) -->
@@ -285,20 +202,6 @@
       integrity="{{ sri_hashes.codemirror_mode_rust }}"
       crossorigin="anonymous">
     </script>
-    {% endif %}
-    <!-- Alpine.js (requires unsafe-eval for reactive system) -->
-    {% if ui_airgapped %}
-    <script
-      src="{{ root_path }}/static/vendor/alpinejs/alpine.min.js"
-      defer
-    ></script>
-    {% else %}
-    <script
-      src="https://cdn.jsdelivr.net/npm/alpinejs@3.15.12/dist/cdn.min.js"
-      integrity="{{ sri_hashes.alpinejs }}"
-      crossorigin="anonymous"
-      defer
-    ></script>
     {% endif %}
     {% if is_admin %}
     <!-- Chart.js -->
@@ -415,7 +318,7 @@
   <body class="bg-gray-100 dark:bg-gray-900">
     {% set hidden_sections = ui_hidden_sections | default([]) %}
     {% set hidden_header_items = ui_hidden_header_items | default([]) %}
-    <div class="flex h-screen overflow-hidden" x-data="{ sidebarOpen: true, sidebarCollapsed: false }" @resize.window="if (window.innerWidth >= 1024) sidebarOpen = true">
+    <div class="flex h-screen overflow-hidden" x-data="mainLayout">
 
       <!-- Mobile sidebar backdrop -->
       <div
@@ -441,7 +344,7 @@
           '-translate-x-full lg:translate-x-0': !sidebarOpen,
           'translate-x-0': sidebarOpen
         }"
-        x-show="sidebarOpen || window.innerWidth >= 1024"
+        x-show="sidebarOpen || isDesktop"
         x-transition:enter="transition ease-out duration-300"
         x-transition:enter-start="-translate-x-full"
         x-transition:enter-end="translate-x-0"
@@ -835,43 +738,12 @@
               {% if email_auth_enabled and 'team_selector' not in hidden_header_items %}
               <div
                 class="relative inline-block text-left"
-                x-data="{
-                  open: false,
-                  selectedTeam: '',
-                  selectedTeamName: 'All Teams',
-                  init() {
-                    const urlParams = new URLSearchParams(window.location.search);
-                    const requestedTeamId = urlParams.get('team_id') || '';
-                    this.selectedTeam = '';
-                    this.selectedTeamName = 'All Teams';
-
-                    if (requestedTeamId) {
-                      // Keep team scope only when it exists in known visible teams.
-                      const teams = (Array.isArray(window.USER_TEAMS_DATA) && window.USER_TEAMS_DATA.length > 0)
-                        ? window.USER_TEAMS_DATA
-                        : (Array.isArray(window.USER_TEAMS) ? window.USER_TEAMS : []);
-                      const team = teams.find(t => t.id === requestedTeamId);
-
-                      if (team) {
-                        this.selectedTeam = requestedTeamId;
-                        this.selectedTeamName = team.is_personal ? '👤 ' + team.name : '🏢 ' + team.name;
-                      } else if (teams.length > 0) {
-                        // Remove stale/invalid team_id from URL to avoid confusing stale team scope behavior.
-                        const cleanUrl = new URL(window.location.href);
-                        cleanUrl.searchParams.delete('team_id');
-                        window.Admin?.safeReplaceState?.({}, '', cleanUrl);
-                      }
-                    }
-                  },
-                  loadTeams() {
-                    if (this.open) { window.Admin?.loadTeamSelectorDropdown?.(); }
-                  }
-                }"
+                x-data="teamSelector"
                 @click.away="open = false"
               >
                 <button
                   type="button"
-                  @click="open = !open; $nextTick(() => loadTeams())"
+                  @click="toggleOpen()"
                   id="team-selector-button"
                   aria-expanded="false"
                   aria-haspopup="true"
@@ -913,7 +785,7 @@
                   <div class="border-b border-gray-200 dark:border-gray-700">
                     <button
                       type="button"
-                      @click="selectedTeam = ''; selectedTeamName = 'All Teams'; open = false; updateTeamContext('')"
+                      @click="selectAllTeams()"
                       class="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
                       role="menuitem"
                     >
@@ -2409,7 +2281,7 @@
               class="mr-2 show-inactive-toggle"
               name="include_inactive"
               checked
-              x-init="syncCheckboxFromUrl('servers', 'show-inactive-servers')"
+              x-init="$syncCheckbox('servers', 'show-inactive-servers')"
               @change="updateInactiveUrlState('servers', $el.checked)"
               hx-get="{{ root_path }}/admin/servers/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-vals="js:{include_inactive: document.getElementById('show-inactive-servers').checked, per_page: document.querySelector('#servers-pagination-controls select')?.value || 50, q: document.getElementById('servers-search-input')?.value || '', tags: document.getElementById('servers-tag-filter')?.value || ''}"
@@ -2476,7 +2348,7 @@
           <div id="servers-table-wrapper" class="overflow-x-auto">
             <!-- Table will be loaded via HTMX -->
             <div id="servers-table"
-                 x-init="$el.setAttribute('hx-get', buildTableUrl('servers', '{{ root_path }}/admin/servers/partial', {include_inactive: (document.getElementById('show-inactive-servers')?.checked ?? true).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
+                 x-init="$tableHxGet('servers', '{{ root_path }}/admin/servers/partial', 'show-inactive-servers', true{% if selected_team_id %}, {team_id: '{{ selected_team_id }}'}{% endif %})"
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#servers-loading">
@@ -3434,7 +3306,7 @@
               id="show-inactive-tools"
               class="mr-2 show-inactive-toggle"
               name="include_inactive"
-              x-init="syncCheckboxFromUrl('tools', 'show-inactive-tools')"
+              x-init="$syncCheckbox('tools', 'show-inactive-tools')"
               @change="updateInactiveUrlState('tools', $el.checked)"
               hx-get="{{ root_path }}/admin/tools/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-vals="js:{include_inactive: document.getElementById('show-inactive-tools').checked, per_page: document.querySelector('#tools-pagination-controls select')?.value || 50, q: document.getElementById('tools-search-input')?.value || '', tags: document.getElementById('tools-tag-filter')?.value || ''}"
@@ -3481,7 +3353,7 @@
           <div id="tools-table-wrapper" class="overflow-x-auto">
             <!-- Table will be loaded via HTMX -->
             <div id="tools-table"
-                 x-init="$el.setAttribute('hx-get', buildTableUrl('tools', '{{ root_path }}/admin/tools/partial', {include_inactive: (document.getElementById('show-inactive-tools')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
+                 x-init="$tableHxGet('tools', '{{ root_path }}/admin/tools/partial', 'show-inactive-tools', false{% if selected_team_id %}, {team_id: '{{ selected_team_id }}'}{% endif %})"
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#tools-loading">
@@ -4454,7 +4326,7 @@
               id="show-inactive-resources"
               class="mr-2 show-inactive-toggle"
               name="include_inactive"
-              x-init="syncCheckboxFromUrl('resources', 'show-inactive-resources')"
+              x-init="$syncCheckbox('resources', 'show-inactive-resources')"
               @change="updateInactiveUrlState('resources', $el.checked)"
               hx-get="{{ root_path }}/admin/resources/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-vals="js:{include_inactive: document.getElementById('show-inactive-resources').checked, per_page: document.querySelector('#resources-pagination-controls select')?.value || 50, q: document.getElementById('resources-search-input')?.value || '', tags: document.getElementById('resources-tag-filter')?.value || ''}"
@@ -4501,7 +4373,7 @@
           <div id="resources-table-wrapper" class="overflow-x-auto">
             <!-- HTMX container: will be replaced by /admin/resources/partial -->
             <div id="resources-list-container"
-              x-init="$el.setAttribute('hx-get', buildTableUrl('resources', '{{ root_path }}/admin/resources/partial', {include_inactive: (document.getElementById('show-inactive-resources')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
+              x-init="$tableHxGet('resources', '{{ root_path }}/admin/resources/partial', 'show-inactive-resources', false{% if selected_team_id %}, {team_id: '{{ selected_team_id }}'}{% endif %})"
               hx-trigger="load"
               hx-swap="outerHTML"
               hx-indicator="#resources-loading"
@@ -4706,7 +4578,7 @@
               id="show-inactive-prompts"
               class="mr-2 show-inactive-toggle"
               name="include_inactive"
-              x-init="syncCheckboxFromUrl('prompts', 'show-inactive-prompts')"
+              x-init="$syncCheckbox('prompts', 'show-inactive-prompts')"
               @change="updateInactiveUrlState('prompts', $el.checked)"
               hx-get="{{ root_path }}/admin/prompts/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-vals="js:{include_inactive: document.getElementById('show-inactive-prompts').checked, per_page: document.querySelector('#prompts-pagination-controls select')?.value || 50, q: document.getElementById('prompts-search-input')?.value || '', tags: document.getElementById('prompts-tag-filter')?.value || ''}"
@@ -4753,7 +4625,7 @@
           <div id="prompts-table-wrapper" class="overflow-x-auto">
             <!-- HTMX container: will be replaced by /admin/prompts/partial -->
             <div id="prompts-list-container"
-              x-init="$el.setAttribute('hx-get', buildTableUrl('prompts', '{{ root_path }}/admin/prompts/partial', {include_inactive: (document.getElementById('show-inactive-prompts')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
+              x-init="$tableHxGet('prompts', '{{ root_path }}/admin/prompts/partial', 'show-inactive-prompts', false{% if selected_team_id %}, {team_id: '{{ selected_team_id }}'}{% endif %})"
               hx-trigger="load, refreshUsers"
               hx-swap="outerHTML"
               hx-indicator="#prompts-loading"
@@ -4997,7 +4869,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               class="mr-2 show-inactive-toggle"
               name="include_inactive"
               checked
-              x-init="syncCheckboxFromUrl('gateways', 'show-inactive-gateways')"
+              x-init="$syncCheckbox('gateways', 'show-inactive-gateways')"
               @change="updateInactiveUrlState('gateways', $el.checked)"
               hx-get="{{ root_path }}/admin/gateways/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-vals="js:{include_inactive: document.getElementById('show-inactive-gateways').checked, per_page: document.querySelector('#gateways-pagination-controls select')?.value || 50, q: document.getElementById('gateways-search-input')?.value || '', tags: document.getElementById('gateways-tag-filter')?.value || ''}"
@@ -5045,7 +4917,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <div id="gateways-table-wrapper" class="overflow-x-auto">
             <!-- Table will be loaded via HTMX -->
             <div id="gateways-table"
-                 x-init="$el.setAttribute('hx-get', buildTableUrl('gateways', '{{ root_path }}/admin/gateways/partial', {include_inactive: (document.getElementById('show-inactive-gateways')?.checked ?? true).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
+                 x-init="$tableHxGet('gateways', '{{ root_path }}/admin/gateways/partial', 'show-inactive-gateways', true{% if selected_team_id %}, {team_id: '{{ selected_team_id }}'}{% endif %})"
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#gateways-loading">
@@ -6437,7 +6309,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               id="show-inactive-tokens"
               class="mr-2 show-inactive-toggle"
               name="include_inactive"
-              x-init="syncCheckboxFromUrl('tokens', 'show-inactive-tokens')"
+              x-init="$syncCheckbox('tokens', 'show-inactive-tokens')"
               @change="updateInactiveUrlState('tokens', $el.checked)"
               hx-get="{{ root_path }}/admin/tokens/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-vals="js:{include_inactive: document.getElementById('show-inactive-tokens').checked, per_page: document.querySelector('#tokens-pagination-controls select')?.value || 50}"
@@ -6684,7 +6556,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
             <!-- Tokens table loaded via HTMX -->
             <div id="tokens-table"
-                 x-init="$el.setAttribute('hx-get', buildTableUrl('tokens', '{{ root_path }}/admin/tokens/partial', {include_inactive: (document.getElementById('show-inactive-tokens')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
+                 x-init="$tableHxGet('tokens', '{{ root_path }}/admin/tokens/partial', 'show-inactive-tokens', false{% if selected_team_id %}, {team_id: '{{ selected_team_id }}'}{% endif %})"
                  hx-trigger="load, refreshTokens"
                  hx-swap="innerHTML"
                  hx-indicator="#tokens-loading">
@@ -6777,7 +6649,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               id="show-inactive-a2a-agents"
               class="mr-2 show-inactive-toggle"
               name="include_inactive"
-              x-init="syncCheckboxFromUrl('agents', 'show-inactive-a2a-agents')"
+              x-init="$syncCheckbox('agents', 'show-inactive-a2a-agents')"
               @change="updateInactiveUrlState('agents', $el.checked)"
               hx-get="{{ root_path }}/admin/a2a/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-vals="js:{include_inactive: document.getElementById('show-inactive-a2a-agents').checked, per_page: document.querySelector('#agents-pagination-controls select')?.value || 50, q: document.getElementById('a2a-agents-search-input')?.value || '', tags: document.getElementById('a2a-agents-tag-filter')?.value || ''}"
@@ -6832,7 +6704,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <div id="agents-table-wrapper" class="overflow-x-auto">
               <!-- Table will be loaded via HTMX -->
               <div id="agents-table"
-                   x-init="$el.setAttribute('hx-get', buildTableUrl('agents', '{{ root_path }}/admin/a2a/partial', {include_inactive: (document.getElementById('show-inactive-a2a-agents')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
+                   x-init="$tableHxGet('agents', '{{ root_path }}/admin/a2a/partial', 'show-inactive-a2a-agents', false{% if selected_team_id %}, {team_id: '{{ selected_team_id }}'}{% endif %})"
                    hx-trigger="load"
                    hx-swap="outerHTML"
                    hx-indicator="#agents-loading">
@@ -14733,7 +14605,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         const teamId = button.getAttribute('data-team-id');
         // Clear stale modal content before fetching fresh data to prevent
         // race conditions with the delayed closeTeamEditModal timer.
-        var mc = document.getElementById('team-edit-modal-content');
+        const mc = document.getElementById('team-edit-modal-content');
         if (mc) mc.innerHTML = '';
         // Load edit modal content via HTMX
         htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/' + teamId + '/edit', {
@@ -14750,7 +14622,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       }
 
       function loadTeamMembersView(teamId) {
-        var mc = document.getElementById('team-edit-modal-content');
+        const mc = document.getElementById('team-edit-modal-content');
         if (mc) mc.innerHTML = '';
         htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/' + teamId + '/members', {
           target: '#team-edit-modal-content',
@@ -14761,7 +14633,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       }
 
       function loadAddMembersView(teamId) {
-        var mc = document.getElementById('team-edit-modal-content');
+        const mc = document.getElementById('team-edit-modal-content');
         if (mc) mc.innerHTML = '';
         htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/' + teamId + '/members/add', {
           target: '#team-edit-modal-content',

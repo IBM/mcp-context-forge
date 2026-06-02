@@ -768,6 +768,32 @@ export const buildTableUrl = function (
   return url.pathname + url.search;
 };
 
+export const syncCheckboxFromUrl = function (tableName, checkboxId) {
+  const params = getPaginationParams(tableName);
+  const urlParams = new URLSearchParams(window.location.search);
+  if (params.includeInactive !== null) {
+    const checkbox = document.getElementById(checkboxId);
+    if (checkbox) {
+      checkbox.checked = params.includeInactive === "true";
+    }
+  } else if (urlParams.has("include_inactive")) {
+    const checkbox = document.getElementById(checkboxId);
+    if (checkbox) {
+      checkbox.checked = urlParams.get("include_inactive") === "true";
+    }
+  }
+};
+
+export const updateInactiveUrlState = function (tableName, checked) {
+  const currentUrl = new URL(window.location.href);
+  const newParams = new URLSearchParams(currentUrl.searchParams);
+  const prefix = tableName + "_";
+  newParams.set(prefix + "inactive", checked.toString());
+  newParams.set(prefix + "page", "1");
+  const newUrl = currentUrl.pathname + "?" + newParams.toString() + currentUrl.hash;
+  window.Admin?.safeReplaceState?.({}, "", newUrl);
+};
+
 /**
  * Create a copy-to-clipboard button for an ID value.
  * Returns a <button> element that copies the given id string to the clipboard.

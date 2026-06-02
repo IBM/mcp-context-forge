@@ -114,6 +114,7 @@ REQUIRE_JTI=true                           # Require JWT ID for token tracking/r
 ##### JWT Key Management Best Practices
 
 **RSA Key Generation:**
+
 ```bash
 # Option 1: Use Makefile (Recommended for development/local)
 make certs-jwt                   # Generates ./certs/jwt/{private,public}.pem with secure permissions
@@ -128,6 +129,7 @@ chown mcpgateway:mcpgateway /secure/certs/jwt/*.pem
 ```
 
 **ECDSA Key Generation (Alternative):**
+
 ```bash
 # Option 1: Use Makefile (Recommended for development/local)
 make certs-jwt-ecdsa             # Generates ./certs/jwt/{ec_private,ec_public}.pem with secure permissions
@@ -141,6 +143,7 @@ chmod 644 /secure/certs/jwt/ec_public.pem
 ```
 
 **Combined Generation (SSL + JWT):**
+
 ```bash
 make certs-all                   # Generates both TLS certificates and JWT RSA keys
 ```
@@ -156,6 +159,7 @@ make certs-all                   # Generates both TLS certificates and JWT RSA k
 - [ ] **Separate key storage** from application deployment
 
 **Container Security for JWT Keys:**
+
 ```bash
 # Mount keys as read-only secrets (Kubernetes example)
 apiVersion: v1
@@ -182,11 +186,11 @@ When deploying ContextForge across multiple environments (DEV, UAT, PROD), you m
 
 **Required per-environment configuration:**
 
-| Setting | DEV | UAT | PROD |
-|---------|-----|-----|------|
-| `JWT_SECRET_KEY` (or keypair) | Unique | Unique | Unique |
-| `JWT_ISSUER` | `mcpgateway-dev` | `mcpgateway-uat` | `mcpgateway-prod` |
-| `JWT_AUDIENCE` | `mcpgateway-api-dev` | `mcpgateway-api-uat` | `mcpgateway-api-prod` |
+| Setting                       | DEV                  | UAT                  | PROD                  |
+| ----------------------------- | -------------------- | -------------------- | --------------------- |
+| `JWT_SECRET_KEY` (or keypair) | Unique               | Unique               | Unique                |
+| `JWT_ISSUER`                  | `mcpgateway-dev`     | `mcpgateway-uat`     | `mcpgateway-prod`     |
+| `JWT_AUDIENCE`                | `mcpgateway-api-dev` | `mcpgateway-api-uat` | `mcpgateway-api-prod` |
 
 **Example production configuration:**
 
@@ -225,12 +229,12 @@ The gateway supports fine-grained token scoping to restrict token access to spec
 
 Tokens can be scoped to specific teams using the `teams` JWT claim:
 
-| Token Configuration | Admin User | Non-Admin User |
-|---------------------|------------|----------------|
-| No `teams` key | Public-only | Public-only |
-| `teams: null` | Admin bypass (unrestricted) | Public-only |
-| `teams: []` | Public-only | Public-only |
-| `teams: ["team-id"]` | Team + Public | Team + Public |
+| Token Configuration  | Admin User                  | Non-Admin User |
+| -------------------- | --------------------------- | -------------- |
+| No `teams` key       | Public-only                 | Public-only    |
+| `teams: null`        | Admin bypass (unrestricted) | Public-only    |
+| `teams: []`          | Public-only                 | Public-only    |
+| `teams: ["team-id"]` | Team + Public               | Team + Public  |
 
 **Security Default**: Non-admin tokens without explicit team scope default to public-only access (principle of least privilege).
 
@@ -299,10 +303,10 @@ REQUIRE_JTI=true
 
 #### Token Validation Settings
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `REQUIRE_TOKEN_EXPIRATION` | `true` | Reject tokens without `exp` claim |
-| `REQUIRE_JTI` | `true` | Require `jti` claim for token tracking |
+| Setting                    | Default | Description                            |
+| -------------------------- | ------- | -------------------------------------- |
+| `REQUIRE_TOKEN_EXPIRATION` | `true`  | Reject tokens without `exp` claim      |
+| `REQUIRE_JTI`              | `true`  | Require `jti` claim for token tracking |
 
 These settings are enabled by default for security. For backward compatibility with existing tokens that lack these claims, you can disable them (not recommended for production).
 
@@ -342,11 +346,11 @@ The reverse proxy session management (`/reverse-proxy/sessions`) implements acce
 
 #### Session Access Rules
 
-| User Type | Access Level |
-|-----------|--------------|
-| Admin | View all active sessions |
-| Regular User | View only their own sessions |
-| Unauthenticated | No access (401) |
+| User Type       | Access Level                 |
+| --------------- | ---------------------------- |
+| Admin           | View all active sessions     |
+| Regular User    | View only their own sessions |
+| Unauthenticated | No access (401)              |
 
 #### Session Security Features
 
@@ -385,10 +389,10 @@ MCP Gateway implements Subresource Integrity for all external CDN resources to c
 - **DNS Hijacking**: Redirection to malicious CDN servers
 - **Version Drift**: Unexpected changes to CDN content
 
-**Protected Resources** (14 total):
+**Protected Resources**:
 
 - HTMX (2.0.3) - Dynamic interactions (bundled via npm/Vite)
-- Alpine.js (3.14.1) - Reactive framework
+- Alpine.js (3.x CSP) - Reactive framework (bundled via npm/Vite)
 - Chart.js (4.4.1) - Data visualization
 - Marked (11.1.1) - Markdown parser
 - DOMPurify (3.0.6) - XSS sanitizer
@@ -486,6 +490,7 @@ validated for balanced braces and Jinja2 syntax safety.
 | Generic template variables (`{{ var }}`) | ✅ **ALLOWED** | Legitimate in prompts and resources |
 
 **Example - Legitimate Prompt Template:**
+
 ```python
 # ✅ This is ALLOWED
 template = "Hello {{ user.name }}, welcome to {{ company }}!"
@@ -786,6 +791,7 @@ LOG_ROTATION_ENABLED=false   # Enable only when log files are needed
 ### Pre-Production Checklist
 
 1. **Run Security Scans**
+
    ```bash
    make security-all        # Run all security tools
    make security-report     # Generate security report
@@ -793,7 +799,6 @@ LOG_ROTATION_ENABLED=false   # Enable only when log files are needed
    ```
 
 2. **Validate Configuration**
-
    - Review all environment variables
    - Confirm admin features disabled
    - Verify authentication enabled
@@ -804,7 +809,6 @@ LOG_ROTATION_ENABLED=false   # Enable only when log files are needed
    - Confirm team governance flags are set appropriately
 
 3. **Test Security Controls**
-
    - Attempt unauthorized access
    - Verify rate limiting works
    - Test input validation
@@ -835,4 +839,4 @@ make docker-prod
 make security-report
 ```
 
-Remember: **Security is a shared responsibility**. ContextForge provides *some* security controls, but you must properly configure and integrate it within a comprehensive security architecture.
+Remember: **Security is a shared responsibility**. ContextForge provides _some_ security controls, but you must properly configure and integrate it within a comprehensive security architecture.

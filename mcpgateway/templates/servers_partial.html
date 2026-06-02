@@ -43,9 +43,9 @@
   <tr data-testid="server-item" data-enabled="{{ server.enabled|lower }}" data-owner-email="{{ server.ownerEmail }}" data-team-id="{{ server.teamId or '' }}" data-visibility="{{ server.visibility }}">
     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
       <div class="relative"
-           x-data="window.Admin?.overflowMenu?.('servers-table-wrapper')"
+           x-data="overflowMenu('servers-table-wrapper')"
                @click.away="menuOpen = false"
-               @keydown.escape="menuOpen = false; $refs.trigger.focus()">
+               @keydown.escape="closeMenu()">
         <button
           type="button"
           x-ref="trigger"
@@ -72,9 +72,10 @@
           x-transition:leave-start="opacity-100 scale-100"
           x-transition:leave-end="opacity-0 scale-95"
           class="fixed w-44 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 py-1"
-          :style="`top: ${menuTop}px; left: ${menuLeft}px; display: ${menuOpen ? 'block' : 'none'}`"
+          :style="{ top: menuTop + 'px', left: menuLeft + 'px', display: menuOpen ? 'block' : 'none' }"
           role="menu"
           aria-orientation="vertical"
+          @click="menuOpen = false"
           @keydown.arrow-down.prevent="navigate(1)"
           @keydown.arrow-up.prevent="navigate(-1)"
         >
@@ -82,7 +83,7 @@
             type="button"
             role="menuitem"
             tabindex="0"
-            @click="menuOpen = false; window.Admin?.viewServer?.({{ server.id|tojson_attr }})"
+            @click="dispatch('viewServer', {{ server.id|tojson_attr }})"
             class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
           >View</button>
           {% if can_modify %}
@@ -90,7 +91,7 @@
             type="button"
             role="menuitem"
             tabindex="0"
-            @click="menuOpen = false; window.Admin?.editServer?.({{ server.id|tojson_attr }})"
+            @click="dispatch('editServer', {{ server.id|tojson_attr }})"
             class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
           >Edit</button>
           {% endif %}
@@ -98,7 +99,7 @@
             type="button"
             role="menuitem"
             tabindex="0"
-            @click="menuOpen = false; window.Admin?.showConfigSelectionModal?.({{ server.id|tojson_attr }}, {{ server.name|tojson_attr }})"
+            @click="dispatch('showConfigSelectionModal', {{ server.id|tojson_attr }}, {{ server.name|tojson_attr }})"
             class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
             x-tooltip="'💡Generate client configuration files for this server'"
           >Export Config</button>

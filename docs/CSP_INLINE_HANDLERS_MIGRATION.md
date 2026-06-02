@@ -122,7 +122,7 @@ No `'unsafe-inline'` or `'unsafe-hashes'` directives are required for inline eve
 
 ## Known Limitations
 
-1. **Alpine.js `'unsafe-inline'` for styles**: Alpine.js still requires `'unsafe-inline'` in `style-src` for dynamic inline styles. This is tracked separately in #4653.
+1. **HTMX `hx-vals="js:{...}"` and `hx-on:*`**: Several instances in `admin.html` still use HTMX's JS eval path, so `'unsafe-eval'` remains in `script-src`. Tracked in #4655.
 
 2. **HTMX `hx-on:*` attributes**: The 8 `hx-on:*` attributes are not affected by this migration as HTMX evaluates these via the trusted HTMX script and honors `inlineScriptNonce`.
 

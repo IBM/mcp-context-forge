@@ -45,8 +45,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     - Uses cryptographically secure nonces (secrets.token_urlsafe(16))
     - script-src-elem: nonce-based, no unsafe-inline (primary defense for modern browsers)
     - script-src-attr: unsafe-inline for inline event handlers (transitional)
-    - script-src: unsafe-eval for Alpine.js compatibility (fallback for older browsers)
-    - style-src: retains unsafe-inline for Alpine.js dynamic inline styles
+    - script-src: unsafe-eval for HTMX hx-vals="js:{...}" and hx-on:* eval path (fallback for older browsers)
+    - style-src: retains unsafe-inline for dynamic inline styles
     - Nonce stored in request.state.csp_nonce for template access
     - Inline scripts must include nonce="{{ csp_nonce(request) }}" attribute
 
@@ -404,8 +404,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         #   user-generated) and <script> injection is blocked by script-src-elem.
         #
         # script-src: Fallback for older browsers and controls eval()/new Function().
-        #   'unsafe-eval' is required for Alpine.js standard build. The nonce-based
-        #   protection in script-src-elem is the primary defense for modern browsers.
+        #   'unsafe-eval' is still required: HTMX evaluates hx-vals="js:{...}" and
+        #   hx-on:* attributes via htmx.config.allowEval (defaults true). Tracked in
+        #   issue #4655. The nonce-based script-src-elem is the primary defense for
+        #   modern browsers.
         #
         # style-src: Retains 'unsafe-inline' for Alpine.js dynamic inline styles.
         if not skip_csp_for_docs:
