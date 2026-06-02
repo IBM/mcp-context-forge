@@ -746,6 +746,7 @@ async def bootstrap_resource_assignments(conn: Connection) -> None:
 
                     for resource in unassigned:
                         original_value = getattr(resource, field)
+                        added_to_batch = None  # Track what we add to batch_assigned for cleanup on rollback
 
                         if original_value is not None:
                             taken = existing_taken | batch_assigned
@@ -759,8 +760,10 @@ async def bootstrap_resource_assignments(conn: Connection) -> None:
                                 )
                                 setattr(resource, field, new_value)
                                 batch_assigned.add(new_value)
+                                added_to_batch = new_value
                             else:
                                 batch_assigned.add(original_value)
+                                added_to_batch = original_value
 
                         resource.team_id = personal_team.id
                         resource.owner_email = admin_user.email
@@ -776,15 +779,20 @@ async def bootstrap_resource_assignments(conn: Connection) -> None:
                         except IntegrityError:
                             # Another worker assigned this resource first - rollback and continue
                             db.rollback()
-                            
+
+                            # Expunge the resource from session to prevent re-flush on subsequent commits
+                            # Without this, the rolled-back resource remains "dirty" and SQLAlchemy will
+                            # attempt to flush it again on every subsequent commit in this loop
+                            db.expunge(resource)
+
                             # Clean up batch_assigned to prevent false conflicts in subsequent iterations
-                            if original_value is not None:
-                                final_value = getattr(resource, field)
-                                batch_assigned.discard(final_value)
-                            
+                            # Use the tracked value since resource state is unpredictable after expunge
+                            if added_to_batch is not None:
+                                batch_assigned.discard(added_to_batch)
+
                             logger.debug(
                                 f"Skipping {SecurityValidator.sanitize_log_message(resource_name)} "
-                                f"'{SecurityValidator.sanitize_log_message(str(getattr(resource, field)))}' "
+                                f"'{SecurityValidator.sanitize_log_message(str(original_value))}' "
                                 f"- already assigned by concurrent worker"
                             )
                             continue
