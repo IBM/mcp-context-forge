@@ -18,6 +18,7 @@ It handles:
 import asyncio
 import base64
 import binascii
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from functools import lru_cache
 import json  # NOTE: httpx uses stdlib json, not orjson, so response.json() raises json.JSONDecodeError
@@ -96,6 +97,7 @@ from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers
 from mcpgateway.utils.identity_propagation import build_identity_headers, build_identity_meta
+from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor, unified_paginate
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
@@ -217,6 +219,76 @@ _SENSITIVE_TOOL_HEADER_PATTERNS = (
     # Prevent caller-controllable encoding dispatch via header_mapping (see #4139).
     re.compile(r"^content-type$", re.IGNORECASE),
 )
+
+
+def _mapping_keys(value: Any) -> Optional[list[str]]:
+    """Return sorted mapping keys for diagnostics without exposing values."""
+    if isinstance(value, Mapping):
+        return sorted(sanitize_for_log(key) for key in value.keys())
+    if isinstance(value, BaseModel):
+        fields = getattr(value.__class__, "model_fields", None) or getattr(value, "__fields__", None)
+        if fields:
+            return sorted(sanitize_for_log(key) for key in fields.keys())
+        return sorted(sanitize_for_log(key) for key in value.model_dump().keys())
+    return None
+
+
+def _header_payload_keys(value: Any) -> Optional[list[str]]:
+    """Return sorted header keys from a CPEX header payload or plain mapping."""
+    if value is None:
+        return None
+    root = getattr(value, "root", value)
+    return _mapping_keys(root)
+
+
+def _log_tool_pre_invoke_result(tool_name: str, original_args: Any, original_headers: Any, pre_result: Any) -> None:
+    """Log sanitized TOOL_PRE_INVOKE output shape for plugin diagnostics."""
+    try:
+        if not logger.isEnabledFor(logging.DEBUG):
+            return
+
+        sanitized_tool_name = sanitize_for_log(tool_name)
+        modified_payload = getattr(pre_result, "modified_payload", None)
+        before_arg_keys = _mapping_keys(original_args)
+        before_header_keys = _header_payload_keys(original_headers)
+
+        if modified_payload is None:
+            logger.debug(
+                "tool_pre_invoke completed for %s: modified_payload=None, arg_keys_before=%s, header_keys_before=%s",
+                sanitized_tool_name,
+                before_arg_keys,
+                before_header_keys,
+            )
+            return
+
+        after_arg_keys = _mapping_keys(getattr(modified_payload, "args", None))
+        after_header_keys = _header_payload_keys(getattr(modified_payload, "headers", None))
+        before_arg_set = set(before_arg_keys or [])
+        after_arg_set = set(after_arg_keys or [])
+        before_header_set = set(before_header_keys or [])
+        after_header_set = set(after_header_keys or [])
+        modified_name = sanitize_for_log(getattr(modified_payload, "name", None))
+
+        logger.debug(
+            "tool_pre_invoke completed for %s: modified_payload=True, modified_name=%s, "
+            "arg_keys_before=%s, arg_keys_after=%s, removed_arg_keys=%s, added_arg_keys=%s, "
+            "header_keys_before=%s, header_keys_after=%s, removed_header_keys=%s, added_header_keys=%s",
+            sanitized_tool_name,
+            modified_name,
+            before_arg_keys,
+            after_arg_keys,
+            sorted(before_arg_set - after_arg_set),
+            sorted(after_arg_set - before_arg_set),
+            before_header_keys,
+            after_header_keys,
+            sorted(before_header_set - after_header_set),
+            sorted(after_header_set - before_header_set),
+        )
+    except Exception:  # noqa: BLE001
+        try:
+            logger.debug("tool_pre_invoke diagnostic logging failed", exc_info=False)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _is_sensitive_tool_header_name(name: str) -> bool:
@@ -4008,13 +4080,15 @@ class ToolService(BaseService):
         # inject credentials and clean arguments before the Rust direct call.
         modified_args = arguments
         if has_pre_invoke and arguments is not None:
+            pre_invoke_headers = HttpHeaderPayload(root=dict(runtime_headers))
             pre_result, _ = await plugin_manager.invoke_hook(
                 ToolHookType.TOOL_PRE_INVOKE,
-                payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=dict(runtime_headers))),
+                payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
                 global_context=hook_global_context,
                 local_contexts=plugin_context_table,
                 violations_as_exceptions=True,
             )
+            _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
             if pre_result.modified_payload:
                 modified_args = pre_result.modified_payload.args
                 if pre_result.modified_payload.name and pre_result.modified_payload.name != name:
@@ -4882,13 +4956,15 @@ class ToolService(BaseService):
                         # Use pre-created Pydantic model from Phase 2 (no ORM access)
                         if tool_metadata:
                             global_context.metadata[TOOL_METADATA] = tool_metadata
+                        pre_invoke_headers = HttpHeaderPayload(root=headers)
                         pre_result, context_table = await plugin_manager.invoke_hook(
                             ToolHookType.TOOL_PRE_INVOKE,
-                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=headers)),
+                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
                             global_context=global_context,
                             local_contexts=context_table,  # Pass context from previous hooks
                             violations_as_exceptions=True,
                         )
+                        _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
                         if pre_result.modified_payload:
                             payload = pre_result.modified_payload
                             name = payload.name
@@ -5679,13 +5755,15 @@ class ToolService(BaseService):
                             global_context.metadata[TOOL_METADATA] = tool_metadata
                         if gateway_metadata:
                             global_context.metadata[GATEWAY_METADATA] = gateway_metadata
+                        pre_invoke_headers = HttpHeaderPayload(root=headers)
                         pre_result, context_table = await plugin_manager.invoke_hook(
                             ToolHookType.TOOL_PRE_INVOKE,
-                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=headers)),
+                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
                             global_context=global_context,
                             local_contexts=None,
                             violations_as_exceptions=True,
                         )
+                        _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
                         if pre_result.modified_payload:
                             payload = pre_result.modified_payload
                             name = payload.name
@@ -5749,13 +5827,15 @@ class ToolService(BaseService):
                     if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) and not skip_pre_invoke:
                         if tool_metadata:
                             global_context.metadata[TOOL_METADATA] = tool_metadata
+                        pre_invoke_headers = HttpHeaderPayload(root=headers)
                         pre_result, context_table = await plugin_manager.invoke_hook(
                             ToolHookType.TOOL_PRE_INVOKE,
-                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=headers)),
+                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
                             global_context=global_context,
                             local_contexts=context_table,
                             violations_as_exceptions=True,
                         )
+                        _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
                         if pre_result.modified_payload:
                             payload = pre_result.modified_payload
                             name = payload.name

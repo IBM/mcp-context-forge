@@ -67,6 +67,13 @@ ContextForge provides flexible logging with **stdout/stderr by default** and **o
 - **Directory Creation**: Log folder is created automatically if it doesn't exist
 - **Dual Output**: JSON logs to file, text logs to console simultaneously (when file logging enabled)
 
+### Tool Pre-Invoke Diagnostics
+
+Set `LOG_LEVEL=DEBUG` to include `tool_pre_invoke completed` diagnostics after tool pre-invoke plugin hooks run.
+These entries log the tool name, whether a plugin returned a modified payload, the modified tool name when present,
+and before/after argument and header key lists with added/removed key sets. Values are not logged, and tool names
+plus keys are sanitized before emission.
+
 ### Example Configurations
 
 ```bash
