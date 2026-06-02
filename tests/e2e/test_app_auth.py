@@ -114,15 +114,15 @@ class TestFullLoginFlow:
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["user"]["email"] == test_user_credentials["email"]
-        assert "csrf_token" in data
-        assert len(data["csrf_token"]) == 43  # URL-safe base64 of 32 bytes
+        assert "mcpgateway_csrf_token" in data
+        assert len(data["mcpgateway_csrf_token"]) == 64  # HMAC-SHA256 hex digest
 
         # Verify cookies set
         assert "jwt_token" in response.cookies
-        assert "csrf_token" in response.cookies
+        assert "mcpgateway_csrf_token" in response.cookies
 
         # Verify cookie values match
-        assert response.cookies["csrf_token"] == data["csrf_token"]
+        assert response.cookies["mcpgateway_csrf_token"] == data["mcpgateway_csrf_token"]
 
     def test_login_then_get_me(self, client, setup_test_user, test_user_credentials):
         """Test login followed by GET /app/auth/me validates session."""
@@ -138,12 +138,12 @@ class TestFullLoginFlow:
 
         # Extract cookies
         jwt_token = login_response.cookies.get("jwt_token")
-        csrf_token = login_response.cookies.get("csrf_token")
+        csrf_token = login_response.cookies.get("mcpgateway_csrf_token")
 
         # Get current user
         me_response = client.get(
             "/app/auth/me",
-            cookies={"jwt_token": jwt_token, "csrf_token": csrf_token},
+            cookies={"jwt_token": jwt_token, "mcpgateway_csrf_token": csrf_token},
         )
 
         # Verify response
@@ -165,13 +165,13 @@ class TestFullLoginFlow:
 
         # Extract cookies and CSRF token
         jwt_token = login_response.cookies.get("jwt_token")
-        csrf_token_cookie = login_response.cookies.get("csrf_token")
-        csrf_token_header = login_response.json()["csrf_token"]
+        csrf_token_cookie = login_response.cookies.get("mcpgateway_csrf_token")
+        csrf_token_header = login_response.json()["mcpgateway_csrf_token"]
 
         # Logout with CSRF token
         logout_response = client.post(
             "/app/auth/logout",
-            cookies={"jwt_token": jwt_token, "csrf_token": csrf_token_cookie},
+            cookies={"jwt_token": jwt_token, "mcpgateway_csrf_token": csrf_token_cookie},
             headers={"X-CSRF-Token": csrf_token_header},
         )
 
@@ -182,16 +182,16 @@ class TestFullLoginFlow:
         # Verify cookies are cleared in the HTTP response
         set_cookie_headers = _set_cookie_headers(logout_response)
         jwt_clear = next((c for c in set_cookie_headers if "jwt_token=" in c), "")
-        csrf_clear = next((c for c in set_cookie_headers if "csrf_token=" in c), "")
+        csrf_clear = next((c for c in set_cookie_headers if "mcpgateway_csrf_token=" in c), "")
         assert jwt_clear, "jwt_token Set-Cookie header missing from logout response"
-        assert csrf_clear, "csrf_token Set-Cookie header missing from logout response"
+        assert csrf_clear, "mcpgateway_csrf_token Set-Cookie header missing from logout response"
         assert "max-age=0" in jwt_clear.lower(), "jwt_token cookie not cleared (max-age=0 missing)"
         assert "max-age=0" in csrf_clear.lower(), "csrf_token cookie not cleared (max-age=0 missing)"
 
         # Verify session invalidated - GET /app/auth/me should fail
         me_response = client.get(
             "/app/auth/me",
-            cookies={"jwt_token": jwt_token, "csrf_token": csrf_token_cookie},
+            cookies={"jwt_token": jwt_token, "mcpgateway_csrf_token": csrf_token_cookie},
         )
         assert me_response.status_code in [
             status.HTTP_401_UNAUTHORIZED,
@@ -213,12 +213,12 @@ class TestCSRFProtection:
             },
         )
         jwt_token = login_response.cookies.get("jwt_token")
-        csrf_token_cookie = login_response.cookies.get("csrf_token")
+        csrf_token_cookie = login_response.cookies.get("mcpgateway_csrf_token")
 
         # Attempt logout without CSRF header
         logout_response = client.post(
             "/app/auth/logout",
-            cookies={"jwt_token": jwt_token, "csrf_token": csrf_token_cookie},
+            cookies={"jwt_token": jwt_token, "mcpgateway_csrf_token": csrf_token_cookie},
             # No X-CSRF-Token header
         )
 
@@ -237,12 +237,12 @@ class TestCSRFProtection:
             },
         )
         jwt_token = login_response.cookies.get("jwt_token")
-        csrf_token_cookie = login_response.cookies.get("csrf_token")
+        csrf_token_cookie = login_response.cookies.get("mcpgateway_csrf_token")
 
         # Attempt logout with wrong CSRF header
         logout_response = client.post(
             "/app/auth/logout",
-            cookies={"jwt_token": jwt_token, "csrf_token": csrf_token_cookie},
+            cookies={"jwt_token": jwt_token, "mcpgateway_csrf_token": csrf_token_cookie},
             headers={"X-CSRF-Token": "wrong-csrf-token"},
         )
 
@@ -261,13 +261,13 @@ class TestCSRFProtection:
             },
         )
         jwt_token = login_response.cookies.get("jwt_token")
-        csrf_token_cookie = login_response.cookies.get("csrf_token")
-        csrf_token_header = login_response.json()["csrf_token"]
+        csrf_token_cookie = login_response.cookies.get("mcpgateway_csrf_token")
+        csrf_token_header = login_response.json()["mcpgateway_csrf_token"]
 
         # Logout with matching CSRF tokens
         logout_response = client.post(
             "/app/auth/logout",
-            cookies={"jwt_token": jwt_token, "csrf_token": csrf_token_cookie},
+            cookies={"jwt_token": jwt_token, "mcpgateway_csrf_token": csrf_token_cookie},
             headers={"X-CSRF-Token": csrf_token_header},
         )
 
@@ -289,12 +289,12 @@ class TestCrossTabSessionPersistence:
             },
         )
         jwt_token = login_response.cookies.get("jwt_token")
-        csrf_token = login_response.cookies.get("csrf_token")
+        csrf_token = login_response.cookies.get("mcpgateway_csrf_token")
 
         # Tab 2: Use same cookies (simulates browser sharing cookies)
         tab2_response = client.get(
             "/app/auth/me",
-            cookies={"jwt_token": jwt_token, "csrf_token": csrf_token},
+            cookies={"jwt_token": jwt_token, "mcpgateway_csrf_token": csrf_token},
         )
 
         # Verify Tab 2 is authenticated without re-login
@@ -312,13 +312,13 @@ class TestCrossTabSessionPersistence:
             },
         )
         jwt_token = login_response.cookies.get("jwt_token")
-        csrf_token_cookie = login_response.cookies.get("csrf_token")
-        csrf_token_header = login_response.json()["csrf_token"]
+        csrf_token_cookie = login_response.cookies.get("mcpgateway_csrf_token")
+        csrf_token_header = login_response.json()["mcpgateway_csrf_token"]
 
         # Tab 1: Logout
         logout_response = client.post(
             "/app/auth/logout",
-            cookies={"jwt_token": jwt_token, "csrf_token": csrf_token_cookie},
+            cookies={"jwt_token": jwt_token, "mcpgateway_csrf_token": csrf_token_cookie},
             headers={"X-CSRF-Token": csrf_token_header},
         )
         assert logout_response.status_code == status.HTTP_200_OK
@@ -326,7 +326,7 @@ class TestCrossTabSessionPersistence:
         # Tab 2: Try to use same cookies (should fail)
         tab2_response = client.get(
             "/app/auth/me",
-            cookies={"jwt_token": jwt_token, "csrf_token": csrf_token_cookie},
+            cookies={"jwt_token": jwt_token, "mcpgateway_csrf_token": csrf_token_cookie},
         )
 
         # Verify Tab 2 is logged out
@@ -370,9 +370,9 @@ class TestCookieSecurityFlags:
         assert response.status_code == status.HTTP_200_OK
 
         set_cookies = _set_cookie_headers(response)
-        csrf_cookie = next((c for c in set_cookies if "csrf_token=" in c), "")
+        csrf_cookie = next((c for c in set_cookies if "mcpgateway_csrf_token=" in c), "")
 
-        assert csrf_cookie, "csrf_token cookie not found in Set-Cookie headers"
+        assert csrf_cookie, "mcpgateway_csrf_token cookie not found in Set-Cookie headers"
         assert "samesite=strict" in csrf_cookie.lower()
         assert "path=/" in csrf_cookie.lower()
         assert "httponly" not in csrf_cookie.lower(), "CSRF cookie must not be httpOnly — JS needs to read it"
