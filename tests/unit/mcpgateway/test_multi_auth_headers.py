@@ -163,6 +163,7 @@ class TestMultiAuthHeaders:
 
         mock_request = MagicMock(spec=Request)
         mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.headers = {"content-type": "multipart/form-data"}
 
         with patch("mcpgateway.admin.gateway_service.register_gateway", AsyncMock()):
             response = await admin_add_gateway(mock_request, mock_db, user=mock_user)
