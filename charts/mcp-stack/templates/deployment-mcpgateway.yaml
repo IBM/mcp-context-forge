@@ -189,6 +189,45 @@ spec:
               {{- end }}
 
             # ---------- EXTRA ENV (user-defined) ----------
+
+            # ---------- RATE LIMITER REDIS (Optional) ----------
+            {{- if .Values.mcpContextForge.config.RATELIMITER_REDIS_URL }}
+            - name: RATELIMITER_REDIS_URL
+              value: {{ .Values.mcpContextForge.config.RATELIMITER_REDIS_URL | quote }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.config.RATELIMITER_REDIS_MAX_CONNECTIONS }}
+            - name: RATELIMITER_REDIS_MAX_CONNECTIONS
+              value: {{ .Values.mcpContextForge.config.RATELIMITER_REDIS_MAX_CONNECTIONS | quote }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.config.RATELIMITER_REDIS_SOCKET_TIMEOUT }}
+            - name: RATELIMITER_REDIS_SOCKET_TIMEOUT
+              value: {{ .Values.mcpContextForge.config.RATELIMITER_REDIS_SOCKET_TIMEOUT | quote }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.config.RATELIMITER_REDIS_SOCKET_CONNECT_TIMEOUT }}
+            - name: RATELIMITER_REDIS_SOCKET_CONNECT_TIMEOUT
+              value: {{ .Values.mcpContextForge.config.RATELIMITER_REDIS_SOCKET_CONNECT_TIMEOUT | quote }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.config.RATELIMITER_REDIS_SSL_CHECK_HOSTNAME }}
+            - name: RATELIMITER_REDIS_SSL_CHECK_HOSTNAME
+              value: {{ .Values.mcpContextForge.config.RATELIMITER_REDIS_SSL_CHECK_HOSTNAME | quote }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.config.RATELIMITER_REDIS_SSL }}
+            - name: RATELIMITER_REDIS_SSL
+              value: {{ .Values.mcpContextForge.config.RATELIMITER_REDIS_SSL | quote }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.config.RATELIMITER_REDIS_CA_CERTS }}
+            - name: RATELIMITER_REDIS_CA_CERTS
+              value: {{ .Values.mcpContextForge.config.RATELIMITER_REDIS_CA_CERTS | quote }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.config.RATELIMITER_REDIS_CLIENT_CERT }}
+            - name: RATELIMITER_REDIS_CLIENT_CERT
+              value: {{ .Values.mcpContextForge.config.RATELIMITER_REDIS_CLIENT_CERT | quote }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.config.RATELIMITER_REDIS_SSL_KEYFILE }}
+            - name: RATELIMITER_REDIS_SSL_KEYFILE
+              value: {{ .Values.mcpContextForge.config.RATELIMITER_REDIS_SSL_KEYFILE | quote }}
+            {{- end }}
+
             # Placed last so users can override any variable including derived URLs
             {{- if .Values.mcpContextForge.extraEnv }}
             {{- toYaml .Values.mcpContextForge.extraEnv | nindent 12 }}

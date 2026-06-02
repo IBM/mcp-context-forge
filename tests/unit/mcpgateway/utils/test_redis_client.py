@@ -21,7 +21,9 @@ from mcpgateway.utils.redis_client import (
     _get_async_parser_class,
     _is_hiredis_available,
     _reset_client,
+    _validate_ratelimiter_ssl_settings,
     _validate_ssl_settings,
+    build_reatelimiter_ssl_kwargs,
     close_redis_client,
     get_redis_client,
     get_redis_client_sync,
@@ -753,3 +755,179 @@ async def test_get_redis_client_warns_when_rediss_url_but_ssl_disabled(caplog):
 
     assert client is mock_redis
     assert any("rediss://" in r.message and "REDIS_SSL=false" in r.message for r in caplog.records)
+
+
+
+# ---------------------------------------------------------------------------
+# Tests for build_reatelimiter_ssl_kwargs
+# ---------------------------------------------------------------------------
+
+
+def test_build_reatelimiter_ssl_kwargs_returns_empty_dict_when_ssl_disabled():
+    """build_reatelimiter_ssl_kwargs returns {} when ratelimiter_redis_ssl is False (line 177)."""
+    mock_settings = MagicMock()
+    mock_settings.ratelimiter_redis_ssl = False
+
+    result = build_reatelimiter_ssl_kwargs(mock_settings)
+
+    assert result == {}
+
+
+def test_build_reatelimiter_ssl_kwargs_sets_ca_certs_when_provided():
+    """build_reatelimiter_ssl_kwargs sets ssl_ca_certs when provided (line 184-185)."""
+    mock_settings = MagicMock()
+    mock_settings.ratelimiter_redis_ssl = True
+    mock_settings.ratelimiter_redis_ssl_ca_certs = "/some/ca.crt"
+    mock_settings.ratelimiter_redis_ssl_certfile = None
+    mock_settings.ratelimiter_redis_ssl_keyfile = None
+    mock_settings.ratelimiter_redis_ssl_check_hostname = True
+
+    with patch("mcpgateway.utils.redis_client._validate_ratelimiter_ssl_settings"):
+        result = build_reatelimiter_ssl_kwargs(mock_settings)
+
+    assert result["ssl_ca_certs"] == "/some/ca.crt"
+    assert "ssl_certfile" not in result
+    assert "ssl_keyfile" not in result
+
+
+def test_build_reatelimiter_ssl_kwargs_sets_certfile_when_provided():
+    """build_reatelimiter_ssl_kwargs sets ssl_certfile when provided (line 186-187)."""
+    mock_settings = MagicMock()
+    mock_settings.ratelimiter_redis_ssl = True
+    mock_settings.ratelimiter_redis_ssl_ca_certs = None
+    mock_settings.ratelimiter_redis_ssl_certfile = "/some/client.crt"
+    mock_settings.ratelimiter_redis_ssl_keyfile = None
+    mock_settings.ratelimiter_redis_ssl_check_hostname = True
+
+    with patch("mcpgateway.utils.redis_client._validate_ratelimiter_ssl_settings"):
+        result = build_reatelimiter_ssl_kwargs(mock_settings)
+
+    assert result["ssl_certfile"] == "/some/client.crt"
+    assert "ssl_ca_certs" not in result
+    assert "ssl_keyfile" not in result
+
+
+def test_build_reatelimiter_ssl_kwargs_sets_keyfile_when_provided():
+    """build_reatelimiter_ssl_kwargs sets ssl_keyfile when provided (line 188-189)."""
+    mock_settings = MagicMock()
+    mock_settings.ratelimiter_redis_ssl = True
+    mock_settings.ratelimiter_redis_ssl_ca_certs = None
+    mock_settings.ratelimiter_redis_ssl_certfile = None
+    mock_settings.ratelimiter_redis_ssl_keyfile = "/some/client.key"
+    mock_settings.ratelimiter_redis_ssl_check_hostname = True
+
+    with patch("mcpgateway.utils.redis_client._validate_ratelimiter_ssl_settings"):
+        result = build_reatelimiter_ssl_kwargs(mock_settings)
+
+    assert result["ssl_keyfile"] == "/some/client.key"
+    assert "ssl_ca_certs" not in result
+    assert "ssl_certfile" not in result
+
+
+def test_build_reatelimiter_ssl_kwargs_sets_no_hostname_check_when_check_hostname_false():
+    """build_reatelimiter_ssl_kwargs sets ssl_cert_reqs and ssl_check_hostname when check_hostname is False (line 191-194)."""
+    mock_settings = MagicMock()
+    mock_settings.ratelimiter_redis_ssl = True
+    mock_settings.ratelimiter_redis_ssl_ca_certs = None
+    mock_settings.ratelimiter_redis_ssl_certfile = None
+    mock_settings.ratelimiter_redis_ssl_keyfile = None
+    mock_settings.ratelimiter_redis_ssl_check_hostname = False
+
+    result = build_reatelimiter_ssl_kwargs(mock_settings)
+
+    assert result["ssl_cert_reqs"] == "none"
+    assert result["ssl_check_hostname"] is False
+
+
+# ---------------------------------------------------------------------------
+# Tests for _validate_ratelimiter_ssl_settings
+# ---------------------------------------------------------------------------
+
+
+def test_validate_ratelimiter_ssl_settings_passes_when_all_paths_none():
+    """_validate_ratelimiter_ssl_settings passes silently when no cert paths are configured."""
+    mock_settings = MagicMock()
+    mock_settings.ratelimiter_redis_ssl_ca_certs = None
+    mock_settings.ratelimiter_redis_ssl_certfile = None
+    mock_settings.ratelimiter_redis_ssl_keyfile = None
+    # Should not raise
+    _validate_ratelimiter_ssl_settings(mock_settings)
+
+
+def test_validate_ratelimiter_ssl_settings_raises_when_ca_certs_file_missing():
+    """_validate_ratelimiter_ssl_settings raises ValueError when ca_certs path doesn't exist on disk (line 139)."""
+    mock_settings = MagicMock()
+    mock_settings.ratelimiter_redis_ssl_ca_certs = "/nonexistent/ca.crt"
+    mock_settings.ratelimiter_redis_ssl_certfile = None
+    mock_settings.ratelimiter_redis_ssl_keyfile = None
+
+    with pytest.raises(ValueError, match="CA certificate.*not found"):
+        _validate_ratelimiter_ssl_settings(mock_settings)
+
+
+def test_validate_ratelimiter_ssl_settings_raises_when_certfile_missing():
+    """_validate_ratelimiter_ssl_settings raises ValueError when certfile path doesn't exist on disk (line 139)."""
+    mock_settings = MagicMock()
+    mock_settings.ratelimiter_redis_ssl_ca_certs = None
+    mock_settings.ratelimiter_redis_ssl_certfile = "/nonexistent/client.crt"
+    mock_settings.ratelimiter_redis_ssl_keyfile = None
+
+    with pytest.raises(ValueError, match="client certificate.*not found"):
+        _validate_ratelimiter_ssl_settings(mock_settings)
+
+
+def test_validate_ratelimiter_ssl_settings_raises_when_keyfile_missing():
+    """_validate_ratelimiter_ssl_settings raises ValueError when keyfile path doesn't exist on disk (line 139)."""
+    mock_settings = MagicMock()
+    mock_settings.ratelimiter_redis_ssl_ca_certs = None
+    mock_settings.ratelimiter_redis_ssl_certfile = None
+    mock_settings.ratelimiter_redis_ssl_keyfile = "/nonexistent/client.key"
+
+    with pytest.raises(ValueError, match="private key.*not found"):
+        _validate_ratelimiter_ssl_settings(mock_settings)
+
+
+def test_validate_ratelimiter_ssl_settings_raises_on_invalid_ca_cert(tmp_path):
+    """_validate_ratelimiter_ssl_settings raises ValueError when CA cert file exists but content is invalid (line 153-160)."""
+    ca_cert = tmp_path / "ca.crt"
+    ca_cert.write_text("not a valid certificate")
+
+    mock_settings = MagicMock()
+    mock_settings.ratelimiter_redis_ssl_ca_certs = str(ca_cert)
+    mock_settings.ratelimiter_redis_ssl_certfile = None
+    mock_settings.ratelimiter_redis_ssl_keyfile = None
+
+    with pytest.raises(ValueError, match="Invalid CA certificate"):
+        _validate_ratelimiter_ssl_settings(mock_settings)
+
+
+def test_validate_ratelimiter_ssl_settings_raises_on_invalid_cert_key_pair(tmp_path):
+    """_validate_ratelimiter_ssl_settings raises ValueError when cert/key pair files exist but content is invalid (line 153-160)."""
+    certfile = tmp_path / "client.crt"
+    keyfile = tmp_path / "client.key"
+    certfile.write_text("not a valid cert")
+    keyfile.write_text("not a valid key")
+
+    mock_settings = MagicMock()
+    mock_settings.ratelimiter_redis_ssl_ca_certs = None
+    mock_settings.ratelimiter_redis_ssl_certfile = str(certfile)
+    mock_settings.ratelimiter_redis_ssl_keyfile = str(keyfile)
+
+    with pytest.raises(ValueError, match="Invalid client certificate/key"):
+        _validate_ratelimiter_ssl_settings(mock_settings)
+
+
+def test_validate_ratelimiter_ssl_settings_collects_multiple_errors():
+    """_validate_ratelimiter_ssl_settings reports all missing files in one ValueError (line 142)."""
+    mock_settings = MagicMock()
+    mock_settings.ratelimiter_redis_ssl_ca_certs = "/bad/ca.crt"
+    mock_settings.ratelimiter_redis_ssl_certfile = "/bad/client.crt"
+    mock_settings.ratelimiter_redis_ssl_keyfile = "/bad/client.key"
+
+    with pytest.raises(ValueError) as exc_info:
+        _validate_ratelimiter_ssl_settings(mock_settings)
+
+    msg = str(exc_info.value)
+    assert "CA certificate" in msg
+    assert "client certificate" in msg
+    assert "private key" in msg

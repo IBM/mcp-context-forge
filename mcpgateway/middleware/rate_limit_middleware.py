@@ -137,16 +137,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         logger.info(f"RateLimitMiddleware initialized: enabled={self.enabled}, " f"use_redis={self.use_redis}, lockout={self.lockout_enabled}")
 
     def _init_redis(self) -> None:
-        """Initialize Redis client."""
+        """Initialize Redis client for rate limiting."""
         if not self.redis_enabled:
             logger.info("Redis rate limiting disabled by config")
             self.use_redis = False
             return
 
         try:
-            client = auth._get_sync_redis_client()  # pylint: disable=protected-access
+            # Use dedicated rate limiter Redis client
+            client = auth._get_ratelimiter_redis_client()  # pylint: disable=protected-access
             if client is not None:
-                client.ping()
+                # Ping already done in _get_ratelimiter_redis_client()
                 self.redis_client = client
                 self._sliding_window_script = client.register_script(_SLIDING_WINDOW_LUA)
                 self.use_redis = True
@@ -312,7 +313,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 count = self.redis_client.zcard(key)
                 return True, max(0, limit - count)
             except Exception as e:
-                logger.warning(f"Redis rate limit failed: {e}")
+                logger.warning(f"Redis rate limit failed: {e}, falling back to in-memory")
 
         return self._check_rate_limit_memory(key, limit, window_seconds)
 
