@@ -2537,3 +2537,46 @@ class TestTeamManagementService:
 
             # Verify - member should still be removed
             assert result is True
+
+    @pytest.mark.asyncio
+    async def test_update_team_invalidates_member_team_object_caches(self, mock_db):
+        """update_team must fire invalidate_user_teams for each active member."""
+        from unittest.mock import AsyncMock, MagicMock, call, patch
+        from mcpgateway.db import EmailTeam, EmailTeamMember
+        from mcpgateway.services.team_management_service import TeamManagementService
+
+        team = MagicMock(spec=EmailTeam)
+        team.id = "team-001"
+        team.name = "Old Name"
+        team.is_personal = False
+
+        member_alice = MagicMock(spec=EmailTeamMember)
+        member_alice.user_email = "alice@example.com"
+        member_bob = MagicMock(spec=EmailTeamMember)
+        member_bob.user_email = "bob@example.com"
+
+        mock_db.query.return_value.filter.return_value.first.return_value = team
+        # Second query returns active memberships
+        mock_db.query.return_value.filter.return_value.all.return_value = [member_alice, member_bob]
+        mock_db.commit.return_value = None
+
+        service = TeamManagementService(mock_db)
+
+        mock_invalidate_user_teams = AsyncMock()
+        mock_invalidate_teams = AsyncMock()
+
+        with (
+            patch("mcpgateway.services.team_management_service.auth_cache.invalidate_user_teams", mock_invalidate_user_teams),
+            patch("mcpgateway.services.team_management_service.admin_stats_cache.invalidate_teams", mock_invalidate_teams),
+            patch.object(
+                service,
+                "_fire_and_forget",
+                side_effect=lambda coro: coro.close() if hasattr(coro, "close") else None,
+            ),
+        ):
+            result = await service.update_team("team-001", name="New Name", updated_by="admin@example.com")
+
+        assert result is True
+        called_emails = {c.args[0] for c in mock_invalidate_user_teams.call_args_list}
+        assert called_emails == {"alice@example.com", "bob@example.com"}
+        mock_invalidate_teams.assert_called_once()

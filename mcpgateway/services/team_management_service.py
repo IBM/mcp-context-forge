@@ -696,6 +696,19 @@ class TeamManagementService:
             team.updated_at = utc_now()
             self.db.commit()
 
+            # Invalidate cached team objects for all active members so scalar field
+            # changes (name, visibility, description, max_members) propagate immediately.
+            try:
+                memberships = self.db.query(EmailTeamMember).filter(
+                    EmailTeamMember.team_id == team_id,
+                    EmailTeamMember.is_active.is_(True),
+                ).all()
+                for membership in memberships:
+                    self._fire_and_forget(auth_cache.invalidate_user_teams(membership.user_email))
+                self._fire_and_forget(admin_stats_cache.invalidate_teams())
+            except Exception as cache_error:
+                logger.debug(f"Failed to invalidate caches after team update for {SecurityValidator.sanitize_log_message(team_id)}: {cache_error}")
+
             logger.info(f"Updated team {SecurityValidator.sanitize_log_message(team_id)} by {updated_by}")
             return True
 
