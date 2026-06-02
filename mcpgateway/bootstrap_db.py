@@ -856,18 +856,19 @@ async def main() -> None:
 
     try:
         # Fast path: if the schema is already at the current Alembic head,
-        # skip the migration advisory lock entirely. This is critical for
-        # deployments behind a transaction-pooling connection pooler — the
-        # session-scoped advisory lock can be orphaned across pgbouncer's
-        # backend handoffs, which would otherwise make N-th pod startup
-        # spin indefinitely. Replicas 2..N take this branch on normal
-        # restarts.
+        # skip the migration step but still acquire the advisory lock to
+        # serialize bootstrap_resource_assignments across concurrent workers.
+        # This prevents race conditions when multiple pods restart simultaneously
+        # and attempt to assign the same orphaned resources (issue #4993).
+        # Replicas 2..N take this branch on normal restarts.
         with engine.connect() as probe_conn:
             probe_conn.commit()
             if alembic_at_head(probe_conn, cfg):
-                logger.info("Schema already at Alembic head; skipping migration lock")
-                await _run_post_migration_bootstrap(probe_conn)
-                probe_conn.commit()
+                logger.info("Schema already at Alembic head; skipping migration, acquiring lock for bootstrap")
+                with advisory_lock(probe_conn):
+                    logger.info("Acquired lock for bootstrap helpers")
+                    await _run_post_migration_bootstrap(probe_conn)
+                    probe_conn.commit()
                 logger.info("Database ready")
                 return
 
