@@ -100,7 +100,7 @@ async def test_post_with_invalid_token_returns_403():
     request.state = MagicMock()
     request.state.user = MagicMock(email="user@example.com")
     request.state.jti = "session123"
-    request.cookies = {"session_id": "session123", "csrf_token": "invalid_token"}
+    request.cookies = {"session_id": "session123", "mcpgateway_csrf_token": "invalid_token"}
 
     mock_csrf_service = MagicMock()
     mock_csrf_service.validate_csrf_token.return_value = False
@@ -110,7 +110,7 @@ async def test_post_with_invalid_token_returns_403():
         mock_settings.csrf_exempt_paths = []
         mock_settings.csrf_token_name = "X-CSRF-Token"
         mock_settings.csrf_check_referer = False
-        mock_settings.csrf_cookie_name = "csrf_token"
+        mock_settings.csrf_cookie_name = "mcpgateway_csrf_token"
 
         response = await middleware.dispatch(request, call_next)
 
@@ -139,7 +139,7 @@ async def test_post_with_missing_cookie_returns_403():
         mock_settings.csrf_exempt_paths = []
         mock_settings.csrf_token_name = "X-CSRF-Token"
         mock_settings.csrf_check_referer = False
-        mock_settings.csrf_cookie_name = "csrf_token"
+        mock_settings.csrf_cookie_name = "mcpgateway_csrf_token"
 
         response = await middleware.dispatch(request, call_next)
 
@@ -161,7 +161,7 @@ async def test_post_with_mismatched_cookie_returns_403():
     request.state = MagicMock()
     request.state.user = MagicMock(email="user@example.com")
     request.state.jti = "session123"
-    request.cookies = {"session_id": "session123", "csrf_token": "different_token"}
+    request.cookies = {"session_id": "session123", "mcpgateway_csrf_token": "different_token"}
 
     mock_csrf_service = MagicMock()
 
@@ -170,7 +170,7 @@ async def test_post_with_mismatched_cookie_returns_403():
         mock_settings.csrf_exempt_paths = []
         mock_settings.csrf_token_name = "X-CSRF-Token"
         mock_settings.csrf_check_referer = False
-        mock_settings.csrf_cookie_name = "csrf_token"
+        mock_settings.csrf_cookie_name = "mcpgateway_csrf_token"
 
         response = await middleware.dispatch(request, call_next)
 
@@ -192,7 +192,7 @@ async def test_post_with_valid_token_succeeds():
     request.state = MagicMock()
     request.state.user = MagicMock(email="user@example.com")
     request.state.jti = "session123"
-    request.cookies = {"session_id": "session123", "csrf_token": "valid_token"}
+    request.cookies = {"session_id": "session123", "mcpgateway_csrf_token": "valid_token"}
 
     mock_csrf_service = MagicMock()
     mock_csrf_service.validate_csrf_token.return_value = True
@@ -202,7 +202,7 @@ async def test_post_with_valid_token_succeeds():
         mock_settings.csrf_exempt_paths = []
         mock_settings.csrf_token_name = "X-CSRF-Token"
         mock_settings.csrf_check_referer = False
-        mock_settings.csrf_cookie_name = "csrf_token"
+        mock_settings.csrf_cookie_name = "mcpgateway_csrf_token"
 
         response = await middleware.dispatch(request, call_next)
 
