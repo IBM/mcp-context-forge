@@ -12801,7 +12801,7 @@ async def admin_edit_gateway(
             oauth_username = str(form.get("oauth_username", ""))
             oauth_password = str(form.get("oauth_password", ""))
             oauth_scopes_str = str(form.get("oauth_scopes", ""))
-            oauth_audience = str(form.get("oauth_audience", ""))
+            oauth_audience = str(form.get("oauth_audience", "")).strip()
 
             # If any OAuth field is provided, assemble oauth_config
             if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
@@ -15991,7 +15991,7 @@ async def admin_add_a2a_agent(
             oauth_username = str(form.get("oauth_username", ""))
             oauth_password = str(form.get("oauth_password", ""))
             oauth_scopes_str = str(form.get("oauth_scopes", ""))
-            oauth_audience = str(form.get("oauth_audience", ""))
+            oauth_audience = str(form.get("oauth_audience", "")).strip()
 
             # If any OAuth field is provided, assemble oauth_config
             if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
@@ -16261,7 +16261,7 @@ async def admin_edit_a2a_agent(
             oauth_username = str(form.get("oauth_username", ""))
             oauth_password = str(form.get("oauth_password", ""))
             oauth_scopes_str = str(form.get("oauth_scopes", ""))
-            oauth_audience = str(form.get("oauth_audience", ""))
+            oauth_audience = str(form.get("oauth_audience", "")).strip()
 
             # If any OAuth field is provided, assemble oauth_config
             if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
