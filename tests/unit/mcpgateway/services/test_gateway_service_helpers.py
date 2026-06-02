@@ -12,7 +12,7 @@ import asyncio
 from datetime import datetime, timezone
 import tempfile
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, call, MagicMock, Mock
+from unittest.mock import AsyncMock, call, MagicMock, Mock, patch
 
 # Third-Party
 import pytest
@@ -199,6 +199,83 @@ def test_convert_gateway_to_read_capabilities_empty_relationships(monkeypatch):
     assert captured["tool_count"] == 0
     assert captured["prompt_count"] == 0
     assert captured["resource_count"] == 0
+
+
+def test_convert_gateway_to_read_capabilities_not_loaded(monkeypatch):
+    """convert_gateway_to_read returns zero counts when relationships are absent from __dict__."""
+    service = GatewayService()
+
+    # Simulate a gateway whose relationships were NOT eager-loaded (absent from __dict__)
+    gateway = SimpleNamespace(
+        auth_value=None,
+        tags=[],
+        created_by=None,
+        modified_by=None,
+        created_at=None,
+        updated_at=None,
+        version=None,
+        team=None,
+    )
+
+    captured: dict = {}
+
+    class MockGatewayRead:
+        def __init__(self, data):
+            captured.update(data)
+
+        def masked(self):
+            return self
+
+    monkeypatch.setattr(GatewayRead, "model_validate", staticmethod(lambda x: MockGatewayRead(x)))
+
+    service.convert_gateway_to_read(gateway)
+
+    assert captured["tool_count"] == 0
+    assert captured["prompt_count"] == 0
+    assert captured["resource_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_list_gateways_for_user_populates_capability_counts(monkeypatch):
+    """list_gateways_for_user eager-loads relationships so capability counts are non-zero."""
+    service = GatewayService()
+
+    fake_gateway = SimpleNamespace(
+        auth_value=None,
+        tags=[],
+        created_by=None,
+        modified_by=None,
+        created_at=None,
+        updated_at=None,
+        version=None,
+        team=None,
+        team_id=None,
+        tools=["t1", "t2"],
+        prompts=["p1"],
+        resources=["r1", "r2", "r3"],
+    )
+
+    db = MagicMock()
+    db.execute.return_value.scalars.return_value.all.return_value = [fake_gateway]
+
+    captured: dict = {}
+
+    class MockGatewayRead:
+        def __init__(self, data):
+            captured.update(data)
+
+        def masked(self):
+            return self
+
+    monkeypatch.setattr(GatewayRead, "model_validate", staticmethod(lambda x: MockGatewayRead(x)))
+
+    with patch("mcpgateway.services.gateway_service.TeamManagementService") as MockTeamService:
+        MockTeamService.return_value.get_user_teams = AsyncMock(return_value=[])
+        await service.list_gateways_for_user(db, user_email="user@example.com")
+
+    assert captured["tool_count"] == 2
+    assert captured["prompt_count"] == 1
+    assert captured["resource_count"] == 3
 
 
 def test_gateway_service_validate_tools_valueerror(monkeypatch):
