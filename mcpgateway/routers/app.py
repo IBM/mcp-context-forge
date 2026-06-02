@@ -31,7 +31,7 @@ from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.observability_service import ObservabilityService
 from mcpgateway.services.token_blocklist_service import get_token_blocklist_service
 from mcpgateway.utils.auth_errors import raise_auth_error
-from mcpgateway.utils.csrf import clear_csrf_cookie
+from mcpgateway.services.csrf_service import clear_csrf_cookie
 from mcpgateway.utils.security_cookies import clear_auth_cookie, set_auth_cookie
 
 logger = logging.getLogger(__name__)
@@ -44,7 +44,7 @@ def _validate_csrf_token_length() -> None:
     """Validate CSRF token length at startup.
 
     This is a security check performed at application startup to ensure
-    CSRF tokens are generated with the correct length (32 bytes = 43 chars base64url).
+    CSRF tokens are generated with the correct HMAC-SHA256 hex digest length.
 
     Token expiry synchronization between JWT and CSRF is validated by E2E tests
     (test_app_auth_token_expiry.py) which verify that both cookies have identical
@@ -54,14 +54,20 @@ def _validate_csrf_token_length() -> None:
         ValueError: If CSRF token length is misconfigured.
             This will cause application startup to fail (intentional fail-fast).
     """
-    from mcpgateway.utils.csrf import CSRF_TOKEN_LENGTH
+    csrf_service = get_csrf_service()
+    csrf_token = csrf_service.generate_csrf_token("validation@example.com", "validation-session")
 
-    # CSRF token length validation (security check)
-    expected_csrf_length = 43  # 32 bytes base64url = 43 chars
-    if CSRF_TOKEN_LENGTH != expected_csrf_length:
-        raise ValueError(f"CSRF token length mismatch: expected {expected_csrf_length} chars, " f"got {CSRF_TOKEN_LENGTH}. This indicates a configuration error in csrf.py")
+    expected_csrf_length = 64  # HMAC-SHA256 hex digest = 64 chars
+    if len(csrf_token) != expected_csrf_length:
+        raise ValueError(
+            f"CSRF token length mismatch: expected {expected_csrf_length} chars, "
+            f"got {len(csrf_token)}. This indicates a configuration error in csrf_service.py"
+        )
 
-    logger.debug("CSRF token length validation passed: %d chars", CSRF_TOKEN_LENGTH)
+    if not all(c in "0123456789abcdef" for c in csrf_token):
+        raise ValueError("CSRF token format mismatch: expected lowercase hex digest from csrf_service.py")
+
+    logger.debug("CSRF token length validation passed: %d chars", len(csrf_token))
 
 
 # Run validation at module import time (fail-fast before app startup)
@@ -85,7 +91,7 @@ class LoginResponse(BaseModel):
     """Login response payload."""
 
     user: EmailUserResponse
-    csrf_token: str
+    mcpgateway_csrf_token: str
 
 
 @app_router.post("/auth/login", response_model=LoginResponse)
@@ -142,7 +148,7 @@ async def auth_login(
 
         return LoginResponse(
             user=EmailUserResponse.from_email_user(user),
-            csrf_token=csrf_token,
+            mcpgateway_csrf_token=csrf_token,
         )
 
     except HTTPException:
