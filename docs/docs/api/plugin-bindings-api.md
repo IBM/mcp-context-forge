@@ -322,27 +322,25 @@ Rate strings use the format `<count>/<period>` where period is `s` (second) or `
 
 ```json
 {
-  "by_user":         "60/m",
-  "by_tenant":       "600/m",
-  "by_tool":         { "search": "10/m", "fetch_data": "5/s" },
-  "algorithm":       "fixed_window",
-  "backend":         "memory",
-  "redis_url":       null,
-  "redis_key_prefix": "rl",
-  "redis_fallback":  true
+  "by_user":   "60/m",
+  "by_tenant": "600/m",
+  "by_tool":   { "fast-time-get-system-time": "10/m", "fast-time-convert-time": "5/s" },
+  "algorithm": "fixed_window",
+  "backend":   "redis",
+  "fail_mode": "open"
 }
 ```
 
-| Field              | Type                                               | Default          | Format / Constraints               | Description                                                              |
-|--------------------|----------------------------------------------------|------------------|------------------------------------|--------------------------------------------------------------------------|
-| `by_user`          | string \| null                                     | `null`           | `<int>/s` or `<int>/m`             | Rate limit per calling user; `null` disables                             |
-| `by_tenant`        | string \| null                                     | `null`           | `<int>/s` or `<int>/m`             | Rate limit per tenant (team); `null` disables                            |
-| `by_tool`          | object (string → string) \| null                  | `null`           | values: `<int>/s` or `<int>/m`     | Per-tool rate limits as a map of `tool_name → rate`; `null` disables     |
-| `algorithm`        | `"fixed_window"` \| `"sliding_window"` \| `"token_bucket"` | `"fixed_window"` | —                    | Counting algorithm to use                                                |
-| `backend`          | `"memory"` \| `"redis"`                           | `"memory"`       | —                                  | Storage backend for counters                                             |
-| `redis_url`        | string \| null                                     | `null`           | valid Redis URL                    | Redis connection URL; required when `backend` is `"redis"`               |
-| `redis_key_prefix` | string                                             | `"rl"`           | —                                  | Prefix for all Redis counter keys                                        |
-| `redis_fallback`   | boolean                                            | `true`           | —                                  | Fall back to in-memory counting if Redis is unavailable                  |
+| Field       | Type                                                       | Default          | Format / Constraints           | Description                                                          |
+|-------------|------------------------------------------------------------|------------------|--------------------------------|----------------------------------------------------------------------|
+| `by_user`   | string \| null                                             | `null`           | `<int>/s` or `<int>/m`         | Rate limit per calling user; `null` disables                         |
+| `by_tenant` | string \| null                                             | `null`           | `<int>/s` or `<int>/m`         | Rate limit per tenant (team); `null` disables                        |
+| `by_tool`   | object (string → string) \| null                           | `null`           | values: `<int>/s` or `<int>/m` | Per-tool rate limits as a map of `tool_name → rate`; `null` disables |
+| `algorithm` | `"fixed_window"` \| `"sliding_window"` \| `"token_bucket"` | `"fixed_window"` | —                              | Counting algorithm to use                                            |
+| `backend`   | `"memory"` \| `"redis"`                                    | `"memory"`       | —                              | Storage backend for counters; `"redis"` shares state across replicas, `"memory"` is local to each worker |
+| `fail_mode` | `"open"` \| `"closed"`                                     | `"open"`         | —                              | Behaviour when the `"redis"` backend is unreachable: `"open"` falls back to in-process memory counters (availability-first); `"closed"` blocks requests until Redis recovers (enforcement-first); ignored when `backend` is `"memory"` |
+
+> When `backend` is `"redis"`, the Redis connection URL is configured via `redis_url` in `plugins/config.yaml` — it is **not** a binding payload field. Gateway operators set it once at deployment time; binding-API users should not override it per-tenant.
 
 **Validation:** Each non-null rate string must match `^\d+/[sm]$`.
 
@@ -365,10 +363,8 @@ curl -s -X POST \
             "by_tenant": "300/m",
             "by_tool":   null,
             "algorithm": "fixed_window",
-            "backend":   "memory",
-            "redis_url": null,
-            "redis_key_prefix": "rl",
-            "redis_fallback": true
+            "backend":   "redis",
+            "fail_mode": "open"
           }
         }]
       }
@@ -549,10 +545,8 @@ curl -s -X POST \
               "by_tenant": "600/m",
               "by_tool": null,
               "algorithm": "fixed_window",
-              "backend": "memory",
-              "redis_url": null,
-              "redis_key_prefix": "rl",
-              "redis_fallback": true
+              "backend": "redis",
+              "fail_mode": "open"
             }
           },
           {
