@@ -2581,6 +2581,27 @@ class TestTeamManagementService:
         assert called_emails == {"alice@example.com", "bob@example.com"}
         mock_invalidate_teams.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_update_team_cache_invalidation_exception_is_swallowed(self, mock_db):
+        """Exception in cache-invalidation block must not abort update_team (lines 716-717)."""
+        from unittest.mock import MagicMock
+        from mcpgateway.db import EmailTeam
+        from mcpgateway.services.team_management_service import TeamManagementService
+
+        team = MagicMock(spec=EmailTeam)
+        team.id = "team-001"
+        team.name = "Old Name"
+        team.is_personal = False
+
+        mock_db.query.return_value.filter.return_value.first.return_value = team
+        mock_db.query.return_value.filter.return_value.all.side_effect = RuntimeError("cache blast")
+        mock_db.commit.return_value = None
+
+        service = TeamManagementService(mock_db)
+        result = await service.update_team("team-001", name="New Name", updated_by="admin@example.com")
+
+        assert result is True
+
 
 class TestTransientTeamFromDict:
     """Verify that _team_from_dict instances are safe to use without a DB session."""
