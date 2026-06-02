@@ -27,6 +27,7 @@ opentelemetry-exporter-otlp-proto-http = "2026-05-25T23:59:59Z"
 opentelemetry-exporter-otlp-proto-common = "2026-05-25T23:59:59Z"
 opentelemetry-proto = "2026-05-25T23:59:59Z"
 opentelemetry-semantic-conventions = "2026-05-25T23:59:59Z"
+prometheus-fastapi-instrumentator = "2026-06-02T23:59:59Z"
 
 [tool.uv.sources]
 compliance-reference-server = { path = "mcp-servers/python/compliance_reference_server", editable = true }
