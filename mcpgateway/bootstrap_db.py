@@ -47,6 +47,7 @@ from alembic.script import ScriptDirectory
 from filelock import FileLock
 from sqlalchemy import create_engine, or_, text
 from sqlalchemy.engine import Connection
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -741,6 +742,7 @@ async def bootstrap_resource_assignments(conn: Connection) -> None:
 
                     # Track names claimed within this batch to catch intra-batch duplicates
                     batch_assigned: set[str] = set()
+                    assigned_count = 0
 
                     for resource in unassigned:
                         original_value = getattr(resource, field)
@@ -766,8 +768,22 @@ async def bootstrap_resource_assignments(conn: Connection) -> None:
                         if hasattr(resource, "federation_source") and not resource.federation_source:
                             resource.federation_source = "mcpgateway-0.7.0-migration"
 
-                    db.commit()
-                    total_assigned += len(unassigned)
+                        # Per-row commit with race-condition handling (issue #4993)
+                        # If another worker assigned this resource concurrently, gracefully skip it
+                        try:
+                            db.commit()
+                            assigned_count += 1
+                        except IntegrityError as ie:
+                            # Another worker assigned this resource first - rollback and continue
+                            db.rollback()
+                            logger.debug(
+                                f"Skipping {SecurityValidator.sanitize_log_message(resource_name)} "
+                                f"'{SecurityValidator.sanitize_log_message(str(getattr(resource, field)))}' "
+                                f"- already assigned by concurrent worker: {SecurityValidator.sanitize_log_message(str(ie))}"
+                            )
+                            continue
+
+                    total_assigned += assigned_count
 
                 except Exception as e:
                     logger.error(f"Failed to assign {SecurityValidator.sanitize_log_message(resource_name)}: {SecurityValidator.sanitize_log_message(str(e))}")
@@ -856,19 +872,18 @@ async def main() -> None:
 
     try:
         # Fast path: if the schema is already at the current Alembic head,
-        # skip the migration step but still acquire the advisory lock to
-        # serialize bootstrap_resource_assignments across concurrent workers.
-        # This prevents race conditions when multiple pods restart simultaneously
-        # and attempt to assign the same orphaned resources (issue #4993).
-        # Replicas 2..N take this branch on normal restarts.
+        # skip the migration advisory lock entirely. This is critical for
+        # deployments behind a transaction-pooling connection pooler — the
+        # session-scoped advisory lock can be orphaned across pgbouncer's
+        # backend handoffs, which would otherwise make N-th pod startup
+        # spin indefinitely. Replicas 2..N take this branch on normal
+        # restarts.
         with engine.connect() as probe_conn:
             probe_conn.commit()
             if alembic_at_head(probe_conn, cfg):
-                logger.info("Schema already at Alembic head; skipping migration, acquiring lock for bootstrap")
-                with advisory_lock(probe_conn):
-                    logger.info("Acquired lock for bootstrap helpers")
-                    await _run_post_migration_bootstrap(probe_conn)
-                    probe_conn.commit()
+                logger.info("Schema already at Alembic head; skipping migration lock")
+                await _run_post_migration_bootstrap(probe_conn)
+                probe_conn.commit()
                 logger.info("Database ready")
                 return
 
