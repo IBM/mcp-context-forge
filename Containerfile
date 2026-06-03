@@ -125,17 +125,24 @@ RUN chown -R 1001:0 /app && \
 
 # hadolint ignore=DL3041
 # FedRAMP compliance block — only active when ENABLE_FIPS=true
-# Resolves findings: 1 (FIPS policy), 2+3 (SSH ciphers/MACs via FIPS), 7 (init perms), 8 (rootfiles), 9 (SSH RekeyLimit)
+# Resolves: FIPS crypto policy, SSH ciphers/MACs, gnutls-utils, nss-tools,
+#           subscription-manager, pam_wheel, init file perms, home dir perms,
+#           rootfiles tmpfile.d, SSH RekeyLimit
 RUN if [ "$ENABLE_FIPS" = "true" ]; then \
         if ! grep -q "release 9" /etc/redhat-release 2>/dev/null; then \
             echo "ERROR: ENABLE_FIPS=true requires UBI 9 base images (UBI_MINIMAL must be ubi9/ubi-minimal)" >&2; \
             exit 1; \
         fi; \
         microdnf install -y crypto-policies crypto-policies-scripts rootfiles \
+            gnutls-utils nss-tools subscription-manager \
         && microdnf clean all \
         && update-crypto-policies --set FIPS \
         && mkdir -p /etc/ssh/ssh_config.d /etc/tmpfiles.d \
         && echo "RekeyLimit 512M 1h" > /etc/ssh/ssh_config.d/02-rekey-limit.conf \
+        && if [ -f /etc/pam.d/su ]; then \
+               grep -Eq '^[[:space:]]*auth[[:space:]]+required[[:space:]]+pam_wheel\.so([[:space:]]|$)' /etc/pam.d/su \
+               || echo 'auth required pam_wheel.so use_uid' >> /etc/pam.d/su; \
+           fi \
         && printf '%s\n' \
             'C /root/.bash_logout  0740 root root - /usr/share/rootfiles/.bash_logout' \
             'C /root/.bash_profile 0740 root root - /usr/share/rootfiles/.bash_profile' \
@@ -145,7 +152,10 @@ RUN if [ "$ENABLE_FIPS" = "true" ]; then \
             > /etc/tmpfiles.d/rootfiles.conf \
         && install -m 0740 /dev/null /root/.bash_profile \
         && install -m 0740 /dev/null /root/.bashrc \
-        && install -m 0740 /dev/null /root/.bash_logout; \
+        && install -m 0740 /dev/null /root/.bash_logout \
+        && chmod 0750 /root \
+        && find /home -maxdepth 1 -mindepth 1 -type d -exec chmod 0750 {} \; \
+        && find /home -maxdepth 2 -name '.*' -type f -exec chmod 0740 {} \;; \
     else \
         echo "ENABLE_FIPS=false — skipping FedRAMP compliance block"; \
     fi
