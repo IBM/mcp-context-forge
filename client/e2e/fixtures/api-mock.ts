@@ -47,9 +47,9 @@ export function createApiMock(page: Page): ApiMock {
           await route.fulfill({
             status,
             contentType: "application/json",
-             body: JSON.stringify({
-               user,
-               mcpgateway_csrf_token: MOCK_CSRF_TOKEN,
+            body: JSON.stringify({
+              user,
+              mcpgateway_csrf_token: MOCK_CSRF_TOKEN,
             }),
           });
           return;
