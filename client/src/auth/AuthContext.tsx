@@ -25,11 +25,13 @@ interface AuthState {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  selectedTeamId: string | null;
 }
 
 interface AuthContextValue extends AuthState {
   login: (email: string, password: string) => Promise<void>; // pragma: allowlist secret
   logout: () => Promise<void>;
+  setSelectedTeamId: (teamId: string | null) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -44,7 +46,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user: null,
     isAuthenticated: false,
     isLoading: true,
+    selectedTeamId: null,
   });
+
+  const setSelectedTeamId = useCallback((teamId: string | null) => {
+    setState((prev) => ({ ...prev, selectedTeamId: teamId }));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -54,16 +61,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .get<User>("/app/auth/me")
       .then((user) => {
         if (!cancelled && version === authVersion.current) {
-          setState({ user, isAuthenticated: true, isLoading: false });
+          setState({ user, isAuthenticated: true, isLoading: false, selectedTeamId: null });
         }
       })
       .catch((err) => {
         if (!cancelled && version === authVersion.current) {
           if (err instanceof ApiError && err.status === 401) {
-            setState({ user: null, isAuthenticated: false, isLoading: false });
+            setState({
+              user: null,
+              isAuthenticated: false,
+              isLoading: false,
+              selectedTeamId: null,
+            });
             return;
           }
-          setState({ user: null, isAuthenticated: false, isLoading: false });
+          setState({ user: null, isAuthenticated: false, isLoading: false, selectedTeamId: null });
         }
       });
 
@@ -84,7 +96,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       );
 
       authVersion.current += 1;
-      setState({ user: data.user, isAuthenticated: true, isLoading: false });
+      setState({ user: data.user, isAuthenticated: true, isLoading: false, selectedTeamId: null });
     },
     [],
   );
@@ -97,13 +109,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // or the CSRF cookie has expired.
     } finally {
       authVersion.current += 1;
-      setState({ user: null, isAuthenticated: false, isLoading: false });
+      setState({ user: null, isAuthenticated: false, isLoading: false, selectedTeamId: null });
       window.location.href = "/app/login";
     }
   }, []);
 
   return (
-    <AuthContext.Provider value={{ ...state, login, logout }}>{children}</AuthContext.Provider>
+    <AuthContext.Provider value={{ ...state, login, logout, setSelectedTeamId }}>
+      {children}
+    </AuthContext.Provider>
   );
 }
 
