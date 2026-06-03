@@ -5839,13 +5839,22 @@ class ToolService(BaseService):
                         # No whitelist configured = no headers forwarded (fail-closed security default)
                         logger.debug(f"A2A tool '{name}': No passthrough_headers configured, no request headers will be forwarded")
 
+                    # Merge filtered passthrough headers into base headers BEFORE plugin hooks
+                    # This ensures plugins see the full set of headers and can modify/remove them.
+                    # Plugin modifications take precedence (security: plugins have final authority over headers).
+                    if filtered_request_headers:
+                        headers.update(filtered_request_headers)
+                        logger.debug(
+                            f"A2A tool '{name}': Merged {len(filtered_request_headers)} passthrough headers into base headers (whitelist: {a2a_agent_passthrough_headers})"
+                        )
+
                     # Plugin hook: tool pre-invoke for A2A
                     plugin_manager = await self._get_plugin_manager(plugin_context_id)
                     if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) and not skip_pre_invoke:
                         if tool_metadata:
                             global_context.metadata[TOOL_METADATA] = tool_metadata
-                        # Pass filtered headers to plugin hooks (not raw request_headers)
-                        pre_invoke_headers = HttpHeaderPayload(root={**headers, **filtered_request_headers})
+                        # Pass merged headers to plugin (plugins can modify/remove any header including passthrough ones)
+                        pre_invoke_headers = HttpHeaderPayload(root=headers)
                         pre_result, context_table = await plugin_manager.invoke_hook(
                             ToolHookType.TOOL_PRE_INVOKE,
                             payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
@@ -5859,10 +5868,8 @@ class ToolService(BaseService):
                             name = payload.name
                             arguments = payload.args
                             if payload.headers is not None:
+                                # Plugin modifications REPLACE headers completely (security: plugins have final authority)
                                 headers = payload.headers.model_dump()
-
-                    # Merge filtered passthrough headers into base headers for downstream HTTP call
-                    headers.update(filtered_request_headers)
 
                     prepared = prepare_a2a_invocation(
                         agent_type=a2a_agent_type,
