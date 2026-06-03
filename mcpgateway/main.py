@@ -107,6 +107,7 @@ from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, PermissionChecker, require_permission
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
+from mcpgateway.middleware.tbac_middleware import TBACMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 from mcpgateway.observability import configure_baggage_span_attribute_policy, extract_baggage_span_attribute_policy, init_telemetry, OpenTelemetryRequestMiddleware, otel_tracing_enabled
@@ -3154,6 +3155,11 @@ app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 if settings.correlation_id_enabled:
     app.add_middleware(CorrelationIDMiddleware)
     logger.info(f"✅ Correlation ID tracking enabled (header: {settings.correlation_id_header})")
+
+# Add TBAC middleware for MCP tools/call authorization.
+# It enforces optional task/tool/transaction claims in JWT tokens while preserving
+# the original identity for downstream MCP forwarding.
+app.add_middleware(TBACMiddleware)
 
 # Add authentication context middleware if security logging is enabled OR password change enforcement is enabled
 # This middleware extracts user context and logs security events (authentication attempts)
