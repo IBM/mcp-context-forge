@@ -9,10 +9,11 @@ import {
   useCreateServerForm,
   type CreateServerFormInitialValues,
 } from "@/hooks/useCreateServerForm";
-import type { CreateServerDetails, CreateServerVisibility } from "@/components/gateways/types";
+import type { CreateServerDetails } from "@/components/gateways/types";
+import type { Visibility } from "@/types/server";
 
 const visibilityOptions: Array<{
-  value: CreateServerVisibility;
+  value: Visibility;
   labelId: string;
 }> = [
   {
@@ -113,7 +114,7 @@ export function CreateServerForm({
                     value={option.value}
                     checked={selected}
                     onChange={(event) => {
-                      const nextVisibility = event.target.value as CreateServerVisibility;
+                      const nextVisibility = event.target.value as Visibility;
                       setVisibility(nextVisibility);
                       validateField("visibility", nextVisibility);
                     }}

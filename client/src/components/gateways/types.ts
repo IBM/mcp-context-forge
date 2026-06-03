@@ -1,4 +1,5 @@
 import type { ComponentType } from "react";
+import type { Visibility } from "@/types/server";
 
 export interface ActionCard {
   icon: ComponentType<{ className?: string }>;
@@ -12,11 +13,10 @@ export interface ActionCard {
 
 export type ComponentFilter = "all" | "tools" | "resources" | "prompts";
 
-export type CreateServerVisibility = "public" | "team" | "private";
-
 export interface CreateServerDetails {
   name: string;
-  visibility: CreateServerVisibility;
+  visibility: Visibility;
+  teamId?: string;
   oauthEnabled: boolean;
   tags?: string[];
   description?: string;

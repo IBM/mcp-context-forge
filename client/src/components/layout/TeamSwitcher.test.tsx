@@ -3,15 +3,18 @@ import { screen, waitFor, render } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@/i18n";
 import { SidebarProvider } from "@/components/ui/sidebar";
+import { AuthProvider } from "@/auth/AuthContext";
 import { TeamSwitcher } from "./TeamSwitcher";
 
 function renderTeamSwitcher() {
   return render(
-    <I18nProvider>
-      <SidebarProvider>
-        <TeamSwitcher />
-      </SidebarProvider>
-    </I18nProvider>,
+    <AuthProvider>
+      <I18nProvider>
+        <SidebarProvider>
+          <TeamSwitcher />
+        </SidebarProvider>
+      </I18nProvider>
+    </AuthProvider>,
   );
 }
 

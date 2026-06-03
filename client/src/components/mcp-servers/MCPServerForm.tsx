@@ -32,6 +32,7 @@ export function MCPServerForm({ isOpen, onToggle, serverId, onSuccess }: MCPServ
     transport,
     advancedOpen,
     visibility,
+    teamId,
     authType,
     oneTimeAuth,
     passthroughHeaders,
@@ -49,6 +50,7 @@ export function MCPServerForm({ isOpen, onToggle, serverId, onSuccess }: MCPServ
     setTransport,
     setAdvancedOpen,
     setVisibility,
+    setTeamId,
     setAuthType,
     setOneTimeAuth,
     setPassthroughHeaders,
@@ -129,6 +131,8 @@ export function MCPServerForm({ isOpen, onToggle, serverId, onSuccess }: MCPServ
       <ExposeComponentsForm
         gatewayId={createdGateway.id}
         gatewayName={createdGateway.name}
+        visibility={visibility}
+        teamId={teamId}
         oauthNotification={oauthNotification}
         clearOAuthNotification={clearOAuthNotification}
       />
@@ -294,6 +298,8 @@ export function MCPServerForm({ isOpen, onToggle, serverId, onSuccess }: MCPServ
                 <AdvancedSettings
                   visibility={visibility}
                   onVisibilityChange={setVisibility}
+                  teamId={teamId}
+                  onTeamIdChange={setTeamId}
                   authType={authType}
                   onAuthTypeChange={setAuthType}
                   basicAuthUsername={authUsername}
@@ -336,8 +342,8 @@ export function MCPServerForm({ isOpen, onToggle, serverId, onSuccess }: MCPServ
                   onOneTimeAuthChange={setOneTimeAuth}
                   passthroughHeaders={passthroughHeaders}
                   onPassthroughHeadersChange={setPassthroughHeaders}
-                  onCACertificateFilesSelected={(files) => {
-                    console.log("Selected CA certificate files:", files);
+                  onCACertificateFilesSelected={() => {
+                    // CA certificate file selection handled by AdvancedSettings
                   }}
                   oauthErrors={{
                     username: errors.oauthUsername,

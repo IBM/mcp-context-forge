@@ -25,10 +25,13 @@ import { Loading } from "@/components/ui/loading";
 import { createVirtualServer } from "@/api/virtualServers";
 import { useRouter } from "@/router";
 import type { CreateServerDetails } from "@/components/gateways/types";
+import type { Visibility } from "@/types/server";
 
 interface ExposeComponentsFormProps {
   gatewayId: string;
   gatewayName: string;
+  visibility?: Visibility;
+  teamId?: string;
   oauthNotification?: {
     type: "success" | "error";
     message: string;
@@ -128,6 +131,8 @@ function MCPObjectsTable({
 export function ExposeComponentsForm({
   gatewayId,
   gatewayName,
+  visibility = "public",
+  teamId,
   oauthNotification,
   clearOAuthNotification,
 }: ExposeComponentsFormProps) {
@@ -227,7 +232,8 @@ export function ExposeComponentsForm({
     try {
       const serverDetails: CreateServerDetails = {
         name: gatewayName,
-        visibility: "public",
+        visibility,
+        teamId,
         oauthEnabled: requireOAuth,
         tags: [],
         description: undefined,
