@@ -10017,7 +10017,7 @@ class TestPluginHeaderRemovalNotOverridden:
         )
         gp = _make_gateway_payload()
         db = MagicMock()
-        
+
         # A2A agent with passthrough_headers whitelist
         a2a_agent = _make_a2a_agent(passthrough_headers=["x-secret"])
         db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))

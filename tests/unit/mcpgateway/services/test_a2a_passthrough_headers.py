@@ -211,7 +211,7 @@ class TestA2APassthroughHeaders:
         assert headers["x-user-id"] == "bob@example.com"
         assert "x-tenant-id" in headers, f"Header not normalized to lowercase: {list(headers.keys())}"
         assert headers["x-tenant-id"] == "tenant-456"
-        
+
         # Verify no uppercase versions exist (would indicate duplication bug)
         assert "X-User-ID" not in headers, "Header key should be normalized to lowercase"
         assert "X-TENANT-ID" not in headers, "Header key should be normalized to lowercase"
