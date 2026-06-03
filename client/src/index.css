@@ -64,6 +64,12 @@
   --color-tool-badge-bg: var(--tool-badge-bg);
   --color-tool-add-icon-bg: var(--tool-add-icon-bg);
   --color-tool-add-icon-fg: var(--tool-add-icon-fg);
+
+  /* Dashboard chart-specific semantic tokens */
+  --color-chart-volume: var(--chart-volume);
+  --color-chart-latency-p50: var(--chart-latency-p50);
+  --color-chart-latency-p95: var(--chart-latency-p95);
+  --color-chart-latency-p99: var(--chart-latency-p99);
   --radius-xl: calc(var(--radius) * 1.4);
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
@@ -118,6 +124,12 @@
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
+
+  /* Dashboard chart palette — violet ramp for latency, blue for volume */
+  --chart-volume: var(--color-blue-500);
+  --chart-latency-p50: var(--color-violet-400);
+  --chart-latency-p95: var(--color-violet-600);
+  --chart-latency-p99: var(--color-violet-900);
 }
 /*
  ---break---
@@ -146,6 +158,12 @@
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
+
+  /* Shifted one stop lighter for contrast on dark background */
+  --chart-volume: var(--color-blue-400);
+  --chart-latency-p50: var(--color-violet-300);
+  --chart-latency-p95: var(--color-violet-500);
+  --chart-latency-p99: var(--color-violet-700);
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);

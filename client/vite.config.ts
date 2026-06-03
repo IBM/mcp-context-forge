@@ -28,28 +28,18 @@ export default defineConfig({
     emptyOutDir: true,
     manifest: true,
     sourcemap: false,
+    // 1 MB is comfortable for a single-bundle admin UI loaded once per session.
+    // Raising the warning limit keeps build output free of false alarms; the
+    // gzipped payload is ~300 kB.
+    chunkSizeWarningLimit: 1200,
     rollupOptions: {
       external: (id) => /\.(test|spec)\.(ts|tsx|js|jsx)$/.test(id),
-      output: {
-        manualChunks(id) {
-          if (!id.includes("node_modules")) return;
-          if (
-            id.includes("/react/") ||
-            id.includes("/react-dom/") ||
-            id.includes("/scheduler/") ||
-            id.includes("/react-is/") ||
-            id.includes("/react-remove-scroll") ||
-            id.includes("/react-style-singleton") ||
-            id.includes("/use-callback-ref") ||
-            id.includes("/use-sidecar") ||
-            id.includes("react-intl") ||
-            id.includes("@formatjs")
-          ) return "vendor-react";
-          if (id.includes("@radix-ui") || id.includes("radix-ui")) return "vendor-radix";
-          if (id.includes("lucide-react")) return "vendor-lucide";
-          return "vendor";
-        },
-      },
+      // manualChunks was previously used to split vendor code by library, but
+      // any split that put recharts in a different chunk from React broke
+      // Rollup's CJS interop, producing "Cannot read properties of undefined
+      // (reading 'forwardRef')" at module init. Until we can validate a split
+      // that holds together with React 19 + react-intl + recharts, ship as a
+      // single bundle.
     },
   },
 });
