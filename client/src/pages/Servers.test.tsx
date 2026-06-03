@@ -18,10 +18,25 @@ vi.mock("@/api/client", () => ({
 
 import { api } from "@/api/client";
 
+const mockServerDetails = {
+  id: "server-0",
+  name: "Test Server 0",
+  url: "http://test0.example.com",
+  transport: "SSE" as const,
+  enabled: true,
+  reachable: true,
+  tool_count: 5,
+  visibility: "public" as const,
+  created_at: "2024-01-01T00:00:00Z",
+  updated_at: "2024-01-01T00:00:00Z",
+  team: "Engineering",
+  owner_email: "test@example.com",
+};
+
 // Helper to create mock servers
 function createMockServers(startId: number, count: number) {
   return Array.from({ length: count }, (_, i) => ({
-    id: startId + i,
+    id: `server-${startId + i}`,
     name: `Test Server ${startId + i}`,
     url: `http://test${startId + i}.example.com`,
     status: "active",
@@ -89,6 +104,123 @@ describe("Servers", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Test Server 25")).toBeInTheDocument();
+    });
+  });
+
+  it("opens details panel when View Details is clicked", async () => {
+    const user = userEvent.setup();
+
+    // Mock the initial servers fetch
+    vi.mocked(api.get).mockResolvedValueOnce({
+      gateways: createMockServers(0, 25),
+      nextCursor: "cursor-1",
+    });
+
+    renderWithRouter(<Servers />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Test Server 0")).toBeInTheDocument();
+    });
+
+    // Components fetches fire first (panel child effects run before parent detail effect).
+    vi.mocked(api.get).mockResolvedValueOnce({ tools: [] });
+    vi.mocked(api.get).mockResolvedValueOnce({ resources: [] });
+    vi.mocked(api.get).mockResolvedValueOnce({ prompts: [] });
+    vi.mocked(api.get).mockResolvedValueOnce(mockServerDetails);
+
+    // Find the first server row's actions menu
+    const actionsButtons = screen.getAllByRole("button", { name: /actions for/i });
+    await user.click(actionsButtons[0]);
+
+    // Click View Details menu item
+    const viewDetailsItem = await screen.findByRole("menuitem", { name: /view details/i });
+    await user.click(viewDetailsItem);
+
+    // Drawer should open with server details
+    await waitFor(() => {
+      expect(screen.getByText("Details")).toBeInTheDocument();
+    });
+  });
+
+  it("closes details panel when close button is clicked", async () => {
+    const user = userEvent.setup();
+
+    // Mock the initial servers fetch
+    vi.mocked(api.get).mockResolvedValueOnce({
+      gateways: createMockServers(0, 25),
+      nextCursor: "cursor-1",
+    });
+
+    renderWithRouter(<Servers />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Test Server 0")).toBeInTheDocument();
+    });
+
+    // Components fetches fire first (panel child effects run before parent detail effect).
+    vi.mocked(api.get).mockResolvedValueOnce({ tools: [] });
+    vi.mocked(api.get).mockResolvedValueOnce({ resources: [] });
+    vi.mocked(api.get).mockResolvedValueOnce({ prompts: [] });
+    vi.mocked(api.get).mockResolvedValueOnce(mockServerDetails);
+
+    // Open details drawer
+    const actionsButtons = screen.getAllByRole("button", { name: /actions for/i });
+    await user.click(actionsButtons[0]);
+
+    const viewDetailsItem = await screen.findByRole("menuitem", { name: /view details/i });
+    await user.click(viewDetailsItem);
+
+    await waitFor(() => {
+      expect(screen.getByText("Details")).toBeInTheDocument();
+    });
+
+    // Close drawer
+    const closeButton = screen.getByRole("button", { name: /close mcp server details/i });
+    await user.click(closeButton);
+
+    // Drawer should close
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("button", { name: /close mcp server details/i }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("displays server metadata in details panel", async () => {
+    const user = userEvent.setup();
+
+    // Mock the initial servers fetch
+    vi.mocked(api.get).mockResolvedValueOnce({
+      gateways: createMockServers(0, 25),
+      nextCursor: "cursor-1",
+    });
+
+    renderWithRouter(<Servers />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Test Server 0")).toBeInTheDocument();
+    });
+
+    // Components fetches fire first (panel child effects run before parent detail effect).
+    vi.mocked(api.get).mockResolvedValueOnce({ tools: [] });
+    vi.mocked(api.get).mockResolvedValueOnce({ resources: [] });
+    vi.mocked(api.get).mockResolvedValueOnce({ prompts: [] });
+    vi.mocked(api.get).mockResolvedValueOnce(mockServerDetails);
+
+    // Open details drawer
+    const actionsButtons = screen.getAllByRole("button", { name: /actions for/i });
+    await user.click(actionsButtons[0]);
+
+    const viewDetailsItem = await screen.findByRole("menuitem", { name: /view details/i });
+    await user.click(viewDetailsItem);
+
+    // Check for server metadata
+    await waitFor(() => {
+      expect(screen.getByText("Active")).toBeInTheDocument();
+      expect(screen.getByText("Public")).toBeInTheDocument();
+      expect(screen.getByText("Server-Sent Events (SSE)")).toBeInTheDocument();
+      expect(screen.getByText("Engineering")).toBeInTheDocument();
+      expect(screen.getByText("test@example.com")).toBeInTheDocument();
     });
   });
 });
