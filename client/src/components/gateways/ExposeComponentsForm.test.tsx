@@ -6,6 +6,7 @@ import { setupServer } from "msw/node";
 import { ExposeComponentsForm } from "./ExposeComponentsForm";
 import { RouterProvider } from "@/router";
 import { I18nProvider } from "@/i18n";
+import * as virtualServersApi from "@/api/virtualServers";
 
 // Mock data - must match the API response format with id fields
 const mockTools = [
@@ -247,6 +248,48 @@ describe("ExposeComponentsForm", () => {
   });
 
   describe("Form Submission", () => {
+    it("should use provided visibility when creating virtual server", async () => {
+      const spy = vi
+        .spyOn(virtualServersApi, "createVirtualServer")
+        .mockResolvedValue({ id: "virtual-server-456" } as never);
+
+      const user = userEvent.setup();
+      renderWithProviders(<ExposeComponentsForm {...defaultProps} visibility="private" />);
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: /expose components/i })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole("button", { name: /expose components/i }));
+
+      await waitFor(() => {
+        expect(spy).toHaveBeenCalledWith(expect.objectContaining({ visibility: "private" }));
+      });
+
+      spy.mockRestore();
+    });
+
+    it("should default to public visibility when none is provided", async () => {
+      const spy = vi
+        .spyOn(virtualServersApi, "createVirtualServer")
+        .mockResolvedValue({ id: "virtual-server-456" } as never);
+
+      const user = userEvent.setup();
+      renderWithProviders(<ExposeComponentsForm {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: /expose components/i })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole("button", { name: /expose components/i }));
+
+      await waitFor(() => {
+        expect(spy).toHaveBeenCalledWith(expect.objectContaining({ visibility: "public" }));
+      });
+
+      spy.mockRestore();
+    });
+
     it("should create virtual server with selected components", async () => {
       const user = userEvent.setup();
       renderWithProviders(<ExposeComponentsForm {...defaultProps} />);
