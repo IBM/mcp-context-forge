@@ -165,6 +165,55 @@ def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[st
     return v
 
 
+def _validate_canonical_url(v: Optional[str]) -> Optional[str]:
+    """Validate and normalize canonical URL for RFC 9728 metadata.
+
+    Applied as a @field_validator on ServerCreate and ServerUpdate.
+
+    Args:
+        v: The canonical URL string to validate, or None.
+
+    Returns:
+        Normalized URL with trailing slash stripped, or None.
+
+    Raises:
+        ValueError: If the URL fails any validation check.
+    """
+    if v is None:
+        return v
+
+    v = v.strip().rstrip("/")
+    parsed = urlparse(v)
+
+    # Absolute URL with scheme and netloc
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise ValueError("canonical_url must be an absolute URL (http or https)")
+
+    # HTTPS required in production
+    if settings.environment == "production" and parsed.scheme != "https":
+        raise ValueError("canonical_url must use HTTPS in production")
+
+    # Non-root path required
+    if not parsed.path or parsed.path in ("", "/"):
+        raise ValueError("canonical_url must have a non-root path (e.g. /mcp)")
+
+    # No UUID patterns (defeats stability purpose)
+    uuid_pattern = r"[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}"
+    if re.search(uuid_pattern, v, re.IGNORECASE):
+        raise ValueError("canonical_url must not contain UUIDs")
+
+    # Length limit
+    if len(v) > 767:
+        raise ValueError("canonical_url exceeds maximum length (767)")
+
+    # Domain must match app_domain (prevents cross-domain confusion attacks)
+    app_parsed = urlparse(str(settings.app_domain))
+    if parsed.netloc.lower() != app_parsed.netloc.lower():
+        raise ValueError(f"canonical_url domain '{parsed.netloc}' must match " f"app_domain '{app_parsed.netloc}'")
+
+    return v
+
+
 def _validate_mapping_size(v: dict | None) -> dict | None:
     """Validate that a mapping dict does not exceed size limits.
 
@@ -4169,6 +4218,10 @@ class ServerCreate(BaseModel):
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: bool = Field(False, description="Enable OAuth 2.0 for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+    canonical_url: Optional[str] = Field(
+        None,
+        description="Stable canonical URL for RFC 9728 OAuth metadata " "(e.g. https://gateway.example.com/mcp). " "When set, replaces the UUID-based URL in metadata responses.",
+    )
 
     @field_validator("name")
     @classmethod
@@ -4262,6 +4315,19 @@ class ServerCreate(BaseModel):
             return SecurityValidator.validate_uuid(v, "team_id")
         return v
 
+    @field_validator("canonical_url")
+    @classmethod
+    def validate_canonical_url(cls, v: Optional[str]) -> Optional[str]:
+        """Validate canonical URL format for RFC 9728 metadata."""
+        return _validate_canonical_url(v)
+
+    @model_validator(mode="after")
+    def validate_canonical_url_requires_oauth(self):
+        """Canonical URL can only be set when OAuth is enabled."""
+        if self.canonical_url is not None and not self.oauth_enabled:
+            raise ValueError("canonical_url can only be set when oauth_enabled=True")
+        return self
+
 
 class ServerUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing server.
@@ -4283,6 +4349,10 @@ class ServerUpdate(BaseModelWithConfigDict):
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: Optional[bool] = Field(None, description="Enable OAuth 2.0 for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+    canonical_url: Optional[str] = Field(
+        None,
+        description="Stable canonical URL for RFC 9728 OAuth metadata " "(e.g. https://gateway.example.com/mcp). " "When set, replaces the UUID-based URL in metadata responses.",
+    )
 
     @field_validator("tags")
     @classmethod
@@ -4406,6 +4476,21 @@ class ServerUpdate(BaseModelWithConfigDict):
         """
         return _validate_association_ids(v, info.field_name)
 
+    @field_validator("canonical_url")
+    @classmethod
+    def validate_canonical_url(cls, v: Optional[str]) -> Optional[str]:
+        """Validate canonical URL format for RFC 9728 metadata."""
+        return _validate_canonical_url(v)
+
+    @model_validator(mode="after")
+    def validate_canonical_url_requires_oauth(self):
+        """Canonical URL can only be set when OAuth is enabled."""
+        if self.canonical_url is not None and self.oauth_enabled is not None:
+            # oauth_enabled is Optional[bool] in update — only validate when it's set
+            if not self.oauth_enabled:
+                raise ValueError("canonical_url can only be set when oauth_enabled=True")
+        return self
+
 
 class ServerRead(BaseModelWithConfigDict):
     """Schema for reading server information.
@@ -4458,6 +4543,10 @@ class ServerRead(BaseModelWithConfigDict):
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: bool = Field(False, description="Whether OAuth 2.0 is enabled for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+    canonical_url: Optional[str] = Field(
+        None,
+        description="Stable canonical URL for RFC 9728 OAuth metadata. " "Must match app_domain and have a non-root path.",
+    )
 
     _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 

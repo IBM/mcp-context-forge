@@ -4581,6 +4581,11 @@ class Server(Base):
     # When enabled, MCP clients can authenticate using OAuth with browser-based IDP SSO
     oauth_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     oauth_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    canonical_url: Mapped[Optional[str]] = mapped_column(
+        String(767),
+        nullable=True,
+        comment="Stable RFC 9728 resource URL override (e.g. https://gw.example.com/mcp)",
+    )
 
     # Relationship for loading team names (only active teams)
     # Uses default lazy loading - team name is only loaded when accessed

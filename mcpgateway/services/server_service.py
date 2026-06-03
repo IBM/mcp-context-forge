@@ -259,6 +259,14 @@ def _update_server_associations(db: Session, server: DbServer, server_update: Se
             setattr(server, at.rel_attr, list(objs))
 
 
+def _safe_str(v: object) -> Optional[str]:
+    """Return v if it is a string, otherwise None.
+
+    Guards against MagicMock auto-creation in tests.
+    """
+    return v if isinstance(v, str) else None
+
+
 class ServerService(BaseService):
     """Service for managing MCP Servers in the catalog.
 
@@ -432,6 +440,7 @@ class ServerService(BaseService):
             # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
             "oauth_enabled": getattr(server, "oauth_enabled", False),
             "oauth_config": getattr(server, "oauth_config", None),
+            "canonical_url": _safe_str(getattr(server, "canonical_url", None)),
         }
 
         # Compute aggregated metrics only if requested (avoids N+1 queries in list operations)
@@ -599,6 +608,7 @@ class ServerService(BaseService):
                 # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
                 oauth_enabled=getattr(server_in, "oauth_enabled", False) or False,
                 oauth_config=oauth_config,
+                canonical_url=getattr(server_in, "canonical_url", None),
                 # Metadata fields
                 created_by=created_by,
                 created_from_ip=created_from_ip,
@@ -623,6 +633,16 @@ class ServerService(BaseService):
             existing_server = get_for_update(db, DbServer, where=and_(*conditions))
             if existing_server:
                 raise ServerNameConflictError(server_in.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
+            # Canonical URL uniqueness check (metadata endpoint is unauthenticated, so global uniqueness)
+            if server_in.canonical_url is not None:
+                existing_cu = get_for_update(
+                    db,
+                    DbServer,
+                    where=DbServer.canonical_url == server_in.canonical_url,
+                )
+                if existing_cu:
+                    raise ServerError(f"canonical_url '{server_in.canonical_url}' is already in use " f"by server '{existing_cu.name}' ({existing_cu.id})")
+
             # Set custom UUID if provided
             if server_in.id:
                 logger.info(f"Setting custom UUID for server: {server_in.id}")
@@ -669,6 +689,7 @@ class ServerService(BaseService):
                     "associated_resources_count": len(db_server.resources),
                     "associated_prompts_count": len(db_server.prompts),
                     "associated_a2a_agents_count": len(db_server.a2a_agents),
+                    "canonical_url": server_in.canonical_url,
                 },
                 metadata={
                     "created_from_ip": created_from_ip,
@@ -1327,6 +1348,23 @@ class ServerService(BaseService):
                 elif server_update.oauth_config is not None:
                     server.oauth_config = await protect_oauth_config_for_storage(server_update.oauth_config, existing_oauth_config=server.oauth_config)
 
+            # Canonical URL update with uniqueness check
+            update_cu = getattr(server_update, "canonical_url", None)
+            if isinstance(update_cu, str):
+                existing_cu = get_for_update(
+                    db,
+                    DbServer,
+                    where=and_(
+                        DbServer.canonical_url == update_cu,
+                        DbServer.id != server.id,
+                    ),
+                )
+                if existing_cu:
+                    raise ServerError(f"canonical_url '{update_cu}' is already in use " f"by server '{existing_cu.name}' ({existing_cu.id})")
+                server.canonical_url = update_cu
+            elif "canonical_url" in getattr(server_update, "model_fields_set", {}):
+                server.canonical_url = None
+
             # Update metadata fields
             server.updated_at = datetime.now(timezone.utc)
             if modified_by:
@@ -1367,6 +1405,8 @@ class ServerService(BaseService):
                 changes.append(f"visibility: {server_update.visibility}")
             if server_update.team_id:
                 changes.append(f"team_id: {server_update.team_id}")
+            if "canonical_url" in getattr(server_update, "model_fields_set", {}):
+                changes.append(f"canonical_url: {server_update.canonical_url}")
 
             self._audit_trail.log_action(
                 user_id=user_email or "system",

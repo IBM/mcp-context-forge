@@ -2309,6 +2309,77 @@ async def test_streamable_http_auth_oauth_server_returns_resource_metadata_in_st
 
 
 @pytest.mark.asyncio
+async def test_streamable_http_auth_oauth_server_returns_canonical_resource_metadata(monkeypatch):
+    """WWW-Authenticate header includes canonical resource_metadata when server.canonical_url is set."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+
+    mock_server = MagicMock()
+    mock_server.oauth_enabled = True
+    mock_server.canonical_url = "https://gw.example.com/my-canon/mcp"
+
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_server
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", _make_fake_get_db(mock_db))
+
+    scope = _make_scope("/servers/abc123def/mcp")
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    token = tr._oauth_checked_var.set(False)
+    try:
+        result = await streamable_http_auth(scope, None, send)
+    finally:
+        tr._oauth_checked_var.reset(token)
+    assert result is False
+    assert called[0]["status"] == 401
+    www_auth = dict(called[0].get("headers", [])).get(b"www-authenticate", b"").decode()
+    assert "resource_metadata=" in www_auth
+    assert "gw.example.com/.well-known/oauth-protected-resource/my-canon/mcp" in www_auth
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_oauth_server_handles_db_failure_for_canonical_url(monkeypatch):
+    """Falls back gracefully (resource_metadata without canonical URL) when DB lookup fails."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+
+    mock_server = MagicMock()
+    mock_server.oauth_enabled = True
+
+    call_count = [0]
+
+    @asynccontextmanager
+    async def _get_db():
+        call_count[0] += 1
+        if call_count[0] == 1:
+            mock_db = MagicMock()
+            mock_db.execute.return_value.scalar_one_or_none.return_value = mock_server
+            yield mock_db
+        else:
+            raise RuntimeError("DB connection lost")
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", _get_db)
+
+    scope = _make_scope("/servers/abc123def/mcp")
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    token = tr._oauth_checked_var.set(False)
+    try:
+        result = await streamable_http_auth(scope, None, send)
+    finally:
+        tr._oauth_checked_var.reset(token)
+    assert result is False
+    assert called[0]["status"] == 401
+    www_auth = dict(called[0].get("headers", [])).get(b"www-authenticate", b"").decode()
+    assert "resource_metadata=" in www_auth
+
+
+@pytest.mark.asyncio
 async def test_streamable_http_auth_wrong_scheme(monkeypatch):
     """Auth returns False and sends 401 if Authorization is not Bearer and mcp_require_auth=True."""
 
@@ -14002,6 +14073,45 @@ def test_build_resource_metadata_url_exception_returns_empty():
     assert url == ""
 
 
+class TestBuildCanonicalMetadataUrl:
+    """Verify _build_canonical_metadata_url helper function."""
+
+    def test_simple_path(self):
+        """Builds metadata URL from simple canonical URL."""
+        url = tr._build_canonical_metadata_url("https://gw.example.com/mcp")
+        assert url == "https://gw.example.com/.well-known/oauth-protected-resource/mcp"
+
+    def test_multi_segment_path(self):
+        """Builds metadata URL from multi-segment canonical URL."""
+        url = tr._build_canonical_metadata_url("https://gw.example.com/servers/my-srv/mcp")
+        assert url == "https://gw.example.com/.well-known/oauth-protected-resource/servers/my-srv/mcp"
+
+    def test_empty_string(self):
+        """Returns empty string for empty input."""
+        url = tr._build_canonical_metadata_url("")
+        assert url == ""
+
+    def test_no_scheme(self):
+        """Returns empty string for URL without scheme."""
+        url = tr._build_canonical_metadata_url("gw.example.com/mcp")
+        assert url == ""
+
+    def test_no_netloc(self):
+        """Returns empty string for URL without netloc."""
+        url = tr._build_canonical_metadata_url("https:///mcp")
+        assert url == ""
+
+    def test_trailing_slash(self):
+        """Handles canonical URL with trailing slash."""
+        url = tr._build_canonical_metadata_url("https://gw.example.com/mcp/")
+        assert url == "https://gw.example.com/.well-known/oauth-protected-resource/mcp/"
+
+    def test_http_scheme(self):
+        """Works with HTTP scheme."""
+        url = tr._build_canonical_metadata_url("http://internal.example.com/mcp")
+        assert url == "http://internal.example.com/.well-known/oauth-protected-resource/mcp"
+
+
 # ---------------------------------------------------------------------------
 # _check_streamable_permission: exception path
 # ---------------------------------------------------------------------------
@@ -16997,6 +17107,40 @@ def test_get_scoped_visibility_from_user_context_admin_with_team_scope():
 
     assert user_email == "admin@x.com"
     assert token_teams == ["team1"]
+
+
+@pytest.mark.asyncio
+async def test_try_oauth_access_token_with_canonical_url(monkeypatch):
+    """_try_oauth_access_token uses canonical_url as fallback audience and metadata."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import (
+        _StreamableHttpAuthHandler,
+    )
+
+    canonical_url = "https://gw.example.com/my-canon/mcp"
+    mock_server = MagicMock()
+    mock_server.oauth_enabled = True
+    mock_server.oauth_config = {"authorization_server": "https://auth.example.com"}
+    mock_server.canonical_url = canonical_url
+
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_server
+
+    @asynccontextmanager
+    async def _fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", _fake_get_db)
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token",
+        AsyncMock(return_value=None),
+    )
+
+    scope = _make_scope("/servers/abc123def/mcp")
+    handler = _StreamableHttpAuthHandler(scope, AsyncMock(), AsyncMock())
+
+    result = await handler._try_oauth_access_token("fake-token", unverified={"iss": "https://auth.example.com"})
+    assert result is tr.OAuthAuthResult.FAILED
 
 
 @pytest.mark.asyncio
