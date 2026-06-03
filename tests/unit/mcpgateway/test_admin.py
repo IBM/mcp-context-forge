@@ -22419,7 +22419,6 @@ class TestLoadSriHashes:
         # Create a temporary sri_hashes.json file
         sri_file = tmp_path / "sri_hashes.json"
         test_hashes = {
-            "htmx.min.js": "sha384-test2",
             "chart.js": "sha384-test3",
         }
         sri_file.write_text(json.dumps(test_hashes))
@@ -22432,7 +22431,7 @@ class TestLoadSriHashes:
             result = admin_mod.load_sri_hashes()
 
             assert result == test_hashes
-            assert result["htmx.min.js"] == "sha384-test2"
+            assert result["chart.js"] == "sha384-test3"
 
     def test_load_sri_hashes_file_not_found(self, tmp_path):
         """Test load_sri_hashes returns empty dict when file doesn't exist."""
@@ -22540,7 +22539,7 @@ class TestLoadSriHashes:
         admin_mod.load_sri_hashes.cache_clear()
 
         # Mock load_sri_hashes to return test data
-        test_hashes = {"htmx.min.js": "sha384-test2"}
+        test_hashes = {"chart.js": "sha384-test2"}
         with patch.object(admin_mod, "load_sri_hashes", return_value=test_hashes):
             # We can't easily test the full admin_ui endpoint without extensive mocking,
             # but we can verify load_sri_hashes is called correctly

@@ -9,7 +9,6 @@ STATIC_DIR="${SCRIPT_DIR}/../app/mcpgateway/static/vendor"
 
 # Create vendor directory structure
 mkdir -p "${STATIC_DIR}/tailwindcss"
-mkdir -p "${STATIC_DIR}/htmx"
 mkdir -p "${STATIC_DIR}/codemirror/mode/javascript"
 mkdir -p "${STATIC_DIR}/codemirror/theme"
 mkdir -p "${STATIC_DIR}/chartjs"
@@ -22,11 +21,6 @@ echo "📦 Downloading CDN assets for airgapped deployment..."
 echo "  ⬇️  Tailwind CSS..."
 curl -fsSL "https://cdn.tailwindcss.com/3.4.17" \
   -o "${STATIC_DIR}/tailwindcss/tailwind.min.js"
-
-# Download HTMX
-echo "  ⬇️  HTMX 1.9.12..."
-curl -fsSL "https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js" \
-  -o "${STATIC_DIR}/htmx/htmx.min.js"
 
 # Download CodeMirror
 echo "  ⬇️  CodeMirror 5.65.20..."
