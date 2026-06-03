@@ -3,15 +3,15 @@
 # ===============================================================
 #
 # This workflow builds container images for multiple architectures:
-#   - linux/amd64 (native on ubuntu-latest) - built on all triggers
-#   - linux/arm64 (native on ubuntu-24.04-arm) - skipped on PRs
-#   - linux/s390x (native on ubuntu-24.04-s390x) - skipped on PRs
-#   - linux/ppc64le (native on ubuntu-24.04-ppc64le) - skipped on PRs
+#   - linux/amd64 (native on ubuntu-24.04) - PR (build only), merge queue (build only), push
+#   - linux/arm64 (native on ubuntu-24.04-arm) - merge queue (build only), push
+#   - linux/s390x (native on ubuntu-24.04-s390x) - merge queue (build only), push
+#   - linux/ppc64le (native on ubuntu-24.04-ppc64le) - merge queue (build only), push
 #
 # Pipeline:
-#   1. Build platform images in parallel (amd64 only on PRs)
-#   2. Create multiplatform manifest (skipped on PRs)
-#   3. Sign and attest with Cosign (keyless OIDC, skipped on PRs)
+#   1. Build platform images in parallel (amd64 on PR; all arches on merge queue + push)
+#   2. Create multiplatform manifest (push and tags only)
+#   3. Sign and attest with Cosign (keyless OIDC, push and tags only)
 #
 # Linting and security scanning are handled by docker-scan.yml
 #
@@ -38,6 +38,8 @@ on:
       - 'plugins/**'
       - 'pyproject.toml'
       - '.github/workflows/docker-multiplatform.yml'
+  merge_group:
+    branches: ["main"]
   workflow_dispatch:
 
 concurrency:
@@ -63,33 +65,29 @@ jobs:
       matrix:
         include:
           - platform: linux/amd64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
             suffix: amd64
             cache_mode: max
             qemu: false
-            tag_only: false
-            run_on_pr: true   # Always build amd64
+            build_on_pr: true    # amd64 builds on PR, merge queue, and push
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
             suffix: arm64
             cache_mode: max
             qemu: false
-            tag_only: false
-            run_on_pr: false  # Skip on PRs to speed up CI
+            build_on_pr: false   # merge queue and push only
           - platform: linux/s390x
             runner: ubuntu-24.04-s390x
             suffix: s390x
             cache_mode: max
             qemu: false
-            tag_only: false
-            run_on_pr: false
+            build_on_pr: false   # merge queue and push only
           - platform: linux/ppc64le
             runner: ubuntu-24.04-ppc64le
             suffix: ppc64le
             cache_mode: max
             qemu: false
-            tag_only: false
-            run_on_pr: false
+            build_on_pr: false   # merge queue and push only
 
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -97,18 +95,19 @@ jobs:
       contents: read
       packages: write
 
-    # Skip non-amd64 builds on PRs for faster CI feedback
-    # Skip tag_only builds on non-tag pushes
-    # Condition: run if ((run_on_pr is true) OR (not a pull_request)) AND (not tag_only OR is a tag)
+    # amd64: builds (no push) on PR and merge queue; full build+push on push
+    # arm64/s390x/ppc64le: builds (no push) on merge queue; full build+push on push
+    # Condition for build steps: always except PRs skip non-amd64 (build_on_pr)
+    # Condition for push-only steps (login, digest): push/workflow_dispatch only
     steps:
       - name: Checkout code
-        if: (matrix.run_on_pr || github.event_name != 'pull_request') && (!matrix.tag_only || startsWith(github.ref, 'refs/tags/'))
+        if: github.event_name != 'pull_request' || matrix.build_on_pr
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           persist-credentials: false
 
       - name: Set image name lowercase
-        if: (matrix.run_on_pr || github.event_name != 'pull_request') && (!matrix.tag_only || startsWith(github.ref, 'refs/tags/'))
+        if: github.event_name != 'pull_request' || matrix.build_on_pr
         run: |
           IMAGE_NAME_LC=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
           echo "IMAGE_NAME_LC=${IMAGE_NAME_LC}" >> "${GITHUB_ENV}"
@@ -116,17 +115,17 @@ jobs:
       # QEMU is not currently triggered (native runners are used for all platforms)
       # but is retained so it can be re-enabled via matrix.qemu if needed.
       - name: Set up QEMU
-        if: matrix.qemu && (matrix.run_on_pr || github.event_name != 'pull_request') && (!matrix.tag_only || startsWith(github.ref, 'refs/tags/'))
+        if: matrix.qemu && (github.event_name != 'pull_request' || matrix.build_on_pr)
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
         with:
           platforms: ${{ matrix.platform }}
 
       - name: Set up Docker Buildx
-        if: (matrix.run_on_pr || github.event_name != 'pull_request') && (!matrix.tag_only || startsWith(github.ref, 'refs/tags/'))
+        if: github.event_name != 'pull_request' || matrix.build_on_pr
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to GHCR
-        if: (matrix.run_on_pr || github.event_name != 'pull_request') && github.event_name != 'pull_request' && (!matrix.tag_only || startsWith(github.ref, 'refs/tags/'))
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -134,7 +133,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract metadata
-        if: (matrix.run_on_pr || github.event_name != 'pull_request') && (!matrix.tag_only || startsWith(github.ref, 'refs/tags/'))
+        if: github.event_name != 'pull_request' || matrix.build_on_pr
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
@@ -143,7 +142,7 @@ jobs:
             type=raw,value=${{ matrix.suffix }}-${{ github.sha }}
 
       - name: Build and push
-        if: (matrix.run_on_pr || github.event_name != 'pull_request') && (!matrix.tag_only || startsWith(github.ref, 'refs/tags/'))
+        if: github.event_name != 'pull_request' || matrix.build_on_pr
         id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
@@ -151,8 +150,8 @@ jobs:
           file: Containerfile.lite
           platforms: ${{ matrix.platform }}
 
-          push: ${{ github.event_name != 'pull_request' }}
-          load: ${{ github.event_name == 'pull_request' }}
+          push: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+          load: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
 
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -161,7 +160,7 @@ jobs:
           provenance: false
 
       - name: Export digest
-        if: (matrix.run_on_pr || github.event_name != 'pull_request') && github.event_name != 'pull_request' && (!matrix.tag_only || startsWith(github.ref, 'refs/tags/'))
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         run: |
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
@@ -169,7 +168,7 @@ jobs:
           echo "Digest for ${{ matrix.suffix }}: $digest"
 
       - name: Upload digest
-        if: (matrix.run_on_pr || github.event_name != 'pull_request') && github.event_name != 'pull_request' && (!matrix.tag_only || startsWith(github.ref, 'refs/tags/'))
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: digest-${{ matrix.suffix }}
@@ -183,9 +182,9 @@ jobs:
   manifest:
     name: Create Manifest
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: read
       packages: write
@@ -253,9 +252,9 @@ jobs:
   sign:
     name: Sign Images
     needs: manifest
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: read
       packages: write
