@@ -140,7 +140,7 @@ RUN if [ "$ENABLE_FIPS" = "true" ]; then \
         && mkdir -p /etc/ssh/ssh_config.d /etc/tmpfiles.d \
         && echo "RekeyLimit 512M 1h" > /etc/ssh/ssh_config.d/02-rekey-limit.conf \
         && if [ -f /etc/pam.d/su ]; then \
-               grep -q 'pam_wheel\.so' /etc/pam.d/su \
+               grep -Eq '^[[:space:]]*auth[[:space:]]+required[[:space:]]+pam_wheel\.so([[:space:]]|$)' /etc/pam.d/su \
                || echo 'auth required pam_wheel.so use_uid' >> /etc/pam.d/su; \
            fi \
         && printf '%s\n' \
