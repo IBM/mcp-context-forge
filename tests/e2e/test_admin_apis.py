@@ -342,6 +342,82 @@ class TestAdminServerAPIs:
         response = await client.post(f"/admin/servers/{server_id}/delete", headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 303
 
+    async def test_admin_server_oauth_resource_multi_audience(self, client: AsyncClient, mock_settings):
+        """Multi-audience oauth_resource round-trips through create / read / edit."""
+        # Standard
+        import json as _json
+
+        unique_name = f"test_admin_server_oauth_{uuid.uuid4().hex[:8]}"
+        create = {
+            "name": unique_name,
+            "description": "OAuth multi-aud server",
+            "associatedTools": "",
+            "associatedResources": "",
+            "associatedPrompts": "",
+            "visibility": "public",
+            "oauth_enabled": "on",
+            "oauth_authorization_server": "https://idp.example.com",
+            "oauth_resource": _json.dumps(["aud-a", "aud-b"]),
+        }
+        response = await client.post("/admin/servers", data=create, headers=TEST_AUTH_HEADER, follow_redirects=False)
+        assert response.status_code == 200
+
+        listing = await client.get("/admin/servers", headers=TEST_AUTH_HEADER)
+        servers = listing.json()
+        servers = servers["data"] if isinstance(servers, dict) else servers
+        server = next((s for s in servers if s["name"] == unique_name), None)
+        assert server is not None
+        server_id = server["id"]
+
+        detail = await client.get(f"/admin/servers/{server_id}", headers=TEST_AUTH_HEADER)
+        assert detail.status_code == 200
+        oauth_config = detail.json().get("oauthConfig") or detail.json().get("oauth_config")
+        assert oauth_config is not None
+        assert oauth_config["resource"] == ["aud-a", "aud-b"]
+
+        edit = dict(create)
+        edit["oauth_resource"] = _json.dumps(["aud-only"])
+        response = await client.post(f"/admin/servers/{server_id}/edit", data=edit, headers=TEST_AUTH_HEADER, follow_redirects=False)
+        assert response.status_code == 200
+
+        detail = await client.get(f"/admin/servers/{server_id}", headers=TEST_AUTH_HEADER)
+        oauth_config = detail.json().get("oauthConfig") or detail.json().get("oauth_config")
+        assert oauth_config["resource"] == "aud-only"
+
+        await client.post(f"/admin/servers/{server_id}/delete", headers=TEST_AUTH_HEADER, follow_redirects=False)
+
+    async def test_admin_server_oauth_resource_backward_compat_string(self, client: AsyncClient, mock_settings):
+        """Existing single-string callers (no JSON) still create cleanly via the form."""
+        # Standard
+        import json as _json
+
+        unique_name = f"test_admin_server_oauth_compat_{uuid.uuid4().hex[:8]}"
+        create = {
+            "name": unique_name,
+            "description": "OAuth single-aud server",
+            "associatedTools": "",
+            "associatedResources": "",
+            "associatedPrompts": "",
+            "visibility": "public",
+            "oauth_enabled": "on",
+            "oauth_authorization_server": "https://idp.example.com",
+            "oauth_resource": _json.dumps("legacy-string-aud"),
+        }
+        response = await client.post("/admin/servers", data=create, headers=TEST_AUTH_HEADER, follow_redirects=False)
+        assert response.status_code == 200
+
+        listing = await client.get("/admin/servers", headers=TEST_AUTH_HEADER)
+        servers = listing.json()
+        servers = servers["data"] if isinstance(servers, dict) else servers
+        server = next((s for s in servers if s["name"] == unique_name), None)
+        assert server is not None
+
+        detail = await client.get(f"/admin/servers/{server['id']}", headers=TEST_AUTH_HEADER)
+        oauth_config = detail.json().get("oauthConfig") or detail.json().get("oauth_config")
+        assert oauth_config["resource"] == "legacy-string-aud"
+
+        await client.post(f"/admin/servers/{server['id']}/delete", headers=TEST_AUTH_HEADER, follow_redirects=False)
+
 
 # -------------------------
 # Test Tool Admin APIs

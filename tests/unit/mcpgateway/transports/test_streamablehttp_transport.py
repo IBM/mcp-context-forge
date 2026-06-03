@@ -17025,3 +17025,176 @@ async def test_list_tools_sso_admin_gets_admin_bypass_at_service_layer(monkeypat
     await list_tools()
 
     assert called["args"] == (None, None)
+# Multi-audience resource (oauth_config["resource"] str | list[str])
+# ---------------------------------------------------------------------------
+
+
+def _make_oauth_handler(server_oauth_config, monkeypatch, *, verify_return=None, verify_capture=None, patch_persist=True, app_domain="https://gateway.example"):
+    """Wire ``_try_oauth_access_token`` end-to-end.
+
+    Returns ``(handler, captured, mock_db, mock_server)``. ``captured["expected_audience"]``
+    is filled by the patched ``verify_oauth_access_token``. When ``patch_persist`` is
+    False the real prod ``_persist_learned_server_audience`` runs against ``mock_db``
+    so callers can assert side effects (or the absence of them).
+    """
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _StreamableHttpAuthHandler
+
+    mock_server = MagicMock()
+    mock_server.oauth_enabled = True
+    mock_server.oauth_config = server_oauth_config
+
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_server
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", _make_fake_get_db(mock_db))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.app_domain", app_domain)
+
+    captured: dict = {}
+
+    async def _fake_verify(token, auth_servers, *, expected_audience=None):
+        captured["expected_audience"] = expected_audience
+        captured["token"] = token
+        if verify_capture is not None:
+            verify_capture(token, auth_servers, expected_audience)
+        return verify_return
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", _fake_verify)
+    if patch_persist:
+        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._persist_learned_server_audience", MagicMock())
+
+    user_record = SimpleNamespace(is_admin=False, is_active=True, email="user@example.com")
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", lambda _e: user_record)
+    monkeypatch.setattr("mcpgateway.auth._resolve_teams_from_db", AsyncMock(return_value=[]))
+
+    scope = _make_scope("/servers/abc123/mcp", headers=[(b"host", b"gateway.example")])
+    handler = _StreamableHttpAuthHandler(scope=scope, receive=AsyncMock(), send=AsyncMock())
+    return handler, captured, mock_db, mock_server
+
+
+_CANONICAL_AUD = "https://gateway.example/servers/abc123/mcp"
+
+
+@pytest.mark.asyncio
+async def test_try_oauth_access_token_string_resource_passed_through(monkeypatch):
+    """String resource is forwarded as-is (after strip)."""
+    claims = {"iss": "https://idp.example.com", "aud": "https://api.example.com", "email": "user@example.com"}
+    handler, captured, _db, _srv = _make_oauth_handler(
+        {"authorization_servers": ["https://idp.example.com"], "resource": "  https://api.example.com  "},
+        monkeypatch,
+        verify_return=claims,
+    )
+    unverified = {"iss": "https://idp.example.com"}
+    result = await handler._try_oauth_access_token("tok", unverified)
+
+    assert result is tr.OAuthAuthResult.SUCCESS
+    assert captured["expected_audience"] == "https://api.example.com"
+
+
+@pytest.mark.asyncio
+async def test_try_oauth_access_token_list_resource_multiple_passed_as_list(monkeypatch):
+    """A list with 2+ entries is forwarded as a list (any-element semantics)."""
+    claims = {"iss": "https://idp.example.com", "aud": "client-b", "email": "user@example.com"}
+    handler, captured, _db, _srv = _make_oauth_handler(
+        {"authorization_servers": ["https://idp.example.com"], "resource": ["client-a", "client-b"]},
+        monkeypatch,
+        verify_return=claims,
+    )
+    unverified = {"iss": "https://idp.example.com"}
+    result = await handler._try_oauth_access_token("tok", unverified)
+
+    assert result is tr.OAuthAuthResult.SUCCESS
+    assert captured["expected_audience"] == ["client-a", "client-b"]
+
+
+@pytest.mark.asyncio
+async def test_try_oauth_access_token_list_resource_single_unwrapped(monkeypatch):
+    """A list with 1 entry collapses to a string."""
+    claims = {"iss": "https://idp.example.com", "aud": "only-one", "email": "user@example.com"}
+    handler, captured, _db, _srv = _make_oauth_handler(
+        {"authorization_servers": ["https://idp.example.com"], "resource": ["only-one"]},
+        monkeypatch,
+        verify_return=claims,
+    )
+    unverified = {"iss": "https://idp.example.com"}
+    result = await handler._try_oauth_access_token("tok", unverified)
+
+    assert result is tr.OAuthAuthResult.SUCCESS
+    assert captured["expected_audience"] == "only-one"
+    assert isinstance(captured["expected_audience"], str)
+
+
+@pytest.mark.asyncio
+async def test_try_oauth_access_token_list_resource_mismatch_returns_failed(monkeypatch):
+    """When verify returns None (PyJWT InvalidAudience) the handler returns FAILED."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _StreamableHttpAuthHandler
+
+    monkeypatch.setattr(_StreamableHttpAuthHandler, "_send_error", AsyncMock(return_value=False))
+    handler, _captured, _db, _srv = _make_oauth_handler(
+        {"authorization_servers": ["https://idp.example.com"], "resource": ["a", "b"]},
+        monkeypatch,
+        verify_return=None,
+    )
+    unverified = {"iss": "https://idp.example.com"}
+
+    result = await handler._try_oauth_access_token("tok", unverified)
+    assert result is tr.OAuthAuthResult.FAILED
+
+
+@pytest.mark.asyncio
+async def test_try_oauth_access_token_empty_list_resource_uses_fallback(monkeypatch):
+    """An empty list (or list of empty strings) falls through to the canonical-URL fallback."""
+    claims = {"iss": "https://idp.example.com", "aud": _CANONICAL_AUD, "email": "user@example.com"}
+    handler, captured, _db, _srv = _make_oauth_handler(
+        {"authorization_servers": ["https://idp.example.com"], "resource": ["", "   "]},
+        monkeypatch,
+        verify_return=claims,
+    )
+
+    unverified = {"iss": "https://idp.example.com"}
+    result = await handler._try_oauth_access_token("tok", unverified)
+
+    assert result is tr.OAuthAuthResult.SUCCESS
+    assert captured["expected_audience"] == _CANONICAL_AUD
+
+
+@pytest.mark.asyncio
+async def test_try_oauth_access_token_malformed_resource_uses_fallback(monkeypatch):
+    """A list of non-strings is treated as unset; fallback resolves to the canonical URL."""
+    claims = {"iss": "https://idp.example.com", "aud": _CANONICAL_AUD, "email": "user@example.com"}
+    handler, captured, _db, _srv = _make_oauth_handler(
+        {"authorization_servers": ["https://idp.example.com"], "resource": [1, 2, {"x": "y"}]},
+        monkeypatch,
+        verify_return=claims,
+    )
+
+    unverified = {"iss": "https://idp.example.com"}
+    result = await handler._try_oauth_access_token("tok", unverified)
+
+    assert result is tr.OAuthAuthResult.SUCCESS
+    assert captured["expected_audience"] == _CANONICAL_AUD
+
+
+@pytest.mark.asyncio
+async def test_try_oauth_access_token_list_resource_does_not_overwrite_existing_resource(monkeypatch):
+    """A truthy list resource hits the first-write-only guard inside _persist_learned_server_audience.
+
+    Asserts the real prod helper is invoked (so the guard is actually exercised)
+    AND that no DB write side-effects occur: ``db.flush`` is not called and
+    ``server.oauth_config`` is not mutated.
+    """
+    original_config = {"authorization_servers": ["https://idp.example.com"], "resource": ["client-a", "client-b"]}
+    claims = {"iss": "https://idp.example.com", "aud": "client-a", "email": "user@example.com"}
+    handler, _captured, mock_db, mock_server = _make_oauth_handler(
+        original_config,
+        monkeypatch,
+        verify_return=claims,
+        patch_persist=False,
+    )
+
+    unverified = {"iss": "https://idp.example.com"}
+    result = await handler._try_oauth_access_token("tok", unverified)
+
+    assert result is tr.OAuthAuthResult.SUCCESS
+    mock_db.flush.assert_not_called()
+    assert mock_server.oauth_config == original_config

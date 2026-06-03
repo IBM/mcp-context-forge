@@ -3010,6 +3010,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             authorization_server = str(form.get("oauth_authorization_server", "")).strip()
             scopes_str = str(form.get("oauth_scopes", "")).strip()
             token_endpoint = str(form.get("oauth_token_endpoint", "")).strip()
+            oauth_resource_raw = str(form.get("oauth_resource", "")).strip()
 
             if authorization_server:
                 oauth_config = {"authorization_servers": [authorization_server]}
@@ -3018,6 +3019,19 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
                     oauth_config["scopes_supported"] = scopes_str.split()
                 if token_endpoint:
                     oauth_config["token_endpoint"] = token_endpoint
+                if oauth_resource_raw:
+                    try:
+                        parsed_resource = json.loads(oauth_resource_raw)
+                    except (json.JSONDecodeError, ValueError):
+                        parsed_resource = None
+                    if isinstance(parsed_resource, list):
+                        cleaned = [r.strip() for r in parsed_resource if isinstance(r, str) and r.strip()]
+                        if len(cleaned) == 1:
+                            oauth_config["resource"] = cleaned[0]
+                        elif len(cleaned) > 1:
+                            oauth_config["resource"] = cleaned
+                    elif isinstance(parsed_resource, str) and parsed_resource.strip():
+                        oauth_config["resource"] = parsed_resource.strip()
             else:
                 # Invalid or incomplete OAuth configuration; disable OAuth to avoid inconsistent state
                 LOGGER.warning(
@@ -3167,6 +3181,7 @@ async def admin_edit_server(
             authorization_server = str(form.get("oauth_authorization_server", "")).strip()
             scopes_str = str(form.get("oauth_scopes", "")).strip()
             token_endpoint = str(form.get("oauth_token_endpoint", "")).strip()
+            oauth_resource_raw = str(form.get("oauth_resource", "")).strip()
 
             if authorization_server:
                 oauth_config = {"authorization_servers": [authorization_server]}
@@ -3175,6 +3190,19 @@ async def admin_edit_server(
                     oauth_config["scopes_supported"] = scopes_str.split()
                 if token_endpoint:
                     oauth_config["token_endpoint"] = token_endpoint
+                if oauth_resource_raw:
+                    try:
+                        parsed_resource = json.loads(oauth_resource_raw)
+                    except (json.JSONDecodeError, ValueError):
+                        parsed_resource = None
+                    if isinstance(parsed_resource, list):
+                        cleaned = [r.strip() for r in parsed_resource if isinstance(r, str) and r.strip()]
+                        if len(cleaned) == 1:
+                            oauth_config["resource"] = cleaned[0]
+                        elif len(cleaned) > 1:
+                            oauth_config["resource"] = cleaned
+                    elif isinstance(parsed_resource, str) and parsed_resource.strip():
+                        oauth_config["resource"] = parsed_resource.strip()
             else:
                 # Invalid or incomplete OAuth configuration; disable OAuth to avoid inconsistent state
                 LOGGER.warning(

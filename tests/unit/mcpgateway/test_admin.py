@@ -1260,6 +1260,146 @@ class TestAdminServerRoutes:
         assert "include_inactive=true" in location
         assert "nope" in location
 
+    # ------------------------------------------------------------------
+    # oauth_resource (Resource / Audience) form parsing — multi-audience
+    # ------------------------------------------------------------------
+
+    def _oauth_form(self, **overrides):
+        base = {
+            "id": "00000000-0000-0000-0000-0000000000ff",
+            "name": "S",
+            "oauth_enabled": "on",
+            "oauth_authorization_server": "https://idp.example.com",
+            "visibility": "public",
+            "associatedTools": [],
+            "associatedResources": [],
+            "associatedPrompts": [],
+        }
+        base.update(overrides)
+        return FakeForm(base)
+
+    def _setup_team_and_metadata(self, monkeypatch):
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+            lambda *_args, **_kwargs: {
+                "created_by": "u@example.com",
+                "created_from_ip": None,
+                "created_via": "ui",
+                "created_user_agent": None,
+                "import_batch_id": None,
+                "federation_source": None,
+            },
+        )
+
+    @patch.object(ServerService, "register_server")
+    async def test_admin_add_server_oauth_resource_json_array_single(self, mock_register_server, mock_request, mock_db, monkeypatch):
+        """JSON array with a single value is stored as a string."""
+        mock_request.form = AsyncMock(return_value=self._oauth_form(oauth_resource=json.dumps(["https://api.example.com"])))
+        self._setup_team_and_metadata(monkeypatch)
+
+        result = await admin_add_server(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert result.status_code == 200
+        oauth_config = mock_register_server.call_args.args[1].oauth_config
+        assert oauth_config["resource"] == "https://api.example.com"
+
+    @patch.object(ServerService, "register_server")
+    async def test_admin_add_server_oauth_resource_json_array_multi(self, mock_register_server, mock_request, mock_db, monkeypatch):
+        """JSON array with 2+ values is stored as a list."""
+        mock_request.form = AsyncMock(return_value=self._oauth_form(oauth_resource=json.dumps(["a", "b"])))
+        self._setup_team_and_metadata(monkeypatch)
+
+        result = await admin_add_server(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert result.status_code == 200
+        oauth_config = mock_register_server.call_args.args[1].oauth_config
+        assert oauth_config["resource"] == ["a", "b"]
+
+    @patch.object(ServerService, "register_server")
+    async def test_admin_add_server_oauth_resource_json_array_empty(self, mock_register_server, mock_request, mock_db, monkeypatch):
+        """An empty JSON array does not set the resource key at all."""
+        mock_request.form = AsyncMock(return_value=self._oauth_form(oauth_resource=json.dumps([])))
+        self._setup_team_and_metadata(monkeypatch)
+
+        result = await admin_add_server(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert result.status_code == 200
+        oauth_config = mock_register_server.call_args.args[1].oauth_config
+        assert "resource" not in oauth_config
+
+    @patch.object(ServerService, "register_server")
+    async def test_admin_add_server_oauth_resource_json_string(self, mock_register_server, mock_request, mock_db, monkeypatch):
+        """A bare JSON-encoded string is stored as a string."""
+        mock_request.form = AsyncMock(return_value=self._oauth_form(oauth_resource=json.dumps("solo-aud")))
+        self._setup_team_and_metadata(monkeypatch)
+
+        result = await admin_add_server(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert result.status_code == 200
+        oauth_config = mock_register_server.call_args.args[1].oauth_config
+        assert oauth_config["resource"] == "solo-aud"
+
+    @patch.object(ServerService, "register_server")
+    async def test_admin_add_server_oauth_resource_invalid_json_ignored(self, mock_register_server, mock_request, mock_db, monkeypatch):
+        """Malformed JSON is silently ignored; the rest of oauth_config still saves."""
+        mock_request.form = AsyncMock(return_value=self._oauth_form(oauth_resource="{not json"))
+        self._setup_team_and_metadata(monkeypatch)
+
+        result = await admin_add_server(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert result.status_code == 200
+        oauth_config = mock_register_server.call_args.args[1].oauth_config
+        assert "resource" not in oauth_config
+        assert oauth_config["authorization_servers"] == ["https://idp.example.com"]
+
+    @patch.object(ServerService, "register_server")
+    async def test_admin_add_server_oauth_resource_trims_whitespace(self, mock_register_server, mock_request, mock_db, monkeypatch):
+        """Whitespace inside array entries is trimmed and empty strings dropped."""
+        mock_request.form = AsyncMock(return_value=self._oauth_form(oauth_resource=json.dumps(["  a  ", "", "b"])))
+        self._setup_team_and_metadata(monkeypatch)
+
+        result = await admin_add_server(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert result.status_code == 200
+        oauth_config = mock_register_server.call_args.args[1].oauth_config
+        assert oauth_config["resource"] == ["a", "b"]
+
+    @patch.object(ServerService, "update_server")
+    async def test_admin_edit_server_oauth_resource_json_array_single(self, mock_update_server, mock_request, mock_db):
+        """admin_edit_server: single-element array → string."""
+        server_id = "00000000-0000-0000-0000-000000000010"
+        mock_request.form = AsyncMock(return_value=self._oauth_form(id=server_id, oauth_resource=json.dumps(["one"])))
+        mock_request.scope = {"root_path": ""}
+        mock_update_server.return_value = MagicMock(model_dump=lambda: {})
+
+        result = await admin_edit_server(server_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert result.status_code == 200
+        server_update = mock_update_server.call_args[0][2]
+        assert server_update.oauth_config["resource"] == "one"
+
+    @patch.object(ServerService, "update_server")
+    async def test_admin_edit_server_oauth_resource_json_array_multi(self, mock_update_server, mock_request, mock_db):
+        """admin_edit_server: multi-element array → list."""
+        server_id = "00000000-0000-0000-0000-000000000011"
+        mock_request.form = AsyncMock(return_value=self._oauth_form(id=server_id, oauth_resource=json.dumps(["x", "y"])))
+        mock_request.scope = {"root_path": ""}
+        mock_update_server.return_value = MagicMock(model_dump=lambda: {})
+
+        result = await admin_edit_server(server_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert result.status_code == 200
+        server_update = mock_update_server.call_args[0][2]
+        assert server_update.oauth_config["resource"] == ["x", "y"]
+
+    @patch.object(ServerService, "update_server")
+    async def test_admin_edit_server_oauth_resource_invalid_json_ignored(self, mock_update_server, mock_request, mock_db):
+        """admin_edit_server: malformed JSON is silently ignored."""
+        server_id = "00000000-0000-0000-0000-000000000012"
+        mock_request.form = AsyncMock(return_value=self._oauth_form(id=server_id, oauth_resource="???"))
+        mock_request.scope = {"root_path": ""}
+        mock_update_server.return_value = MagicMock(model_dump=lambda: {})
+
+        result = await admin_edit_server(server_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert result.status_code == 200
+        server_update = mock_update_server.call_args[0][2]
+        assert "resource" not in server_update.oauth_config
+
 
 class TestAdminToolRoutes:
     """Test admin routes for tool management with enhanced coverage."""

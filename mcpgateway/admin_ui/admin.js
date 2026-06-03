@@ -433,10 +433,11 @@ Admin.resetImportSelection = resetImportSelection;
 Admin.handleSelectiveImport = handleSelectiveImport;
 
 // Servers
-import { viewServer, editServer } from "./servers.js";
+import { viewServer, editServer, addOauthResource } from "./servers.js";
 
 Admin.viewServer = viewServer;
 Admin.editServer = editServer;
+Admin.addOauthResource = addOauthResource;
 
 // Tabs
 import { showTab } from "./tabs.js";
