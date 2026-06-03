@@ -2232,7 +2232,9 @@ class A2AAgentService(BaseService):
                     if pre_result.modified_payload.headers is not None:
                         # Plugin modifications REPLACE prepared.headers (not merge)
                         # This ensures plugins can remove headers (e.g., for security filtering)
-                        prepared.headers = pre_result.modified_payload.headers.model_dump()
+                        plugin_headers = pre_result.modified_payload.headers.model_dump()
+                        prepared.headers.clear()
+                        prepared.headers.update(plugin_headers)
             except PluginViolationError as e:
                 logger.error("Plugin RBAC violation for A2A agent %s: %s", agent_id, e)
                 raise A2AAgentError(f"Plugin RBAC violation: {e}") from e

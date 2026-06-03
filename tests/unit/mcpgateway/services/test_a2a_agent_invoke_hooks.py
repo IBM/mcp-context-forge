@@ -169,7 +169,7 @@ class TestA2AInvokePreHook:
         mock_db,
         mock_agent,
     ):
-        """When agent.passthrough_headers is None, no headers reach plugins."""
+        """When agent.passthrough_headers is None, only base headers reach plugins (no passthrough headers)."""
         mock_agent.passthrough_headers = None
 
         inbound_headers = {"x-tenant-id": "tenant-123", "x-request-id": "req-456"}
@@ -197,7 +197,12 @@ class TestA2AInvokePreHook:
             )
 
         payload = pm.invoke_hook.await_args_list[0].kwargs["payload"]
-        assert payload.headers.root == {}
+        # Plugin receives base headers from prepare_a2a_invocation (Content-Type, X-Correlation-ID)
+        # but NO passthrough headers since whitelist is None
+        assert "Content-Type" in payload.headers.root or "content-type" in payload.headers.root
+        assert "X-Correlation-ID" in payload.headers.root or "x-correlation-id" in payload.headers.root
+        assert "x-tenant-id" not in payload.headers.root
+        assert "x-request-id" not in payload.headers.root
 
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
@@ -213,7 +218,7 @@ class TestA2AInvokePreHook:
         mock_db,
         mock_agent,
     ):
-        """PRE_INVOKE receives the inbound request_headers as AgentPreInvokePayload.headers."""
+        """PRE_INVOKE receives base headers plus filtered passthrough headers."""
         # Third-Party
         from cpex.framework import AgentHookType, AgentPreInvokePayload
 
@@ -247,7 +252,13 @@ class TestA2AInvokePreHook:
         assert isinstance(payload, AgentPreInvokePayload)
         assert payload.agent_id == mock_agent.id
         assert payload.headers is not None
-        assert payload.headers.root == inbound_headers
+        # Plugin receives base headers (Content-Type, X-Correlation-ID) + passthrough headers
+        assert "x-forwarded-for" in payload.headers.root
+        assert "x-request-id" in payload.headers.root
+        assert payload.headers.root["x-forwarded-for"] == "10.0.0.1"
+        assert payload.headers.root["x-request-id"] == "req-001"
+        # Also has base headers
+        assert "Content-Type" in payload.headers.root or "content-type" in payload.headers.root
 
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
@@ -263,7 +274,7 @@ class TestA2AInvokePreHook:
         mock_db,
         mock_agent,
     ):
-        """When request_headers is None, PRE_INVOKE receives an empty dict."""
+        """When request_headers is None, PRE_INVOKE receives only base headers (Content-Type, X-Correlation-ID)."""
         pm = _make_plugin_manager()
         mock_get_for_update.return_value = mock_agent
         mock_client = AsyncMock()
@@ -288,7 +299,9 @@ class TestA2AInvokePreHook:
             )
 
         payload = pm.invoke_hook.await_args_list[0].kwargs["payload"]
-        assert payload.headers.root == {}
+        # Plugin receives base headers from prepare_a2a_invocation
+        assert "Content-Type" in payload.headers.root or "content-type" in payload.headers.root
+        assert "X-Correlation-ID" in payload.headers.root or "x-correlation-id" in payload.headers.root
 
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
