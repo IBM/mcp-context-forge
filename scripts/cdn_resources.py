@@ -13,8 +13,6 @@ CDN_RESOURCES = {
     # Tailwind is intentionally excluded:
     # - Play CDN is a JIT compiler endpoint (non-static script semantics)
     # - It does not provide stable CORS/SRI guarantees for integrity enforcement
-    # Alpine.js
-    "alpinejs": "https://cdn.jsdelivr.net/npm/alpinejs@3.15.12/dist/cdn.min.js",
     # Chart.js
     "chartjs": "https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js",
     # Marked (Markdown parser)
