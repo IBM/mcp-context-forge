@@ -2,7 +2,7 @@ module fast-time-server
 
 go 1.25.5
 
-toolchain go1.26.2
+toolchain go1.26.4
 
 require github.com/mark3labs/mcp-go v0.54.1 // MCP server/runtime
 

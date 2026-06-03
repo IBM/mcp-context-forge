@@ -3832,7 +3832,7 @@ LINT_GO_ROOT ?= $(LINT_TMP_ROOT)/go
 LINT_HELM_ROOT ?= $(LINT_TMP_ROOT)/helm
 LINT_NODE_ROOT ?= $(LINT_TMP_ROOT)/node
 LINT_PY_VENV ?= $(LINT_TMP_ROOT)/py-venv
-LINT_GO_TOOLCHAIN ?= go1.26.3
+LINT_GO_TOOLCHAIN ?= go1.26.4
 
 # Tool target defaults
 LINT_ZIZMOR_TARGET ?= .github/workflows

@@ -253,8 +253,8 @@ find . -path "./mcp-servers/templates" -prune -o -name "go.mod" -type f -print |
 done
 ```
 
-2. Update `LINT_GO_TOOLCHAIN ?= go1.26.3` appropriately in the _root_/Makefile
-3. Update Dockerfile e.g. `FROM golang:1.26.3`
+2. Update `LINT_GO_TOOLCHAIN ?= go1.26.4` appropriately in the _root_/Makefile
+3. Update Dockerfile e.g. `FROM golang:1.26.4`
 
 Verify Go code compiles and passes security checks:
 
