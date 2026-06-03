@@ -16,6 +16,7 @@ describe("useMCPServerForm", () => {
       expect(result.current.transport).toBe("STREAMABLEHTTP");
       expect(result.current.advancedOpen).toBe(false);
       expect(result.current.visibility).toBe("public");
+      expect(result.current.teamId).toBe("");
       expect(result.current.authType).toBe("none");
       expect(result.current.oneTimeAuth).toBe(false);
       expect(result.current.passthroughHeaders).toBe("");
@@ -67,6 +68,16 @@ describe("useMCPServerForm", () => {
       expect(result.current.description).toBe("Test description");
     });
 
+    it("should update teamId", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setTeamId("team-xyz-456");
+      });
+
+      expect(result.current.teamId).toBe("team-xyz-456");
+    });
+
     it("should toggle advanced settings", () => {
       const { result } = renderHook(() => useMCPServerForm());
 
@@ -111,6 +122,41 @@ describe("useMCPServerForm", () => {
       });
 
       expect(result.current.errors.url).toBe("URL must start with http:// or https://");
+    });
+
+    it("should add teamId error when visibility is team and teamId is empty", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setVisibility("team");
+      });
+
+      act(() => {
+        result.current.validateForm();
+      });
+
+      expect(result.current.errors.teamId).toBeDefined();
+    });
+
+    it("should pass validation when visibility is team and teamId is set", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setVisibility("team");
+        result.current.setTeamId("team-abc");
+      });
+
+      let isValid: boolean;
+      act(() => {
+        isValid = result.current.validateForm();
+      });
+
+      expect(isValid!).toBe(true);
+      expect(result.current.errors.teamId).toBeUndefined();
     });
 
     it("should pass validation with valid data", () => {
@@ -197,8 +243,10 @@ describe("useMCPServerForm", () => {
         result.current.setUrl("http://localhost:3000");
       });
 
-      result.current.handleSubmit(mockEvent, () => {
-        callbackCalled = true;
+      await act(async () => {
+        await result.current.handleSubmit(mockEvent, () => {
+          callbackCalled = true;
+        });
       });
 
       await waitFor(() => {
@@ -220,7 +268,9 @@ describe("useMCPServerForm", () => {
         result.current.setDescription("Test description");
       });
 
-      result.current.handleSubmit(mockEvent);
+      await act(async () => {
+        await result.current.handleSubmit(mockEvent);
+      });
 
       await waitFor(() => {
         expect(result.current.name).toBe("");
@@ -255,6 +305,7 @@ describe("useMCPServerForm", () => {
       expect(result.current.description).toBe("");
       expect(result.current.advancedOpen).toBe(false);
       expect(result.current.visibility).toBe("public");
+      expect(result.current.teamId).toBe("");
       expect(result.current.authType).toBe("none");
       expect(result.current.errors).toEqual({});
     });
@@ -291,6 +342,31 @@ describe("useMCPServerForm", () => {
 
       expect(result.current.isValid).toBe(true);
     });
+
+    it("should be false when visibility is team but teamId is empty", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setVisibility("team");
+      });
+
+      expect(result.current.isValid).toBe(false);
+    });
+
+    it("should be true when visibility is team and teamId is provided", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setVisibility("team");
+        result.current.setTeamId("team-abc");
+      });
+
+      expect(result.current.isValid).toBe(true);
+    });
   });
 
   describe("getFormData", () => {
@@ -310,6 +386,34 @@ describe("useMCPServerForm", () => {
       expect(formData.description).toBe("Test description");
       expect(formData.transport).toBe("STREAMABLEHTTP");
       expect(formData.visibility).toBe("public");
+    });
+
+    it("includes teamId when visibility is team", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setVisibility("team");
+        result.current.setTeamId("team-abc-123");
+      });
+
+      const formData = result.current.getFormData();
+      expect(formData.teamId).toBe("team-abc-123");
+    });
+
+    it("omits teamId when visibility is not team", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setVisibility("private");
+        result.current.setTeamId("team-abc-123");
+      });
+
+      const formData = result.current.getFormData();
+      expect(formData.teamId).toBeUndefined();
     });
   });
 
