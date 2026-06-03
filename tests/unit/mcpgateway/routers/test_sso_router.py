@@ -476,8 +476,12 @@ async def test_handle_sso_callback_non_admin_with_team_redirects_to_team(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_handle_sso_callback_non_admin_no_teams_redirects_to_root(monkeypatch: pytest.MonkeyPatch):
-    """Test that non-admin users without teams are redirected to root."""
+async def test_handle_sso_callback_non_admin_no_teams_redirects_to_admin_gateways(monkeypatch: pytest.MonkeyPatch):
+    """Test that non-admin users without teams are redirected to admin gateways view.
+
+    This prevents a redirect loop when Admin UI is enabled, as root (/) redirects
+    back to /admin/. The gateways section is accessible to platform_viewer users.
+    """
     monkeypatch.setattr(sso_router.settings, "sso_enabled", True)
 
     # Create a valid JWT token for non-admin user
@@ -523,7 +527,7 @@ async def test_handle_sso_callback_non_admin_no_teams_redirects_to_root(monkeypa
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 302
-    assert response.headers.get("location", "") == "/"
+    assert response.headers.get("location", "") == "/admin/#gateways"
     assert set_cookie.called
 
 
@@ -580,7 +584,11 @@ async def test_handle_sso_callback_team_service_error_falls_back_to_admin(monkey
 
 @pytest.mark.asyncio
 async def test_handle_sso_callback_invalid_jwt_falls_back_to_user_info(monkeypatch: pytest.MonkeyPatch):
-    """Test that invalid JWT token falls back to using user_info for redirect determination."""
+    """Test that invalid JWT token falls back to using user_info for redirect determination.
+
+    When JWT decoding fails, the code falls back to user_info to determine redirect.
+    Non-admin users without teams are redirected to admin gateways view.
+    """
     monkeypatch.setattr(sso_router.settings, "sso_enabled", True)
 
     # Return an invalid JWT token (not properly formatted)
@@ -621,8 +629,8 @@ async def test_handle_sso_callback_invalid_jwt_falls_back_to_user_info(monkeypat
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 302
-    # Should redirect to root since user has no teams and is not admin
-    assert response.headers.get("location", "") == "/"
+    # Should redirect to admin gateways view since user has no teams and is not admin
+    assert response.headers.get("location", "") == "/admin/#gateways"
     assert set_cookie.called
 
 

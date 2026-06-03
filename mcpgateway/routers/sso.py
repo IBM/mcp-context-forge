@@ -429,9 +429,12 @@ async def handle_sso_callback(
                 redirect_url = f"{root_path}/admin?team_id={first_team_id}"
                 logger.info(f"Redirecting non-admin SSO user {sanitize_for_log(user_email)} to team-scoped admin: {first_team_id}")
             else:
-                # User has no teams - redirect to root
-                redirect_url = f"{root_path}/"
-                logger.info(f"Redirecting non-admin SSO user {sanitize_for_log(user_email)} with no teams to root")
+                # User has no teams - redirect to admin gateways view
+                # Redirecting to root (/) would create a loop when Admin UI is enabled,
+                # as root redirects back to /admin/. The gateways section is accessible
+                # to platform_viewer users (who have gateways.read permission).
+                redirect_url = f"{root_path}/admin/#gateways"
+                logger.info(f"Redirecting non-admin SSO user {sanitize_for_log(user_email)} with no teams to admin gateways view")
         except Exception as e:
             logger.warning(f"Failed to retrieve teams for SSO user {sanitize_for_log(user_email)}: {e}. Redirecting to /admin")
             # Fall back to /admin - middleware will handle permission check
