@@ -6891,11 +6891,7 @@ class TestOAuthFunctionality:
         existing_gateway.owner_email = "original-owner@example.com"
         mock_db.get = MagicMock(return_value=existing_gateway)
 
-        form_data = FakeForm({
-            "name": "Updated_Gateway",
-            "url": "https://updated.example.com",
-            "description": "Updated description"
-        })
+        form_data = FakeForm({"name": "Updated_Gateway", "url": "https://updated.example.com", "description": "Updated description"})
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.headers = {"content-type": "multipart/form-data"}
 
@@ -6912,12 +6908,7 @@ class TestOAuthFunctionality:
                 "modified_user_agent": None,
             }
 
-            result = await admin_update_gateway_rest(
-                "gateway-123",
-                mock_request,
-                mock_db,
-                user={"email": "test-user", "db": mock_db}
-            )
+            result = await admin_update_gateway_rest("gateway-123", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
             assert isinstance(result, JSONResponse)
             body = json.loads(result.body)
@@ -7108,11 +7099,7 @@ class TestErrorHandlingPaths:
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_tags_as_comma_string_json(self, mock_register_gateway, mock_request, mock_db):
         """Test adding gateway with tags as comma-separated string in JSON (covers lines 874-876)."""
-        mock_request.json = AsyncMock(return_value={
-            "name": "test-gateway",
-            "url": "https://example.com",
-            "tags": "tag1, tag2, tag3"  # String instead of array
-        })
+        mock_request.json = AsyncMock(return_value={"name": "test-gateway", "url": "https://example.com", "tags": "tag1, tag2, tag3"})  # String instead of array
         mock_request.headers = {"content-type": "application/json"}
 
         result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
@@ -7133,10 +7120,7 @@ class TestErrorHandlingPaths:
     async def test_admin_add_gateway_parse_exception(self, mock_register_gateway, mock_request, mock_db):
         """Test adding gateway with parsing exception after successful parse (covers lines 12362-12363)."""
         # Mock successful JSON parsing but raise exception during processing
-        mock_request.json = AsyncMock(return_value={
-            "name": "test-gateway",
-            "url": "https://example.com"
-        })
+        mock_request.json = AsyncMock(return_value={"name": "test-gateway", "url": "https://example.com"})
         mock_request.headers = {"content-type": "application/json"}
 
         # Mock _parse_gateway_data_from_request to raise a generic exception
@@ -7175,11 +7159,7 @@ class TestErrorHandlingPaths:
         existing_gateway.team_id = "team-123"
         mock_db.get = MagicMock(return_value=existing_gateway)
 
-        mock_request.json = AsyncMock(return_value={
-            "name": "updated-gateway",
-            "url": "https://updated.example.com",
-            "team_id": "  "  # Whitespace only
-        })
+        mock_request.json = AsyncMock(return_value={"name": "updated-gateway", "url": "https://updated.example.com", "team_id": "  "})  # Whitespace only
         mock_request.headers = {"content-type": "application/json"}
 
         team_service = MagicMock()
@@ -7202,15 +7182,13 @@ class TestErrorHandlingPaths:
         existing_gateway.team_id = "team-123"
         mock_db.get = MagicMock(return_value=existing_gateway)
 
-        mock_request.json = AsyncMock(return_value={
-            "name": "oauth-gateway",
-            "url": "https://oauth.example.com",
-            "oauth_config": {
-                "client_id": "client123",
-                "client_secret": "secret123",
-                "token_url": "https://oauth.example.com/token"
+        mock_request.json = AsyncMock(
+            return_value={
+                "name": "oauth-gateway",
+                "url": "https://oauth.example.com",
+                "oauth_config": {"client_id": "client123", "client_secret": "secret123", "token_url": "https://oauth.example.com/token"},  # pragma: allowlist secret
             }
-        })
+        )
         mock_request.headers = {"content-type": "application/json"}
 
         team_service = MagicMock()
@@ -7241,15 +7219,14 @@ class TestErrorHandlingPaths:
         existing_gateway.team_id = "team-123"
         mock_db.get = MagicMock(return_value=existing_gateway)
 
-        mock_request.json = AsyncMock(return_value={
-            "name": "oauth-gateway",
-            "url": "https://oauth.example.com",
-            "oauth_config": {
-                "client_id": "client123",
-                "token_url": "https://oauth.example.com/token"
+        mock_request.json = AsyncMock(
+            return_value={
+                "name": "oauth-gateway",
+                "url": "https://oauth.example.com",
+                "oauth_config": {"client_id": "client123", "token_url": "https://oauth.example.com/token"},
+                # No auth_type specified
             }
-            # No auth_type specified
-        })
+        )
         mock_request.headers = {"content-type": "application/json"}
 
         team_service = MagicMock()
@@ -7276,10 +7253,7 @@ class TestErrorHandlingPaths:
         existing_gateway.team_id = "team-123"
         mock_db.get = MagicMock(return_value=existing_gateway)
 
-        mock_request.json = AsyncMock(return_value={
-            "name": "updated-gateway",
-            "url": "https://updated.example.com"
-        })
+        mock_request.json = AsyncMock(return_value={"name": "updated-gateway", "url": "https://updated.example.com"})
         mock_request.headers = {"content-type": "application/json"}
 
         mock_update_gateway.side_effect = PermissionError("User does not have permission")
@@ -7306,10 +7280,7 @@ class TestErrorHandlingPaths:
         existing_gateway.team_id = "team-123"
         mock_db.get = MagicMock(return_value=existing_gateway)
 
-        mock_request.json = AsyncMock(return_value={
-            "name": "updated-gateway",
-            "url": "https://updated.example.com"
-        })
+        mock_request.json = AsyncMock(return_value={"name": "updated-gateway", "url": "https://updated.example.com"})
         mock_request.headers = {"content-type": "application/json"}
 
         mock_update_gateway.side_effect = GatewayConnectionError("Connection failed")
@@ -7336,10 +7307,7 @@ class TestErrorHandlingPaths:
         existing_gateway.team_id = "team-123"
         mock_db.get = MagicMock(return_value=existing_gateway)
 
-        mock_request.json = AsyncMock(return_value={
-            "name": "updated-gateway",
-            "url": "https://updated.example.com"
-        })
+        mock_request.json = AsyncMock(return_value={"name": "updated-gateway", "url": "https://updated.example.com"})
         mock_request.headers = {"content-type": "application/json"}
 
         mock_update_gateway.side_effect = RuntimeError("Service unavailable")
@@ -7367,15 +7335,13 @@ class TestErrorHandlingPaths:
         existing_gateway.team_id = "team-123"
         mock_db.get = MagicMock(return_value=existing_gateway)
 
-        mock_request.json = AsyncMock(return_value={
-            "name": "updated-gateway",
-            "url": "https://updated.example.com"
-        })
+        mock_request.json = AsyncMock(return_value={"name": "updated-gateway", "url": "https://updated.example.com"})
         mock_request.headers = {"content-type": "application/json"}
 
         # Create a proper Pydantic ValidationError by trying to validate invalid data
         try:
             from mcpgateway.schemas import GatewayUpdate
+
             GatewayUpdate(url="not-a-valid-url")  # This will raise ValidationError
         except ValidationError as e:
             validation_error = e
@@ -7403,10 +7369,7 @@ class TestErrorHandlingPaths:
         existing_gateway.team_id = "team-123"
         mock_db.get = MagicMock(return_value=existing_gateway)
 
-        mock_request.json = AsyncMock(return_value={
-            "name": "updated-gateway",
-            "url": "https://updated.example.com"
-        })
+        mock_request.json = AsyncMock(return_value={"name": "updated-gateway", "url": "https://updated.example.com"})
         mock_request.headers = {"content-type": "application/json"}
 
         mock_update_gateway.side_effect = IntegrityError("statement", {}, None)
@@ -7430,10 +7393,7 @@ class TestErrorHandlingPaths:
         existing_gateway.team_id = "team-123"
         mock_db.get = MagicMock(return_value=existing_gateway)
 
-        mock_request.json = AsyncMock(return_value={
-            "name": "updated-gateway",
-            "url": "https://updated.example.com"
-        })
+        mock_request.json = AsyncMock(return_value={"name": "updated-gateway", "url": "https://updated.example.com"})
         mock_request.headers = {"content-type": "application/json"}
 
         mock_update_gateway.side_effect = ValueError("Invalid value")
@@ -7460,10 +7420,7 @@ class TestErrorHandlingPaths:
         existing_gateway.team_id = "team-123"
         mock_db.get = MagicMock(return_value=existing_gateway)
 
-        mock_request.json = AsyncMock(return_value={
-            "name": "updated-gateway",
-            "url": "https://updated.example.com"
-        })
+        mock_request.json = AsyncMock(return_value={"name": "updated-gateway", "url": "https://updated.example.com"})
         mock_request.headers = {"content-type": "application/json"}
 
         mock_update_gateway.side_effect = Exception("Unexpected error")
@@ -7509,7 +7466,6 @@ class TestErrorHandlingPaths:
             body = json.loads(result.body)
             assert body["success"] is False
             assert "Failed to delete gateway" in body["message"]
-
 
 
 class TestImportConfigurationEndpoints:
