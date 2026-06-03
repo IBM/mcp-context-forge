@@ -1,3 +1,5 @@
+export type Visibility = "private" | "team" | "public";
+
 /**
  * Base server interface with common fields
  */
@@ -6,7 +8,7 @@ export interface BaseServer {
   name: string;
   description?: string;
   enabled: boolean;
-  visibility: "private" | "team" | "public";
+  visibility: Visibility;
   team_id?: string;
   team?: string;
   owner_email?: string;

@@ -66,6 +66,9 @@ window.HTMLElement.prototype.releasePointerCapture = vi.fn();
 // Mock scrollIntoView required by Radix UI Select dropdown item focus
 window.HTMLElement.prototype.scrollIntoView = vi.fn();
 
+// Mock window.open — jsdom does not implement it and OAuth flows call it
+window.open = vi.fn();
+
 // Start MSW server before all tests
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 

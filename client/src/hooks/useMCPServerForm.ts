@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo, useEffect, useRef, type FormEvent } fro
 import { z } from "zod";
 import { useQuery } from "@/hooks/useQuery";
 import { serversApi } from "@/api/servers";
+import type { Visibility } from "@/types/server";
 import {
   sanitizeString,
   sanitizeUrl,
@@ -112,7 +113,8 @@ const mcpServerFormObjectSchema = z.object({
     .transform((val) => sanitizeQueryParam(val, 500))
     .optional(),
   oneTimeAuth: z.boolean().optional(),
-  visibility: z.enum(["public", "private"]).optional(),
+  visibility: z.enum(["public", "private", "team"]).optional(),
+  teamId: z.string().optional(),
   caCertificate: z
     .string()
     .transform((val) => sanitizeCertificate(val, 10000))
@@ -138,6 +140,14 @@ const mcpServerFormSchema = mcpServerFormObjectSchema.superRefine((data, ctx) =>
       });
     }
   }
+  // Require teamId when visibility is "team"
+  if (data.visibility === "team" && !data.teamId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Team selection is required when visibility is set to team",
+      path: ["teamId"],
+    });
+  }
 });
 
 export type MCPServerFormData = z.infer<typeof mcpServerFormSchema>;
@@ -154,6 +164,7 @@ export interface FormErrors {
   authToken?: string;
   oneTimeAuth?: string;
   visibility?: string;
+  teamId?: string;
   caCertificate?: string;
   oauthUsername?: string;
   oauthPassword?: string;
@@ -168,7 +179,8 @@ export interface UseMCPServerFormReturn {
   description: string;
   transport: TransportType;
   advancedOpen: boolean;
-  visibility: string;
+  visibility: Visibility;
+  teamId: string;
   authType: AuthType;
   oneTimeAuth: boolean; // pragma: allowlist secret
   passthroughHeaders: string;
@@ -206,7 +218,8 @@ export interface UseMCPServerFormReturn {
   setDescription: (value: string) => void;
   setTransport: (value: TransportType) => void;
   setAdvancedOpen: (value: boolean | ((prev: boolean) => boolean)) => void;
-  setVisibility: (value: string) => void;
+  setVisibility: (value: Visibility) => void;
+  setTeamId: (value: string) => void;
   setAuthType: (value: AuthType) => void;
   setOneTimeAuth: (value: boolean) => void; // pragma: allowlist secret
   setPassthroughHeaders: (value: string) => void;
@@ -251,7 +264,8 @@ const initialState = {
   description: "",
   transport: "STREAMABLEHTTP" as TransportType,
   advancedOpen: false,
-  visibility: "public",
+  visibility: "public" as Visibility,
+  teamId: "",
   authType: "none" as AuthType,
   oneTimeAuth: false,
   passthroughHeaders: "",
@@ -284,6 +298,7 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
   const [transport, setTransport] = useState<TransportType>(initialState.transport);
   const [advancedOpen, setAdvancedOpen] = useState(initialState.advancedOpen);
   const [visibility, setVisibility] = useState(initialState.visibility);
+  const [teamId, setTeamId] = useState(initialState.teamId);
   const [authType, setAuthType] = useState<AuthType>(initialState.authType);
   const [oneTimeAuth, setOneTimeAuth] = useState(initialState.oneTimeAuth);
   const [passthroughHeaders, setPassthroughHeaders] = useState(initialState.passthroughHeaders);
@@ -330,6 +345,7 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
     description?: string;
     transport?: string;
     visibility?: string;
+    teamId?: string;
     authType?: string;
     authUsername?: string;
     authPassword?: string;
@@ -369,6 +385,7 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
       setDescription(serverData.description || "");
       setTransport((serverData.transport as TransportType) || "STREAMABLEHTTP");
       setVisibility(serverData.visibility || "public");
+      if (serverData.teamId) setTeamId(serverData.teamId);
 
       // Auth fields — open advanced panel when any auth is configured
       if (serverData.authType) {
@@ -516,7 +533,8 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
       auth_query_param_key: authType === "query" ? queryParamName || undefined : undefined,
       auth_query_param_value: authType === "query" ? queryParamApiKey || undefined : undefined,
       oneTimeAuth: oneTimeAuth || undefined, // pragma: allowlist secret
-      visibility: (visibility as "public" | "private") || undefined,
+      visibility: visibility || undefined,
+      teamId: visibility === "team" ? teamId || undefined : undefined,
       caCertificate: caCertificate || undefined,
       oauth_config: oauthConfig,
     };
@@ -535,6 +553,7 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
     queryParamApiKey,
     oneTimeAuth,
     visibility,
+    teamId,
     caCertificate,
     oauthGrantType,
     oauthClientId,
@@ -613,6 +632,7 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
     setTransport(initialState.transport);
     setAdvancedOpen(initialState.advancedOpen);
     setVisibility(initialState.visibility);
+    setTeamId(initialState.teamId);
     setAuthType(initialState.authType);
     setOneTimeAuth(initialState.oneTimeAuth);
     setPassthroughHeaders(initialState.passthroughHeaders);
@@ -644,9 +664,10 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
     async (event: FormEvent<HTMLFormElement>, onSuccess?: (response?: unknown) => void) => {
       event.preventDefault();
 
-      if (validateForm()) {
+      const formValid = validateForm();
+
+      if (formValid) {
         try {
-          // Form is valid, proceed with submission
           const formData = getFormData();
 
           // Call the appropriate API based on mode (create or update)
@@ -774,8 +795,12 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
       if (!oauthUsername.trim()) return false;
       if (!oauthPassword.trim()) return false;
     }
+    // Require teamId when visibility is "team"
+    if (visibility === "team" && (!teamId || !teamId.trim())) {
+      return false;
+    }
     return true;
-  }, [name, url, authType, oauthGrantType, oauthUsername, oauthPassword]);
+  }, [name, url, authType, oauthGrantType, oauthUsername, oauthPassword, visibility, teamId]);
 
   return {
     // State
@@ -786,6 +811,7 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
     transport,
     advancedOpen,
     visibility,
+    teamId,
     authType,
     oneTimeAuth,
     passthroughHeaders,
@@ -823,6 +849,7 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
     setTransport,
     setAdvancedOpen,
     setVisibility,
+    setTeamId,
     setAuthType,
     setOneTimeAuth,
     setPassthroughHeaders,

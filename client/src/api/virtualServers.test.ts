@@ -177,4 +177,40 @@ describe("virtualServers API", () => {
     expect(payload.server.description).toBeUndefined();
     expect(payload.server.oauth_config).toBeUndefined();
   });
+
+  it("sets team_id when visibility is team and teamId is provided", () => {
+    const payload = buildCreateVirtualServerPayload({
+      name: "Team server",
+      visibility: "team",
+      teamId: "team-abc-123",
+      oauthEnabled: false,
+    });
+
+    expect(payload.server.team_id).toBe("team-abc-123");
+    expect(payload.team_id).toBe("team-abc-123");
+    expect(payload.visibility).toBe("team");
+  });
+
+  it("keeps team_id null when visibility is team but teamId is absent", () => {
+    const payload = buildCreateVirtualServerPayload({
+      name: "Team server no id",
+      visibility: "team",
+      oauthEnabled: false,
+    });
+
+    expect(payload.server.team_id).toBeNull();
+    expect(payload.team_id).toBeNull();
+  });
+
+  it("keeps team_id null when teamId is provided but visibility is not team", () => {
+    const payload = buildCreateVirtualServerPayload({
+      name: "Private server",
+      visibility: "private",
+      teamId: "team-abc-123",
+      oauthEnabled: false,
+    });
+
+    expect(payload.server.team_id).toBeNull();
+    expect(payload.team_id).toBeNull();
+  });
 });

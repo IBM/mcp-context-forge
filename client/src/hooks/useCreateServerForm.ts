@@ -1,7 +1,8 @@
 import { useCallback, useMemo, useState, type FormEvent } from "react";
 import { useIntl } from "react-intl";
 import { z } from "zod";
-import type { CreateServerDetails, CreateServerVisibility } from "@/components/gateways/types";
+import type { CreateServerDetails } from "@/components/gateways/types";
+import type { Visibility } from "@/types/server";
 import { sanitizeString } from "@/lib/sanitize";
 
 function createServerFormSchema(messages: {
@@ -37,7 +38,7 @@ export type CreateServerFormData = z.infer<ReturnType<typeof createServerFormSch
 
 interface CreateServerFormValues {
   name: string;
-  visibility: CreateServerVisibility;
+  visibility: Visibility;
   oauthEnabled: boolean;
   tags: string;
   description: string;
@@ -45,7 +46,7 @@ interface CreateServerFormValues {
 
 export interface CreateServerFormInitialValues {
   name?: string;
-  visibility?: CreateServerVisibility;
+  visibility?: Visibility;
   oauthEnabled?: boolean;
   tags?: string[];
   description?: string;
@@ -62,14 +63,14 @@ export interface CreateServerFormErrors {
 
 export interface UseCreateServerFormReturn {
   name: string;
-  visibility: CreateServerVisibility;
+  visibility: Visibility;
   oauthEnabled: boolean;
   tags: string;
   description: string;
   errors: CreateServerFormErrors;
   isValid: boolean;
   setName: (value: string) => void;
-  setVisibility: (value: CreateServerVisibility) => void;
+  setVisibility: (value: Visibility) => void;
   setOAuthEnabled: (value: boolean) => void;
   setTags: (value: string) => void;
   setDescription: (value: string) => void;
@@ -133,9 +134,7 @@ export function useCreateServerForm(
   );
   const resolvedInitialState = useMemo(() => getInitialState(initialValues), [initialValues]);
   const [name, setName] = useState(resolvedInitialState.name);
-  const [visibility, setVisibility] = useState<CreateServerVisibility>(
-    resolvedInitialState.visibility,
-  );
+  const [visibility, setVisibility] = useState<Visibility>(resolvedInitialState.visibility);
   const [oauthEnabled, setOAuthEnabled] = useState(resolvedInitialState.oauthEnabled);
   const [tags, setTags] = useState(resolvedInitialState.tags);
   const [description, setDescription] = useState(resolvedInitialState.description);

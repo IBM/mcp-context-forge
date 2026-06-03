@@ -25,6 +25,8 @@ export interface CreateVirtualServerPayload {
 export function buildCreateVirtualServerPayload(
   details: CreateServerDetails,
 ): CreateVirtualServerPayload {
+  const teamId = details.visibility === "team" && details.teamId ? details.teamId : null;
+
   return {
     server: {
       name: details.name,
@@ -35,12 +37,12 @@ export function buildCreateVirtualServerPayload(
       associated_resources: details.associatedResources ?? [],
       associated_prompts: details.associatedPrompts ?? [],
       associated_a2a_agents: [],
-      team_id: null,
+      team_id: teamId,
       visibility: details.visibility,
       oauth_enabled: details.oauthEnabled,
       oauth_config: details.oauthEnabled ? {} : undefined,
     },
-    team_id: null,
+    team_id: teamId,
     visibility: details.visibility,
   };
 }

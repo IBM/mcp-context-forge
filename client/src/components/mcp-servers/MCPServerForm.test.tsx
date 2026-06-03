@@ -6,9 +6,13 @@ import { setupServer } from "msw/node";
 import { MCPServerForm } from "./MCPServerForm";
 import { RouterProvider } from "@/router";
 import { I18nProvider } from "@/i18n";
+import { AuthProvider } from "@/auth/AuthContext";
 
 // Mock API responses for ExposeComponentsForm and gateway creation
 const server = setupServer(
+  http.get("/app/auth/me", () => {
+    return HttpResponse.json({ detail: "Unauthorized" }, { status: 401 });
+  }),
   // Mock gateway creation
   http.post("/gateways", () => {
     return HttpResponse.json({ id: "test-gateway-123", name: "Test Server" });
@@ -35,12 +39,14 @@ describe("MCPServerForm", () => {
     onToggle: vi.fn(),
   };
 
-  // Helper to render with router and i18n
+  // Helper to render with router, i18n, and auth context
   const renderWithRouter = (ui: React.ReactElement) => {
     return render(
-      <I18nProvider>
-        <RouterProvider>{ui}</RouterProvider>
-      </I18nProvider>,
+      <AuthProvider>
+        <I18nProvider>
+          <RouterProvider>{ui}</RouterProvider>
+        </I18nProvider>
+      </AuthProvider>,
     );
   };
 
@@ -931,8 +937,7 @@ describe("MCPServerForm", () => {
       }
     });
 
-    it("should log selected files to console", async () => {
-      const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    it("should handle CA certificate file selection without errors", async () => {
       const user = userEvent.setup();
       renderWithRouter(<MCPServerForm {...defaultProps} />);
 
@@ -949,17 +954,9 @@ describe("MCPServerForm", () => {
           writable: false,
         });
 
-        fireEvent.change(fileInput);
-
-        await waitFor(() => {
-          expect(consoleSpy).toHaveBeenCalledWith(
-            "Selected CA certificate files:",
-            expect.arrayContaining([expect.any(File)]),
-          );
-        });
+        // File selection should not throw
+        expect(() => fireEvent.change(fileInput)).not.toThrow();
       }
-
-      consoleSpy.mockRestore();
     });
 
     describe("OAuth Notifications", () => {
