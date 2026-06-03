@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useMemo, useCallback } from "react";
 import { ChevronsUpDown, Globe } from "lucide-react";
 import {
   DropdownMenu,
@@ -8,6 +8,7 @@ import {
 } from "../ui/dropdown-menu";
 import { SidebarMenuButton } from "../ui/sidebar";
 import { useQuery } from "../../hooks/useQuery";
+import { useAuthContext } from "../../auth/AuthContext";
 
 interface Team {
   id: string;
@@ -20,19 +21,22 @@ interface TeamsResponse {
 }
 
 export function TeamSwitcher() {
-  const [selectedTeam, setSelectedTeam] = useState<string | null>(null);
+  const { selectedTeamId, setSelectedTeamId } = useAuthContext();
   const { data, isLoading, error } = useQuery<TeamsResponse>("/teams");
 
   const teams = useMemo(() => data?.teams ?? [], [data?.teams]);
   const currentTeam = useMemo(
-    () => (selectedTeam ? teams.find((t) => t.id === selectedTeam) : null),
-    [selectedTeam, teams],
+    () => (selectedTeamId ? teams.find((t) => t.id === selectedTeamId) : null),
+    [selectedTeamId, teams],
   );
   const displayName = currentTeam?.name ?? "All teams";
 
-  const handleSelectTeam = useCallback((teamId: string | null) => {
-    setSelectedTeam(teamId);
-  }, []);
+  const handleSelectTeam = useCallback(
+    (teamId: string | null) => {
+      setSelectedTeamId(teamId);
+    },
+    [setSelectedTeamId],
+  );
 
   return (
     <DropdownMenu>
@@ -75,7 +79,7 @@ export function TeamSwitcher() {
           className="gap-2 p-2"
           onClick={() => handleSelectTeam(null)}
           aria-label="Select all teams"
-          aria-current={selectedTeam === null ? "true" : "false"}
+          aria-current={selectedTeamId === null ? "true" : "false"}
         >
           <div
             className="flex size-6 items-center justify-center rounded-sm border bg-background"
@@ -91,7 +95,7 @@ export function TeamSwitcher() {
             className="gap-2 p-2"
             onClick={() => handleSelectTeam(team.id)}
             aria-label={`Select ${team.name} team${team.description ? `: ${team.description}` : ""}`}
-            aria-current={selectedTeam === team.id ? "true" : "false"}
+            aria-current={selectedTeamId === team.id ? "true" : "false"}
           >
             <div
               className="flex size-6 items-center justify-center rounded-sm border bg-background"
