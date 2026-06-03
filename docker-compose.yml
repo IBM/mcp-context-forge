@@ -528,7 +528,7 @@ services:
       - TOOL_DESCRIPTION_FORBIDDEN_PATTERNS=${TOOL_DESCRIPTION_FORBIDDEN_PATTERNS:-["&&", ";", "||", "$(", "> ", "< "]}
       - CORRELATION_ID_ENABLED=false
       - LLMCHAT_ENABLED=true
-      - OBSERVABILITY_ENABLED=false
+      - OBSERVABILITY_ENABLED=true
       # ═══════════════════════════════════════════════════════════════════════════
       # Database Connection Pool Configuration
       # ═══════════════════════════════════════════════════════════════════════════

@@ -639,7 +639,7 @@ mcpContextForge:
     # OTEL_BSP_SCHEDULE_DELAY: "5000"
 
     # ─ Internal Observability & Tracing ─
-    OBSERVABILITY_ENABLED: "false"               # enable internal observability tracing and metrics
+    OBSERVABILITY_ENABLED: "true"               # enable internal observability tracing and metrics
     # Uncomment when enabling observability:
     # OBSERVABILITY_TRACE_HTTP_REQUESTS: "true"
     # OBSERVABILITY_TRACE_RETENTION_DAYS: "7"
