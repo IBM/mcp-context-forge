@@ -2200,7 +2200,18 @@ class A2AAgentService(BaseService):
             except Exception as e:
                 logger.warning("Failed to build A2A agent metadata for plugins: %s", e)
 
+        # Merge filtered passthrough headers BEFORE plugin hooks
+        # This ensures plugins see the full set of headers that will be sent and can modify/remove them.
+        # Plugin modifications take precedence (security: plugins have final authority over headers).
+        if request_headers:
+            prepared.headers.update(request_headers)
+            logger.debug(
+                f"A2A agent '{agent_name}': Merged {len(request_headers)} passthrough headers into prepared headers (whitelist: {agent_passthrough_headers})"
+            )
+
         # Fire pre-invoke hook — can modify parameters, headers, and agent metadata
+        # IMPORTANT: Plugin header modifications must take precedence over passthrough headers.
+        # Plugins may remove/modify headers for security (e.g., header_filter plugin).
         if plugin_manager and plugin_manager.has_hooks_for(AgentHookType.AGENT_PRE_INVOKE):
             try:
                 pre_result, context_table = await plugin_manager.invoke_hook(
@@ -2208,7 +2219,7 @@ class A2AAgentService(BaseService):
                     payload=AgentPreInvokePayload(
                         agent_id=agent_id,
                         messages=[{"role": "user", "content": parameters}] if parameters else [],
-                        headers=HttpHeaderPayload(root=request_headers or {}),
+                        headers=HttpHeaderPayload(root=prepared.headers),
                         parameters=parameters if isinstance(parameters, dict) else {},
                     ),
                     global_context=global_context,
@@ -2219,21 +2230,15 @@ class A2AAgentService(BaseService):
                     if pre_result.modified_payload.parameters is not None:
                         parameters = pre_result.modified_payload.parameters
                     if pre_result.modified_payload.headers is not None:
-                        prepared.headers.update(pre_result.modified_payload.headers.model_dump())
+                        # Plugin modifications REPLACE prepared.headers (not merge)
+                        # This ensures plugins can remove headers (e.g., for security filtering)
+                        prepared.headers = pre_result.modified_payload.headers.model_dump()
             except PluginViolationError as e:
                 logger.error("Plugin RBAC violation for A2A agent %s: %s", agent_id, e)
                 raise A2AAgentError(f"Plugin RBAC violation: {e}") from e
             except Exception as e:
                 logger.error("Pre-invoke plugin error for A2A agent %s: %s", agent_id, e)
                 raise A2AAgentError(f"Pre-invoke plugin error: {e}") from e
-
-        # Merge filtered passthrough headers into prepared.headers for downstream HTTP call
-        # (Mirrors the fix applied to tool_service.py for issue #5004)
-        if request_headers:
-            prepared.headers.update(request_headers)
-            logger.debug(
-                f"A2A agent '{agent_name}': Merged {len(request_headers)} passthrough headers into downstream request (whitelist: {agent_passthrough_headers})"
-            )
 
         span_attributes = {
             "a2a.agent.name": agent_name,
