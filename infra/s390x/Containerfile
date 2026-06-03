@@ -34,7 +34,7 @@ RUN microdnf update -y && \
         libffi-devel \
         rust \
         cargo \
-        jq-devel \
+        jq \
         autoconf \
         automake \
         libtool && \
