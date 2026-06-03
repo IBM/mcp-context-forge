@@ -1625,35 +1625,40 @@ class SecurityValidator:
         # Example: evil.com. should be normalized to evil.com before allowlist check
         hostname_normalized = hostname.lower().rstrip(".")
 
-        # Unconditionally block private IPs, loopback, and link-local addresses
-        # This prevents testing internal services regardless of allowlist
-        try:
-            ip_addr = ipaddress.ip_address(hostname_normalized)
-            # Unwrap IPv4-mapped IPv6 addresses (e.g., ::ffff:127.0.0.1 -> 127.0.0.1)
-            # Python 3.11 bug: is_loopback returns False for IPv4-mapped loopback addresses
-            if ip_addr.version == 6 and ip_addr.ipv4_mapped is not None:
-                ip_addr = ip_addr.ipv4_mapped
+        # Apply additional SSRF protections only when global SSRF protection is enabled.
+        # This ensures consistency with other endpoints that respect ssrf_protection_enabled.
+        # When SSRF protection is disabled (e.g., for development/testing), the gateway test
+        # endpoint will still enforce allowlist-based restrictions but won't block private IPs.
+        if settings.ssrf_protection_enabled:
+            # Block private IPs, loopback, and link-local addresses
+            # This prevents testing internal services regardless of allowlist
+            try:
+                ip_addr = ipaddress.ip_address(hostname_normalized)
+                # Unwrap IPv4-mapped IPv6 addresses (e.g., ::ffff:127.0.0.1 -> 127.0.0.1)
+                # Python 3.11 bug: is_loopback returns False for IPv4-mapped loopback addresses
+                if ip_addr.version == 6 and ip_addr.ipv4_mapped is not None:
+                    ip_addr = ip_addr.ipv4_mapped
 
-            # Check for carrier-grade NAT (100.64.0.0/10) - not covered by is_private
-            is_cgnat = False
-            if ip_addr.version == 4:
-                cgnat_network = ipaddress.IPv4Network("100.64.0.0/10")
-                is_cgnat = ip_addr in cgnat_network
+                # Check for carrier-grade NAT (100.64.0.0/10) - not covered by is_private
+                is_cgnat = False
+                if ip_addr.version == 4:
+                    cgnat_network = ipaddress.IPv4Network("100.64.0.0/10")
+                    is_cgnat = ip_addr in cgnat_network
 
-            # Block private IPs (RFC 1918: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
-            # Block loopback (127.0.0.0/8, ::1)
-            # Block link-local (169.254.0.0/16, fe80::/10)
-            # Block unspecified (0.0.0.0, ::)
-            # Block multicast (224.0.0.0/4, ff00::/8)
-            # Block reserved (240.0.0.0/4)
-            # Block carrier-grade NAT (100.64.0.0/10)
-            if ip_addr.is_private or ip_addr.is_loopback or ip_addr.is_link_local or ip_addr.is_unspecified or ip_addr.is_multicast or ip_addr.is_reserved or is_cgnat:
-                raise ValueError(f"{field_name} is not allowed")
-        except ValueError as e:
-            # If it's our security error, re-raise it
-            if "is not allowed" in str(e):
-                raise
-            # Otherwise it's not a valid IP, continue to hostname check
+                # Block private IPs (RFC 1918: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
+                # Block loopback (127.0.0.0/8, ::1)
+                # Block link-local (169.254.0.0/16, fe80::/10)
+                # Block unspecified (0.0.0.0, ::)
+                # Block multicast (224.0.0.0/4, ff00::/8)
+                # Block reserved (240.0.0.0/4)
+                # Block carrier-grade NAT (100.64.0.0/10)
+                if ip_addr.is_private or ip_addr.is_loopback or ip_addr.is_link_local or ip_addr.is_unspecified or ip_addr.is_multicast or ip_addr.is_reserved or is_cgnat:
+                    raise ValueError(f"{field_name} is not allowed")
+            except ValueError as e:
+                # If it's our security error, re-raise it
+                if "is not allowed" in str(e):
+                    raise
+                # Otherwise it's not a valid IP, continue to hostname check
 
         # Resolve hostname to check for private IPs and capture a safe IP for outbound pinning.
         # Run DNS resolution in an executor to avoid blocking the event loop and bound it
@@ -1675,14 +1680,24 @@ class SecurityValidator:
                     if resolved_ip.version == 6 and resolved_ip.ipv4_mapped is not None:
                         resolved_ip = resolved_ip.ipv4_mapped
 
-                    # Check for carrier-grade NAT (100.64.0.0/10)
-                    is_cgnat = False
-                    if resolved_ip.version == 4:
-                        cgnat_network = ipaddress.IPv4Network("100.64.0.0/10")
-                        is_cgnat = resolved_ip in cgnat_network
+                    # Apply SSRF checks to resolved IPs only when protection is enabled
+                    if settings.ssrf_protection_enabled:
+                        # Check for carrier-grade NAT (100.64.0.0/10)
+                        is_cgnat = False
+                        if resolved_ip.version == 4:
+                            cgnat_network = ipaddress.IPv4Network("100.64.0.0/10")
+                            is_cgnat = resolved_ip in cgnat_network
 
-                    if resolved_ip.is_private or resolved_ip.is_loopback or resolved_ip.is_link_local or resolved_ip.is_unspecified or resolved_ip.is_multicast or resolved_ip.is_reserved or is_cgnat:
-                        raise ValueError(f"{field_name} is not allowed")
+                        if (
+                            resolved_ip.is_private
+                            or resolved_ip.is_loopback
+                            or resolved_ip.is_link_local
+                            or resolved_ip.is_unspecified
+                            or resolved_ip.is_multicast
+                            or resolved_ip.is_reserved
+                            or is_cgnat
+                        ):
+                            raise ValueError(f"{field_name} is not allowed")
 
                     resolved_ips.append(str(resolved_ip))
                 except ValueError as e:
