@@ -13,6 +13,15 @@
 name: s390x Wheel Builder
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/s390x/Containerfile"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/s390x-wheels.yml"
+  schedule:
+    - cron: "0 2 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -63,8 +72,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}
           tags: |
-            type=raw,value=${{ github.sha }}
-            type=raw,value={{date 'YYYYMMDD'}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=long
 
       - name: Build and push
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
