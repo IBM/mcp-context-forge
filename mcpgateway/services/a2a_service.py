@@ -2205,9 +2205,7 @@ class A2AAgentService(BaseService):
         # Plugin modifications take precedence (security: plugins have final authority over headers).
         if request_headers:
             prepared.headers.update(request_headers)
-            logger.debug(
-                f"A2A agent '{agent_name}': Merged {len(request_headers)} passthrough headers into prepared headers (whitelist: {agent_passthrough_headers})"
-            )
+            logger.debug(f"A2A agent '{agent_name}': Merged {len(request_headers)} passthrough headers into prepared headers (whitelist: {agent_passthrough_headers})")
 
         # Fire pre-invoke hook — can modify parameters, headers, and agent metadata
         # IMPORTANT: Plugin header modifications must take precedence over passthrough headers.

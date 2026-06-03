@@ -4445,6 +4445,7 @@ class ToolService(BaseService):
         # ═══════════════════════════════════════════════════════════════════════════
         # First-Party
         from mcpgateway.transports.context import request_headers_var  # pylint: disable=import-outside-toplevel
+
         if request_headers:
             request_headers_var.set(request_headers)
         # ═══════════════════════════════════════════════════════════════════════════
@@ -5844,9 +5845,7 @@ class ToolService(BaseService):
                     # Plugin modifications take precedence (security: plugins have final authority over headers).
                     if filtered_request_headers:
                         headers.update(filtered_request_headers)
-                        logger.debug(
-                            f"A2A tool '{name}': Merged {len(filtered_request_headers)} passthrough headers into base headers (whitelist: {a2a_agent_passthrough_headers})"
-                        )
+                        logger.debug(f"A2A tool '{name}': Merged {len(filtered_request_headers)} passthrough headers into base headers (whitelist: {a2a_agent_passthrough_headers})")
 
                     # Plugin hook: tool pre-invoke for A2A
                     plugin_manager = await self._get_plugin_manager(plugin_context_id)
