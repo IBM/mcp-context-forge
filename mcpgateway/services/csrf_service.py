@@ -90,6 +90,8 @@ from mcpgateway.config import settings as app_settings
 
 logger = logging.getLogger(__name__)
 
+CSRF_TOKEN_LENGTH = 64  # HMAC-SHA256 hex digest = 64 chars
+
 
 def generate_csrf_token(user_id: str, session_id: str, secret: str, expiry: int) -> str:
     """Generate a CSRF token using HMAC-SHA256.
