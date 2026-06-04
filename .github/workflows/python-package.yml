@@ -19,11 +19,38 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
+  ci-decision:
+    name: Full CI decision
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run-full-ci: ${{ steps.decision.outputs.run-full-ci }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Decide full CI scope
+        id: decision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_FILE: python-package.yml
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_JSON: ${{ toJson(github.event) }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          GITHUB_REPOSITORY_NAME: ${{ github.repository }}
+          GITHUB_REF_TYPE_VALUE: ${{ github.ref_type }}
+          GITHUB_SHA_VALUE: ${{ github.sha }}
+        run: python3 .github/scripts/secret_baseline_ci_decision.py
+
   build-package:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: ci-decision
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false')
     runs-on: ubuntu-slim
     timeout-minutes: 20
 
