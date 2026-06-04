@@ -1923,3 +1923,75 @@ async def test_require_admin_auth_non_admin_jwt_gets_403_not_basic_fallback(monk
     # Must be 403 Forbidden, NOT 200/success from basic auth fallback
     assert exc.value.status_code == status.HTTP_403_FORBIDDEN
     assert "Admin privileges required" in exc.value.detail
+
+
+# ---------------------------------------------------------------------------
+# _enforce_revocation_and_active_user coverage tests
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_enforce_revocation_user_not_found_in_db_raises_401(monkeypatch):
+    """User not found in DB with require_user_in_db=True should raise 401."""
+    monkeypatch.setattr(vc.settings, "require_user_in_db", True, raising=False)
+    monkeypatch.setattr(vc.settings, "platform_admin_email", "admin@example.com", raising=False)
+
+    # Mock _get_user_by_email_sync to return None (user not found)
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", lambda _email: None)
+
+    payload = {"sub": "nonexistent@example.com"}
+
+    with pytest.raises(HTTPException) as exc:
+        await vc._enforce_revocation_and_active_user(payload)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "User not found in database" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_enforce_revocation_platform_admin_not_in_db_allowed(monkeypatch):
+    """Platform admin not in DB with require_user_in_db=True should be allowed."""
+    monkeypatch.setattr(vc.settings, "require_user_in_db", True, raising=False)
+    monkeypatch.setattr(vc.settings, "platform_admin_email", "admin@example.com", raising=False)
+
+    # Mock _get_user_by_email_sync to return None (user not found)
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", lambda _email: None)
+
+    payload = {"sub": "admin@example.com"}
+
+    # Should not raise - platform admin is allowed even if not in DB
+    await vc._enforce_revocation_and_active_user(payload)
+
+
+@pytest.mark.asyncio
+async def test_enforce_revocation_inactive_user_raises_401(monkeypatch):
+    """Inactive user should raise 401."""
+    monkeypatch.setattr(vc.settings, "require_user_in_db", False, raising=False)
+
+    # Mock _get_user_by_email_sync to return inactive user
+    inactive_user = MagicMock()
+    inactive_user.is_active = False
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", lambda _email: inactive_user)
+
+    payload = {"sub": "inactive@example.com"}
+
+    with pytest.raises(HTTPException) as exc:
+        await vc._enforce_revocation_and_active_user(payload)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "Account disabled" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_enforce_revocation_user_lookup_exception_continues(monkeypatch):
+    """Exception during user lookup should log warning and continue."""
+    monkeypatch.setattr(vc.settings, "require_user_in_db", False, raising=False)
+
+    # Mock _get_user_by_email_sync to raise exception
+    def raise_exception(_email):
+        raise RuntimeError("Database connection failed")
+
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", raise_exception)
+
+    payload = {"sub": "user@example.com"}
+
+    # Should not raise - exception is caught and logged
+    await vc._enforce_revocation_and_active_user(payload)
