@@ -17,14 +17,15 @@ import { CustomHeadersAuth, type CustomHeader } from "@/components/mcp-servers/C
 import { OAuth2Auth } from "@/components/mcp-servers/OAuth2Auth";
 import { QueryParameterAuth } from "@/components/mcp-servers/QueryParameterAuth";
 import { useAuthContext } from "@/auth/AuthContext";
+import type { Visibility } from "@/types/server";
 
 export type { CustomHeader };
 
 type AuthType = "none" | "basic" | "bearer" | "custom" | "oauth" | "query";
 
 interface AdvancedSettingsProps {
-  visibility: string;
-  onVisibilityChange: (value: string) => void;
+  visibility: Visibility;
+  onVisibilityChange: (value: Visibility) => void;
   teamId: string;
   onTeamIdChange: (value: string) => void;
   authType: AuthType;

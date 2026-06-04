@@ -290,6 +290,59 @@ describe("ServersTable", () => {
     expect(screen.getByText("Active")).toBeInTheDocument();
   });
 
+  // ── onViewDetails wiring ────────────────────────────────────────────────────
+
+  it("shows View Details menu item when onViewDetails is provided", async () => {
+    const user = userEvent.setup();
+    renderTable(
+      <ServersTable
+        servers={[makeServer()]}
+        isLoading={false}
+        onEdit={noop}
+        onDelete={noop}
+        onTest={noop}
+        onViewDetails={noop}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /actions for/i }));
+    expect(await screen.findByRole("menuitem", { name: /view details/i })).toBeInTheDocument();
+  });
+
+  it("hides View Details menu item when onViewDetails is not provided", async () => {
+    const user = userEvent.setup();
+    renderTable(
+      <ServersTable
+        servers={[makeServer()]}
+        isLoading={false}
+        onEdit={noop}
+        onDelete={noop}
+        onTest={noop}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /actions for/i }));
+    await screen.findByRole("menuitem", { name: /edit/i });
+    expect(screen.queryByRole("menuitem", { name: /view details/i })).not.toBeInTheDocument();
+  });
+
+  it("calls onViewDetails with the server id when View Details is clicked", async () => {
+    const user = userEvent.setup();
+    const onViewDetails = vi.fn();
+    renderTable(
+      <ServersTable
+        servers={[makeServer({ id: "srv-42" })]}
+        isLoading={false}
+        onEdit={noop}
+        onDelete={noop}
+        onTest={noop}
+        onViewDetails={onViewDetails}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /actions for/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /view details/i }));
+    expect(onViewDetails).toHaveBeenCalledWith("srv-42");
+    expect(onViewDetails).toHaveBeenCalledTimes(1);
+  });
+
   // ── Multiple rows ───────────────────────────────────────────────────────────
 
   it("renders one row per server", () => {

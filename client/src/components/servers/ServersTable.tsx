@@ -269,6 +269,7 @@ export function ServersTable({ servers, isLoading, onEdit, onDelete, onTest, onV
                     onEdit={onEdit}
                     onDelete={onDelete}
                     onTest={onTest}
+                    onViewDetails={onViewDetails}
                   />
                 </TableCell>
               </TableRow>
