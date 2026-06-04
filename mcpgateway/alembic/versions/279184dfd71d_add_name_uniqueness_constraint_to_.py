@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy import text
 
 
 # revision identifiers, used by Alembic.
@@ -25,6 +26,25 @@ def upgrade() -> None:
 
     if "resources" not in inspector.get_table_names():
         return
+
+    # Pre-flight: fail early with a clear message if duplicate names already exist under the
+    # same ownership scope. Without this check the constraint creation below raises a raw
+    # IntegrityError that is hard to diagnose.
+    dupes = bind.execute(
+        text(
+            "SELECT name, team_id, owner_email, gateway_id, COUNT(*) AS cnt "
+            "FROM resources "
+            "GROUP BY name, team_id, owner_email, gateway_id "
+            "HAVING COUNT(*) > 1"
+        )
+    ).fetchall()
+    if dupes:
+        dupe_list = ", ".join(f"'{r[0]}'" for r in dupes[:5])
+        raise RuntimeError(
+            f"Cannot add resource name uniqueness constraint: {len(dupes)} duplicate name(s) "
+            f"exist under the same (team_id, owner_email, gateway_id) scope "
+            f"(e.g. {dupe_list}). Resolve duplicates before migrating."
+        )
 
     existing_constraints = {c["name"] for c in inspector.get_unique_constraints("resources")}
     existing_indexes = {i["name"] for i in inspector.get_indexes("resources")}
