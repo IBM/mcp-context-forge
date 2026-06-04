@@ -17,10 +17,10 @@ const mockServer: MCPServer = {
   enabled: true,
   reachable: true,
   visibility: "public",
-  tool_count: 5,
-  created_at: "2024-01-01T00:00:00Z",
-  updated_at: "2024-01-02T00:00:00Z",
-  last_seen: "2024-01-03T00:00:00Z",
+  toolCount: 5,
+  createdAt: "2024-01-01T00:00:00Z",
+  updatedAt: "2024-01-02T00:00:00Z",
+  lastSeen: "2024-01-03T00:00:00Z",
   team: "Engineering",
   owner_email: "test@example.com",
 };
@@ -632,6 +632,20 @@ describe("MCPServerDetailsPanel", () => {
     );
 
     expect(getRequests.length).toBe(0);
+  });
+
+  it("displays activity timestamps from camelCase fields", async () => {
+    renderWithProviders(
+      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Tool One")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("Created")).toBeInTheDocument();
+    expect(screen.getByText("Last modified")).toBeInTheDocument();
+    expect(screen.getByText("Last seen")).toBeInTheDocument();
   });
 
   it("displays copy buttons for identifiers", async () => {
