@@ -25,9 +25,6 @@ import { useQuery } from "@/hooks/useQuery";
 
 interface MCPServer extends BaseMCPServer {
   tags?: Array<string | VirtualServerTag>;
-  createdAt?: string;
-  updatedAt?: string;
-  lastSeen?: string;
 }
 
 type ComponentTab = "all" | "tools" | "resources" | "prompts";
@@ -602,13 +599,13 @@ export function MCPServerDetailsPanel({
                 <h3 className="mb-7 text-sm font-semibold text-foreground">Activity</h3>
                 <dl className="space-y-4">
                   <DetailRow label="Created">
-                    {formatDateTime(server.createdAt || server.created_at)}
+                    {formatDateTime(server.createdAt)}
                   </DetailRow>
                   <DetailRow label="Last modified">
-                    {formatDateTime(server.updatedAt || server.updated_at)}
+                    {formatDateTime(server.updatedAt)}
                   </DetailRow>
                   <DetailRow label="Last seen">
-                    {formatLastSeen(server.lastSeen || server.last_seen)}
+                    {formatLastSeen(server.lastSeen)}
                   </DetailRow>
                 </dl>
               </div>
