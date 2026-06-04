@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { render } from "@testing-library/react";
 import { Servers } from "./Servers";
@@ -25,10 +25,10 @@ const mockServerDetails = {
   transport: "SSE" as const,
   enabled: true,
   reachable: true,
-  tool_count: 5,
+  toolCount: 5,
   visibility: "public" as const,
-  created_at: "2024-01-01T00:00:00Z",
-  updated_at: "2024-01-01T00:00:00Z",
+  createdAt: "2024-01-01T00:00:00Z",
+  updatedAt: "2024-01-01T00:00:00Z",
   team: "Engineering",
   owner_email: "test@example.com",
 };
@@ -214,13 +214,15 @@ describe("Servers", () => {
     const viewDetailsItem = await screen.findByRole("menuitem", { name: /view details/i });
     await user.click(viewDetailsItem);
 
-    // Check for server metadata
+    // Check for server metadata inside the details panel region
+    const detailsPanel = await screen.findByRole("region", { name: /test server 0/i });
     await waitFor(() => {
-      expect(screen.getByText("Active")).toBeInTheDocument();
-      expect(screen.getByText("Public")).toBeInTheDocument();
-      expect(screen.getByText("Server-Sent Events (SSE)")).toBeInTheDocument();
-      expect(screen.getByText("Engineering")).toBeInTheDocument();
-      expect(screen.getByText("test@example.com")).toBeInTheDocument();
+      const panel = within(detailsPanel);
+      expect(panel.getByText("Active")).toBeInTheDocument();
+      expect(panel.getByText("Public")).toBeInTheDocument();
+      expect(panel.getByText("Server-Sent Events (SSE)")).toBeInTheDocument();
+      expect(panel.getByText("Engineering")).toBeInTheDocument();
+      expect(panel.getByText("test@example.com")).toBeInTheDocument();
     });
   });
 });
