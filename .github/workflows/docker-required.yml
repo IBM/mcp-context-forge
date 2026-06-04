@@ -1,0 +1,39 @@
+# ===============================================================
+# Docker Build Required — Skip Reporter
+# ===============================================================
+#
+# This workflow is the complement of docker-multiplatform.yml.
+# It runs ONLY when Docker-related files did NOT change, and
+# immediately reports success for the "Docker Build Complete"
+# required status check so that PRs are not blocked waiting.
+#
+# Together with the build-complete job in docker-multiplatform.yml,
+# the "Docker Build Complete" check always reports a result:
+#   - Files changed  → docker-multiplatform.yml reports the real result
+#   - Files unchanged → this workflow reports success (skipped)
+#
+# ===============================================================
+
+name: Docker Build Skip Reporter
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    branches: ["main"]
+    paths-ignore:
+      - 'Containerfile.lite'
+      - 'mcpgateway/**'
+      - 'plugins/**'
+      - 'pyproject.toml'
+      - '.github/workflows/docker-multiplatform.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-complete:
+    name: Docker Build Complete
+    runs-on: ubuntu-24.04
+    steps:
+      - name: No Docker-related files changed
+        run: echo "Docker build skipped — no relevant files changed in this PR"

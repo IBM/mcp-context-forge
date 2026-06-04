@@ -313,3 +313,22 @@ jobs:
           done
 
           echo "Images signed and attested successfully"
+
+  # ---------------------------------------------------------------
+  # Fan-in gate: single required status check for merge queue/PRs
+  # ---------------------------------------------------------------
+  build-complete:
+    name: Docker Build Complete
+    needs: build
+    runs-on: ubuntu-24.04
+    if: always()
+    steps:
+      - name: Check all platform builds passed
+        run: |
+          result="${{ needs.build.result }}"
+          if [[ "$result" == "success" || "$result" == "skipped" ]]; then
+            echo "Docker builds passed (result: $result)"
+          else
+            echo "Docker builds failed (result: $result)"
+            exit 1
+          fi
