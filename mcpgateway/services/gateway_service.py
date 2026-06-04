@@ -1911,8 +1911,17 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 cached_gateways = [GatewayRead.model_validate(g).masked() for g in cached["gateways"]]
                 return (cached_gateways, cached.get("next_cursor"))
 
-        # Build base query with ordering
-        query = select(DbGateway).options(joinedload(DbGateway.email_team)).order_by(desc(DbGateway.created_at), desc(DbGateway.id))
+        # Build base query with ordering and eager load relationships for capability counts
+        query = (
+            select(DbGateway)
+            .options(
+                joinedload(DbGateway.email_team),
+                selectinload(DbGateway.tools),
+                selectinload(DbGateway.prompts),
+                selectinload(DbGateway.resources),
+            )
+            .order_by(desc(DbGateway.created_at), desc(DbGateway.id))
+        )
 
         # Apply active/inactive filter
         if not include_inactive:
@@ -2008,8 +2017,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         user_teams = await team_service.get_user_teams(user_email)
         team_ids = [team.id for team in user_teams]
 
-        # Use joinedload to eager load email_team relationship (avoids N+1 queries)
-        query = select(DbGateway).options(joinedload(DbGateway.email_team))
+        # Use joinedload/selectinload to eager load relationships for capability counts (avoids N+1 queries)
+        query = select(DbGateway).options(
+            joinedload(DbGateway.email_team),
+            selectinload(DbGateway.tools),
+            selectinload(DbGateway.prompts),
+            selectinload(DbGateway.resources),
+        )
 
         # Apply active/inactive filter
         if not include_inactive:
@@ -4626,9 +4640,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway_dict["version"] = getattr(gateway, "version", None)
         gateway_dict["team"] = getattr(gateway, "team", None)
 
-        # Populate tool count from the eagerly-loaded tools relationship when available
-        tools_rel = gateway.__dict__.get("tools")
-        gateway_dict["tool_count"] = len(tools_rel) if tools_rel is not None else 0
+        # Populate from the eagerly-loaded tools relationship when available, this helps to log or fail in the else condition if needed in future.
+        gateway_dict["tool_count"] = len(gateway.tools) if gateway.__dict__.get("tools") else 0
+        gateway_dict["prompt_count"] = len(gateway.prompts) if gateway.__dict__.get("prompts") else 0
+        gateway_dict["resource_count"] = len(gateway.resources) if gateway.__dict__.get("resources") else 0
 
         return GatewayRead.model_validate(gateway_dict).masked()
 
