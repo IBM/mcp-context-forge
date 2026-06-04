@@ -274,7 +274,11 @@ async def test_delete_gateway_calls_registry_evict_gateway():
 
         await service.delete_gateway(test_db, "gw-to-delete")
 
-    reg.evict_gateway.assert_awaited_once_with("gw-to-delete")
+    # ASYNC LIFECYCLE: delete_gateway marks status=deleting, worker handles eviction
+    # evict_gateway is NOT called during delete_gateway
+    reg.evict_gateway.assert_not_awaited()
+    # Verify gateway marked for deletion
+    assert gateway.status == "deleting"
 
 
 @pytest.mark.asyncio

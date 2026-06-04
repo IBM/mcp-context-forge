@@ -1053,6 +1053,7 @@ def init_telemetry() -> Optional[Any]:
             """Span processor that copies specific resource attributes to span attributes."""
 
             def __init__(self, attributes_to_copy=None):
+                """Initialize the processor with a list of attributes to copy."""
                 self.attributes_to_copy = attributes_to_copy or ["arize.project.name", "model_id"]
                 logger.info(f"ResourceAttributeSpanProcessor will copy: {self.attributes_to_copy}")
 

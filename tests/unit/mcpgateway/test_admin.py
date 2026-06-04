@@ -77,6 +77,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     admin_deactivate_user,
     admin_delete_a2a_agent,
     admin_delete_gateway,
+    admin_delete_gateway_api,
     admin_delete_grpc_service,
     admin_discover_oauth,
     admin_delete_prompt,
@@ -3204,7 +3205,8 @@ class TestAdminGatewayRoutes:
 
             result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
             assert isinstance(result, JSONResponse)
-            assert result.status_code == 200
+            # ASYNC LIFECYCLE: register_gateway returns 202 Accepted (status=pending)
+            assert result.status_code == 202
 
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_without_auth(self, mock_register_gateway, mock_request, mock_db):
@@ -3222,7 +3224,8 @@ class TestAdminGatewayRoutes:
 
         result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, JSONResponse)
-        assert result.status_code == 200
+        # ASYNC LIFECYCLE: register_gateway returns 202 Accepted (status=pending)
+        assert result.status_code == 202
 
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_connection_error(self, mock_register_gateway, mock_request, mock_db):
@@ -3304,7 +3307,7 @@ class TestAdminGatewayRoutes:
 
         result = await admin_edit_gateway(gateway_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
-        assert result.status_code == 200
+        assert result.status_code == 202
         team_service.verify_team_for_user.assert_called_once_with("test-user", existing_team_id)
         call_args = mock_update_gateway.call_args
         gateway_update = call_args[1].get("gateway") or call_args[0][2]
@@ -6407,7 +6410,7 @@ class TestOAuthFunctionality:
         mock_update_gateway.return_value = None
         response = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(response, JSONResponse)
-        assert response.status_code == 200
+        assert response.status_code == 202
 
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_oauth_assembled_from_form_fields(self, mock_register_gateway, mock_request, mock_db):
@@ -6453,7 +6456,8 @@ class TestOAuthFunctionality:
 
             result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
             assert isinstance(result, JSONResponse)
-            assert result.status_code == 200
+            # ASYNC LIFECYCLE: register_gateway returns 202 Accepted (status=pending)
+            assert result.status_code == 202
 
             gateway_create = mock_register_gateway.call_args.args[1]
             assert gateway_create.oauth_config["grant_type"] == "client_credentials"
@@ -6502,7 +6506,8 @@ class TestOAuthFunctionality:
 
             result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
             assert isinstance(result, JSONResponse)
-            assert result.status_code == 200
+            # ASYNC LIFECYCLE: register_gateway returns 202 Accepted (status=pending)
+            assert result.status_code == 202
 
             gateway_create = mock_register_gateway.call_args.args[1]
             assert gateway_create.auth_type == "oauth"
@@ -6541,7 +6546,8 @@ class TestOAuthFunctionality:
 
             result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
             assert isinstance(result, JSONResponse)
-            assert result.status_code == 200
+            # ASYNC LIFECYCLE: register_gateway returns 202 Accepted (status=pending)
+            assert result.status_code == 202
 
             gateway_create = mock_register_gateway.call_args.args[1]
             assert gateway_create.auth_type == "oauth"
@@ -6572,7 +6578,8 @@ class TestOAuthFunctionality:
 
             result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
             assert isinstance(result, JSONResponse)
-            assert result.status_code == 200
+            # ASYNC LIFECYCLE: register_gateway returns 202 Accepted (status=pending)
+            assert result.status_code == 202
 
             gateway_create = mock_register_gateway.call_args.args[1]
             assert gateway_create.auth_type == "oauth"
@@ -6613,7 +6620,8 @@ class TestOAuthFunctionality:
 
             result = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
             assert isinstance(result, JSONResponse)
-            assert result.status_code == 200
+            # ASYNC LIFECYCLE: register_gateway returns 202 Accepted (status=pending)
+            assert result.status_code == 202
 
             gateway_update = mock_update_gateway.call_args.args[2]
             assert gateway_update.oauth_config["issuer"] == "https://issuer.example.com"
@@ -6648,7 +6656,8 @@ class TestOAuthFunctionality:
 
         result = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, JSONResponse)
-        assert result.status_code == 200
+        # ASYNC LIFECYCLE: register_gateway returns 202 Accepted (status=pending)
+        assert result.status_code == 202
 
         gateway_update = mock_update_gateway.call_args.args[2]
         assert gateway_update.auth_type == "oauth"
@@ -6680,7 +6689,8 @@ class TestOAuthFunctionality:
 
         result = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, JSONResponse)
-        assert result.status_code == 200
+        # ASYNC LIFECYCLE: register_gateway returns 202 Accepted (status=pending)
+        assert result.status_code == 202
 
         gateway_update = mock_update_gateway.call_args.args[2]
         assert gateway_update.oauth_config == {"grant_type": "client_credentials"}
@@ -6716,7 +6726,8 @@ class TestOAuthFunctionality:
 
             result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
             assert isinstance(result, JSONResponse)
-            assert result.status_code == 200
+            # ASYNC LIFECYCLE: register_gateway returns 202 Accepted (status=pending)
+            assert result.status_code == 202
 
             gateway_create = mock_register_gateway.call_args.args[1]
             assert gateway_create.ca_certificate == "CERT"
@@ -6749,7 +6760,8 @@ class TestOAuthFunctionality:
 
             result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
             assert isinstance(result, JSONResponse)
-            assert result.status_code == 200
+            # ASYNC LIFECYCLE: register_gateway returns 202 Accepted (status=pending)
+            assert result.status_code == 202
 
             gateway_create = mock_register_gateway.call_args.args[1]
             assert gateway_create.ca_certificate == "CERT"
@@ -16402,6 +16414,38 @@ async def test_admin_delete_gateway_error_inactive_checked_redirect(mock_delete,
     assert response.status_code == 303
     assert "include_inactive=true" in response.headers["location"]
     assert "error=" in response.headers["location"]
+
+
+@pytest.mark.asyncio
+@patch.object(GatewayService, "delete_gateway")
+async def test_admin_delete_gateway_api_success(mock_delete, mock_db):
+    """Test API endpoint for gateway deletion returns 202."""
+    response = await admin_delete_gateway_api("gateway-1", mock_db, user={"email": "user@example.com"})
+    assert response.status_code == 202
+    assert response.body == b'{"message":"Gateway deletion accepted","success":true}'
+    mock_delete.assert_called_once_with(mock_db, "gateway-1", user_email="user@example.com")
+
+
+@pytest.mark.asyncio
+@patch.object(GatewayService, "delete_gateway")
+async def test_admin_delete_gateway_api_permission_error(mock_delete, mock_db):
+    """Test API endpoint handles PermissionError (line 12667-12669)."""
+    mock_delete.side_effect = PermissionError("Access denied")
+    response = await admin_delete_gateway_api("gateway-1", mock_db, user={"email": "user@example.com"})
+    assert response.status_code == 403
+    assert b"Access denied" in response.body
+    assert b'"success":false' in response.body
+
+
+@pytest.mark.asyncio
+@patch.object(GatewayService, "delete_gateway")
+async def test_admin_delete_gateway_api_generic_error(mock_delete, mock_db):
+    """Test API endpoint handles generic Exception (line 12670-12672)."""
+    mock_delete.side_effect = Exception("Database error")
+    response = await admin_delete_gateway_api("gateway-1", mock_db, user={"email": "user@example.com"})
+    assert response.status_code == 500
+    assert b"Failed to delete gateway" in response.body
+    assert b'"success":false' in response.body
 
 
 @pytest.mark.asyncio

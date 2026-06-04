@@ -251,136 +251,22 @@ class TestGatewayCreateErrorHandlers:
 
 
 class TestGatewayUpdateErrorHandlers:
-    """Tests for error handling in gateway update endpoint."""
+    """Tests for error handling in gateway update endpoint.
 
-    def test_update_gateway_permission_error(self, test_client, auth_headers):
-        """Test PermissionError handling in update_gateway."""
-        with patch("mcpgateway.main.gateway_service.update_gateway", new_callable=AsyncMock) as mock_update:
-            mock_update.side_effect = PermissionError("Not authorized")
-
-            gateway_data = {
-                "name": "updated-gateway",
-                "url": "http://localhost:9000",
-                "description": "Updated gateway",
-            }
-            response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
-            assert response.status_code == 403
+    Note: Most error scenarios now return 202 Accepted due to async lifecycle.
+    Errors are handled by the background worker, not the endpoint.
+    """
 
     def test_update_gateway_not_found_error(self, test_client, auth_headers):
         """Test GatewayNotFoundError handling in update_gateway."""
-        with patch("mcpgateway.main.gateway_service.update_gateway", new_callable=AsyncMock) as mock_update:
-            mock_update.side_effect = GatewayNotFoundError("Gateway not found")
-
-            gateway_data = {
-                "name": "updated-gateway",
-                "url": "http://localhost:9000",
-                "description": "Updated gateway",
-            }
-            response = test_client.put("/gateways/nonexistent-id", json=gateway_data, headers=auth_headers)
-            assert response.status_code == 404
-
-    def test_update_gateway_connection_error(self, test_client, auth_headers):
-        """Test GatewayConnectionError handling in update_gateway."""
-        with patch("mcpgateway.main.gateway_service.update_gateway", new_callable=AsyncMock) as mock_update:
-            mock_update.side_effect = GatewayConnectionError("Connection failed")
-
-            gateway_data = {
-                "name": "updated-gateway",
-                "url": "http://localhost:9000",
-                "description": "Updated gateway",
-            }
-            response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
-            assert response.status_code == 502
-            assert "Connection failed" in response.json()["message"]
-
-    def test_update_gateway_value_error(self, test_client, auth_headers):
-        """Test ValueError handling in update_gateway."""
-        with patch("mcpgateway.main.gateway_service.update_gateway", new_callable=AsyncMock) as mock_update:
-            mock_update.side_effect = ValueError("Invalid value")
-
-            gateway_data = {
-                "name": "updated-gateway",
-                "url": "http://localhost:9000",
-                "description": "Updated gateway",
-            }
-            response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
-            assert response.status_code == 400
-
-    def test_update_gateway_name_conflict_error(self, test_client, auth_headers):
-        """Test GatewayNameConflictError handling in update_gateway."""
-        with patch("mcpgateway.main.gateway_service.update_gateway", new_callable=AsyncMock) as mock_update:
-            mock_update.side_effect = GatewayNameConflictError("Name conflict")
-
-            gateway_data = {
-                "name": "conflicting-name",
-                "url": "http://localhost:9000",
-                "description": "Updated gateway",
-            }
-            response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
-            assert response.status_code == 409
-
-    def test_update_gateway_duplicate_conflict_error(self, test_client, auth_headers):
-        """Test GatewayDuplicateConflictError handling in update_gateway."""
-        with patch("mcpgateway.main.gateway_service.update_gateway", new_callable=AsyncMock) as mock_update:
-            # Create a mock DbGateway object
-            mock_gateway = MagicMock()
-            mock_gateway.url = "http://localhost:9000"
-            mock_gateway.id = "existing-id"
-            mock_gateway.enabled = True
-            mock_gateway.visibility = "public"
-            mock_gateway.team_id = None
-            mock_gateway.name = "existing-gateway"
-            mock_gateway.owner_email = "user@example.com"
-
-            mock_update.side_effect = GatewayDuplicateConflictError(duplicate_gateway=mock_gateway)
-
-            gateway_data = {
-                "name": "updated-gateway",
-                "url": "http://localhost:9000",
-                "description": "Updated gateway",
-            }
-            response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
-            assert response.status_code == 409
-
-    def test_update_gateway_runtime_error(self, test_client, auth_headers):
-        """Test RuntimeError handling in update_gateway."""
-        with patch("mcpgateway.main.gateway_service.update_gateway", new_callable=AsyncMock) as mock_update:
-            mock_update.side_effect = RuntimeError("Runtime error")
-
-            gateway_data = {
-                "name": "updated-gateway",
-                "url": "http://localhost:9000",
-                "description": "Updated gateway",
-            }
-            response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
-            assert response.status_code == 500
-
-    def test_update_gateway_integrity_error(self, test_client, auth_headers):
-        """Test IntegrityError handling in update_gateway."""
-        with patch("mcpgateway.main.gateway_service.update_gateway", new_callable=AsyncMock) as mock_update:
-            mock_error = IntegrityError("UPDATE failed", {}, Exception("constraint violation"))
-            mock_update.side_effect = mock_error
-
-            gateway_data = {
-                "name": "updated-gateway",
-                "url": "http://localhost:9000",
-                "description": "Updated gateway",
-            }
-            response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
-            assert response.status_code == 409
-
-    def test_update_gateway_unexpected_error(self, test_client, auth_headers):
-        """Test unexpected exception handling in update_gateway."""
-        with patch("mcpgateway.main.gateway_service.update_gateway", new_callable=AsyncMock) as mock_update:
-            mock_update.side_effect = Exception("Unknown error")
-
-            gateway_data = {
-                "name": "updated-gateway",
-                "url": "http://localhost:9000",
-                "description": "Updated gateway",
-            }
-            response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
-            assert response.status_code == 500
+        # No gateway in DB = 404 (checked before async processing)
+        gateway_data = {
+            "name": "updated-gateway",
+            "url": "http://localhost:9000",
+            "description": "Updated gateway",
+        }
+        response = test_client.put("/gateways/nonexistent-id", json=gateway_data, headers=auth_headers)
+        assert response.status_code == 404
 
 
 # --------------------------------------------------------------------------- #

@@ -280,6 +280,7 @@ class _TagStripper(HTMLParser):
     """
 
     def __init__(self) -> None:
+        """Initialize the tag stripper with character reference conversion enabled."""
         super().__init__(convert_charrefs=True)
         self.reset()
         self.strict = False
