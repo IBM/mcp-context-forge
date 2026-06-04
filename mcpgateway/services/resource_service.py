@@ -3701,16 +3701,19 @@ class ResourceService(BaseService):
         """Subscribe to Resource events via the EventService.
 
         Args:
-            user_email: Requesting user email. ``None`` with ``token_teams=None`` indicates unrestricted admin context.
+            user_email: Requesting user email. After PR #4341, admin bypass
+                is ``(email, None)`` not ``(None, None)`` — the email is
+                kept for owner matching. The ``is_admin_bypass`` parameter
+                is the authoritative bypass flag.
             token_teams: Token team scope context:
-                - ``None`` = unrestricted admin
+                - ``None`` = unrestricted (checked via ``is_admin_bypass``)
                 - ``[]`` = public-only
                 - ``[...]`` = team-scoped access
             is_admin_bypass: Pre-resolved DB-admin bypass flag.  Callers
                 that can consult a request-scoped session (e.g. the SSE
                 HTTP handler) should compute this once via
-                :func:`mcpgateway.utils.admin_check.is_user_admin` and
-                pass it in; this avoids a throw-away session spawn per
+                :func:`mcpgateway.utils.admin_check.is_admin_bypass_granted`
+                and pass it in; this avoids a throw-away session spawn per
                 subscription and keeps the bypass check near the auth
                 boundary.
 
@@ -3722,12 +3725,13 @@ class ResourceService(BaseService):
             for the stream lifetime.  A user demoted mid-subscription
             keeps visibility until reconnect — this is an intentional
             trade-off between auth freshness and SSE simplicity.  Callers
-            MUST only pass ``is_admin_bypass=True`` when
-            ``token_teams is None`` (auth-layer bypass); see
-            :mod:`mcpgateway.utils.admin_check`.
+            MUST only pass ``is_admin_bypass=True`` when the caller has
+            been validated via ``is_admin_bypass_granted()``.
         """
         async for event in self._event_service.subscribe_events():
-            if (user_email is None and token_teams is None) or is_admin_bypass:
+            # Rely on is_admin_bypass for admin bypass (PR #4341 / issue #4694)
+            # Admin bypass is now (email, None) not (None, None) for owner matching
+            if is_admin_bypass:
                 yield event
                 continue
 

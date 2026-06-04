@@ -458,7 +458,9 @@ class TestAdminServerRoutes:
         )
 
         # Test with include_inactive=False
-        result = await admin_list_servers(page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
+        mock_request = MagicMock()
+        mock_request.state = MagicMock(token_teams=None)
+        result = await admin_list_servers(request=mock_request, page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
 
         assert "data" in result
         assert "pagination" in result
@@ -1271,6 +1273,11 @@ class TestAdminToolRoutes:
         # First-Party
         from mcpgateway.schemas import PaginationMeta
 
+        # Create mock request with token_teams
+        mock_request = MagicMock()
+        mock_request.state = MagicMock()
+        mock_request.state.token_teams = []
+
         # Test empty list
         # Mock tool_service.list_tools to return empty paginated response
         mock_tool_service.list_tools = AsyncMock(
@@ -1278,7 +1285,7 @@ class TestAdminToolRoutes:
         )
 
         # Call the function with explicit pagination params
-        result = await admin_list_tools(page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_list_tools(request=mock_request, page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
 
         # Expect structure with 'data' key and empty list
         assert isinstance(result, dict)
@@ -1289,7 +1296,7 @@ class TestAdminToolRoutes:
         mock_tool_service.list_tools = AsyncMock(side_effect=RuntimeError("Service unavailable"))
 
         with pytest.raises(RuntimeError):
-            await admin_list_tools(page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_list_tools(request=mock_request, page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
 
     @patch.object(ToolService, "get_tool")
     async def test_admin_get_tool_various_exceptions(self, mock_get_tool, mock_request, mock_db):
@@ -2434,7 +2441,12 @@ class TestAdminResourceRoutes:
             return_value={"data": [resource_read], "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False), "links": None}
         )
 
-        result = await admin_list_resources(page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
+        # Create mock request with token_teams
+        mock_request = MagicMock()
+        mock_request.state = MagicMock()
+        mock_request.state.token_teams = []
+
+        result = await admin_list_resources(request=mock_request, page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
 
         assert "data" in result
         assert len(result["data"]) == 1
@@ -2763,7 +2775,12 @@ class TestAdminPromptRoutes:
             return_value={"data": [mock_prompt], "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False), "links": None}
         )
 
-        result = await admin_list_prompts(page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
+        # Create mock request with token_teams
+        mock_request = MagicMock()
+        mock_request.state = MagicMock()
+        mock_request.state.token_teams = []
+
+        result = await admin_list_prompts(request=mock_request, page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
 
         assert "data" in result
         assert "pagination" in result
@@ -3113,7 +3130,9 @@ class TestAdminGatewayRoutes:
             return_value={"data": [mock_gateway], "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False), "links": None}
         )
 
-        result = await admin_list_gateways(page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
+        mock_request = MagicMock()
+        mock_request.state = MagicMock(token_teams=None)
+        result = await admin_list_gateways(request=mock_request, page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
 
         assert "data" in result
         assert result["data"][0]["authType"] == "bearer"  # Using camelCase as per by_alias=True
@@ -16772,7 +16791,12 @@ async def test_get_resources_section_team_filter(mock_list, mock_db, allow_permi
             visibility="public",
         )
     ]
-    response = await get_resources_section(team_id="team-1", db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    # Create mock request with token_teams
+    mock_request = MagicMock()
+    mock_request.state = MagicMock()
+    mock_request.state.token_teams = []
+
+    response = await get_resources_section(request=mock_request, team_id="team-1", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     payload = json.loads(response.body)
     assert payload["team_id"] == "team-1"
     assert len(payload["resources"]) == 1
@@ -16796,7 +16820,12 @@ async def test_get_resources_section_team_filter_with_tuple_result(mock_list, mo
         ],
         None,
     )
-    response = await get_resources_section(team_id="team-1", db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    # Create mock request with token_teams
+    mock_request = MagicMock()
+    mock_request.state = MagicMock()
+    mock_request.state.token_teams = []
+
+    response = await get_resources_section(request=mock_request, team_id="team-1", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     payload = json.loads(response.body)
     assert payload["team_id"] == "team-1"
     assert len(payload["resources"]) == 1
@@ -16807,7 +16836,12 @@ async def test_get_resources_section_team_filter_with_tuple_result(mock_list, mo
 async def test_get_resources_section_exception_returns_500(mock_list, mock_db, allow_permission):
     """Cover get_resources_section exception handler."""
     mock_list.side_effect = RuntimeError("boom")
-    response = await get_resources_section(team_id="team-1", db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    # Create mock request with token_teams
+    mock_request = MagicMock()
+    mock_request.state = MagicMock()
+    mock_request.state.token_teams = []
+
+    response = await get_resources_section(request=mock_request, team_id="team-1", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 500
     payload = json.loads(response.body)
     assert "boom" in payload["error"]
@@ -16828,7 +16862,12 @@ async def test_get_prompts_section_team_filter(mock_list, mock_db, allow_permiss
             visibility="team",
         )
     ]
-    response = await get_prompts_section(team_id="team-2", db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    # Create mock request with token_teams
+    mock_request = MagicMock()
+    mock_request.state = MagicMock()
+    mock_request.state.token_teams = []
+
+    response = await get_prompts_section(request=mock_request, team_id="team-2", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     payload = json.loads(response.body)
     assert payload["team_id"] == "team-2"
     assert len(payload["prompts"]) == 1
@@ -16852,7 +16891,12 @@ async def test_get_prompts_section_team_filter_with_tuple_result(mock_list, mock
         ],
         None,
     )
-    response = await get_prompts_section(team_id="team-2", db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    # Create mock request with token_teams
+    mock_request = MagicMock()
+    mock_request.state = MagicMock()
+    mock_request.state.token_teams = []
+
+    response = await get_prompts_section(request=mock_request, team_id="team-2", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     payload = json.loads(response.body)
     assert payload["team_id"] == "team-2"
     assert len(payload["prompts"]) == 1
@@ -16863,7 +16907,12 @@ async def test_get_prompts_section_team_filter_with_tuple_result(mock_list, mock
 async def test_get_prompts_section_exception_returns_500(mock_list, mock_db, allow_permission):
     """Cover get_prompts_section exception handler."""
     mock_list.side_effect = RuntimeError("boom")
-    response = await get_prompts_section(team_id="team-2", db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    # Create mock request with token_teams
+    mock_request = MagicMock()
+    mock_request.state = MagicMock()
+    mock_request.state.token_teams = []
+
+    response = await get_prompts_section(request=mock_request, team_id="team-2", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 500
     payload = json.loads(response.body)
     assert "boom" in payload["error"]
@@ -21202,8 +21251,13 @@ class TestAdminGetToolPassesTeamRoles:
             }
         )
 
+        # Create mock request with token_teams
+        mock_request = MagicMock()
+        mock_request.state = MagicMock()
+        mock_request.state.token_teams = []
+
         with patch("mcpgateway.admin.tool_service", mock_tool_svc), patch("mcpgateway.admin._get_user_team_roles", return_value={"team-2": "member"}) as mock_roles:
-            await admin_list_tools(page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "user@example.com", "is_admin": False, "db": mock_db})
+            await admin_list_tools(request=mock_request, page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "user@example.com", "is_admin": False, "db": mock_db})
 
             mock_roles.assert_called_once_with(mock_db, "user@example.com")
             mock_tool_svc.list_tools.assert_called_once()

@@ -490,10 +490,10 @@ def get_scoped_resource_access_context(request: Request, user) -> tuple[Optional
     if not _has_verified_jwt_payload(request):
         _requester_email, fallback_admin = get_request_identity(request, user)
         if fallback_admin:
-            return None, None
+            return _requester_email, None  # Keep email for owner matching (PR #4341 / issue #4694)
 
     if is_admin and token_teams is None:
-        return None, None
+        return user_email, None  # Keep user_email for owner matching (PR #4341 / issue #4694)
     if token_teams is None:
         return user_email, []
     return user_email, token_teams

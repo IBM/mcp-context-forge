@@ -1458,19 +1458,19 @@ class TestResourceEndpoints:
 
     @patch("mcpgateway.main.resource_service.list_resource_templates", new_callable=AsyncMock)
     def test_list_resource_templates_admin_bypass_nulls_user_email(self, mock_list, test_client, auth_headers):
-        """SECURITY: admin bypass must pass (user_email=None, token_teams=None) to list_resource_templates.
+        """SECURITY: admin bypass must pass (user_email=email, token_teams=None) to list_resource_templates.
 
-        Regression for Oracle review of PR #4341 — earlier wiring passed the admin's email
-        while nulling token_teams, which caused the service to skip the private-exclusion
-        WHERE clause and leak other users' private templates.
+        Updated for PR #4877 / issue #4877 — admin bypass now keeps user_email for owner matching
+        on private resources. This allows admins to view/edit their OWN private resources while
+        maintaining proper access control (token_teams=None grants admin bypass).
         """
         mock_list.return_value = []
         response = test_client.get("/resources/templates/list", headers=auth_headers)
         assert response.status_code == 200
         mock_list.assert_called_once()
         call_kwargs = mock_list.call_args.kwargs
-        assert call_kwargs.get("user_email") is None
-        assert call_kwargs.get("token_teams") is None
+        assert call_kwargs.get("user_email") == "test_user@example.com"  # Preserved for owner matching
+        assert call_kwargs.get("token_teams") is None  # None = admin bypass
 
     @patch("mcpgateway.main.resource_service.set_resource_state")
     def test_set_resource_state(self, mock_toggle, test_client, auth_headers):
@@ -1509,9 +1509,9 @@ class TestResourceEndpoints:
         response = test_client.post("/resources/subscribe", headers=auth_headers)
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
-        # Handler pre-resolves is_admin_bypass; with user_email=None it resolves to True
-        # (no-auth-context bypass).  See mcpgateway.utils.admin_check.
-        mock_subscribe.assert_called_once_with(user_email=None, token_teams=None, is_admin_bypass=True)
+        # Admin bypass now preserves user_email for owner matching (PR #4877 / issue #4877)
+        # is_admin_bypass=False because test user is not a DB admin (no DB setup in test)
+        mock_subscribe.assert_called_once_with(user_email="test_user@example.com", token_teams=None, is_admin_bypass=False)
 
     @patch("mcpgateway.main.resource_service.subscribe_events")
     def test_subscribe_resource_events_sse_format(self, mock_subscribe, test_client, auth_headers):
@@ -1573,7 +1573,10 @@ class TestPromptEndpoints:
 
     @patch("mcpgateway.main.prompt_service.get_prompt")
     def test_get_prompt_no_args_non_jwt_admin_bypass(self, mock_get, test_client, auth_headers):
-        """Non-JWT admin (dev-mode / basic-auth) gets admin bypass via get_scoped_resource_access_context."""
+        """Non-JWT admin (dev-mode / basic-auth) gets admin bypass via get_scoped_resource_access_context.
+
+        Updated for PR #4877 — admin bypass now preserves user_email for owner matching.
+        """
         mock_get.return_value = {"name": "test", "template": "Hello"}
         response = test_client.get("/prompts/test", headers=auth_headers)
         assert response.status_code == 200
@@ -1581,9 +1584,9 @@ class TestPromptEndpoints:
             ANY,
             "test",
             {},
-            user=None,
+            user="test_user@example.com",  # Preserved for owner matching (PR #4877)
             server_id=None,
-            token_teams=None,
+            token_teams=None,  # None = admin bypass
             plugin_context_table=None,
             plugin_global_context=ANY,
         )
@@ -1615,8 +1618,8 @@ class TestPromptEndpoints:
         result = await get_prompt_no_args(request=mock_request, prompt_id="test", db=mock_db, user=admin_user)
 
         assert result == {"name": "test", "template": "Hello"}
-        # Admin bypass: both auth_user_email and auth_token_teams should be None
-        mock_get.assert_called_once_with(mock_db, "test", {}, user=None, server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=None)
+        # Admin bypass: user_email preserved for owner matching (PR #4877), token_teams=None
+        mock_get.assert_called_once_with(mock_db, "test", {}, user="admin@example.com", server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=None)
 
     @pytest.mark.asyncio
     @patch("mcpgateway.main.prompt_service.get_prompt")
@@ -1645,8 +1648,8 @@ class TestPromptEndpoints:
         result = await get_prompt(request=mock_request, prompt_id="test", args={"name": "World"}, db=mock_db, user=admin_user)
 
         assert result == {"name": "test", "template": "Hello {{name}}"}
-        # Admin bypass: both auth_user_email and auth_token_teams should be None
-        mock_get.assert_called_once_with(mock_db, "test", {"name": "World"}, user=None, server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=None)
+        # Admin bypass: user_email preserved for owner matching (PR #4877), token_teams=None
+        mock_get.assert_called_once_with(mock_db, "test", {"name": "World"}, user="admin@example.com", server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=None)
 
     @pytest.mark.asyncio
     @patch("mcpgateway.main.resource_service.read_resource")
@@ -1679,11 +1682,11 @@ class TestPromptEndpoints:
 
         # The endpoint converts ResourceContent to dict via model_dump()
         assert result == {"type": "resource", "id": "test-resource", "uri": "file://test.txt", "mime_type": None, "text": "content", "blob": None}
-        # Admin bypass: both user and token_teams should be None
+        # Admin bypass: user_email preserved for owner matching (PR #4877), token_teams=None
         mock_read.assert_called_once()
         call_kwargs = mock_read.call_args[1]
-        assert call_kwargs["user"] is None
-        assert call_kwargs["token_teams"] is None
+        assert call_kwargs["user"] == "admin@example.com"  # Preserved for owner matching
+        assert call_kwargs["token_teams"] is None  # None = admin bypass
 
     @patch("mcpgateway.main.prompt_service.update_prompt")
     def test_update_prompt_endpoint_secondary(self, mock_update, test_client, auth_headers):
@@ -2701,11 +2704,11 @@ class TestRPCEndpoints:
 
     @patch("mcpgateway.main.resource_service.list_resource_templates", new_callable=AsyncMock)
     def test_rpc_resource_templates_list_admin_bypass_nulls_user_email(self, mock_list_templates, test_client, auth_headers):
-        """SECURITY: admin bypass via JSON-RPC must pass (user_email=None, token_teams=None).
+        """SECURITY: admin bypass via JSON-RPC must pass (user_email=email, token_teams=None).
 
-        Regression for Oracle review of PR #4341 — the JSON-RPC resources/templates/list
-        handler in main.py previously kept the admin's email while nulling token_teams,
-        causing list_resource_templates to skip the private-exclusion filter.
+        Updated for PR #4877 / issue #4877 — admin bypass now keeps user_email for owner matching
+        on private resources. This allows admins to view/edit their OWN private resources while
+        maintaining proper access control (token_teams=None grants admin bypass).
         """
         mock_list_templates.return_value = []
 
@@ -2719,8 +2722,8 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         mock_list_templates.assert_called_once()
         call_kwargs = mock_list_templates.call_args.kwargs
-        assert call_kwargs.get("user_email") is None
-        assert call_kwargs.get("token_teams") is None
+        assert call_kwargs.get("user_email") == "test_user@example.com"  # Preserved for owner matching
+        assert call_kwargs.get("token_teams") is None  # None = admin bypass
 
     @patch("mcpgateway.main.prompt_service.list_prompts", new_callable=AsyncMock)
     def test_rpc_prompts_list_next_cursor(self, mock_list_prompts, test_client, auth_headers):

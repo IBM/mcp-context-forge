@@ -1018,7 +1018,11 @@ class ServerService(BaseService):
             return True
 
         if is_admin_bypass_granted(db, user_email, token_teams):
-            return visibility != "private"
+            # Admin bypass grants access to public + team resources + OWN private resources (PR #4341 / issue #4694)
+            if visibility == "private":
+                server_owner_email = getattr(server, "owner_email", None)
+                return server_owner_email and server_owner_email == user_email
+            return True  # public or team visibility
 
         if not user_email:
             return False
