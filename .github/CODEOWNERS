@@ -1,7 +1,3 @@
-# All files in the repo
-* @crivetimihai @brian-hussey @Lang-Akshay @ja8zyjits
-/.github/workflows/ @crivetimihai @brian-hussey @Lang-Akshay @ja8zyjits
-
 # Plugin framework
 /mcpgateway/plugins @araujof @terylt @jonpspri
 
@@ -18,3 +14,7 @@
 
 # Tests for plugin framework
 /tests/unit/mcpgateway/plugins @araujof @terylt @jonpspri
+
+# All files in the repo
+/.github/workflows/ @crivetimihai @brian-hussey @Lang-Akshay @ja8zyjits
+* @crivetimihai @brian-hussey @Lang-Akshay @ja8zyjits
