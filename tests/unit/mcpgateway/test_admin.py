@@ -2613,6 +2613,16 @@ class TestAdminResourceRoutes:
         assert isinstance(result, JSONResponse)
         assert result.status_code == 409
 
+        # Test ResourceNameConflictError
+        from mcpgateway.services.resource_service import ResourceNameConflictError
+
+        mock_register_resource.side_effect = ResourceNameConflictError("test_resource")
+        result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 409
+        body = json.loads(result.body)
+        assert "test_resource" in body.get("message", "")
+
         # Test generic exception
         mock_register_resource.side_effect = Exception("Generic error")
 
