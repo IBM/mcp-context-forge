@@ -65,7 +65,31 @@ class ContentModel(BaseModel):
         return v
 
 
-def test_format_validation_error_letter_requirement():
+def test_format_validation_error_production_mode(monkeypatch):
+    """In production (default), format_validation_error returns a uniform generic detail, no field info."""
+    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: False)
+    with pytest.raises(ValidationError) as exc:
+        NameModel(name="Bobby")
+    result = ErrorFormatter.format_validation_error(exc.value)
+    assert result["detail"] == "An error occurred, please try again."
+    assert "message" not in result
+    assert "details" not in result
+
+
+def test_format_validation_error_empty_errors_verbose(monkeypatch):
+    """In verbose mode with an empty errors list, user_message defaults to 'Validation error' (no NameError)."""
+    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: True)
+    # Craft a ValidationError mock whose .errors() returns []
+    mock_exc = Mock(spec=ValidationError)
+    mock_exc.errors = lambda: []
+    result = ErrorFormatter.format_validation_error(mock_exc)
+    assert result["success"] is False
+    assert result["details"] == []
+    assert result["message"] == "Validation failed: Validation error"
+
+
+def test_format_validation_error_letter_requirement(monkeypatch):
+    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: True)
     with pytest.raises(ValidationError) as exc:
         NameModel(name="Bobby")
     result = ErrorFormatter.format_validation_error(exc.value)
@@ -75,35 +99,41 @@ def test_format_validation_error_letter_requirement():
     assert "must start with a letter, number, or underscore" in result["details"][0]["message"]
 
 
-def test_format_validation_error_length():
+def test_format_validation_error_length(monkeypatch):
+    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: True)
     with pytest.raises(ValidationError) as exc:
         NameModel(name="A" * 300)
     result = ErrorFormatter.format_validation_error(exc.value)
     assert "too long" in result["details"][0]["message"]
 
 
-def test_format_validation_error_url():
+def test_format_validation_error_url(monkeypatch):
+    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: True)
     with pytest.raises(ValidationError) as exc:
         UrlModel(url="ftp://example.com")
     result = ErrorFormatter.format_validation_error(exc.value)
     assert "valid HTTP" in result["details"][0]["message"]
 
 
-def test_format_validation_error_directory_traversal():
+def test_format_validation_error_directory_traversal(monkeypatch):
+    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: True)
     with pytest.raises(ValidationError) as exc:
         PathModel(path="../etc/passwd")
     result = ErrorFormatter.format_validation_error(exc.value)
     assert "invalid characters" in result["details"][0]["message"]
 
 
-def test_format_validation_error_html_injection():
+def test_format_validation_error_html_injection(monkeypatch):
+    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: True)
     with pytest.raises(ValidationError) as exc:
         ContentModel(content="<script>alert(1)</script>")
     result = ErrorFormatter.format_validation_error(exc.value)
     assert "cannot contain HTML" in result["details"][0]["message"]
 
 
-def test_format_validation_error_fallback():
+def test_format_validation_error_fallback(monkeypatch):
+    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: True)
+
     class CustomModel(BaseModel):
         custom: str
 
@@ -117,7 +147,9 @@ def test_format_validation_error_fallback():
     assert result["details"][0]["message"] == "Invalid custom"
 
 
-def test_format_validation_error_multiple_fields():
+def test_format_validation_error_multiple_fields(monkeypatch):
+    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: True)
+
     class MultiModel(BaseModel):
         name: str
         url: str

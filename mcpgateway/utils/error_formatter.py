@@ -65,68 +65,17 @@ class ErrorFormatter:
             error (ValidationError): The Pydantic validation error to format
 
         Returns:
-            Dict[str, Any]: A dictionary with formatted error details containing:
-                - message: General error description
-                - details: List of field-specific errors
-                - success: Always False for errors
-
-        Examples:
-            >>> from pydantic import BaseModel, ValidationError, field_validator
-            >>> # Create a test model with validation
-            >>> class TestModel(BaseModel):
-            ...     name: str
-            ...     @field_validator('name')
-            ...     def validate_name(cls, v):
-            ...         if not v.startswith('A'):
-            ...             raise ValueError('Tool name must start with a letter, number, or underscore')
-            ...         return v
-            >>> # Test validation error formatting
-            >>> try:
-            ...     TestModel(name="B123")
-            ... except ValidationError as e:
-            ...     print(type(e))
-            ...     result = ErrorFormatter.format_validation_error(e)
-            <class 'pydantic_core._pydantic_core.ValidationError'>
-            >>> result['message']
-            'Validation failed: Name must start with a letter, number, or underscore and contain only letters, numbers, periods, underscores, hyphens, and slashes'
-            >>> result['success']
-            False
-            >>> len(result['details']) > 0
-            True
-            >>> result['details'][0]['field']
-            'name'
-            >>> 'must start with a letter, number, or underscore' in result['details'][0]['message']
-            True
-
-            >>> # Test with multiple errors
-            >>> class MultiFieldModel(BaseModel):
-            ...     name: str
-            ...     url: str
-            ...     @field_validator('name')
-            ...     def validate_name(cls, v):
-            ...         if len(v) > 255:
-            ...             raise ValueError('Tool name exceeds maximum length')
-            ...         return v
-            ...     @field_validator('url')
-            ...     def validate_url(cls, v):
-            ...         if not v.startswith('http'):
-            ...             raise ValueError('Tool URL must start with http')
-            ...         return v
-            >>>
-            >>> try:
-            ...     MultiFieldModel(name='A' * 300, url='ftp://invalid')
-            ... except ValidationError as e:
-            ...     print(type(e))
-            ...     result = ErrorFormatter.format_validation_error(e)
-            <class 'pydantic_core._pydantic_core.ValidationError'>
-            >>> len(result['details'])
-            2
-            >>> any('too long' in detail['message'] for detail in result['details'])
-            True
-            >>> any('valid HTTP' in detail['message'] for detail in result['details'])
-            True
+            Dict[str, Any]: ``{"detail": str}`` by default, or
+                ``{"message": str, "details": [...], "success": bool}`` when verbose mode is enabled.
         """
+        # Log full detail server-side always; only expose to callers in verbose mode
+        logger.warning("Validation error: %s", error)
+
+        if not should_expose_error_details():
+            return {"detail": "An error occurred, please try again."}
+
         errors = []
+        user_message = "Validation error"  # default; overwritten by each error in the loop
 
         for err in error.errors():
             loc = err.get("loc", ["field"])
@@ -136,9 +85,6 @@ class ErrorFormatter:
             # Map technical messages to user-friendly ones
             user_message = ErrorFormatter._get_user_message(field, msg)
             errors.append({"field": field, "message": user_message})
-
-        # Log the full error for debugging
-        logger.debug(f"Validation error: {error}")
 
         return {"message": f"Validation failed: {user_message}", "details": errors, "success": False}
 
