@@ -150,9 +150,7 @@ RUN if [ "$ENABLE_FIPS" = "true" ]; then \
             'C /root/.cshrc        0740 root root - /usr/share/rootfiles/.cshrc' \
             'C /root/.tcshrc       0740 root root - /usr/share/rootfiles/.tcshrc' \
             > /etc/tmpfiles.d/rootfiles.conf \
-        && install -m 0740 /dev/null /root/.bash_profile \
-        && install -m 0740 /dev/null /root/.bashrc \
-        && install -m 0740 /dev/null /root/.bash_logout \
+        && find /root -maxdepth 1 -name '.*' -type f -exec chmod 0740 {} \; \
         && chmod 0750 /root \
         && find /home -maxdepth 1 -mindepth 1 -type d -exec chmod 0750 {} \; \
         && find /home -maxdepth 2 -name '.*' -type f -exec chmod 0740 {} \;; \
