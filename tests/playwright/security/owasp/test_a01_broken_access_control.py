@@ -216,10 +216,10 @@ class TestVerticalPrivilegeEscalation:
     """CWE-269, CWE-285 – Non-admin authenticated users cannot call admin-only endpoints."""
 
     @pytest.fixture(scope="class")
-    def non_admin_ctx(self, owasp_admin_api: APIRequestContext, playwright: Playwright) -> APIRequestContext:
-        """Register a non-admin user via owasp_admin_api, then yield an API context for them."""
+    def non_admin_ctx(self, admin_api: APIRequestContext, playwright: Playwright) -> APIRequestContext:
+        """Register a non-admin user via admin_api, then yield an API context for them."""
         email = f"nonadmin-a01-{uuid.uuid4().hex[:8]}@example.com"
-        create_resp = owasp_admin_api.post(
+        create_resp = admin_api.post(
             "/auth/email/admin/users",
             data={"email": email, "password": TEST_PASSWORD, "full_name": "Non-Admin A01"},
         )
@@ -229,7 +229,7 @@ class TestVerticalPrivilegeEscalation:
         yield ctx
         ctx.dispose()
         with suppress(Exception):
-            owasp_admin_api.delete(f"/auth/email/admin/users/{email}")
+            admin_api.delete(f"/auth/email/admin/users/{email}")
 
     def test_non_admin_cannot_list_all_users(self, non_admin_ctx: APIRequestContext) -> None:
         resp = non_admin_ctx.get("/auth/email/admin/users")

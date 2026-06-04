@@ -336,9 +336,9 @@ class TestToolsViewModal:
         tools_page.wait_for_tools_table_loaded()
         _skip_if_no_tools(tools_page)
 
-        # Get description from table (shifted +1 after Tool ID insertion)
+        # Description is at td[6]: Actions(0), S.No.(1), ToolID(2), Source(3), Name(4), RequestType(5), Description(6)
         first_row = tools_page.get_tool_row(0)
-        description = first_row.locator("td").nth(7).text_content().strip()
+        description = first_row.locator("td").nth(6).text_content().strip()
 
         tools_page.open_tool_view_modal(0)
 
