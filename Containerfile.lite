@@ -50,6 +50,8 @@ ARG ENABLE_PROFILING=false
 ARG UBI_BASE=registry.access.redhat.com/ubi10/ubi:10.1-1778562845
 ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:10.1-1778561468
 ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:10.1-1778576723
+# s390x wheels stage - pulls pre-built wheels from GHCR
+FROM --platform=linux/s390x ghcr.io/ibm/mcp-context-forge-s390x-wheels:latest AS s390x-wheels
 
 ###############################################################################
 # Rust builder stage - builds Rust MCP runtime and local native extensions
@@ -253,11 +255,12 @@ RUN if [ "$(uname -m)" = "s390x" ] || [ "$(uname -m)" = "ppc64le" ]; then \
 # ----------------------------------------------------------------------------
 COPY pyproject.toml /app/
 COPY --from=rust-builder /build/native-extension-wheels/ /tmp/local-native-extension-wheels/
+COPY --from=s390x-wheels /wheels /tmp/s390x-wheels
 COPY --chmod=0755 scripts/verify-native-extensions.py /tmp/verify-native-extensions.py
 
 # ----------------------------------------------------------------------------
 # Create and populate virtual environment
-#  - Upgrade pip, setuptools, wheel, pdm, uv
+#  - Upgrade pip, setuptools, wheel, uv
 #  - Install project dependencies and package
 #  - Include observability packages for OpenTelemetry support
 #  - Install plugins from PyPI (cpex-* packages)
@@ -272,34 +275,41 @@ ARG ENABLE_PROFILING=false
 RUN set -euo pipefail \
     && . /etc/profile.d/use-openssl.sh \
     && python3 -m venv /app/.venv \
-    && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel pdm uv \
+    && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel uv \
     && if [ "$(uname -m)" = "s390x" ]; then \
         echo "📦 Installing dependencies for s390x architecture..."; \
-        /app/.venv/bin/pip install --no-cache-dir ".[redis,observability,granian,plugins,llmchat]" \
-        && /app/.venv/bin/pip install --no-cache-dir "psycopg[c]>=3.3.3"; \
+        if [ -d "/tmp/s390x-wheels" ] && [ "$(ls -A /tmp/s390x-wheels/*.whl 2>/dev/null | wc -l)" -gt 0 ]; then \
+            echo "✅ Using pre-built wheels from /tmp/s390x-wheels"; \
+            /app/.venv/bin/uv pip install --no-index --find-links=/tmp/s390x-wheels ".[redis,observability,granian,plugins,llmchat]" \
+            && /app/.venv/bin/uv pip install --no-index --find-links=/tmp/s390x-wheels "psycopg[c]>=3.3.3"; \
+        else \
+            echo "⚠️  Pre-built wheels not found, falling back to building from source (this may take longer)..."; \
+            /app/.venv/bin/uv pip install ".[redis,observability,granian,plugins,llmchat]" \
+            && /app/.venv/bin/uv pip install "psycopg[c]>=3.3.3"; \
+        fi; \
     else \
         /app/.venv/bin/uv pip install ".[redis,postgres,observability,granian,plugins,llmchat]"; \
     fi \
     && echo "✅ Plugins installed from PyPI via [plugins] extra" \
     && if [ "$ENABLE_RUST" = "true" ] && ls "/tmp/local-native-extension-wheels/"*.whl 1> /dev/null 2>&1; then \
         echo "🦀 Installing local native extensions..."; \
-        /app/.venv/bin/pip install --no-cache-dir "/tmp/local-native-extension-wheels/"*.whl && \
+        /app/.venv/bin/uv pip install --no-cache-dir "/tmp/local-native-extension-wheels/"*.whl && \
         /app/.venv/bin/python3 /tmp/verify-native-extensions.py && rm /tmp/verify-native-extensions.py; \
     else \
         echo "⏭️  No local native extensions discovered"; \
     fi \
-    && rm -rf /tmp/local-native-extension-wheels \
+    && rm -rf /tmp/local-native-extension-wheels /tmp/s390x-wheels \
     && if [ "$ENABLE_PROFILING" = "true" ]; then \
         echo "📊 Installing profiling tools (memray, py-spy)..."; \
-        /app/.venv/bin/pip install --no-cache-dir "memray>=1.17.0" && \
+        /app/.venv/bin/uv pip install --no-cache-dir "memray>=1.17.0" && \
         /app/.venv/bin/python3 -c "import memray; print('✓ memray installed successfully')"; \
     else \
         echo "⏭️  Profiling tools disabled (set --build-arg ENABLE_PROFILING=true to enable)"; \
     fi \
-    && /app/.venv/bin/pip uninstall --yes uv pip setuptools wheel pdm \
+    && /app/.venv/bin/pip uninstall --yes uv pip setuptools wheel \
     && rm -rf /root/.cache /var/cache/dnf \
     && find /app/.venv -name "*.dist-info" -type d \
-        \( -name "pip-*" -o -name "setuptools-*" -o -name "wheel-*" -o -name "pdm-*" -o -name "uv-*" \) \
+        \( -name "pip-*" -o -name "setuptools-*" -o -name "wheel-*" -o -name "uv-*" \) \
         -exec rm -rf {} + 2>/dev/null || true \
     && rm -rf /app/.venv/share/python-wheels \
     && rm -rf "/app/"*.egg-info /app/build /app/dist /app/.eggs
