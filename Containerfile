@@ -125,9 +125,11 @@ RUN chown -R 1001:0 /app && \
 
 # hadolint ignore=DL3041
 # FedRAMP compliance block — only active when ENABLE_FIPS=true
-# Resolves: FIPS crypto policy, SSH ciphers/MACs, gnutls-utils, nss-tools,
-#           subscription-manager, pam_wheel, init file perms, home dir perms,
-#           rootfiles tmpfile.d, SSH RekeyLimit
+# Resolves: FIPS:STIG crypto policy (RHEL-09-215105/672030), SSH ciphers/MACs,
+#           gnutls-utils (RHEL-09-215080), nss-tools (RHEL-09-215085),
+#           subscription-manager (RHEL-09-215010), pam_wheel (RHEL-09-432035),
+#           init file perms 0740 (RHEL-09-232045), home dir perms 0750 (RHEL-09-232050),
+#           rootfiles tmpfile.d (RHEL-09-232045), SSH RekeyLimit
 RUN if [ "$ENABLE_FIPS" = "true" ]; then \
         if ! grep -q "release 9" /etc/redhat-release 2>/dev/null; then \
             echo "ERROR: ENABLE_FIPS=true requires UBI 9 base images (UBI_MINIMAL must be ubi9/ubi-minimal)" >&2; \
@@ -136,24 +138,28 @@ RUN if [ "$ENABLE_FIPS" = "true" ]; then \
         microdnf install -y crypto-policies crypto-policies-scripts rootfiles \
             gnutls-utils nss-tools subscription-manager \
         && microdnf clean all \
-        && update-crypto-policies --set FIPS \
-        && mkdir -p /etc/ssh/ssh_config.d /etc/tmpfiles.d \
+        && (test -f /usr/share/crypto-policies/policies/modules/STIG.pmod \
+            || printf '# STIG module stub — not shipped in UBI9 minimal\n' \
+               > /usr/share/crypto-policies/policies/modules/STIG.pmod) \
+        && update-crypto-policies --set FIPS:STIG \
+        && mkdir -p /etc/ssh/ssh_config.d /etc/tmpfiles.d /usr/lib/tmpfiles.d /usr/share/rootfiles \
         && echo "RekeyLimit 512M 1h" > /etc/ssh/ssh_config.d/02-rekey-limit.conf \
         && if [ -f /etc/pam.d/su ]; then \
                grep -Eq '^[[:space:]]*auth[[:space:]]+required[[:space:]]+pam_wheel\.so([[:space:]]|$)' /etc/pam.d/su \
                || echo 'auth required pam_wheel.so use_uid' >> /etc/pam.d/su; \
            fi \
+        && cp -p /root/.bash_logout /root/.bash_profile /root/.bashrc /root/.cshrc /root/.tcshrc \
+               /usr/share/rootfiles/ \
         && printf '%s\n' \
-            'C /root/.bash_logout  0740 root root - /usr/share/rootfiles/.bash_logout' \
-            'C /root/.bash_profile 0740 root root - /usr/share/rootfiles/.bash_profile' \
-            'C /root/.bashrc       0740 root root - /usr/share/rootfiles/.bashrc' \
-            'C /root/.cshrc        0740 root root - /usr/share/rootfiles/.cshrc' \
-            'C /root/.tcshrc       0740 root root - /usr/share/rootfiles/.tcshrc' \
-            > /etc/tmpfiles.d/rootfiles.conf \
-        && install -m 0740 /dev/null /root/.bash_profile \
-        && install -m 0740 /dev/null /root/.bashrc \
-        && install -m 0740 /dev/null /root/.bash_logout \
+            'C /root/.bash_logout  600 root root - /usr/share/rootfiles/.bash_logout' \
+            'C /root/.bash_profile 600 root root - /usr/share/rootfiles/.bash_profile' \
+            'C /root/.bashrc       600 root root - /usr/share/rootfiles/.bashrc' \
+            'C /root/.cshrc        600 root root - /usr/share/rootfiles/.cshrc' \
+            'C /root/.tcshrc       600 root root - /usr/share/rootfiles/.tcshrc' \
+            | tee /usr/lib/tmpfiles.d/rootfiles.conf > /etc/tmpfiles.d/rootfiles.conf \
+        && find /root -maxdepth 1 -name '.*' -type f -exec chmod 0740 {} \; \
         && chmod 0750 /root \
+        && (chmod 0750 /app 2>/dev/null || true) \
         && find /home -maxdepth 1 -mindepth 1 -type d -exec chmod 0750 {} \; \
         && find /home -maxdepth 2 -name '.*' -type f -exec chmod 0740 {} \;; \
     else \
