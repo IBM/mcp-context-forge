@@ -543,45 +543,44 @@ export function handleAuthTypeChange() {
   const oauthFields = safeGetElement(`auth-oauth-fields-${prefix}`);
   const queryParamFields = safeGetElement(`auth-query_param-fields-${prefix}`);
 
+  // Disable inputs in hidden sections so browsers don't submit them.
+  // Without this, e.g. auth_query_param_key arrives as "" and fails its
+  // pattern validator even when query_param auth was never selected. (#5064)
+  const hideSection = (section) => {
+    if (!section) return;
+    section.style.display = "none";
+    section.querySelectorAll("input, select, textarea").forEach((el) => {
+      el.disabled = true;
+    });
+  };
+
+  const showSection = (section) => {
+    if (!section) return;
+    section.style.display = "block";
+    section.querySelectorAll("input, select, textarea").forEach((el) => {
+      el.disabled = false;
+    });
+  };
+
   // Hide all auth sections first
-  [
-    basicFields,
-    bearerFields,
-    headersFields,
-    oauthFields,
-    queryParamFields,
-  ].forEach((section) => {
-    if (section) {
-      section.style.display = "none";
-    }
-  });
+  [basicFields, bearerFields, headersFields, oauthFields, queryParamFields].forEach(hideSection);
 
   // Show the appropriate section
   switch (authType) {
     case "basic":
-      if (basicFields) {
-        basicFields.style.display = "block";
-      }
+      showSection(basicFields);
       break;
     case "bearer":
-      if (bearerFields) {
-        bearerFields.style.display = "block";
-      }
+      showSection(bearerFields);
       break;
     case "authheaders":
-      if (headersFields) {
-        headersFields.style.display = "block";
-      }
+      showSection(headersFields);
       break;
     case "oauth":
-      if (oauthFields) {
-        oauthFields.style.display = "block";
-      }
+      showSection(oauthFields);
       break;
     case "query_param":
-      if (queryParamFields) {
-        queryParamFields.style.display = "block";
-      }
+      showSection(queryParamFields);
       break;
     default:
       // "none" or unknown type — keep everything hidden

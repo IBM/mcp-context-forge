@@ -979,6 +979,16 @@ async def _parse_gateway_data_from_request(request: Request) -> dict[str, Any]:
         if oauth_config:
             data["oauth_config"] = oauth_config
 
+        # Hidden auth-section inputs are always submitted by browsers (even when the
+        # containing div is display:none), arriving as empty strings rather than None.
+        # auth_query_param_key has a pattern constraint that rejects "", causing a
+        # false-positive ValidationError whenever any non-query-param auth type is used.
+        # Convert empty strings to None here for defense in depth; mirrors what the
+        # gateway update handler already does manually. See: #5064
+        for _field in ("auth_query_param_key", "auth_query_param_value"):
+            if data.get(_field) == "":
+                data[_field] = None
+
         return data
 
     else:

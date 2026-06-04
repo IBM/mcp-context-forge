@@ -3309,6 +3309,36 @@ class TestAdminGatewayRoutes:
             assert result.status_code == 200
 
     @patch.object(GatewayService, "register_gateway")
+    async def test_admin_add_gateway_empty_query_param_fields_converted_to_none(self, mock_register_gateway, mock_request, mock_db):
+        """Browser always submits hidden auth_query_param_key/value inputs as empty strings.
+
+        When a non-query-param auth type is selected, those empty strings must be
+        converted to None before schema validation, otherwise the pattern constraint
+        on auth_query_param_key raises a false-positive ValidationError. See: #5064
+        """
+        form_data = FakeForm(
+            {
+                "name": "Bearer_Gateway",
+                "url": "http://example.com",
+                "auth_type": "bearer",
+                "auth_token": "tok123",
+                "auth_query_param_key": "",
+                "auth_query_param_value": "",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.headers = {"content-type": "multipart/form-data"}
+
+        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+        call_data = mock_register_gateway.call_args[1] if mock_register_gateway.call_args[1] else mock_register_gateway.call_args[0][0]
+        # Confirm the empty strings were normalised to None, not passed as ""
+        if isinstance(call_data, dict):
+            assert call_data.get("auth_query_param_key") is None
+            assert call_data.get("auth_query_param_value") is None
+
+    @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_without_auth(self, mock_register_gateway, mock_request, mock_db):
         """Test adding gateway without authentication."""
         # Test gateway without auth_type (should default to empty string which is valid)
