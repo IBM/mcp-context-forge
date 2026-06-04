@@ -10,26 +10,21 @@
 // Transport: Streamable HTTP (no auth)
 // Default: http://127.0.0.1:9080/mcp
 
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::serve::ListenerExt;
 use axum::Router;
 use chrono::{DateTime, FixedOffset, TimeZone, Utc};
-use rand::Rng;
+use rand_distr::Distribution;
 use rand_distr::Normal;
 use rmcp::{
-    handler::server::router::tool::ToolRouter,
-    model::*,
-    schemars,
-    service::RequestContext,
-    tool, tool_handler, tool_router,
-    transport::streamable_http_server::{
-        session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
-    },
-    ErrorData as McpError, RoleServer, ServerHandler,
+    handler::server::router::tool::ToolRouter, model::*, schemars, service::RequestContext, tool,
+    tool_handler, tool_router, ErrorData as McpError, RoleServer, ServerHandler,
 };
 use serde_json::json;
 use std::env;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::info;
 use tracing::trace;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -37,6 +32,9 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 const DEFAULT_BIND_ADDRESS: &str = "0.0.0.0:9080";
 const APP_NAME: &str = "fast-test-server";
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+const SESSION_HEADER: &str = "mcp-session-id";
+static DIRECT_REQUEST_COUNT: AtomicU64 = AtomicU64::new(0);
+static SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 // ============================================================================
 // Request/Response Schemas
@@ -89,8 +87,9 @@ pub struct SchemaFixtureResponse {
 
 #[derive(Clone)]
 pub struct FastTestServer {
+    #[allow(dead_code)]
     tool_router: ToolRouter<FastTestServer>,
-    request_count: Arc<Mutex<u64>>,
+    request_count: Arc<AtomicU64>,
 }
 
 impl Default for FastTestServer {
@@ -104,7 +103,7 @@ impl FastTestServer {
     pub fn new() -> Self {
         Self {
             tool_router: Self::tool_router(),
-            request_count: Arc::new(Mutex::new(0)),
+            request_count: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -121,8 +120,7 @@ impl FastTestServer {
             EchoRequest,
         >,
     ) -> Result<CallToolResult, McpError> {
-        let mut count = self.request_count.lock().await;
-        *count += 1;
+        self.request_count.fetch_add(1, Ordering::Relaxed);
 
         if let Some(ms) = req.delay {
             if ms > 0 {
@@ -144,8 +142,7 @@ impl FastTestServer {
             GetTimeRequest,
         >,
     ) -> Result<CallToolResult, McpError> {
-        let mut count = self.request_count.lock().await;
-        *count += 1;
+        self.request_count.fetch_add(1, Ordering::Relaxed);
 
         let tz_name = req.timezone.as_deref().unwrap_or("UTC");
 
@@ -179,8 +176,7 @@ impl FastTestServer {
             ConvertTimeRequest,
         >,
     ) -> Result<CallToolResult, McpError> {
-        let mut count = self.request_count.lock().await;
-        *count += 1;
+        self.request_count.fetch_add(1, Ordering::Relaxed);
 
         let source_offset = match parse_timezone(&req.source_timezone) {
             Ok(o) => o,
@@ -227,8 +223,7 @@ impl FastTestServer {
         output_schema = rmcp::handler::server::tool::schema_for_type::<SchemaFixtureResponse>()
     )]
     async fn schema_error(&self) -> Result<CallToolResult, McpError> {
-        let mut count = self.request_count.lock().await;
-        *count += 1;
+        self.request_count.fetch_add(1, Ordering::Relaxed);
         Ok(CallToolResult::error(vec![Content::text(
             "You cannot send more than 200 points",
         )]))
@@ -242,8 +237,7 @@ impl FastTestServer {
         output_schema = rmcp::handler::server::tool::schema_for_type::<SchemaFixtureResponse>()
     )]
     async fn schema_success(&self) -> Result<CallToolResult, McpError> {
-        let mut count = self.request_count.lock().await;
-        *count += 1;
+        self.request_count.fetch_add(1, Ordering::Relaxed);
         Ok(CallToolResult::structured(json!({
             "recognitionId": "rec-123",
             "message": "ok",
@@ -253,12 +247,12 @@ impl FastTestServer {
     /// Get server statistics
     #[tool(description = "Get server statistics including request count and uptime.")]
     async fn get_stats(&self) -> Result<CallToolResult, McpError> {
-        let count = self.request_count.lock().await;
+        let count = self.request_count.load(Ordering::Relaxed);
 
         let stats = json!({
             "server": APP_NAME,
             "version": APP_VERSION,
-            "requests_handled": *count,
+            "requests_handled": count,
         });
 
         Ok(CallToolResult::success(vec![Content::text(
@@ -270,21 +264,19 @@ impl FastTestServer {
 #[tool_handler]
 impl ServerHandler for FastTestServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: ProtocolVersion::V_2024_11_05,
-            capabilities: ServerCapabilities::builder()
-                .enable_tools()
-                .build(),
-            server_info: Implementation::from_build_env(),
-            instructions: Some(
-                "Ultra-fast MCP test server. Tools: echo, get_system_time, convert_time, get_stats, plus schema_error and schema_success validation fixtures.".to_string()
-            ),
-        }
+        let mut info = ServerInfo::default();
+        info.protocol_version = ProtocolVersion::V_2024_11_05;
+        info.capabilities = ServerCapabilities::builder().enable_tools().build();
+        info.server_info = Implementation::from_build_env();
+        info.instructions = Some(
+            "Ultra-fast MCP test server. Tools: echo, get_system_time, convert_time, get_stats, plus schema_error and schema_success validation fixtures.".to_string()
+        );
+        info
     }
 
     async fn initialize(
         &self,
-        _request: InitializeRequestParam,
+        _request: InitializeRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<InitializeResult, McpError> {
         info!("Client connected to {}", APP_NAME);
@@ -303,7 +295,7 @@ fn compute_delay(mean_ms: u64, stddev: Option<f64>) -> u64 {
         Some(sd) if sd > 0.0 => {
             let dist = Normal::new(mean_ms as f64, sd)
                 .unwrap_or_else(|_| Normal::new(mean_ms as f64, 0.0).unwrap());
-            let sample = rand::thread_rng().sample(dist);
+            let sample = dist.sample(&mut rand::rng());
             // Clamp to >= 0 (negative delays make no sense)
             sample.round().max(0.0) as u64
         }
@@ -382,7 +374,10 @@ fn parse_timezone(tz: &str) -> Result<FixedOffset, String> {
 
 /// Parse an input time string in the given offset, accepting RFC3339 and a
 /// handful of common formats used by the Go fast-time-server port.
-fn parse_time_in_offset(time_str: &str, offset: FixedOffset) -> Result<DateTime<FixedOffset>, String> {
+fn parse_time_in_offset(
+    time_str: &str,
+    offset: FixedOffset,
+) -> Result<DateTime<FixedOffset>, String> {
     if let Ok(parsed) = DateTime::parse_from_rfc3339(time_str) {
         return Ok(parsed.with_timezone(&offset));
     }
@@ -448,19 +443,6 @@ async fn main() -> anyhow::Result<()> {
     info!("{} v{} starting...", APP_NAME, APP_VERSION);
     info!("Binding to: {}", bind_address);
 
-    // Create cancellation token for graceful shutdown
-    let ct = tokio_util::sync::CancellationToken::new();
-
-    // Create the MCP service
-    let service = StreamableHttpService::new(
-        || Ok(FastTestServer::new()),
-        LocalSessionManager::default().into(),
-        StreamableHttpServerConfig {
-            cancellation_token: ct.child_token(),
-            ..Default::default()
-        },
-    );
-
     // Build router with health check endpoint and REST API for benchmarking
     let router = Router::new()
         // Health & version
@@ -470,7 +452,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/echo", axum::routing::post(rest_echo_handler))
         .route("/api/time", axum::routing::get(rest_time_handler))
         // MCP protocol endpoint
-        .nest_service("/mcp", service);
+        .route(
+            "/mcp",
+            axum::routing::post(mcp_handler).delete(mcp_delete_handler),
+        );
 
     // Bind and serve
     let tcp_listener = tokio::net::TcpListener::bind(&bind_address)
@@ -500,7 +485,6 @@ async fn main() -> anyhow::Result<()> {
         .with_graceful_shutdown(async move {
             tokio::signal::ctrl_c().await.unwrap();
             info!("Shutting down...");
-            ct.cancel();
         })
         .await?;
 
@@ -523,6 +507,307 @@ async fn version_handler() -> axum::Json<serde_json::Value> {
         "version": APP_VERSION,
         "mcp_version": "2024-11-05"
     }))
+}
+
+// ============================================================================
+// Fast Streamable HTTP MCP Handler
+// ============================================================================
+
+async fn mcp_delete_handler() -> StatusCode {
+    StatusCode::ACCEPTED
+}
+
+async fn mcp_handler(
+    headers: HeaderMap,
+    axum::Json(req): axum::Json<serde_json::Value>,
+) -> Response {
+    let method = req
+        .get("method")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let id = req.get("id");
+
+    if id.is_none() {
+        return StatusCode::ACCEPTED.into_response();
+    }
+
+    if method != "initialize" && !headers.contains_key(SESSION_HEADER) {
+        return mcp_error_response(id, -32000, "Invalid session ID", None);
+    }
+
+    match method {
+        "initialize" => mcp_initialize_response(id),
+        "tools/list" => mcp_tools_list_response(id),
+        "tools/call" => mcp_tools_call_response(id, &req).await,
+        _ => mcp_error_response(id, -32601, "Method not found", None),
+    }
+}
+
+fn mcp_base_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    headers
+}
+
+fn mcp_json_response(headers: HeaderMap, body: String) -> Response {
+    (headers, body).into_response()
+}
+
+fn mcp_id_json(id: Option<&serde_json::Value>) -> String {
+    id.and_then(|value| serde_json::to_string(value).ok())
+        .unwrap_or_else(|| "null".to_string())
+}
+
+fn mcp_initialize_response(id: Option<&serde_json::Value>) -> Response {
+    let mut headers = mcp_base_headers();
+    let session_id = SESSION_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let session_header = HeaderValue::from_str(&format!("fast-test-{session_id}"))
+        .unwrap_or_else(|_| HeaderValue::from_static("fast-test"));
+    headers.insert(SESSION_HEADER, session_header);
+    mcp_json_response(
+        headers,
+        format!(
+            r#"{{"jsonrpc":"2.0","id":{},"result":{{"protocolVersion":"2024-11-05","capabilities":{{"tools":{{}}}},"serverInfo":{{"name":"{}","version":"{}"}},"instructions":"Ultra-fast MCP test server."}}}}"#,
+            mcp_id_json(id),
+            APP_NAME,
+            APP_VERSION
+        ),
+    )
+}
+
+fn mcp_tools_list_response(id: Option<&serde_json::Value>) -> Response {
+    mcp_json_response(
+        mcp_base_headers(),
+        format!(
+            r#"{{"jsonrpc":"2.0","id":{},"result":{{"tools":[{{"name":"echo","description":"Echo back the provided message.","inputSchema":{{"type":"object","properties":{{"message":{{"type":"string"}},"delay":{{"type":"integer","minimum":0}},"delay_stddev":{{"type":"number","minimum":0}}}},"required":["message"]}}}},{{"name":"get_system_time","description":"Get current system time in the specified IANA timezone.","inputSchema":{{"type":"object","properties":{{"timezone":{{"type":"string"}}}}}}}},{{"name":"convert_time","description":"Convert a time value from a source IANA timezone to a target IANA timezone.","inputSchema":{{"type":"object","properties":{{"time":{{"type":"string"}},"source_timezone":{{"type":"string"}},"target_timezone":{{"type":"string"}}}},"required":["time","source_timezone","target_timezone"]}}}},{{"name":"schema_error","description":"Always returns isError=true.","inputSchema":{{"type":"object","properties":{{}}}},"outputSchema":{{"type":"object","properties":{{"recognitionId":{{"type":"string"}},"message":{{"type":"string"}}}},"required":["recognitionId"]}}}},{{"name":"schema_success","description":"Returns a JSON payload that conforms to the declared outputSchema.","inputSchema":{{"type":"object","properties":{{}}}},"outputSchema":{{"type":"object","properties":{{"recognitionId":{{"type":"string"}},"message":{{"type":"string"}}}},"required":["recognitionId"]}}}},{{"name":"get_stats","description":"Get server statistics including request count and uptime.","inputSchema":{{"type":"object","properties":{{}}}}}}]}}}}"#,
+            mcp_id_json(id)
+        ),
+    )
+}
+
+async fn mcp_tools_call_response(
+    id: Option<&serde_json::Value>,
+    req: &serde_json::Value,
+) -> Response {
+    let params = req.get("params").unwrap_or(&serde_json::Value::Null);
+    let name = params
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let arguments = params.get("arguments").unwrap_or(&serde_json::Value::Null);
+
+    match name {
+        "echo" => {
+            let Some(arguments) = mcp_arguments_object(id, arguments) else {
+                return mcp_invalid_params_response(id, "arguments must be an object");
+            };
+            let Some(message) = mcp_required_string(id, arguments, "message") else {
+                return mcp_invalid_params_response(id, "message must be a string");
+            };
+            let Some(delay) = mcp_optional_u64(id, arguments, "delay") else {
+                return mcp_invalid_params_response(id, "delay must be an unsigned integer");
+            };
+            let Some(delay_stddev) = mcp_optional_f64(id, arguments, "delay_stddev") else {
+                return mcp_invalid_params_response(id, "delay_stddev must be a number");
+            };
+
+            DIRECT_REQUEST_COUNT.fetch_add(1, Ordering::Relaxed);
+            if let Some(ms) = delay {
+                if ms > 0 {
+                    let actual_ms = compute_delay(ms, delay_stddev);
+                    tokio::time::sleep(std::time::Duration::from_millis(actual_ms)).await;
+                }
+            }
+            mcp_text_result_response(id, message, false)
+        }
+        "get_system_time" => {
+            let timezone = if arguments.is_null() {
+                None
+            } else {
+                let Some(arguments) = mcp_arguments_object(id, arguments) else {
+                    return mcp_invalid_params_response(id, "arguments must be an object");
+                };
+                let Some(timezone) = mcp_optional_string(id, arguments, "timezone") else {
+                    return mcp_invalid_params_response(id, "timezone must be a string");
+                };
+                timezone
+            };
+            let timezone = timezone.unwrap_or("UTC");
+
+            DIRECT_REQUEST_COUNT.fetch_add(1, Ordering::Relaxed);
+            match parse_timezone(timezone) {
+                Ok(offset) => {
+                    let result = Utc::now().with_timezone(&offset).to_rfc3339();
+                    mcp_text_result_response(id, &result, false)
+                }
+                Err(err) => mcp_text_result_response(
+                    id,
+                    &format!("Invalid timezone '{timezone}': {err}"),
+                    true,
+                ),
+            }
+        }
+        "convert_time" => mcp_convert_time_response(id, arguments),
+        "schema_error" => {
+            DIRECT_REQUEST_COUNT.fetch_add(1, Ordering::Relaxed);
+            mcp_text_result_response(id, "You cannot send more than 200 points", true)
+        }
+        "schema_success" => mcp_json_response(mcp_base_headers(), {
+            DIRECT_REQUEST_COUNT.fetch_add(1, Ordering::Relaxed);
+            format!(
+                r#"{{"jsonrpc":"2.0","id":{},"result":{{"content":[{{"type":"text","text":"{{\"recognitionId\":\"rec-123\",\"message\":\"ok\"}}"}}],"structuredContent":{{"recognitionId":"rec-123","message":"ok"}},"isError":false}}}}"#,
+                mcp_id_json(id)
+            )
+        }),
+        "get_stats" => {
+            let count = DIRECT_REQUEST_COUNT.load(Ordering::Relaxed);
+            mcp_text_result_response(
+                id,
+                &format!(
+                    "{{\n  \"server\": \"{}\",\n  \"version\": \"{}\",\n  \"requests_handled\": {}\n}}",
+                    APP_NAME, APP_VERSION, count
+                ),
+                false,
+            )
+        }
+        _ => mcp_error_response(id, -32602, "Unknown tool", Some(json!({ "tool": name }))),
+    }
+}
+
+fn mcp_convert_time_response(
+    id: Option<&serde_json::Value>,
+    arguments: &serde_json::Value,
+) -> Response {
+    let Some(arguments) = mcp_arguments_object(id, arguments) else {
+        return mcp_invalid_params_response(id, "arguments must be an object");
+    };
+    let Some(time) = mcp_required_string(id, arguments, "time") else {
+        return mcp_invalid_params_response(id, "time must be a string");
+    };
+    let Some(source_timezone) = mcp_required_string(id, arguments, "source_timezone") else {
+        return mcp_invalid_params_response(id, "source_timezone must be a string");
+    };
+    let Some(target_timezone) = mcp_required_string(id, arguments, "target_timezone") else {
+        return mcp_invalid_params_response(id, "target_timezone must be a string");
+    };
+
+    DIRECT_REQUEST_COUNT.fetch_add(1, Ordering::Relaxed);
+
+    let source_offset = match parse_timezone(source_timezone) {
+        Ok(offset) => offset,
+        Err(err) => {
+            return mcp_text_result_response(id, &format!("invalid source timezone: {err}"), true)
+        }
+    };
+    let target_offset = match parse_timezone(target_timezone) {
+        Ok(offset) => offset,
+        Err(err) => {
+            return mcp_text_result_response(id, &format!("invalid target timezone: {err}"), true)
+        }
+    };
+    match parse_time_in_offset(time, source_offset) {
+        Ok(parsed) => {
+            let converted = parsed.with_timezone(&target_offset).to_rfc3339();
+            mcp_text_result_response(id, &converted, false)
+        }
+        Err(_) => mcp_text_result_response(id, &format!("invalid time format: {time}"), true),
+    }
+}
+
+fn mcp_arguments_object<'a>(
+    _id: Option<&serde_json::Value>,
+    value: &'a serde_json::Value,
+) -> Option<&'a serde_json::Map<String, serde_json::Value>> {
+    value.as_object()
+}
+
+fn mcp_required_string<'a>(
+    _id: Option<&serde_json::Value>,
+    arguments: &'a serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Option<&'a str> {
+    arguments.get(field)?.as_str()
+}
+
+fn mcp_optional_string<'a>(
+    _id: Option<&serde_json::Value>,
+    arguments: &'a serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Option<Option<&'a str>> {
+    match arguments.get(field) {
+        Some(value) if value.is_null() => Some(None),
+        Some(value) => value.as_str().map(Some),
+        None => Some(None),
+    }
+}
+
+fn mcp_optional_u64(
+    _id: Option<&serde_json::Value>,
+    arguments: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Option<Option<u64>> {
+    match arguments.get(field) {
+        Some(value) if value.is_null() => Some(None),
+        Some(value) => value.as_u64().map(Some),
+        None => Some(None),
+    }
+}
+
+fn mcp_optional_f64(
+    _id: Option<&serde_json::Value>,
+    arguments: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Option<Option<f64>> {
+    match arguments.get(field) {
+        Some(value) if value.is_null() => Some(None),
+        Some(value) => value.as_f64().map(Some),
+        None => Some(None),
+    }
+}
+
+fn mcp_text_result_response(
+    id: Option<&serde_json::Value>,
+    text: &str,
+    is_error: bool,
+) -> Response {
+    let escaped = serde_json::to_string(text).unwrap_or_else(|_| "\"\"".to_string());
+    mcp_json_response(
+        mcp_base_headers(),
+        format!(
+            r#"{{"jsonrpc":"2.0","id":{},"result":{{"content":[{{"type":"text","text":{}}}],"isError":{}}}}}"#,
+            mcp_id_json(id),
+            escaped,
+            is_error
+        ),
+    )
+}
+
+fn mcp_error_response(
+    id: Option<&serde_json::Value>,
+    code: i32,
+    message: &str,
+    data: Option<serde_json::Value>,
+) -> Response {
+    let data = data
+        .map(|value| format!(r#","data":{}"#, value))
+        .unwrap_or_default();
+    mcp_json_response(
+        mcp_base_headers(),
+        format!(
+            r#"{{"jsonrpc":"2.0","id":{},"error":{{"code":{},"message":"{}"{}}}}}"#,
+            mcp_id_json(id),
+            code,
+            message,
+            data
+        ),
+    )
+}
+
+fn mcp_invalid_params_response(id: Option<&serde_json::Value>, message: &str) -> Response {
+    mcp_error_response(id, -32602, message, None)
 }
 
 // ============================================================================
