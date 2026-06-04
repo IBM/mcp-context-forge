@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
   Copy,
   Globe,
@@ -43,19 +43,19 @@ function formatLastSeen(lastSeen?: string): string {
 }
 
 function getLastSeenValue(server: MCPServer): string | undefined {
-  return server.lastSeen ?? server.last_seen;
+  return server.lastSeen;
 }
 
 function getToolCount(server: MCPServer): number {
-  return server.toolCount ?? server.tool_count ?? 0;
+  return server.toolCount ?? 0;
 }
 
 function getResourceCount(server: MCPServer): number {
-  return server.resourceCount ?? server.resource_count ?? 0;
+  return server.resourceCount ?? 0;
 }
 
 function getPromptCount(server: MCPServer): number {
-  return server.promptCount ?? server.prompt_count ?? 0;
+  return server.promptCount ?? 0;
 }
 
 function getServerStatus(server: MCPServer): ServerStatus {
@@ -108,6 +108,8 @@ function getStatusConfig(status: ServerStatus) {
   }
 }
 
+const COPY_FEEDBACK_DURATION_MS = 1500;
+
 interface ServersTableProps {
   servers: MCPServer[];
   isLoading: boolean;
@@ -117,14 +119,36 @@ interface ServersTableProps {
   onViewDetails?: (id: string) => void;
 }
 
-export function ServersTable({
-  servers,
-  isLoading,
-  onEdit,
-  onDelete,
-  onTest,
-  onViewDetails,
-}: ServersTableProps) {
+export function ServersTable({ servers, isLoading, onEdit, onDelete, onTest, onViewDetails }: ServersTableProps) {
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const timeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        window.clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleCopy = async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedId(value);
+
+      if (timeoutRef.current) {
+        window.clearTimeout(timeoutRef.current);
+      }
+
+      timeoutRef.current = window.setTimeout(() => {
+        setCopiedId((current) => (current === value ? null : current));
+        timeoutRef.current = null;
+      }, COPY_FEEDBACK_DURATION_MS);
+    } catch (error) {
+      console.error("Failed to copy server id:", error);
+    }
+  };
+
   if (isLoading) {
     return (
       <div
@@ -214,15 +238,18 @@ export function ServersTable({
                   >
                     <span className="max-w-[180px] truncate">{server.id}</span>
                     {copiedId === server.id ? (
-                      <Check className="h-3.5 w-3.5 text-emerald-400" />
+                      <>
+                        <Check className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
+                        <span className="sr-only">Copied!</span>
+                      </>
                     ) : (
-                      <Copy className="h-3.5 w-3.5" />
+                      <Copy className="h-3.5 w-3.5" aria-hidden="true" />
                     )}
                   </button>
                 </TableCell>
                 <TableCell className="px-4 py-2.5">
                   <div className="inline-flex items-center gap-1.5 text-xs text-neutral-600 dark:text-neutral-400">
-                    <VisibilityIcon className="h-3.5 w-3.5" />
+                    <VisibilityIcon className="h-3.5 w-3.5" aria-hidden="true" focusable="false" />
                     <span>{visibility.label}</span>
                   </div>
                 </TableCell>

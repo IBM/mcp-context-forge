@@ -20,9 +20,8 @@ function makeServer(overrides: Partial<MCPServer> = {}): MCPServer {
     enabled: true,
     reachable: true,
     visibility: "public",
-    tool_count: 0,
-    created_at: "2024-01-01T00:00:00Z",
-    updated_at: "2024-01-01T00:00:00Z",
+    createdAt: "2024-01-01T00:00:00Z",
+    updatedAt: "2024-01-01T00:00:00Z",
     ...overrides,
   };
 }
@@ -67,10 +66,10 @@ describe("ServersTable", () => {
 
   // ── Components cell ─────────────────────────────────────────────────────────
 
-  it("shows tool_count when toolCount is absent", () => {
+  it("shows toolCount from server data", () => {
     renderTable(
       <ServersTable
-        servers={[makeServer({ tool_count: 7 })]}
+        servers={[makeServer({ toolCount: 7 })]}
         isLoading={false}
         onEdit={noop}
         onDelete={noop}
@@ -80,24 +79,10 @@ describe("ServersTable", () => {
     expect(screen.getByText("7 tools")).toBeInTheDocument();
   });
 
-  it("prefers toolCount over tool_count", () => {
+  it("shows 0 tools when toolCount is absent", () => {
     renderTable(
       <ServersTable
-        servers={[makeServer({ tool_count: 1, toolCount: 9 })]}
-        isLoading={false}
-        onEdit={noop}
-        onDelete={noop}
-        onTest={noop}
-      />,
-    );
-    expect(screen.getByText("9 tools")).toBeInTheDocument();
-    expect(screen.queryByText("1 tools")).not.toBeInTheDocument();
-  });
-
-  it("shows 0 tools when no count is provided", () => {
-    renderTable(
-      <ServersTable
-        servers={[makeServer({ tool_count: 0 })]}
+        servers={[makeServer({})]}
         isLoading={false}
         onEdit={noop}
         onDelete={noop}
@@ -107,10 +92,10 @@ describe("ServersTable", () => {
     expect(screen.getByText("0 tools")).toBeInTheDocument();
   });
 
-  it("shows resource_count and prompt_count from flat fields", () => {
+  it("shows resourceCount and promptCount", () => {
     const server = makeServer({
-      resource_count: 3,
-      prompt_count: 2,
+      resourceCount: 3,
+      promptCount: 2,
     });
     renderTable(
       <ServersTable
@@ -123,26 +108,6 @@ describe("ServersTable", () => {
     );
     expect(screen.getByText("3 resources")).toBeInTheDocument();
     expect(screen.getByText("2 prompts")).toBeInTheDocument();
-  });
-
-  it("prefers camelCase count fields over snake_case", () => {
-    const server = makeServer({
-      resource_count: 1,
-      resourceCount: 5,
-      prompt_count: 2,
-      promptCount: 8,
-    });
-    renderTable(
-      <ServersTable
-        servers={[server]}
-        isLoading={false}
-        onEdit={noop}
-        onDelete={noop}
-        onTest={noop}
-      />,
-    );
-    expect(screen.getByText("5 resources")).toBeInTheDocument();
-    expect(screen.getByText("8 prompts")).toBeInTheDocument();
   });
 
   it("shows 0 resources and 0 prompts when count fields are absent", () => {
@@ -161,10 +126,10 @@ describe("ServersTable", () => {
 
   // ── Last seen cell ──────────────────────────────────────────────────────────
 
-  it("shows 'Never used' when last_seen and lastSeen are both absent", () => {
+  it("shows 'Never used' when lastSeen is absent", () => {
     renderTable(
       <ServersTable
-        servers={[makeServer({ last_seen: undefined, lastSeen: undefined })]}
+        servers={[makeServer({ lastSeen: undefined })]}
         isLoading={false}
         onEdit={noop}
         onDelete={noop}
@@ -177,7 +142,7 @@ describe("ServersTable", () => {
   it("shows 'Never used' for an invalid date string", () => {
     renderTable(
       <ServersTable
-        servers={[makeServer({ last_seen: "not-a-date" })]}
+        servers={[makeServer({ lastSeen: "not-a-date" })]}
         isLoading={false}
         onEdit={noop}
         onDelete={noop}
@@ -187,8 +152,8 @@ describe("ServersTable", () => {
     expect(screen.getByText("Never used")).toBeInTheDocument();
   });
 
-  it("formats a valid last_seen date in ISO-like sv-SE format", () => {
-    const server = makeServer({ last_seen: "2024-06-15T14:05:30Z" });
+  it("formats a valid lastSeen date in ISO-like sv-SE format", () => {
+    const server = makeServer({ lastSeen: "2024-06-15T14:05:30Z" });
     renderTable(
       <ServersTable
         servers={[server]}
@@ -200,24 +165,6 @@ describe("ServersTable", () => {
     );
     // sv-SE locale produces "YYYY-MM-DD HH:MM:SS" which is then converted to "YYYY-MM-DDTHH:MM:SS"
     expect(screen.getByText(/2024-06-15T/)).toBeInTheDocument();
-  });
-
-  it("prefers lastSeen over last_seen", () => {
-    const server = makeServer({
-      last_seen: "2023-01-01T00:00:00Z",
-      lastSeen: "2025-03-20T08:00:00Z",
-    });
-    renderTable(
-      <ServersTable
-        servers={[server]}
-        isLoading={false}
-        onEdit={noop}
-        onDelete={noop}
-        onTest={noop}
-      />,
-    );
-    expect(screen.getByText(/2025-03-20T/)).toBeInTheDocument();
-    expect(screen.queryByText(/2023-01-01T/)).not.toBeInTheDocument();
   });
 
   // ── UUID copy cell ──────────────────────────────────────────────────────────
@@ -303,7 +250,6 @@ describe("ServersTable", () => {
           makeServer({
             enabled: true,
             reachable: false,
-            last_seen: undefined,
             lastSeen: undefined,
           }),
         ]}
