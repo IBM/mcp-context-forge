@@ -27,6 +27,7 @@ opentelemetry-exporter-otlp-proto-http = "2026-05-25T23:59:59Z"
 opentelemetry-exporter-otlp-proto-common = "2026-05-25T23:59:59Z"
 opentelemetry-proto = "2026-05-25T23:59:59Z"
 opentelemetry-semantic-conventions = "2026-05-25T23:59:59Z"
+prometheus-fastapi-instrumentator = "2026-06-02T23:59:59Z"
 
 [tool.uv.sources]
 compliance-reference-server = { path = "mcp-servers/python/compliance_reference_server", editable = true }
@@ -92,7 +93,7 @@ dependencies = [
     "mcp>=1.27.1",
     "orjson>=3.11.9",
     "parse>=1.22.0",
-    "prometheus-fastapi-instrumentator>=7.1.0",
+    "prometheus-fastapi-instrumentator>=8.0.0",
     "prometheus_client>=0.25.0", # 0.25.0 exceeds 10-day min-release-age policy
     "psutil>=7.2.2",
     "pydantic>=2.13.4",
@@ -107,7 +108,7 @@ dependencies = [
     "requests-oauthlib>=2.0.0",
     "sqlalchemy<2.0.50",
     "sse-starlette>=3.4.4",
-    "starlette>=0.30.0,<1.0.0", # prometheus-fastapi-instrumentator 7.1.0 caps at <1.0.0
+    "starlette>=1.0.1",
     "starlette-compress>=1.7.1",
     "typer>=0.25.1",
     "urllib3>=2.7.0", # Transitive pin (requests); dependabot/76
