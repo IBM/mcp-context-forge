@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Info, TriangleAlert } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
@@ -15,6 +16,7 @@ import { BearerTokenAuth } from "@/components/mcp-servers/BearerTokenAuth";
 import { CustomHeadersAuth, type CustomHeader } from "@/components/mcp-servers/CustomHeadersAuth";
 import { OAuth2Auth } from "@/components/mcp-servers/OAuth2Auth";
 import { QueryParameterAuth } from "@/components/mcp-servers/QueryParameterAuth";
+import { useAuthContext } from "@/auth/AuthContext";
 
 export type { CustomHeader };
 
@@ -23,6 +25,8 @@ type AuthType = "none" | "basic" | "bearer" | "custom" | "oauth" | "query";
 interface AdvancedSettingsProps {
   visibility: string;
   onVisibilityChange: (value: string) => void;
+  teamId: string;
+  onTeamIdChange: (value: string) => void;
   authType: AuthType;
   onAuthTypeChange: (value: AuthType) => void;
   basicAuthUsername: string;
@@ -72,6 +76,8 @@ interface AdvancedSettingsProps {
 export function AdvancedSettings({
   visibility,
   onVisibilityChange,
+  teamId,
+  onTeamIdChange,
   authType,
   onAuthTypeChange,
   basicAuthUsername,
@@ -117,6 +123,18 @@ export function AdvancedSettings({
   onCACertificateFilesSelected,
   oauthErrors,
 }: AdvancedSettingsProps) {
+  const { selectedTeamId } = useAuthContext();
+
+  useEffect(() => {
+    if (visibility === "team") {
+      if (selectedTeamId && !teamId) {
+        onTeamIdChange(selectedTeamId);
+      }
+    } else if (teamId) {
+      onTeamIdChange("");
+    }
+  }, [visibility, selectedTeamId, teamId, onTeamIdChange]);
+
   const renderAuthContent = () => {
     switch (authType) {
       case "none":
@@ -200,6 +218,13 @@ export function AdvancedSettings({
             <SelectItem value="team">Team</SelectItem>
           </SelectContent>
         </Select>
+        {visibility === "team" && (
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            {selectedTeamId
+              ? "This server will be scoped to your currently selected team"
+              : "Please select a team using the team switcher in the sidebar"}
+          </p>
+        )}
       </div>
 
       {/* Authentication type */}
