@@ -3663,7 +3663,9 @@ class Resource(Base):
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_resource_association, back_populates="resources")
     __table_args__ = (
         UniqueConstraint("team_id", "owner_email", "gateway_id", "uri", name="uq_team_owner_gateway_uri_resource"),
+        UniqueConstraint("team_id", "owner_email", "gateway_id", "name", name="uq_team_owner_gateway_name_resource"),
         Index("uq_team_owner_uri_resource_local", "team_id", "owner_email", "uri", unique=True, postgresql_where=text("gateway_id IS NULL"), sqlite_where=text("gateway_id IS NULL")),
+        Index("uq_team_owner_name_resource_local", "team_id", "owner_email", "name", unique=True, postgresql_where=text("gateway_id IS NULL"), sqlite_where=text("gateway_id IS NULL")),
         Index("idx_resources_created_at_id", "created_at", "id"),
     )
 

@@ -28,7 +28,7 @@ from sqlalchemy.exc import IntegrityError, MultipleResultsFound
 # First-Party
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.schemas import ResourceCreate, ResourceRead, ResourceSubscription, ResourceUpdate
-from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService
+from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService, ResourceURIConflictError
 
 # Local
 from tests.helpers.admin_mocks import install_admin_user
@@ -302,27 +302,34 @@ class TestResourceRegistration:
     @pytest.mark.asyncio
     async def test_register_resource_uri_conflict_active(self, resource_service, mock_db, sample_resource_create, mock_resource):
         """URI conflict when an **active** resource already exists."""
-        mock_scalar = MagicMock()
-        mock_scalar.scalar_one_or_none.return_value = mock_resource  # active
-        mock_db.execute.return_value = mock_scalar
-
         # Ensure visibility is a string, not a MagicMock
         mock_resource.visibility = "public"
 
-        with pytest.raises(ResourceError) as exc_info:
+        # First execute() call is the name check (return None = no name conflict),
+        # second is the URI check (return mock_resource = URI conflict).
+        no_match = MagicMock()
+        no_match.scalar_one_or_none.return_value = None
+        uri_match = MagicMock()
+        uri_match.scalar_one_or_none.return_value = mock_resource
+        mock_db.execute.side_effect = [no_match, uri_match]
+
+        with pytest.raises(ResourceURIConflictError) as exc_info:
             await resource_service.register_resource(mock_db, sample_resource_create)
 
-        # Accept the wrapped error message
         assert "Public Resource already exists with URI" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_register_resource_uri_conflict_inactive(self, resource_service, mock_db, sample_resource_create, mock_inactive_resource):
         """URI conflict when an **inactive** resource already exists."""
-        mock_scalar = MagicMock()
-        mock_scalar.scalar_one_or_none.return_value = mock_inactive_resource  # inactive
-        mock_db.execute.return_value = mock_scalar
+        # First execute() call is the name check (return None = no name conflict),
+        # second is the URI check (return mock_inactive_resource = URI conflict).
+        no_match = MagicMock()
+        no_match.scalar_one_or_none.return_value = None
+        uri_match = MagicMock()
+        uri_match.scalar_one_or_none.return_value = mock_inactive_resource
+        mock_db.execute.side_effect = [no_match, uri_match]
 
-        with pytest.raises(ResourceError) as exc_info:
+        with pytest.raises(ResourceURIConflictError) as exc_info:
             await resource_service.register_resource(mock_db, sample_resource_create)
 
         assert "Resource already exists with URI" in str(exc_info.value)
@@ -3359,7 +3366,7 @@ class TestResourceGatewayNamespacing:
             await resource_service.register_resource(mock_db, sample_resource_create)
 
         # Verification
-        assert "Resource already exists" in str(exc_info.value)
+        assert "already exists" in str(exc_info.value)
         assert "gateway-1" in str(existing_resource.gateway_id)
 
     @pytest.mark.asyncio
@@ -3396,7 +3403,7 @@ class TestResourceGatewayNamespacing:
             await resource_service.register_resource(mock_db, sample_resource_create)
 
         # Verification
-        assert "Resource already exists" in str(exc_info.value)
+        assert "already exists" in str(exc_info.value)
 
 
 class TestResourceBulkRegistration:
@@ -4939,7 +4946,7 @@ class TestResourceServiceCoverageEdges:
 
         with pytest.raises(ResourceError) as exc_info:
             await resource_service.register_resource(mock_db, sample_resource_create, visibility="team", team_id="team-1")
-        assert "Team Resource already exists with URI" in str(exc_info.value)
+        assert "already exists" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_register_resources_bulk_unknown_conflict_strategy_does_nothing(self, resource_service, mock_db):

@@ -324,6 +324,8 @@ class ErrorFormatter:
                     return {"message": "A tool with this name already exists", "success": False}
                 elif "resources.uri" in error_str:
                     return {"message": "A resource with this URI already exists", "success": False}
+                elif "resources.name" in error_str:
+                    return {"message": "A resource with this name already exists", "success": False}
                 elif "servers.name" in error_str:
                     return {"message": "A server with this name already exists", "success": False}
                 elif "prompts.name" in error_str:

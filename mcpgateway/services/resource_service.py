@@ -172,6 +172,36 @@ class ResourceURIConflictError(ResourceError):
         super().__init__(message)
 
 
+class ResourceNameConflictError(ResourceError):
+    """Raised when a resource name conflicts with an existing (active or inactive) resource."""
+
+    def __init__(self, name: str, enabled: bool = True, resource_id: Optional[str] = None, visibility: str = "public") -> None:
+        """Initialize the error with resource information.
+
+        Args:
+            name: The conflicting resource name.
+            enabled: Whether the existing resource is active.
+            resource_id: ID of the existing resource if available.
+            visibility: Visibility status of the resource.
+
+        Examples:
+            >>> err = ResourceNameConflictError('my-resource', enabled=True)
+            >>> str(err)
+            'A resource with this name already exists: my-resource'
+            >>> err2 = ResourceNameConflictError('my-resource', enabled=False, resource_id='abc123')
+            >>> str(err2)
+            'A resource with this name already exists: my-resource (currently inactive, ID: abc123)'
+        """
+        self.name = name
+        self.enabled = enabled
+        self.resource_id = resource_id
+        message = f"A resource with this name already exists: {name}"
+        logger.info(f"ResourceNameConflictError: {message}")
+        if not enabled:
+            message += f" (currently inactive, ID: {resource_id})"
+        super().__init__(message)
+
+
 class ResourceValidationError(ResourceError):
     """Raised when resource validation fails."""
 
@@ -545,14 +575,30 @@ class ResourceService(BaseService):
             # Extract gateway_id from resource if present
             gateway_id = getattr(resource, "gateway_id", None)
 
-            # Check for existing server with the same uri
+            # Check for existing resource with the same name (application-level uniqueness within scope)
+            if visibility.lower() == "public":
+                existing_by_name = db.execute(select(DbResource).where(DbResource.name == resource.name, DbResource.visibility == "public", DbResource.gateway_id == gateway_id)).scalar_one_or_none()
+                if existing_by_name:
+                    raise ResourceNameConflictError(resource.name, enabled=existing_by_name.enabled, resource_id=existing_by_name.id, visibility=existing_by_name.visibility)
+            elif visibility.lower() == "team":
+                if not team_id:
+                    raise ResourceValidationError("Cannot create a team-scoped resource without a team_id")
+                existing_by_name = db.execute(
+                    select(DbResource).where(DbResource.name == resource.name, DbResource.visibility == "team", DbResource.team_id == team_id, DbResource.gateway_id == gateway_id)
+                ).scalar_one_or_none()
+                if existing_by_name:
+                    raise ResourceNameConflictError(resource.name, enabled=existing_by_name.enabled, resource_id=existing_by_name.id, visibility=existing_by_name.visibility)
+
+            # Check for existing resource with the same uri
             if visibility.lower() == "public":
                 logger.info(f"visibility:: {visibility}")
                 # Check for existing public resource with the same uri and gateway_id
                 existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "public", DbResource.gateway_id == gateway_id)).scalar_one_or_none()
                 if existing_resource:
                     raise ResourceURIConflictError(resource.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
-            elif visibility.lower() == "team" and team_id:
+            elif visibility.lower() == "team":
+                if not team_id:
+                    raise ResourceValidationError("Cannot create a team-scoped resource without a team_id")
                 # Check for existing team resource with the same uri and gateway_id
                 existing_resource = db.execute(
                     select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "team", DbResource.team_id == team_id, DbResource.gateway_id == gateway_id)
@@ -679,6 +725,23 @@ class ResourceService(BaseService):
                 },
             )
             raise rce
+        except ResourceNameConflictError as rnce:
+            logger.error(f"ResourceNameConflictError in group: {resource.name}")
+
+            # Structured logging: Log name conflict error
+            structured_logger.log(
+                level="WARNING",
+                message="Resource creation failed due to name conflict",
+                event_type="resource_name_conflict",
+                component="resource_service",
+                user_id=created_by,
+                user_email=owner_email,
+                custom_fields={
+                    "resource_name": resource.name,
+                    "visibility": visibility,
+                },
+            )
+            raise rnce
         except ContentSizeError as cse:
             db.rollback()
             structured_logger.log(
