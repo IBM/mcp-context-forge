@@ -29,18 +29,20 @@ check "FIPS:STIG crypto sub-policy set (RHEL-09-215105/672030)" \
     "update-crypto-policies --show" \
     "FIPS:STIG"
 
-# RHEL-09-232045 (rootfiles tmpfile.d): both RPM path and admin-override path
-check "rootfiles tmpfile.d present at RPM path /usr/lib (RHEL-09-232045)" \
-    "test -f /usr/lib/tmpfiles.d/rootfiles.conf && echo PRESENT" \
-    "PRESENT"
+# RHEL-09-232045 (rootfiles tmpfile.d): OVAL requires C-type entries with 600 perms
+# Check /etc/tmpfiles.d/ (primary path the OVAL validates)
+for dotfile in .bash_logout .bash_profile .bashrc .cshrc .tcshrc; do
+    check "rootfiles /etc/tmpfiles.d has C 600 entry for ${dotfile} (RHEL-09-232045)" \
+        "grep -F \"C /root/${dotfile}\" /etc/tmpfiles.d/rootfiles.conf" \
+        "600 root root"
+done
 
-check "rootfiles tmpfile.d present at /etc (RHEL-09-232045)" \
-    "test -f /etc/tmpfiles.d/rootfiles.conf && echo PRESENT" \
-    "PRESENT"
-
-check "rootfiles tmpfile.d contains bash_profile entry (RHEL-09-232045)" \
-    "cat /etc/tmpfiles.d/rootfiles.conf" \
-    "bash_profile"
+# Check /usr/lib/tmpfiles.d/ (RPM-managed path, mirrored for belt-and-suspenders)
+for dotfile in .bash_logout .bash_profile .bashrc .cshrc .tcshrc; do
+    check "rootfiles /usr/lib/tmpfiles.d has C 600 entry for ${dotfile} (RHEL-09-232045)" \
+        "grep -F \"C /root/${dotfile}\" /usr/lib/tmpfiles.d/rootfiles.conf" \
+        "600 root root"
+done
 
 # SSH RekeyLimit
 check "SSH RekeyLimit configured" \

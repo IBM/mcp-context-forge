@@ -142,18 +142,20 @@ RUN if [ "$ENABLE_FIPS" = "true" ]; then \
             || printf '# STIG module stub — not shipped in UBI9 minimal\n' \
                > /usr/share/crypto-policies/policies/modules/STIG.pmod) \
         && update-crypto-policies --set FIPS:STIG \
-        && mkdir -p /etc/ssh/ssh_config.d /etc/tmpfiles.d /usr/lib/tmpfiles.d \
+        && mkdir -p /etc/ssh/ssh_config.d /etc/tmpfiles.d /usr/lib/tmpfiles.d /usr/share/rootfiles \
         && echo "RekeyLimit 512M 1h" > /etc/ssh/ssh_config.d/02-rekey-limit.conf \
         && if [ -f /etc/pam.d/su ]; then \
                grep -Eq '^[[:space:]]*auth[[:space:]]+required[[:space:]]+pam_wheel\.so([[:space:]]|$)' /etc/pam.d/su \
                || echo 'auth required pam_wheel.so use_uid' >> /etc/pam.d/su; \
            fi \
+        && cp -p /root/.bash_logout /root/.bash_profile /root/.bashrc /root/.cshrc /root/.tcshrc \
+               /usr/share/rootfiles/ \
         && printf '%s\n' \
-            'z /root/.bash_logout  0740 root root -' \
-            'z /root/.bash_profile 0740 root root -' \
-            'z /root/.bashrc       0740 root root -' \
-            'z /root/.cshrc        0740 root root -' \
-            'z /root/.tcshrc       0740 root root -' \
+            'C /root/.bash_logout  600 root root - /usr/share/rootfiles/.bash_logout' \
+            'C /root/.bash_profile 600 root root - /usr/share/rootfiles/.bash_profile' \
+            'C /root/.bashrc       600 root root - /usr/share/rootfiles/.bashrc' \
+            'C /root/.cshrc        600 root root - /usr/share/rootfiles/.cshrc' \
+            'C /root/.tcshrc       600 root root - /usr/share/rootfiles/.tcshrc' \
             | tee /usr/lib/tmpfiles.d/rootfiles.conf > /etc/tmpfiles.d/rootfiles.conf \
         && find /root -maxdepth 1 -name '.*' -type f -exec chmod 0740 {} \; \
         && chmod 0750 /root \
