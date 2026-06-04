@@ -507,7 +507,7 @@ async def test_admin_logout_paths():
     # GET request with admin referer should redirect to login
     get_referer_request = _make_request(root_path="/root")
     get_referer_request.method = "GET"
-    get_referer_request.headers = {"accept": "application/json", "referer": "http://localhost:4444/admin/users"}
+    get_referer_request.headers = {"accept": "application/json", "referer": "http://localhost:4444/admin/users", "host": "localhost:4444"}
     response = await admin._admin_logout(get_referer_request)
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303

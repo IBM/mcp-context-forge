@@ -114,7 +114,7 @@ async def test_cookie_auth_allowed_with_admin_referer():
     """/admin referer marks the request as a browser/UI request; cookie auth must be accepted."""
     mock_request = MagicMock(spec=Request)
     mock_request.cookies = {"jwt_token": "token123"}
-    mock_request.headers = {"accept": "application/json", "referer": "http://localhost:4444/admin#gateways"}
+    mock_request.headers = {"accept": "application/json", "referer": "http://localhost:4444/admin#gateways", "host": "localhost:4444"}
     mock_request.client = MagicMock()
     mock_request.client.host = "127.0.0.1"
     mock_request.state = MagicMock(auth_method="jwt", request_id="req-admin", token_teams=["team-1"])
@@ -142,6 +142,34 @@ async def test_cookie_auth_allowed_with_accept_text_html():
 
 
 @pytest.mark.asyncio
+async def test_cookie_auth_allowed_with_oauth_callback_referer():
+    """OAuth callback referer with Accept: application/json must be treated as a browser request.
+
+    This test covers the scenario where the OAuth callback success page makes a fetch
+    request to /oauth/fetch-tools with Accept: application/json. The referer header
+    indicates it's from the OAuth callback page, so cookie authentication should be allowed.
+
+    Regression test for issue where OAuth tool fetching failed after PR #2680 added
+    cookie authentication restrictions for API requests.
+    """
+    mock_request = MagicMock(spec=Request)
+    mock_request.cookies = {"jwt_token": "token123"}
+    mock_request.headers = {
+        "accept": "application/json",
+        "referer": "http://localhost:4444/oauth/callback?code=abc&state=xyz",
+        "host": "localhost:4444"
+    }
+    mock_request.client = MagicMock()
+    mock_request.client.host = "127.0.0.1"
+    mock_request.state = MagicMock(auth_method="jwt", request_id="req-oauth-fetch", token_teams=["team-1"])
+
+    mock_user = MagicMock(email="user@example.com", full_name="User", is_admin=False)
+    with patch("mcpgateway.auth.validate_token_user", return_value=mock_user):
+        result = await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token="token123")
+    assert result["email"] == "user@example.com"
+
+
+@pytest.mark.asyncio
 async def test_cookie_auth_rejected_with_cross_origin_oauth_referer():
     """Cross-origin /oauth/ referer without browser headers must NOT grant cookie auth."""
     mock_request = MagicMock(spec=Request)
@@ -155,6 +183,30 @@ async def test_cookie_auth_rejected_with_cross_origin_oauth_referer():
         await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
     assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
     assert "Cookie authentication not allowed" in exc.value.detail
+
+@pytest.mark.asyncio
+async def test_cookie_auth_rejected_with_invalid_referer_url():
+    """Invalid referer URL that causes urlparse exception should be treated as not same-origin and reject cookie auth."""
+    from unittest.mock import patch
+
+    mock_request = MagicMock(spec=Request)
+    mock_request.cookies = {"jwt_token": "token123"}
+    mock_request.headers = {
+        "accept": "application/json",
+        "referer": "http://example.com/admin",  # Valid URL but will be mocked to raise exception
+        "host": "localhost:4444"
+    }
+    mock_request.client = MagicMock()
+    mock_request.client.host = "127.0.0.1"
+    mock_request.state = MagicMock(auth_method="jwt", request_id="req-invalid")
+
+    # Mock urlparse to raise an exception to test exception handling
+    with patch("urllib.parse.urlparse", side_effect=ValueError("Invalid URL")):
+        with pytest.raises(HTTPException) as exc:
+            await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+        assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+        assert "Cookie authentication not allowed" in exc.value.detail
+
 
 
 @pytest.mark.asyncio

@@ -271,11 +271,27 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                 # without user context so the RBAC layer can redirect to /admin/login.
                 # API requests: return a hard JSON 401/403 deny.
                 # Detection must match rbac.py's is_browser_request logic (Accept,
-                # HX-Request, and Referer: /admin) to avoid breaking admin UI flows.
+                # HX-Request, and same-origin Referer: /admin or /oauth/callback) to avoid breaking admin UI flows.
                 accept_header = request.headers.get("accept", "")
                 is_htmx = request.headers.get("hx-request") == "true"
                 referer = request.headers.get("referer", "")
-                is_browser = "text/html" in accept_header or is_htmx or "/admin" in referer
+
+                # Check if referer is from same origin (for admin UI and OAuth callback pages)
+                is_same_origin_referer = False
+                if referer:
+                    try:
+                        # Standard
+                        from urllib.parse import urlparse
+
+                        referer_parsed = urlparse(referer)
+                        request_host = request.headers.get("host", "")
+                        # Match if referer host matches request host and path contains /admin or /oauth/callback
+                        if referer_parsed.netloc == request_host and ("/admin" in referer_parsed.path or "/oauth/callback" in referer_parsed.path):
+                            is_same_origin_referer = True
+                    except Exception:
+                        pass  # Invalid referer URL, treat as not same-origin
+
+                is_browser = "text/html" in accept_header or is_htmx or is_same_origin_referer
                 if is_browser:
                     logger.debug("Browser request with rejected auth — continuing without user for redirect")
                     return await call_next(request)
