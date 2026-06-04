@@ -598,15 +598,9 @@ export function MCPServerDetailsPanel({
               <div className="p-4">
                 <h3 className="mb-7 text-sm font-semibold text-foreground">Activity</h3>
                 <dl className="space-y-4">
-                  <DetailRow label="Created">
-                    {formatDateTime(server.createdAt)}
-                  </DetailRow>
-                  <DetailRow label="Last modified">
-                    {formatDateTime(server.updatedAt)}
-                  </DetailRow>
-                  <DetailRow label="Last seen">
-                    {formatLastSeen(server.lastSeen)}
-                  </DetailRow>
+                  <DetailRow label="Created">{formatDateTime(server.createdAt)}</DetailRow>
+                  <DetailRow label="Last modified">{formatDateTime(server.updatedAt)}</DetailRow>
+                  <DetailRow label="Last seen">{formatLastSeen(server.lastSeen)}</DetailRow>
                 </dl>
               </div>
             </aside>
