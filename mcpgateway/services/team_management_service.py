@@ -410,6 +410,25 @@ class TeamManagementService:
         except Exception as cache_error:
             logger.debug(f"Failed to invalidate membership caches for {SecurityValidator.sanitize_log_message(user_email)}: {cache_error}")
 
+    def _invalidate_team_member_caches(self, team_id: str) -> None:
+        """Invalidate cached team objects for all active members after a team update.
+
+        Errors are logged at warning level but do not propagate.
+
+        Args:
+            team_id: ID of the team whose member caches should be invalidated.
+        """
+        try:
+            memberships = self.db.query(EmailTeamMember).filter(
+                EmailTeamMember.team_id == team_id,
+                EmailTeamMember.is_active.is_(True),
+            ).all()
+            for membership in memberships:
+                self._fire_and_forget(auth_cache.invalidate_user_teams(membership.user_email))
+            self._fire_and_forget(admin_stats_cache.invalidate_teams())
+        except Exception as cache_error:
+            logger.warning(f"Failed to invalidate caches after team update for {SecurityValidator.sanitize_log_message(team_id)}: {cache_error}")
+
     def _check_user_team_limit(self, user_email: str) -> None:
         """Raise if the user has reached the maximum team membership limit.
 
@@ -703,18 +722,7 @@ class TeamManagementService:
             team.updated_at = utc_now()
             self.db.commit()
 
-            # Invalidate cached team objects for all active members so scalar field
-            # changes (name, visibility, description, max_members) propagate immediately.
-            try:
-                memberships = self.db.query(EmailTeamMember).filter(
-                    EmailTeamMember.team_id == team_id,
-                    EmailTeamMember.is_active.is_(True),
-                ).all()
-                for membership in memberships:
-                    self._fire_and_forget(auth_cache.invalidate_user_teams(membership.user_email))
-                self._fire_and_forget(admin_stats_cache.invalidate_teams())
-            except Exception as cache_error:
-                logger.warning(f"Failed to invalidate caches after team update for {SecurityValidator.sanitize_log_message(team_id)}: {cache_error}")
+            self._invalidate_team_member_caches(team_id)
 
             logger.info(f"Updated team {SecurityValidator.sanitize_log_message(team_id)} by {updated_by}")
             return True
