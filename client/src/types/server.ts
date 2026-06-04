@@ -32,18 +32,12 @@ export interface MCPServer extends BaseServer {
   transport: "SSE" | "STREAMABLEHTTP";
   reachable: boolean;
   capabilities?: MCPServerCapabilities;
-  last_seen?: string;
   lastSeen?: string;
-  tool_count: number;
   toolCount?: number;
-  prompt_count?: number;
   promptCount?: number;
-  resource_count?: number;
   resourceCount?: number;
-  created_at: string;
-  createdAt?: string;
-  updated_at: string;
-  updatedAt?: string;
+  createdAt: string;
+  updatedAt: string;
   slug?: string;
 }
 

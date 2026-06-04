@@ -10,9 +10,9 @@ function getServerStatus(server: MCPServer): ServerStatus {
   if (!server.enabled) return "draft";
   if (!server.reachable) return "offline";
 
-  // Warning: if last_seen is older than the threshold
-  if (server.last_seen) {
-    const lastSeenDate = new Date(server.last_seen);
+  // Warning: if lastSeen is older than the threshold
+  if (server.lastSeen) {
+    const lastSeenDate = new Date(server.lastSeen);
     const thresholdDate = new Date(Date.now() - WARNING_THRESHOLD_MS);
     if (lastSeenDate < thresholdDate) return "warning";
   }
