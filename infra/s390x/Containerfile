@@ -37,7 +37,7 @@ RUN microdnf update -y && \
         jq \
         autoconf \
         automake \
-        libtool && \
+        libtool \
         postgresql-devel && \
     microdnf clean all && \
     update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 && \
@@ -63,4 +63,4 @@ RUN python3 -m pip wheel --no-binary :all: --wheel-dir /wheels \
         httptools \
         uvloop \
         argon2-cffi-bindings \
-        psycopg[c]
+        'psycopg[c]'
