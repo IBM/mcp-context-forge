@@ -446,7 +446,7 @@ RUN if [ "$ENABLE_FIPS" = "true" ]; then \
         microdnf install -y crypto-policies crypto-policies-scripts rootfiles \
             gnutls-utils nss-tools subscription-manager \
         && microdnf clean all \
-        && update-crypto-policies --set FIPS \
+        && update-crypto-policies --set FIPS:STIG \
         && mkdir -p /etc/ssh/ssh_config.d /etc/tmpfiles.d \
         && echo "RekeyLimit 512M 1h" > /etc/ssh/ssh_config.d/02-rekey-limit.conf \
         && if [ -f /etc/pam.d/su ]; then \
