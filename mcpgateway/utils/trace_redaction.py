@@ -34,6 +34,7 @@ _DEFAULT_REDACT_FIELDS = ",".join(
         "private_key",
         "session_id",
         "sessionid",
+        "session_token",
     ]
 )
 _DEFAULT_MAX_PAYLOAD_SIZE = 32768
@@ -147,7 +148,70 @@ def _field_looks_like_url(field_name: str) -> bool:
         ``True`` when the field likely carries a URL, URI, or endpoint value.
     """
     normalized = _normalize_field_name(field_name)
-    return normalized.endswith("url") or normalized.endswith("uri") or normalized.endswith("endpoint")
+    return any(
+        keyword in normalized
+        for keyword in (
+            "url",
+            "uri",
+            "endpoint",
+            "href",
+            "link",
+            "redirect",
+            "callback",
+            "webhook",
+        )
+    )
+
+
+def safe_log_user(user: Any) -> str:
+    """Redact PII and prevent log injection for user data in logs.
+
+    This function combines PII redaction with log injection protection,
+    ensuring user data is safe to include in log messages. It handles both
+    dict and non-dict user representations.
+
+    Args:
+        user: User data to sanitize (dict, string, or other type).
+
+    Returns:
+        Sanitized string safe for logging with PII redacted and log injection prevented.
+
+    Examples:
+        Dict user with PII:
+
+        >>> user = {"email": "user@example.com", "password": "secret123"}  # pragma: allowlist secret
+        >>> result = safe_log_user(user)
+        >>> "***" in result
+        True
+        >>> "secret123" not in result
+        True
+
+        Dict user with newline injection:
+
+        >>> user = {"email": "attacker@evil.com\\nFAKE LOG: Admin login"}
+        >>> result = safe_log_user(user)
+        >>> "\\n" not in result
+        True
+
+        String user:
+
+        >>> result = safe_log_user("user@example.com")
+        >>> isinstance(result, str)
+        True
+    """
+    # Import here to avoid circular dependency
+    from mcpgateway.common.validators import SecurityValidator
+
+    if isinstance(user, dict):
+        # Redact PII from dict
+        redacted = redact_sensitive_fields(user)
+        user_str = str(redacted)
+    else:
+        # Convert to string
+        user_str = str(user)
+
+    # Apply log injection protection
+    return SecurityValidator.sanitize_log_message(user_str)
 
 
 def _sanitize_trace_value(field_name: str, value: Any) -> Any:
