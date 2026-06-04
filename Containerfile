@@ -125,7 +125,7 @@ RUN chown -R 1001:0 /app && \
 
 # hadolint ignore=DL3041
 # FedRAMP compliance block — only active when ENABLE_FIPS=true
-# Resolves: FIPS crypto policy (RHEL-09-215105/672030), SSH ciphers/MACs,
+# Resolves: FIPS:STIG crypto policy (RHEL-09-215105/672030), SSH ciphers/MACs,
 #           gnutls-utils (RHEL-09-215080), nss-tools (RHEL-09-215085),
 #           subscription-manager (RHEL-09-215010), pam_wheel (RHEL-09-432035),
 #           init file perms 0740 (RHEL-09-232045), home dir perms 0750 (RHEL-09-232050),
@@ -138,7 +138,10 @@ RUN if [ "$ENABLE_FIPS" = "true" ]; then \
         microdnf install -y crypto-policies crypto-policies-scripts rootfiles \
             gnutls-utils nss-tools subscription-manager \
         && microdnf clean all \
-        && update-crypto-policies --set FIPS \
+        && (test -f /usr/share/crypto-policies/policies/modules/STIG.pmod \
+            || printf '# STIG module stub — not shipped in UBI9 minimal\n' \
+               > /usr/share/crypto-policies/policies/modules/STIG.pmod) \
+        && update-crypto-policies --set FIPS:STIG \
         && mkdir -p /etc/ssh/ssh_config.d /etc/tmpfiles.d /usr/lib/tmpfiles.d \
         && echo "RekeyLimit 512M 1h" > /etc/ssh/ssh_config.d/02-rekey-limit.conf \
         && if [ -f /etc/pam.d/su ]; then \

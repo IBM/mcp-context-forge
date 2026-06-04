@@ -24,10 +24,10 @@ check() {
 
 echo "=== FedRAMP Compliance Validation ==="
 
-# RHEL-09-215105 / RHEL-09-672030: FIPS crypto policy active
-check "FIPS crypto policy set (RHEL-09-215105/672030)" \
+# RHEL-09-215105 / RHEL-09-672030: FIPS:STIG crypto sub-policy
+check "FIPS:STIG crypto sub-policy set (RHEL-09-215105/672030)" \
     "update-crypto-policies --show" \
-    "FIPS"
+    "FIPS:STIG"
 
 # RHEL-09-232045 (rootfiles tmpfile.d): both RPM path and admin-override path
 check "rootfiles tmpfile.d present at RPM path /usr/lib (RHEL-09-232045)" \
