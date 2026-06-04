@@ -714,7 +714,7 @@ class TeamManagementService:
                     self._fire_and_forget(auth_cache.invalidate_user_teams(membership.user_email))
                 self._fire_and_forget(admin_stats_cache.invalidate_teams())
             except Exception as cache_error:
-                logger.debug(f"Failed to invalidate caches after team update for {SecurityValidator.sanitize_log_message(team_id)}: {cache_error}")
+                logger.warning(f"Failed to invalidate caches after team update for {SecurityValidator.sanitize_log_message(team_id)}: {cache_error}")
 
             logger.info(f"Updated team {SecurityValidator.sanitize_log_message(team_id)} by {updated_by}")
             return True
