@@ -119,7 +119,14 @@ interface ServersTableProps {
   onViewDetails?: (id: string) => void;
 }
 
-export function ServersTable({ servers, isLoading, onEdit, onDelete, onTest, onViewDetails }: ServersTableProps) {
+export function ServersTable({
+  servers,
+  isLoading,
+  onEdit,
+  onDelete,
+  onTest,
+  onViewDetails,
+}: ServersTableProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const timeoutRef = useRef<number | null>(null);
 
