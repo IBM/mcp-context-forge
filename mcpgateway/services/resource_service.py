@@ -153,7 +153,7 @@ class ResourceNotFoundError(ResourceError):
 class ResourceURIConflictError(ResourceError):
     """Raised when a resource URI conflicts with existing (active or inactive) resource."""
 
-    def __init__(self, uri: str, enabled: bool = True, resource_id: Optional[int] = None, visibility: str = "public") -> None:
+    def __init__(self, uri: str, enabled: bool = True, resource_id: Optional[str] = None, visibility: str = "public") -> None:
         """Initialize the error with resource information.
 
         Args:
@@ -196,9 +196,9 @@ class ResourceNameConflictError(ResourceError):
         self.enabled = enabled
         self.resource_id = resource_id
         message = f"A resource with this name already exists: {name}"
-        logger.info(f"ResourceNameConflictError: {message}")
         if not enabled:
             message += f" (currently inactive, ID: {resource_id})"
+        logger.info(f"ResourceNameConflictError: {message}")
         super().__init__(message)
 
 
@@ -591,14 +591,11 @@ class ResourceService(BaseService):
 
             # Check for existing resource with the same uri
             if visibility.lower() == "public":
-                logger.info(f"visibility:: {visibility}")
                 # Check for existing public resource with the same uri and gateway_id
                 existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "public", DbResource.gateway_id == gateway_id)).scalar_one_or_none()
                 if existing_resource:
                     raise ResourceURIConflictError(resource.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
             elif visibility.lower() == "team":
-                if not team_id:
-                    raise ResourceValidationError("Cannot create a team-scoped resource without a team_id")
                 # Check for existing team resource with the same uri and gateway_id
                 existing_resource = db.execute(
                     select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "team", DbResource.team_id == team_id, DbResource.gateway_id == gateway_id)
@@ -708,7 +705,7 @@ class ResourceService(BaseService):
                 },
             )
             raise ie
-        except ResourceURIConflictError as rce:
+        except ResourceURIConflictError as rce:  # noqa: F841
             logger.error(f"ResourceURIConflictError in group: {resource.uri}")
 
             # Structured logging: Log URI conflict error
@@ -724,7 +721,7 @@ class ResourceService(BaseService):
                     "visibility": visibility,
                 },
             )
-            raise rce
+            raise
         except ResourceNameConflictError as rnce:
             logger.error(f"ResourceNameConflictError in group: {resource.name}")
 
@@ -741,7 +738,7 @@ class ResourceService(BaseService):
                     "visibility": visibility,
                 },
             )
-            raise rnce
+            raise
         except ContentSizeError as cse:
             db.rollback()
             structured_logger.log(
@@ -936,6 +933,28 @@ class ResourceService(BaseService):
                         resource_owner_email = owner_email or getattr(resource, "owner_email", None) or created_by
                         resource_visibility = visibility if visibility is not None else getattr(resource, "visibility", "public")
                         resource_gateway_id = getattr(resource, "gateway_id", None)
+
+                        # Check for duplicate name before URI conflict (mirrors register_resource logic)
+                        if resource_visibility.lower() == "public":
+                            existing_by_name = db.execute(
+                                select(DbResource).where(DbResource.name == resource.name, DbResource.visibility == "public", DbResource.gateway_id == resource_gateway_id)
+                            ).scalar_one_or_none()
+                        elif resource_visibility.lower() == "team" and resource_team_id:
+                            existing_by_name = db.execute(
+                                select(DbResource).where(DbResource.name == resource.name, DbResource.visibility == "team", DbResource.team_id == resource_team_id, DbResource.gateway_id == resource_gateway_id)
+                            ).scalar_one_or_none()
+                        else:
+                            existing_by_name = None
+
+                        if existing_by_name and existing_by_name.uri != resource.uri:
+                            # Name conflict with a *different* resource — treat same as URI conflict strategy
+                            if conflict_strategy == "skip":
+                                stats["skipped"] += 1
+                                stats["errors"].append(f"Resource '{resource.name}' skipped: name already exists")
+                                continue
+                            elif conflict_strategy == "fail":
+                                raise ResourceNameConflictError(resource.name, enabled=existing_by_name.enabled, resource_id=existing_by_name.id, visibility=existing_by_name.visibility)
+                            # rename / update strategies fall through to URI-based handling below
 
                         # Look up existing resource by (uri, gateway_id) tuple
                         existing_resource = existing_resources_map.get((resource.uri, resource_gateway_id))

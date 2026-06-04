@@ -3549,6 +3549,7 @@ class TestResourceBulkRegistration:
                 raise ValueError("boom")
 
         mock_db.execute.return_value.scalars.return_value.all.return_value = []
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
         resource_service._notify_resource_added = AsyncMock()
@@ -4937,16 +4938,21 @@ class TestResourceServiceCoverageEdges:
 
     @pytest.mark.asyncio
     async def test_register_resource_uri_conflict_team(self, resource_service, mock_db, sample_resource_create):
-        """Cover team visibility URI conflict path (line 449)."""
+        """Cover team visibility URI conflict path."""
         existing = MagicMock()
         existing.enabled = True
         existing.id = "existing-id"
         existing.visibility = "team"
-        mock_db.execute.return_value.scalar_one_or_none.return_value = existing
+        # First execute() call is the name check (no conflict), second is the URI check (conflict).
+        no_match = MagicMock()
+        no_match.scalar_one_or_none.return_value = None
+        uri_match = MagicMock()
+        uri_match.scalar_one_or_none.return_value = existing
+        mock_db.execute.side_effect = [no_match, uri_match]
 
-        with pytest.raises(ResourceError) as exc_info:
+        with pytest.raises(ResourceURIConflictError) as exc_info:
             await resource_service.register_resource(mock_db, sample_resource_create, visibility="team", team_id="team-1")
-        assert "already exists" in str(exc_info.value)
+        assert "Team Resource already exists with URI" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_register_resources_bulk_unknown_conflict_strategy_does_nothing(self, resource_service, mock_db):
@@ -4999,6 +5005,7 @@ class TestResourceServiceCoverageEdges:
     async def test_register_resources_bulk_mime_validation_passes_for_allowed_type(self, resource_service, mock_db):
         """MIME type validation in bulk: allowed type (text/plain) passes and resource is created."""
         mock_db.execute.return_value.scalars.return_value.all.return_value = []
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
         mock_db.add_all = MagicMock()
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
