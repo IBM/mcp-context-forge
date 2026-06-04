@@ -1534,6 +1534,8 @@ async def test_get_user_team_ids_returns_cached_ids_without_service_lookup(monke
 @pytest.mark.asyncio
 async def test_admin_list_servers_returns_paginated(monkeypatch):
     mock_db = MagicMock()
+    mock_request = _make_request()
+    mock_request.state = SimpleNamespace(token_teams=None)
 
     mock_server = MagicMock()
     mock_server.model_dump.return_value = {"id": "server-1"}
@@ -1549,7 +1551,7 @@ async def test_admin_list_servers_returns_paginated(monkeypatch):
 
     monkeypatch.setattr(admin.server_service, "list_servers", _fake_list_servers)
 
-    result = await admin.admin_list_servers(page=1, per_page=10, include_inactive=False, db=mock_db, user={"email": "user@example.com"})
+    result = await admin.admin_list_servers(request=mock_request, page=1, per_page=10, include_inactive=False, db=mock_db, user={"email": "user@example.com"})
     assert result["data"] == [{"id": "server-1"}]
     assert result["pagination"] == {"page": 1, "per_page": 10}
     assert result["links"] == {"self": "/admin/servers?page=1&per_page=10"}

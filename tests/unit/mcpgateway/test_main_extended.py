@@ -13107,8 +13107,9 @@ class TestHardeningHelperCoverage:
         request = MagicMock(spec=Request)
         request.state = SimpleNamespace(_jwt_verified_payload=("tok", {"sub": "u"}))
 
+        # Admin bypass now preserves user_email for owner matching (PR #4877 / issue #4877)
         with patch("mcpgateway.auth_context.get_rpc_filter_context", return_value=("user@example.com", None, True)):
-            assert main_mod.get_scoped_resource_access_context(request, {"email": "user@example.com"}) == (None, None)
+            assert main_mod.get_scoped_resource_access_context(request, {"email": "user@example.com"}) == ("user@example.com", None)
 
         with patch("mcpgateway.auth_context.get_rpc_filter_context", return_value=("user@example.com", None, False)):
             assert main_mod.get_scoped_resource_access_context(request, {"email": "user@example.com"}) == ("user@example.com", [])

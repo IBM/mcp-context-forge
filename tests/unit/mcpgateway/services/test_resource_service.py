@@ -1393,8 +1393,8 @@ class TestResourceSubscriptions:
         # Mock the EventService's subscribe_events method
         resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
 
-        # Subscribe and get one event
-        event_gen = resource_service.subscribe_events()
+        # Subscribe with admin bypass enabled to receive all events
+        event_gen = resource_service.subscribe_events(is_admin_bypass=True)
         event = await anext(event_gen)
 
         # Verify the event came through
@@ -1415,8 +1415,8 @@ class TestResourceSubscriptions:
         # Mock the EventService method
         resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
 
-        # Subscribe globally (no uri parameter)
-        event_gen = resource_service.subscribe_events()
+        # Subscribe globally with admin bypass to receive all events
+        event_gen = resource_service.subscribe_events(is_admin_bypass=True)
         event = await anext(event_gen)
 
         assert event["type"] == "resource_created"
@@ -5311,7 +5311,8 @@ class TestResourceServiceCoverageEdges:
         svc._event_service.subscribe_events = MagicMock(return_value=_gen())
 
         out = []
-        async for ev in svc.subscribe_events():
+        # Pass is_admin_bypass=True to receive all events
+        async for ev in svc.subscribe_events(is_admin_bypass=True):
             out.append(ev)
         assert out == [{"type": "resource_added"}]
 

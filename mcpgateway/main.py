@@ -3965,11 +3965,10 @@ async def list_servers(
     # - None: admin bypass (is_admin=true with explicit null teams) - sees ALL resources
     # - []: public-only (missing teams or explicit empty) - sees only public
     # - [...]: team-scoped - sees public + teams + user's private
-    is_admin_bypass = token_teams is None
     is_public_only_token = token_teams is not None and len(token_teams) == 0
 
     # Use consolidated server listing with optional team filtering
-    # For admin bypass: pass user_email=None and token_teams=None to skip all filtering
+    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
     logger.debug(
         f"User: {SecurityValidator.sanitize_log_message(user_email)} requested server list with include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}"
     )
@@ -3980,7 +3979,7 @@ async def list_servers(
         include_inactive=include_inactive,
         include_metrics=include_metrics,
         tags=tags_list,
-        user_email=None if is_admin_bypass else user_email,  # Admin bypass: no user filtering
+        user_email=user_email,  # Keep for owner matching (PR #4341 / issue #4694)
         team_id=team_id,
         visibility="public" if is_public_only_token and not visibility else visibility,
         token_teams=token_teams,  # None = admin bypass, [] = public-only, [...] = team-scoped
@@ -6873,18 +6872,17 @@ async def list_gateways(
     # - None: admin bypass (is_admin=true with explicit null teams) - sees ALL resources
     # - []: public-only (missing teams or explicit empty) - sees only public
     # - [...]: team-scoped - sees public + teams + user's private
-    is_admin_bypass = token_teams is None
     is_public_only_token = token_teams is not None and len(token_teams) == 0
 
     # Use consolidated gateway listing with optional team filtering
-    # For admin bypass: pass user_email=None and token_teams=None to skip all filtering
+    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
     logger.debug(f"User: {SecurityValidator.sanitize_log_message(user_email)} requested gateway list with include_inactive={include_inactive}, team_id={team_id}, visibility={visibility}")
     data, next_cursor = await gateway_service.list_gateways(
         db=db,
         cursor=cursor,
         limit=limit,
         include_inactive=include_inactive,
-        user_email=None if is_admin_bypass else user_email,  # Admin bypass: no user filtering
+        user_email=user_email,  # Keep for owner matching (PR #4341 / issue #4694)
         team_id=team_id,
         visibility="public" if is_public_only_token and not visibility else visibility,
         token_teams=token_teams,  # None = admin bypass, [] = public-only, [...] = team-scoped
@@ -10470,8 +10468,9 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             _req_email, _req_is_admin = user_email, is_admin
             _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
             # Admin bypass - only when token has NO team restrictions
+            # Keep user_email for owner matching (PR #4341 / issue #4694)
             if is_admin and token_teams is None:
-                user_email = None
+                # user_email stays as-is (not None) for owner matching
                 token_teams = None  # Admin unrestricted
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
@@ -10513,9 +10512,10 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             _req_email, _req_is_admin = user_email, is_admin
             _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
             # Admin bypass - only when token has NO team restrictions (token_teams is None)
+            # Keep user_email for owner matching (PR #4341 / issue #4694)
             # If token has explicit team scope (even empty [] for public-only), respect it
             if is_admin and token_teams is None:
-                user_email = None
+                # user_email stays as-is (not None) for owner matching
                 token_teams = None  # Admin unrestricted
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
@@ -10572,8 +10572,9 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             await _ensure_rpc_permission(user, db, "resources.read", method, request=request)
             user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
             # Admin bypass - only when token has NO team restrictions
+            # Keep user_email for owner matching (PR #4341 / issue #4694)
             if is_admin and token_teams is None:
-                user_email = None
+                # user_email stays as-is (not None) for owner matching
                 token_teams = None  # Admin unrestricted
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
@@ -10598,10 +10599,12 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 raise JSONRPCError(-32602, "Missing resource URI in parameters", params)
 
             # Get authorization context (same as resources/list)
+            # Keep user_email for owner matching (PR #4341 / issue #4694)
             auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
             if auth_is_admin and auth_token_teams is None:
-                auth_user_email = None
+                # auth_user_email stays as-is (not None) for owner matching
                 # auth_token_teams stays None (unrestricted)
+                pass
             elif auth_token_teams is None:
                 auth_token_teams = []  # Non-admin without teams = public-only
 
@@ -10674,8 +10677,9 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             await _ensure_rpc_permission(user, db, "prompts.read", method, request=request)
             user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
             # Admin bypass - only when token has NO team restrictions
+            # Keep user_email for owner matching (PR #4341 / issue #4694)
             if is_admin and token_teams is None:
-                user_email = None
+                # user_email stays as-is (not None) for owner matching
                 token_teams = None  # Admin unrestricted
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
@@ -10700,10 +10704,12 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 raise JSONRPCError(-32602, "Missing prompt name in parameters", params)
 
             # Get authorization context (same as prompts/list)
+            # Keep user_email for owner matching (PR #4341 / issue #4694)
             auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
             if auth_is_admin and auth_token_teams is None:
-                auth_user_email = None
+                # auth_user_email stays as-is (not None) for owner matching
                 # auth_token_teams stays None (unrestricted)
+                pass
             elif auth_token_teams is None:
                 auth_token_teams = []  # Non-admin without teams = public-only
 
