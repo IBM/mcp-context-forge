@@ -251,6 +251,58 @@ Use ZMQ's `REQ/REP` pattern over `ipc://` (UDS) or `tcp://`. Discovery still in 
 
 ---
 
+## Approach 4 — Redis-Resident Sessions
+
+Externalise the session state into Redis so any worker can serve any downstream session. Workers don't keep upstream connections alive; they re-open one and resume on each request using the upstream session id stored in Redis.
+
+```
+                       ┌───────────────────────────────────────┐
+                       │  Redis (data path, not just directory)│
+                       │                                       │
+                       │  mcpgw:session:{sid} →                │
+                       │    { upstream_url, upstream_sid,      │
+                       │      last_seq, capabilities, ... }    │
+                       └───────────────────────────────────────┘
+                                ▲          ▲          ▲
+                                │          │          │
+                            (read/write per request)
+                                │          │          │
+                       ┌────────┴───┐ ┌────┴───┐ ┌────┴───┐
+                       │  Worker 1  │ │  W 2   │ │  W N   │
+                       │ stateless  │ │        │ │        │
+                       └─────┬──────┘ └────┬───┘ └────┬───┘
+                             │              │           │
+                       (each opens its own upstream connection
+                        on each request and resumes via upstream_sid)
+                             │              │           │
+                             ▼              ▼           ▼
+                       ┌─────────────────────────────────────┐
+                       │   Upstream MCP server (rmcp etc.)   │
+                       │   must support: resume by sid       │
+                       └─────────────────────────────────────┘
+```
+
+**Pros**
+
+- No affinity layer needed. LB can round-robin freely; no `mcpgw:pool_owner` keys, no per-worker pub/sub channels.
+- No cross-worker forwarding. Removes the entire IPC sub-problem that Approach 3 has to solve.
+- Worker failure doesn't strand sessions; the next request opens a fresh upstream connection on a different worker.
+- Sessions could survive worker restarts and rolling deploys.
+- Truly stateless workers, horizontal scale is trivial.
+
+**Cons**
+
+- **Requires every upstream MCP server to support cross-connection session resumption.** The MCP spec has `Mcp-Session-Id` for client-side continuity but does not standardise an upstream `resume(session_id)` primitive. Most rmcp and Python SDK servers tie state to the TCP connection.
+- **Per-request connection establishment adds 50–500 ms.** TCP plus TLS handshake plus MCP `initialize` plus `notifications/initialized` round-trip, on the request critical path, every time.
+- **Stateful upstreams break by default.** Servers like the rmcp counter keep state keyed by connection. Two workers reconnecting with the same upstream session id will get two separate counters, or the server may reject the duplicate.
+- **Concurrency races on the upstream.** Two workers handling the same downstream session in parallel can send overlapping requests on different connections, fighting for state ordering on the upstream. The current single-writer model avoids this entirely.
+- **Redis becomes the data path, not just the directory.** Every request reads and writes session state. Hot-path Redis is more expensive than ownership lookup (~5-10 ms vs ~0.5 ms) and a Redis outage degrades to "no requests at all" rather than "no forwarding."
+- **Server-initiated SSE / notifications break.** Only the worker holding the live connection receives upstream-pushed events. You'd need a fan-out mechanism, which is exactly the cross-worker forwarding this approach was trying to avoid.
+
+**When to pick**: only if you can guarantee all upstreams are stateless request-response tools (no counters, no resources, no subscriptions) AND every upstream supports cross-connection resumption AND you're willing to pay the per-call reconnect cost. For a federating gateway that has to handle arbitrary third-party MCP servers, this bet doesn't hold.
+
+---
+
 ## Comparison Matrix
 
 > **Latency figures are order-of-magnitude estimates** drawn from typical commodity hardware, included to support relative comparison between the approaches. They are sensitive to deployment specifics (kernel, container runtime, Redis version, network path, payload size) and must be measured against the gateway benchmark stack before being used for capacity planning or SLA commitments.
@@ -264,6 +316,7 @@ Use ZMQ's `REQ/REP` pattern over `ipc://` (UDS) or `tcp://`. Discovery still in 
 | **3c. Worker-to-worker UDS** | ~5–50 μs (10–100× faster) | no (needs fallback) | shared mount, UDS lifecycle | medium | no, intra-container |
 | **3d. Direct TCP per worker** | ~50 μs–5 ms | yes | per-worker port allocation, auth | medium | no |
 | **3e. ZeroMQ** | ~20–50 μs over ipc | yes | new dependency, custom observability | medium-large | no |
+| **4. Redis-resident sessions** | n/a (no forward; +50–500 ms per call to re-establish upstream) | yes | Redis becomes data path | very large | no |
 
 ---
 
@@ -302,5 +355,6 @@ These are transport-only upgrades — the surrounding architecture stays the sam
 
 - **Pivot to Approach 1 (sticky LB)** if the deployment moves to one-worker-per-container. With no intra-container scatter, sticky LB at nginx is strictly simpler than any forwarding mechanism.
 - **Pivot to Approach 2 (coordinator-worker)** if cluster-wide session migration becomes a real requirement (auto-scale without dropping sessions, blue/green deploys preserving session state, multi-region failover). At that point the structural refactor is worth the cost.
+- **Approach 4 (Redis-resident sessions) stays out of scope** as long as ContextForge is a federating gateway over arbitrary third-party upstreams. It would only make sense if the gateway's role narrowed to stateless tool execution AND every supported upstream guaranteed cross-connection session resumption. Neither holds today.
 
 The question that drives any future revisit isn't *"should we replace pub/sub with X?"* — it's *"do the deployment shape or the requirements still match the assumptions behind Approach 3?"* As long as both hold, 3a (with 3b/3c as ready-to-pick upgrades) covers the problem cleanly.
