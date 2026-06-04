@@ -58,6 +58,7 @@ import binascii
 from time import monotonic
 from typing import Any, Optional, Union
 from urllib.parse import urlsplit, urlunsplit
+import uuid
 
 # Third-Party
 from fastapi import Cookie, Depends, HTTPException, Request, status
@@ -517,12 +518,13 @@ async def _enforce_revocation_and_active_user(payload: dict) -> None:
         user = await asyncio.to_thread(_get_user_by_email_sync, username)
         if user is None and payload.get("token_use") == "session":
             # Session tokens use UUID as sub; resolve to email first
-            import re as _re  # pylint: disable=import-outside-toplevel  # nosec B404
-
-            if _re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", username, _re.IGNORECASE):
+            try:
+                uuid.UUID(username)
                 resolved = await asyncio.to_thread(_get_email_by_id_sync, username)
                 if resolved:
                     user = await asyncio.to_thread(_get_user_by_email_sync, resolved)
+            except ValueError:
+                pass  # Not a UUID, skip resolution
     except Exception as exc:
         logger.warning("User status check failed for %s: %s", username, exc)
         return
