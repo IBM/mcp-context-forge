@@ -384,7 +384,7 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
       setUrl(serverData.url || "");
       setDescription(serverData.description || "");
       setTransport((serverData.transport as TransportType) || "STREAMABLEHTTP");
-      setVisibility(serverData.visibility || "public");
+      setVisibility((serverData.visibility as Visibility) || "public");
       if (serverData.teamId) setTeamId(serverData.teamId);
 
       // Auth fields — open advanced panel when any auth is configured
