@@ -1012,7 +1012,7 @@ export MCPGATEWAY_ADMIN_TOKEN=$(./.venv/bin/python -m mcpgateway.utils.create_jw
   --username admin@example.com \
   --admin \
   --exp 10080 \
-  --secret "${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}" \
+  --secret "$JWT_SECRET_KEY" \
   --algo HS256 \
   2>/dev/null | tail -n 1)
 
