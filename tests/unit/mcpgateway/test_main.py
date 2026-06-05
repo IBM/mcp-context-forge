@@ -5485,8 +5485,7 @@ def test_startup_succeeds_with_uaid_require_allowlist_false():
 def test_db_pool_warning_calculation_with_gunicorn_workers():
     """Verify DB pool warning calculation when GUNICORN_WORKERS is set."""
     with patch.dict(os.environ, {"GUNICORN_WORKERS": "4"}):
-        # Test the calculation logic directly
-        workers = int(os.environ.get("GUNICORN_WORKERS", "2"))
+        workers = int(os.environ["GUNICORN_WORKERS"])
         db_pool_size = 15
         db_max_overflow = 30
         total_pool = db_pool_size + db_max_overflow
@@ -5497,15 +5496,24 @@ def test_db_pool_warning_calculation_with_gunicorn_workers():
         assert total_connections == 180
 
 
-def test_db_pool_warning_calculation_with_gunicorn_cmd_args():
-    """Verify DB pool warning triggers when GUNICORN_CMD_ARGS is set."""
-    with patch.dict(os.environ, {"GUNICORN_CMD_ARGS": "--workers=2"}):
-        # Verify the condition that triggers the warning
-        assert os.environ.get("GUNICORN_CMD_ARGS") is not None
+def test_db_pool_warning_calculation_with_gunicorn_cmd_args_uses_auto_worker_formula():
+    """Verify DB pool warning uses the same auto worker formula as run-gunicorn.sh."""
+    with (
+        patch.dict(os.environ, {"GUNICORN_CMD_ARGS": "--workers=auto"}, clear=True),
+        patch("mcpgateway.main.multiprocessing.cpu_count", return_value=6),
+    ):
+        workers = int(os.environ.get("GUNICORN_WORKERS", str(min(2 * 6 + 1, 16))))
+        assert workers == 13
 
-        # Test default worker calculation
-        workers = int(os.environ.get("GUNICORN_WORKERS", "2"))
-        assert workers == 2
+
+def test_db_pool_warning_calculation_with_gunicorn_cmd_args_caps_auto_workers_at_16():
+    """Verify DB pool warning caps auto-detected workers the same way as run-gunicorn.sh."""
+    with (
+        patch.dict(os.environ, {"GUNICORN_CMD_ARGS": "--workers=auto"}, clear=True),
+        patch("mcpgateway.main.multiprocessing.cpu_count", return_value=12),
+    ):
+        workers = int(os.environ.get("GUNICORN_WORKERS", str(min(2 * 12 + 1, 16))))
+        assert workers == 16
 
 
 def test_db_pool_warning_not_triggered_without_gunicorn():
@@ -5595,12 +5603,13 @@ async def test_lifespan_logs_db_pool_warning_with_gunicorn_workers(monkeypatch, 
 
 @pytest.mark.asyncio
 async def test_lifespan_logs_db_pool_warning_with_gunicorn_cmd_args(monkeypatch, caplog):
-    """Verify DB pool warning is logged during lifespan startup when GUNICORN_CMD_ARGS is set."""
+    """Verify DB pool warning uses run-gunicorn auto worker detection when env var is absent."""
     # First-Party
     import mcpgateway.main as main_mod
 
-    # Set GUNICORN_CMD_ARGS environment variable (triggers warning even without GUNICORN_WORKERS)
-    monkeypatch.setenv("GUNICORN_CMD_ARGS", "--workers=2")
+    monkeypatch.setenv("GUNICORN_CMD_ARGS", "--workers=auto")
+    monkeypatch.delenv("GUNICORN_WORKERS", raising=False)
+    monkeypatch.setattr(main_mod.multiprocessing, "cpu_count", lambda: 6)
 
     # Mock settings
     monkeypatch.setattr(main_mod.settings, "db_pool_size", 100)
@@ -5618,7 +5627,6 @@ async def test_lifespan_logs_db_pool_warning_with_gunicorn_cmd_args(monkeypatch,
     monkeypatch.setattr(main_mod.settings, "llmchat_enabled", False)
     monkeypatch.setattr(main_mod.settings, "mcpgateway_a2a_enabled", False)
 
-    # Mock all required services and functions
     def make_service():
         service = MagicMock()
         service.initialize = AsyncMock()
@@ -5655,16 +5663,13 @@ async def test_lifespan_logs_db_pool_warning_with_gunicorn_cmd_args(monkeypatch,
 
     main_mod.app.state.update_http_pool_metrics = MagicMock()
 
-    # Run lifespan
     with caplog.at_level(logging.WARNING):
         async with main_mod.lifespan(main_mod.app):
             await asyncio.sleep(0)
 
-    # Verify the warning was logged with correct calculation
-    # Default workers=2, pool_size=100, max_overflow=20 -> total_pool=120, total_connections=240
     warning_found = any(
-        "DATABASE POOL: Running with 2 gunicorn workers" in record.message
-        and "240" in record.message
+        "DATABASE POOL: Running with 13 gunicorn workers" in record.message
+        and "1560" in record.message
         for record in caplog.records
     )
     assert warning_found, "Expected DB pool warning not found in logs"

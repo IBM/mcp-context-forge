@@ -35,6 +35,7 @@ from functools import lru_cache
 import html
 import json
 import logging
+import multiprocessing
 import os
 import re
 import signal
@@ -1630,7 +1631,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         # Warn about per-worker database connection pool multiplication
         if os.environ.get("GUNICORN_CMD_ARGS") or os.environ.get("GUNICORN_WORKERS"):
-            workers = int(os.environ.get("GUNICORN_WORKERS", "2"))
+            cpu_count = multiprocessing.cpu_count()
+            default_workers = min(2 * cpu_count + 1, 16)
+            workers = int(os.environ.get("GUNICORN_WORKERS", str(default_workers)))
             total_pool = settings.db_pool_size + settings.db_max_overflow
             total_connections = workers * total_pool
             logger.warning(
