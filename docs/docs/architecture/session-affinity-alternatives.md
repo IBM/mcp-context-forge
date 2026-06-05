@@ -316,7 +316,7 @@ Externalise the session state into Redis so any worker can serve any downstream 
 
 | Approach | Latency / forward (est.) | Cross-container | Operational delta | Code change | Pub/sub still needed |
 |---|---|---|---|---|---|
-| **1. Sticky LB** | 0 (no forward) | n/a | nginx config + 1-worker-per-container | small | no |
+| **1. Sticky LB** | 0 (no forward); 352 RPS / p99 530 ms measured on a 3-pod sticky-on-`Authorization` prototype | n/a | nginx config + 1-worker-per-container | small | no |
 | **2. Coordinator-worker** | ~10 μs UDS to coordinator | yes | new process type, lifecycle, monitoring | very large | no |
 | **3a. Redis pub/sub TCP** | ~1–2 ms | yes | none | bounded (honour the Approach-3 invariants) | yes |
 | **3b. Redis pub/sub UDS** | ~0.8–1.7 ms (15–25% faster) | only if co-located | shared volume, config | tiny | yes |
@@ -342,7 +342,7 @@ The four invariants are listed in detail under [Approach 3 — Invariants](#inva
 
 ### Why this approach over the alternatives
 
-- **No architectural delta.** The Redis directory, per-worker channels, and dead-worker reclaim are already in place. Approach 1 (sticky LB) requires both LB-layer and deployment-shape changes plus an answer to the bootstrap-routing question. Approach 2 (coordinator-worker) is a significant refactor that introduces a new process type.
+- **No architectural delta.** The Redis directory, per-worker channels, and dead-worker reclaim are already in place. Approach 1 (sticky LB) requires LB-layer and deployment-shape changes plus the user-pinning trade-offs of routing on `Authorization` (heavy-user concentration, session loss on token refresh); the bootstrap-routing question now has an empirically validated answer (see the [follow-up experiment](#approach-1--sticky-load-balancing-on-mcp-session-id)). Approach 2 (coordinator-worker) is a significant refactor that introduces a new process type.
 - **No new operational burden.** Redis is already in the deployment; no new dependencies, no new process types to monitor and version.
 - **Fastest path to a working solution.** Bounded to honouring the four invariants — the surface is small and the validation criteria are explicit and verifiable.
 - **Doesn't foreclose the long-term options.** Picking 3a now leaves room to evolve toward 3c (worker-to-worker UDS) when perf demands grow, or pivot to Approach 1 / Approach 2 if the deployment shape or requirements change.
@@ -360,7 +360,7 @@ These are transport-only upgrades — the surrounding architecture stays the sam
 
 ### When to revisit and switch approach
 
-- **Pivot to Approach 1 (sticky LB)** if the deployment moves to one-worker-per-container. With no intra-container scatter, sticky LB at nginx is strictly simpler than any forwarding mechanism.
+- **Pivot to Approach 1 (sticky LB)** if the deployment moves to one-worker-per-container. With no intra-container scatter, sticky LB at nginx is strictly simpler than any forwarding mechanism. This pivot is empirically de-risked: [`experiment/sticky-lb-auth-hash`](https://github.com/IBM/mcp-context-forge/tree/experiment/sticky-lb-auth-hash) demonstrated end-to-end correctness and **117 RPS per worker vs. 5.5 RPS per worker** for the current affinity baseline (#4987) — production rollout still needs a longer soak, real-hardware run, and the per-`$http_authorization` rate-limit recommended in the experiment write-up.
 - **Pivot to Approach 2 (coordinator-worker)** if cluster-wide session migration becomes a real requirement (auto-scale without dropping sessions, blue/green deploys preserving session state, multi-region failover). At that point the structural refactor is worth the cost.
 - **Approach 4 (Redis-resident sessions) stays out of scope** as long as ContextForge is a federating gateway over arbitrary third-party upstreams. It would only make sense if the gateway's role narrowed to stateless tool execution AND every supported upstream guaranteed cross-connection session resumption. Neither holds today.
 
