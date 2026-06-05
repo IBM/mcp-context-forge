@@ -177,6 +177,35 @@ async def test_dispatch_end_trace_failure_logs_warning(mock_request, mock_call_n
     ):
         response = await middleware.dispatch(mock_request, mock_call_next)
         assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_dispatch_trace_setup_failure_with_session_close_failure(mock_request, mock_call_next):
+    """Test that trace setup failure with session close failure is handled gracefully.
+
+    This test covers lines 213-214 in observability_middleware.py where the session
+    close operation in the exception handler also fails.
+    """
+    middleware = ObservabilityMiddleware(app=None, enabled=True)
+
+    mock_session = MagicMock()
+    # Make session close fail
+    mock_session.close.side_effect = Exception("close failed")
+
+    with (
+        patch("mcpgateway.db.SessionLocal", return_value=mock_session),
+        patch.object(middleware.service, "start_trace", side_effect=Exception("trace setup failed")),
+        patch("mcpgateway.middleware.observability_middleware.logger.warning") as mock_warning,
+        patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False),
+    ):
+        # Should continue without tracing despite both failures
+        response = await middleware.dispatch(mock_request, mock_call_next)
+        assert response.status_code == 200
+        # Verify warning was logged for trace setup failure
+        mock_warning.assert_called_once()
+        assert "Failed to setup observability trace" in str(mock_warning.call_args)
+        # Session close failure should be silently caught (lines 213-214)
+        mock_session.close.assert_called_once()
         mock_warning.assert_called()
 
 
