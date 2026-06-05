@@ -5584,6 +5584,9 @@ async def test_lifespan_logs_db_pool_warning_with_gunicorn_workers(monkeypatch, 
     monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", AsyncMock())
     monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", AsyncMock())
 
+    # Mock bootstrap_db to avoid running migrations
+    monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
+
     main_mod.app.state.update_http_pool_metrics = MagicMock()
 
     # Run lifespan
@@ -5660,6 +5663,9 @@ async def test_lifespan_logs_db_pool_warning_with_gunicorn_cmd_args(monkeypatch,
     monkeypatch.setattr(main_mod, "refresh_slugs_on_startup", MagicMock())
     monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", AsyncMock())
     monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", AsyncMock())
+
+    # Mock bootstrap_db to avoid running migrations
+    monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
 
     main_mod.app.state.update_http_pool_metrics = MagicMock()
 
