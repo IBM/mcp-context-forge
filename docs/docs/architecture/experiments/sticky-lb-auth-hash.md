@@ -63,8 +63,8 @@ Strict monotonic 1..25, `get_value` returned 25, single upstream session
 held by one pod throughout.
 
 ```
-token → pod=555afb3636eb
-initialize → sid=3f6aeef8...
+token → pod=pod-X
+initialize → sid=<sid>
 notifications/initialized: 202
 25 increments: 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25
 get-value: 25
@@ -75,22 +75,22 @@ get-value: 25
 Two distinct tokens, parallel counters.
 
 ```
-[A] pod=555afb3636eb  increments: 1 2 3 4 5 6 7 8 9 10  final: 10
-[B] pod=0a265444cab5  increments: 1 2 3 4 5 6 7 8 9 10  final: 10
+[A] pod=pod-X  increments: 1 2 3 4 5 6 7 8 9 10  final: 10
+[B] pod=pod-Y  increments: 1 2 3 4 5 6 7 8 9 10  final: 10
 ```
 
-Different tokens hashed to different pods; sessions independent; no
-cross-contamination.
+Different tokens hashed to different pods (pod-X ≠ pod-Y); sessions
+independent; no cross-contamination.
 
 ### 3. Same-user multi-session
 
 One token, three parallel sessions.
 
 ```
-token → pod=555afb3636eb (gateway-3)
-[S1] sid=d36172cd... increments: 1..10  final: 10
-[S2] sid=4a16c0c7... increments: 1..10  final: 10
-[S3] sid=b24a2a68... increments: 1..10  final: 10
+token → pod=pod-X (gateway-3)
+[S1] sid=<sid-1>  increments: 1..10  final: 10
+[S2] sid=<sid-2>  increments: 1..10  final: 10
+[S3] sid=<sid-3>  increments: 1..10  final: 10
 ```
 
 All three sessions pinned to gateway-3 as expected (user-pinning by
@@ -103,10 +103,10 @@ Stopped `gateway-3` (the pod the test token hashed to), observed
 behaviour on the same token.
 
 ```
-before: pod=555afb3636eb (gateway-3),  sid bound, increments OK
+before: pod=pod-X (gateway-3),  sid bound, increments OK
 docker compose stop gateway-3
 old sid request: connection error
-token → pod=22d94c05449e (gateway-2)   ← consistent hash skipped dead pod
+token → pod=pod-Y (gateway-2)   ← consistent hash skipped dead pod
 fresh initialize on gateway-2: new sid, increments 1..5 on fresh counter
 docker compose start gateway-3
 ```
