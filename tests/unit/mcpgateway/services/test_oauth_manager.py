@@ -1511,14 +1511,14 @@ async def test_initiate_authorization_code_flow_with_popup_false(oauth_manager):
         "authorization_url": "https://auth.example.com/authorize",
         "redirect_uri": "https://app.example.com/callback",
     }
-    
+
     result = await oauth_manager.initiate_authorization_code_flow(
         "test-gateway",
         credentials,
         app_user_email="user@test.com",
         popup=False
     )
-    
+
     assert "authorization_url" in result
     assert "state" in result
     assert not result["state"].startswith("popup.")
@@ -1532,14 +1532,14 @@ async def test_initiate_authorization_code_flow_with_popup_true(oauth_manager):
         "authorization_url": "https://auth.example.com/authorize",
         "redirect_uri": "https://app.example.com/callback",
     }
-    
+
     result = await oauth_manager.initiate_authorization_code_flow(
         "test-gateway",
         credentials,
         app_user_email="user@test.com",
         popup=True
     )
-    
+
     assert "authorization_url" in result
     assert "state" in result
     assert result["state"].startswith("popup.")
