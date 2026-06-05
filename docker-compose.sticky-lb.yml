@@ -1,0 +1,117 @@
+# docker-compose.sticky-lb.yml
+#
+# Experiment overlay for Approach 1 (sticky load balancing on Mcp-Session-Id)
+# from docs/docs/architecture/session-affinity-alternatives.md.
+#
+# Idea: replace the single replicated `gateway` service (1 service × N replicas
+# × K workers) with N discrete services (gateway-1..gateway-N), each running
+# GUNICORN_WORKERS=1. nginx then routes by hashing on the Mcp-Session-Id header
+# so the same session id always lands on the same backend, which is also the
+# same worker. The in-process affinity layer is disabled via
+# MCPGATEWAY_SESSION_AFFINITY_ENABLED=false.
+#
+# Usage:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.sticky-lb.yml \
+#       make testing-up
+#
+# Tear-down:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.sticky-lb.yml \
+#       make testing-down
+#
+# Reverting the experiment is `git checkout` on this file and the matching
+# infra/nginx/nginx-sticky-lb.conf — nothing in the base stack is edited.
+
+services:
+  # Disable the replicated gateway service. nginx in this overlay points at
+  # gateway-1..gateway-3 instead. Setting replicas: 0 keeps the service
+  # definition intact so `extends` below can still inherit from it.
+  gateway:
+    deploy:
+      replicas: 0
+
+  gateway-1:
+    extends:
+      file: docker-compose.yml
+      service: gateway
+    environment:
+      - GUNICORN_WORKERS=1
+      - MCPGATEWAY_SESSION_AFFINITY_ENABLED=false
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      migration:
+        condition: service_completed_successfully
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '${STICKY_LB_CPU_LIMIT:-2}'
+          memory: ${STICKY_LB_MEM_LIMIT:-1G}
+        reservations:
+          cpus: '${STICKY_LB_CPU_RESERVATION:-1}'
+          memory: ${STICKY_LB_MEM_RESERVATION:-512M}
+
+  gateway-2:
+    extends:
+      file: docker-compose.yml
+      service: gateway
+    environment:
+      - GUNICORN_WORKERS=1
+      - MCPGATEWAY_SESSION_AFFINITY_ENABLED=false
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      migration:
+        condition: service_completed_successfully
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '${STICKY_LB_CPU_LIMIT:-2}'
+          memory: ${STICKY_LB_MEM_LIMIT:-1G}
+        reservations:
+          cpus: '${STICKY_LB_CPU_RESERVATION:-1}'
+          memory: ${STICKY_LB_MEM_RESERVATION:-512M}
+
+  gateway-3:
+    extends:
+      file: docker-compose.yml
+      service: gateway
+    environment:
+      - GUNICORN_WORKERS=1
+      - MCPGATEWAY_SESSION_AFFINITY_ENABLED=false
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      migration:
+        condition: service_completed_successfully
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '${STICKY_LB_CPU_LIMIT:-2}'
+          memory: ${STICKY_LB_MEM_LIMIT:-1G}
+        reservations:
+          cpus: '${STICKY_LB_CPU_RESERVATION:-1}'
+          memory: ${STICKY_LB_MEM_RESERVATION:-512M}
+
+  # Mount the sticky-LB nginx config and depend on the discrete backends.
+  # Compose merges `volumes` lists (so the base `nginx.conf` mount stays) but
+  # overlapping container paths take the override. Using a path-relative
+  # mount keeps Docker DNS resolution working the same way.
+  nginx:
+    volumes:
+      - ./infra/nginx/nginx-sticky-lb.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      gateway-1:
+        condition: service_healthy
+      gateway-2:
+        condition: service_healthy
+      gateway-3:
+        condition: service_healthy
