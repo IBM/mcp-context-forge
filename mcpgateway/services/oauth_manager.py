@@ -636,23 +636,44 @@ class OAuthManager:
         token_url = runtime_credentials["token_url"]
         redirect_uri = runtime_credentials["redirect_uri"]
 
-        # Prepare token exchange data
+        # Check if provider requires Basic Auth for client authentication (RFC 6749 Section 2.3.1)
+        # Default to form-based auth for backward compatibility
+        auth_method = runtime_credentials.get("token_endpoint_auth_method", "client_secret_post")
+
+        # Prepare token exchange data and headers
         token_data = {
             "grant_type": "authorization_code",
             "code": code,
             "redirect_uri": redirect_uri,
-            "client_id": client_id,
         }
+        headers = {}
 
-        # Only include client_secret if present (public clients don't have secrets)
-        if client_secret:
-            token_data["client_secret"] = client_secret
+        if auth_method == "none":
+            # RFC 7591 §2: Public client with no authentication
+            token_data["client_id"] = client_id
+            logger.debug("Using no authentication for token endpoint (public client)")
+        elif auth_method == "client_secret_basic" and client_secret:
+            # RFC 6749 §2.3.1: HTTP Basic Authentication
+            headers["Authorization"] = self._build_basic_auth_header(client_id, client_secret)
+            logger.debug("Using HTTP Basic Auth for token endpoint authentication")
+        elif auth_method == "client_secret_basic" and not client_secret:
+            # Public PKCE clients can't use Basic Auth (no secret to encode)
+            logger.warning("Basic Auth requested but client_secret is missing - falling back to POST body mode (public client)")
+            token_data["client_id"] = client_id
+            logger.debug("Using POST body for token endpoint authentication")
+        else:
+            # Default: client credentials in POST body (client_secret_post)
+            token_data["client_id"] = client_id
+            # Only include client_secret if present (public clients don't have secrets)
+            if client_secret:
+                token_data["client_secret"] = client_secret
+            logger.debug("Using POST body for token endpoint authentication")
 
         # Exchange code for token with retries
         for attempt in range(self.max_retries):
             try:
                 client = await self._get_client()
-                response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
+                response = await client.post(token_url, data=token_data, headers=headers, timeout=self.request_timeout)
                 response.raise_for_status()
 
                 token_response = self._parse_token_response(response)
