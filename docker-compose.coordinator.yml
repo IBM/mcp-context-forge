@@ -1,0 +1,61 @@
+# docker-compose.coordinator.yml
+#
+# Experiment overlay for Approach 2 (Coordinator-Worker) from the design doc
+# at docs/docs/architecture/experiments/coordinator-worker-design.md.
+#
+# Milestone A scope: bring up one coordinator process per replica with a
+# shared UDS socket volume mounted into the gateway service. Worker-side
+# wiring (env var + dispatch path) lands in Milestone B; until then this
+# overlay just proves the coordinator can be deployed alongside the
+# existing stack without disturbing the legacy code path.
+#
+# Usage:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.coordinator.yml \
+#       make testing-up
+#
+# Tear-down:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.coordinator.yml \
+#       make testing-down
+
+services:
+  # One coordinator process per replica. Inherits the gateway image and env
+  # so the same Python interpreter, deps, and settings are available; only
+  # the command changes (we run mcpgateway.coordinator instead of the
+  # FastAPI app via gunicorn).
+  coordinator:
+    extends:
+      file: docker-compose.yml
+      service: gateway
+    command: ["python", "-m", "mcpgateway.coordinator"]
+    environment:
+      - COORDINATOR_UDS_PATH=/sockets/coordinator.sock
+      - COORDINATOR_LOG_LEVEL=INFO
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      migration:
+        condition: service_completed_successfully
+    volumes:
+      - coordinator-socket:/sockets
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '${COORDINATOR_CPU_LIMIT:-2}'
+          memory: ${COORDINATOR_MEM_LIMIT:-1G}
+        reservations:
+          cpus: '${COORDINATOR_CPU_RESERVATION:-1}'
+          memory: ${COORDINATOR_MEM_RESERVATION:-512M}
+
+  # Workers mount the same socket volume read-only. In Milestone A the
+  # workers still use the legacy in-process dispatch path; the volume mount
+  # is in place so Milestone B only needs to set COORDINATOR_UDS_PATH on
+  # the worker side to start exercising the IPC.
+  gateway:
+    volumes:
+      - coordinator-socket:/sockets:ro
+
+volumes:
+  coordinator-socket:
