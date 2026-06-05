@@ -41,6 +41,7 @@ from starlette.types import Scope
 # Import module under test - we only need the specific classes / functions
 # ---------------------------------------------------------------------------
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
+from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
 from mcpgateway.transports import streamablehttp_transport as tr  # noqa: E402
 from mcpgateway.transports.streamablehttp_transport import (
     _MCPGATEWAY_CONTEXT_KEY,
@@ -1118,6 +1119,39 @@ async def test_list_tools_no_server_id(monkeypatch):
     assert result[0].name == "t"
     assert getattr(result[0], "title", None) == "Global Tool Title"
     assert result[0].description == "desc"
+
+
+@pytest.mark.asyncio
+async def test_list_tools_projects_mcp_apps_meta(monkeypatch):
+    """Streamable cache-mode tools/list should project stored MCP Apps metadata."""
+    mock_db = MagicMock()
+    mock_tool = MagicMock()
+    mock_tool.name = "open_widget"
+    mock_tool.title = "Open Widget"
+    mock_tool.description = "Open widget"
+    mock_tool.input_schema = {"type": "object"}
+    mock_tool.output_schema = None
+    mock_tool.annotations = {}
+    mock_tool.extension_metadata = {MCP_UI_EXTENSION: {"resourceUri": "ui://widgets/example", "audience": ["model"]}}
+    app_only_tool = MagicMock()
+    app_only_tool.name = "widget_helper"
+    app_only_tool.extension_metadata = {MCP_UI_EXTENSION: {"audience": ["app"]}}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "list_tools", AsyncMock(return_value=([mock_tool, app_only_tool], None)))
+
+    token = server_id_var.set(None)
+    result = await list_tools()
+    server_id_var.reset(token)
+
+    payload = result[0].model_dump(by_alias=True, exclude_none=True)
+    assert [tool.name for tool in result] == ["open_widget"]
+    assert payload["_meta"]["ui"]["resourceUri"] == "ui://widgets/example"
 
 
 @pytest.mark.asyncio

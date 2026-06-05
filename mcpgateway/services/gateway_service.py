@@ -102,6 +102,7 @@ from mcpgateway.services.encryption_service import get_encryption_service, prote
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout, get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.mcp_apps import merge_mcp_protocol_meta, optional_extension_metadata
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.session_affinity import register_gateway_capabilities_for_notifications
 from mcpgateway.services.structured_logger import get_structured_logger
@@ -5169,6 +5170,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             headers=tool.headers,
             input_schema=tool.input_schema,
             annotations=tool.annotations,
+            extension_metadata=optional_extension_metadata(getattr(tool, "extension_metadata", None)),
             jsonpath_filter=tool.jsonpath_filter,
             auth_type=gateway.auth_type,
             auth_value=encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value,
@@ -5243,6 +5245,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         or existing_tool.input_schema != tool.input_schema
                         or existing_tool.output_schema != tool.output_schema
                         or existing_tool.jsonpath_filter != tool.jsonpath_filter
+                        or optional_extension_metadata(getattr(existing_tool, "extension_metadata", None)) != optional_extension_metadata(getattr(tool, "extension_metadata", None))
                     )
 
                     # Check authentication and visibility changes.
@@ -5289,6 +5292,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_tool.input_schema = tool.input_schema
                         existing_tool.output_schema = tool.output_schema
                         existing_tool.jsonpath_filter = tool.jsonpath_filter
+                        existing_tool.extension_metadata = optional_extension_metadata(getattr(tool, "extension_metadata", None))
                         existing_tool.title = _resolve_tool_title(tool)
                         existing_tool.auth_type = gateway.auth_type
                         existing_tool.auth_value = encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value
@@ -5359,6 +5363,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         or existing_resource.description != resource.description
                         or existing_resource.mime_type != resource.mime_type
                         or existing_resource.uri_template != resource.uri_template
+                        or optional_extension_metadata(getattr(existing_resource, "extension_metadata", None)) != optional_extension_metadata(getattr(resource, "extension_metadata", None))
                         or (update_visibility and upstream_visibility is not None and existing_resource.visibility != upstream_visibility)
                         or existing_resource.title != getattr(resource, "title", None)
                     ):
@@ -5369,6 +5374,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_resource.description = resource.description
                         existing_resource.mime_type = resource.mime_type
                         existing_resource.uri_template = resource.uri_template
+                        existing_resource.extension_metadata = optional_extension_metadata(getattr(resource, "extension_metadata", None))
                         existing_resource.title = getattr(resource, "title", None)
                         if update_visibility and upstream_visibility is not None:
                             existing_resource.visibility = upstream_visibility
@@ -5382,6 +5388,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         description=resource.description,
                         mime_type=resource.mime_type,
                         uri_template=resource.uri_template,
+                        extension_metadata=optional_extension_metadata(getattr(resource, "extension_metadata", None)),
                         gateway_id=gateway.id,
                         created_by="system",
                         created_via=created_via,
@@ -6116,6 +6123,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             tool_name = tool_dict.get("name", f"unknown_tool_{i}")
             try:
                 logger.debug("Validating tool: %s", tool_name)
+                merge_mcp_protocol_meta(tool_dict)
                 validated_tool = ToolCreate.model_validate(tool_dict)
                 valid_tools.append(validated_tool)
                 logger.debug("Tool '%s' validated successfully", tool_name)
@@ -6198,6 +6206,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             raw_resources = response.resources
                             for resource in raw_resources:
                                 resource_data = resource.model_dump(by_alias=True, exclude_none=True)
+                                merge_mcp_protocol_meta(resource_data)
                                 # Convert AnyUrl to string if present
                                 if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
                                     resource_data["uri"] = str(resource_data["uri"])
@@ -6216,6 +6225,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                             mime_type=resource_data.get("mimeType"),
                                             uri_template=resource_data.get("uriTemplate") or None,
                                             content="",
+                                            extension_metadata=resource_data.get("extensionMetadata"),
                                         )
                                     )
                             logger.info("Fetched %s resources from gateway", len(resources))
@@ -6229,6 +6239,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             resource_templates = []
                             for resource_template in raw_resources_templates:
                                 resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
+                                merge_mcp_protocol_meta(resource_template_data)
 
                                 if "uriTemplate" in resource_template_data:  # and hasattr(resource_template_data["uriTemplate"], "unicode_string"):
                                     resource_template_data["uri_template"] = str(resource_template_data["uriTemplate"])
@@ -6375,6 +6386,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             raw_resources = response.resources
                             for resource in raw_resources:
                                 resource_data = resource.model_dump(by_alias=True, exclude_none=True)
+                                merge_mcp_protocol_meta(resource_data)
                                 # Convert AnyUrl to string if present
                                 if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
                                     resource_data["uri"] = str(resource_data["uri"])
@@ -6393,6 +6405,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                             mime_type=resource_data.get("mimeType"),
                                             uri_template=resource_data.get("uriTemplate") or None,
                                             content="",
+                                            extension_metadata=resource_data.get("extensionMetadata"),
                                         )
                                     )
                             logger.info("Fetched %s resources from gateway", len(resources))
@@ -6406,6 +6419,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             resource_templates = []
                             for resource_template in raw_resources_templates:
                                 resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
+                                merge_mcp_protocol_meta(resource_template_data)
 
                                 if "uriTemplate" in resource_template_data:  # and hasattr(resource_template_data["uriTemplate"], "unicode_string"):
                                     resource_template_data["uri_template"] = str(resource_template_data["uriTemplate"])
@@ -6544,6 +6558,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             raw_resources = response.resources
                             for resource in raw_resources:
                                 resource_data = resource.model_dump(by_alias=True, exclude_none=True)
+                                merge_mcp_protocol_meta(resource_data)
                                 # Convert AnyUrl to string if present
                                 if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
                                     resource_data["uri"] = str(resource_data["uri"])
@@ -6562,6 +6577,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                             mime_type=resource_data.get("mimeType"),
                                             uri_template=resource_data.get("uriTemplate") or None,
                                             content="",
+                                            extension_metadata=resource_data.get("extensionMetadata"),
                                         )
                                     )
                             logger.info("Fetched %s resources from gateway", len(resources))
@@ -6575,6 +6591,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             resource_templates = []
                             for resource_template in raw_resources_templates:
                                 resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
+                                merge_mcp_protocol_meta(resource_template_data)
 
                                 if "uriTemplate" in resource_template_data:  # and hasattr(resource_template_data["uriTemplate"], "unicode_string"):
                                     resource_template_data["uri_template"] = str(resource_template_data["uriTemplate"])
