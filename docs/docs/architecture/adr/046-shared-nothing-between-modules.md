@@ -38,7 +38,7 @@ modules remain isolated from one another and the core performs the bridging.
 - Prevents language-specific coupling between modules (Rust MCP module doesn't import Python A2A code).
 - Forces clean API boundaries — all cross-protocol contracts go through the Core SPI.
 - Enables independent deployment and scaling of modules.
-- Modules can be replaced independently (e.g., Go A2A module replaces Python A2A module) without affecting other modules.
+- Modules can be replaced independently (e.g., Rust A2A module replaces Python A2A module) without affecting other modules.
 
 ### Negative
 

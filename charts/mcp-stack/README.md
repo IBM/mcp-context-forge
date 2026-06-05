@@ -38,7 +38,7 @@ When you enable testing registration jobs (`testing.fastTime.register.enabled` o
 `testing.fastTest.register.enabled`), those jobs create gateways that point to
 in-cluster service URLs:
 
-- `fast-time`: `http://<release>-mcp-fast-time-server:80/http`
+- `fast-time`: `http://<release>-mcp-fast-time-server:80/mcp`
 - `fast-test`: `http://<release>-fast-test-server:8880/mcp`
 
 Those destinations are private cluster addresses and will be blocked under strict SSRF defaults.
@@ -1212,15 +1212,13 @@ When `RATELIMITER_REDIS_URL` is not set during start time, the gateway automatic
 | minio.resources.requests.memory | string | `"256Mi"` |  |
 | mcpFastTimeServer.enabled | bool | `true` |  |
 | mcpFastTimeServer.replicaCount | int | `2` |  |
-| mcpFastTimeServer.image.repository | string | `"ghcr.io/ibm/fast-time-server"` |  |
+| mcpFastTimeServer.image.repository | string | `"mcpgateway/fast-time-server"` |  |
 | mcpFastTimeServer.image.tag | string | `"latest"` |  |
 | mcpFastTimeServer.image.pullPolicy | string | `"IfNotPresent"` |  |
 | mcpFastTimeServer.port | int | `8080` |  |
 | mcpFastTimeServer.command | list | `[]` |  |
-| mcpFastTimeServer.args[0] | string | `"-transport=dual"` |  |
-| mcpFastTimeServer.args[1] | string | `"-listen=0.0.0.0"` |  |
-| mcpFastTimeServer.args[2] | string | `"-port=8080"` |  |
-| mcpFastTimeServer.args[3] | string | `"-log-level=info"` |  |
+| mcpFastTimeServer.env.BIND_ADDRESS | string | `"0.0.0.0:8080"` |  |
+| mcpFastTimeServer.env.RUST_LOG | string | `"info"` |  |
 | mcpFastTimeServer.ingress.enabled | bool | `true` |  |
 | mcpFastTimeServer.ingress.className | string | `"nginx"` |  |
 | mcpFastTimeServer.ingress.host | string | `"gateway.local"` |  |
@@ -1246,10 +1244,10 @@ When `RATELIMITER_REDIS_URL` is not set during start time, the gateway automatic
 | mcpFastTimeServer.probes.liveness.timeoutSeconds | int | `2` |  |
 | mcpFastTimeServer.probes.liveness.successThreshold | int | `1` |  |
 | mcpFastTimeServer.probes.liveness.failureThreshold | int | `3` |  |
-| mcpFastTimeServer.resources.limits.cpu | string | `"50m"` |  |
-| mcpFastTimeServer.resources.limits.memory | string | `"64Mi"` |  |
-| mcpFastTimeServer.resources.requests.cpu | string | `"25m"` |  |
-| mcpFastTimeServer.resources.requests.memory | string | `"10Mi"` |  |
+| mcpFastTimeServer.resources.limits.cpu | string | `"2"` |  |
+| mcpFastTimeServer.resources.limits.memory | string | `"1Gi"` |  |
+| mcpFastTimeServer.resources.requests.cpu | string | `"500m"` |  |
+| mcpFastTimeServer.resources.requests.memory | string | `"128Mi"` |  |
 | nginxProxy.enabled | bool | `false` |  |
 | nginxProxy.image.repository | string | `"mcpgateway/nginx-cache"` |  |
 | nginxProxy.image.tag | string | `"latest"` |  |
@@ -1427,7 +1425,7 @@ When `RATELIMITER_REDIS_URL` is not set during start time, the gateway automatic
 | testing.registration.jwt.secret | string | `"my-test-key-but-now-longer-than-32-bytes"` |  |
 | testing.fastTime.register.enabled | bool | `false` |  |
 | testing.fastTime.register.gatewayName | string | `"fast_time"` |  |
-| testing.fastTime.register.gatewayPath | string | `"/http"` |  |
+| testing.fastTime.register.gatewayPath | string | `"/mcp"` |  |
 | testing.fastTime.register.transport | string | `"STREAMABLEHTTP"` |  |
 | testing.fastTime.register.createVirtualServer | bool | `true` |  |
 | testing.fastTime.register.virtualServerId | string | `"9779b6698cbd4b4995ee04a4fab38737"` |  |

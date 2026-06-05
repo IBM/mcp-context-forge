@@ -231,7 +231,7 @@ Aligned `values.yaml` with `config.py` secure defaults and tightened for product
 
 ### Added
 * **Horizontal Pod Autoscaler** - Full HPA support for mcpgateway with CPU and memory metrics
-* **Fast Time Server** - Optional high-performance Go-based time server deployment
+* **Fast Time Server** - Optional high-performance Rust time server deployment
 * **Advanced ingress configuration** - Support for multiple ingress controllers and path-based routing
 * **Migration job** - Automated database migration job using Alembic with proper startup dependencies
 * **Comprehensive health checks** - Detailed readiness and liveness probes for all components

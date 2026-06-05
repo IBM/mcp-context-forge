@@ -93,7 +93,7 @@ Our security pipeline operates at multiple levels:
 
 **Pre-commit Security Gates**: Before any code reaches our repository, it must pass through rigorous pre-commit hooks that include multiple security scanners like Bandit for common security issues, Semgrep for semantic pattern matching, Dodgy for hardcoded secrets detection, and detect-private-key for catching committed private keys, along with type checking and code quality enforcement. Pre-commit hooks also enforce **AI content integrity** (preventing AI-generated artifacts such as hallucinated citations, stock phrases, and malformed code fences) and **Unicode safety** (fixing smart quotes, ligatures, and forbidding BiDi control characters to prevent [trojan-source attacks](https://trojansource.codes/)). Developers can run `make security-all` or `make pre-commit bandit semgrep dodgy lint` locally to execute these same security checks before pushing code.
 
-**Continuous Integration Security**: Our GitHub Actions workflows implement automated security scanning on every pull request and commit, with **40+ security scans** triggering automatically on every PR, including Semgrep for semantic analysis, detect-secrets for secret detection with baseline allowlist, comprehensive dependency vulnerability scanning with pip-audit, npm audit, and cargo audit, SBOM generation, and Hadolint-style linting where configured, IaC scanning with Checkov and kube-linter, GitHub Actions security linting with Zizmor, and multi-language static analysis across Python, Go, Rust, Shell, and JavaScript.
+**Continuous Integration Security**: Our GitHub Actions workflows implement automated security scanning on every pull request and commit, with **40+ security scans** triggering automatically on every PR, including Semgrep for semantic analysis, detect-secrets for secret detection with baseline allowlist, comprehensive dependency vulnerability scanning with pip-audit, npm audit, and cargo audit, SBOM generation, and Hadolint-style linting where configured, IaC scanning with Checkov and kube-linter, GitHub Actions security linting with Zizmor, and multi-language static analysis across Python, Rust, Shell, and JavaScript.
 
 **Code Review Security**: All code changes undergo mandatory peer review with security-focused review criteria, ensuring that security considerations are evaluated by human experts in addition to automated tooling.
 
@@ -109,11 +109,10 @@ Our security toolchain includes **40+ different security and quality tools**, ea
 
 - **Static Analysis Security Testing (SAST)**: CodeQL, Bandit, Semgrep, DevSkim (Microsoft security anti-patterns), and multiple type checkers
 - **Secret Detection**: detect-secrets with baseline allowlist for tracked-file scanning and pre-commit enforcement, Dodgy for hardcoded secrets in code, detect-private-key for committed private keys, and Snyk custom rules for hardcoded JWT secrets and credentials (CWE-798)
-- **Dependency Vulnerability Scanning**: OSV-Scanner, pip-audit, npm audit, cargo audit (Rust), govulncheck (Go), and GitHub dependency review with license policy enforcement
+- **Dependency Vulnerability Scanning**: OSV-Scanner, pip-audit, npm audit, cargo audit (Rust), and GitHub dependency review with license policy enforcement
 - **Container Security**: Dockerfile linting, SBOM generation, and Dockle where used
 - **Infrastructure as Code (IaC) Security**: Checkov for IaC security scanning (Dockerfiles, Helm charts, docker-compose), kube-linter for Kubernetes/Helm manifest best practices
 - **CI/CD Pipeline Security**: Zizmor for GitHub Actions workflow security linting, actionlint for workflow syntax validation
-- **Go Security**: gosec for Go static security analysis, golangci-lint with security rules, govulncheck for Go vulnerability database checking
 - **Rust Security**: cargo audit for Rust dependency vulnerability scanning, cargo clippy for Rust linting
 - **Shell Security**: shellcheck for shell script security and correctness linting
 - **Web & Frontend Security**: ESLint, HTMLHint, Stylelint, retire.js for known-vulnerable JS library detection, nodejsscan for JavaScript/Node.js security vulnerability scanning, npm audit for package vulnerabilities
@@ -161,13 +160,11 @@ We believe that security should enhance rather than hinder the development proce
 - `make linting-security-kube-linter` - Kubernetes/Helm manifest best-practice linting
 - `make linting-workflow-zizmor` - GitHub Actions workflow security linting
 - `make linting-workflow-actionlint` - GitHub Actions workflow syntax validation
-- `make linting-go-gosec` - Go security static analysis
-- `make linting-go-govulncheck` - Go vulnerability database checking
 - `make shell-lint` - Shell script linting with shellcheck
 
 **Local-First Security**: Developers are encouraged to run `make pre-commit` and `make test` before every commit, ensuring that security issues are caught and resolved locally before code reaches the repository. This "shift-left" approach means security problems are identified early in the development process, reducing the time and cost of remediation.
 
-**CI/CD Security Enforcement**: Even with local testing, our CI/CD pipeline runs the complete security suite on every pull request, with 40+ security scans executed automatically across Python, Go, Rust, Shell, JavaScript, IaC, and container targets. This dual-layer approach ensures no security issues slip through, while the local tooling provides rapid feedback to developers.
+**CI/CD Security Enforcement**: Even with local testing, our CI/CD pipeline runs the complete security suite on every pull request, with 40+ security scans executed automatically across Python, Rust, Shell, JavaScript, IaC, and container targets. This dual-layer approach ensures no security issues slip through, while the local tooling provides rapid feedback to developers.
 
 This approach ensures that security is integrated into daily development workflows rather than being an afterthought, while maintaining the aggressive response timelines our users expect.
 
@@ -569,18 +566,13 @@ flowchart TD
     IA --> IA3[Zizmor - Actions Security]
     IA --> IA4[actionlint - Actions Validation]
 
-    ML --> ML1[Go Security]
-    ML --> ML2[Rust Security]
-    ML --> ML3[Shell Security]
+    ML --> ML1[Rust Security]
+    ML --> ML2[Shell Security]
 
-    ML1 --> ML1A[gosec - Static Analysis]
-    ML1 --> ML1B[golangci-lint - Linting]
-    ML1 --> ML1C[govulncheck - Vuln DB]
+    ML1 --> ML1A[cargo audit - Dependency Vulns]
+    ML1 --> ML1B[cargo clippy - Linting]
 
-    ML2 --> ML2A[cargo audit - Dependency Vulns]
-    ML2 --> ML2B[cargo clippy - Linting]
-
-    ML3 --> ML3A[shellcheck - Script Analysis]
+    ML2 --> ML2A[shellcheck - Script Analysis]
 
     Q --> Q1[Multiple Linters]
     Q --> Q2[Static Analysis Tools]
@@ -643,8 +635,7 @@ flowchart TD
     W --> W20[make linting-security-checkov]
     W --> W21[make linting-security-kube-linter]
     W --> W22[make linting-workflow-zizmor]
-    W --> W23[make linting-go-gosec]
-    W --> W24[make shell-lint - shellcheck]
+    W --> W23[make shell-lint - shellcheck]
 
     X --> X1[CycloneDX SBOM Generation]
     X --> X2[Dependency Inventory]

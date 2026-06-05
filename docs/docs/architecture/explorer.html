@@ -4830,7 +4830,7 @@ renderConfig();
     { name:"License Check", file:"license-check.yml", desc:"Scan for license compliance on dependency changes.", triggers:["push","PR"] },
     { name:"Full Linting", file:"linting-full.yml", desc:"Comprehensive linting pass on main branch.", triggers:["push","manual"] },
     { name:"s390x Wheel Builder", file:"s390x-wheels.yml", desc:"Build native Python wheels for s390x (packages lacking PyPI binaries).", triggers:["manual"] },
-    { name:"Wrapper E2E", file:"wrapper.yml", desc:"End-to-end testing for Rust wrapper + Go fast-time-server.", triggers:["push"] }
+    { name:"Wrapper E2E", file:"wrapper.yml", desc:"End-to-end testing for Rust wrapper + Rust fast-time-server.", triggers:["push"] }
   ];
   workflows.forEach(function(w) {
     wfContainer.appendChild(el('div', { className:'workflow-card' }, [
@@ -4877,7 +4877,7 @@ renderConfig();
   var rpContainer = document.getElementById('release-phases');
   var phases = [
     "Version bump (bump2version)", "Python dep updates + pip-audit",
-    "Rust, Go & JS dep updates", "Quality gates (format + lint + secrets)",
+    "Rust & JS dep updates", "Quality gates (format + lint + secrets)",
     "Test gates (unit + JS + UI + MCP)", "Build verification (Docker + compose)",
     "SSO verification (Keycloak)", "Observability verification (under load)",
     "Security analysis (SonarQube)", "Deployment verification (Helm + Minikube)",

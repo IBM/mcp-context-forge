@@ -1,7 +1,6 @@
 title: MCP Servers
 nav:
   - Overview: index.md
-  - Go Servers: go
   - Rust Servers: rust
   - Python Servers: python
   - External Servers: external

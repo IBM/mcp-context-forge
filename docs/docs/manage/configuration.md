@@ -664,7 +664,7 @@ ContextForge includes **Server-Side Request Forgery (SSRF) protection** to preve
 When deployed with the Helm chart, the testing registration jobs create gateways pointing to
 in-cluster Service DNS names:
 
-- Fast-time: `http://<release>-mcp-fast-time-server:80/http`
+- Fast-time: `http://<release>-mcp-fast-time-server:80/mcp`
 - Fast-test: `http://<release>-fast-test-server:8880/mcp`
 
 Under strict defaults (`SSRF_ALLOW_PRIVATE_NETWORKS=false`, `SSRF_ALLOWED_NETWORKS=[]`), these private

@@ -118,12 +118,14 @@ REDIS_SERVICE = """  redis:
 
 FAST_TIME_SERVER_TEMPLATE = """  fast_time_server:
     build:
-      context: ./mcp-servers/go/fast-time-server
-      dockerfile: Dockerfile
+      context: ./mcp-servers/rust/fast-time-server
+      dockerfile: Containerfile
     container_name: fast_time_server
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    command: ["-transport=sse", "-port=8002"]
+    environment:
+      - BIND_ADDRESS=0.0.0.0:8002
+      - RUST_LOG=info
     ports:
       - "8002:8002"
     networks:
@@ -137,7 +139,7 @@ FAST_TIME_SERVER_TEMPLATE = """  fast_time_server:
 
 FAST_TEST_SERVER_TEMPLATE = """  fast_test_server:
     build:
-      # Context builds the renamed rust fast-time-server crate; image/service name kept as fast-test-server to avoid colliding with the Go fast_time_server.
+      # Image/service name kept as fast-test-server to preserve existing test profile names.
       context: ./mcp-servers/rust/fast-time-server
       dockerfile: Dockerfile
     container_name: fast_test_server
@@ -252,7 +254,7 @@ class DockerComposeGenerator:
         # Generate gateway services
         gateway_services = self._generate_gateway_services(num_instances, server, redis_enabled)
 
-        # Generate fast-time server (Go - always included for basic MCP testing)
+        # Generate Rust fast-time server (always included for basic MCP testing)
         fast_time_server = FAST_TIME_SERVER_TEMPLATE
 
         # Generate fast-test server (Rust - always included for echo/stats tools)

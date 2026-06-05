@@ -4,10 +4,10 @@ Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-RBAC + multi-transport MCP protocol tests using Playwright API + FastMCP Client.
+RBAC + MCP transport tests using Playwright API + FastMCP Client.
 
 Exercises MCP JSON-RPC protocol behaviour across multiple users, RBAC roles, token
-scopes, server visibilities, and transports (Streamable HTTP + SSE). All user/team/role
+scopes, server visibilities, and Streamable HTTP transport. All user/team/role
 setup is performed via real REST API calls (Playwright APIRequestContext) to cover the
 full auth code path rather than shortcutting with _create_jwt_token().
 
@@ -17,7 +17,7 @@ requests with HTTP 400 responses.
 
 Requirements:
     - ContextForge running with docker-compose (default: http://localhost:8080)
-    - fast_time_server registered as both Streamable HTTP and SSE gateways
+    - Rust fast_time_server reachable inside the compose network
     - FastMCP client dependencies installed
     - playwright installed: pip install playwright
 
@@ -64,7 +64,7 @@ pytestmark = [pytest.mark.e2e, skip_no_gateway]
 # Constants
 # ---------------------------------------------------------------------------
 RBAC_PREFIX = "mcp-rbac"
-SSE_GATEWAY_NAME = f"{RBAC_PREFIX}-sse-gw"
+RUST_GATEWAY_NAME = f"{RBAC_PREFIX}-rust-gw"
 # Must match docker-compose gateway JWT_SECRET_KEY
 _JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")
 _CLIENT_TIMEOUT = float(os.getenv("MCP_E2E_CLIENT_TIMEOUT", "5.0"))
@@ -223,78 +223,78 @@ def rbac_team(admin_api: APIRequestContext) -> Generator[dict[str, Any], None, N
 
 
 @pytest.fixture(scope="module")
-def sse_gateway(admin_api: APIRequestContext) -> Generator[dict[str, Any], None, None]:
-    """Register fast_time_server via SSE transport and wait for tool sync."""
-    sse_url = "http://fast_time_server:8080/sse"
+def rust_gateway(admin_api: APIRequestContext) -> Generator[dict[str, Any], None, None]:
+    """Register the Rust fast_time_server via Streamable HTTP and wait for tool sync."""
+    streamable_url = "http://fast_time_server:9080/mcp"
 
-    # Delete any pre-existing SSE gateway with same name or same URL
+    # Delete any pre-existing gateway with same name or same URL
     with suppress(Exception):
         gateways = admin_api.get("/gateways").json()
         for gw in gateways:
-            if gw.get("name") == SSE_GATEWAY_NAME or gw.get("url") == sse_url:
+            if gw.get("name") == RUST_GATEWAY_NAME or gw.get("url") == streamable_url:
                 admin_api.delete(f"/gateways/{gw['id']}")
 
     resp = admin_api.post(
         "/gateways",
         data={
-            "name": SSE_GATEWAY_NAME,
-            "url": sse_url,
-            "transport": "SSE",
+            "name": RUST_GATEWAY_NAME,
+            "url": streamable_url,
+            "transport": "STREAMABLEHTTP",
         },
     )
-    assert resp.status in (200, 201), f"Failed to register SSE gateway: {resp.status} {resp.text()}"
+    assert resp.status in (200, 201), f"Failed to register Rust gateway: {resp.status} {resp.text()}"
     gw = resp.json()
     gw_id = gw["id"]
-    logger.info("Registered SSE gateway: %s (id=%s)", SSE_GATEWAY_NAME, gw_id)
+    logger.info("Registered Rust gateway: %s (id=%s)", RUST_GATEWAY_NAME, gw_id)
 
     # Poll for tool sync (up to 30s)
     for i in range(30):
         time.sleep(1)
         try:
             tools = admin_api.get("/tools").json()
-            sse_tools = [t for t in tools if t.get("gatewayId") == gw_id]
-            if sse_tools:
-                logger.info("SSE gateway synced: %d tools", len(sse_tools))
+            rust_tools = [t for t in tools if t.get("gatewayId") == gw_id]
+            if rust_tools:
+                logger.info("Rust gateway synced: %d tools", len(rust_tools))
                 break
         except Exception:
             pass
     else:
-        logger.warning("SSE gateway tool sync timed out, continuing anyway")
+        logger.warning("Rust gateway tool sync timed out, continuing anyway")
 
-    yield {"id": gw_id, "name": SSE_GATEWAY_NAME}
+    yield {"id": gw_id, "name": RUST_GATEWAY_NAME}
 
     with suppress(Exception):
         admin_api.delete(f"/gateways/{gw_id}")
 
 
 @pytest.fixture(scope="module")
-def visibility_servers(admin_api: APIRequestContext, rbac_team: dict, sse_gateway: dict) -> Generator[dict[str, Any], None, None]:
-    """Create 3 virtual servers (public, team, private) with SSE gateway tools."""
-    gw_id = sse_gateway["id"]
+def visibility_servers(admin_api: APIRequestContext, rbac_team: dict, rust_gateway: dict) -> Generator[dict[str, Any], None, None]:
+    """Create 3 virtual servers (public, team, private) with Rust gateway tools."""
+    gw_id = rust_gateway["id"]
     team_id = rbac_team["id"]
 
-    # Fetch SSE tools for association
+    # Fetch Rust fast-time tools for association
     tools = admin_api.get("/tools").json()
-    sse_tool_ids = [t["id"] for t in tools if t.get("gatewayId") == gw_id]
+    rust_tool_ids = [t["id"] for t in tools if t.get("gatewayId") == gw_id]
 
     # Also fetch resources/prompts
     resources = admin_api.get("/resources").json()
-    sse_resource_ids = [r["id"] for r in resources if r.get("gatewayId") == gw_id] if resources else []
+    rust_resource_ids = [r["id"] for r in resources if r.get("gatewayId") == gw_id] if resources else []
     prompts = admin_api.get("/prompts").json()
-    sse_prompt_ids = [p["id"] for p in prompts if p.get("gatewayId") == gw_id] if prompts else []
+    rust_prompt_ids = [p["id"] for p in prompts if p.get("gatewayId") == gw_id] if prompts else []
 
     uid = uuid.uuid4().hex[:8]
     servers: dict[str, dict[str, Any]] = {}
 
     for vis, vis_team_id in [("public", None), ("team", team_id), ("private", team_id)]:
-        name = f"{RBAC_PREFIX}-{vis}-sse-{uid}"
+        name = f"{RBAC_PREFIX}-{vis}-rust-{uid}"
         payload: dict[str, Any] = {
             "server": {
                 "name": name,
-                "description": f"RBAC test {vis} SSE server",
-                "associated_tools": sse_tool_ids,
-                "associated_resources": sse_resource_ids,
-                "associated_prompts": sse_prompt_ids,
+                "description": f"RBAC test {vis} Rust fast-time server",
+                "associated_tools": rust_tool_ids,
+                "associated_resources": rust_resource_ids,
+                "associated_prompts": rust_prompt_ids,
             },
             "visibility": vis,
         }
@@ -729,30 +729,27 @@ class TestMcpScopedTokenPermissions:
 
 
 # ---------------------------------------------------------------------------
-# Test: SSE transport
+# Test: Rust Streamable HTTP transport
 # ---------------------------------------------------------------------------
 @pytest.mark.flaky(reruns=1, reruns_delay=2)
-class TestMcpSSETransport:
-    """SSE transport works end-to-end through MCP protocol."""
+class TestMcpStreamableTransport:
+    """Rust Streamable HTTP transport works end-to-end through MCP protocol."""
 
-    def test_sse_tools_discoverable(self, test_users: dict, sse_gateway: dict) -> None:
+    def test_streamable_tools_discoverable(self, test_users: dict, rust_gateway: dict) -> None:
         tools = _mcp_tools_list(test_users["admin"]["access_token"])
-        # SSE tools should have a prefix from the SSE gateway
-        print(f"    -> {len(tools)} total tools visible to admin (SSE gateway id={sse_gateway['id']})")
-        assert len(tools) > 0, "Should discover at least one tool via SSE"
+        print(f"    -> {len(tools)} total tools visible to admin (Rust gateway id={rust_gateway['id']})")
+        assert len(tools) > 0, "Should discover at least one tool via Rust Streamable HTTP"
 
-    def test_sse_get_system_time(self, test_users: dict, sse_gateway: dict) -> None:
-        """Call an SSE-sourced tool: the tool name may have SSE gateway prefix."""
+    def test_streamable_get_system_time(self, test_users: dict, rust_gateway: dict) -> None:
+        """Call a Rust fast-time tool through ContextForge."""
         tools = _mcp_tools_list(test_users["admin"]["access_token"])
-        # Find a get-system-time tool (either from SSE or Streamable HTTP)
         time_tools = [t.name for t in tools if "get-system-time" in t.name]
         assert len(time_tools) > 0, f"Expected at least one get-system-time tool, got: {[t.name for t in tools]}"
-        # Call the first one found
         result = _mcp_tool_call(test_users["admin"]["access_token"], time_tools[0], {"timezone": "UTC"})
-        assert not result.is_error, f"SSE get-system-time failed: {result}"
-        print(f"    -> SSE {time_tools[0]} = {result.content[0].text}")
+        assert not result.is_error, f"Rust get-system-time failed: {result}"
+        print(f"    -> Rust {time_tools[0]} = {result.content[0].text}")
 
-    def test_sse_convert_time(self, test_users: dict) -> None:
+    def test_streamable_convert_time(self, test_users: dict) -> None:
         tools = _mcp_tools_list(test_users["admin"]["access_token"])
         convert_tools = [t.name for t in tools if "convert-time" in t.name]
         assert len(convert_tools) > 0, "Expected at least one convert-time tool"
@@ -761,16 +758,16 @@ class TestMcpSSETransport:
             convert_tools[0],
             {"time": "2025-06-01T10:00:00Z", "source_timezone": "UTC", "target_timezone": "Europe/London"},
         )
-        assert not result.is_error, f"SSE convert-time failed: {result}"
-        print(f"    -> SSE {convert_tools[0]}: OK")
+        assert not result.is_error, f"Rust convert-time failed: {result}"
+        print(f"    -> Rust {convert_tools[0]}: OK")
 
-    def test_sse_resources_discoverable(self, test_users: dict) -> None:
+    def test_streamable_resources_discoverable(self, test_users: dict) -> None:
         resources = _mcp_resources_list(test_users["admin"]["access_token"])
-        print(f"    -> Admin sees {len(resources)} resources (incl. SSE)")
+        print(f"    -> Admin sees {len(resources)} resources")
 
-    def test_sse_prompts_discoverable(self, test_users: dict) -> None:
+    def test_streamable_prompts_discoverable(self, test_users: dict) -> None:
         prompts = _mcp_prompts_list(test_users["admin"]["access_token"])
-        print(f"    -> Admin sees {len(prompts)} prompts (incl. SSE)")
+        print(f"    -> Admin sees {len(prompts)} prompts")
 
 
 # ---------------------------------------------------------------------------
@@ -895,14 +892,14 @@ class TestDenyPaths:
 
 
 # ---------------------------------------------------------------------------
-# Test: Cross-transport consistency
+# Test: Registered fast-time tool consistency
 # ---------------------------------------------------------------------------
 @pytest.mark.flaky(reruns=1, reruns_delay=2)
 class TestCrossTransportConsistency:
-    """Same tool produces consistent results across Streamable HTTP and SSE."""
+    """Registered fast-time tools produce valid results through ContextForge."""
 
-    def test_get_system_time_both_transports(self, test_users: dict) -> None:
-        """Both transports return valid timestamps for get-system-time."""
+    def test_get_system_time_registered_tools(self, test_users: dict) -> None:
+        """Registered tools return valid timestamps for get-system-time."""
         tools = _mcp_tools_list(test_users["admin"]["access_token"])
         time_tools = [t.name for t in tools if "get-system-time" in t.name]
         assert len(time_tools) >= 1, f"Expected at least 1 get-system-time tool, got: {time_tools}"
@@ -914,8 +911,8 @@ class TestCrossTransportConsistency:
             assert len(text) > 0, f"{tool_name} returned empty text"
             print(f"    -> {tool_name} = {text}")
 
-    def test_convert_time_both_transports(self, test_users: dict) -> None:
-        """Both transports return valid results for convert-time."""
+    def test_convert_time_registered_tools(self, test_users: dict) -> None:
+        """Registered tools return valid results for convert-time."""
         tools = _mcp_tools_list(test_users["admin"]["access_token"])
         convert_tools = [t.name for t in tools if "convert-time" in t.name]
         assert len(convert_tools) >= 1, f"Expected at least 1 convert-time tool, got: {convert_tools}"

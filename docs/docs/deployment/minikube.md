@@ -182,7 +182,7 @@ See `charts/mcp-stack/values.yaml` for the full list of configurable values.
 If you enable Helm testing registrations (`testing.fastTime.register.enabled=true`,
 `testing.fastTest.register.enabled=true`), the gateway URLs use in-cluster services:
 
-- `http://<release>-mcp-fast-time-server:80/http`
+- `http://<release>-mcp-fast-time-server:80/mcp`
 - `http://<release>-fast-test-server:8880/mcp`
 
 Strict SSRF defaults block private destinations, which can cause registration jobs to fail with `422`.

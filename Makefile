@@ -3468,7 +3468,7 @@ mutmut-clean:
 # =============================================================================
 # help: 📊 METRICS
 # help: pip-licenses         - Produce dependency license inventory (markdown)
-# help: license-check         - Check repo licenses with policy file (`pyproject`, pip, Go, Rust).
+# help: license-check         - Check repo licenses with policy file (`pyproject`, pip, Rust).
 # help:                      - Set LICENSE_CHECK_INCLUDE_DEV_GROUPS=true to include dev groups.
 # help:                      - Set LICENSE_CHECK_SUMMARY_ONLY=true for compact output.
 # help: scc                  - Quick LoC/complexity snapshot with scc
@@ -3649,8 +3649,6 @@ images:
 # help: linting-helm-lint            - Run Helm chart lint
 # help: linting-helm-chart-testing   - Run chart-testing lint (ct) for Helm chart
 # help: linting-helm-unittest        - Run Helm chart unit tests via helm-unittest plugin
-# help: linting-go-gosec             - Run gosec on discovered Go modules
-# help: linting-go-govulncheck       - Run govulncheck on discovered Go modules
 # help: linting-security-checkov     - Run Checkov IaC security scan
 # help: linting-security-kube-linter - Run kube-linter against Kubernetes/Helm manifests
 # help: linting-coverage-diff-cover  - Run diff-cover against changed lines
@@ -3690,7 +3688,6 @@ FILE_AWARE_LINTERS := isort black pylint mypy bandit pydocstyle \
 	linting-python-fixit linting-python-xenon linting-python-refurb \
 	linting-docs-codespell linting-docs-markdown-links linting-web-depcheck \
 	linting-helm-lint linting-helm-chart-testing linting-helm-unittest \
-	linting-go-gosec linting-go-govulncheck \
 	linting-security-checkov linting-security-kube-linter \
 	linting-coverage-diff-cover linting-full
 
@@ -3846,10 +3843,8 @@ LINT_MARKDOWN_LINKS_TARGET ?= README.md
 LINT_DEPCHECK_TARGET ?= .
 LINT_CHECKOV_TARGET ?= .
 LINT_KUBE_LINTER_TARGET ?= charts/mcp-stack
-LINT_GO_MODULE_SEARCH_DIRS ?= mcp-servers a2a-agents
-
 # Passing gates only (used by CI workflow linting-full).
-LINTING_FULL_TARGETS := linting-workflow-actionlint linting-workflow-commitlint linting-helm-lint linting-helm-chart-testing linting-helm-unittest linting-go-gosec linting-go-govulncheck
+LINTING_FULL_TARGETS := linting-workflow-actionlint linting-workflow-commitlint linting-helm-lint linting-helm-chart-testing linting-helm-unittest
 
 # Tools requiring auth/login (e.g. safety, OSSF scorecard) are intentionally excluded.
 
@@ -3978,44 +3973,6 @@ linting-helm-unittest:               ## 🧪  Helm template unit tests
 			helm plugin install https://github.com/helm-unittest/helm-unittest --version v0.5.2 --verify=false >/dev/null; \
 		fi; \
 		helm unittest $(CHART_DIR)"
-
-.PHONY: linting-go-gosec
-linting-go-gosec:                    ## 🔒  Go security static analysis
-	@echo "🔒 gosec scan of discovered Go modules..."
-	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
-	@export GOPATH='$(LINT_GO_ROOT)/gopath'; \
-		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
-		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
-		export GOBIN='$(LINT_GO_ROOT)/bin'; \
-		export GOTOOLCHAIN='$(LINT_GO_TOOLCHAIN)'; \
-		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache' '$(LINT_GO_ROOT)/bin'; \
-		go install github.com/securego/gosec/v2/cmd/gosec@latest >/dev/null; \
-		mods="$$( { find $(LINT_GO_MODULE_SEARCH_DIRS) -name go.mod -not -path '*/templates/*' -exec dirname {} ';' 2>/dev/null || true; } | sort -u )"; \
-		if [ -z "$$mods" ]; then echo 'ℹ️  No Go modules found'; exit 0; fi; \
-		while IFS= read -r d; do \
-			[ -n "$$d" ] || continue; \
-			echo "→ gosec $$d"; \
-			(cd "$$d" && "$(LINT_GO_ROOT)/bin/gosec" ./...); \
-		done <<< "$$mods"
-
-.PHONY: linting-go-govulncheck
-linting-go-govulncheck:              ## 🔎  Go vulnerability checks
-	@echo "🔎 govulncheck scan of discovered Go modules..."
-	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
-	@export GOPATH='$(LINT_GO_ROOT)/gopath'; \
-		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
-		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
-		export GOBIN='$(LINT_GO_ROOT)/bin'; \
-		export GOTOOLCHAIN='$(LINT_GO_TOOLCHAIN)'; \
-		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache' '$(LINT_GO_ROOT)/bin'; \
-		go install golang.org/x/vuln/cmd/govulncheck@latest >/dev/null; \
-		mods="$$( { find $(LINT_GO_MODULE_SEARCH_DIRS) -name go.mod -not -path '*/templates/*' -exec dirname {} ';' 2>/dev/null || true; } | sort -u )"; \
-		if [ -z "$$mods" ]; then echo 'ℹ️  No Go modules found'; exit 0; fi; \
-		while IFS= read -r d; do \
-			[ -n "$$d" ] || continue; \
-			echo "→ govulncheck $$d"; \
-			(cd "$$d" && "$(LINT_GO_ROOT)/bin/govulncheck" ./...); \
-		done <<< "$$mods"
 
 .PHONY: linting-security-checkov
 linting-security-checkov:            ## 🛡️  IaC security scanning with Checkov
@@ -4157,9 +4114,6 @@ pre-commit: uv                     ## 🪄  Run pre-commit tool
 			'$(CURDIR)/.cache/xdg-cache' \
 			'$(CURDIR)/.cache/xdg-data' \
 			'$(CURDIR)/.cache/virtualenv-app-data' \
-			'$(CURDIR)/.cache/go-cache' \
-			'$(CURDIR)/.cache/go-mod' \
-			'$(CURDIR)/.cache/go-build' \
 			'$(CURDIR)/.cache/pip-cache' \
 			'$(CURDIR)/.cache/tmp'; \
 		PRE_COMMIT_HOME='$(CURDIR)/.cache/pre-commit-home' \
@@ -4171,9 +4125,6 @@ pre-commit: uv                     ## 🪄  Run pre-commit tool
 		PIP_CACHE_DIR='$(CURDIR)/.cache/pip-cache' \
 		PIP_USE_PEP517='0' \
 		PIP_NO_BUILD_ISOLATION='1' \
-		GOPATH='$(CURDIR)/.cache/go-cache' \
-		GOMODCACHE='$(CURDIR)/.cache/go-mod' \
-		GOCACHE='$(CURDIR)/.cache/go-build' \
 		$(VENV_DIR)/bin/pre-commit run --config .pre-commit-lite.yaml --all-files --show-diff-on-failure"
 
 RUFF_MODE   ?= check
@@ -7876,7 +7827,6 @@ DETECT_SECRETS_FILES_EXCLUDE := '(?x)( \
   package-lock\.json$$         \
   |Cargo\.lock$$               \
   |uv\.lock$$                  \
-  |go\.sum$$                   \
   |mcpgateway/sri_hashes\.json$$ \
 )'
 

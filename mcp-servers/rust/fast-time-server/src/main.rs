@@ -127,7 +127,7 @@ fn parse_timezone(tz: &str) -> Result<ParsedTimezone, String> {
 }
 
 /// Parse an input time string in the given offset, accepting RFC3339 and a
-/// handful of common formats used by the Go fast-time-server port.
+/// handful of common formats used by earlier fast-time-server clients.
 fn parse_time_in_timezone(
     time_str: &str,
     timezone: &ParsedTimezone,
@@ -838,7 +838,7 @@ mod tests {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {},
                     "clientInfo": {
-                        "name": "go-parity",
+                        "name": "fast-time-parity",
                         "version": "1.0"
                     }
                 },
@@ -875,7 +875,7 @@ mod tests {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {},
                     "clientInfo": {
-                        "name": "go-compat-smoke",
+                        "name": "compat-smoke",
                         "version": "1.0"
                     }
                 },
@@ -911,7 +911,7 @@ mod tests {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {},
                     "clientInfo": {
-                        "name": "go-compat-smoke",
+                        "name": "compat-smoke",
                         "version": "1.0"
                     }
                 },
@@ -992,7 +992,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_convert_time_matches_go_fast_time_dst_behavior() {
+    async fn test_convert_time_matches_fast_time_dst_behavior() {
         let response = mcp_handler(
             initialized_headers().await,
             axum::Json(json!({
@@ -1020,7 +1020,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_convert_time_matches_go_fast_time_half_hour_zones() {
+    async fn test_convert_time_matches_fast_time_half_hour_zones() {
         let response = mcp_handler(
             initialized_headers().await,
             axum::Json(json!({

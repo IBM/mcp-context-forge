@@ -59,7 +59,7 @@ Lessons learned from this implementation will be documented and used to guide fu
 | Optimizing existing Python asyncio transports | Limited performance headroom due to GIL constraints |
 | Full gateway rewrite in Rust | Out of scope and higher risk; significant operational complexity |
 | Using Cython for hot paths | Moderate gains but still bound by Python runtime |
-| Go-based transport layer | Different async model; less ecosystem alignment with MCP tooling |
+| Non-Rust transport layer | Different async model; less ecosystem alignment with MCP tooling |
 
 ## References
 

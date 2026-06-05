@@ -996,18 +996,19 @@ services:
 ###############################################################################
 
   ###############################################################################
-  # Fast Time Server - High-performance time/timezone service for MCP
-  # Note: This is an amd64-only image. On ARM platforms (Apple Silicon),
-  # emulation may not work properly.
+  # Fast Time Server - High-performance Rust time/timezone service for MCP
   ###############################################################################
   fast_time_server:
-    image: ghcr.io/ibm/fast-time-server:latest
+    image: ${FAST_TIME_IMAGE:-mcpgateway/fast-time-server:latest}
+    build:
+      context: ./mcp-servers/rust/fast-time-server
+      dockerfile: Containerfile
     restart: unless-stopped
     networks: [mcpnet]
     ports:
-      - "8888:8080"    # Map host port 8888 to container port 8080
-    # Use dual mode for both SSE (/sse) and Streamable HTTP (/http) endpoints
-    command: ["-transport=dual", "-listen=0.0.0.0", "-port=8080", "-log-level=info"]
+      - "8888:9080"    # Map host port 8888 to container port 9080
+    environment:
+      - RUST_LOG=info
 
   ###############################################################################
   # Auto-registration service - registers fast_time_server with gateway
@@ -1060,7 +1061,7 @@ services:
 
         for i in range(1, 31):
             try:
-                with urllib.request.urlopen('http://fast_time_server:8080/health', timeout=2) as response:
+                with urllib.request.urlopen('http://fast_time_server:9080/health', timeout=2) as response:
                     if response.status == 200:
                         print('✅ fast_time_server is healthy')
                         break
@@ -1158,7 +1159,7 @@ services:
         try:
             result = api_request('POST', '/gateways', {
                 'name': 'fast_time',
-                'url': 'http://fast_time_server:8080/http',
+                'url': 'http://fast_time_server:9080/mcp',
                 'transport': 'STREAMABLEHTTP'
             })
             print(f'Registration response: {result}')
@@ -1275,7 +1276,7 @@ services:
   ###############################################################################
   fast_test_server:
     build:
-      # Context builds the renamed rust fast-time-server crate; image/service name kept as fast-test-server to avoid colliding with the Go fast_time_server.
+      # Image/service name kept as fast-test-server to preserve existing test profile names.
       context: ./mcp-servers/rust/fast-time-server
       dockerfile: Containerfile
     image: mcpgateway/fast-test-server:latest

@@ -26,7 +26,7 @@ at `/mcp`.
 
 The root `/` path also accepts MCP JSON-RPC requests as a compatibility alias.
 SSE transport is not available in the Rust migration; use `/mcp` instead of the
-old Go `/http` or `/sse` endpoints.
+legacy `/http` or `/sse` endpoints.
 
 ## Configuration
 
@@ -80,11 +80,11 @@ curl -s http://localhost:8081/mcp \
 
 ## Migration Notes
 
-This Rust server replaces the previous Go slow-time-server.
+This Rust server replaces the previous slow-time-server implementation.
 
-- Use `POST /mcp`; the old Go `/http`, `/sse`, and `/messages` endpoints are removed.
+- Use `POST /mcp`; legacy `/http`, `/sse`, and `/messages` endpoints are removed.
 - OpenAPI/Swagger endpoints (`/api/v1/docs`, `/api/v1/openapi.json`) are removed.
-- Go CLI flags and transport modes are removed; configure the Rust server with environment variables.
+- Legacy CLI flags and transport modes are removed; configure the Rust server with environment variables.
 - Container health checks now call `curl -sf http://localhost:8081/health`
   instead of invoking binary health-check flags.
 

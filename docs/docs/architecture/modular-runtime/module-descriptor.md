@@ -9,7 +9,7 @@ discovery, compatibility checks, health integration, and release validation.
 |-------|---------|
 | `moduleId` | Stable module identifier, for example `mcp-rust-runtime` |
 | `protocolFamily` | One of `mcp`, `a2a`, `llm`, `rest-grpc`, or a future family |
-| `implementationLanguage` | `python`, `rust`, `go`, or another language identifier |
+| `implementationLanguage` | `python`, `rust`, or another language identifier |
 | `moduleVersion` | Module build or release version |
 | `spiVersions` | Supported core SPI versions |
 | `runtimeModes` | Supported runtime modes such as `embedded`, `sidecar` |
@@ -53,13 +53,13 @@ discovery, compatibility checks, health integration, and release validation.
 }
 ```
 
-Second illustrative example for a Go LLM proxy module:
+Second illustrative example for an LLM proxy module:
 
 ```json
 {
-  "moduleId": "llm-go-proxy",
+  "moduleId": "llm-rust-proxy",
   "protocolFamily": "llm",
-  "implementationLanguage": "go",
+  "implementationLanguage": "rust",
   "moduleVersion": "0.1.0",
   "spiVersions": ["v1alpha1"],
   "runtimeModes": ["sidecar"],
@@ -104,7 +104,7 @@ Recommended categories:
 ## Protocol-Specific Notes
 
 - A Rust A2A module should declare task-state and invoke support explicitly.
-- A Go LLM proxy module should declare both chat-completion and streaming
+- An LLM proxy module should declare both chat-completion and streaming
   support explicitly.
 - A REST or gRPC module should declare whether it owns reflection, OpenAPI
   import, or only invocation relay.

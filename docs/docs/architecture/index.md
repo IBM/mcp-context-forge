@@ -240,7 +240,6 @@ ContextForge ecosystem consists of **independently deployable modules** that can
 Sample servers:
 
 - `mcp-contextforge-mcp-servers-python` - 4 Python servers
-- `mcp-contextforge-mcp-servers-go` - Go servers (static binaries, 5-15 MB)
 - `mcp-contextforge-mcp-servers-rust` - Rust servers (static binaries, 3-10 MB)
 
 **Agent Runtimes:**
@@ -302,7 +301,7 @@ Sample runtimes:
 - **Embedded observability** - OpenTelemetry, Prometheus built-in
 - **Native compression and caching** - No sidecar required (Brotli/Zstd/GZip)
 - **Zero-infrastructure dev mode** - SQLite + memory cache
-- **Modular composition** - 14 independently deployable modules
+- **Modular composition** - Independently deployable modules
 - **Multi-format packaging** - PyPI packages, container images with multi-arch support, Helm charts, and binaries
 
 ### When to Use What

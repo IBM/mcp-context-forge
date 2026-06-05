@@ -16,7 +16,7 @@ It is intended to support:
 - the existing A2A gateway
 - future LLM gateway runtimes
 - future REST and gRPC gateway runtimes
-- implementations in different languages, including Python, Rust, and Go
+- implementations in different languages, including Python and Rust
 
 ## Purpose
 
@@ -153,7 +153,7 @@ modules should target.
 
 | Topic | Implemented today | Target-state default |
 |-------|-------------------|----------------------|
-| First extracted runtime | Rust MCP sidecar | Additional protocol modules, potentially in Rust, Go, or Python |
+| First extracted runtime | Rust MCP sidecar | Additional protocol modules, potentially in Rust or Python |
 | Sidecar transport to core | Narrow internal HTTP over local/private transport, including UDS or loopback depending on path | gRPC over UDS |
 | Fallback transport | HTTP/JSON | HTTP/JSON |
 | Ingress ownership | Both valid today: Python-owned ingress and direct Rust ingress depending on mode | Both valid patterns remain acceptable |
@@ -381,7 +381,7 @@ Why:
 
 - language-neutral
 - streaming support
-- well understood code generation story for Python, Rust, and Go
+- well understood code generation story for Python and Rust
 - suitable for host-local sidecar communication
 
 This is the target-state default, not a claim about every implemented module

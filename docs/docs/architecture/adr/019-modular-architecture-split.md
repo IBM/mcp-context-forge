@@ -1,4 +1,4 @@
-# ADR-0019: Modular Architecture Split (14 Independent Modules)
+# ADR-0019: Modular Architecture Split
 
 - *Status:* Accepted
 - *Date:* 2025-10-27
@@ -14,7 +14,7 @@ ContextForge codebase has grown to support diverse use cases:
 - Multi-regional deployments with federation
 - Independent utility tools (translate, wrapper, reverse-proxy)
 - Plugin ecosystem with external integrations
-- MCP servers in multiple languages (Python, Go, Rust)
+- MCP servers in multiple languages (Python, Rust)
 
 The monolithic architecture created challenges:
 
@@ -29,7 +29,7 @@ We needed maximum deployment flexibility while maintaining cohesive functionalit
 
 ## Decision
 
-We will split ContextForge ecosystem into **14 independently deployable modules** that can run standalone or be composed together:
+We will split ContextForge ecosystem into independently deployable modules that can run standalone or be composed together:
 
 ### Core Gateway (2 modules)
 1. **mcp-contextforge-gateway-core** - FastAPI gateway with 33 services, 11 routers (~150K lines)
@@ -44,20 +44,19 @@ We will split ContextForge ecosystem into **14 independently deployable modules*
 6. **mcp-contextforge-plugins-python** - 40+ Python plugins + framework
 7. **mcp-contextforge-plugins-rust** - High-performance PyO3 plugins
 
-### MCP Servers (3 modules) - Zero Gateway Dependencies
+### MCP Servers (2 modules) - Zero Gateway Dependencies
 8. **mcp-contextforge-mcp-servers-python** - 4 Python servers
-9. **mcp-contextforge-mcp-servers-go** - Go servers (static binaries, 5-15 MB)
-10. **mcp-contextforge-mcp-servers-rust** - Rust servers (static binaries, 3-10 MB)
+9. **mcp-contextforge-mcp-servers-rust** - Rust servers (static binaries, 3-10 MB)
 
 ### Agent Runtimes (1 module)
-11. **mcp-contextforge-agent-runtimes** - LangChain + future runtimes
+10. **mcp-contextforge-agent-runtimes** - LangChain + future runtimes
 
 ### Infrastructure (2 modules)
-12. **mcp-contextforge-helm** - Kubernetes Helm charts (OCI registry)
-13. **mcp-contextforge-deployment-scripts** - Terraform, Ansible, Docker Compose
+11. **mcp-contextforge-helm** - Kubernetes Helm charts (OCI registry)
+12. **mcp-contextforge-deployment-scripts** - Terraform, Ansible, Docker Compose
 
 ### Documentation (1 module)
-14. **mcp-contextforge-docs** - MkDocs Material site
+13. **mcp-contextforge-docs** - MkDocs Material site
 
 **Key Design Principles:**
 
@@ -82,7 +81,7 @@ We will split ContextForge ecosystem into **14 independently deployable modules*
 ### Negative
 
 - 🔄 **Cross-repo dependencies** - Plugins depend on core gateway version
-- 📚 **More repositories** - 14 repos to maintain vs. 1 monorepo
+- 📚 **More repositories** - More repos to maintain vs. 1 monorepo
 - 🔀 **Coordination overhead** - Breaking changes require multi-repo updates
 
 ### Neutral
@@ -118,7 +117,7 @@ kubectl apply -f mcp-server-docx.yaml
 
 **Edge Deployment (Minimal Footprint):**
 ```bash
-# Just the translate utility as a static Go binary
+# Just the translate utility as a standalone binary
 ./mcptranslate --stdio "command" --port 9000
 # No gateway, no Python, just protocol translation
 ```
@@ -135,7 +134,6 @@ kubectl apply -f mcp-server-docx.yaml
 | plugins-python | Requires core | ❌ No | PyPI |
 | plugins-rust | Requires core | ❌ No | PyPI (wheels) |
 | mcp-servers-python | None | ✅ Yes | PyPI, Container |
-| mcp-servers-go | None | ✅ Yes | Binary, Container |
 | mcp-servers-rust | None | ✅ Yes | Binary, Container |
 | agent-runtimes | Optional | ✅ Yes | PyPI, Container |
 | helm | Deploys others | ✅ Yes | Helm OCI |
@@ -181,14 +179,14 @@ This allows deploying the core gateway with only required features enabled, redu
 | Option | Why Not |
 |--------|---------|
 | **Monolithic repository** | Too large, slow CI/CD, conflicting versions, difficult navigation |
-| **Single binary (Go/Rust rewrite)** | Loss of Python ecosystem, major rewrite cost, slower development |
+| **Single binary rewrite** | Loss of Python ecosystem, major rewrite cost, slower development |
 | **Microservices architecture** | Too heavyweight for many use cases, operational complexity |
-| **Monorepo with Bazel/Nx** | Complex build system, overkill for 14 modules |
+| **Monorepo with Bazel/Nx** | Complex build system, overkill for independent modules |
 
 ## Migration Path
 
 1. Extract utilities (translate, wrapper, reverse-proxy) to independent repos
-2. Extract MCP servers (Python, Go, Rust) to independent repos
+2. Extract MCP servers (Python, Rust) to independent repos
 3. Extract plugins to independent repos
 4. Extract infrastructure (Helm, deployment scripts) to independent repos
 5. Core gateway remains with UI as optional dependency

@@ -166,10 +166,6 @@ The `get_system_time` tool supports:
 - IANA timezone names (e.g., `America/New_York`, `Europe/London`, `Asia/Tokyo`)
 - Fixed offsets (e.g., `+05:30`, `-08:00`)
 
-## Comparison with Go Server
-
-This server is designed to be compared with the Go `fast-time-server` for benchmarking purposes. Both implement similar functionality with the same transport (streamable HTTP).
-
 ## License
 
 Apache-2.0

@@ -2,14 +2,14 @@
 
 This section turns the [Modular Runtime Architecture](../modular-design.md)
 into an implementation-oriented specification that another team can use to
-build a protocol module in Rust, Go, or Python.
+build a protocol module in Rust or Python.
 
 The intent is not to freeze every future protobuf field today. The intent is
 to define the minimum contract surface clearly enough that:
 
 - the existing Rust MCP module can be understood as the reference implementation
 - a Rust A2A module can be implemented without re-designing the trust model
-- a Go LLM proxy module can be implemented without guessing where policy lives
+- an LLM proxy module can be implemented without guessing where policy lives
 - a REST or gRPC module can be implemented without inventing a different
   lifecycle or error model
 

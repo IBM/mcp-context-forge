@@ -8,27 +8,20 @@ The **ContextForge Gateway** includes a collection of **high-performance sample 
 
 ## 🌟 Available Servers
 
-### 🦫 Fast Time Server (Go)
-**`mcp-servers/go/fast-time-server`** - Ultra-fast timezone and time conversion tools
+### 🦀 Fast Time Server (Rust)
+**`mcp-servers/rust/fast-time-server`** - Ultra-fast timezone and time conversion tools
 
-- **Language:** Go 1.21+
+- **Language:** Rust
 - **Performance:** Sub-millisecond response times
-- **Transport:** stdio, HTTP, SSE, dual-mode
-- **Tools:** `get_system_time`, timezone conversions with DST support
-- **Container:** `ghcr.io/ibm/fast-time-server:latest`
-
-**[📖 Full Documentation →](go/fast-time-server.md)**
+- **Transport:** Streamable HTTP
+- **Tools:** `echo`, `get_system_time`, `convert_time`, `get_stats`
+- **Container:** built locally from `mcp-servers/rust/fast-time-server`
 
 #### Quick Start
 ```bash
-# Docker (recommended)
-docker run --rm -it -p 8888:8080 \
-  ghcr.io/ibm/fast-time-server:latest \
-  -transport=dual -log-level=debug
-
 # From source
-cd mcp-servers/go/fast-time-server
-make build && make run
+cd mcp-servers/rust/fast-time-server
+make run
 ```
 
 ---
@@ -125,12 +118,6 @@ Each sample server should follow these conventions:
 #### **Directory Structure**
 ```
 mcp-servers/
-├── go/
-│   └── your-server/
-│       ├── main.go
-│       ├── Makefile
-│       ├── Dockerfile
-│       └── README.md
 ├── python/
 │   └── your-server/
 │       ├── main.py
@@ -165,10 +152,9 @@ mcp-servers/
 
 | Server | Language | Response Time | Memory | Binary Size | Cold Start |
 |--------|----------|---------------|---------|-------------|------------|
-| fast-time-server | Go | **0.5ms** | 8MB | 12MB | 100ms |
+| fast-time-server | Rust | **0.3ms** | 4MB | 8MB | 50ms |
 | (planned) | Python | ~2ms | 25MB | N/A | 300ms |
 | (planned) | TypeScript | ~3ms | 35MB | N/A | 400ms |
-| (planned) | Rust | **0.3ms** | 4MB | 8MB | 50ms |
 | (planned) | Java | ~5ms | 45MB | 25MB | 800ms |
 
 *Benchmarks measured on standard GitHub Actions runners*
@@ -218,7 +204,7 @@ We're particularly interested in:
 
 ## 🔗 Quick Links
 
-- [🦫 **Fast Time Server (Go)** →](go/fast-time-server.md)
+- [🦀 **Rust Slow Time Server** →](rust/slow-time-server.md)
 
 ---
 

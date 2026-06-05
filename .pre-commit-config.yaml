@@ -630,6 +630,5 @@ repos:
             package-lock\.json$
             |Cargo\.lock$
             |uv\.lock$
-            |go\.sum$
             |mcpgateway/sri_hashes\.json$
           )

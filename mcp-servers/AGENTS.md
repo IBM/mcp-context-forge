@@ -6,8 +6,6 @@ MCP server implementation guidance for AI coding assistants.
 
 ```
 mcp-servers/
-├── go/                            # Go MCP servers
-│   └── fast-time-server/          # Time/date operations
 ├── python/                        # Python MCP servers
 │   ├── data_analysis_server/      # Data analysis tools
 │   ├── graphviz_server/           # Diagram generation
@@ -19,26 +17,15 @@ mcp-servers/
 │   └── url_to_markdown_server/    # URL to markdown conversion
 ├── rust/                          # Rust MCP servers
 │   ├── benchmark-server/          # Performance benchmarking
-│   ├── fast-test-server/          # Fast testing server
+│   ├── fast-time-server/          # Time/date operations
 │   ├── filesystem-server/         # Filesystem operations
 │   └── slow-time-server/          # Configurable-latency testing server
 ├── templates/                     # Cookiecutter scaffolding templates
-│   ├── go/                        # Go server template
 │   └── python/                    # Python server template
-├── scaffold-go-server.sh          # Go server scaffolding script
 └── scaffold-python-server.sh      # Python server scaffolding script
 ```
 
 ## Scaffolding New Servers
-
-### Go Server
-
-```bash
-./mcp-servers/scaffold-go-server.sh my-server
-cd my-server
-make build
-make run
-```
 
 ### Python Server
 
@@ -47,36 +34,6 @@ make run
 cd my-server
 make install-dev
 make run
-```
-
-## Go Server Development
-
-From `mcp-servers/go/`:
-
-```bash
-make build            # Build the server
-make run              # Run the server
-make test             # Run tests
-make lint             # Run linter
-```
-
-### Key Files
-
-- `main.go` - Server entry point
-- `go.mod` - Go module definition
-- `Makefile` - Build automation
-
-### Example Tool Implementation
-
-```go
-func (s *Server) handleToolCall(name string, args map[string]interface{}) (interface{}, error) {
-    switch name {
-    case "my_tool":
-        return s.myTool(args)
-    default:
-        return nil, fmt.Errorf("unknown tool: %s", name)
-    }
-}
 ```
 
 ## Python Server Development
@@ -153,9 +110,6 @@ curl -X POST http://localhost:4444/gateways \
 Each language template includes test scaffolding:
 
 ```bash
-# Go
-cd mcp-servers/go && make test
-
 # Python
 cd mcp-servers/python && make test
 
@@ -181,6 +135,5 @@ async def test_tool():
 
 ## Key Documentation
 
-- `llms/mcp-server-go.md` - Detailed Go server guidance (for end-users)
 - `llms/mcp-server-python.md` - Detailed Python server guidance (for end-users)
 - `docs/docs/using/servers/` - Server integration guides

@@ -360,17 +360,6 @@ Why this matters:
 Recommended next step:
 - Treat as part of the admin login fixture investigation rather than fixing prompt-specific tests first.
 
-### 10. `register_fast_time_sse` sync quirk
-
-Status:
-- Needs investigation
-
-Observed behavior:
-- On clean startup, `register_fast_time_sse` can still create its SSE virtual server with zero associated tools even though related tooling can later appear reachable.
-
-Why this matters:
-- Compose test ergonomics and fixture predictability.
-
 ### 11. Remaining Rust runtime test-hardening lanes from `todo/test-improvement.md`
 
 Status:

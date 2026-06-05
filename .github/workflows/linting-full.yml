@@ -8,12 +8,6 @@ on:
     paths:
       - ".github/workflows/**"
       - "charts/**"
-      - "mcp-servers/**/*.go"
-      - "mcp-servers/**/go.mod"
-      - "mcp-servers/**/go.sum"
-      - "a2a-agents/**/*.go"
-      - "a2a-agents/**/go.mod"
-      - "a2a-agents/**/go.sum"
       - "Makefile"
   workflow_dispatch:
 
@@ -39,11 +33,11 @@ env:
 
 jobs:
   # ---------------------------------------------------------------
-  # Go / Helm / CI-infra gates (actionlint, commitlint, helm, gosec, govulncheck)
+  # Helm / CI-infra gates (actionlint, commitlint, helm)
   # ---------------------------------------------------------------
-  lint-go-helm-ci:
+  lint-helm-ci:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    name: lint-go-helm-ci
+    name: lint-helm-ci
     runs-on: ubuntu-slim
     timeout-minutes: 30
 
@@ -58,13 +52,6 @@ jobs:
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: "3.12"
-
-      - name: Set up Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version: "1.26.4"
-          cache-dependency-path: |
-            mcp-servers/go/fast-time-server/go.sum
 
       - name: Install Node.js 22
         run: |
@@ -383,14 +370,14 @@ jobs:
   # ---------------------------------------------------------------
   lint-complete:
     name: Linting Complete
-    needs: [lint-go-helm-ci, lint-python, syntax-check, lint-rust, lint-web, nodejsscan]
+    needs: [lint-helm-ci, lint-python, syntax-check, lint-rust, lint-web, nodejsscan]
     runs-on: ubuntu-slim
     if: always()
     steps:
       - name: Check all linting gates passed
         run: |
           results=(
-            "${{ needs.lint-go-helm-ci.result }}"
+            "${{ needs.lint-helm-ci.result }}"
             "${{ needs.lint-python.result }}"
             "${{ needs.syntax-check.result }}"
             "${{ needs.lint-rust.result }}"

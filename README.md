@@ -284,19 +284,9 @@ Copy [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.exam
 <summary><strong>🚀 End-to-end demo (register a local MCP server)</strong></summary>
 
 ```bash
-# 1️⃣  Spin up the sample GO MCP time server using mcpgateway.translate & docker (replace docker with podman if needed)
-python3 -m mcpgateway.translate \
-     --stdio "docker run --rm -i ghcr.io/ibm/fast-time-server:latest -transport=stdio" \
-     --expose-sse \
-     --port 8003
-
-# Or using the official mcp-server-git using uvx:
+# 1️⃣  Spin up the official mcp-server-git using uvx:
 pip install uv # to install uvx, if not already installed
 python3 -m mcpgateway.translate --stdio "uvx mcp-server-git" --expose-sse --port 9000
-
-# Alternative: running the local binary
-# cd mcp-servers/go/fast-time-server; make build
-# python3 -m mcpgateway.translate --stdio "./dist/fast-time-server -transport=stdio" --expose-sse --port 8002
 
 # NEW: Expose via multiple protocols simultaneously!
 python3 -m mcpgateway.translate \

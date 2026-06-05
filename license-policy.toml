@@ -88,7 +88,6 @@ allowlist = [
 [scan]
 check_pyproject_licenses = true
 check_pip_dependencies = true
-check_go_dependencies = true
 check_rust_dependencies = true
 ignore_dev_dependency_group_names = [
   "dev",

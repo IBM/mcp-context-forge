@@ -55,6 +55,13 @@ spec:
           args:
 {{- toYaml .Values.mcpFastTimeServer.args | nindent 12 }}
           {{- end }}
+          {{- if .Values.mcpFastTimeServer.env }}
+          env:
+            {{- range $key, $val := .Values.mcpFastTimeServer.env }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
+            {{- end }}
+          {{- end }}
 
           # ─── Service port exposed inside the pod ───
           ports:

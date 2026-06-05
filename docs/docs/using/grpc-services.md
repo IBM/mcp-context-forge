@@ -443,9 +443,8 @@ Use gRPC metadata for authentication:
 **Solutions:**
 
 1. Ensure the gRPC server has reflection enabled
-2. For Go servers: import `google.golang.org/grpc/reflection`
-3. For Python servers: use `grpc_reflection.v1alpha.reflection`
-4. Verify the server is running and accepting connections
+2. For Python servers: use `grpc_reflection.v1alpha.reflection`
+3. Verify the server is running and accepting connections
 
 ### TLS Connection Errors
 

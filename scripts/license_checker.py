@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Repository license compliance check for Python, Go, and Rust.
+"""Repository license compliance check for Python and Rust.
 
 This script validates:
 - Python project metadata from `pyproject.toml` files
 - Installed Python dependency licenses via `pip-licenses`
-- Go module licenses via `go-licenses`
 - Rust crate licenses via `cargo-license`
 """
 
@@ -134,7 +133,6 @@ def _summarize_findings(findings: Sequence[Finding]) -> Dict[str, int]:
         "pyproject": 0,
         "pip": 0,
         "pip-subvenv": 0,
-        "go": 0,
         "rust": 0,
     }
     for finding in findings:
@@ -142,7 +140,7 @@ def _summarize_findings(findings: Sequence[Finding]) -> Dict[str, int]:
             summary["warnings"] += 1
         else:
             summary["errors"] += 1
-        if finding.scope in {"pyproject", "pip", "pip-subvenv", "go", "rust"}:
+        if finding.scope in {"pyproject", "pip", "pip-subvenv", "rust"}:
             summary[finding.scope] += 1
     return summary
 
@@ -205,7 +203,6 @@ def _default_policy() -> Dict[str, Any]:
         "scan": {
             "check_pyproject_licenses": True,
             "check_pip_dependencies": True,
-            "check_go_dependencies": True,
             "check_rust_dependencies": True,
             "ignore_unknown_scanners": False,
             "ignore_dev_dependency_group_names": [
@@ -592,25 +589,6 @@ def _extract_cargo_license(manifest_path: Path) -> str:
     return ""
 
 
-def _extract_go_module_name(go_mod_path: Path) -> str:
-    try:
-        for line in go_mod_path.read_text(encoding="utf-8").splitlines():
-            stripped = line.strip()
-            if stripped.startswith("module "):
-                return stripped.split(maxsplit=1)[1].strip()
-    except (OSError, UnicodeDecodeError):
-        return ""
-    return ""
-
-
-def _is_local_go_package(package: str, module_name: str) -> bool:
-    module_name = module_name.strip()
-    if not module_name or not package:
-        return False
-    prefix = module_name.rstrip("/")
-    return package == module_name or package.startswith(prefix + "/")
-
-
 def _find_match(name: str, raw_license: str, allowlist: Sequence[Dict[str, str]]) -> Optional[str]:
     normalized = name.lower()
     normalized_license = raw_license.lower()
@@ -990,108 +968,6 @@ def scan_pip_subvenvs(
     return findings, stats
 
 
-def scan_go_modules(root: Path, policy: Dict[str, Any], compiled_patterns: Optional[CompiledPatterns] = None) -> Tuple[List[Finding], Dict[str, int]]:
-    findings: List[Finding] = []
-    stats = {"modules": 0, "packages": 0}
-
-    if not shutil.which("go-licenses"):
-        return (
-            [
-                Finding(
-                    "go",
-                    "go modules",
-                    "go-licenses",
-                    "",
-                    "`go-licenses` binary is not available",
-                )
-            ],
-            stats,
-        )
-
-    module_meta: Dict[Path, Tuple[str, str]] = {}
-    for module_file in _iter_files_with_name(root, "go.mod"):
-        module_root = module_file.parent
-        module_name = _extract_go_module_name(module_file)
-        module_license = _find_repo_spdx(module_root, root)
-        if not module_license:
-            module_license = "unknown"
-        module_meta[module_root] = (module_name, module_license)
-
-        finding = evaluate_license(
-            "go",
-            str(module_root.relative_to(root)),
-            module_root.name,
-            module_license,
-            policy,
-            is_local=True,
-            compiled_patterns=compiled_patterns,
-        )
-        if finding:
-            findings.append(finding)
-
-    for module_file in _iter_files_with_name(root, "go.mod"):
-        module_root = module_file.parent
-        stats["modules"] += 1
-        module_name, module_license = module_meta.get(module_root, ("", "unknown"))
-        result = _run_command(["go-licenses", "report", "./..."], module_root)
-        parsed_any = False
-        for row in csv.reader(result.stdout.splitlines()):
-            if len(row) < 3:
-                continue
-            package = row[0].strip()
-            package_license = row[2].strip()
-            if is_local_package := _is_local_go_package(package, module_name):
-                if not package_license or package_license.lower() in {"unknown", "n/a", ""}:
-                    package_license = module_license
-            if package or package_license:
-                parsed_any = True
-            first_segment = package.split("/", 1)[0]
-            if "." not in first_segment and not is_local_package:
-                continue
-            if package in {"go", "gopkg.in", "golang.org/x"}:
-                continue
-            if first_segment == "internal" and not is_local_package:
-                continue
-
-            stats["packages"] += 1
-            finding = evaluate_license(
-                "go",
-                str(module_root.relative_to(root)),
-                package,
-                package_license,
-                policy,
-                is_local=is_local_package,
-                compiled_patterns=compiled_patterns,
-            )
-            if finding:
-                findings.append(finding)
-
-        if result.returncode != 0 and not parsed_any:
-            stderr_lines = [line.strip() for line in result.stderr.splitlines() if line.strip()]
-            if stderr_lines:
-                if len(stderr_lines) > 3:
-                    stderr_summary = "; ".join(stderr_lines[-3:])
-                else:
-                    stderr_summary = "; ".join(stderr_lines)
-            else:
-                stderr_summary = ""
-            reason = "go-licenses returned non-zero exit code (warnings/partial scan possible)"
-            if stderr_summary:
-                reason = f"{reason}: {stderr_summary[:300]}"
-            findings.append(
-                Finding(
-                    "go",
-                    str(module_root.relative_to(root)),
-                    module_root.name,
-                    "",
-                    reason,
-                    is_warning=True,
-                )
-            )
-
-    return findings, stats
-
-
 def scan_rust_modules(root: Path, policy: Dict[str, Any], compiled_patterns: Optional[CompiledPatterns] = None) -> Tuple[List[Finding], Dict[str, int]]:
     findings: List[Finding] = []
     stats = {"manifests": 0, "crates": 0}
@@ -1202,7 +1078,6 @@ def print_summary(findings: Sequence[Finding], stats: Dict[str, Dict[str, int]],
     subvenv_stats = stats.get("pip-subvenv", {})
     if subvenv_stats.get("venvs", 0):
         print(f"Checked pip sub-venvs: {subvenv_stats['venvs']} venvs, {subvenv_stats['packages']} packages")
-    print(f"Checked Go modules: {stats['go']['modules']} modules, {stats['go']['packages']} packages")
     print(f"Checked Rust manifests: {stats['rust']['manifests']} manifests, {stats['rust']['crates']} crates")
     print(f"Findings: {_color(str(errors), _Palette.BOLD + _Palette.RED)} " f"error(s), {_color(str(warnings), _Palette.BOLD + _Palette.YELLOW)} warning(s)\n")
 
@@ -1212,7 +1087,6 @@ def print_summary(findings: Sequence[Finding], stats: Dict[str, Dict[str, int]],
         print(f"  python manifest files: {counts['pyproject']} finding(s)")
         print(f"  pip third-party: {counts['pip']} finding(s)")
         print(f"  pip sub-venvs: {counts['pip-subvenv']} finding(s)")
-        print(f"  go modules: {counts['go']} finding(s)")
         print(f"  rust manifests: {counts['rust']} finding(s)")
         if not findings:
             print(f"\n  {_status_label(False)} no findings")
@@ -1303,25 +1177,6 @@ def print_summary(findings: Sequence[Finding], stats: Dict[str, Dict[str, int]],
             print("")
         else:
             print(f"  {_status_label(False)} no issues detected\n")
-
-    print(_section_banner("# GO"))
-    go_findings = [finding for finding in findings if finding.scope == "go"]
-    go_by_source: Dict[str, List[Finding]] = defaultdict(list)
-    for finding in go_findings:
-        go_by_source[finding.source].append(finding)
-    for source in sorted(go_by_source.keys()):
-        scope_findings = go_by_source[source]
-        if not scope_findings:
-            continue
-        for item in scope_findings:
-            label = _status_label(item.is_warning, is_error=not item.is_warning)
-            print(f"  {label} {source} :: {item.package}")
-            print(f"    license: {item.license_value or 'n/a'}")
-            print(f"    reason: {item.reason}")
-        print("")
-    if not go_by_source:
-        print(f"  {_status_label(False)} no go license issues found")
-        print("")
 
     print(_section_banner("# RUST"))
     rust_findings = [finding for finding in findings if finding.scope == "rust"]
@@ -1420,7 +1275,6 @@ def main() -> int:
         "pyproject": {"manifests": 0, "evaluated": 0},
         "pip": {"dependencies": 0, "dependencies_ignored_as_dev": 0},
         "pip-subvenv": {"venvs": 0, "packages": 0, "dependencies_ignored_as_dev": 0},
-        "go": {"modules": 0, "packages": 0},
         "rust": {"manifests": 0, "crates": 0},
     }
 
@@ -1450,11 +1304,6 @@ def main() -> int:
         )
         findings.extend(scope_findings)
         stats["pip-subvenv"].update(scope_stats)
-
-    if scan_cfg.get("check_go_dependencies", True):
-        scope_findings, scope_stats = scan_go_modules(ROOT, policy, compiled_patterns=compiled_patterns)
-        findings.extend(scope_findings)
-        stats["go"].update(scope_stats)
 
     if scan_cfg.get("check_rust_dependencies", True):
         scope_findings, scope_stats = scan_rust_modules(ROOT, policy, compiled_patterns=compiled_patterns)

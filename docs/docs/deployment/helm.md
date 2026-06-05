@@ -294,7 +294,7 @@ flowchart TD
     If you enable testing registrations for fast-time / fast-test, the registration jobs use
     private Service URLs:
 
-    - `http://<release>-mcp-fast-time-server:80/http`
+    - `http://<release>-mcp-fast-time-server:80/mcp`
     - `http://<release>-fast-test-server:8880/mcp`
 
     Under strict defaults, gateway creation can fail with `422` ("private network address blocked").

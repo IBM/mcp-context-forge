@@ -128,11 +128,10 @@ helm install mcp-stack contextforge/mcp-stack \
   --set hpa.enabled=true
 ```
 
-### 4. Static Binaries (Go/Rust Servers)
+### 4. Static Binaries (Rust Servers)
 
 **Binary targets:**
 
-- Go servers: Cross-compiled Go executables (5-15 MB)
 - Rust servers: Static Rust binaries (3-10 MB)
 - Platforms: linux-amd64, linux-arm64, darwin-amd64, darwin-arm64, windows-amd64
 
@@ -144,10 +143,10 @@ helm install mcp-stack contextforge/mcp-stack \
 
 **Usage:**
 ```bash
-# Download and run Go server
-curl -LO https://github.com/contextforge-org/mcp-servers-go/releases/download/v1.0.0/mcp-server-time-linux-amd64
-chmod +x mcp-server-time-linux-amd64
-./mcp-server-time-linux-amd64 --port 9000
+# Download and run Rust server
+curl -LO https://github.com/contextforge-org/mcp-servers-rust/releases/download/v1.0.0/fast-time-server-linux-amd64
+chmod +x fast-time-server-linux-amd64
+./fast-time-server-linux-amd64
 ```
 
 ## Consequences
@@ -181,7 +180,7 @@ chmod +x mcp-server-time-linux-amd64
 | **PyPI** | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Python only | ❌ No | Local dev, pip install |
 | **Containers** | ✅ Yes | ✅ Yes | ✅ Bundled | ✅ All languages | ❌ No | K8s, serverless, Docker |
 | **Helm** | ✅ Yes | ✅ Optional | ✅ Optional | ✅ Optional | ✅ Yes | Kubernetes production |
-| **Binaries** | ❌ No | ⚠️ Future | ❌ No | ✅ Go/Rust only | ❌ No | Edge, embedded systems |
+| **Binaries** | ❌ No | ⚠️ Future | ❌ No | ✅ Rust only | ❌ No | Edge, embedded systems |
 
 ## Multi-Arch Build Strategy
 
@@ -200,14 +199,6 @@ cargo build --release --target x86_64-unknown-linux-gnu
 cargo build --release --target aarch64-unknown-linux-gnu
 maturin build --release --target x86_64-unknown-linux-gnu
 maturin build --release --target aarch64-unknown-linux-gnu
-```
-
-**Go binaries:**
-```bash
-# Cross-compile Go server
-GOOS=linux GOARCH=amd64 go build -o mcp-server-time-linux-amd64
-GOOS=linux GOARCH=arm64 go build -o mcp-server-time-linux-arm64
-GOOS=darwin GOARCH=arm64 go build -o mcp-server-time-darwin-arm64
 ```
 
 ## Supply Chain Security
@@ -234,7 +225,7 @@ sha256sum -c checksums.txt
 
 | Option | Why Not |
 |--------|---------|
-| **PyPI only** | Doesn't work for Go/Rust servers, inconvenient for Kubernetes |
+| **PyPI only** | Doesn't work for Rust servers, inconvenient for Kubernetes |
 | **Containers only** | Poor developer experience, overkill for pip install |
 | **Single monolithic package** | Too large, includes unnecessary dependencies |
 | **OS-specific packages (deb, rpm)** | Narrow distribution, doesn't work for all platforms |

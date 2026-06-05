@@ -4,7 +4,7 @@
 
 The **slow-time-server** is a Rust MCP test fixture for timeout, retry,
 circuit-breaker, session-pool, and load-testing scenarios. It replaces the
-previous Go slow-time-server implementation.
+previous slow-time-server implementation.
 
 This server is intentionally a test utility. Do not expose it outside a trusted
 test network.
@@ -16,7 +16,7 @@ The Rust server exposes MCP JSON-RPC over Streamable HTTP:
 - `POST /mcp` - canonical MCP endpoint
 - `POST /` - compatibility alias for MCP JSON-RPC requests
 
-SSE and the old Go HTTP endpoint are not available in the Rust implementation.
+SSE and the legacy HTTP endpoint are not available in the Rust implementation.
 Use `/mcp` instead of the old `/http` endpoint.
 
 ## Tools
@@ -111,11 +111,11 @@ curl -s http://localhost:8081/mcp \
   }'
 ```
 
-## Migration From Go
+## Migration Notes
 
-This is a full replacement for the Go slow-time-server.
+This is the current slow-time-server implementation.
 
-Removed Go endpoints and modes:
+Removed legacy endpoints and modes:
 
 - `/sse`
 - `/messages`
@@ -124,14 +124,14 @@ Removed Go endpoints and modes:
 - `/api/v1/openapi.json`
 - stdio, SSE, dual, and REST-only transport modes
 
-Current Rust replacements:
+Current endpoints:
 
 - Use `POST /mcp` for MCP JSON-RPC.
 - Use `/health` for container and compose health checks.
 - Use `/api/v1/time`, `/api/v1/config`, and `/api/v1/stats` for REST test helpers.
 - Build containers with `mcp-servers/rust/slow-time-server/Containerfile`.
 
-The old Go binary health-check flags are removed. Container health checks now
+The old binary health-check flags are removed. Container health checks now
 call `curl -sf http://localhost:8081/health`, so the runtime image includes
 `curl`.
 

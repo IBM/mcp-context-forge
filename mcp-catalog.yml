@@ -1405,10 +1405,10 @@ catalog_servers:
   - id: fast-time-server
     name: "Fast Time Server"
     category: "Time Services"
-    url: "http://localhost:8101/sse"
+    url: "http://localhost:9080/mcp"
     auth_type: "Open"
     provider: "ContextForge"
-    description: "Minimal Go service for time operations with MCP tools, resources, and prompts"
+    description: "Minimal Rust service for time operations with MCP tools, resources, and prompts"
     requires_api_key: false
     tags: ["time", "timezone", "local", "development"]
 

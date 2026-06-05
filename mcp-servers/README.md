@@ -34,18 +34,12 @@
 | `qr_code_server` | QR code generation and decoding |
 | `url_to_markdown_server` | URL and document to markdown conversion |
 
-### Go
-
-| Server | Description |
-|--------|-------------|
-| `fast-time-server` | Time and date operations |
-
 ### Rust
 
 | Server | Description |
 |--------|-------------|
 | `benchmark-server` | Dynamic tools, resources, and prompts for gateway scale testing |
-| `fast-test-server` | Fast testing server |
+| `fast-time-server` | Time and date operations |
 | `filesystem-server` | Filesystem operations |
 | `slow-time-server` | Configurable latency and failure simulation for resilience testing |
 
@@ -54,9 +48,6 @@
 ```bash
 # Python
 ./mcp-servers/scaffold-python-server.sh my-server
-
-# Go
-./mcp-servers/scaffold-go-server.sh my-server
 ```
 
 See templates in `templates/` for cookiecutter scaffolding.

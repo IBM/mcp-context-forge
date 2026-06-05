@@ -58,7 +58,7 @@ Release 1.0.3 consolidates **61 PRs** focused on **authentication and JWT harden
 - **👥 AuthCache Full Team Objects** ([#4550](https://github.com/IBM/mcp-context-forge/pull/4550)) – Store full team objects in AuthCache to eliminate a secondary DB query. Reduces auth hot-path latency.
 - **🎫 Token Revocation Caching** ([#4527](https://github.com/IBM/mcp-context-forge/pull/4527)) – Cache `get_token_revocation` / `is_token_revoked` to eliminate hot-path DB queries. Improves request throughput.
 - **🦀 Rust Fast-Test Server Speedup** ([#5059](https://github.com/IBM/mcp-context-forge/pull/5059)) – Sped up the Rust fast-test server. Reduces benchmark/test cycle time.
-- **🦀 Benchmark Server Rust Migration** ([#5091](https://github.com/IBM/mcp-context-forge/pull/5091)) – Replaced the Go benchmark server with the Rust benchmark server and rewired benchmark compose profiles to build from `mcp-servers/rust/benchmark-server`. Breaking: local benchmark-server binary paths move from `./dist/benchmark-server` to Cargo targets such as `./target/release/benchmark-server`.
+- **🦀 Benchmark Server Rust Migration** ([#5091](https://github.com/IBM/mcp-context-forge/pull/5091)) – Replaced the legacy benchmark server with the Rust benchmark server and rewired benchmark compose profiles to build from `mcp-servers/rust/benchmark-server`. Breaking: local benchmark-server binary paths move from `./dist/benchmark-server` to Cargo targets such as `./target/release/benchmark-server`.
 
 #### **🖥️ Admin UI**
 
@@ -1877,7 +1877,7 @@ This release delivers **enterprise security hardening**, **comprehensive RBAC im
 * **EntraID Admin Groups** ([#2265](https://github.com/IBM/mcp-context-forge/issues/2265)) - Added `sso_entra_admin_groups` to `_parse_list_from_env` validator
 * **CI/CD Workflow Fix** ([#2207](https://github.com/IBM/mcp-context-forge/issues/2207)) - Removed unused `workflow_dispatch` platforms input
 * **Dependency Cleanup** ([#2651](https://github.com/IBM/mcp-context-forge/issues/2651)) - Removed unused runtime dependencies from pyproject.toml
-* **MCP Server Dependencies** ([#2630](https://github.com/IBM/mcp-context-forge/issues/2630)) - Updated dependencies across Python, Go, and Rust MCP servers
+* **MCP Server Dependencies** ([#2630](https://github.com/IBM/mcp-context-forge/issues/2630)) - Updated dependencies across Python and Rust MCP servers
 * **Rust CI/CD** ([#2776](https://github.com/IBM/mcp-context-forge/issues/2776)) - Fixed Rust Plugins CI/CD workflow disallowed actions
 * **Verbose Test Output** ([#2665](https://github.com/IBM/mcp-context-forge/issues/2665)) - Added verbose pytest output option for real-time test name visibility
 * **.gitignore Cleanup** ([#2337](https://github.com/IBM/mcp-context-forge/issues/2337)) - Cleaned up redundant patterns and improved organization
@@ -2304,7 +2304,7 @@ We've established the [contextforge-org](https://github.com/contextforge-org) Gi
 * **N+1 Query Detection** - Automated tests to catch database query performance regressions
 
 #### **📦 Sample MCP Servers**
-* **Go System Monitor Server** ([#898](https://github.com/IBM/mcp-context-forge/issues/898)) - Reference implementation in Go for system monitoring
+* **System Monitor Server** ([#898](https://github.com/IBM/mcp-context-forge/issues/898)) - Reference implementation for system monitoring
 
 #### **🛠️ Developer Experience Improvements**
 * **Test Button for Resources** ([#1560](https://github.com/IBM/mcp-context-forge/issues/1560)) - Quick resource testing from Admin UI
@@ -2592,7 +2592,7 @@ docker compose up -d
   - Preserves output schema during tool discovery and invocation
 * **Multiple StreamableHTTP Content** (#1188, #1189) - Support for multiple content blocks in StreamableHTTP responses
 * **s390x Architecture Support** (#1138, #1206) - Container builds for IBM Z platform (s390x)
-* **System Monitor MCP Server** (#977) - Go-based MCP server for system monitoring and metrics
+* **System Monitor MCP Server** (#977) - MCP server for system monitoring and metrics
 
 #### **📚 Documentation Enhancements**
 * **Langflow MCP Server Integration** (#1205) - Documentation for Langflow integration
@@ -2696,7 +2696,7 @@ docker compose up -d
 
 #### **🐳 Container & Deployment Fixes**
 * **Gateway Registration on MacOS** (#625) - Fixed gateway registration and tool invocation on MacOS
-* **Non-root Container Users** (#1231) - Added non-root user to scratch Go containers
+* **Non-root Container Users** (#1231) - Added non-root users to scratch containers
 * **Container Runtime Detection** - Improved Docker/Podman detection in Makefile
 
 #### **💻 Admin UI Fixes** (#1370)
@@ -3184,7 +3184,7 @@ This release focuses on **Advanced OAuth Integration, Plugin Ecosystem, MCP Regi
 - Closes #1143 - Adding any server in MCP Registry fails
 - Closes #1061, #1062, #1058, #1059, #1060 - Python MCP Server Samples
 - Closes #1055, #1056, #1057, #1053, #1054, #1045, #1052 - Additional Python MCP Server Samples
-- Closes #1043 - Pandoc MCP server in Go
+- Closes #1043 - Pandoc MCP server sample
 
 **Bug Fixes:**
 - Closes #1178 - Header overlaps with modals
@@ -4102,7 +4102,7 @@ This release represents a true community effort with contributions from develope
 
 * **Infrastructure & DevOps**:
   * **Enhanced Helm charts** with health probes, HPA support, and migration jobs
-  * **Fast Go MCP server example** (`mcp-fast-time-server`) for high-performance demos (#265)
+  * **Fast MCP server example** (`mcp-fast-time-server`) for high-performance demos (#265)
   * Database migration management with proper Alembic integration
   * Init containers for database readiness checks
 
@@ -4199,7 +4199,7 @@ Thanks to the **first-time contributors** who delivered features in 0.3.0:
   * UI now shows a *transport* column for each gateway/tool;
 * **Authentication & stateful sessions** for Streamable HTTP clients/servers (Basic/Bearer headers, session persistence).
 * **Gateway hardening** - connection-level time-outs and smarter health-check retries to avoid UI hangs
-* **Fast Go MCP server example** - high-performance reference server for benchmarking/demos.
+* **Fast MCP server example** - high-performance reference server for benchmarking/demos.
 * **Exportable connection strings** - one-click download & `/servers/{id}/connect` API that generates ready-made configs for LangChain, Claude Desktop, etc. (closed #154).
 * **Infrastructure as Code** - initial Terraform & Ansible scripts for cloud installs.
 * **Developer tooling & UX**

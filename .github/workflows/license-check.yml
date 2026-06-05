@@ -40,13 +40,6 @@ jobs:
       - name: Install pip-licenses
         run: pip install pip-licenses
 
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version: "stable"
-
-      - name: Install go-licenses
-        run: go install github.com/google/go-licenses@latest
-
       - name: Install Rust stable
         run: rustup default stable
 

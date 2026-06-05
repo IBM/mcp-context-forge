@@ -8,7 +8,7 @@
 
 External plugins can run over MCP using HTTP or STDIO. STDIO is the easiest way to run an external MCP server without additional infrastructure, but the previous configuration only allowed a `script` path (with a `.py` restriction). This made it hard to:
 
-- Run non-Python MCP servers (Go, Rust, Node, etc.).
+- Run non-Python MCP servers (Rust, Node, etc.).
 - Provide per-plugin environment variables (e.g., `PLUGINS_CONFIG_PATH`) without wrapper scripts.
 - Set a working directory for plugin servers started by the gateway.
 

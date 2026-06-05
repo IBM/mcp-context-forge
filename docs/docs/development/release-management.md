@@ -10,7 +10,7 @@ This document describes the complete release process for ContextForge, from pre-
 |-------|-------|
 | [1. Version Update](#1-version-update) | Bump version, update references, CHANGELOG, roadmap, security advisories, base images |
 | [2. Python Dependency Updates](#2-python-dependency-updates) | Update pyproject.toml/requirements.txt, pip-audit |
-| [3. Rust, Go & JS Dependency Updates](#3-rust-go-javascript-dependency-updates) | cargo update, go get -u, npm update |
+| [3. Rust & JS Dependency Updates](#3-rust-javascript-dependency-updates) | cargo update, npm update |
 | [4. Quality Gates](#4-quality-gates) | Code formatting, linting, secrets scanning, security analysis |
 | [5. Test Gates](#5-test-gates) | Unit tests, JS tests, UI tests, MCP tests, load tests |
 | [6. Build Verification](#6-build-verification) | Docker build, compose stack, embedded mode, package validation |
@@ -189,7 +189,7 @@ make test
 
 ---
 
-## 3. Rust, Go & JavaScript Dependency Updates
+## 3. Rust & JavaScript Dependency Updates
 
 Update non-Python dependencies across the repository.
 
@@ -241,34 +241,7 @@ Audits and exemptions should be reviewed by Rust maintainers or security reviewe
 
 When ContextForge and `cpex-plugins` share Rust dependency changes, apply the same decision in both repositories: run each repo's cargo-vet check, update each repo's `supply-chain/` metadata, or explicitly defer the update in the repo where the audit cannot be completed.
 
-### 3.3 Go dependencies
-
-1. Update `go.mod` and `go.sum` for all Go modules:
-
-```bash
-find . -path "./mcp-servers/templates" -prune -o -name "go.mod" -type f -print | while read -r mod_file; do
-  dir=$(dirname "$mod_file")
-  echo "Updating Go dependencies in $dir"
-  (cd "$dir" && go get -u ./... && go mod tidy)
-done
-```
-
-2. Update `LINT_GO_TOOLCHAIN ?= go1.26.4` appropriately in the _root_/Makefile
-3. Update Dockerfile e.g. `FROM golang:1.26.4`
-
-Verify Go code compiles and passes security checks:
-
-```bash
-make linting-go-gosec
-make linting-go-govulncheck
-```
-
-| Target | What it checks |
-|--------|----------------|
-| `linting-go-gosec` | Security static analysis across all Go modules |
-| `linting-go-govulncheck` | Known vulnerability scanning in Go dependencies |
-
-### 3.4 JavaScript dependencies (npm)
+### 3.3 JavaScript dependencies (npm)
 
 Update `package.json` and verify the frontend builds and passes linting:
 
@@ -1494,10 +1467,8 @@ python .github/tools/update_dependencies.py --file pyproject.toml
 make install-dev
 make pip-audit
 
-# 2. Rust / Go / JS / CDN dependency updates
+# 2. Rust / JS / CDN dependency updates
 # ... repeat for all Cargo.toml dirs (see Section 3) ...
-# ... go get -u ./... && go mod tidy for all go.mod dirs ...
-make linting-go-gosec linting-go-govulncheck
 npm update && npm audit && npm audit fix
 make lint-web test-js-coverage
 # CDN deps: update versions in cdn_resources.py, download-cdn-assets.sh, templates/*.html

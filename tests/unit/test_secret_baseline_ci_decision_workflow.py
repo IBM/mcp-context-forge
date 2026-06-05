@@ -290,7 +290,6 @@ def test_pre_commit_uses_shared_decision_for_fast_path() -> None:
     assert Path(".github/workflows/secret-baseline-ci-decision.yml").exists() is False
     assert DECISION_SCRIPT.exists()
     assert re.search(r"ci-decision:\n\s+name: Full CI decision", text)
-    assert _step_if_expression("Set up Go") == full_ci_if
     assert _step_if_expression("Run pre-commit") == full_ci_if
     assert _step_if_expression("Run detect-secrets validation") == secrets_only_if
 

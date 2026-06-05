@@ -30,7 +30,7 @@ module should assume a layout equivalent to:
 - `core.spi.config.v1`
 - `core.spi.observability.v1`
 
-This is a useful planning baseline for a Rust A2A module or a Go LLM proxy
+This is a useful planning baseline for a Rust A2A module or an LLM proxy
 module even if the exact final packages evolve.
 
 ### AuthPolicyService
@@ -255,7 +255,7 @@ All invoke-style operations should preserve the same conceptual envelope:
 - trace metadata
 - optional delegation hints
 
-That allows a Rust A2A module and a Go LLM module to call the same core
+That allows a Rust A2A module and an LLM module to call the same core
 services without inventing a protocol-specific policy seam.
 
 ## Typical Flow

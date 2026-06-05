@@ -15,7 +15,7 @@ ContextForge: Full Project Overview
 **Project Structure**
 - App: `mcpgateway/` (FastAPI entrypoints, db.py ORM models, 50+ services, 19 routers, 15 middleware, transports, plugins framework, alembic migrations)
 - Plugins: `plugins/` (42 built-in native plugins and external plugin example)
-- MCP Servers: `mcp-servers/` (5 Go servers, 20 Python servers, scaffolding templates)
+- MCP Servers: `mcp-servers/` (Python and Rust sample servers, scaffolding templates)
 - Docs: `docs/` (MkDocs site + docs Makefile)
 - Charts: `charts/` (Helm chart `mcp-stack`)
 - Rust MCP Runtime: `tools_rust/mcp_runtime/` (optional Rust sidecar/edge runtime; see `DEVELOPING.md` for workflows)
