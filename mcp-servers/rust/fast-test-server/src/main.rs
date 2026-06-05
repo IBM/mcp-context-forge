@@ -937,6 +937,7 @@ async fn rest_time_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body;
 
     #[test]
     fn test_parse_utc() {
@@ -1018,5 +1019,122 @@ mod tests {
             mcp_validate_active_session(&headers),
             Err(StatusCode::NOT_FOUND)
         );
+    }
+
+    async fn response_text(response: Response) -> String {
+        let bytes = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body should be readable");
+        String::from_utf8(bytes.to_vec()).expect("response body should be utf-8")
+    }
+
+    #[tokio::test]
+    async fn test_version_endpoint_advertises_latest_protocol() {
+        let version = version_handler().await;
+        assert_eq!(version.0["mcp_version"], MCP_PROTOCOL_VERSION);
+    }
+
+    #[tokio::test]
+    async fn test_initialize_accepts_older_protocol_and_advertises_latest() {
+        let response = mcp_handler(
+            HeaderMap::new(),
+            axum::Json(json!({
+                "jsonrpc": "2.0",
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "go-compat-smoke",
+                        "version": "1.0"
+                    }
+                },
+                "id": 1
+            })),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().contains_key(SESSION_HEADER));
+        let body = response_text(response).await;
+        assert!(body.contains(r#""protocolVersion":"2025-11-25""#));
+    }
+
+    #[tokio::test]
+    async fn test_direct_mcp_session_lifecycle_matches_streamable_http() {
+        let initialize = mcp_handler(
+            HeaderMap::new(),
+            axum::Json(json!({
+                "jsonrpc": "2.0",
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "go-compat-smoke",
+                        "version": "1.0"
+                    }
+                },
+                "id": 1
+            })),
+        )
+        .await;
+        let session_id = initialize
+            .headers()
+            .get(SESSION_HEADER)
+            .expect("initialize should issue session id")
+            .clone();
+
+        let mut valid_headers = HeaderMap::new();
+        valid_headers.insert(SESSION_HEADER, session_id.clone());
+        let valid = mcp_handler(
+            valid_headers.clone(),
+            axum::Json(json!({
+                "jsonrpc": "2.0",
+                "method": "tools/list",
+                "id": 2
+            })),
+        )
+        .await;
+        assert_eq!(valid.status(), StatusCode::OK);
+
+        let missing = mcp_handler(
+            HeaderMap::new(),
+            axum::Json(json!({
+                "jsonrpc": "2.0",
+                "method": "tools/list",
+                "id": 3
+            })),
+        )
+        .await;
+        assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
+
+        let mut fake_headers = HeaderMap::new();
+        fake_headers.insert(SESSION_HEADER, HeaderValue::from_static("fake-session"));
+        let fake = mcp_handler(
+            fake_headers,
+            axum::Json(json!({
+                "jsonrpc": "2.0",
+                "method": "tools/list",
+                "id": 4
+            })),
+        )
+        .await;
+        assert_eq!(fake.status(), StatusCode::NOT_FOUND);
+
+        assert_eq!(
+            mcp_delete_handler(valid_headers.clone()).await,
+            StatusCode::OK
+        );
+        let deleted = mcp_handler(
+            valid_headers,
+            axum::Json(json!({
+                "jsonrpc": "2.0",
+                "method": "tools/list",
+                "id": 5
+            })),
+        )
+        .await;
+        assert_eq!(deleted.status(), StatusCode::NOT_FOUND);
     }
 }
