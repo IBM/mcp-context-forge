@@ -271,7 +271,7 @@ class ObservabilityService:
     # Trace Management
     # ==============================
 
-    def start_trace(  # pylint: disable=too-many-locals
+    def start_trace(  # pylint: disable=too-many-locals,too-many-arguments
         self,
         name: str,
         trace_id: Optional[str] = None,
