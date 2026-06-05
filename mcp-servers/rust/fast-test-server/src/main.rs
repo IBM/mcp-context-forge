@@ -22,9 +22,10 @@ use rmcp::{
     tool_handler, tool_router, ErrorData as McpError, RoleServer, ServerHandler,
 };
 use serde_json::json;
+use std::collections::HashSet;
 use std::env;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, RwLock};
 use tracing::info;
 use tracing::trace;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -32,9 +33,12 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 const DEFAULT_BIND_ADDRESS: &str = "0.0.0.0:9080";
 const APP_NAME: &str = "fast-test-server";
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 const SESSION_HEADER: &str = "mcp-session-id";
 static DIRECT_REQUEST_COUNT: AtomicU64 = AtomicU64::new(0);
 static SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
+static ACTIVE_SESSIONS: LazyLock<RwLock<HashSet<String>>> =
+    LazyLock::new(|| RwLock::new(HashSet::new()));
 
 // ============================================================================
 // Request/Response Schemas
@@ -265,7 +269,7 @@ impl FastTestServer {
 impl ServerHandler for FastTestServer {
     fn get_info(&self) -> ServerInfo {
         let mut info = ServerInfo::default();
-        info.protocol_version = ProtocolVersion::V_2024_11_05;
+        info.protocol_version = ProtocolVersion::LATEST;
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info.server_info = Implementation::from_build_env();
         info.instructions = Some(
@@ -505,7 +509,7 @@ async fn version_handler() -> axum::Json<serde_json::Value> {
     axum::Json(json!({
         "name": APP_NAME,
         "version": APP_VERSION,
-        "mcp_version": "2024-11-05"
+        "mcp_version": MCP_PROTOCOL_VERSION
     }))
 }
 
@@ -513,8 +517,15 @@ async fn version_handler() -> axum::Json<serde_json::Value> {
 // Fast Streamable HTTP MCP Handler
 // ============================================================================
 
-async fn mcp_delete_handler() -> StatusCode {
-    StatusCode::ACCEPTED
+async fn mcp_delete_handler(headers: HeaderMap) -> StatusCode {
+    let Some(session_id) = mcp_session_id(&headers) else {
+        return StatusCode::BAD_REQUEST;
+    };
+    if remove_session(session_id) {
+        StatusCode::OK
+    } else {
+        StatusCode::NOT_FOUND
+    }
 }
 
 async fn mcp_handler(
@@ -527,18 +538,29 @@ async fn mcp_handler(
         .unwrap_or_default();
     let id = req.get("id");
 
+    if method != "initialize" {
+        let Err(status) = mcp_validate_active_session(&headers) else {
+            if id.is_none() {
+                return StatusCode::ACCEPTED.into_response();
+            }
+            return match method {
+                "tools/list" => mcp_tools_list_response(id),
+                "tools/call" => mcp_tools_call_response(id, &req).await,
+                _ => mcp_error_response(id, -32601, "Method not found", None),
+            };
+        };
+        if id.is_none() {
+            return status.into_response();
+        }
+        return mcp_error_response_with_status(status, id, -32000, "Invalid session ID", None);
+    }
+
     if id.is_none() {
         return StatusCode::ACCEPTED.into_response();
     }
 
-    if method != "initialize" && !headers.contains_key(SESSION_HEADER) {
-        return mcp_error_response(id, -32000, "Invalid session ID", None);
-    }
-
     match method {
         "initialize" => mcp_initialize_response(id),
-        "tools/list" => mcp_tools_list_response(id),
-        "tools/call" => mcp_tools_call_response(id, &req).await,
         _ => mcp_error_response(id, -32601, "Method not found", None),
     }
 }
@@ -564,18 +586,53 @@ fn mcp_id_json(id: Option<&serde_json::Value>) -> String {
 fn mcp_initialize_response(id: Option<&serde_json::Value>) -> Response {
     let mut headers = mcp_base_headers();
     let session_id = SESSION_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let session_header = HeaderValue::from_str(&format!("fast-test-{session_id}"))
+    let session_id = format!("fast-test-{session_id}");
+    let session_header = HeaderValue::from_str(&session_id)
         .unwrap_or_else(|_| HeaderValue::from_static("fast-test"));
+    remember_session(session_id);
     headers.insert(SESSION_HEADER, session_header);
     mcp_json_response(
         headers,
         format!(
-            r#"{{"jsonrpc":"2.0","id":{},"result":{{"protocolVersion":"2024-11-05","capabilities":{{"tools":{{}}}},"serverInfo":{{"name":"{}","version":"{}"}},"instructions":"Ultra-fast MCP test server."}}}}"#,
+            r#"{{"jsonrpc":"2.0","id":{},"result":{{"protocolVersion":"{}","capabilities":{{"tools":{{}}}},"serverInfo":{{"name":"{}","version":"{}"}},"instructions":"Ultra-fast MCP test server."}}}}"#,
             mcp_id_json(id),
+            MCP_PROTOCOL_VERSION,
             APP_NAME,
             APP_VERSION
         ),
     )
+}
+
+fn mcp_session_id(headers: &HeaderMap) -> Option<&str> {
+    headers.get(SESSION_HEADER)?.to_str().ok()
+}
+
+fn remember_session(session_id: String) {
+    if let Ok(mut sessions) = ACTIVE_SESSIONS.write() {
+        sessions.insert(session_id);
+    }
+}
+
+fn remove_session(session_id: &str) -> bool {
+    ACTIVE_SESSIONS
+        .write()
+        .map(|mut sessions| sessions.remove(session_id))
+        .unwrap_or(false)
+}
+
+fn mcp_validate_active_session(headers: &HeaderMap) -> Result<(), StatusCode> {
+    let Some(session_id) = mcp_session_id(headers) else {
+        return Err(StatusCode::BAD_REQUEST);
+    };
+    if ACTIVE_SESSIONS
+        .read()
+        .map(|sessions| sessions.contains(session_id))
+        .unwrap_or(false)
+    {
+        Ok(())
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
 }
 
 fn mcp_tools_list_response(id: Option<&serde_json::Value>) -> Response {
@@ -791,10 +848,20 @@ fn mcp_error_response(
     message: &str,
     data: Option<serde_json::Value>,
 ) -> Response {
+    mcp_error_response_with_status(StatusCode::OK, id, code, message, data)
+}
+
+fn mcp_error_response_with_status(
+    status: StatusCode,
+    id: Option<&serde_json::Value>,
+    code: i32,
+    message: &str,
+    data: Option<serde_json::Value>,
+) -> Response {
     let data = data
         .map(|value| format!(r#","data":{}"#, value))
         .unwrap_or_default();
-    mcp_json_response(
+    let mut response = mcp_json_response(
         mcp_base_headers(),
         format!(
             r#"{{"jsonrpc":"2.0","id":{},"error":{{"code":{},"message":"{}"{}}}}}"#,
@@ -803,7 +870,9 @@ fn mcp_error_response(
             message,
             data
         ),
-    )
+    );
+    *response.status_mut() = status;
+    response
 }
 
 fn mcp_invalid_params_response(id: Option<&serde_json::Value>, message: &str) -> Response {
@@ -920,5 +989,34 @@ mod tests {
     #[test]
     fn test_default_server() {
         let _server = FastTestServer::default();
+    }
+
+    #[test]
+    fn test_server_advertises_latest_protocol() {
+        let server = FastTestServer::default();
+        assert_eq!(server.get_info().protocol_version, ProtocolVersion::LATEST);
+        assert_eq!(MCP_PROTOCOL_VERSION, "2025-11-25");
+    }
+
+    #[test]
+    fn test_active_session_validation() {
+        let session_id = "unit-test-session-validation";
+        remove_session(session_id);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(SESSION_HEADER, HeaderValue::from_static(session_id));
+        assert_eq!(
+            mcp_validate_active_session(&headers),
+            Err(StatusCode::NOT_FOUND)
+        );
+
+        remember_session(session_id.to_string());
+        assert_eq!(mcp_validate_active_session(&headers), Ok(()));
+
+        assert!(remove_session(session_id));
+        assert_eq!(
+            mcp_validate_active_session(&headers),
+            Err(StatusCode::NOT_FOUND)
+        );
     }
 }
