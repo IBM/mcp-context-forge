@@ -3413,6 +3413,7 @@ class TestAuthenticateOrCreateUser:
     @pytest.mark.asyncio
     async def test_existing_user_mixed_case_idp_email_uses_canonical_claims(self, sso_service, mock_db):
         existing_user = SimpleNamespace(
+            id="550e8400-e29b-41d4-a716-446655440001",
             email="user@test.com",
             full_name="User Name",
             auth_provider="github",
@@ -3444,9 +3445,10 @@ class TestAuthenticateOrCreateUser:
         assert result == "jwt-token"
         sso_service.auth_service.get_user_by_email.assert_awaited_once_with("user@test.com")
         token_payload = mock_jwt.await_args.args[0]
-        assert token_payload["sub"] == "user@test.com"
-        assert token_payload["email"] == "user@test.com"
-        assert token_payload["user"]["email"] == "user@test.com"
+        assert token_payload["sub"] == "550e8400-e29b-41d4-a716-446655440001"
+        assert "email" not in token_payload
+        assert "user" not in token_payload
+        assert "is_admin" not in token_payload
 
     @pytest.mark.asyncio
     async def test_existing_user_avoids_post_commit_attribute_reads(self, sso_service, mock_db):
