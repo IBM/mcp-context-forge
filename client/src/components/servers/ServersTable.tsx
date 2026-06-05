@@ -117,6 +117,7 @@ interface ServersTableProps {
   onDelete: (id: string) => void;
   onTest: (id: string) => void;
   onViewDetails?: (id: string) => void;
+  onToggleEnabled?: (id: string, enabled: boolean) => void;
 }
 
 export function ServersTable({
@@ -126,6 +127,7 @@ export function ServersTable({
   onDelete,
   onTest,
   onViewDetails,
+  onToggleEnabled,
 }: ServersTableProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const timeoutRef = useRef<number | null>(null);
@@ -277,6 +279,7 @@ export function ServersTable({
                     onDelete={onDelete}
                     onTest={onTest}
                     onViewDetails={onViewDetails}
+                    onToggleEnabled={onToggleEnabled}
                   />
                 </TableCell>
               </TableRow>

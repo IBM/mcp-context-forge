@@ -8,7 +8,7 @@ interface ValidationError {
 }
 
 interface ErrorBody {
-  detail?: Array<ValidationError> | string;
+  detail?: Array<ValidationError> | { message?: string; success?: boolean } | string;
   message?: string;
 }
 
@@ -38,6 +38,16 @@ export function parseApiError(error: unknown, fallbackMessage: string): string {
   // Check for string detail
   if (typeof apiError.body?.detail === "string") {
     return apiError.body.detail;
+  }
+
+  // Check for object detail with a message property (e.g. {"detail":{"message":"...","success":false}})
+  if (
+    apiError.body?.detail !== null &&
+    typeof apiError.body?.detail === "object" &&
+    !Array.isArray(apiError.body?.detail) &&
+    typeof (apiError.body.detail as { message?: string }).message === "string"
+  ) {
+    return (apiError.body.detail as { message: string }).message;
   }
 
   // Check for validation errors format

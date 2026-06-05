@@ -191,11 +191,13 @@ export function useQuery<TData, TBody = unknown>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, method, enabled, shouldFetchImmediately, initialData, headersKey, bodyKey, timeout]);
 
+  const refetch = useCallback(() => execute(), [execute]);
+
   return {
     data,
     error,
     isLoading,
     execute,
-    refetch: () => execute(),
+    refetch,
   };
 }

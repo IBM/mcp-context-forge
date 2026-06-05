@@ -465,9 +465,11 @@ describe("ExposeComponentsForm", () => {
 
     it("should call clearOAuthNotification when notification is dismissed", async () => {
       const clearOAuthNotification = vi.fn();
+      // Use "error" so the useEffect (which only fires on "success") does not
+      // call clearOAuthNotification automatically — the dismiss click is the sole caller.
       const oauthNotification = {
-        type: "success" as const,
-        message: "OAuth configured successfully",
+        type: "error" as const,
+        message: "OAuth authorization failed",
       };
 
       const user = userEvent.setup();
@@ -480,10 +482,9 @@ describe("ExposeComponentsForm", () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText("OAuth configured successfully")).toBeInTheDocument();
+        expect(screen.getByText("OAuth authorization failed")).toBeInTheDocument();
       });
 
-      // Find and click the dismiss button
       const dismissButton = screen.getByRole("button", { name: /dismiss/i });
       await user.click(dismissButton);
 

@@ -99,7 +99,7 @@ class TestRateLimiting:
 
     def test_rate_limit_is_per_ip(self, client: TestClient, setup_test_user: EmailUser, test_user_credentials: Dict[str, str]) -> None:
         """Test rate limit is enforced per IP address.
-        
+
         Note: TestClient doesn't support changing client IP in headers, so this test
         verifies that rate limiting is active for a single IP. In production, different
         IPs would have separate rate limit buckets.
