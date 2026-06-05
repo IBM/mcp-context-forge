@@ -9265,7 +9265,11 @@ class TestInvokeToolMcpSse:
         registry = MagicMock()
         registry.acquire = fake_acquire
 
-        headers_token = request_headers_var.set({"mcp-session-id": "downstream-xyz"})
+        # Phase 1 / #4686: Use legacy protocol version so session ID is not ignored
+        headers_token = request_headers_var.set({
+            "mcp-session-id": "downstream-xyz",
+            "mcp-protocol-version": "2024-11-05"
+        })
         try:
             with (
                 _setup_cache_for_invoke(tp, gp),
@@ -9538,7 +9542,11 @@ class TestInvokeToolMcpStreamableHttpCoverage:
         registry = MagicMock()
         registry.acquire = MagicMock(return_value=_AcquireCM())
 
-        headers_token = request_headers_var.set({"mcp-session-id": "downstream-sh"})
+        # Phase 1 / #4686: Use legacy protocol version so session ID is not ignored
+        headers_token = request_headers_var.set({
+            "mcp-session-id": "downstream-sh",
+            "mcp-protocol-version": "2024-11-05"
+        })
         try:
             with (
                 _setup_cache_for_invoke(tp, gp),

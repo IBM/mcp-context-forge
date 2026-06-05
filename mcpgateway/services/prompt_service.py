@@ -420,32 +420,66 @@ class PromptService(BaseService):
         # CWE-400: Validate meta_data limits before forwarding to upstream
         _validate_meta_data(meta_data)
 
-        try:
-            # #4205: Use the upstream session registry when a downstream Mcp-Session-Id
-            # is in scope; this binds the upstream session 1:1 to the downstream
-            # session and preserves connection reuse across its tool/prompt calls.
+        try:  # pylint: disable=duplicate-code
+            # #4205 / #4686: Connection reuse strategy depends on protocol semantics.
+            # - Sessionful protocols (< 2025-11-25): Use UpstreamSessionRegistry
+            #   keyed by downstream Mcp-Session-Id for 1:1 binding.
+            # - Sessionless protocols (>= 2025-11-25): Use SessionlessConnectionPool
+            #   keyed by (gateway_id, url, transport, auth_fingerprint).
+            # - Fallback: Per-call session when pool unavailable.
             downstream_session_id = _downstream_session_id_from_request()
-            if downstream_session_id and gateway_id:
+            use_registry = bool(downstream_session_id) and bool(gateway_id)
+            use_sessionless_pool = not downstream_session_id and bool(gateway_id)
+
+            if use_registry:
                 try:
                     registry = get_upstream_session_registry()
                 except RegistryNotInitializedError:
-                    registry = None
-                if registry is not None:
-                    async with registry.acquire(
-                        downstream_session_id=downstream_session_id,
-                        gateway_id=gateway_id,
-                        url=gateway_url,
-                        headers=headers,
-                        transport_type=registry_transport_type,
-                    ) as upstream:
-                        remote_result = await _get_prompt_with_meta(upstream.session, remote_name, prompt_arguments, meta_data)
-                        return PromptResult(
-                            messages=[
-                                Message.model_validate(message.model_dump(by_alias=True, exclude_none=True) if hasattr(message, "model_dump") else message)
-                                for message in getattr(remote_result, "messages", []) or []
-                            ],
-                            description=getattr(remote_result, "description", None) or prompt.description,
-                        )
+                    use_registry = False
+
+            if use_sessionless_pool:
+                try:
+                    # First-Party
+                    from mcpgateway.services.sessionless_connection_pool import (  # pylint: disable=import-outside-toplevel
+                        get_sessionless_connection_pool,
+                        SessionlessConnectionPoolNotInitializedError,
+                    )
+
+                    sessionless_pool = get_sessionless_connection_pool()
+                except SessionlessConnectionPoolNotInitializedError:
+                    use_sessionless_pool = False
+
+            if use_registry:
+                async with registry.acquire(
+                    downstream_session_id=downstream_session_id,
+                    gateway_id=gateway_id,
+                    url=gateway_url,
+                    headers=headers,
+                    transport_type=registry_transport_type,
+                ) as upstream:
+                    remote_result = await _get_prompt_with_meta(upstream.session, remote_name, prompt_arguments, meta_data)
+                    return PromptResult(
+                        messages=[
+                            Message.model_validate(message.model_dump(by_alias=True, exclude_none=True) if hasattr(message, "model_dump") else message)
+                            for message in getattr(remote_result, "messages", []) or []
+                        ],
+                        description=getattr(remote_result, "description", None) or prompt.description,
+                    )
+            elif use_sessionless_pool:
+                async with sessionless_pool.acquire(
+                    gateway_id=gateway_id,
+                    url=gateway_url,
+                    headers=headers,
+                    transport_type=registry_transport_type,
+                ) as pooled_conn:
+                    remote_result = await _get_prompt_with_meta(pooled_conn.session, remote_name, prompt_arguments, meta_data)
+                    return PromptResult(
+                        messages=[
+                            Message.model_validate(message.model_dump(by_alias=True, exclude_none=True) if hasattr(message, "model_dump") else message)
+                            for message in getattr(remote_result, "messages", []) or []
+                        ],
+                        description=getattr(remote_result, "description", None) or prompt.description,
+                    )
 
             if transport == "sse":
                 async with sse_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout) as streams:
