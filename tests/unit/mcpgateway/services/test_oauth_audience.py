@@ -333,8 +333,3 @@ class TestOAuthAudienceParameter:
             assert token_data["audience"] == "https://my-api.example.com"
             assert token_data["resource"] == "https://mcp-server.example.com"
             assert result["access_token"] == "test-token"
-
-            # Verify audience was sent
-            call_args = oauth_manager._post_token_request.call_args
-            token_data = call_args[0][1]
-            assert token_data["audience"] == "https://my-api.example.com"
