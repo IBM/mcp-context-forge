@@ -455,6 +455,8 @@ async def initiate_oauth_flow(
                     oauth_config["client_id"] = registered_client.client_id
                     if decrypted_secret:
                         oauth_config["client_secret"] = decrypted_secret
+                    # Include token_endpoint_auth_method from DCR registration
+                    oauth_config["token_endpoint_auth_method"] = registered_client.token_endpoint_auth_method
 
                     # Discover AS metadata to get authorization/token endpoints if not already set
                     # Note: OAuthManager expects 'authorization_url' and 'token_url', not 'authorization_endpoint'/'token_endpoint'

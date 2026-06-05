@@ -1617,6 +1617,7 @@ class TestOAuthRouterAdditionalCoverage:
         class _Registered:
             client_id = "client-123"
             client_secret_encrypted = None
+            token_endpoint_auth_method = "client_secret_post"
 
         class _FakeDcrService:
             async def get_or_register_client(self, **_kwargs):
@@ -1735,6 +1736,7 @@ class TestOAuthRouterAdditionalCoverage:
         class _Registered:
             client_id = "client-123"
             client_secret_encrypted = "encrypted"
+            token_endpoint_auth_method = "client_secret_post"
 
         class _FakeDcrService:
             async def get_or_register_client(self, **_kwargs):
