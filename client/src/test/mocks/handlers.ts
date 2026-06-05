@@ -21,7 +21,7 @@ export const handlers = [
           email_verified: true,
           password_change_required: false,
         },
-        csrf_token: "mock-csrf-token",
+        mcpgateway_csrf_token: "mock-csrf-token",
       });
     }
 

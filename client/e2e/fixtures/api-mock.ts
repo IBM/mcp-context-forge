@@ -49,7 +49,7 @@ export function createApiMock(page: Page): ApiMock {
             contentType: "application/json",
             body: JSON.stringify({
               user,
-              csrf_token: MOCK_CSRF_TOKEN,
+              mcpgateway_csrf_token: MOCK_CSRF_TOKEN,
             }),
           });
           return;

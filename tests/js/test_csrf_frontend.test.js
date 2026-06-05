@@ -60,7 +60,7 @@ beforeEach(() => {
                 const cookies = document.cookie.split(';');
                 for (let cookie of cookies) {
                     const [name, value] = cookie.trim().split('=');
-                    if (name === 'csrf_token') return decodeURIComponent(value);
+                    if (name === 'mcpgateway_csrf_token') return decodeURIComponent(value);
                 }
             } catch (e) {
                 console.error('CSRF: failed to read cookie fallback', e);
@@ -70,7 +70,7 @@ beforeEach(() => {
         }
 
         async function refreshCSRFToken() {
-            const response = await fetch('/auth/csrf-token', {
+            const response = await fetch('/app/auth/csrf-token', {
                 method: 'GET',
                 credentials: 'include'  // pragma: allowlist secret
             });
@@ -79,10 +79,10 @@ beforeEach(() => {
             }
             const data = await response.json();
             const meta = document.querySelector('meta[name="csrf-token"]');
-            if (meta && data.csrf_token) {
-                meta.setAttribute('content', data.csrf_token);
+            if (meta && data.mcpgateway_csrf_token) {
+                meta.setAttribute('content', data.mcpgateway_csrf_token);
             }
-            return data.csrf_token;
+            return data.mcpgateway_csrf_token;
         }
 
         function injectCSRFIntoForm(form) {
@@ -90,13 +90,13 @@ beforeEach(() => {
             const method = (form.method || 'GET').toUpperCase();
             if (method === 'GET') return;
 
-            if (form.querySelector('input[name="csrf_token"][data-csrf-injected]')) return;
+            if (form.querySelector('input[name="mcpgateway_csrf_token"][data-csrf-injected]')) return;
 
-            let input = form.querySelector('input[name="csrf_token"]');
+            let input = form.querySelector('input[name="mcpgateway_csrf_token"]');
             if (!input) {
                 input = document.createElement('input');
                 input.type = 'hidden';
-                input.name = 'csrf_token';
+                input.name = 'mcpgateway_csrf_token';
                 input.value = getCSRFToken();
                 input.setAttribute('data-csrf-injected', 'true');
                 form.appendChild(input);
@@ -138,7 +138,7 @@ describe("getCSRFToken", () => {
             meta.remove();
 
             // Set cookie
-            document.cookie = 'csrf_token=cookie-token-456';
+            document.cookie = 'mcpgateway_csrf_token=cookie-token-456';
 
             const token = getCSRFToken();
             expect(token).toBe('cookie-token-456');
@@ -148,7 +148,7 @@ describe("getCSRFToken", () => {
             const meta = document.querySelector('meta[name="csrf-token"]');
             meta.setAttribute('content', '');
 
-            document.cookie = 'csrf_token=cookie-token-789';
+            document.cookie = 'mcpgateway_csrf_token=cookie-token-789';
 
             const token = getCSRFToken();
             expect(token).toBe('cookie-token-789');
@@ -169,7 +169,7 @@ describe("getCSRFToken", () => {
             const meta = document.querySelector('meta[name="csrf-token"]');
             meta.setAttribute('content', 'meta-token-priority');
 
-            document.cookie = 'csrf_token=cookie-token-ignored';
+            document.cookie = 'mcpgateway_csrf_token=cookie-token-ignored';
 
             const token = getCSRFToken();
             expect(token).toBe('meta-token-priority');
@@ -181,7 +181,7 @@ describe("refreshCSRFToken", () => {
     test("calls GET /auth/csrf-token with credentials include", async () => {
         window.fetch.mockResolvedValue({
             ok: true,
-            json: async () => ({ csrf_token: 'new-token-123' })
+            json: async () => ({ mcpgateway_csrf_token: 'new-token-123' })
         });
 
         await refreshCSRFToken();
@@ -195,7 +195,7 @@ describe("refreshCSRFToken", () => {
     test("returns new token from response on success", async () => {
         window.fetch.mockResolvedValue({
             ok: true,
-            json: async () => ({ csrf_token: 'refreshed-token-456' })
+            json: async () => ({ mcpgateway_csrf_token: 'refreshed-token-456' })
         });
 
         const token = await refreshCSRFToken();
@@ -208,7 +208,7 @@ describe("refreshCSRFToken", () => {
 
         window.fetch.mockResolvedValue({
             ok: true,
-            json: async () => ({ csrf_token: 'updated-token-789' })
+            json: async () => ({ mcpgateway_csrf_token: 'updated-token-789' })
         });
 
         await refreshCSRFToken();
@@ -222,7 +222,7 @@ describe("refreshCSRFToken", () => {
 
         window.fetch.mockResolvedValue({
             ok: true,
-            json: async () => ({ csrf_token: 'new-token' })
+            json: async () => ({ mcpgateway_csrf_token: 'new-token' })
         });
 
         // Should not throw
@@ -394,7 +394,7 @@ describe("Fetch Monkey-Patch", () => {
             .mockResolvedValueOnce({ ok: false, status: 401 })
             .mockResolvedValueOnce({
                 ok: true,
-                json: async () => ({ csrf_token: 'new-token-401' })
+                json: async () => ({ mcpgateway_csrf_token: 'new-token-401' })
             })
             .mockResolvedValueOnce({ ok: true, status: 200 });
 
@@ -413,7 +413,7 @@ describe("Fetch Monkey-Patch", () => {
             .mockResolvedValueOnce({ ok: false, status: 403 })
             .mockResolvedValueOnce({
                 ok: true,
-                json: async () => ({ csrf_token: 'new-token-403' })
+                json: async () => ({ mcpgateway_csrf_token: 'new-token-403' })
             })
             .mockResolvedValueOnce({ ok: true, status: 200 });
 
@@ -458,13 +458,13 @@ describe("Fetch Monkey-Patch", () => {
             .mockResolvedValueOnce({ ok: false, status: 401 })
             .mockResolvedValueOnce({
                 ok: true,
-                json: async () => ({ csrf_token: 'new-token' })
+                json: async () => ({ mcpgateway_csrf_token: 'new-token' })
             })
-            .mockResolvedValueOnce({ ok: false, status: 401 });
-
-        const response = await monkeyPatchedFetch('/api/data', { method: 'POST' });
-
-        expect(mockFetch).toHaveBeenCalledTimes(3);
+            .mockResolvedValueOnce({ ok: false, status: 401 })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({ mcpgateway_csrf_token: 'new-token' })
+            })
         expect(response.status).toBe(401);
     });
 
@@ -498,7 +498,7 @@ describe("Form Auto-Injection - injectCSRFIntoForm", () => {
 
         injectCSRFIntoForm(form);
 
-        const input = form.querySelector('input[name="csrf_token"]');
+        const input = form.querySelector('input[name="mcpgateway_csrf_token"]');
         expect(input).not.toBeNull();
         expect(input.type).toBe('hidden');
         expect(input.value).toBe('form-token-123');
@@ -514,7 +514,7 @@ describe("Form Auto-Injection - injectCSRFIntoForm", () => {
 
         injectCSRFIntoForm(form);
 
-        const input = form.querySelector('input[name="csrf_token"]');
+        const input = form.querySelector('input[name="mcpgateway_csrf_token"]');
         expect(input).not.toBeNull();
         expect(input.value).toBe('form-token-put');
     });
@@ -529,7 +529,7 @@ describe("Form Auto-Injection - injectCSRFIntoForm", () => {
 
         injectCSRFIntoForm(form);
 
-        const input = form.querySelector('input[name="csrf_token"]');
+        const input = form.querySelector('input[name="mcpgateway_csrf_token"]');
         expect(input).toBeNull();
     });
 
@@ -558,7 +558,7 @@ describe("Form Auto-Injection - injectCSRFIntoForm", () => {
         injectCSRFIntoForm(form);
         injectCSRFIntoForm(form);
 
-        const inputs = form.querySelectorAll('input[name="csrf_token"]');
+        const inputs = form.querySelectorAll('input[name="mcpgateway_csrf_token"]');
         expect(inputs.length).toBe(1);
     });
 
@@ -566,7 +566,7 @@ describe("Form Auto-Injection - injectCSRFIntoForm", () => {
         const meta = document.querySelector('meta[name="csrf-token"]');
         meta.setAttribute('content', 'meta-form-token');
 
-        document.cookie = 'csrf_token=cookie-form-token';
+        document.cookie = 'mcpgateway_csrf_token=cookie-form-token';
 
         const form = document.createElement('form');
         form.method = 'POST';
@@ -574,7 +574,7 @@ describe("Form Auto-Injection - injectCSRFIntoForm", () => {
 
         injectCSRFIntoForm(form);
 
-        const input = form.querySelector('input[name="csrf_token"]');
+        const input = form.querySelector('input[name="mcpgateway_csrf_token"]');
         expect(input.value).toBe('meta-form-token');
     });
 
@@ -582,7 +582,7 @@ describe("Form Auto-Injection - injectCSRFIntoForm", () => {
         const meta = document.querySelector('meta[name="csrf-token"]');
         meta.remove();
 
-        document.cookie = 'csrf_token=cookie-fallback-token';
+        document.cookie = 'mcpgateway_csrf_token=cookie-fallback-token';
 
         const form = document.createElement('form');
         form.method = 'POST';
@@ -590,7 +590,7 @@ describe("Form Auto-Injection - injectCSRFIntoForm", () => {
 
         injectCSRFIntoForm(form);
 
-        const input = form.querySelector('input[name="csrf_token"]');
+        const input = form.querySelector('input[name="mcpgateway_csrf_token"]');
         expect(input.value).toBe('cookie-fallback-token');
     });
 
@@ -643,7 +643,7 @@ describe("MutationObserver", () => {
 
         // Wait for observer to process
         setTimeout(() => {
-            const input = form.querySelector('input[name="csrf_token"]');
+            const input = form.querySelector('input[name="mcpgateway_csrf_token"]');
             expect(input).not.toBeNull();
             expect(input.value).toBe('dynamic-token');
             observer.disconnect();
@@ -677,7 +677,7 @@ describe("MutationObserver", () => {
 
         // Wait for observer to process
         setTimeout(() => {
-            const input = form.querySelector('input[name="csrf_token"]');
+            const input = form.querySelector('input[name="mcpgateway_csrf_token"]');
             expect(input).not.toBeNull();
             expect(input.value).toBe('nested-token');
             observer.disconnect();
