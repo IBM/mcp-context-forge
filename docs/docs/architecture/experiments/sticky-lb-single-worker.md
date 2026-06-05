@@ -54,9 +54,9 @@ gateway/nginx/redis services come up healthy.
 response) produced this distribution across 3 backends:
 
 ```
- 7  0a265444cab5
-10  22d94c05449e
-13  555afb3636eb
+ 7  pod-A
+10  pod-B
+13  pod-C
 ```
 
 Spread is uneven (23% / 33% / 43%) at N=30, well within consistent-hash
@@ -78,7 +78,7 @@ fails on this branch. Steps:
 1. Register a counter MCP server as a gateway.
 2. Create a virtual server scoping its three tools (echo, increment, get_value).
 3. `POST /servers/{id}/mcp` with `{"method":"initialize"}` — gateway responds
-   with a fresh `Mcp-Session-Id` header (e.g. `b616268e74704c37a6cb2af3f7d51114`).
+   with a fresh `Mcp-Session-Id` header (e.g. `<sid>` — an opaque 32-hex uuid).
 4. `POST /servers/{id}/mcp` with `{"method":"tools/call","name":"increment"}`
    and the new `Mcp-Session-Id` header.
 
