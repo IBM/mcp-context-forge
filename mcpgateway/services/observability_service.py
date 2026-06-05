@@ -16,12 +16,14 @@ It includes:
 - Query and filtering capabilities
 - Integration with FastAPI middleware
 
-Architecture (Issue #3883 - Separate Session Pattern):
-    Write operations (start_trace, end_trace, start_span, end_span, add_event,
-    record_token_usage, record_metric, delete_old_traces) use independent database
-    sessions that commit immediately on a best-effort basis. This allows observability
-    data to persist even when the main request transaction fails, providing visibility
-    into partial failures.
+Architecture (Issue #3883 - Separate Session Pattern, Issue #5072 - Session Reuse):
+    Write operations support session reuse to reduce connection pool pressure:
+    - start_trace, end_trace, start_span, end_span accept optional obs_db parameter
+    - When obs_db is provided, caller owns session lifecycle (no auto-close)
+    - When obs_db is None, creates independent session (auto-close after commit)
+    - ObservabilityMiddleware creates single session for entire trace lifecycle
+      (start_trace → start_span → end_span → end_trace), reducing from 4-6 sessions
+      to 1 session per traced request
 
     Query operations (get_trace, get_traces, get_spans, etc.) accept a session parameter
     to use the request-scoped session with proper RBAC and token scoping.
@@ -35,6 +37,7 @@ Transaction Semantics:
     - This is intentional for best-effort observability visibility
     - Context managers (trace_span, trace_tool_invocation, trace_a2a_request) create
       a single independent session for the entire span lifecycle
+    - Middleware batches all trace operations into single session with atomic commit
 
 Examples:
     >>> from mcpgateway.services.observability_service import ObservabilityService  # doctest: +SKIP
@@ -280,12 +283,13 @@ class ObservabilityService:
         ip_address: Optional[str] = None,
         attributes: Optional[Dict[str, Any]] = None,
         resource_attributes: Optional[Dict[str, Any]] = None,
+        commit: bool = True,
+        obs_db: Optional[Session] = None,
     ) -> str:
         """Start a new trace.
 
-        Creates an independent observability session for best-effort recording.
-        Observability data persists independently of main request transaction
-        (issue #3883 - separate session pattern).
+        Creates an independent observability session for best-effort recording
+        unless obs_db is provided for session reuse.
 
         Args:
             name: Trace name (e.g., "POST /tools/invoke")
@@ -298,13 +302,18 @@ class ObservabilityService:
             ip_address: Client IP address
             attributes: Additional trace attributes
             resource_attributes: Resource attributes (service name, version, etc.)
+            commit: Whether to commit immediately (default True).
+                Set to False when called from middleware for session reuse.
+            obs_db: Optional observability session for session reuse.
+                If not provided, creates a new independent session.
 
         Returns:
             Trace ID (UUID string or W3C format)
 
         Note:
-            Uses separate database session from main transaction (best-effort).
-            Follows pattern established in instrumentation/sqlalchemy.py:58-87.
+            When obs_db is provided, caller owns session lifecycle.
+            When obs_db is None, this method creates and closes its own session.
+            Uses separate database session from main transaction (issue #3883).
 
         Examples:
             >>> trace_id = service.start_trace(  # doctest: +SKIP
@@ -314,10 +323,11 @@ class ObservabilityService:
             ...     user_email="user@example.com"
             ... )
         """
-        obs_db = None
-        owned = False
+        session_owned = False
+        if obs_db is None:
+            obs_db, session_owned = _get_or_create_observability_session()
+
         try:
-            obs_db, owned = _get_or_create_observability_session()
             # Use provided trace_id or generate new UUID
             if not trace_id:
                 trace_id = str(uuid.uuid4())
@@ -342,11 +352,12 @@ class ObservabilityService:
                 created_at=utc_now(),
             )
             obs_db.add(trace)
-            self._safe_commit(obs_db, "start_trace")
-            logger.debug("Started trace %s: %s", trace_id, name)
+            if commit:
+                self._safe_commit(obs_db, "start_trace")
+            logger.debug(f"Started trace {trace_id}: {name}")
             return trace_id
         finally:
-            if owned and obs_db is not None:
+            if session_owned and obs_db is not None:
                 try:
                     obs_db.close()
                 except Exception as close_error:
@@ -359,12 +370,13 @@ class ObservabilityService:
         status_message: Optional[str] = None,
         http_status_code: Optional[int] = None,
         attributes: Optional[Dict[str, Any]] = None,
+        commit: bool = True,
+        obs_db: Optional[Session] = None,
     ) -> None:
         """End a trace.
 
-        Creates an independent observability session for best-effort recording.
-        Observability data persists independently of main request transaction
-        (issue #3883 - separate session pattern).
+        Creates an independent observability session for best-effort recording
+        unless obs_db is provided for session reuse.
 
         Args:
             trace_id: Trace ID to end
@@ -372,10 +384,15 @@ class ObservabilityService:
             status_message: Optional status message
             http_status_code: HTTP response status code
             attributes: Additional attributes to merge
+            commit: Whether to commit immediately (default True).
+                Set to False when called from middleware for session reuse.
+            obs_db: Optional observability session for session reuse.
+                If not provided, creates a new independent session.
 
         Note:
-            Uses separate database session from main transaction (best-effort).
-            Follows pattern established in instrumentation/sqlalchemy.py:58-87.
+            When obs_db is provided, caller owns session lifecycle.
+            When obs_db is None, this method creates and closes its own session.
+            Uses separate database session from main transaction (issue #3883).
 
         Examples:
             >>> service.end_trace(  # doctest: +SKIP
@@ -384,10 +401,11 @@ class ObservabilityService:
             ...     http_status_code=200
             ... )
         """
-        obs_db = None
-        owned = False
+        session_owned = False
+        if obs_db is None:
+            obs_db, session_owned = _get_or_create_observability_session()
+
         try:
-            obs_db, owned = _get_or_create_observability_session()
             trace = obs_db.query(ObservabilityTrace).filter_by(trace_id=trace_id).first()
             if not trace:
                 logger.warning("Trace %s not found", trace_id)
@@ -405,10 +423,11 @@ class ObservabilityService:
             if attributes:
                 trace.attributes = {**(trace.attributes or {}), **attributes}
 
-            self._safe_commit(obs_db, "end_trace")
-            logger.debug("Ended trace %s: %s (%.2fms)", trace_id, status, duration_ms)
+            if commit:
+                self._safe_commit(obs_db, "end_trace")
+            logger.debug(f"Ended trace {trace_id}: {status} ({duration_ms:.2f}ms)")
         finally:
-            if owned and obs_db is not None:
+            if session_owned and obs_db is not None:
                 try:
                     obs_db.close()
                 except Exception as close_error:
