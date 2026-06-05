@@ -34,6 +34,11 @@ def upgrade() -> None:
     if "tool_plugin_bindings" not in inspector.get_table_names():
         return
 
+    columns = [col["name"] for col in inspector.get_columns("tool_plugin_bindings")]
+    # The on error column will be removed when downgrading from 4842b831d24e
+    if "on_error" not in columns:
+        op.add_column("tool_plugin_bindings", sa.Column("on_error", sa.String(10), nullable=True))
+
     # SQLite: CHECK constraints are only applied at table creation time.
     # Fresh installs get the constraint from the ORM model in db.py.
     if bind.dialect.name == "sqlite":
