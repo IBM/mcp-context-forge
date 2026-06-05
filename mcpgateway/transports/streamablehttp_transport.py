@@ -75,6 +75,7 @@ from mcpgateway.observability import create_span
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.mcp_apps import apply_tool_meta, filter_model_visible_tools
 from mcpgateway.services.metrics import (
     mcp_auth_cache_events_counter,
     oauth_verify_events_counter,
@@ -186,6 +187,20 @@ def _safe_str_attr(obj: Any, attr: str) -> Optional[str]:
     """
     value = getattr(obj, attr, None)
     return value if isinstance(value, str) else None
+
+
+def _to_mcp_tool(tool: Any) -> types.Tool:
+    """Convert an internal tool record to the MCP transport model."""
+    payload: Dict[str, Any] = {
+        "name": tool.name,
+        "title": _safe_str_attr(tool, "title"),
+        "description": tool.description or "",
+        "inputSchema": tool.input_schema,
+        "outputSchema": tool.output_schema,
+        "annotations": tool.annotations,
+    }
+    apply_tool_meta(payload, getattr(tool, "extension_metadata", None))
+    return types.Tool.model_validate({key: value for key, value in payload.items() if value is not None})
 
 
 def _to_mcp_prompt(prompt: Any) -> types.Prompt:
@@ -2265,17 +2280,7 @@ async def list_tools() -> List[types.Tool]:
 
                 # Default cache mode: use database
                 tools = await tool_service.list_server_tools(db, server_id, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
-                return [
-                    types.Tool(
-                        name=tool.name,
-                        title=_safe_str_attr(tool, "title"),
-                        description=tool.description or "",
-                        inputSchema=tool.input_schema,
-                        outputSchema=tool.output_schema,
-                        annotations=tool.annotations,
-                    )
-                    for tool in tools
-                ]
+                return [_to_mcp_tool(tool) for tool in filter_model_visible_tools(tools)]
         except Exception as e:
             logger.error("Error listing tools:%s", e)
             return []
@@ -2283,17 +2288,7 @@ async def list_tools() -> List[types.Tool]:
         try:
             async with get_db() as db:
                 tools, _ = await tool_service.list_tools(db, include_inactive=False, limit=0, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
-                return [
-                    types.Tool(
-                        name=tool.name,
-                        title=_safe_str_attr(tool, "title"),
-                        description=tool.description or "",
-                        inputSchema=tool.input_schema,
-                        outputSchema=tool.output_schema,
-                        annotations=tool.annotations,
-                    )
-                    for tool in tools
-                ]
+                return [_to_mcp_tool(tool) for tool in filter_model_visible_tools(tools)]
         except Exception as e:
             logger.exception("Error listing tools:%s", e)
             return []

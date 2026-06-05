@@ -48,6 +48,7 @@ from mcpgateway.services.gateway_service import (
     GatewayService,
     OAuthToolValidationError,
 )
+from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
 
 # ---------------------------------------------------------------------------
 # Helpers & global monkey-patches
@@ -3329,6 +3330,22 @@ class TestGatewayRefresh:
         assert valid_tools[0].name == "valid_tool"
         assert len(validation_errors) == 1
         assert "invalid_tool" in validation_errors[0]
+
+    def test_validate_tools_preserves_mcp_apps_meta(self, gateway_service):
+        """Gateway discovery should preserve upstream MCP Apps _meta.ui metadata."""
+        tools = [
+            {
+                "name": "open_widget",
+                "description": "Open widget",
+                "inputSchema": {},
+                "_meta": {"ui": {"resourceUri": "ui://widgets/example", "audience": ["model"]}},
+            }
+        ]
+
+        valid_tools, validation_errors = gateway_service._validate_tools(tools)
+
+        assert validation_errors == []
+        assert valid_tools[0].extension_metadata == {MCP_UI_EXTENSION: {"resourceUri": "ui://widgets/example", "audience": ["model"]}}
 
     def test_validate_tools_error_message(self, gateway_service):
         """Validation errors must be 'toolname: reason' strings, not raw pydantic dicts (issue #136 Bug C).

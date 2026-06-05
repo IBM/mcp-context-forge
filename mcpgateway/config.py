@@ -1145,6 +1145,10 @@ class Settings(BaseSettings):
     mcpgateway_elicitation_timeout: int = Field(default=60, description="Default timeout for elicitation requests in seconds")
     mcpgateway_elicitation_max_concurrent: int = Field(default=100, description="Maximum concurrent elicitation requests")
 
+    # MCP Apps extension support (disabled by default)
+    mcpgateway_mcp_apps_enabled: bool = Field(default=False, description="Enable MCP Apps support through capabilities.extensions")
+    mcpgateway_mcp_apps_session_ttl: int = Field(default=900, ge=1, le=86400, description="AppBridge session TTL in seconds")
+
     # Security
     skip_ssl_verify: bool = Field(
         default=False,

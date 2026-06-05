@@ -81,6 +81,7 @@ from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.content_security import ContentSecurityService
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.mcp_apps import is_app_visible_tool, is_model_visible_tool, optional_extension_metadata, validate_extension_metadata
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.metrics_query_service import get_top_performers_combined
@@ -1165,6 +1166,7 @@ class ToolService(BaseService):
             "input_schema": tool.input_schema or {"type": "object", "properties": {}},
             "output_schema": tool.output_schema,
             "annotations": tool.annotations or {},
+            "extension_metadata": optional_extension_metadata(getattr(tool, "extension_metadata", None)),
             "auth_type": tool.auth_type,
             "jsonpath_filter": tool.jsonpath_filter,
             "custom_name": tool.custom_name,
@@ -1358,6 +1360,7 @@ class ToolService(BaseService):
 
         tool_dict["request_type"] = tool.request_type
         tool_dict["annotations"] = tool.annotations or {}
+        tool_dict["extension_metadata"] = optional_extension_metadata(getattr(tool, "extension_metadata", None))
 
         # Only decode auth if include_auth=True AND we have encrypted credentials
         if include_auth and has_encrypted_auth:
@@ -1966,6 +1969,7 @@ class ToolService(BaseService):
             >>> db = MagicMock()
             >>> tool = MagicMock()
             >>> tool.name = 'test'
+            >>> tool.extension_metadata = None
             >>> db.execute.return_value.scalar_one_or_none.return_value = None
             >>> mock_gateway = MagicMock()
             >>> mock_gateway.name = 'test_gateway'
@@ -1997,6 +2001,9 @@ class ToolService(BaseService):
 
             if visibility is None:
                 visibility = tool.visibility or "public"
+
+            tool_extension_metadata = optional_extension_metadata(getattr(tool, "extension_metadata", None))
+            validate_extension_metadata(tool_extension_metadata)
 
             # Validate tool content for malicious patterns (CWE-20 fix - Issue #6)
             # Scan tool name, description, and inputSchema
@@ -2059,6 +2066,7 @@ class ToolService(BaseService):
                 input_schema=tool.input_schema,
                 output_schema=tool.output_schema,
                 annotations=tool.annotations,
+                extension_metadata=tool_extension_metadata,
                 jsonpath_filter=tool.jsonpath_filter,
                 auth_type=auth_type,
                 auth_value=auth_value,
@@ -2635,6 +2643,8 @@ class ToolService(BaseService):
         Returns:
             DbTool: Database model instance ready to be added to the session.
         """
+        tool_extension_metadata = optional_extension_metadata(getattr(tool, "extension_metadata", None))
+        validate_extension_metadata(tool_extension_metadata)
         return DbTool(
             original_name=name,
             custom_name=name,
@@ -2650,6 +2660,7 @@ class ToolService(BaseService):
             input_schema=tool.input_schema,
             output_schema=tool.output_schema,
             annotations=tool.annotations,
+            extension_metadata=tool_extension_metadata,
             jsonpath_filter=tool.jsonpath_filter,
             auth_type=auth_type,
             auth_value=auth_value,
@@ -3054,6 +3065,7 @@ class ToolService(BaseService):
                     DbTool.input_schema.label("input_schema"),
                     DbTool.output_schema.label("output_schema"),
                     DbTool.annotations.label("annotations"),
+                    DbTool.extension_metadata.label("extension_metadata"),
                     DbTool.owner_email.label("owner_email"),
                     DbTool.team_id.label("team_id"),
                     DbTool.visibility.label("visibility"),
@@ -3081,6 +3093,7 @@ class ToolService(BaseService):
 
             result: List[Dict[str, Any]] = []
             for row in rows:
+                extension_metadata = optional_extension_metadata(row.get("extension_metadata"))
                 payload: Dict[str, Any] = {
                     "name": row["name"],
                     "description": row["description"],
@@ -3089,6 +3102,10 @@ class ToolService(BaseService):
                 }
                 if row["title"] is not None:
                     payload["title"] = row["title"]
+                if extension_metadata is not None:
+                    payload["extensionMetadata"] = extension_metadata
+                if not is_model_visible_tool(payload):
+                    continue
                 if row["output_schema"] is not None:
                     payload["outputSchema"] = row["output_schema"]
                 result.append(payload)
@@ -4675,6 +4692,7 @@ class ToolService(BaseService):
         global_context: Any,
         meta_data: Optional[Dict[str, Any]],
         skip_pre_invoke: bool,
+        require_app_visible: bool,
         path_label: str,
     ) -> "ToolResult":
         """Sleep for the plugin-requested delay, then recursively re-invoke the tool.
@@ -4697,6 +4715,7 @@ class ToolService(BaseService):
             global_context: Plugin global context.
             meta_data: Optional metadata dictionary.
             skip_pre_invoke: Whether to skip pre-invoke hooks.
+            require_app_visible: Whether the retried invocation must resolve an app-visible tool.
             path_label: Label for log messages (success/timeout/exception).
 
         Returns:
@@ -4725,6 +4744,7 @@ class ToolService(BaseService):
                 plugin_global_context=global_context,
                 meta_data=meta_data,
                 skip_pre_invoke=skip_pre_invoke,
+                require_app_visible=require_app_visible,
                 retry_attempt=retry_attempt + 1,
             )
 
@@ -4742,6 +4762,7 @@ class ToolService(BaseService):
         plugin_global_context: Optional[GlobalContext] = None,
         meta_data: Optional[Dict[str, Any]] = None,
         skip_pre_invoke: bool = False,
+        require_app_visible: bool = False,
         retry_attempt: int = 0,
     ) -> ToolResult:
         """
@@ -4765,6 +4786,7 @@ class ToolService(BaseService):
             plugin_global_context: Optional global context from middleware for consistency across hooks.
             meta_data: Optional metadata dictionary for additional context (e.g., request ID).
             skip_pre_invoke: When True, skip TOOL_PRE_INVOKE hooks (used by trusted Rust fallback path).
+            require_app_visible: When True, deny execution unless the resolved tool is MCP Apps app-visible.
             retry_attempt: Zero-based retry counter; 0 = original call.  Incremented by the retry
                 loop and compared against ``settings.max_tool_retries``.
 
@@ -4810,7 +4832,7 @@ class ToolService(BaseService):
         if gateway_id_from_header:
             # Look up gateway to check if it's in direct_proxy mode
             gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id_from_header)).scalar_one_or_none()
-            if gateway and gateway.gateway_mode == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
+            if gateway and gateway.gateway_mode == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled and not require_app_visible:
                 # SECURITY: Check gateway access before allowing direct proxy
                 # This prevents RBAC bypass where any authenticated user could invoke tools
                 # on any gateway just by knowing the gateway ID
@@ -4962,6 +4984,10 @@ class ToolService(BaseService):
                 ).first()
                 if not server_match:
                     raise ToolNotFoundError(f"Tool not found: {name}")
+
+        if require_app_visible:
+            if is_direct_proxy or not is_app_visible_tool(tool_payload):
+                raise ToolNotFoundError(f"Tool not found: {name}")
 
         # Extract A2A-related data from annotations (will be used after db.close() if A2A tool)
         tool_annotations = tool_payload.get("annotations") or {}
@@ -6413,6 +6439,7 @@ class ToolService(BaseService):
                             global_context,
                             meta_data,
                             skip_pre_invoke,
+                            require_app_visible,
                             "success",
                         )
 
@@ -6442,6 +6469,7 @@ class ToolService(BaseService):
                         global_context,
                         meta_data,
                         skip_pre_invoke,
+                        require_app_visible,
                         "timeout",
                     )
                 raise
@@ -6503,6 +6531,7 @@ class ToolService(BaseService):
                         global_context,
                         meta_data,
                         skip_pre_invoke,
+                        require_app_visible,
                         "exception",
                     )
 
@@ -6704,7 +6733,9 @@ class ToolService(BaseService):
             >>> service.convert_tool_to_read = MagicMock(return_value='tool_read')
             >>> ToolRead.model_validate = MagicMock(return_value='tool_read')
             >>> import asyncio
-            >>> asyncio.run(service.update_tool(db, 'tool_id', MagicMock()))
+            >>> tool_update = MagicMock()
+            >>> tool_update.extension_metadata = None
+            >>> asyncio.run(service.update_tool(db, 'tool_id', tool_update))
             'tool_read'
         """
         try:
@@ -6801,6 +6832,10 @@ class ToolService(BaseService):
                 tool.output_schema = tool_update.output_schema
             if tool_update.annotations is not None:
                 tool.annotations = tool_update.annotations
+            tool_update_extension_metadata = optional_extension_metadata(getattr(tool_update, "extension_metadata", None))
+            if tool_update_extension_metadata is not None:
+                validate_extension_metadata(tool_update_extension_metadata)
+                tool.extension_metadata = tool_update_extension_metadata
             if tool_update.jsonpath_filter is not None:
                 tool.jsonpath_filter = tool_update.jsonpath_filter
             if tool_update.visibility is not None:
