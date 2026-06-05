@@ -63,6 +63,8 @@ include .snyk
 recursive-include mcpgateway/templates *.html
 recursive-include mcpgateway/static *.css *.js *.gif *.png *.svg
 exclude mcpgateway/static/iframe-test-harness.html
+exclude mcpgateway/static/css/tailwind.min.css # Generated Tailwind CSS (built during development or container build)
+
 # Vite build artifacts (gitignored; regenerated per build with hashed filenames)
 exclude mcpgateway/static/bundle-*.js
 recursive-exclude mcpgateway/static/.vite *

@@ -1,4 +1,10 @@
-"""Tests for UAID domain allowlist validation at registration and invocation.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/services/test_a2a_uaid_allowlist.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for UAID domain allowlist validation at registration and invocation.
 
 These tests verify the fail-closed security behavior that prevents SSRF
 via locally-registered agents with UAID-enabled external endpoints.

@@ -60,7 +60,7 @@ class TestPostgreSQLPercentilePerformance:
         try:
             # Try to connect to PostgreSQL test database
             engine = create_engine(
-                "postgresql://postgres:postgres@localhost:5432/mcpgateway_test",
+                "postgresql://postgres:postgres@localhost:5432/mcpgateway_test",  # pragma: allowlist secret
                 echo=False,
                 pool_pre_ping=True,
             )

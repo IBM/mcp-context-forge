@@ -65,10 +65,9 @@ from mcpgateway import version as version_module
 
 # Authentication and password-related imports
 from mcpgateway.auth import get_current_user, get_user_team_roles
-from mcpgateway.auth_context import get_scoped_resource_access_context
 
 # Re-export canonical get_user_email from auth_context for backward compatibility.
-from mcpgateway.auth_context import get_user_email
+from mcpgateway.auth_context import get_scoped_resource_access_context, get_token_teams_from_request, get_user_email
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
@@ -96,10 +95,11 @@ from mcpgateway.config import settings, UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECT
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import EmailApiToken, EmailTeam, extract_json_field
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace, SessionLocal
+from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
+from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_any_permission, require_permission
@@ -147,6 +147,7 @@ from mcpgateway.schemas import (
     ToolRead,
     ToolUpdate,
 )
+from mcpgateway.services.a2a_agent_plugin_binding_service import A2AAgentPluginBindingForbiddenError, A2AAgentPluginBindingNotFoundError, A2AAgentPluginBindingService
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
@@ -162,6 +163,7 @@ from mcpgateway.services.import_service import ImportService, ImportValidationEr
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.openapi_service import fetch_and_extract_schemas
+from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService
 from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.plugin_service import get_plugin_service
@@ -847,6 +849,138 @@ def _form_team_id(form: Any) -> Optional[str]:
     return str(raw).strip() or None
 
 
+async def _parse_gateway_data_from_request(request: Request) -> dict[str, Any]:
+    """Parse gateway data from either JSON body or form data.
+
+    This helper function enables endpoints to accept both application/json and
+    multipart/form-data content types, supporting both API clients and the HTMX UI.
+
+    Args:
+        request: FastAPI request object.
+
+    Returns:
+        Dictionary containing parsed gateway data.
+
+    Raises:
+        HTTPException: If content type is unsupported or data is malformed.
+    """
+    content_type = request.headers.get("content-type", "").lower()
+
+    # Handle JSON requests
+    if "application/json" in content_type:
+        try:
+            data = await request.json()
+            # Normalize tags if provided as string
+            if isinstance(data.get("tags"), str):
+                data["tags"] = [tag.strip() for tag in data["tags"].split(",") if tag.strip()]
+            return data
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON body: {e}")
+
+    # Handle form data requests (multipart/form-data or application/x-www-form-urlencoded)
+    elif "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
+        form = await request.form()
+        data: dict[str, Any] = {}
+
+        # Extract all form fields
+        for key in form.keys():
+            value = form.get(key)
+            if value is not None:
+                data[key] = value
+
+        # Parse tags from comma-separated string
+        if "tags" in data and isinstance(data["tags"], str):
+            tags_str = str(data["tags"])
+            data["tags"] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
+        # Parse auth_headers JSON if present
+        if "auth_headers" in data and isinstance(data["auth_headers"], str):
+            try:
+                data["auth_headers"] = orjson.loads(data["auth_headers"])
+            except (orjson.JSONDecodeError, ValueError):
+                data["auth_headers"] = []
+
+        # Parse passthrough_headers
+        if "passthrough_headers" in data and isinstance(data["passthrough_headers"], str):
+            passthrough_str = str(data["passthrough_headers"]).strip()
+            if passthrough_str:
+                try:
+                    data["passthrough_headers"] = orjson.loads(passthrough_str)
+                except (orjson.JSONDecodeError, ValueError):
+                    # Fallback to comma-separated parsing
+                    data["passthrough_headers"] = [h.strip() for h in passthrough_str.split(",") if h.strip()]
+            else:
+                data["passthrough_headers"] = None
+
+        # Parse OAuth configuration - support both JSON string and individual form fields
+        oauth_config: Optional[dict[str, Any]] = None
+        oauth_config_json = str(data.get("oauth_config", ""))
+
+        # Option 1: Pre-assembled oauth_config JSON (from API calls)
+        # If oauth_config field is present (even if invalid), don't fall back to Option 2
+        oauth_config_field_provided = "oauth_config" in data
+        if oauth_config_json and oauth_config_json != "None":
+            try:
+                oauth_config = orjson.loads(oauth_config_json)
+            except (orjson.JSONDecodeError, ValueError):
+                # Invalid JSON - set to None in data and don't try Option 2
+                oauth_config = None
+                data["oauth_config"] = None
+        elif oauth_config_json == "None":
+            # Explicit "None" string - set to None in data
+            oauth_config = None
+            data["oauth_config"] = None
+
+        # Option 2: Assemble from individual UI form fields
+        # Only try this if oauth_config field was NOT provided
+        if not oauth_config and not oauth_config_field_provided:
+            oauth_grant_type = str(data.get("oauth_grant_type", ""))
+            oauth_issuer = str(data.get("oauth_issuer", ""))
+            oauth_token_url = str(data.get("oauth_token_url", ""))
+            oauth_authorization_url = str(data.get("oauth_authorization_url", ""))
+            oauth_redirect_uri = str(data.get("oauth_redirect_uri", ""))
+            oauth_client_id = str(data.get("oauth_client_id", ""))
+            oauth_client_secret = str(data.get("oauth_client_secret", ""))
+            oauth_username = str(data.get("oauth_username", ""))
+            oauth_password = str(data.get("oauth_password", ""))
+            oauth_scopes_str = str(data.get("oauth_scopes", ""))
+
+            # If any OAuth field is provided, assemble oauth_config
+            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
+                oauth_config = {}
+                if oauth_grant_type:
+                    oauth_config["grant_type"] = oauth_grant_type
+                if oauth_issuer:
+                    oauth_config["issuer"] = oauth_issuer
+                if oauth_token_url:
+                    oauth_config["token_url"] = oauth_token_url
+                if oauth_authorization_url:
+                    oauth_config["authorization_url"] = oauth_authorization_url
+                if oauth_redirect_uri:
+                    oauth_config["redirect_uri"] = oauth_redirect_uri
+                if oauth_client_id:
+                    oauth_config["client_id"] = oauth_client_id
+                if oauth_client_secret:
+                    oauth_config["client_secret"] = oauth_client_secret
+                if oauth_username:
+                    oauth_config["username"] = oauth_username
+                if oauth_password:
+                    oauth_config["password"] = oauth_password
+                if oauth_scopes_str:
+                    scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
+                    if scopes:
+                        oauth_config["scopes"] = scopes
+
+        # Only set oauth_config if it's a non-empty dict
+        if oauth_config:
+            data["oauth_config"] = oauth_config
+
+        return data
+
+    else:
+        raise HTTPException(status_code=415, detail=f"Unsupported content type: {content_type}. Use application/json or multipart/form-data")
+
+
 def _build_admin_redirect(root_path: str, fragment: str, *, error: Optional[str] = None, include_inactive: bool = False, team_id: Optional[str] = None) -> str:
     """Build an admin redirect URL preserving query parameters.
 
@@ -1369,8 +1503,6 @@ def validate_password_strength(password: str, email: str = "", is_admin: bool = 
     # If password policy is disabled, skip all validation
     if not getattr(settings, "password_policy_enabled", True):
         return True, ""
-
-    from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService
 
     with SessionLocal() as db:
         policy = PasswordPolicyService(db)
@@ -2513,6 +2645,7 @@ async def get_configuration_settings(
 @admin_router.get("/servers", response_model=PaginatedResponse)
 @require_permission("servers.read", allow_admin_bypass=False)
 async def admin_list_servers(
+    request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
@@ -2526,6 +2659,7 @@ async def admin_list_servers(
     including those that are inactive. Uses offset-based (page/per_page) pagination.
 
     Args:
+        request (Request): FastAPI request object (required for token team extraction via request.state.token_teams).
         page (int): Page number (1-indexed) for offset pagination.
         per_page (int): Number of items per page.
         include_inactive (bool): Whether to include inactive servers.
@@ -2546,6 +2680,7 @@ async def admin_list_servers(
     """
     LOGGER.debug(f"User {get_user_email(user)} requested server list (page={page}, per_page={per_page})")
     user_email = get_user_email(user)
+    token_teams = get_token_teams_from_request(request)
 
     # Call server_service.list_servers with page-based pagination
     paginated_result = await server_service.list_servers(
@@ -2554,6 +2689,7 @@ async def admin_list_servers(
         page=page,
         per_page=per_page,
         user_email=user_email,
+        token_teams=token_teams,
     )
 
     # End the read-only transaction early to avoid idle-in-transaction under load.
@@ -3211,6 +3347,7 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
 @admin_router.get("/resources", response_model=PaginatedResponse)
 @require_permission("resources.read", allow_admin_bypass=False)
 async def admin_list_resources(
+    request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
@@ -3224,6 +3361,7 @@ async def admin_list_resources(
     including those that are inactive. Uses offset-based (page/per_page) pagination.
 
     Args:
+        request (Request): FastAPI request object (required for token team extraction via request.state.token_teams).
         page (int): Page number (1-indexed). Default: 1.
         per_page (int): Items per page. Default: 50.
         include_inactive (bool): Whether to include inactive resources in the results.
@@ -3239,8 +3377,9 @@ async def admin_list_resources(
         >>> admin_list_resources.__name__
         'admin_list_resources'
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested resource list (page={page}, per_page={per_page})")
     user_email = get_user_email(user)
+    token_teams = get_token_teams_from_request(request)
+    LOGGER.debug(f"User {user_email} requested resource list (page={page}, per_page={per_page})")
 
     # Call resource_service.list_resources with page-based pagination
     paginated_result = await resource_service.list_resources(
@@ -3249,6 +3388,7 @@ async def admin_list_resources(
         page=page,
         per_page=per_page,
         user_email=user_email,
+        token_teams=token_teams,
     )
 
     # Return standardized paginated response
@@ -3262,6 +3402,7 @@ async def admin_list_resources(
 @admin_router.get("/prompts", response_model=PaginatedResponse)
 @require_permission("prompts.read", allow_admin_bypass=False)
 async def admin_list_prompts(
+    request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
@@ -3275,6 +3416,7 @@ async def admin_list_prompts(
     including those that are inactive. Uses offset-based (page/per_page) pagination.
 
     Args:
+        request (Request): FastAPI request object (required for token team extraction via request.state.token_teams).
         page (int): Page number (1-indexed) for offset pagination.
         per_page (int): Number of items per page.
         include_inactive (bool): Whether to include inactive prompts in the results.
@@ -3293,8 +3435,9 @@ async def admin_list_prompts(
         >>> admin_list_prompts.__name__
         'admin_list_prompts'
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested prompt list (page={page}, per_page={per_page})")
     user_email = get_user_email(user)
+    token_teams = get_token_teams_from_request(request)
+    LOGGER.debug(f"User {user_email} requested prompt list (page={page}, per_page={per_page})")
 
     # Call prompt_service.list_prompts with page-based pagination
     paginated_result = await prompt_service.list_prompts(
@@ -3303,6 +3446,7 @@ async def admin_list_prompts(
         page=page,
         per_page=per_page,
         user_email=user_email,
+        token_teams=token_teams,
     )
 
     # Return standardized paginated response
@@ -3316,6 +3460,7 @@ async def admin_list_prompts(
 @admin_router.get("/gateways", response_model=PaginatedResponse)
 @require_permission("gateways.read", allow_admin_bypass=False)
 async def admin_list_gateways(
+    request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
@@ -3329,6 +3474,7 @@ async def admin_list_gateways(
     including those that are inactive. Uses offset-based (page/per_page) pagination.
 
     Args:
+        request (Request): FastAPI request object (required for token team extraction via request.state.token_teams).
         page (int): Page number (1-indexed) for offset pagination.
         per_page (int): Number of items per page.
         include_inactive (bool): Whether to include inactive gateways in the results.
@@ -3348,6 +3494,7 @@ async def admin_list_gateways(
         'admin_list_gateways'
     """
     user_email = get_user_email(user)
+    token_teams = get_token_teams_from_request(request)
     LOGGER.debug(f"User {user_email} requested gateway list (page={page}, per_page={per_page})")
 
     # Call gateway_service.list_gateways with page-based pagination
@@ -3357,6 +3504,7 @@ async def admin_list_gateways(
         page=page,
         per_page=per_page,
         user_email=user_email,
+        token_teams=token_teams,
     )
 
     # Return standardized paginated response
@@ -3934,12 +4082,9 @@ async def admin_ui(
             "ui_hidden_header_items": ui_visibility_config["hidden_header_items"],
             "ui_hidden_tabs": ui_visibility_config["hidden_tabs"],
             "user_permissions": user_permissions,
-            # Password policy flags for frontend templates
-            "password_min_length": getattr(settings, "password_min_length", 8),
-            "password_require_uppercase": getattr(settings, "password_require_uppercase", False),
-            "password_require_lowercase": getattr(settings, "password_require_lowercase", False),
-            "password_require_numbers": getattr(settings, "password_require_numbers", False),
-            "password_require_special": getattr(settings, "password_require_special", False),
+            # Password policy - pass actual requirements dict for user creation
+            "password_requirements": PasswordPolicyService.get_password_requirements(is_privileged=False),
+            "password_policy_enabled": getattr(settings, "password_policy_enabled", True),
             # Token policy flags
             "require_token_expiration": getattr(settings, "require_token_expiration", True),
             "sri_hashes": load_sri_hashes(),
@@ -4094,6 +4239,7 @@ async def admin_login_page(request: Request) -> Response:
         jwt_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
         if jwt_token:
             try:
+                # First-Party
                 from mcpgateway.auth import validate_token_user
 
                 auth_user = await validate_token_user(request, jwt_token)
@@ -4177,7 +4323,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
         >>> # Mock request with form data
         >>> mock_request = MagicMock(spec=Request)
         >>> mock_request.scope = {"root_path": "/test"}
-        >>> mock_form = {"email": "admin@example.com", "password": "changeme"}
+        >>> mock_form = {"email": "admin@example.com", "password": "changeme"}  # pragma: allowlist secret
         >>> mock_request.form = AsyncMock(return_value=mock_form)
         >>>
         >>> mock_db = MagicMock()
@@ -4659,13 +4805,29 @@ async def _admin_logout(request: Request) -> Response:
 
     # For GET requests, distinguish between browser navigation and OIDC front-channel logout
     if request.method == "GET":
-        # Check if request is from a browser (Accept: text/html, HX-Request header, or admin referer)
+        # Check if request is from a browser (Accept: text/html, HX-Request header, or same-origin admin/oauth referer)
         # Detection must match auth_middleware.py and rbac.py patterns to ensure consistent behavior
         # Browser navigation should redirect to login, OIDC callbacks should return 200 OK
         accept_header = request.headers.get("accept", "")
         is_htmx = request.headers.get("hx-request") == "true"
         referer = request.headers.get("referer", "")
-        is_browser_request = "text/html" in accept_header or is_htmx or "/admin" in referer
+
+        # Check if referer is from same origin (for admin UI and OAuth callback pages)
+        is_same_origin_referer = False
+        if referer:
+            try:
+                # Standard
+                from urllib.parse import urlparse
+
+                referer_parsed = urlparse(referer)
+                request_host = request.headers.get("host", "")
+                # Match if referer host matches request host and path contains /admin or /oauth/callback
+                if referer_parsed.netloc == request_host and ("/admin" in referer_parsed.path or "/oauth/callback" in referer_parsed.path):
+                    is_same_origin_referer = True
+            except Exception:
+                pass  # Invalid referer URL, treat as not same-origin
+
+        is_browser_request = "text/html" in accept_header or is_htmx or is_same_origin_referer
 
         if is_browser_request:
             # Browser navigation - redirect to login (cookies cleared below)
@@ -4691,6 +4853,7 @@ async def _admin_logout(request: Request) -> Response:
     clear_auth_cookie(response)
 
     # Clear CSRF token cookie
+    # First-Party
     from mcpgateway.services.csrf_service import clear_csrf_cookie
 
     clear_csrf_cookie(response, settings)
@@ -4774,6 +4937,21 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
     # Get root path for template
     root_path = _resolve_root_path(request)
 
+    # Determine if this is a privileged account for password requirements
+    is_privileged = False
+    try:
+        jwt_token = request.cookies.get("jwt_token")
+        if jwt_token:
+            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=jwt_token)
+            current_user = await get_current_user(credentials, request=request)
+            if current_user:
+                is_privileged = getattr(current_user, "is_admin", False)
+    except Exception as e:
+        LOGGER.warning(f"Failed to determine user admin status for password requirements: {e}")
+
+    # Get actual password requirements from PasswordPolicyService
+    password_requirements = PasswordPolicyService.get_password_requirements(is_privileged=is_privileged)
+
     response = request.app.state.templates.TemplateResponse(
         request,
         "change-password-required.html",
@@ -4782,11 +4960,7 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
             "root_path": root_path,
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
             "password_policy_enabled": getattr(settings, "password_policy_enabled", True),
-            "password_min_length": getattr(settings, "password_min_length", 8),
-            "password_require_uppercase": getattr(settings, "password_require_uppercase", False),
-            "password_require_lowercase": getattr(settings, "password_require_lowercase", False),
-            "password_require_numbers": getattr(settings, "password_require_numbers", False),
-            "password_require_special": getattr(settings, "password_require_special", False),
+            "password_requirements": password_requirements,
             "sri_hashes": load_sri_hashes(),
         },
     )
@@ -4818,9 +4992,9 @@ async def change_password_required_handler(request: Request, db: Session = Depen
         >>> mock_request = MagicMock(spec=Request)
         >>> mock_request.scope = {"root_path": "/test"}
         >>> mock_form = {
-        ...     "current_password": "oldpass",
-        ...     "new_password": "newpass123",
-        ...     "confirm_password": "newpass123"
+        ...     "current_password": "oldpass",  # pragma: allowlist secret
+        ...     "new_password": "newpass123",  # pragma: allowlist secret
+        ...     "confirm_password": "newpass123"  # pragma: allowlist secret
         ... }
         >>> mock_request.form = AsyncMock(return_value=mock_form)
         >>> mock_request.cookies = {"jwt_token": "test_token"}
@@ -4927,8 +5101,14 @@ async def change_password_required_handler(request: Request, db: Session = Depen
         except AuthenticationError:
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=invalid_password", status_code=303)
         except PasswordValidationError as e:
-            LOGGER.warning(f"Password validation failed for {current_user.email}: {e}")
-            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=weak_password", status_code=303)
+            LOGGER.warning(f"Password validation failed for {current_user.email}: {e}", exc_info=True)
+            # Encode error message in URL for display to user (truncate to prevent URL length issues)
+            error_msg = str(e)
+            max_length = settings.password_error_message_max_length
+            if len(error_msg) > max_length:
+                error_msg = error_msg[: max_length - 3] + "..."
+            error_msg_encoded = urllib.parse.quote(error_msg)
+            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=weak_password&details={error_msg_encoded}", status_code=303)
         except Exception as e:
             LOGGER.error(f"Password change failed for {current_user.email}: {e}", exc_info=True)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
@@ -5783,7 +5963,7 @@ async def admin_view_team_members(
                 <h3 class="text-lg font-medium text-gray-900 dark:text-white">
                     Team Members: {safe_team_name}
                 </h3>
-                <button onclick="document.getElementById('team-edit-modal').classList.add('hidden')"
+                <button data-action-click="hideElement" data-arg0="team-edit-modal"
                         class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round"
@@ -5939,10 +6119,10 @@ async def admin_add_team_members_view(
             <div class="flex justify-between items-center mb-4">
                 <h3 class="text-lg font-medium text-gray-900 dark:text-white">Add Members to: {safe_team_name}</h3>
                 <div class="flex items-center space-x-2">
-                    <button onclick="loadTeamMembersView('{team.id}')" class="px-3 py-1 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">
+                    <button data-action-click="loadTeamMembersView" data-arg0="{team.id}" class="px-3 py-1 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">
                         ← Back to Members
                     </button>
-                    <button onclick="document.getElementById('team-edit-modal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                    <button data-action-click="hideElement" data-arg0="team-edit-modal" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
                         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                         </svg>
@@ -6287,7 +6467,7 @@ async def admin_update_team(
         is_htmx = request.headers.get("HX-Request") == "true"
 
         if is_htmx:
-            return HTMLResponse(content=f'<div class="text-red-500">Error updating team: {html.escape(str(e))}</div>', status_code=400)
+            return HTMLResponse(content=f'<div class="text-red-500">Error updating team: {html.escape(str(e))}</div>', status_code=500)
         # For regular form submission, redirect to admin page with error parameter
         error_msg = urllib.parse.quote(f"Error updating team: {str(e)}")
         return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
@@ -6326,7 +6506,7 @@ async def admin_delete_team(
         deleted = await team_service.delete_team(team_id, deleted_by=user_email)
 
         if not deleted:
-            return HTMLResponse(content='<div class="text-red-500">Team cannot be deleted</div>', status_code=400)
+            return HTMLResponse(content='<div class="text-red-500">Team cannot be deleted due to business constraints</div>', status_code=409)
 
         # Return success message with script to refresh teams list
         safe_team_name = html.escape(team_name)
@@ -7004,11 +7184,11 @@ async def admin_list_join_requests(
                     <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300">{safe_status}</span>
                 </div>
                 <div class="flex gap-2">
-                    <button onclick="approveJoinRequest('{team_id}', '{req.id}')"
+                    <button data-action-click="approveJoinRequest" data-arg0="{team_id}" data-arg1="{req.id}"
                             class="px-3 py-1 text-sm font-medium text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 border border-green-300 dark:border-green-600 hover:border-green-500 dark:hover:border-green-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
                         Approve
                     </button>
-                    <button onclick="rejectJoinRequest('{team_id}', '{req.id}')"
+                    <button data-action-click="rejectJoinRequest" data-arg0="{team_id}" data-arg1="{req.id}"
                             class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500">
                         Reject
                     </button>
@@ -7771,7 +7951,9 @@ async def admin_create_user(
         if password:
             is_valid, error_msg = validate_password_strength(password, email_val, is_admin_val)
             if not is_valid:
-                return HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {error_msg}</div>', status_code=400)
+                # Use data-error-message attribute for reliable error extraction (not CSS class scraping)
+                error_html = f'<div class="text-red-500" data-error-message="{html.escape(error_msg)}"><strong>Password validation failed:</strong><br/>{html.escape(error_msg)}</div>'
+                return HTMLResponse(content=error_html, status_code=400)
 
         # First-Party
 
@@ -8321,6 +8503,7 @@ async def admin_force_password_change(
 @admin_router.get("/tools", response_model=PaginatedResponse)
 @require_permission("tools.read", allow_admin_bypass=False)
 async def admin_list_tools(
+    request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
@@ -8334,6 +8517,7 @@ async def admin_list_tools(
     including those that are inactive. Uses offset-based (page/per_page) pagination.
 
     Args:
+        request (Request): FastAPI request object (required for token team extraction via request.state.token_teams).
         page (int): Page number (1-indexed). Default: 1.
         per_page (int): Items per page. Default: 50.
         include_inactive (bool): Whether to include inactive tools in the results.
@@ -8344,8 +8528,9 @@ async def admin_list_tools(
         Dict with 'data', 'pagination', and 'links' keys containing paginated tools.
 
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested tool list (page={page}, per_page={per_page})")
     user_email = get_user_email(user)
+    token_teams = get_token_teams_from_request(request)
+    LOGGER.debug(f"User {user_email} requested tool list (page={page}, per_page={per_page})")
     _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
     _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
 
@@ -8356,6 +8541,7 @@ async def admin_list_tools(
         page=page,
         per_page=per_page,
         user_email=user_email,
+        token_teams=token_teams,
         requesting_user_email=user_email,
         requesting_user_is_admin=_is_admin,
         requesting_user_team_roles=_team_roles,
@@ -8565,6 +8751,13 @@ async def admin_tools_partial_html(
 
     # If render=controls, return only pagination controls
     if render == "controls":
+        # NOTE: hx_target/hx_swap must match what tools_partial.html sets when
+        # rendering the inline pagination_controls include — currently
+        # `#tools-table` with swap=outerHTML. Diverging here would cause
+        # subsequent pagination clicks (after a controls-only re-render) to
+        # swap into a target that the success-path doesn't own and trigger
+        # the same `o.querySelector` null-fragment crash that caused the
+        # `_loading` deadlock the rest of this PR fixes.
         return request.app.state.templates.TemplateResponse(
             request,
             "pagination_controls.html",
@@ -8572,8 +8765,10 @@ async def admin_tools_partial_html(
                 "request": request,
                 "pagination": pagination.model_dump(),
                 "base_url": base_url,
-                "hx_target": "#tools-table-body",
+                "hx_target": "#tools-table",
+                "hx_swap": "outerHTML",
                 "hx_indicator": "#tools-loading",
+                "table_name": "tools",
                 "query_params": query_params_dict,
                 "root_path": _resolve_root_path(request),
             },
@@ -12075,7 +12270,7 @@ async def admin_discover_oauth(
 
     try:
         body = await request.json()
-    except Exception as _e:
+    except Exception:
         LOGGER.warning("OAuth discovery failed: invalid JSON body")
         return JSONResponse(
             {"success": False, "error": "Invalid JSON body"},
@@ -12108,6 +12303,15 @@ async def admin_discover_oauth(
         metadata = await dcr.discover_as_metadata(issuer)
 
         def _safe_endpoint(raw: str | None, name: str) -> str | None:
+            """Validate and return an OAuth endpoint URL, or None if invalid.
+
+            Args:
+                raw: The raw endpoint URL string or None.
+                name: The name of the endpoint for validation error messages.
+
+            Returns:
+                The validated URL string if valid, None otherwise.
+            """
             if not raw:
                 return None
             try:
@@ -12141,194 +12345,106 @@ async def admin_discover_oauth(
         )
 
 
-@admin_router.post("/gateways")
+@admin_router.post("/gateways", response_model=None)
 @require_permission("gateways.create", allow_admin_bypass=False)
-async def admin_add_gateway(request: Request, db: Session = Depends(get_db), user: dict[str, Any] = Depends(get_current_user_with_permissions)) -> JSONResponse:
-    """Add a gateway via the admin UI.
+async def admin_add_gateway(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: dict[str, Any] = Depends(get_current_user_with_permissions),
+) -> JSONResponse:
+    """Add a gateway via Admin API.
 
-    Expects form fields:
-      - name
-      - url
-      - description (optional)
-      - tags (optional, comma-separated)
+    Accepts both JSON (application/json) and form data (multipart/form-data).
+
+    **JSON Example:**
+    ```json
+    {
+      "name": "my-gateway",
+      "url": "http://localhost:9000/sse",
+      "transport": "SSE",
+      "description": "My gateway",
+      "tags": ["tag1", "tag2"],
+      "visibility": "private"
+    }
+    ```
+
+    **Form Data Example:**
+    ```
+    name=my-gateway
+    url=http://localhost:9000/sse
+    transport=SSE
+    tags=tag1,tag2
+    ```
 
     Args:
-        request: FastAPI request containing form data.
+        request: FastAPI request containing JSON or form data.
+        gateway_data: Optional pre-parsed Pydantic model (for JSON requests).
         db: Database session.
         user: Authenticated user.
 
     Returns:
-        A redirect response to the admin dashboard.
+        JSON response with success status and message.
 
     Raises:
         HTTPException: 422 when public visibility is disabled and request is team-scoped.
-
-    Examples:
-        >>> callable(admin_add_gateway)
-        True
-        >>> admin_add_gateway.__name__
-        'admin_add_gateway'
     """
     LOGGER.debug(f"User {get_user_email(user)} is adding a new gateway")
-    form = await request.form()
-    team_id = _form_team_id(form)
-    visibility = str(form.get("visibility", "private"))
-    _check_public_visibility_allowed(visibility, team_id=team_id)
+
+    # Parse request data (supports both JSON and form-data)
     try:
-        # Parse tags from comma-separated string
-        tags_str = str(form.get("tags", ""))
-        tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+        data = await _parse_gateway_data_from_request(request)
+    except HTTPException:
+        raise
+    except Exception as e:
+        return ORJSONResponse(content={"message": f"Invalid request data: {e}", "success": False}, status_code=400)
 
-        # Parse auth_headers JSON if present
-        auth_headers_json = form.get("auth_headers") or ""
-        auth_headers: list[dict[str, Any]] = []
-        if auth_headers_json:
-            try:
-                auth_headers = orjson.loads(auth_headers_json)
-            except (orjson.JSONDecodeError, ValueError):
-                auth_headers = []
+    team_id = data.get("team_id")
+    if team_id and isinstance(team_id, str):
+        team_id = team_id.strip() or None
+    visibility = str(data.get("visibility", "private"))
 
-        # Parse OAuth configuration - support both JSON string and individual form fields
-        oauth_config_json = str(form.get("oauth_config"))
-        oauth_config: Optional[dict[str, Any]] = None
+    _check_public_visibility_allowed(visibility, team_id=team_id)
 
-        LOGGER.info(f"DEBUG: oauth_config_json from form = '{oauth_config_json}'")
-        LOGGER.info(f"DEBUG: Individual OAuth fields - grant_type='{form.get('oauth_grant_type')}', issuer='{form.get('oauth_issuer')}'")
+    try:
+        # Handle OAuth client secret encryption if present
+        oauth_config = data.get("oauth_config")
+        if oauth_config and isinstance(oauth_config, dict) and "client_secret" in oauth_config:
+            client_secret = oauth_config.get("client_secret")
+            if client_secret and isinstance(client_secret, str):
+                encryption = get_encryption_service(settings.auth_encryption_secret)
+                oauth_config["client_secret"] = await encryption.encrypt_secret_async(client_secret)
+                data["oauth_config"] = oauth_config
 
-        # Option 1: Pre-assembled oauth_config JSON (from API calls)
-        if oauth_config_json and oauth_config_json != "None":
-            try:
-                oauth_config = orjson.loads(oauth_config_json)
-                # Encrypt the client secret if present
-                if oauth_config and "client_secret" in oauth_config:
-                    encryption = get_encryption_service(settings.auth_encryption_secret)
-                    oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_config["client_secret"])
-            except (orjson.JSONDecodeError, ValueError) as e:
-                LOGGER.error(f"Failed to parse OAuth config: {e}")
-                oauth_config = None
-
-        # Option 2: Assemble from individual UI form fields
-        if not oauth_config:
-            oauth_grant_type = str(form.get("oauth_grant_type", ""))
-            oauth_issuer = str(form.get("oauth_issuer", ""))
-            oauth_token_url = str(form.get("oauth_token_url", ""))
-            oauth_authorization_url = str(form.get("oauth_authorization_url", ""))
-            oauth_redirect_uri = str(form.get("oauth_redirect_uri", ""))
-            oauth_client_id = str(form.get("oauth_client_id", ""))
-            oauth_client_secret = str(form.get("oauth_client_secret", ""))
-            oauth_username = str(form.get("oauth_username", ""))
-            oauth_password = str(form.get("oauth_password", ""))
-            oauth_scopes_str = str(form.get("oauth_scopes", ""))
-
-            # If any OAuth field is provided, assemble oauth_config
-            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
-                oauth_config = {}
-
-                if oauth_grant_type:
-                    oauth_config["grant_type"] = oauth_grant_type
-                if oauth_issuer:
-                    oauth_config["issuer"] = oauth_issuer
-                if oauth_token_url:
-                    oauth_config["token_url"] = oauth_token_url  # OAuthManager expects 'token_url', not 'token_endpoint'
-                if oauth_authorization_url:
-                    oauth_config["authorization_url"] = oauth_authorization_url  # OAuthManager expects 'authorization_url', not 'authorization_endpoint'
-                if oauth_redirect_uri:
-                    oauth_config["redirect_uri"] = oauth_redirect_uri
-                if oauth_client_id:
-                    oauth_config["client_id"] = oauth_client_id
-                if oauth_client_secret:
-                    # Encrypt the client secret
-                    encryption = get_encryption_service(settings.auth_encryption_secret)
-                    oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
-
-                # Add username and password for password grant type
-                if oauth_username:
-                    oauth_config["username"] = oauth_username
-                if oauth_password:
-                    oauth_config["password"] = oauth_password
-
-                # Parse scopes (comma or space separated)
-                if oauth_scopes_str:
-                    scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
-                    if scopes:
-                        oauth_config["scopes"] = scopes
-
-                LOGGER.info(f"✅ Assembled OAuth config from UI form fields: grant_type={oauth_grant_type}, issuer={oauth_issuer}")
-                LOGGER.info(f"DEBUG: Complete oauth_config = {oauth_config}")
-
-        # Handle passthrough_headers
-        passthrough_headers = str(form.get("passthrough_headers"))
-        if passthrough_headers and passthrough_headers.strip():
-            try:
-                passthrough_headers = orjson.loads(passthrough_headers)
-            except (orjson.JSONDecodeError, ValueError):
-                # Fallback to comma-separated parsing
-                passthrough_headers = [h.strip() for h in passthrough_headers.split(",") if h.strip()]
-        else:
-            passthrough_headers = None
-
-        # Auto-detect OAuth: if oauth_config is present and auth_type not explicitly set, use "oauth"
-        auth_type_from_form = str(form.get("auth_type", ""))
-        LOGGER.info(f"DEBUG: auth_type from form: '{auth_type_from_form}', oauth_config present: {oauth_config is not None}")
-        if oauth_config and not auth_type_from_form:
-            auth_type_from_form = "oauth"
-            LOGGER.info("✅ Auto-detected OAuth configuration, setting auth_type='oauth'")
-        elif oauth_config and auth_type_from_form:
-            LOGGER.info(f"✅ OAuth config present with explicit auth_type='{auth_type_from_form}'")
-
-        ca_certificate: Optional[str] = None
+        # Handle CA certificate signing
+        ca_certificate = data.get("ca_certificate")
         sig: Optional[str] = None
+        if ca_certificate and isinstance(ca_certificate, str) and ca_certificate.strip():
+            ca_certificate = ca_certificate.strip()
+            if settings.enable_ed25519_signing:
+                try:
+                    private_key_pem = settings.ed25519_private_key.get_secret_value()
+                    sig = sign_data(ca_certificate.encode(), private_key_pem)
+                    data["ca_certificate_sig"] = sig
+                    data["signing_algorithm"] = "ed25519"
+                except Exception as e:
+                    LOGGER.error(f"Error signing CA certificate: {e}")
+                    raise RuntimeError("Failed to sign CA certificate") from e
+            else:
+                # Explicitly set to None when signing is disabled
+                data["ca_certificate_sig"] = None
+                data["signing_algorithm"] = None
 
-        # CA certificate(s) handled by JavaScript validation (supports single or multiple files)
-        # JavaScript validates, orders (root→intermediate→leaf), and concatenates into hidden field
-        if "ca_certificate" in form:
-            ca_cert_value = form["ca_certificate"]
-            if isinstance(ca_cert_value, str) and ca_cert_value.strip():
-                ca_certificate = ca_cert_value.strip()
-                LOGGER.info("✅ CA certificate(s) received and validated by frontend")
+        # Auto-detect OAuth auth_type
+        if oauth_config and not data.get("auth_type"):
+            data["auth_type"] = "oauth"
+            LOGGER.info("✅ Auto-detected OAuth configuration, setting auth_type='oauth'")
 
-                if settings.enable_ed25519_signing:
-                    try:
-                        private_key_pem = settings.ed25519_private_key.get_secret_value()
-                        sig = sign_data(ca_certificate.encode(), private_key_pem)
-                    except Exception as e:
-                        LOGGER.error(f"Error signing CA certificate: {e}")
-                        sig = None
-                        raise RuntimeError("Failed to sign CA certificate") from e
-                else:
-                    LOGGER.warning("⚠️  Ed25519 signing is disabled; CA certificate will be stored without signature")
-                    sig = None
-
-        gateway = GatewayCreate(
-            name=str(form["name"]),
-            url=str(form["url"]),
-            description=str(form.get("description")),
-            tags=tags,
-            transport=str(form.get("transport", "SSE")),
-            auth_type=auth_type_from_form,
-            auth_username=str(form.get("auth_username", "")),
-            auth_password=str(form.get("auth_password", "")),
-            auth_token=str(form.get("auth_token", "")),
-            auth_header_key=str(form.get("auth_header_key", "")),
-            auth_header_value=str(form.get("auth_header_value", "")),
-            auth_headers=auth_headers if auth_headers else None,
-            auth_query_param_key=str(form.get("auth_query_param_key", "")) or None,
-            auth_query_param_value=str(form.get("auth_query_param_value", "")) or None,
-            oauth_config=oauth_config,
-            one_time_auth=form.get("one_time_auth", False),
-            passthrough_headers=passthrough_headers,
-            visibility=visibility,
-            ca_certificate=ca_certificate,
-            ca_certificate_sig=sig if sig else None,
-            signing_algorithm="ed25519" if sig else None,
-        )
-    except KeyError as e:
-        # Convert KeyError to ValidationError-like response
-        return ORJSONResponse(content={"message": f"Missing required field: {e}", "success": False}, status_code=422)
+        # Create GatewayCreate model from data
+        gateway = GatewayCreate(**data)
 
     except ValidationError as ex:
         # --- Getting only the custom message from the ValueError ---
-        error_ctx = [str(err["ctx"]["error"]) for err in ex.errors()]
+        error_ctx = [str(err.get("ctx", {}).get("error", err.get("msg", str(err)))) for err in ex.errors()]
         return ORJSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
 
     except RuntimeError as err:
@@ -12400,6 +12516,182 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         return ORJSONResponse(content={"message": "An unexpected error occurred. Please try again or contact support.", "success": False}, status_code=500)
 
 
+# RESTful PUT endpoint for gateway updates (JSON/form-data support)
+@admin_router.put("/gateways/{gateway_id}", response_model=None)
+@require_permission("gateways.update", allow_admin_bypass=False)
+async def admin_update_gateway_rest(
+    gateway_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: dict[str, Any] = Depends(get_current_user_with_permissions),
+) -> JSONResponse:
+    """Update a gateway via REST API (PUT).
+
+    Accepts both JSON (application/json) and form data (multipart/form-data).
+
+    **JSON Example:**
+    ```json
+    {
+      "name": "updated-gateway",
+      "url": "http://localhost:9001/sse",
+      "description": "Updated description"
+    }
+    ```
+
+    Args:
+        gateway_id: Gateway ID to update.
+        request: FastAPI request containing JSON or form data.
+        gateway_data: Optional pre-parsed Pydantic model (for JSON requests).
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        JSON response with success status and message.
+    """
+    LOGGER.debug(f"User {get_user_email(user)} is updating gateway ID {gateway_id}")
+
+    # Parse request data (supports both JSON and form-data)
+    try:
+        data = await _parse_gateway_data_from_request(request)
+    except HTTPException:
+        raise
+    except Exception as e:
+        return ORJSONResponse(content={"message": f"Invalid request data: {e}", "success": False}, status_code=400)
+
+    team_id = data.get("team_id")
+    if team_id and isinstance(team_id, str):
+        team_id = team_id.strip() or None
+    visibility = str(data.get("visibility", "private"))
+
+    _check_public_visibility_allowed(visibility, team_id=team_id)
+
+    try:
+        # Handle OAuth client secret encryption if present
+        oauth_config = data.get("oauth_config")
+        if oauth_config and isinstance(oauth_config, dict) and "client_secret" in oauth_config:
+            client_secret = oauth_config.get("client_secret")
+            if client_secret and isinstance(client_secret, str):
+                encryption = get_encryption_service(settings.auth_encryption_secret)
+                oauth_config["client_secret"] = await encryption.encrypt_secret_async(client_secret)
+                data["oauth_config"] = oauth_config
+
+        # Auto-detect OAuth auth_type
+        if oauth_config and not data.get("auth_type"):
+            data["auth_type"] = "oauth"
+
+        user_email = get_user_email(user)
+
+        # Fetch existing gateway to preserve owner_email and team_id
+        existing_gateway = db.get(DbGateway, gateway_id)
+        if not existing_gateway:
+            return ORJSONResponse(content={"message": "Gateway not found", "success": False}, status_code=404)
+
+        # Preserve existing owner_email (don't transfer ownership)
+        existing_owner = getattr(existing_gateway, "owner_email", None)
+        if existing_owner:
+            data["owner_email"] = existing_owner
+
+        # Preserve existing gateway's team_id when no explicit team_id is provided
+        if not team_id:
+            existing_team = getattr(existing_gateway, "team_id", None)
+            if isinstance(existing_team, str) and existing_team:
+                team_id = existing_team
+
+        team_service = TeamManagementService(db)
+        team_id = await team_service.verify_team_for_user(user_email, team_id)
+
+        # Set team_id (but not owner_email, which was preserved above)
+        data["team_id"] = team_id
+
+        # Create GatewayUpdate model from data
+        gateway = GatewayUpdate(**data)
+
+        mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
+        await gateway_service.update_gateway(
+            db,
+            gateway_id,
+            gateway,
+            modified_by=mod_metadata["modified_by"],
+            modified_from_ip=mod_metadata["modified_from_ip"],
+            modified_via=mod_metadata["modified_via"],
+            modified_user_agent=mod_metadata["modified_user_agent"],
+            user_email=user_email,
+        )
+        return ORJSONResponse(
+            content={"message": "Gateway updated successfully!", "success": True},
+            status_code=200,
+        )
+    except PermissionError as e:
+        LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
+        return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
+    except HTTPException:
+        raise
+    except GatewayNotFoundError as e:
+        return ORJSONResponse(content={"message": str(e), "success": False}, status_code=404)
+    except Exception as ex:
+        if isinstance(ex, GatewayConnectionError):
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
+        if isinstance(ex, RuntimeError):
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        if isinstance(ex, ValidationError):
+            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+        if isinstance(ex, IntegrityError):
+            return ORJSONResponse(status_code=409, content=ErrorFormatter.format_database_error(ex))
+        if isinstance(ex, ValueError):
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
+        LOGGER.exception(f"Unexpected error in admin_update_gateway_rest: {ex}")
+        return ORJSONResponse(content={"message": "An unexpected error occurred. Please try again or contact support.", "success": False}, status_code=500)
+
+
+# RESTful DELETE endpoint for gateway deletion
+@admin_router.delete("/gateways/{gateway_id}", response_model=None, status_code=204)
+@require_permission("gateways.delete", allow_admin_bypass=False)
+async def admin_delete_gateway_rest(
+    gateway_id: str,
+    db: Session = Depends(get_db),
+    user: dict[str, Any] = Depends(get_current_user_with_permissions),
+) -> Response:
+    """Delete a gateway via REST API (DELETE).
+
+    **Example Request:**
+    ```bash
+    curl -X DELETE http://localhost:4444/admin/gateways/gw-123 \
+         -H "Authorization: Bearer $TOKEN"
+    ```
+
+    **Example Response (204):**
+    ```
+    (No content - empty response body)
+    ```
+
+    Args:
+        gateway_id: The ID of the gateway to delete.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        204 No Content on success, or error response with appropriate status code.
+    """
+    user_email = get_user_email(user)
+    LOGGER.debug(f"User {user_email} is deleting gateway ID {gateway_id}")
+
+    try:
+        await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
+        return Response(status_code=204)
+    except PermissionError as e:
+        LOGGER.warning(f"Permission denied for user {user_email} deleting gateway {gateway_id}: {e}")
+        return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
+    except GatewayNotFoundError as e:
+        return ORJSONResponse(content={"message": str(e), "success": False}, status_code=404)
+    except Exception as e:
+        LOGGER.error(f"Error deleting gateway: {e}")
+        return ORJSONResponse(
+            content={"message": "Failed to delete gateway. Please try again.", "success": False},
+            status_code=500,
+        )
+
+
+# Legacy POST endpoint for backward compatibility with HTMX UI
 # OAuth callback is now handled by the dedicated OAuth router at /oauth/callback
 # This route has been removed to avoid conflicts with the complete implementation
 @admin_router.post("/gateways/{gateway_id}/edit")
@@ -14044,9 +14336,10 @@ async def admin_test_gateway(
 
     allowed_hosts = list(allowed_hosts_set)
 
-    # Validate URL with allowlist enforcement
+    # Validate URL with allowlist enforcement and pin a safe resolved IP to close
+    # the DNS rebinding gap between validation-time and connection-time resolution.
     try:
-        validated_base_url = SecurityValidator.validate_gateway_test_url(str(request.base_url), allowed_hosts, "Gateway test URL")
+        validated_gateway_target = await SecurityValidator.validate_gateway_test_url(str(request.base_url), allowed_hosts, "Gateway test URL")
     except ValueError as e:
         # Log the actual error for security monitoring, but return generic message
         safe_url = sanitize_url_for_logging(str(request.base_url))
@@ -14060,17 +14353,33 @@ async def admin_test_gateway(
         # Generic error message - don't expose allowlist or validation details
         return GatewayTestResponse(status_code=400, latency_ms=latency_ms, body={"error": "Invalid gateway URL"})
 
-    full_url = validated_base_url.rstrip("/") + "/" + request.path.lstrip("/")
+    validated_base_url = validated_gateway_target["validated_url"]
+    validated_hostname = validated_gateway_target["hostname"]
+    pinned_resolved_ip = validated_gateway_target["resolved_ip"]
+
+    parsed_validated_base_url = urllib.parse.urlparse(validated_base_url)
+    pinned_ip_is_ipv6 = ":" in pinned_resolved_ip
+    if parsed_validated_base_url.port is not None:
+        pinned_netloc = f"[{pinned_resolved_ip}]:{parsed_validated_base_url.port}" if pinned_ip_is_ipv6 else f"{pinned_resolved_ip}:{parsed_validated_base_url.port}"
+        original_authority = f"{validated_hostname}:{parsed_validated_base_url.port}"
+    else:
+        pinned_netloc = f"[{pinned_resolved_ip}]" if pinned_ip_is_ipv6 else pinned_resolved_ip
+        original_authority = validated_hostname
+
+    pinned_base_url = urllib.parse.urlunparse(parsed_validated_base_url._replace(netloc=pinned_netloc))
+    full_url = pinned_base_url.rstrip("/") + "/" + request.path.lstrip("/")
     full_url = full_url.rstrip("/")
     safe_validated_url = sanitize_url_for_logging(validated_base_url)
-    LOGGER.debug(f"User {get_user_email(user)} testing server at {safe_validated_url}.")
+    LOGGER.info(
+        "Gateway test pinned outbound address for user %s: url=%s hostname=%s pinned_ip=%s",
+        get_user_email(user),
+        safe_validated_url,
+        validated_hostname,
+        pinned_resolved_ip,
+    )
 
-    # TODO(ICACF-15): DNS rebinding risk — allowlist and SSRF checks resolve DNS, but the
-    # actual ResilientHttpClient request resolves DNS a third time. An attacker-controlled DNS
-    # server could return a public IP during validation and a private IP during the actual
-    # request. Consider pinning the resolved IP for outbound requests (custom transport) or
-    # caching DNS resolution across validation and request phases.
-    headers = request.headers or {}
+    headers = dict(request.headers or {})
+    headers["Host"] = original_authority
 
     # Attempt to find a registered gateway matching this URL and team.
     # Query the raw DB object directly so we get the unmasked auth_value
@@ -14136,7 +14445,12 @@ async def admin_test_gateway(
 
         # Prepare request based on content type
         content_type = getattr(request, "content_type", "application/json")
-        request_kwargs = {"method": request.method.upper(), "url": full_url, "headers": headers}
+        request_kwargs = {
+            "method": request.method.upper(),
+            "url": full_url,
+            "headers": headers,
+            "extensions": {"sni_hostname": validated_hostname},
+        }
 
         if request.body is not None:
             if content_type == "application/x-www-form-urlencoded":
@@ -15366,7 +15680,7 @@ async def admin_import_configuration(request: Request, db: Session = Depends(get
         "import_data": { ... },
         "conflict_strategy": "update",
         "dry_run": false,
-        "rekey_secret": "optional-new-secret",
+        "rekey_secret": "optional-new-secret",  # pragma: allowlist secret
         "selected_entities": { ... }
     }
     """
@@ -15462,6 +15776,7 @@ async def admin_list_import_statuses(user=Depends(get_current_user_with_permissi
 @require_permission("a2a.read", allow_admin_bypass=False)
 async def admin_get_agent(
     agent_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
@@ -15469,6 +15784,7 @@ async def admin_get_agent(
 
     Args:
         agent_id: Agent ID.
+        request: FastAPI request object (required for token team extraction via request.state.token_teams).
         db: Database session.
         user: Authenticated user.
 
@@ -15486,19 +15802,23 @@ async def admin_get_agent(
         'admin_get_agent'
     """
     LOGGER.debug(f"User {get_user_email(user)} requested details for agent ID {agent_id}")
+    user_email = get_user_email(user)
+    token_teams = get_token_teams_from_request(request)
+
     try:
-        agent = await a2a_service.get_agent(db, agent_id)
+        agent = await a2a_service.get_agent(db, agent_id, user_email=user_email, token_teams=token_teams)
         return agent.model_dump(by_alias=True)
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         LOGGER.error(f"Error getting agent {agent_id}: {e}")
-        raise e
+        raise
 
 
 @admin_router.get("/a2a", response_model=PaginatedResponse)
 @require_permission("a2a.read", allow_admin_bypass=False)
 async def admin_list_a2a_agents(
+    request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
@@ -15516,6 +15836,7 @@ async def admin_list_a2a_agents(
         page (int): Page number (1-indexed) for offset pagination.
         per_page (int): Number of items per page.
         include_inactive (bool): Whether to include inactive agents in the results.
+        request (Request): FastAPI request object (required for token team extraction via request.state.token_teams).
         db (Session): Database session dependency.
         user (dict): Authenticated user dependency.
 
@@ -15546,6 +15867,7 @@ async def admin_list_a2a_agents(
 
     LOGGER.debug(f"User {get_user_email(user)} requested A2A Agent list (page={page}, per_page={per_page})")
     user_email = get_user_email(user)
+    token_teams = get_token_teams_from_request(request)
 
     # Call a2a_service.list_agents with page-based pagination
     paginated_result = await a2a_service.list_agents(
@@ -15554,6 +15876,7 @@ async def admin_list_a2a_agents(
         page=page,
         per_page=per_page,
         user_email=user_email,
+        token_teams=token_teams,
     )
 
     # Return standardized paginated response
@@ -15716,6 +16039,7 @@ async def admin_add_a2a_agent(
             description=form.get("description"),
             endpoint_url=form["endpoint_url"],
             agent_type=form.get("agent_type", "generic"),
+            protocol_version=str(form.get("protocol_version", "1.0")),
             auth_type=auth_type_from_form,
             auth_username=str(form.get("auth_username", "")),
             auth_password=str(form.get("auth_password", "")),
@@ -16005,6 +16329,11 @@ async def admin_edit_a2a_agent(
             uaid_protocol=uaid_protocol,
             uaid_native_id_override=uaid_native_id_override if generate_uaid else None,
         )
+        # Only update protocol_version when the field is explicitly submitted.
+        # Defaulting on edit would silently coerce an existing 0.3 agent back
+        # to "1.0" for any caller (cached form, scripted PATCH) that omits the field.
+        if form.get("protocol_version"):
+            agent_update.protocol_version = str(form["protocol_version"])
 
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
         await a2a_service.update_agent(
@@ -16551,6 +16880,7 @@ async def admin_get_grpc_methods(
 @admin_router.get("/sections/resources")
 @require_permission("resources.read", allow_admin_bypass=False)
 async def get_resources_section(
+    request: Request,
     team_id: Optional[str] = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -16558,6 +16888,7 @@ async def get_resources_section(
     """Get resources data filtered by team.
 
     Args:
+        request: FastAPI request object
         team_id: Optional team ID to filter by
         db: Database session
         user: Current authenticated user context
@@ -16567,11 +16898,16 @@ async def get_resources_section(
     """
     try:
         local_resource_service = ResourceService()
-        user_email = get_user_email(user)
-        LOGGER.debug(f"User {user_email} requesting resources section with team_id={team_id}")
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
+        LOGGER.debug(f"User {user_email} requesting resources section with team_id={team_id}, token_teams={token_teams}")
 
-        # Get all resources and filter by team
-        resources_result = await local_resource_service.list_resources(db, include_inactive=True)
+        # Get all resources with token_teams for proper scoping
+        resources_result = await local_resource_service.list_resources(
+            db,
+            include_inactive=True,
+            user_email=user_email,
+            token_teams=token_teams
+        )
         if isinstance(resources_result, tuple):
             resources_list = resources_result[0]
         else:
@@ -16610,6 +16946,7 @@ async def get_resources_section(
 @admin_router.get("/sections/prompts")
 @require_permission("prompts.read", allow_admin_bypass=False)
 async def get_prompts_section(
+    request: Request,
     team_id: Optional[str] = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -16617,6 +16954,7 @@ async def get_prompts_section(
     """Get prompts data filtered by team.
 
     Args:
+        request: FastAPI request object
         team_id: Optional team ID to filter by
         db: Database session
         user: Current authenticated user context
@@ -16626,11 +16964,16 @@ async def get_prompts_section(
     """
     try:
         local_prompt_service = PromptService()
-        user_email = get_user_email(user)
-        LOGGER.debug(f"User {user_email} requesting prompts section with team_id={team_id}")
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
+        LOGGER.debug(f"User {user_email} requesting prompts section with team_id={team_id}, token_teams={token_teams}")
 
-        # Get all prompts and filter by team
-        prompts_result = await local_prompt_service.list_prompts(db, include_inactive=True)
+        # Get all prompts with token_teams for proper scoping
+        prompts_result = await local_prompt_service.list_prompts(
+            db,
+            include_inactive=True,
+            user_email=user_email,
+            token_teams=token_teams
+        )
         if isinstance(prompts_result, tuple):
             prompts_list = prompts_result[0]
         else:
@@ -16875,6 +17218,195 @@ async def get_plugins_partial(request: Request, db: Session = Depends(get_db), u
         </div>
         """
         return HTMLResponse(content=error_html, status_code=500)
+
+
+@admin_router.get("/a2a/plugin-bindings/partial")
+@require_permission("admin.plugins", allow_admin_bypass=False)
+async def get_a2a_plugin_bindings_partial(
+    request: Request,
+    team_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Render the A2A agent plugin bindings partial HTML template.
+
+    This endpoint returns a rendered HTML partial containing A2A agent plugin
+    bindings, designed to be loaded via HTMX into the admin interface.
+
+    Args:
+        request: FastAPI request object.
+        team_id: Optional team ID to filter bindings.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        HTMLResponse with rendered partial template.
+    """
+    LOGGER.debug(f"User {get_user_email(user)} requested A2A plugin bindings partial")
+
+    try:
+        return await _render_a2a_plugin_bindings_partial(request, db, team_id=team_id)
+
+    except Exception as e:
+        LOGGER.error(f"Error rendering A2A plugin bindings partial: {e}")
+        error_html = f"""
+        <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+            <strong class="font-bold">Error loading A2A plugin bindings:</strong>
+            <span class="block sm:inline">{html.escape(str(e))}</span>
+        </div>
+        """
+        return HTMLResponse(content=error_html, status_code=500)
+
+
+async def _render_a2a_plugin_bindings_partial(request: Request, db: Session, team_id: Optional[str] = None) -> HTMLResponse:
+    """Build and return the A2A agent plugin bindings partial template."""
+    plugin_service = get_plugin_service()
+    await _sync_plugin_service_from_runtime(request, plugin_service)
+    binding_service = A2AAgentPluginBindingService()
+    bindings, _ = binding_service.list_bindings(db, team_id=team_id)
+    agents = db.query(DbA2AAgent.name).distinct().order_by(DbA2AAgent.name).all()
+    agent_names = [a[0] for a in agents]
+    plugin_ids = [p["name"] for p in plugin_service.get_all_plugins()]
+    teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.is_active.is_(True))).all()
+    context = {
+        "request": request,
+        "bindings": bindings,
+        "agent_names": agent_names,
+        "plugin_ids": plugin_ids,
+        "teams": teams,
+        "selected_team_id": team_id,
+        "root_path": _resolve_root_path(request),
+    }
+    return request.app.state.templates.TemplateResponse(request, "a2a_agent_plugin_bindings_partial.html", context)
+
+
+@admin_router.post("/a2a/plugin-bindings")
+@require_permission("admin.plugins", allow_admin_bypass=False)
+async def admin_create_a2a_plugin_binding(
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Create an A2A agent plugin binding from the admin UI.
+
+    Returns the refreshed partial on success or an error HTML fragment.
+    """
+    try:
+        form = await request.form()
+        team_id = form.get("team_id", "")
+        agent_name = form.get("agent_name", "")
+        plugin_id = form.get("plugin_id", "")
+        mode = form.get("mode", "enforce")
+        try:
+            priority = int(form.get("priority", 50))
+        except (ValueError, TypeError):
+            return HTMLResponse(
+                content='<div class="bg-red-50 p-4 rounded text-red-700">Invalid priority value; must be an integer</div>',
+                status_code=400,
+            )
+        on_error = form.get("on_error") or None
+        config_raw = form.get("config", "{}")
+
+        try:
+            config = json.loads(config_raw)
+        except (json.JSONDecodeError, TypeError):
+            return HTMLResponse(
+                content=f'<div class="bg-red-50 p-4 rounded text-red-700">Invalid JSON in config: {html.escape(config_raw)}</div>',
+                status_code=400,
+            )
+
+        if not team_id or not agent_name or not plugin_id:
+            return HTMLResponse(
+                content='<div class="bg-red-50 p-4 rounded text-red-700">team_id, agent_name, and plugin_id are required</div>',
+                status_code=400,
+            )
+
+        if mode not in {"enforce", "report", "disabled"}:
+            return HTMLResponse(
+                content=f'<div class="bg-red-50 p-4 rounded text-red-700">Invalid mode: {html.escape(mode)}</div>',
+                status_code=400,
+            )
+        if on_error not in {"fail", "ignore", "disable", None}:
+            return HTMLResponse(
+                content=f'<div class="bg-red-50 p-4 rounded text-red-700">Invalid on_error: {html.escape(on_error)}</div>',
+                status_code=400,
+            )
+
+        caller_email = get_user_email(user)
+        service = A2AAgentPluginBindingService()
+        service.upsert_binding(
+            db=db,
+            team_id=team_id,
+            agent_name=agent_name,
+            plugin_id=plugin_id,
+            mode=mode,
+            priority=priority,
+            config=config,
+            on_error=on_error,
+            caller_email=caller_email,
+        )
+        db.commit()
+
+    except Exception as e:
+        LOGGER.error(f"Error creating A2A plugin binding: {e}")
+        return HTMLResponse(
+            content=f'<div class="bg-red-50 p-4 rounded text-red-700">Error: {html.escape(str(e))}</div>',
+            status_code=500,
+        )
+
+    return await _render_a2a_plugin_bindings_partial(request, db)
+
+
+@admin_router.post("/a2a/plugin-bindings/{binding_id}/delete")
+@require_permission("admin.plugins", allow_admin_bypass=False)
+async def admin_delete_a2a_plugin_binding(
+    request: Request,
+    binding_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Delete an A2A agent plugin binding from the admin UI.
+
+    POST endpoint (HTMX-compatible) that deletes a binding and returns
+    the refreshed partial.
+    """
+    try:
+        # Validate that binding_id is a valid UUID
+        try:
+            uuid.UUID(binding_id)
+        except ValueError:
+            return HTMLResponse(
+                content=f'<div class="bg-red-50 p-4 rounded text-red-700">Invalid binding ID format: {html.escape(binding_id)}</div>',
+                status_code=400,
+            )
+
+        # Derive team-scoped access from the authenticated user
+        is_admin = user.get("is_admin", False)
+        token_teams = user.get("token_teams")
+        allowed_teams = None if (is_admin and token_teams is None) else set(token_teams or [])
+
+        service = A2AAgentPluginBindingService()
+        service.delete_binding(db, binding_id, allowed_teams=allowed_teams)
+        db.commit()
+
+    except A2AAgentPluginBindingNotFoundError as e:
+        return HTMLResponse(
+            content=f'<div class="bg-red-50 p-4 rounded text-red-700">Not found: {html.escape(str(e))}</div>',
+            status_code=404,
+        )
+    except A2AAgentPluginBindingForbiddenError as e:
+        return HTMLResponse(
+            content=f'<div class="bg-red-50 p-4 rounded text-red-700">Forbidden: {html.escape(str(e))}</div>',
+            status_code=403,
+        )
+    except Exception as e:
+        LOGGER.error(f"Error deleting A2A plugin binding {binding_id}: {e}")
+        return HTMLResponse(
+            content=f'<div class="bg-red-50 p-4 rounded text-red-700">Error: {html.escape(str(e))}</div>',
+            status_code=500,
+        )
+
+    return await _render_a2a_plugin_bindings_partial(request, db)
 
 
 @admin_router.get("/plugins", response_model=PluginListResponse)

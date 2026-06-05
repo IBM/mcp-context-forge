@@ -21,8 +21,8 @@ import sqlalchemy as sa
 from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
-revision: str = "356a2d4eed6f"
-down_revision: Union[str, Sequence[str], None] = "9e028ecf59c4"
+revision: str = "356a2d4eed6f"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "9e028ecf59c4"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -642,6 +642,11 @@ def downgrade() -> None:
     """Downgrade schema."""
     conn = op.get_bind()
     dialect = conn.dialect.name if hasattr(conn, "dialect") else None
+
+    inspector = sa.inspect(conn)
+    if not inspector.has_table("prompts") and not inspector.has_table("resources"):
+        print("prompts and resources tables not found. Skipping downgrade.")
+        return
 
     # Best-effort: rebuild integer prompt ids and remap dependent FK columns.
     # 1) Create old-style prompts table with integer id (autoincrement)

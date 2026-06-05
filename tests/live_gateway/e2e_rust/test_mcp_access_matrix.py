@@ -27,8 +27,7 @@ import uuid
 import httpx
 import pytest
 
-from mcpgateway.utils.create_jwt_token import _create_jwt_token
-
+from tests.helpers.auth import make_auth_headers, make_test_jwt
 from tests.live_gateway.helpers.mcp_test_helpers import BASE_URL, JWT_SECRET, TEST_PASSWORD, skip_no_gateway, skip_no_rust_mcp_gateway
 
 pytestmark = [pytest.mark.e2e, skip_no_gateway, skip_no_rust_mcp_gateway]
@@ -42,17 +41,12 @@ REQUIRED_PROMPT_NAMES = {"fast-time-schedule-meeting", "fast-time-convert-time-d
 
 def _make_jwt(email: str, *, is_admin: bool = False, teams: list[str] | None = None) -> str:
     """Create a JWT for compose-backed E2E tests."""
-    return _create_jwt_token(
-        {"sub": email},
-        user_data={"email": email, "is_admin": is_admin, "auth_provider": "local"},
-        teams=teams,
-        secret=JWT_SECRET,
-    )
+    return make_test_jwt(email, is_admin=is_admin, teams=teams, secret=JWT_SECRET)
 
 
 def _api_headers(token: str) -> dict[str, str]:
     """Build standard JSON API headers."""
-    return {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    return make_auth_headers(token)
 
 
 def _mcp_headers(token: str, *, session_id: str | None = None) -> dict[str, str]:

@@ -627,6 +627,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             return raw_oauth_config
 
         def _validate_discovered(url: str, name: str) -> bool:
+            """Validate a discovered OAuth endpoint URL.
+
+            Args:
+                url: The endpoint URL to validate
+                name: Human-readable name of the endpoint for logging
+
+            Returns:
+                True if URL passes security validation, False otherwise
+            """
             try:
                 SecurityValidator.validate_url(url, name)
                 return True
@@ -2797,7 +2806,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             return True
 
         if is_admin_bypass_granted(db, user_email, token_teams):
-            return visibility != "private"
+            # Admin bypass grants access to public + team resources + OWN private resources (PR #4341 / issue #4694)
+            if visibility == "private":
+                gateway_owner_email = getattr(gateway, "owner_email", None)
+                return gateway_owner_email and gateway_owner_email == user_email
+            return True  # public or team visibility
 
         if not user_email:
             return False
@@ -3781,7 +3794,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 """
                 return httpx.AsyncClient(
                     verify=ssl_context if ssl_context else get_default_verify(),
-                    follow_redirects=True,
+                    follow_redirects=False,
                     headers=headers,
                     timeout=timeout if timeout else get_http_timeout(),
                     auth=auth,
@@ -5737,9 +5750,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 ctx = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
             else:
                 ctx = None
+
             return httpx.AsyncClient(
                 verify=ctx if ctx else get_default_verify(),
-                follow_redirects=True,
+                follow_redirects=False,
                 headers=headers,
                 timeout=timeout if timeout else get_http_timeout(),
                 auth=auth,
@@ -5904,9 +5918,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 ctx = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
             else:
                 ctx = None
+
             return httpx.AsyncClient(
                 verify=ctx if ctx else get_default_verify(),
-                follow_redirects=True,
+                follow_redirects=False,
                 headers=headers,
                 timeout=timeout if timeout else get_http_timeout(),
                 auth=auth,

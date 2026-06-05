@@ -68,6 +68,7 @@ def create_mock_tool(visibility="public", owner_email=None, team_id=None, enable
     tool.owner_email = owner_email
     tool.team_id = team_id
     tool.enabled = enabled
+    tool.deprecated = False
     tool.reachable = True
     tool.integration_type = "REST"
     tool.request_type = "GET"

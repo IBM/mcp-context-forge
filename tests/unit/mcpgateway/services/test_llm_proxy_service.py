@@ -100,7 +100,7 @@ def test_resolve_model_provider_disabled(service):
 
 
 def test_get_api_key_decode_error(service, monkeypatch: pytest.MonkeyPatch):
-    provider = _make_provider(api_key="encoded")
+    provider = _make_provider(api_key="encoded")  # pragma: allowlist secret
     monkeypatch.setattr("mcpgateway.services.llm_proxy_service.decode_auth", lambda _: (_ for _ in ()).throw(RuntimeError("bad")))
 
     assert service._get_api_key(provider) is None
@@ -437,7 +437,7 @@ def test_resolve_model_by_alias(service):
 
 def test_get_api_key_success(service, monkeypatch: pytest.MonkeyPatch):
     """Successful API key decode (line 153)."""
-    provider = _make_provider(api_key="encoded")
+    provider = _make_provider(api_key="encoded")  # pragma: allowlist secret
     monkeypatch.setattr("mcpgateway.services.llm_proxy_service.decode_auth", lambda _: {"api_key": "secret"})
     assert service._get_api_key(provider) == "secret"
 
@@ -450,7 +450,7 @@ def test_get_api_key_none(service):
 
 def test_build_openai_request_all_optional_params(service, monkeypatch: pytest.MonkeyPatch):
     """OpenAI request with all optional params set (lines 183, 193-216)."""
-    monkeypatch.setattr("mcpgateway.services.llm_proxy_service.decode_auth", lambda _: {"api_key": "key123"})
+    monkeypatch.setattr("mcpgateway.services.llm_proxy_service.decode_auth", lambda _: {"api_key": "key123"})  # pragma: allowlist secret
     request = ChatCompletionRequest(
         model="gpt-4",
         messages=[ChatMessage(role="user", content="hi")],
@@ -463,7 +463,7 @@ def test_build_openai_request_all_optional_params(service, monkeypatch: pytest.M
         presence_penalty=0.2,
         stop=["END"],
     )
-    provider = _make_provider(api_key="enc", api_base=None)
+    provider = _make_provider(api_key="enc", api_base=None)  # pragma: allowlist secret
     model = _make_model()
 
     url, headers, body = service._build_openai_request(request, provider, model)

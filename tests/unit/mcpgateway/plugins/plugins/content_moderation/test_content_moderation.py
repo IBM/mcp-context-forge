@@ -37,7 +37,7 @@ def _create_plugin(config_dict=None) -> ContentModerationPlugin:
         "provider": "ibm_watson",
         "fallback_provider": "ibm_granite",
         "fallback_on_error": "warn",
-        "ibm_watson": {"api_key": "test-watson-key", "url": "https://api.us-south.natural-language-understanding.watson.cloud.ibm.com", "version": "2022-04-07"},
+        "ibm_watson": {"api_key": "test-watson-key", "url": "https://api.us-south.natural-language-understanding.watson.cloud.ibm.com", "version": "2022-04-07"},  # pragma: allowlist secret
         "ibm_granite": {"ollama_url": "http://localhost:11434", "model": "granite3-guardian", "temperature": 0.1},
         "categories": {
             "hate": {"threshold": 0.7, "action": "block"},
@@ -196,7 +196,7 @@ class TestContentModerationPlugin:
         mock_client.post.return_value = mock_response
         mock_client_class.return_value = mock_client
 
-        config = {"provider": "openai", "openai": {"api_key": "test-openai-key", "api_base": "https://api.openai.com/v1"}}
+        config = {"provider": "openai", "openai": {"api_key": "test-openai-key", "api_base": "https://api.openai.com/v1"}}  # pragma: allowlist secret
         plugin = _create_plugin(config)
         plugin._client = mock_client
 

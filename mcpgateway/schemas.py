@@ -585,6 +585,7 @@ class ToolCreate(BaseModel):
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
     tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the tool")
+    deprecated: Optional[bool] = Field(default=False, description="Whether the tool is deprecated (visible but non-executable)")
 
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
@@ -1150,6 +1151,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the tool")
+    deprecated: Optional[bool] = Field(None, description="Whether the tool is deprecated (visible but non-executable)")
     visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
 
     # Passthrough REST fields
@@ -1596,6 +1598,7 @@ class ToolRead(BaseModelWithConfigDict):
     created_at: datetime
     updated_at: datetime
     enabled: bool
+    deprecated: bool
     reachable: bool
     gateway_id: Optional[str]
     grpc_service_id: Optional[str] = Field(None, description="ID of the gRPC service this tool was discovered from")
@@ -3716,7 +3719,7 @@ class GatewayRead(BaseModelWithConfigDict):
             >>> # Custom headers example
             >>> values = GatewayRead.model_construct(
             ...     auth_type='authheaders',
-            ...     auth_value=encode_auth({"X-API-Key": "abc123"})
+            ...     auth_value=encode_auth({"X-API-Key": "abc123"})  # pragma: allowlist secret
             ... )
             >>> values = GatewayRead._populate_auth(values)
             >>> values.auth_header_key
@@ -5443,7 +5446,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
             >>> # Custom headers example
             >>> values = A2AAgentRead.model_construct(
             ...     auth_type='authheaders',
-            ...     auth_value=encode_auth({"X-API-Key": "abc123"})
+            ...     auth_value=encode_auth({"X-API-Key": "abc123"})  # pragma: allowlist secret
             ... )
             >>> values = A2AAgentRead._populate_auth(values)
             >>> values.auth_header_key
@@ -5792,7 +5795,7 @@ class EmailLoginRequest(BaseModel):
         password: User's password
 
     Examples:
-        >>> request = EmailLoginRequest(email="user@example.com", password="secret123")
+        >>> request = EmailLoginRequest(email="user@example.com", password="secret123")  # pragma: allowlist secret
         >>> request.email
         'user@example.com'
         >>> request.password
@@ -5819,7 +5822,7 @@ class PublicRegistrationRequest(BaseModel):
     Examples:
         >>> request = PublicRegistrationRequest(
         ...     email="new@example.com",
-        ...     password="secure123",
+        ...     password="secure123",  # pragma: allowlist secret
         ...     full_name="New User"
         ... )
         >>> request.email
@@ -5849,7 +5852,7 @@ class AdminCreateUserRequest(BaseModel):
     Examples:
         >>> request = AdminCreateUserRequest(
         ...     email="new@example.com",
-        ...     password="secure123",
+        ...     password="secure123",  # pragma: allowlist secret
         ...     full_name="New User"
         ... )
         >>> request.email
@@ -5887,8 +5890,8 @@ class ChangePasswordRequest(BaseModel):
 
     Examples:
         >>> request = ChangePasswordRequest(
-        ...     old_password="old_secret",
-        ...     new_password="new_secure_password"
+        ...     old_password="old_secret",  # pragma: allowlist secret
+        ...     new_password="new_secure_password"  # pragma: allowlist secret
         ... )
         >>> request.old_password
         'old_secret'
@@ -8465,4 +8468,122 @@ class ToolPluginBindingListResponse(BaseModelWithConfigDict):
     """Response for GET /v1/tools/plugin_bindings[/{team_id}]."""
 
     bindings: List[ToolPluginBindingResponse] = Field(default_factory=list, description="List of tool plugin bindings")
+    total: int = Field(0, description="Total number of bindings returned")
+
+
+# --- A2A Agent Plugin Schemas ---
+
+A2A_AGENT_METADATA = "a2a_agent"
+# Metadata key used in GlobalContext.metadata for A2A agent plugin context.
+# Defined locally to avoid depending on the cpex package version for a string constant.
+
+
+class PydanticA2AAgent(BaseModelWithConfigDict):
+    """A2A agent metadata for plugin context.
+
+    Used in GlobalContext.metadata[A2A_AGENT_METADATA] to provide
+    agent configuration to pre/post-invoke plugins. This schema exposes
+    the relevant A2A agent configuration fields that plugins may need
+    for policy decisions, such as authorization type visibility, and
+    header pass-through configuration.
+
+    Attributes:
+        id: A2A agent UUID identifier.
+        name: Agent name (used in context_id generation for plugin bindings).
+        team_id: Team the agent belongs to (None for public agents).
+        visibility: Agent visibility scope (public, private, etc.).
+        enabled: Whether the agent is currently enabled.
+        tags: List of string tags for agent classification (Note: differs from Gateway.tags which is List[Dict[str,str]]).
+        oauth_config: OAuth configuration for the agent (if any).
+        passthrough_headers: List of HTTP header names that should be passed through to upstream agent.
+        auth_type: Authentication type (basic, bearer, api_key, etc.).
+    """
+
+    id: str = Field(..., description="A2A agent UUID identifier")
+    name: str = Field(..., description="Agent name")
+    team_id: Optional[str] = Field(None, description="Team ID the agent belongs to")
+    visibility: str = Field(..., description="Agent visibility scope")
+    enabled: bool = Field(..., description="Whether the agent is enabled")
+    tags: List[str] = Field(default_factory=list, description="String tags for agent classification")
+    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth configuration")
+    passthrough_headers: Optional[List[str]] = Field(None, description="Headers to pass through to upstream agent")
+    auth_type: Optional[str] = Field(None, description="Authentication type")
+    content_type: Optional[str] = Field(None, description="Content-Type of the inbound request")
+
+    class Config:
+        """Pydantic config for A2A agent metadata."""
+
+        from_attributes = True  # SQLAlchemy ORM compatibility
+
+
+class A2AAgentPluginBindingRequest(BaseModelWithConfigDict):
+    """Request schema for creating/updating A2A agent plugin bindings.
+
+    Attributes:
+        agent_name: Agent name (or "*" for team-wide policies).
+        plugin_id: Plugin identifier.
+        mode: Plugin execution mode (enforce, detect).
+        priority: Execution priority (lower runs first).
+        config: Plugin-specific configuration.
+        on_error: Error handling policy (fail, ignore, disable).
+    """
+
+    agent_name: str = Field(..., min_length=1, max_length=255, description="Agent name or '*' for team-wide")
+    plugin_id: str = Field(..., min_length=1, max_length=64, description="Plugin identifier")
+    mode: str = Field(default="enforce", description="Plugin execution mode")
+    priority: int = Field(default=50, description="Execution priority")
+    config: Dict[str, Any] = Field(default_factory=dict, description="Plugin-specific configuration")
+    on_error: Optional[str] = Field(None, description="Error handling policy (fail, ignore, disable)")
+
+
+class A2AAgentPluginBindingResponse(BaseModelWithConfigDict):
+    """Response schema for A2A agent plugin bindings.
+
+    Attributes:
+        id: Unique binding identifier (UUID).
+        team_id: Team the binding belongs to.
+        agent_name: Agent name the policy applies to.
+        plugin_id: Plugin identifier.
+        mode: Execution mode.
+        priority: Execution priority.
+        config: Plugin-specific configuration.
+        on_error: Error handling policy.
+        binding_reference_id: Optional external reference ID.
+        created_at: Creation timestamp.
+        created_by: Email of creator.
+        updated_at: Last update timestamp.
+        updated_by: Email of last updater.
+    """
+
+    id: str = Field(..., description="Unique binding identifier")
+    team_id: str = Field(..., description="Team the binding belongs to")
+    agent_name: str = Field(..., description="Agent name the policy applies to")
+    plugin_id: str = Field(..., description="Plugin identifier")
+    mode: str = Field(..., description="Execution mode")
+    priority: int = Field(..., description="Execution priority")
+    config: Dict[str, Any] = Field(..., description="Plugin-specific configuration")
+    on_error: Optional[str] = Field(None, description="Error handling policy")
+    binding_reference_id: Optional[str] = Field(None, description="Optional external reference ID")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    created_by: str = Field(..., description="Email of creator")
+    updated_at: datetime = Field(..., description="Last update timestamp")
+    updated_by: str = Field(..., description="Email of last updater")
+
+    @field_serializer("created_at", "updated_at")
+    def serialize_dt(self, v: datetime) -> str:
+        """Serialize datetime fields to ISO 8601.
+
+        Args:
+            v: Datetime to serialize.
+
+        Returns:
+            ISO 8601 string.
+        """
+        return encode_datetime(v)
+
+
+class A2AAgentPluginBindingListResponse(BaseModelWithConfigDict):
+    """Response for GET /v1/a2a-agents/{team_id}/plugin-bindings."""
+
+    bindings: List[A2AAgentPluginBindingResponse] = Field(default_factory=list, description="List of A2A agent plugin bindings")
     total: int = Field(0, description="Total number of bindings returned")

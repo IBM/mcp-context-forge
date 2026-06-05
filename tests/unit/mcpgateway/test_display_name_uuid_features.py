@@ -262,7 +262,7 @@ class TestSchemaValidation:
         server_data = {"id": "550e8400-e29b-41d4-a716-446655440000", "name": "Test Server", "description": "Test server with custom UUID"}
 
         server_create = ServerCreate(**server_data)
-        assert server_create.id == "550e8400e29b41d4a716446655440000"
+        assert server_create.id == "550e8400e29b41d4a716446655440000"  # pragma: allowlist secret
         assert server_create.name == "Test Server"
 
     def test_server_update_schema_with_uuid(self):
@@ -270,7 +270,7 @@ class TestSchemaValidation:
         update_data = {"id": "123e4567-e89b-12d3-a456-426614174000", "name": "Updated Server Name"}
 
         server_update = ServerUpdate(**update_data)
-        assert server_update.id == "123e4567e89b12d3a456426614174000"
+        assert server_update.id == "123e4567e89b12d3a456426614174000"  # pragma: allowlist secret
         assert server_update.name == "Updated Server Name"
 
     def test_server_uuid_validation(self):
@@ -280,7 +280,7 @@ class TestSchemaValidation:
 
         # Test valid UUID
         server_create = ServerCreate(id="550e8400-e29b-41d4-a716-446655440000", name="Test Server")
-        assert server_create.id == "550e8400e29b41d4a716446655440000"
+        assert server_create.id == "550e8400e29b41d4a716446655440000"  # pragma: allowlist secret
 
     def test_tool_create_request_type_and_auth_assembly(self):
         info_rest = type("obj", (object,), {"data": {"integration_type": "REST"}})
@@ -357,7 +357,7 @@ class TestSchemaValidation:
 
         # Test ServerUpdate UUID validation
         server_update = ServerUpdate(id="123e4567-e89b-12d3-a456-426614174000")
-        assert server_update.id == "123e4567e89b12d3a456426614174000"
+        assert server_update.id == "123e4567e89b12d3a456426614174000"  # pragma: allowlist secret
 
         # Test invalid UUID in update
         with pytest.raises(Exception):  # Pydantic ValidationError
@@ -449,7 +449,7 @@ class TestServerUUIDNormalization:
 
         # Hex UUID format (without dashes) - but we need to provide a valid UUID
         standard_uuid = "550e8400-e29b-41d4-a716-446655440000"
-        hex_uuid = "550e8400e29b41d4a716446655440000"
+        hex_uuid = "550e8400e29b41d4a716446655440000"  # pragma: allowlist secret
 
         # Mock database operations
         mock_db_server = None
@@ -617,8 +617,8 @@ class TestServerUUIDNormalization:
 
         # Test cases for UUID normalization
         test_cases = [
-            {"input": "550e8400-e29b-41d4-a716-446655440000", "expected": "550e8400e29b41d4a716446655440000", "description": "Standard UUID with dashes"},
-            {"input": "123e4567-e89b-12d3-a456-426614174000", "expected": "123e4567e89b12d3a456426614174000", "description": "Another standard UUID with dashes"},
+            {"input": "550e8400-e29b-41d4-a716-446655440000", "expected": "550e8400e29b41d4a716446655440000", "description": "Standard UUID with dashes"},  # pragma: allowlist secret
+            {"input": "123e4567-e89b-12d3-a456-426614174000", "expected": "123e4567e89b12d3a456426614174000", "description": "Another standard UUID with dashes"},  # pragma: allowlist secret
             {"input": "00000000-0000-0000-0000-000000000000", "expected": "00000000000000000000000000000000", "description": "Nil UUID"},
         ]
 

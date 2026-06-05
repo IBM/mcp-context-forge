@@ -47,8 +47,8 @@ from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batche
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
-from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
+from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 
@@ -1018,7 +1018,11 @@ class ServerService(BaseService):
             return True
 
         if is_admin_bypass_granted(db, user_email, token_teams):
-            return visibility != "private"
+            # Admin bypass grants access to public + team resources + OWN private resources (PR #4341 / issue #4694)
+            if visibility == "private":
+                server_owner_email = getattr(server, "owner_email", None)
+                return server_owner_email and server_owner_email == user_email
+            return True  # public or team visibility
 
         if not user_email:
             return False

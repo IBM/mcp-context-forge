@@ -1,4 +1,9 @@
-"""
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/services/test_a2a_service_uaid_security.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 Unit tests for UAID security features in A2AAgentService.
 
 Tests cover:
@@ -219,7 +224,6 @@ class TestUAIDDomainAllowlistValidation:
 
         # Assert - should not raise domain validation error
         assert result == {"result": "success"}
-
 
 
 class TestUAIDBearerTokenForwarding:
@@ -599,6 +603,7 @@ class TestAuthenticationErrorHandling:
                 bearer_token=_make_test_jwt(),
             )
 
+
 class TestBearerTokenForwardingGracefulDegradation:
     """Tests for bearer token forwarding graceful degradation."""
 
@@ -886,6 +891,7 @@ class TestTokenTypeFiltering:
         """
         # Third-Party
         import base64
+
         # First-Party
         from unittest.mock import AsyncMock, MagicMock
 

@@ -2,7 +2,7 @@
 
 ## ⚠️ Beta Software Notice
 
-**Current Version: 1.0.0**
+**Current Version: 1.0.2**
 
 ContextForge is currently in beta and should be treated as such until the 1.0 release. While we implement comprehensive security measures and follow best practices, important limitations exist:
 
@@ -233,6 +233,10 @@ SecurityValidator.validate_identifier(identifier)
 ### Server-Side Request Forgery (SSRF) Protection
 
 ContextForge implements comprehensive SSRF protection through [`validate_url()`](mcpgateway/common/validators.py:885):
+
+**HTTP Redirect Hardening:**
+- As part of ongoing security hardening, HTTP redirect following is disabled on all outbound requests
+- See [HTTP Redirect Handling Migration Guide](docs/docs/operations/ssrf-redirect-protection-migration.md) for upgrade guidance
 
 **Scheme Allowlist:**
 - Only permits: `http://`, `https://`, `ws://`, `wss://`

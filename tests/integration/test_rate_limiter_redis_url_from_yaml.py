@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Smoke test for the rate-limiter's env-sourced redis_url.
+"""Location: ./tests/integration/test_rate_limiter_redis_url_from_yaml.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Smoke test for the rate-limiter's env-sourced redis_url.
 
 Pins the contract that ``plugins/config.yaml`` resolves the rate-limiter's
 ``redis_url`` from the gateway's ``REDIS_URL`` environment variable via the

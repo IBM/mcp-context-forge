@@ -70,3 +70,26 @@ class TestAdvisoryLockRetry:
 
                 # Verify all 60 retries were attempted
                 assert mock_conn.execute.call_count == 60
+
+    def test_advisory_lock_unlock_exception_is_swallowed(self):
+        """Test that an exception during pg_advisory_unlock is logged as warning, not raised."""
+        mock_conn = MagicMock()
+        mock_conn.dialect.name = "postgresql"
+
+        mock_result_true = MagicMock()
+        mock_result_true.scalar.return_value = True
+
+        # Lock acquired on first attempt; unlock raises
+        mock_conn.execute.side_effect = [
+            mock_result_true,
+            Exception("connection lost"),
+        ]
+
+        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+            with patch("time.sleep"):
+                with advisory_lock(mock_conn):
+                    pass  # no exception raised to caller
+
+        mock_logger.warning.assert_called_once()
+        warning_msg = str(mock_logger.warning.call_args)
+        assert "connection lost" in warning_msg

@@ -40,16 +40,13 @@ spec:
       {{- end }}
       automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       securityContext:
+        {{- toYaml .Values.mcpContextForge.podSecurityContext | nindent 8 }}
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: mcp-context-forge
           securityContext:
-            allowPrivilegeEscalation: false
-            runAsNonRoot: true
-            capabilities:
-              drop:
-                - ALL
+            {{- toYaml .Values.mcpContextForge.containerSecurityContext | nindent 12 }}
           image: "{{ .Values.mcpContextForge.image.repository }}:{{ .Values.mcpContextForge.image.tag }}"
           imagePullPolicy: {{ .Values.mcpContextForge.image.pullPolicy }}
           {{- $pluginsConfigFile := default "plugins/config.yaml" .Values.mcpContextForge.config.PLUGINS_CONFIG_FILE }}
@@ -192,6 +189,45 @@ spec:
               {{- end }}
 
             # ---------- EXTRA ENV (user-defined) ----------
+
+            # ---------- RATE LIMITER REDIS (Optional) ----------
+            {{- if .Values.mcpContextForge.config.RATELIMITER_REDIS_URL }}
+            - name: RATELIMITER_REDIS_URL
+              value: {{ .Values.mcpContextForge.config.RATELIMITER_REDIS_URL | quote }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.config.RATELIMITER_REDIS_MAX_CONNECTIONS }}
+            - name: RATELIMITER_REDIS_MAX_CONNECTIONS
+              value: {{ .Values.mcpContextForge.config.RATELIMITER_REDIS_MAX_CONNECTIONS | quote }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.config.RATELIMITER_REDIS_SOCKET_TIMEOUT }}
+            - name: RATELIMITER_REDIS_SOCKET_TIMEOUT
+              value: {{ .Values.mcpContextForge.config.RATELIMITER_REDIS_SOCKET_TIMEOUT | quote }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.config.RATELIMITER_REDIS_SOCKET_CONNECT_TIMEOUT }}
+            - name: RATELIMITER_REDIS_SOCKET_CONNECT_TIMEOUT
+              value: {{ .Values.mcpContextForge.config.RATELIMITER_REDIS_SOCKET_CONNECT_TIMEOUT | quote }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.config.RATELIMITER_REDIS_SSL_CHECK_HOSTNAME }}
+            - name: RATELIMITER_REDIS_SSL_CHECK_HOSTNAME
+              value: {{ .Values.mcpContextForge.config.RATELIMITER_REDIS_SSL_CHECK_HOSTNAME | quote }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.config.RATELIMITER_REDIS_SSL }}
+            - name: RATELIMITER_REDIS_SSL
+              value: {{ .Values.mcpContextForge.config.RATELIMITER_REDIS_SSL | quote }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.config.RATELIMITER_REDIS_CA_CERTS }}
+            - name: RATELIMITER_REDIS_CA_CERTS
+              value: {{ .Values.mcpContextForge.config.RATELIMITER_REDIS_CA_CERTS | quote }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.config.RATELIMITER_REDIS_CLIENT_CERT }}
+            - name: RATELIMITER_REDIS_CLIENT_CERT
+              value: {{ .Values.mcpContextForge.config.RATELIMITER_REDIS_CLIENT_CERT | quote }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.config.RATELIMITER_REDIS_SSL_KEYFILE }}
+            - name: RATELIMITER_REDIS_SSL_KEYFILE
+              value: {{ .Values.mcpContextForge.config.RATELIMITER_REDIS_SSL_KEYFILE | quote }}
+            {{- end }}
+
             # Placed last so users can override any variable including derived URLs
             {{- if .Values.mcpContextForge.extraEnv }}
             {{- toYaml .Values.mcpContextForge.extraEnv | nindent 12 }}
@@ -202,6 +238,14 @@ spec:
             - name: PLUGINS_CONFIG_FILE
               value: {{ $pluginsConfigFile | quote }}
             {{- end }}
+            # Migration runner ownership — wired from .Values.migration.enabled:
+            #   true  → pre-install Job owns the schema; gateway pods skip alembic upgrade head
+            #           and fail fast if the Job left the schema behind.
+            #   false → no dedicated runner; each gateway pod runs the advisory-lock migration
+            #           path itself (safe for single-replica or SQLite deployments).
+            # Placed after extraEnv so users cannot accidentally drop the contract by overriding it.
+            - name: MCPGATEWAY_SKIP_MIGRATIONS
+              value: {{ ternary "true" "false" .Values.migration.enabled | quote }}
 
           ################################################################
           # BULK ENV-VARS - pulled from ConfigMap + Secret
@@ -225,18 +269,21 @@ spec:
                 - /bin/sh
                 - -c
                 - |
-                  # Check if migration check already passed
-                  if [ -f /tmp/migration_check_done ]; then
+                  # Schema-at-head guard: refuse Ready until alembic_version
+                  # matches the script-directory head. This is the chart-level
+                  # invariant — pods cannot serve traffic against a half-
+                  # migrated DB regardless of which entity (pre-install Job,
+                  # post-install Job, init container, external CD pipeline)
+                  # is responsible for running migrations.
+                  if [ -f /tmp/schema_at_head_done ]; then
                     exit 0
                   fi
-                  # Wait for database to be ready (implies migration completed)
-                  python3 /app/mcpgateway/utils/db_isready.py --max-tries 1 --interval 1 --timeout 2 || exit 1
-                  # Mark check as done to avoid repeated database calls
-                  touch /tmp/migration_check_done
+                  python3 -m mcpgateway.utils.check_schema_at_head || exit 1
+                  touch /tmp/schema_at_head_done
                   exit 0
             initialDelaySeconds: 10
             periodSeconds: 5
-            timeoutSeconds: 10
+            timeoutSeconds: 15
             failureThreshold: 60    # Allow up to 5 minutes for migration to complete
           {{- else }}
           {{- with .Values.mcpContextForge.probes.startup }}

@@ -115,11 +115,12 @@ jobs:
                   JWT_SECRET_KEY: ${{ env.DYNAMIC_JWT_SECRET }}
                   ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP: false
                   PASSWORD_CHANGE_ENFORCEMENT_ENABLED: false
+                  LOG_LEVEL: INFO
               run: |
                   make venv
                   make install
                   make stop-serve
-                  make serve &
+                  make serve > gateway.log 2>&1 &
 
                   echo "Waiting for gateway to start..."
                   for i in {1..60}; do
@@ -298,12 +299,15 @@ jobs:
                   IS_ERROR=$(echo "$RESPONSE" | jq -r '.isError')
                   ERR_MSG=$(echo "$RESPONSE" | jq -r '.content[0].text')
 
+                  cat gateway.log | grep sql_sanitizer
+
                   if [[ "$IS_ERROR" == "true" ]] && [[ "$ERR_MSG" == *"blocked by plugin SQLSanitizer"* ]]; then
                     echo "Success: SQLSanitizer blocked the 'DROP' command."
                   else
                     echo "Failure: SQLSanitizer did not block the malicious command as expected."
                     exit 1
                   fi
+                  cat gateway.log | grep sql_sanitizer
 
                   echo "All sql-sanitizer tests passed!"
             - name: Upload logs on failure
@@ -315,4 +319,5 @@ jobs:
                       fast-test-server.log
                       sql-sanitizer_output.json
                       sql-sanitizer_test.log
+                      gateway.log
                   retention-days: 7

@@ -104,10 +104,10 @@ class OAuthManager:
         False
         >>>
         >>> # Test encrypted secret detection heuristic
-        >>> short_secret = "secret123"
+        >>> short_secret = "secret123"  # pragma: allowlist secret
         >>> len(short_secret) > 50
         False
-        >>> encrypted_secret = "gAAAAABh" + "x" * 60  # Simulated encrypted secret
+        >>> encrypted_secret = "gAAAAABh" + "x" * 60  # Simulated encrypted secret  # pragma: allowlist secret
         >>> len(encrypted_secret) > 50
         True
         >>>
@@ -740,7 +740,7 @@ class OAuthManager:
         token_data: Dict[str, str] = {
             "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
             "subject_token": subject_token,
-            "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",  # nosec
+            "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",  # nosec B105 - RFC 8693 token type URI, not a credential
             "requested_token_type": requested_token_type,
             "client_id": client_id,
             "client_secret": client_secret,

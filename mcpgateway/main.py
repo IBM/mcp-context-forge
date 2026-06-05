@@ -69,12 +69,10 @@ from starlette.responses import Response as starletteResponse
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # First-Party
-from mcpgateway.middleware.forwarded_host import ForwardedHostMiddleware
-
 # Import the admin routes from the new module
 from mcpgateway import __version__
 from mcpgateway import version as version_module
-from mcpgateway.auth import TokenValidationError, get_current_user, get_user_team_roles, validate_token_user
+from mcpgateway.auth import get_current_user, get_user_team_roles, TokenValidationError, validate_token_user
 from mcpgateway.auth_context import (
     decode_internal_mcp_auth_context,
     get_internal_mcp_auth_context,
@@ -102,6 +100,7 @@ from mcpgateway.handlers.sampling import SamplingError, SamplingHandler
 from mcpgateway.middleware.client_disconnect import ClientDisconnectMiddleware
 from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
+from mcpgateway.middleware.forwarded_host import ForwardedHostMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware, run_pre_request_hooks
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
 from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
@@ -110,10 +109,11 @@ from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddl
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
-from mcpgateway.observability import init_telemetry, OpenTelemetryRequestMiddleware, otel_tracing_enabled
+from mcpgateway.observability import configure_baggage_span_attribute_policy, extract_baggage_span_attribute_policy, init_telemetry, OpenTelemetryRequestMiddleware, otel_tracing_enabled
 from mcpgateway.plugins import (
     enable_plugins,
     get_plugin_manager,
+    get_plugin_manager_factory,
     init_plugin_manager_factory,
     shutdown_plugin_manager_factory,
     start_plugin_invalidation_listener,
@@ -178,6 +178,7 @@ from mcpgateway.services.prompt_service import PromptError, PromptLockConflictEr
 from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
 from mcpgateway.services.tag_service import TagService
+from mcpgateway.services.dataplane_publisher import DataplanePublisherService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
 from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import (
@@ -202,6 +203,7 @@ from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.token_scoping import validate_server_access
 from mcpgateway.utils.trace_context import clear_trace_context, set_trace_context_from_teams, set_trace_session_id
+from mcpgateway.utils.trace_redaction import safe_log_user
 from mcpgateway.utils.verify_credentials import (
     _resolve_auth_header_name,
     extract_websocket_bearer_token,
@@ -251,7 +253,16 @@ streamable_http_session = SessionManagerWrapper()
 
 # Wait for redis to be ready
 if settings.cache_type == "redis" and settings.redis_url is not None:
-    wait_for_redis_ready(redis_url=settings.redis_url, max_retries=int(settings.redis_max_retries), retry_interval_ms=int(settings.redis_retry_interval_ms), sync=True)
+    # First-Party
+    from mcpgateway.utils.redis_client import _build_ssl_kwargs
+
+    wait_for_redis_ready(
+        redis_url=settings.redis_url,
+        max_retries=int(settings.redis_max_retries),
+        retry_interval_ms=int(settings.redis_retry_interval_ms),
+        ssl_kwargs=_build_ssl_kwargs(settings),
+        sync=True,
+    )
 
 # Initialize session registry
 session_registry = SessionRegistry(
@@ -1306,6 +1317,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     aggregation_loop_task: Optional[asyncio.Task] = None
     aggregation_backfill_task: Optional[asyncio.Task] = None
     siem_export_service: Optional[Any] = None
+    dataplane_publisher_service: Optional[Any] = None
 
     # Initialize logging service FIRST to ensure all logging goes to dual output
     await logging_service.initialize()
@@ -1345,6 +1357,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     siem_export_service = get_siem_export_service()
     await siem_export_service.initialize()
+
+    # Initialize rate limiter Redis early for validation
+    # First-Party
+    from mcpgateway.auth import _get_ratelimiter_redis_client  # pylint: disable=import-outside-toplevel
+
+    if settings.ratelimiter_redis_url:
+        _get_ratelimiter_redis_client()  # Triggers lazy init + logging
 
     # Initialize shared HTTP client (connection pool for all outbound requests)
     # First-Party
@@ -1426,10 +1445,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         await init_llmchat_redis()
 
-    # Initialize observability (Phoenix tracing)
-    init_telemetry()
-    logger.info("Observability initialized")
-
     try:
         # Validate security configuration
         validate_security_configuration()
@@ -1478,6 +1493,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             from mcpgateway.plugins import mark_factory_init_degraded  # pylint: disable=import-outside-toplevel
 
             mark_factory_init_degraded()
+
+        # Load SpanAttributeCustomizer baggage emission policy before telemetry starts
+        # creating spans. Baggage remains the propagation mechanism; this policy
+        # controls the span attribute names exported from allowed baggage keys.
+        configure_baggage_span_attribute_policy(extract_baggage_span_attribute_policy(get_plugin_manager_factory()))
+        init_telemetry()
+        logger.info("Observability initialized")
 
         try:
             plugin_manager = await get_plugin_manager()
@@ -1594,6 +1616,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         refresh_slugs_on_startup()
 
+        # Initialize experimental dataplane publisher to send config data to redis
+        if settings.dataplane_publisher:
+            dataplane_publisher_service = DataplanePublisherService()
+            await dataplane_publisher_service.start()
         # Bootstrap SSO providers from environment configuration
         if settings.sso_enabled:
             await attempt_to_bootstrap_sso_providers()
@@ -1651,7 +1677,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 Raises:
                     asyncio.CancelledError: When aggregation is stopped
                 """
-                interval_seconds = max(1, int(settings.metrics_aggregation_window_minutes)) * 60
+                interval_seconds = settings.metrics_aggregation_interval_seconds or max(1, int(settings.metrics_aggregation_window_minutes)) * 60
                 logger.info(
                     "Starting log aggregation loop (window=%s min)",
                     log_aggregator.aggregation_window_minutes,
@@ -1796,6 +1822,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             metrics_cleanup_service = get_metrics_cleanup_service()
             services_to_shutdown.insert(2, metrics_cleanup_service)
 
+        if dataplane_publisher_service is not None:
+            services_to_shutdown.insert(3, dataplane_publisher_service)
+
         await shutdown_services(services_to_shutdown)
 
         # Shutdown session-affinity service (before shared HTTP client).
@@ -1882,6 +1911,17 @@ def validate_security_configuration():
     logger.info("🔒 Validating security configuration...")
     try:
         current_settings = get_settings()
+
+        for _field_name, _secret_field in (
+            ("jwt_secret_key", current_settings.jwt_secret_key),
+            ("auth_encryption_secret", current_settings.auth_encryption_secret),
+        ):
+            _val = _secret_field.get_secret_value()
+            if _val.lower().startswith("__replace_me__"):
+                _msg = f"{_field_name}: Value is an unset placeholder (__REPLACE_ME__). Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values."
+                if str(current_settings.environment).lower() == "production":
+                    raise SecurityConfigurationError(_msg)
+                logger.warning("🔓 SECURITY WARNING - %s", _msg)
 
         security_status: settings.SecurityStatus = current_settings.get_security_status()
         security_warnings = security_status["warnings"]
@@ -2797,8 +2837,10 @@ class MCPPathRewriteMiddleware:
     """
     Middleware that rewrites paths ending with '/mcp' to '/mcp/', after performing authentication.
 
+    - Rewrites exact '/mcp' to '/mcp/' so Starlette's mount does not emit a 307 redirect.
     - Rewrites paths like '/servers/<server_id>/mcp' to '/mcp/'.
-    - Only paths ending with '/mcp' or '/mcp/' (but not exactly '/mcp' or '/mcp/') are rewritten.
+    - Keeps ASGI ``raw_path`` aligned with rewritten paths when present.
+    - Only exact '/mcp' and server-scoped MCP transport paths are rewritten.
     - Authentication is performed before any path rewriting.
     - If authentication fails, the request is not processed further.
     - All other requests are passed through without change.
@@ -2915,6 +2957,13 @@ class MCPPathRewriteMiddleware:
             >>> with patch('mcpgateway.main.streamable_http_auth', return_value=True):
             ...     asyncio.run(middleware._call_streamable_http(scope, receive, send))
             >>> app_mock.assert_called_once_with(scope, receive, send)
+
+            >>> # Exact /mcp is normalized to avoid Starlette's mount redirect.
+            >>> scope = {"type": "http", "path": "/mcp"}
+            >>> with patch('mcpgateway.main.streamable_http_auth', return_value=True):
+            ...     asyncio.run(middleware._call_streamable_http(scope, receive, send))
+            >>> scope["path"]
+            '/mcp/'
         """
         # Auth check first
         auth_ok = await streamable_http_auth(scope, receive, send)
@@ -2938,7 +2987,11 @@ class MCPPathRewriteMiddleware:
         # Skip rewriting for well-known URIs (RFC 9728 OAuth metadata, etc.)
         # These paths may end with /mcp but should not be rewritten to the MCP transport
         if not app_path.startswith("/.well-known/"):
-            if (app_path.endswith("/mcp") and app_path != "/mcp") or (app_path.endswith("/mcp/") and app_path != "/mcp/"):
+            if app_path == "/mcp":
+                self._apply_mcp_rewrite(scope, root_path)
+                await self.application(scope, receive, send)
+                return
+            if app_path.endswith("/mcp") or (app_path.endswith("/mcp/") and app_path != "/mcp/"):
                 # SECURITY: Only rewrite recognised MCP paths — /servers/{id}/mcp.
                 # Arbitrary prefixes (e.g. /foo/mcp) must NOT be rewritten to
                 # /mcp/ as that would expose the global MCP transport under
@@ -2959,10 +3012,27 @@ class MCPPathRewriteMiddleware:
                     return
                 # Rewrite to /mcp/ and continue through middleware (lets CORSMiddleware handle preflight)
                 # Preserve root_path prefix when rewriting
-                scope["path"] = f"{root_path}/mcp/" if root_path else "/mcp/"
+                self._apply_mcp_rewrite(scope, root_path)
                 await self.application(scope, receive, send)
                 return
         await self.application(scope, receive, send)
+
+    @staticmethod
+    def _apply_mcp_rewrite(scope, root_path: str) -> str:
+        """Rewrite a validated MCP transport path to the mounted /mcp/ app path."""
+        original_path = scope.get("path", "")
+        new_path = f"{root_path}/mcp/" if root_path else "/mcp/"
+        scope["path"] = new_path
+
+        if "raw_path" in scope:
+            try:
+                # ASGI raw_path stores raw octets; latin-1 preserves a 1:1 byte mapping for valid values.
+                scope["raw_path"] = new_path.encode("latin-1")
+            except (UnicodeEncodeError, ValueError):
+                logger.warning("MCPPathRewriteMiddleware: non-latin-1 raw_path skipped for %s", new_path)
+
+        logger.debug("MCPPathRewriteMiddleware: %s -> %s", original_path, new_path)
+        return new_path
 
 
 # Configure CORS with environment-aware origins
@@ -3086,11 +3156,30 @@ if settings.correlation_id_enabled:
     app.add_middleware(CorrelationIDMiddleware)
     logger.info(f"✅ Correlation ID tracking enabled (header: {settings.correlation_id_header})")
 
-# Add authentication context middleware if security logging is enabled
+# Add authentication context middleware if security logging is enabled OR password change enforcement is enabled
 # This middleware extracts user context and logs security events (authentication attempts)
 # Note: SIEM export can also require auth event capture even when DB security logging is off.
+# Note: Password change enforcement also requires user context to be available
+# IMPORTANT: Middleware runs in REVERSE order of addition in Starlette/FastAPI
+# Add PasswordChangeEnforcementMiddleware FIRST so it runs AFTER AuthContextMiddleware
 _siem_auth_source_enabled = settings.siem_export_enabled and "auth" in {str(item).lower() for item in getattr(settings, "siem_export_event_sources", [])}
-if settings.security_logging_enabled or _siem_auth_source_enabled or settings.mcpgateway_admin_api_enabled:
+
+# Add password change enforcement middleware FIRST (runs SECOND due to reverse order)
+# This middleware enforces mandatory password changes for users with password_change_required flag
+# Note: Runs after AuthContextMiddleware (added below) so request.state.user is available
+if settings.password_change_enforcement_enabled:
+    # First-Party
+    from mcpgateway.middleware.password_change_enforcement import PasswordChangeEnforcementMiddleware
+
+    app.add_middleware(PasswordChangeEnforcementMiddleware)
+    logger.info("🔒 Password change enforcement middleware enabled - blocking access for users requiring password change")
+else:
+    logger.info("🔒 Password change enforcement middleware disabled")
+
+# Add authentication context middleware SECOND (runs FIRST due to reverse order)
+# This populates request.state.user for downstream middleware and handlers
+_auth_context_required = settings.security_logging_enabled or _siem_auth_source_enabled or settings.mcpgateway_admin_api_enabled or settings.password_change_enforcement_enabled
+if _auth_context_required:
     # First-Party
     from mcpgateway.middleware.auth_middleware import AuthContextMiddleware
 
@@ -3685,7 +3774,7 @@ async def initialize(request: Request, user=Depends(get_current_user)) -> Initia
     try:
         body = await _read_request_json(request)
 
-        logger.debug(f"Authenticated user {SecurityValidator.sanitize_log_message(str(user))} is initializing the protocol.")
+        logger.debug(f"Authenticated user {safe_log_user(user)} is initializing the protocol.")
         return await session_registry.handle_initialize_logic(body)
 
     except orjson.JSONDecodeError:
@@ -3718,7 +3807,7 @@ async def ping(request: Request, user=Depends(get_current_user)) -> JSONResponse
     if not isinstance(body, dict) or body.get("method") != "ping":
         return ORJSONResponse(status_code=400, content=_jsonrpc_invalid_request(req_id))
 
-    logger.debug(f"Authenticated user {SecurityValidator.sanitize_log_message(str(user))} sent ping request.")
+    logger.debug(f"Authenticated user {safe_log_user(user)} sent ping request.")
     response: dict = {"jsonrpc": "2.0", "id": req_id, "result": {}}
     return ORJSONResponse(content=response)
 
@@ -3734,7 +3823,7 @@ async def handle_notification(request: Request, user=Depends(get_current_user)) 
         user (str): The authenticated user making the request.
     """
     body = await _read_request_json(request)
-    logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} sent a notification")
+    logger.debug(f"User {safe_log_user(user)} sent a notification")
     if body.get("method") == "notifications/initialized":
         logger.info("Client initialized")
         await logging_service.notify("Client initialized", LogLevel.INFO)
@@ -3777,8 +3866,9 @@ async def handle_completion(request: Request, db: Session = Depends(get_db), use
     body = await _read_request_json(request)
     logger.debug(f"User {SecurityValidator.sanitize_log_message(user['email'])} sent a completion request")
     user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
+    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
     if is_admin and token_teams is None:
-        user_email = None
+        token_teams = None  # Admin unrestricted - sees all public+team resources + own private
     elif token_teams is None:
         token_teams = []
     try:
@@ -3875,11 +3965,10 @@ async def list_servers(
     # - None: admin bypass (is_admin=true with explicit null teams) - sees ALL resources
     # - []: public-only (missing teams or explicit empty) - sees only public
     # - [...]: team-scoped - sees public + teams + user's private
-    is_admin_bypass = token_teams is None
     is_public_only_token = token_teams is not None and len(token_teams) == 0
 
     # Use consolidated server listing with optional team filtering
-    # For admin bypass: pass user_email=None and token_teams=None to skip all filtering
+    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
     logger.debug(
         f"User: {SecurityValidator.sanitize_log_message(user_email)} requested server list with include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}"
     )
@@ -3890,7 +3979,7 @@ async def list_servers(
         include_inactive=include_inactive,
         include_metrics=include_metrics,
         tags=tags_list,
-        user_email=None if is_admin_bypass else user_email,  # Admin bypass: no user filtering
+        user_email=user_email,  # Keep for owner matching (PR #4341 / issue #4694)
         team_id=team_id,
         visibility="public" if is_public_only_token and not visibility else visibility,
         token_teams=token_teams,  # None = admin bypass, [] = public-only, [...] = team-scoped
@@ -3920,7 +4009,7 @@ async def get_server(server_id: str, request: Request, db: Session = Depends(get
         HTTPException: If the server is not found.
     """
     try:
-        logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} requested server with ID {server_id}")
+        logger.debug(f"User {safe_log_user(user)} requested server with ID {server_id}")
         auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
         server = await server_service.get_server(db, server_id, user_email=auth_user_email, token_teams=auth_token_teams)
         _enforce_scoped_resource_access(request, db, user, f"/servers/{server_id}")
@@ -4041,7 +4130,7 @@ async def update_server(
         HTTPException: If the server is not found, there is a name conflict, or other errors.
     """
     try:
-        logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is updating server with ID {server_id}")
+        logger.debug(f"User {safe_log_user(user)} is updating server with ID {server_id}")
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
@@ -4101,7 +4190,7 @@ async def set_server_state(
     """
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is setting server with ID {server_id} to {'active' if activate else 'inactive'}")
+        logger.debug(f"User {safe_log_user(user)} is setting server with ID {server_id} to {'active' if activate else 'inactive'}")
         return await server_service.set_server_state(db, server_id, activate, user_email=user_email)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -4165,7 +4254,7 @@ async def delete_server(
         HTTPException: If the server is not found or there is an error.
     """
     try:
-        logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is deleting server with ID {server_id}")
+        logger.debug(f"User {safe_log_user(user)} is deleting server with ID {server_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
         await server_service.get_server(db, server_id, user_email=auth_user_email, token_teams=auth_token_teams)
@@ -4204,7 +4293,7 @@ async def sse_endpoint(request: Request, server_id: str, db: Session = Depends(g
         asyncio.CancelledError: If the request is cancelled during SSE setup.
     """
     try:
-        logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is establishing SSE connection for server {server_id}")
+        logger.debug(f"User {safe_log_user(user)} is establishing SSE connection for server {server_id}")
         auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
         await server_service.get_server(db, server_id, user_email=auth_user_email, token_teams=auth_token_teams)
         _enforce_scoped_resource_access(request, db, user, f"/servers/{server_id}/sse")
@@ -4321,7 +4410,7 @@ async def message_endpoint(request: Request, server_id: str = Depends(require_va
         HTTPException: If there are errors processing the message.
     """
     try:
-        logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} sent a message to server {server_id}")
+        logger.debug(f"User {safe_log_user(user)} sent a message to server {server_id}")
         session_id = request.query_params.get("session_id")
         if not session_id:
             logger.error("Missing session_id in message request")
@@ -4400,15 +4489,15 @@ async def server_get_tools(
     Returns:
         List[ToolRead]: A list of tool records formatted with by_alias=True.
     """
-    logger.debug(f"User: {SecurityValidator.sanitize_log_message(str(user))} has listed tools for the server_id: {server_id}")
+    logger.debug(f"User: {safe_log_user(user)} has listed tools for the server_id: {server_id}")
     user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
     _req_email, _req_is_admin = user_email, is_admin
     _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
     # Admin bypass - only when token has NO team restrictions (token_teams is None)
     # If token has explicit team scope (even empty [] for public-only), respect it
+    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
     if is_admin and token_teams is None:
-        user_email = None
-        token_teams = None  # Admin unrestricted
+        token_teams = None  # Admin unrestricted - sees all public+team resources + own private
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
     tools = await tool_service.list_server_tools(
@@ -4453,13 +4542,13 @@ async def server_get_resources(
     Returns:
         List[ResourceRead]: A list of resource records formatted with by_alias=True.
     """
-    logger.debug(f"User: {SecurityValidator.sanitize_log_message(str(user))} has listed resources for the server_id: {server_id}")
+    logger.debug(f"User: {safe_log_user(user)} has listed resources for the server_id: {server_id}")
     user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
     # Admin bypass - only when token has NO team restrictions (token_teams is None)
     # If token has explicit team scope (even empty [] for public-only), respect it
+    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
     if is_admin and token_teams is None:
-        user_email = None
-        token_teams = None  # Admin unrestricted
+        token_teams = None  # Admin unrestricted - sees all public+team resources + own private
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
     resources = await resource_service.list_server_resources(
@@ -4496,13 +4585,13 @@ async def server_get_prompts(
     Returns:
         List[PromptRead]: A list of prompt records formatted with by_alias=True.
     """
-    logger.debug(f"User: {SecurityValidator.sanitize_log_message(str(user))} has listed prompts for the server_id: {server_id}")
+    logger.debug(f"User: {safe_log_user(user)} has listed prompts for the server_id: {server_id}")
     user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
     # Admin bypass - only when token has NO team restrictions (token_teams is None)
     # If token has explicit team scope (even empty [] for public-only), respect it
+    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
     if is_admin and token_teams is None:
-        user_email = None
-        token_teams = None  # Admin unrestricted
+        token_teams = None  # Admin unrestricted - sees all public+team resources + own private
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
     prompts = await prompt_service.list_server_prompts(db, server_id=server_id, include_inactive=include_inactive, include_metrics=include_metrics, user_email=user_email, token_teams=token_teams)
@@ -4561,9 +4650,9 @@ async def list_a2a_agents(
 
     # Admin bypass - only when token has NO team restrictions (token_teams is None)
     # If token has explicit team scope (even for admins), respect it for least-privilege
+    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
     if is_admin and token_teams is None:
-        user_email = None
-        token_teams = None  # Admin unrestricted
+        token_teams = None  # Admin unrestricted - sees all public+team resources + own private
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
@@ -4624,7 +4713,7 @@ async def get_a2a_agent(
         HTTPException: If the agent is not found or user lacks access.
     """
     try:
-        logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} requested A2A agent with ID {agent_id}")
+        logger.debug(f"User {safe_log_user(user)} requested A2A agent with ID {agent_id}")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
 
@@ -4760,7 +4849,7 @@ async def update_a2a_agent(
         HTTPException: If the agent is not found, there is a name conflict, or other errors.
     """
     try:
-        logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is updating A2A agent with ID {agent_id}")
+        logger.debug(f"User {safe_log_user(user)} is updating A2A agent with ID {agent_id}")
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
@@ -4818,7 +4907,7 @@ async def set_a2a_agent_state(
     """
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is toggling A2A agent with ID {agent_id} to {'active' if activate else 'inactive'}")
+        logger.debug(f"User {safe_log_user(user)} is toggling A2A agent with ID {agent_id} to {'active' if activate else 'inactive'}")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
         return await a2a_service.set_agent_state(db, agent_id, activate, user_email=user_email)
@@ -4880,7 +4969,7 @@ async def delete_a2a_agent(
         HTTPException: If the agent is not found or there is an error.
     """
     try:
-        logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is deleting A2A agent with ID {agent_id}")
+        logger.debug(f"User {safe_log_user(user)} is deleting A2A agent with ID {agent_id}")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
@@ -4895,6 +4984,24 @@ async def delete_a2a_agent(
         raise HTTPException(status_code=404, detail=str(e))
     except A2AAgentError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+_SENSITIVE_REQUEST_HEADER_PATTERNS = (
+    re.compile(r"^authorization$", re.IGNORECASE),
+    re.compile(r"^proxy-authorization$", re.IGNORECASE),
+    re.compile(r"^x-api-key$", re.IGNORECASE),
+    re.compile(r"^api-key$", re.IGNORECASE),
+    re.compile(r"^apikey$", re.IGNORECASE),
+    re.compile(r"^x-(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
+    re.compile(r"^cookie$", re.IGNORECASE),
+    re.compile(r"^set-cookie$", re.IGNORECASE),
+    re.compile(r"^host$", re.IGNORECASE),
+)
+
+
+def _filter_sensitive_headers(headers: Dict[str, str]) -> Dict[str, str]:
+    """Strip sensitive/credential headers from a dict before passing to plugins."""
+    return {k: v for k, v in headers.items() if not any(p.match(k) for p in _SENSITIVE_REQUEST_HEADER_PATTERNS)}
 
 
 @a2a_router.post("/{agent_name}/invoke", response_model=Dict[str, Any])
@@ -4925,7 +5032,7 @@ async def invoke_a2a_agent(
         HTTPException: If the agent is not found, user lacks access, or there is an error during invocation.
     """
     try:
-        logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is invoking A2A agent '{agent_name}' with type '{interaction_type}'")
+        logger.debug(f"User {safe_log_user(user)} is invoking A2A agent '{agent_name}' with type '{interaction_type}'")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
 
@@ -4976,6 +5083,11 @@ async def invoke_a2a_agent(
             logger.info("Non-JWT token detected, not forwarding for cross-gateway auth")
             bearer_token = None
 
+        # Extract inbound request metadata for plugin context
+        # Strip sensitive/credential headers before passing to plugins.
+        content_type = request.headers.get("content-type")
+        request_headers = _filter_sensitive_headers({k.lower(): v for k, v in request.headers.items()})
+
         return await a2a_service.invoke_agent(
             db,
             agent_name,
@@ -4986,6 +5098,8 @@ async def invoke_a2a_agent(
             token_teams=token_teams,
             hop_count=hop_count,
             bearer_token=bearer_token,
+            content_type=content_type,
+            request_headers=request_headers,
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -5025,7 +5139,7 @@ async def invoke_a2a_agent_by_id(
         HTTPException: If the agent is not found, user lacks access, or there is an error during invocation.
     """
     try:
-        logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is invoking A2A agent '{agent_id}' with type '{interaction_type}'")
+        logger.debug(f"User {safe_log_user(user)} is invoking A2A agent '{agent_id}' with type '{interaction_type}'")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
 
@@ -5061,6 +5175,11 @@ async def invoke_a2a_agent_by_id(
             logger.info("Non-JWT token detected, not forwarding for cross-gateway auth")
             bearer_token = None
 
+        # Extract inbound request metadata for plugin context
+        # Strip sensitive/credential headers before passing to plugins.
+        content_type = request.headers.get("content-type")
+        request_headers = _filter_sensitive_headers({k.lower(): v for k, v in request.headers.items()})
+
         return await a2a_service.invoke_agent(
             db,
             agent_name=None,  # Not using name lookup
@@ -5072,6 +5191,8 @@ async def invoke_a2a_agent_by_id(
             token_teams=token_teams,
             hop_count=hop_count,
             bearer_token=bearer_token,
+            content_type=content_type,
+            request_headers=request_headers,
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -5141,9 +5262,9 @@ async def list_tools(
 
     # Admin bypass - only when token has NO team restrictions (token_teams is None)
     # If token has explicit team scope (even for admins), respect it for least-privilege
+    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
     if is_admin and token_teams is None:
-        user_email = None
-        token_teams = None  # Admin unrestricted
+        token_teams = None  # Admin unrestricted - sees all public+team resources + own private
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
@@ -5333,7 +5454,7 @@ async def get_tool(
         HTTPException: If the tool does not exist or the transformation fails.
     """
     try:
-        logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is retrieving tool with ID {tool_id}")
+        logger.debug(f"User {safe_log_user(user)} is retrieving tool with ID {tool_id}")
         # SECURITY (Layer 1): resolve the caller's visibility scope; (None, None) == unrestricted admin.
         auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
         _req_email = get_user_email(user)
@@ -5404,7 +5525,7 @@ async def update_tool(
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, current_version)
 
-        logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is updating tool with ID {tool_id}")
+        logger.debug(f"User {safe_log_user(user)} is updating tool with ID {tool_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         result = await tool_service.update_tool(
             db,
@@ -5460,7 +5581,7 @@ async def delete_tool(
         HTTPException: If an error occurs during deletion.
     """
     try:
-        logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is deleting tool with ID {tool_id}")
+        logger.debug(f"User {safe_log_user(user)} is deleting tool with ID {tool_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         await tool_service.delete_tool(db, tool_id, user_email=user_email, purge_metrics=purge_metrics)
         db.commit()
@@ -5498,7 +5619,7 @@ async def set_tool_state(
         HTTPException: If an error occurs during state change.
     """
     try:
-        logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is setting tool state for ID {tool_id} to {'active' if activate else 'inactive'}")
+        logger.debug(f"User {safe_log_user(user)} is setting tool state for ID {tool_id} to {'active' if activate else 'inactive'}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         tool = await tool_service.set_tool_state(db, tool_id, activate, reachable=activate, user_email=user_email)
         return {
@@ -5570,7 +5691,7 @@ async def list_resource_templates(
     Returns:
         ListResourceTemplatesResult: A paginated list of resource templates.
     """
-    logger.info(f"User {SecurityValidator.sanitize_log_message(str(user))} requested resource templates")
+    logger.info(f"User {safe_log_user(user)} requested resource templates")
 
     # Parse tags parameter if provided
     tags_list = None
@@ -5617,7 +5738,7 @@ async def set_resource_state(
     Raises:
         HTTPException: If toggling fails.
     """
-    logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is toggling resource with ID {resource_id} to {'active' if activate else 'inactive'}")
+    logger.debug(f"User {safe_log_user(user)} is toggling resource with ID {resource_id} to {'active' if activate else 'inactive'}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         resource = await resource_service.set_resource_state(db, resource_id, activate, user_email=user_email)
@@ -5707,9 +5828,9 @@ async def list_resources(
 
     # Admin bypass - only when token has NO team restrictions (token_teams is None)
     # If token has explicit team scope (even for admins), respect it for least-privilege
+    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
     if is_admin and token_teams is None:
-        user_email = None
-        token_teams = None  # Admin unrestricted
+        token_teams = None  # Admin unrestricted - sees all public+team resources + own private
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
@@ -5869,7 +5990,7 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
     request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
     server_id = request.headers.get("X-Server-ID")
 
-    logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} requested resource with ID {resource_id} (request_id: {request_id})")
+    logger.debug(f"User {safe_log_user(user)} requested resource with ID {resource_id} (request_id: {request_id})")
 
     # NOTE: Removed endpoint-level cache to prevent authorization bypass
     # The cache was checked before access control, allowing unauthorized users
@@ -5957,7 +6078,7 @@ async def get_resource_info(
         HTTPException: If the resource is not found.
     """
     try:
-        logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} requested resource info for ID {resource_id}")
+        logger.debug(f"User {safe_log_user(user)} requested resource info for ID {resource_id}")
         auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
         result = await resource_service.get_resource_by_id(
             db,
@@ -5998,7 +6119,7 @@ async def update_resource(
         HTTPException: If the resource is not found or update fails.
     """
     try:
-        logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is updating resource with ID {resource_id}")
+        logger.debug(f"User {safe_log_user(user)} is updating resource with ID {resource_id}")
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
@@ -6061,7 +6182,7 @@ async def delete_resource(
         HTTPException: If the resource is not found or deletion fails.
     """
     try:
-        logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is deleting resource with id {resource_id}")
+        logger.debug(f"User {safe_log_user(user)} is deleting resource with id {resource_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         await resource_service.delete_resource(db, resource_id, user_email=user_email, purge_metrics=purge_metrics)
         db.commit()
@@ -6089,7 +6210,7 @@ async def subscribe_resource(request: Request, user=Depends(get_current_user_wit
     Returns:
         StreamingResponse: A streaming response with event updates.
     """
-    logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is subscribing to resource")
+    logger.debug(f"User {safe_log_user(user)} is subscribing to resource")
     user_email, token_teams = get_scoped_resource_access_context(request, user)
 
     # Pre-resolve admin bypass once using a request-scoped session, keeping
@@ -6137,7 +6258,7 @@ async def set_prompt_state(
     Raises:
         HTTPException: If the state change fails (e.g., prompt not found or database error); emitted with *400 Bad Request* status and an error message.
     """
-    logger.debug(f"User: {SecurityValidator.sanitize_log_message(str(user))} requested state change for prompt {prompt_id}, activate={activate}")
+    logger.debug(f"User: {safe_log_user(user)} requested state change for prompt {prompt_id}, activate={activate}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         prompt = await prompt_service.set_prompt_state(db, prompt_id, activate, user_email=user_email)
@@ -6227,9 +6348,9 @@ async def list_prompts(
 
     # Admin bypass - only when token has NO team restrictions (token_teams is None)
     # If token has explicit team scope (even for admins), respect it for least-privilege
+    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
     if is_admin and token_teams is None:
-        user_email = None
-        token_teams = None  # Admin unrestricted
+        token_teams = None  # Admin unrestricted - sees all public+team resources + own private
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
@@ -6407,7 +6528,7 @@ async def get_prompt(
     Raises:
         Exception: Re-raised if not a handled exception type.
     """
-    logger.debug(f"User: {SecurityValidator.sanitize_log_message(str(user))} requested prompt: {prompt_id} with args={args}")
+    logger.debug(f"User: {safe_log_user(user)} requested prompt: {prompt_id} with args={args}")
 
     # Get plugin contexts from request.state for cross-hook sharing
     plugin_context_table = getattr(request.state, "plugin_context_table", None)
@@ -6473,7 +6594,7 @@ async def get_prompt_no_args(
     Raises:
         HTTPException: 404 if prompt not found, 403 if permission denied.
     """
-    logger.debug(f"User: {SecurityValidator.sanitize_log_message(str(user))} requested prompt: {prompt_id} with no arguments")
+    logger.debug(f"User: {safe_log_user(user)} requested prompt: {prompt_id} with no arguments")
 
     # Get plugin contexts from request.state for cross-hook sharing
     plugin_context_table = getattr(request.state, "plugin_context_table", None)
@@ -6528,7 +6649,7 @@ async def update_prompt(
         HTTPException: * **409 Conflict** - a different prompt with the same *name* already exists and is still active.
             * **400 Bad Request** - validation or persistence error raised by :pyclass:`~mcpgateway.services.prompt_service.PromptService`.
     """
-    logger.debug(f"User: {SecurityValidator.sanitize_log_message(str(user))} requested to update prompt: {prompt_id} with data={prompt}")
+    logger.debug(f"User: {safe_log_user(user)} requested to update prompt: {prompt_id} with data={prompt}")
     try:
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
@@ -6601,7 +6722,7 @@ async def delete_prompt(
     Raises:
         HTTPException: If the prompt is not found, a prompt error occurs, or an unexpected error occurs during deletion.
     """
-    logger.debug(f"User: {SecurityValidator.sanitize_log_message(str(user))} requested deletion of prompt {prompt_id}")
+    logger.debug(f"User: {safe_log_user(user)} requested deletion of prompt {prompt_id}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         await prompt_service.delete_prompt(db, prompt_id, user_email=user_email, purge_metrics=purge_metrics)
@@ -6650,7 +6771,7 @@ async def set_gateway_state(
     Raises:
         HTTPException: Returned with **400 Bad Request** if the state change fails (e.g., the gateway does not exist or the database raises an unexpected error).
     """
-    logger.debug(f"User '{SecurityValidator.sanitize_log_message(str(user))}' requested state change for gateway {gateway_id}, activate={activate}")
+    logger.debug(f"User '{safe_log_user(user)}' requested state change for gateway {gateway_id}, activate={activate}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         gateway = await gateway_service.set_gateway_state(
@@ -6729,7 +6850,7 @@ async def list_gateways(
     Returns:
         Union[List[GatewayRead], Dict[str, Any]]: List of gateway records or paginated response with nextCursor.
     """
-    logger.debug(f"User '{SecurityValidator.sanitize_log_message(str(user))}' requested list of gateways with include_inactive={include_inactive}")
+    logger.debug(f"User '{safe_log_user(user)}' requested list of gateways with include_inactive={include_inactive}")
 
     user_email = get_user_email(user)
 
@@ -6751,18 +6872,17 @@ async def list_gateways(
     # - None: admin bypass (is_admin=true with explicit null teams) - sees ALL resources
     # - []: public-only (missing teams or explicit empty) - sees only public
     # - [...]: team-scoped - sees public + teams + user's private
-    is_admin_bypass = token_teams is None
     is_public_only_token = token_teams is not None and len(token_teams) == 0
 
     # Use consolidated gateway listing with optional team filtering
-    # For admin bypass: pass user_email=None and token_teams=None to skip all filtering
+    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
     logger.debug(f"User: {SecurityValidator.sanitize_log_message(user_email)} requested gateway list with include_inactive={include_inactive}, team_id={team_id}, visibility={visibility}")
     data, next_cursor = await gateway_service.list_gateways(
         db=db,
         cursor=cursor,
         limit=limit,
         include_inactive=include_inactive,
-        user_email=None if is_admin_bypass else user_email,  # Admin bypass: no user filtering
+        user_email=user_email,  # Keep for owner matching (PR #4341 / issue #4694)
         team_id=team_id,
         visibility="public" if is_public_only_token and not visibility else visibility,
         token_teams=token_teams,  # None = admin bypass, [] = public-only, [...] = team-scoped
@@ -6797,7 +6917,7 @@ async def register_gateway(
     Returns:
         Created gateway.
     """
-    logger.debug(f"User '{SecurityValidator.sanitize_log_message(str(user))}' requested to register gateway: {gateway}")
+    logger.debug(f"User '{safe_log_user(user)}' requested to register gateway: {gateway}")
     try:
         # Extract metadata from request
         metadata = MetadataCapture.extract_creation_metadata(request, user)
@@ -6882,7 +7002,7 @@ async def get_gateway(gateway_id: str, request: Request, db: Session = Depends(g
     Raises:
         HTTPException: 404 if gateway not found.
     """
-    logger.debug(f"User '{SecurityValidator.sanitize_log_message(str(user))}' requested gateway {gateway_id}")
+    logger.debug(f"User '{safe_log_user(user)}' requested gateway {gateway_id}")
     try:
         auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
         gateway = await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
@@ -6914,7 +7034,7 @@ async def update_gateway(
     Returns:
         Updated gateway.
     """
-    logger.debug(f"User '{SecurityValidator.sanitize_log_message(str(user))}' requested update on gateway {gateway_id} with data={gateway}")
+    logger.debug(f"User '{safe_log_user(user)}' requested update on gateway {gateway_id} with data={gateway}")
     try:
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
@@ -6973,7 +7093,7 @@ async def delete_gateway(gateway_id: str, request: Request, db: Session = Depend
     Raises:
         HTTPException: If permission denied (403), gateway not found (404), or other gateway error (400).
     """
-    logger.debug(f"User '{SecurityValidator.sanitize_log_message(str(user))}' requested deletion of gateway {gateway_id}")
+    logger.debug(f"User '{safe_log_user(user)}' requested deletion of gateway {gateway_id}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
@@ -7030,7 +7150,7 @@ async def refresh_gateway_tools(
     Raises:
         HTTPException: 404 if gateway not found, 409 if refresh already in progress.
     """
-    logger.info(f"User '{SecurityValidator.sanitize_log_message(str(user))}' requested manual refresh for gateway {gateway_id}")
+    logger.info(f"User '{safe_log_user(user)}' requested manual refresh for gateway {gateway_id}")
     try:
         auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
         await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
@@ -7070,7 +7190,7 @@ async def list_roots(
     Returns:
         List of Root objects.
     """
-    logger.debug(f"User '{SecurityValidator.sanitize_log_message(str(user))}' requested list of roots")
+    logger.debug(f"User '{safe_log_user(user)}' requested list of roots")
     return await root_service.list_roots()
 
 
@@ -7094,7 +7214,7 @@ async def export_root(
         HTTPException: If root not found or export fails
     """
     try:
-        logger.info(f"User {SecurityValidator.sanitize_log_message(str(user))} requested root export for URI: {uri}")
+        logger.info(f"User {safe_log_user(user)} requested root export for URI: {uri}")
 
         # Extract username from user
         username: Optional[str] = None
@@ -7123,10 +7243,10 @@ async def export_root(
         return export_data
 
     except RootServiceNotFoundError as e:
-        logger.error(f"Root not found for export by user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
+        logger.error(f"Root not found for export by user {safe_log_user(user)}: {str(e)}")
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
-        logger.error(f"Unexpected root export error for user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
+        logger.error(f"Unexpected root export error for user {safe_log_user(user)}: {str(e)}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Root export failed")
 
 
@@ -7144,7 +7264,7 @@ async def subscribe_roots_changes(
     Returns:
         StreamingResponse with event-stream media type.
     """
-    logger.debug(f"User '{SecurityValidator.sanitize_log_message(str(user))}' subscribed to root changes stream")
+    logger.debug(f"User '{safe_log_user(user)}' subscribed to root changes stream")
 
     async def generate_events():
         """Generate SSE-formatted events from root service changes.
@@ -7178,7 +7298,7 @@ async def get_root_by_uri(
         HTTPException: If the root is not found.
         Exception: For any other unexpected errors.
     """
-    logger.debug(f"User '{SecurityValidator.sanitize_log_message(str(user))}' requested root with URI: {root_uri}")
+    logger.debug(f"User '{safe_log_user(user)}' requested root with URI: {root_uri}")
     try:
         root = await root_service.get_root_by_uri(root_uri)
         return root
@@ -7206,7 +7326,7 @@ async def add_root(
     Returns:
         The added Root object.
     """
-    logger.debug(f"User '{SecurityValidator.sanitize_log_message(str(user))}' requested to add root: {root}")
+    logger.debug(f"User '{safe_log_user(user)}' requested to add root: {root}")
     return await root_service.add_root(str(root.uri), root.name)
 
 
@@ -7232,7 +7352,7 @@ async def update_root(
         HTTPException: If the root is not found.
         Exception: For any other unexpected errors.
     """
-    logger.debug(f"User '{SecurityValidator.sanitize_log_message(str(user))}' requested to update root with URI: {root_uri}")
+    logger.debug(f"User '{safe_log_user(user)}' requested to update root with URI: {root_uri}")
     try:
         root = await root_service.update_root(root_uri, root.name)
         return root
@@ -7259,8 +7379,14 @@ async def remove_root(
     Returns:
         Status message indicating result.
     """
-    logger.debug(f"User '{SecurityValidator.sanitize_log_message(str(user))}' requested to remove root with URI: {uri}")
-    await root_service.remove_root(uri)
+    logger.debug(f"User '{safe_log_user(user)}' requested to remove root with URI: {uri}")
+    try:
+        await root_service.remove_root(uri)
+    except RootServiceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=f"Root not found: {uri}") from e
+    except Exception as e:
+        logger.exception(f"Unexpected error removing root {uri}: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}") from e
     return {"status": "success", "message": f"Root {uri} removed"}
 
 
@@ -10342,8 +10468,9 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             _req_email, _req_is_admin = user_email, is_admin
             _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
             # Admin bypass - only when token has NO team restrictions
+            # Keep user_email for owner matching (PR #4341 / issue #4694)
             if is_admin and token_teams is None:
-                user_email = None
+                # user_email stays as-is (not None) for owner matching
                 token_teams = None  # Admin unrestricted
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
@@ -10385,9 +10512,10 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             _req_email, _req_is_admin = user_email, is_admin
             _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
             # Admin bypass - only when token has NO team restrictions (token_teams is None)
+            # Keep user_email for owner matching (PR #4341 / issue #4694)
             # If token has explicit team scope (even empty [] for public-only), respect it
             if is_admin and token_teams is None:
-                user_email = None
+                # user_email stays as-is (not None) for owner matching
                 token_teams = None  # Admin unrestricted
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
@@ -10444,8 +10572,9 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             await _ensure_rpc_permission(user, db, "resources.read", method, request=request)
             user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
             # Admin bypass - only when token has NO team restrictions
+            # Keep user_email for owner matching (PR #4341 / issue #4694)
             if is_admin and token_teams is None:
-                user_email = None
+                # user_email stays as-is (not None) for owner matching
                 token_teams = None  # Admin unrestricted
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
@@ -10470,10 +10599,12 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 raise JSONRPCError(-32602, "Missing resource URI in parameters", params)
 
             # Get authorization context (same as resources/list)
+            # Keep user_email for owner matching (PR #4341 / issue #4694)
             auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
             if auth_is_admin and auth_token_teams is None:
-                auth_user_email = None
+                # auth_user_email stays as-is (not None) for owner matching
                 # auth_token_teams stays None (unrestricted)
+                pass
             elif auth_token_teams is None:
                 auth_token_teams = []  # Non-admin without teams = public-only
 
@@ -10498,10 +10629,17 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     result = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}
                 else:
                     result = {"contents": [result]}
-            except (ValueError, ResourceNotFoundError):
+            except (ValueError, ResourceNotFoundError) as e:
                 # Resource not found in the gateway
                 logger.error("Resource not found: %s", uri)
-                raise JSONRPCError(-32002, f"Resource not found: {uri}", {"uri": uri})
+                raise JSONRPCError(-32002, f"Resource not found: {uri}", {"uri": uri}) from e
+            except ResourceError as e:
+                # Other resource errors (ambiguous URI, proxy failures, path validation, etc.)
+                logger.error("Resource read failed: %s", str(e))
+                raise JSONRPCError(-32000, f"Resource read failed: {str(e)}", {"uri": uri}) from e
+            except Exception as e:
+                logger.exception(f"Unexpected error in resources/read for {uri}: {e}")
+                raise JSONRPCError(-32603, f"Internal error: {str(e)}", {"uri": uri}) from e
             # Release transaction after resources/read completes
             db.commit()
             db.close()
@@ -10539,8 +10677,9 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             await _ensure_rpc_permission(user, db, "prompts.read", method, request=request)
             user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
             # Admin bypass - only when token has NO team restrictions
+            # Keep user_email for owner matching (PR #4341 / issue #4694)
             if is_admin and token_teams is None:
-                user_email = None
+                # user_email stays as-is (not None) for owner matching
                 token_teams = None  # Admin unrestricted
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
@@ -10565,27 +10704,37 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 raise JSONRPCError(-32602, "Missing prompt name in parameters", params)
 
             # Get authorization context (same as prompts/list)
+            # Keep user_email for owner matching (PR #4341 / issue #4694)
             auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
             if auth_is_admin and auth_token_teams is None:
-                auth_user_email = None
+                # auth_user_email stays as-is (not None) for owner matching
                 # auth_token_teams stays None (unrestricted)
+                pass
             elif auth_token_teams is None:
                 auth_token_teams = []  # Non-admin without teams = public-only
 
             # Get plugin contexts from request.state for cross-hook sharing
             plugin_context_table = getattr(request.state, "plugin_context_table", None)
             plugin_global_context = getattr(request.state, "plugin_global_context", None)
-            result = await prompt_service.get_prompt(
-                db,
-                name,
-                arguments,
-                user=auth_user_email,
-                server_id=server_id,
-                token_teams=auth_token_teams,
-                plugin_context_table=plugin_context_table,
-                plugin_global_context=plugin_global_context,
-                _meta_data=meta_data,
-            )
+            try:
+                result = await prompt_service.get_prompt(
+                    db,
+                    name,
+                    arguments,
+                    user=auth_user_email,
+                    server_id=server_id,
+                    token_teams=auth_token_teams,
+                    plugin_context_table=plugin_context_table,
+                    plugin_global_context=plugin_global_context,
+                    _meta_data=meta_data,
+                )
+            except PromptNotFoundError as e:
+                raise JSONRPCError(-32002, str(e), {"name": name}) from e
+            except PromptError as e:
+                raise JSONRPCError(-32000, f"Prompt retrieval failed: {str(e)}", {"name": name}) from e
+            except Exception as e:
+                logger.exception(f"Unexpected error in prompts/get for {name}: {e}")
+                raise JSONRPCError(-32603, f"Internal error: {str(e)}", {"name": name}) from e
             if hasattr(result, "model_dump"):
                 result = result.model_dump(by_alias=True, exclude_none=True)
             # Release transaction after prompts/get completes
@@ -11180,9 +11329,13 @@ async def set_log_level(request: Request, user=Depends(get_current_user_with_per
         request: HTTP request with log level JSON body.
         user: Authenticated user.
     """
-    logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} requested to set log level")
+    logger.debug(f"User {safe_log_user(user)} requested to set log level")
     body = await _read_request_json(request)
-    level = LogLevel(body["level"])
+    try:
+        # Normalize to lowercase before enum construction
+        level = LogLevel(body["level"].lower())
+    except (ValueError, KeyError, AttributeError) as e:
+        raise HTTPException(status_code=422, detail=f"Invalid log level: {body.get('level', 'missing')}") from e
     await logging_service.set_level(level)
 
 
@@ -11202,7 +11355,7 @@ async def get_metrics(db: Session = Depends(get_db), user=Depends(get_current_us
     Returns:
         A MetricsResponse with keys for each entity type and their aggregated metrics.
     """
-    logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} requested aggregated metrics")
+    logger.debug(f"User {safe_log_user(user)} requested aggregated metrics")
     tool_metrics = await tool_service.aggregate_metrics(db)
     resource_metrics = await resource_service.aggregate_metrics(db)
     server_metrics = await server_service.aggregate_metrics(db)
@@ -11240,7 +11393,7 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
     Raises:
         HTTPException: If an invalid entity type is specified.
     """
-    logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} requested metrics reset for entity: {entity}, id: {entity_id}")
+    logger.debug(f"User {safe_log_user(user)} requested metrics reset for entity: {entity}, id: {entity_id}")
     if entity is None:
         # Global reset
         await tool_service.reset_metrics(db)
@@ -11484,7 +11637,7 @@ async def list_tags(
     if entity_types:
         entity_types_list = [et.strip().lower() for et in entity_types.split(",") if et.strip()]
 
-    logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is retrieving tags for entity types: {entity_types_list}, include_entities: {include_entities}")
+    logger.debug(f"User {safe_log_user(user)} is retrieving tags for entity types: {entity_types_list}, include_entities: {include_entities}")
 
     try:
         user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
@@ -11538,7 +11691,7 @@ async def get_entities_by_tag(
     if entity_types:
         entity_types_list = [et.strip().lower() for et in entity_types.split(",") if et.strip()]
 
-    logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is retrieving entities for tag '{tag_name}' with entity types: {entity_types_list}")
+    logger.debug(f"User {safe_log_user(user)} is retrieving entities for tag '{tag_name}' with entity types: {entity_types_list}")
 
     try:
         user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
@@ -11599,7 +11752,7 @@ async def export_configuration(
         HTTPException: If export fails
     """
     try:
-        logger.info(f"User {SecurityValidator.sanitize_log_message(str(user))} requested configuration export")
+        logger.info(f"User {safe_log_user(user)} requested configuration export")
         username: Optional[str] = None
         # Parse parameters
         include_types = None
@@ -11645,10 +11798,10 @@ async def export_configuration(
         return export_data
 
     except ExportError as e:
-        logger.error(f"Export failed for user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
+        logger.error(f"Export failed for user {safe_log_user(user)}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Unexpected export error for user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
+        logger.error(f"Unexpected export error for user {safe_log_user(user)}: {str(e)}")
         raise HTTPException(status_code=500, detail="Export failed")
 
 
@@ -11681,7 +11834,7 @@ async def export_selective_configuration(
         }
     """
     try:
-        logger.info(f"User {SecurityValidator.sanitize_log_message(str(user))} requested selective configuration export")
+        logger.info(f"User {safe_log_user(user)} requested selective configuration export")
 
         username: Optional[str] = None
         # Extract username from user (which is now an EmailUser object)
@@ -11709,10 +11862,10 @@ async def export_selective_configuration(
         return export_data
 
     except ExportError as e:
-        logger.error(f"Selective export failed for user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
+        logger.error(f"Selective export failed for user {safe_log_user(user)}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Unexpected selective export error for user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
+        logger.error(f"Unexpected selective export error for user {safe_log_user(user)}: {str(e)}")
         raise HTTPException(status_code=500, detail="Export failed")
 
 
@@ -11749,7 +11902,7 @@ async def import_configuration(
         if not import_data:
             raise HTTPException(status_code=400, detail="Missing 'import_data' in request body")
 
-        logger.info(f"User {SecurityValidator.sanitize_log_message(str(user))} requested configuration import (dry_run={dry_run})")
+        logger.info(f"User {safe_log_user(user)} requested configuration import (dry_run={dry_run})")
 
         # Validate conflict strategy
         try:
@@ -11775,16 +11928,16 @@ async def import_configuration(
     except HTTPException:
         raise
     except ImportValidationError as e:
-        logger.error(f"Import validation failed for user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
+        logger.error(f"Import validation failed for user {safe_log_user(user)}: {str(e)}")
         raise HTTPException(status_code=422, detail="Import validation failed")
     except ImportConflictError as e:
-        logger.error(f"Import conflict for user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
+        logger.error(f"Import conflict for user {safe_log_user(user)}: {str(e)}")
         raise HTTPException(status_code=409, detail="Import conflict detected")
     except ImportServiceError as e:
-        logger.error(f"Import failed for user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
+        logger.error(f"Import failed for user {safe_log_user(user)}: {str(e)}")
         raise HTTPException(status_code=400, detail="Import failed")
     except Exception as e:
-        logger.error(f"Unexpected import error for user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
+        logger.error(f"Unexpected import error for user {safe_log_user(user)}: {str(e)}")
         raise HTTPException(status_code=500, detail="Import failed")
 
 
@@ -11804,7 +11957,7 @@ async def get_import_status(import_id: str, user=Depends(get_current_user_with_p
     Raises:
         HTTPException: If import not found
     """
-    logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} requested import status for {import_id}")
+    logger.debug(f"User {safe_log_user(user)} requested import status for {import_id}")
 
     import_status = import_service.get_import_status(import_id)
     if not import_status:
@@ -11825,7 +11978,7 @@ async def list_import_statuses(user=Depends(get_current_user_with_permissions)) 
     Returns:
         List of import status information
     """
-    logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} requested all import statuses")
+    logger.debug(f"User {safe_log_user(user)} requested all import statuses")
 
     statuses = import_service.list_import_statuses()
     return [status.to_dict() for status in statuses]
@@ -11844,7 +11997,7 @@ async def cleanup_import_statuses(max_age_hours: int = 24, user=Depends(get_curr
     Returns:
         Cleanup results
     """
-    logger.info(f"User {SecurityValidator.sanitize_log_message(str(user))} requested import status cleanup (max_age_hours={max_age_hours})")
+    logger.info(f"User {safe_log_user(user)} requested import status cleanup (max_age_hours={max_age_hours})")
 
     removed_count = import_service.cleanup_completed_imports(max_age_hours)
     return {"status": "success", "message": f"Cleaned up {removed_count} completed import statuses", "removed_count": removed_count}
@@ -11871,6 +12024,7 @@ app.include_router(export_import_router)
 # Compliance report router (admin API)
 if settings.mcpgateway_admin_api_enabled:
     try:
+        # First-Party
         from mcpgateway.routers.compliance_router import router as compliance_router
 
         app.include_router(compliance_router)
@@ -11889,6 +12043,16 @@ try:
     logger.info("Tool plugin bindings router included")
 except ImportError as e:
     logger.error(f"Tool plugin bindings router not available: {e}")
+
+# A2A agent plugin bindings router
+try:
+    # First-Party
+    from mcpgateway.routers.a2a_agent_plugin_bindings import router as a2a_agent_plugin_bindings_router  # pylint: disable=import-outside-toplevel
+
+    app.include_router(a2a_agent_plugin_bindings_router)
+    logger.info("A2A agent plugin bindings router included")
+except ImportError as e:
+    logger.error(f"A2A agent plugin bindings router not available: {e}")
 
 # Include log search router if structured logging is enabled
 if getattr(settings, "structured_logging_enabled", True):
@@ -12048,10 +12212,10 @@ if settings.llmchat_enabled:
     # Include LLM configuration and proxy routers (internal API)
     try:
         # First-Party
+        from mcpgateway.admin import enforce_admin_csrf  # pylint: disable=import-outside-toplevel
         from mcpgateway.routers.llm_admin_router import llm_admin_router
         from mcpgateway.routers.llm_config_router import llm_config_router
         from mcpgateway.routers.llm_proxy_router import llm_proxy_router
-        from mcpgateway.admin import enforce_admin_csrf  # pylint: disable=import-outside-toplevel
 
         app.include_router(llm_config_router, prefix="/llm", tags=["LLM Configuration"])
         app.include_router(llm_proxy_router, prefix=settings.llm_api_prefix, tags=["LLM Proxy"])

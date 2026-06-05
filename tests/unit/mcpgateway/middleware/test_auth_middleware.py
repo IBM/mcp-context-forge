@@ -49,6 +49,59 @@ async def test_no_token_continues(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_invalid_referer_url_treated_as_api_request():
+    """Invalid referer URL that causes urlparse exception should be treated as not same-origin and trigger hard deny for cookie auth."""
+    from fastapi import HTTPException
+
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/data"
+    request.cookies = {"jwt_token": "invalid_token"}
+    request.headers = {
+        "accept": "application/json",
+        "referer": "http://example.com/admin",  # Valid URL but will be mocked to raise exception
+        "host": "localhost:4444"
+    }
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+
+    # Mock urlparse to raise an exception to test exception handling (lines 289-290)
+    # Mock get_current_user to raise a hard-deny exception (simulating revoked token)
+    with patch("urllib.parse.urlparse", side_effect=ValueError("Invalid URL")):
+        with patch("mcpgateway.middleware.auth_middleware.get_current_user", side_effect=HTTPException(status_code=401, detail="Token has been revoked")):
+            response = await middleware.dispatch(request, call_next)
+            # Should return hard deny (401) because exception means not a browser request
+            assert response.status_code == 401
+            assert "Token has been revoked" in response.body.decode()
+
+@pytest.mark.asyncio
+async def test_oauth_callback_referer_allows_browser_continuation():
+    """OAuth callback referer should be treated as same-origin and allow browser request to continue."""
+    from fastapi import HTTPException
+
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/data"
+    request.cookies = {"jwt_token": "invalid_token"}
+    request.headers = {
+        "accept": "application/json",
+        "referer": "http://localhost:4444/oauth/callback?code=abc123",
+        "host": "localhost:4444"
+    }
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+
+    # Mock get_current_user to raise a hard-deny exception (simulating revoked token)
+    with patch("mcpgateway.middleware.auth_middleware.get_current_user", side_effect=HTTPException(status_code=401, detail="Token has been revoked")):
+        response = await middleware.dispatch(request, call_next)
+        # Should continue to call_next (browser request) instead of returning hard deny
+        call_next.assert_awaited_once_with(request)
+        assert response.status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_token_from_cookie(monkeypatch):
     """Token extracted from cookie triggers authentication."""
     middleware = AuthContextMiddleware(app=AsyncMock())

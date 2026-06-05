@@ -24,6 +24,56 @@ const MODE_CSS = {
   disabled: "bg-gray-100 text-gray-800",
 };
 
+const appendHeading = function (parent, text) {
+  const heading = document.createElement("h4");
+  heading.className = "font-medium text-gray-700 dark:text-gray-300";
+  heading.textContent = text;
+  parent.appendChild(heading);
+};
+
+const appendTextSection = function (parent, headingText, value) {
+  const section = document.createElement("div");
+  appendHeading(section, headingText);
+
+  const text = document.createElement("p");
+  text.className = "mt-1";
+  text.textContent = value;
+  section.appendChild(text);
+
+  parent.appendChild(section);
+};
+
+const appendBadgeListSection = function (
+  parent,
+  headingText,
+  values,
+  className
+) {
+  const section = document.createElement("div");
+  appendHeading(section, headingText);
+
+  const badgeList = document.createElement("div");
+  badgeList.className = "mt-1 flex flex-wrap gap-1";
+  (values || []).forEach((value) => {
+    const badge = document.createElement("span");
+    badge.className = className;
+    badge.textContent = value;
+    badgeList.appendChild(badge);
+  });
+
+  section.appendChild(badgeList);
+  parent.appendChild(section);
+};
+
+const getModeLabel = function (mode) {
+  return (
+    MODE_LABEL[mode] ||
+    (mode || "unknown")
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase())
+  );
+};
+
 // Populate hook, tag, and author filters on page load
 export const populatePluginFilters = function () {
   const cards = document.querySelectorAll(".plugin-card");
@@ -306,7 +356,11 @@ export const showPluginDetails = async function (pluginName) {
 
   // Show loading state
   modalName.textContent = pluginName;
-  modalContent.innerHTML = '<div class="text-center py-4">Loading...</div>';
+  modalContent.textContent = "";
+  const loading = document.createElement("div");
+  loading.className = "text-center py-4";
+  loading.textContent = "Loading...";
+  modalContent.appendChild(loading);
   modal.classList.remove("hidden");
 
   try {
@@ -329,85 +383,83 @@ export const showPluginDetails = async function (pluginName) {
     const plugin = await response.json();
 
     // Render plugin details
-    modalContent.innerHTML = `
-                  <div class="space-y-4">
-                      <div>
-                          <h4 class="font-medium text-gray-700 dark:text-gray-300">Description</h4>
-                          <p class="mt-1">${plugin.description || "No description available"}</p>
-                      </div>
+    modalContent.textContent = "";
 
-                      <div class="grid grid-cols-2 gap-4">
-                          <div>
-                              <h4 class="font-medium text-gray-700 dark:text-gray-300">Author</h4>
-                              <p class="mt-1">${plugin.author || "Unknown"}</p>
-                          </div>
-                          <div>
-                              <h4 class="font-medium text-gray-700 dark:text-gray-300">Version</h4>
-                              <p class="mt-1">${plugin.version || "0.0.0"}</p>
-                          </div>
-                      </div>
+    const content = document.createElement("div");
+    content.className = "space-y-4";
 
-                      <div class="grid grid-cols-2 gap-4">
-                          <div>
-                              <h4 class="font-medium text-gray-700 dark:text-gray-300">Mode</h4>
-                              <p class="mt-1">
-                                  <span class="px-2 py-1 text-xs rounded-full ${
-  MODE_CSS[plugin.mode] || "bg-gray-100 text-gray-800"
-}">
-                                      ${MODE_LABEL[plugin.mode] || (plugin.mode || "unknown").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
-                                  </span>
-                              </p>
-                          </div>
-                          <div>
-                              <h4 class="font-medium text-gray-700 dark:text-gray-300">Priority</h4>
-                              <p class="mt-1">${plugin.priority}</p>
-                          </div>
-                      </div>
+    appendTextSection(
+      content,
+      "Description",
+      plugin.description || "No description available"
+    );
 
-                      <div>
-                          <h4 class="font-medium text-gray-700 dark:text-gray-300">Hooks</h4>
-                          <div class="mt-1 flex flex-wrap gap-1">
-                              ${(plugin.hooks || [])
-    .map(
-      (hook) =>
-        `<span class="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded">${hook}</span>`
-    )
-    .join("")}
-                          </div>
-                      </div>
+    const authorVersionGrid = document.createElement("div");
+    authorVersionGrid.className = "grid grid-cols-2 gap-4";
+    appendTextSection(authorVersionGrid, "Author", plugin.author || "Unknown");
+    appendTextSection(authorVersionGrid, "Version", plugin.version || "0.0.0");
+    content.appendChild(authorVersionGrid);
 
-                      <div>
-                          <h4 class="font-medium text-gray-700 dark:text-gray-300">Tags</h4>
-                          <div class="mt-1 flex flex-wrap gap-1">
-                              ${(plugin.tags || [])
-    .map(
-      (tag) =>
-        `<span class="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded">${tag}</span>`
-    )
-    .join("")}
-                          </div>
-                      </div>
+    const modePriorityGrid = document.createElement("div");
+    modePriorityGrid.className = "grid grid-cols-2 gap-4";
 
-                      ${
-  plugin.config && Object.keys(plugin.config).length > 0
-    ? `
-                          <div>
-                              <h4 class="font-medium text-gray-700 dark:text-gray-300">Configuration</h4>
-                              <pre class="mt-1 p-2 bg-gray-50 dark:bg-gray-800 rounded text-xs overflow-x-auto">${JSON.stringify(plugin.config, null, 2)}</pre>
-                          </div>
-                      `
-    : ""
-}
-                  </div>
-              `;
+    const modeSection = document.createElement("div");
+    appendHeading(modeSection, "Mode");
+    const modeText = document.createElement("p");
+    modeText.className = "mt-1";
+    const modeBadge = document.createElement("span");
+    modeBadge.className = `px-2 py-1 text-xs rounded-full ${
+      MODE_CSS[plugin.mode] || "bg-gray-100 text-gray-800"
+    }`;
+    modeBadge.textContent = getModeLabel(plugin.mode);
+    modeText.appendChild(modeBadge);
+    modeSection.appendChild(modeText);
+    modePriorityGrid.appendChild(modeSection);
+
+    appendTextSection(modePriorityGrid, "Priority", plugin.priority);
+    content.appendChild(modePriorityGrid);
+
+    appendBadgeListSection(
+      content,
+      "Hooks",
+      plugin.hooks,
+      "px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded"
+    );
+    appendBadgeListSection(
+      content,
+      "Tags",
+      plugin.tags,
+      "px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded"
+    );
+
+    if (plugin.config && Object.keys(plugin.config).length > 0) {
+      const configSection = document.createElement("div");
+      appendHeading(configSection, "Configuration");
+      const config = document.createElement("pre");
+      config.className =
+        "mt-1 p-2 bg-gray-50 dark:bg-gray-800 rounded text-xs overflow-x-auto";
+      config.textContent = JSON.stringify(plugin.config, null, 2);
+      configSection.appendChild(config);
+      content.appendChild(configSection);
+    }
+
+    modalContent.appendChild(content);
   } catch (error) {
     console.error("Error loading plugin details:", error);
-    modalContent.innerHTML = `
-                  <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
-                      <strong class="font-bold">Error:</strong>
-                      <span class="block sm:inline">${error.message}</span>
-                  </div>
-              `;
+    modalContent.textContent = "";
+    const errorBox = document.createElement("div");
+    errorBox.className =
+      "bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded";
+    const label = document.createElement("strong");
+    label.className = "font-bold";
+    label.textContent = "Error:";
+    const message = document.createElement("span");
+    message.className = "block sm:inline";
+    message.textContent = error.message;
+    errorBox.appendChild(label);
+    errorBox.appendChild(document.createTextNode(" "));
+    errorBox.appendChild(message);
+    modalContent.appendChild(errorBox);
   }
 };
 
@@ -435,4 +487,4 @@ export const dispatchPluginAction = function (target) {
   else if (closeEl) closePluginDetails();
   else return false;
   return true;
-}
+};

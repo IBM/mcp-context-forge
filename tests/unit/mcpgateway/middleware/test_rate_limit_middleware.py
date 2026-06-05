@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/middleware/test_rate_limit_middleware.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: ContextForge Team
 
@@ -16,8 +16,48 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
-class TestRateLimitMiddleware:
-    """Tests for RateLimitMiddleware."""
+class TestRateLimiterRedisUrl:
+    """Test rate limit middleware uses dedicated Redis function."""
+
+    @patch("mcpgateway.auth._get_ratelimiter_redis_client")
+    @patch("mcpgateway.middleware.rate_limit_middleware.settings")
+    def test_rate_limit_calls_dedicated_redis_function(self, mock_settings, mock_get_client):
+        """Test rate limit middleware calls _get_ratelimiter_redis_client."""
+        mock_settings.rate_limiting_enabled = True
+        mock_settings.rate_limiting_redis_enabled = True
+        mock_settings.ratelimiter_redis_url = "redis://localhost:6380/0"
+
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
+
+        middleware = RateLimitMiddleware(MagicMock())
+
+        # Verify dedicated function was called
+        mock_get_client.assert_called()
+
+    @patch("mcpgateway.auth._get_ratelimiter_redis_client")
+    @patch("mcpgateway.middleware.rate_limit_middleware.settings")
+    def test_rate_limit_dedicated_function_handles_fallback(self, mock_settings, mock_get_client):
+        """Test rate limit middleware dedicated function handles fallback internally."""
+        mock_settings.rate_limiting_enabled = True
+        mock_settings.rate_limiting_redis_enabled = True
+        mock_settings.ratelimiter_redis_url = None
+
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
+
+        middleware = RateLimitMiddleware(MagicMock())
+
+        # Verify client was obtained (will use main REDIS_URL via _get_sync_redis_client)
+        mock_get_client.assert_called()
+
+
+class TestRateLimitMiddlewareTiers:
+    """Test rate limit middleware tier detection."""
 
     @pytest.fixture
     def mock_app(self):
@@ -154,9 +194,7 @@ class TestRateLimitMiddleware:
 
     def test_check_rate_limit_memory_allowed(self, middleware):
         """Test in-memory rate limit allows under limit."""
-        allowed, remaining = middleware._check_rate_limit_memory(
-            "test:ip:192.168.1.100:CRITICAL", 10, 60
-        )
+        allowed, remaining = middleware._check_rate_limit_memory("test:ip:192.168.1.100:CRITICAL", 10, 60)
 
         assert allowed is True
         assert remaining == 9
@@ -164,13 +202,9 @@ class TestRateLimitMiddleware:
     def test_check_rate_limit_memory_blocked(self, middleware):
         """Test in-memory rate limit blocks at limit."""
         now = time.time()
-        middleware._memory_store = {
-            "test:ip:192.168.1.100:CRITICAL": [now - i for i in range(10)]
-        }
+        middleware._memory_store = {"test:ip:192.168.1.100:CRITICAL": [now - i for i in range(10)]}
 
-        allowed, remaining = middleware._check_rate_limit_memory(
-            "test:ip:192.168.1.100:CRITICAL", 10, 60
-        )
+        allowed, remaining = middleware._check_rate_limit_memory("test:ip:192.168.1.100:CRITICAL", 10, 60)
 
         assert allowed is False
         assert remaining == 0
@@ -348,9 +382,7 @@ class TestRateLimitMiddleware:
         mock_script = MagicMock()
         mock_client.register_script.return_value = mock_script
 
-        with patch("mcpgateway.middleware.rate_limit_middleware.settings") as mock_settings, patch(
-            "mcpgateway.middleware.rate_limit_middleware.auth._get_sync_redis_client", return_value=mock_client
-        ):
+        with patch("mcpgateway.middleware.rate_limit_middleware.settings") as mock_settings, patch("mcpgateway.middleware.rate_limit_middleware.auth._get_ratelimiter_redis_client", return_value=mock_client):
             mock_settings.rate_limiting_enabled = True
             mock_settings.rate_limiting_redis_enabled = True
             mock_settings.trust_proxy_auth = True
@@ -370,15 +402,16 @@ class TestRateLimitMiddleware:
 
             mw = RateLimitMiddleware(mock_app)
 
-        mock_client.ping.assert_called_once()
+        # Note: _get_ratelimiter_redis_client() calls ping() internally, so we don't assert it here
         mock_client.register_script.assert_called_once()
         assert mw.use_redis is True
         assert mw._sliding_window_script is mock_script
 
     def test_init_redis_exception(self, mock_app):
         """Test Redis initialization fallback on exception."""
-        with patch("mcpgateway.middleware.rate_limit_middleware.settings") as mock_settings, patch(
-            "mcpgateway.middleware.rate_limit_middleware.auth._get_sync_redis_client", side_effect=Exception("boom")
+        with (
+            patch("mcpgateway.middleware.rate_limit_middleware.settings") as mock_settings,
+            patch("mcpgateway.middleware.rate_limit_middleware.auth._get_sync_redis_client", side_effect=Exception("boom")),
         ):
             mock_settings.rate_limiting_enabled = True
             mock_settings.rate_limiting_redis_enabled = True
@@ -480,18 +513,14 @@ class TestRateLimitMiddleware:
 
     def test_check_rate_limit_sync_returns_allowed(self, middleware):
         """Test sync rate limit check allows under limit."""
-        allowed, remaining = middleware._check_rate_limit_sync(
-            "ratelimit:test:LOW", 10, 60
-        )
+        allowed, remaining = middleware._check_rate_limit_sync("ratelimit:test:LOW", 10, 60)
         assert allowed is True
 
     def test_check_rate_limit_sync_blocks_at_limit(self, middleware):
         """Test sync rate limit blocks when at limit."""
         middleware._memory_store = {"ratelimit:test:LOW": [time.time() - i for i in range(10)]}
 
-        allowed, remaining = middleware._check_rate_limit_sync(
-            "ratelimit:test:LOW", 10, 60
-        )
+        allowed, remaining = middleware._check_rate_limit_sync("ratelimit:test:LOW", 10, 60)
         assert allowed is False
         assert remaining == 0
 
@@ -557,9 +586,7 @@ class TestRateLimitMiddleware:
         middleware._increment_violation_sync("ratelimit:violations:test:dimension", "test:dimension")
 
         middleware.redis_client.incr.assert_called_once_with("ratelimit:violations:test:dimension")
-        middleware.redis_client.expire.assert_called_once_with(
-            "ratelimit:violations:test:dimension", middleware.lockout_duration_minutes * 60
-        )
+        middleware.redis_client.expire.assert_called_once_with("ratelimit:violations:test:dimension", middleware.lockout_duration_minutes * 60)
 
     def test_endpoint_tiers_all_critical(self, middleware):
         """Test all critical tier patterns defined."""
@@ -594,6 +621,7 @@ class TestRateLimitMiddleware:
     def test_create_rate_limit_response_structure(self, middleware):
         """Test rate limit response has correct structure."""
         from unittest.mock import MagicMock
+
         mock_request = MagicMock()
         mock_request.url.path = "/api/test"
 
@@ -650,11 +678,13 @@ class TestRateLimitMiddleware:
         """Test check_rate_limit uses executor."""
         import asyncio
 
-        result = asyncio.run(middleware._check_rate_limit(
-            "test:dimension",
-            {"limit": 10},
-            "CRITICAL",
-        ))
+        result = asyncio.run(
+            middleware._check_rate_limit(
+                "test:dimension",
+                {"limit": 10},
+                "CRITICAL",
+            )
+        )
 
         assert result is not None
         assert isinstance(result, tuple)
@@ -809,6 +839,7 @@ class TestRateLimitMiddleware:
         )
 
         import json
+
         body = json.loads(response.body)
         assert "error" in body
         assert "message" in body
@@ -828,9 +859,7 @@ class TestRateLimitMiddleware:
             mock_script = MagicMock(return_value=1)
             middleware._sliding_window_script = mock_script
 
-            allowed, remaining = middleware._check_rate_limit_sync(
-                "ratelimit:test:LOW", 10, 60
-            )
+            allowed, remaining = middleware._check_rate_limit_sync("ratelimit:test:LOW", 10, 60)
 
             assert allowed is True
             assert remaining == 5
@@ -854,9 +883,7 @@ class TestRateLimitMiddleware:
             mock_script = MagicMock(side_effect=Exception("Redis error"))
             middleware._sliding_window_script = mock_script
 
-            allowed, remaining = middleware._check_rate_limit_sync(
-                "ratelimit:test:LOW", 10, 60
-            )
+            allowed, remaining = middleware._check_rate_limit_sync("ratelimit:test:LOW", 10, 60)
 
             assert allowed is True
         finally:
@@ -864,12 +891,11 @@ class TestRateLimitMiddleware:
             middleware.redis_client = original_client
             middleware._sliding_window_script = original_script
 
-    def test_get_client_ip_with_both_headers(self, middleware, mock_request):
+    def test_get_client_ip_with_both_headers(self, middleware):
         """Test IP extraction prefers X-Forwarded-For."""
-        mock_request.headers = {
-            "X-Forwarded-For": "10.0.0.1",
-            "X-Real-IP": "10.0.0.2"
-        }
+        mock_request = MagicMock()
+        mock_request.headers = {"X-Forwarded-For": "10.0.0.1", "X-Real-IP": "10.0.0.2"}
+        mock_request.scope = {"client": ("10.0.0.1", 12345)}
 
         ip = middleware._get_client_ip(mock_request)
 
@@ -910,9 +936,7 @@ class TestRateLimitMiddleware:
             mock_script = MagicMock(side_effect=Exception("Redis error"))
             middleware._sliding_window_script = mock_script
 
-            allowed, remaining = middleware._check_rate_limit_sync(
-                "ratelimit:test:LOW", 10, 60
-            )
+            allowed, remaining = middleware._check_rate_limit_sync("ratelimit:test:LOW", 10, 60)
 
             assert allowed is True
         finally:
@@ -963,9 +987,7 @@ class TestRateLimitMiddleware:
         mock_executor.submit.side_effect = Exception("Executor error")
         middleware.executor = mock_executor
 
-        result = asyncio.run(middleware._check_rate_limit(
-            "test:dimension", {"limit": 10}, "CRITICAL"
-        ))
+        result = asyncio.run(middleware._check_rate_limit("test:dimension", {"limit": 10}, "CRITICAL"))
 
         assert result is not None
         middleware.executor = original_executor
@@ -1057,6 +1079,7 @@ class TestRateLimitMiddleware:
             mock_settings.rate_limit_lockout_duration_minutes = 15
 
             from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
+
             mw = RateLimitMiddleware(mock_app)
 
         assert mw is not None
@@ -1071,9 +1094,7 @@ class TestRateLimitMiddleware:
         middleware.executor.submit.side_effect = TimeoutError()
 
         try:
-            result = asyncio.run(middleware._check_rate_limit(
-                "test:dimension", {"limit": 10}, "CRITICAL"
-            ))
+            result = asyncio.run(middleware._check_rate_limit("test:dimension", {"limit": 10}, "CRITICAL"))
 
             assert result is not None
         finally:
@@ -1172,9 +1193,7 @@ class TestRateLimitMiddleware:
         """Test check rate limit returns tuple properly."""
         import asyncio
 
-        result = asyncio.run(middleware._check_rate_limit(
-            "test:dim", {"limit": 10, "burst": 2}, "LOW"
-        ))
+        result = asyncio.run(middleware._check_rate_limit("test:dim", {"limit": 10, "burst": 2}, "LOW"))
 
         assert isinstance(result, tuple)
         assert len(result) == 2

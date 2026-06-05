@@ -47,6 +47,7 @@ import {
 } from "./users.js";
 import {
   createMemoizedInit,
+  handleDeleteUserError,
   safeGetElement,
   showErrorMessage,
   showSuccessMessage,
@@ -666,6 +667,164 @@ import {
   });
 
   // ===================================================================
+  // HTMX SHOW-INACTIVE CHECKBOX PARAMETER INJECTION
+  // Replaces hx-vals="js:{...}" (requires unsafe-eval) with a configRequest
+  // handler that reads data-hx-vals-* attributes and injects parameters at
+  // request time — no eval required.
+  // ===================================================================
+  document.addEventListener("htmx:configRequest", function (evt) {
+    const elt = evt.detail.elt;
+    if (!elt || !elt.classList.contains("show-inactive-toggle")) return;
+
+    const params = evt.detail.parameters;
+
+    // Always send include_inactive as an explicit boolean string so the backend
+    // receives "true" or "false" regardless of the checkbox's checked state
+    // (unchecked checkboxes are normally omitted from form submissions).
+    params["include_inactive"] = String(elt.checked);
+
+    const perPageSelector = elt.getAttribute("data-hx-vals-per-page");
+    if (perPageSelector) {
+      const perPageEl = document.querySelector(perPageSelector);
+      params["per_page"] = perPageEl ? perPageEl.value || "50" : "50";
+    }
+
+    const searchId = elt.getAttribute("data-hx-vals-search");
+    if (searchId) {
+      const searchEl = document.getElementById(searchId);
+      params["q"] = searchEl ? searchEl.value || "" : "";
+    }
+
+    const tagsId = elt.getAttribute("data-hx-vals-tags");
+    if (tagsId) {
+      const tagsEl = document.getElementById(tagsId);
+      params["tags"] = tagsEl ? tagsEl.value || "" : "";
+    }
+  });
+
+  // ===================================================================
+  // HTMX SELECTOR CONTAINER INIT (replaces hx-on:htmx:after-swap)
+  // After HTMX swaps content into a tool/resource/prompt selector container,
+  // wire up the checkbox-pill UI.  Avoids new Function() / unsafe-eval.
+  // ===================================================================
+  const SELECTOR_SWAP_MAP = {
+    associatedTools: () =>
+      Admin.initToolSelect(
+        "associatedTools",
+        "selectedToolsPills",
+        "selectedToolsWarning",
+        6,
+        "selectAllToolsBtn",
+        "clearAllToolsBtn"
+      ),
+    associatedResources: () =>
+      Admin.initResourceSelect(
+        "associatedResources",
+        "selectedResourcesPills",
+        "selectedResourcesWarning",
+        6,
+        "selectAllResourcesBtn",
+        "clearAllResourcesBtn"
+      ),
+    associatedPrompts: () =>
+      Admin.initPromptSelect(
+        "associatedPrompts",
+        "selectedPromptsPills",
+        "selectedPromptsWarning",
+        6,
+        "selectAllPromptsBtn",
+        "clearAllPromptsBtn"
+      ),
+    "edit-server-tools": () =>
+      Admin.initToolSelect(
+        "edit-server-tools",
+        "selectedEditToolsPills",
+        "selectedEditToolsWarning",
+        6,
+        "selectAllEditToolsBtn",
+        "clearAllEditToolsBtn"
+      ),
+    "edit-server-resources": () =>
+      Admin.initResourceSelect(
+        "edit-server-resources",
+        "selectedEditResourcesPills",
+        "selectedEditResourcesWarning",
+        6,
+        "selectAllEditResourcesBtn",
+        "clearAllEditResourcesBtn"
+      ),
+    "edit-server-prompts": () =>
+      Admin.initPromptSelect(
+        "edit-server-prompts",
+        "selectedEditPromptsPills",
+        "selectedEditPromptsWarning",
+        6,
+        "selectAllEditPromptsBtn",
+        "clearAllEditPromptsBtn"
+      ),
+  };
+
+  document.addEventListener("htmx:afterSwap", function (evt) {
+    const targetId = evt.detail.target && evt.detail.target.id;
+    if (targetId && SELECTOR_SWAP_MAP[targetId]) {
+      SELECTOR_SWAP_MAP[targetId]();
+    }
+  });
+
+  // ===================================================================
+  // HTMX USER EDIT MODAL (replaces hx-on:htmx:before-request on edit btn)
+  // Shows #user-edit-modal before the user edit form loads into it.
+  // ===================================================================
+  document.addEventListener("htmx:beforeRequest", function (evt) {
+    const elt = evt.detail.elt;
+    if (!elt) return;
+
+    if (elt.classList.contains("edit-user-btn")) {
+      const modal = document.getElementById("user-edit-modal");
+      if (modal) {
+        modal.style.display = "block";
+        modal.classList.remove("hidden");
+        void modal.offsetHeight;
+      }
+    }
+
+    if (elt.classList.contains("mcp-register-btn")) {
+      elt.innerHTML =
+        '<span class="inline-flex items-center">' +
+        '<span class="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></span>' +
+        "Registering..." +
+        "</span>";
+    }
+  });
+
+  // ===================================================================
+  // HTMX USER DELETE ERROR (replaces hx-on:htmx:after-request on delete btn)
+  // ===================================================================
+  document.addEventListener("htmx:afterRequest", function (evt) {
+    const elt = evt.detail.elt;
+    if (elt && elt.classList.contains("delete-user-btn")) {
+      handleDeleteUserError(evt);
+    }
+  });
+
+  // ===================================================================
+  // HTMX MCP REGISTER ERROR (replaces hx-on:htmx:response-error on register btn)
+  // ===================================================================
+  document.addEventListener("htmx:responseError", function (evt) {
+    const elt = evt.detail.elt;
+    if (!elt || !elt.classList.contains("mcp-register-btn")) return;
+    elt.className =
+      "w-full px-4 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 transition-colors";
+    elt.innerHTML =
+      '<svg class="inline-block h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">' +
+      '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" ' +
+      'd="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z">' +
+      "</path></svg>" +
+      "Request Failed - Click to Retry";
+    elt.disabled = false;
+  });
+
+  // ===================================================================
   // GLOBAL ERROR HANDLERS
   // ===================================================================
 
@@ -845,7 +1004,10 @@ import {
   // ===================================================================
   // Alpine Components
   // ===================================================================
-  document.addEventListener('alpine:init', () => {
-    Alpine.data('overflowMenu', (wrapperId = null) => overflowMenu(wrapperId));
+  document.addEventListener("alpine:init", () => {
+    Alpine.data("overflowMenu", (wrapperId = null) => overflowMenu(wrapperId));
+    Alpine.data("paginationData", () => Admin.paginationData());
+    Alpine.data("overviewDashboard", () => Admin.overviewDashboard());
+    Alpine.data("llmApiInfoApp", () => Admin.llmApiInfoApp());
   });
 })(window.Admin);
