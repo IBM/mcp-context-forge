@@ -36,9 +36,17 @@ import signal
 import struct
 from typing import Any, Optional
 
+# First-Party
+from mcpgateway.services.upstream_session_registry import (
+    init_upstream_session_registry,
+    TransportType,
+    UpstreamSessionRegistry,
+)
+
 LOG_LEVEL = os.environ.get("COORDINATOR_LOG_LEVEL", "INFO").upper()
 SOCKET_PATH = os.environ.get("COORDINATOR_UDS_PATH", "/tmp/mcp-coordinator.sock")
 MAX_FRAME_BYTES = 10 * 1024 * 1024  # 10 MiB hard ceiling on a single frame.
+DISPATCH_TIMEOUT_S = float(os.environ.get("COORDINATOR_DISPATCH_TIMEOUT_S", "30.0"))
 
 logging.basicConfig(
     level=LOG_LEVEL,
@@ -77,26 +85,87 @@ async def _write_frame(writer: asyncio.StreamWriter, message: dict[str, Any]) ->
     await writer.drain()
 
 
-def _handle_message(message: dict[str, Any]) -> dict[str, Any]:
-    """Translate one inbound frame into a response frame.
+_REGISTRY: Optional[UpstreamSessionRegistry] = None
 
-    Milestone A only handles ``ping``; ``dispatch`` returns a structured
-    "not implemented" error so the framing path can still be exercised
-    end-to-end with the eventual worker client.
+
+async def _handle_call_tool(message: dict[str, Any]) -> dict[str, Any]:
+    """Acquire an upstream session and dispatch a ``tools/call`` against it.
+
+    The worker keeps client-facing MCP state (its own session manager); only
+    the upstream call -- the part that requires the live `ClientSession` --
+    is delegated here.
     """
+    assert _REGISTRY is not None, "registry must be initialized before dispatch"
+    req_id = message.get("req_id")
+    try:
+        downstream_sid = message["downstream_session_id"]
+        gateway_id = message["gateway_id"]
+        url = message["url"]
+        headers = message.get("headers")
+        transport_type = TransportType(message["transport_type"])
+        tool_name = message["tool_name"]
+        arguments = message.get("arguments") or {}
+        meta = message.get("meta")
+        timeout_s = float(message.get("timeout_s") or DISPATCH_TIMEOUT_S)
+    except (KeyError, ValueError) as exc:
+        return {
+            "type": "response",
+            "req_id": req_id,
+            "error": {"code": -32602, "message": f"invalid dispatch payload: {exc}"},
+        }
+
+    try:
+        async with _REGISTRY.acquire(
+            downstream_session_id=downstream_sid,
+            gateway_id=gateway_id,
+            url=url,
+            headers=headers,
+            transport_type=transport_type,
+        ) as upstream:
+            async with asyncio.timeout(timeout_s):
+                result = await upstream.session.call_tool(tool_name, arguments, meta=meta)
+        # Pydantic model -> JSON-friendly dict. by_alias keeps the wire-shape
+        # the SDK expects when the worker reconstructs the model.
+        return {
+            "type": "response",
+            "req_id": req_id,
+            "result": result.model_dump(by_alias=True, mode="json"),
+        }
+    except asyncio.TimeoutError:
+        return {
+            "type": "response",
+            "req_id": req_id,
+            "error": {"code": -32000, "message": f"upstream call timed out after {timeout_s}s"},
+        }
+    except Exception as exc:
+        logger.exception("dispatch failed (sid=%s, gateway=%s, tool=%s)", downstream_sid, gateway_id, tool_name)
+        return {
+            "type": "response",
+            "req_id": req_id,
+            "error": {"code": -32603, "message": f"{type(exc).__name__}: {exc}"},
+        }
+
+
+async def _handle_message(message: dict[str, Any]) -> dict[str, Any]:
+    """Translate one inbound frame into a response frame."""
     msg_type = message.get("type")
     req_id = message.get("req_id")
 
     if msg_type == "ping":
         return {"type": "pong", "req_id": req_id}
 
+    if msg_type == "call_tool":
+        return await _handle_call_tool(message)
+
     if msg_type == "dispatch":
+        # Generic dispatch placeholder for later milestones (tools/list,
+        # resources/read, prompts/get); only call_tool is wired in B.
         return {
             "type": "response",
             "req_id": req_id,
             "error": {
                 "code": -32601,
-                "message": "dispatch not implemented (Milestone A: framing only)",
+                "message": "generic dispatch not implemented; only call_tool is wired in Milestone B",
             },
         }
 
@@ -119,7 +188,7 @@ async def _handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWri
             if message is None:
                 break
             try:
-                response = _handle_message(message)
+                response = await _handle_message(message)
             except Exception as exc:  # pragma: no cover - defensive
                 logger.exception("handler crashed on message: %s", exc)
                 response = {
@@ -142,7 +211,11 @@ async def _handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWri
 
 
 async def main() -> None:
-    """Bind the UDS socket, serve until SIGTERM/SIGINT."""
+    """Initialize the registry, bind the UDS socket, serve until SIGTERM/SIGINT."""
+    global _REGISTRY
+    _REGISTRY = init_upstream_session_registry()
+    logger.info("UpstreamSessionRegistry initialized")
+
     sock_path = Path(SOCKET_PATH)
     sock_path.parent.mkdir(parents=True, exist_ok=True)
     if sock_path.exists():
@@ -165,6 +238,12 @@ async def main() -> None:
             await stop.wait()
             logger.info("shutdown signal received")
     finally:
+        # Drain the registry so upstream connections close cleanly.
+        if _REGISTRY is not None:
+            try:
+                await _REGISTRY.close_all()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("registry close_all failed: %s", exc)
         # Clean up the socket file so a restart can re-bind.
         try:
             sock_path.unlink(missing_ok=True)
