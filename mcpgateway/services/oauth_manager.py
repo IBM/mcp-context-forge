@@ -32,10 +32,16 @@ from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import get_settings
 from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runtime, get_encryption_service
 from mcpgateway.services.http_client_service import get_http_client
+from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.redis_client import get_redis_client as _get_shared_redis_client
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 
 logger = logging.getLogger(__name__)
+
+# Audience parameter validation pattern (URI or hostname format)
+# Allows: alphanumeric, dots, hyphens, underscores, colons, slashes (for URIs)
+_AUDIENCE_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9\.\-_/:]*$")
+_AUDIENCE_MAX_LENGTH = 512
 
 # In-memory storage for OAuth states with expiration (fallback for single-process)
 # Format: {state_key: {"state": state, "gateway_id": gateway_id, "expires_at": datetime}}
@@ -164,6 +170,37 @@ class OAuthManager:
         code_challenge = base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode("utf-8")).digest()).decode("utf-8").rstrip("=")
 
         return {"code_verifier": code_verifier, "code_challenge": code_challenge, "code_challenge_method": "S256"}
+
+    def _validate_and_extract_audience(self, source: Dict[str, Any]) -> Optional[str]:
+        """Validate and extract audience parameter from OAuth configuration.
+
+        Args:
+            source: Dictionary containing potential audience parameter
+
+        Returns:
+            Validated audience string or None if not present
+
+        Raises:
+            ValueError: If audience format is invalid
+        """
+        audience = source.get("audience")
+        if not audience:
+            return None
+
+        # Strip whitespace
+        audience = str(audience).strip()
+        if not audience:
+            return None
+
+        # Validate format (URI or hostname)
+        if not _AUDIENCE_PATTERN.match(audience):
+            raise ValueError(f"Invalid audience format: '{sanitize_for_log(audience)}'. " "Audience must be a URI or hostname (alphanumeric, dots, hyphens, underscores, colons, slashes only).")
+
+        # Validate length
+        if len(audience) > _AUDIENCE_MAX_LENGTH:
+            raise ValueError(f"Audience parameter too long ({len(audience)} chars, max {_AUDIENCE_MAX_LENGTH}): " f"'{sanitize_for_log(audience[:100])}...'")
+
+        return audience
 
     async def get_access_token(self, credentials: Dict[str, Any], ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None) -> str:
         """Get access token based on grant type.
@@ -498,6 +535,12 @@ class OAuthManager:
 
         if scopes:
             token_data["scope"] = " ".join(scopes) if isinstance(scopes, list) else scopes
+
+        # Add audience parameter if configured (for Atlassian, Auth0, and other non-RFC-8707 providers)
+        audience = self._validate_and_extract_audience(runtime_credentials)
+        if audience:
+            token_data["audience"] = audience
+            logger.debug("Including audience parameter in client credentials request: %s", sanitize_for_log(audience))
 
         # Fetch token with retries
         for attempt in range(self.max_retries):
@@ -1463,6 +1506,12 @@ class OAuthManager:
         if scopes:
             params["scope"] = " ".join(scopes) if isinstance(scopes, list) else scopes
 
+        # Add audience parameter if configured (for Atlassian, Auth0, and other non-RFC-8707 providers)
+        audience = self._validate_and_extract_audience(credentials)
+        if audience:
+            params["audience"] = audience
+            logger.debug("Including audience parameter in authorization URL: %s", sanitize_for_log(audience))
+
         # Add resource parameter for JWT access token (RFC 8707)
         # The resource is the MCP server URL, set by oauth_router.py
         resource = credentials.get("resource")
@@ -1533,6 +1582,12 @@ class OAuthManager:
         # Add PKCE code_verifier if present (RFC 7636)
         if code_verifier:
             token_data["code_verifier"] = code_verifier
+
+        # Add audience parameter if configured (for Atlassian, Auth0, and other non-RFC-8707 providers)
+        audience = self._validate_and_extract_audience(runtime_credentials)
+        if audience:
+            token_data["audience"] = audience
+            logger.debug("Including audience parameter in token exchange: %s", sanitize_for_log(audience))
 
         # Add resource parameter to request JWT access token (RFC 8707)
         # The resource identifies the MCP server (resource server), not the OAuth server
@@ -1638,6 +1693,12 @@ class OAuthManager:
             if client_secret:
                 token_data["client_secret"] = client_secret
             logger.debug("Using POST body for token endpoint authentication")
+
+        # Add audience parameter if configured (for Atlassian, Auth0, and other non-RFC-8707 providers)
+        audience = self._validate_and_extract_audience(runtime_credentials)
+        if audience:
+            token_data["audience"] = audience
+            logger.debug("Including audience parameter in token refresh: %s", sanitize_for_log(audience))
 
         # Add resource parameter for JWT access token (RFC 8707)
         # Must be included in refresh requests to maintain JWT token type
