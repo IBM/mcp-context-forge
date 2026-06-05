@@ -1026,7 +1026,7 @@ describe("useMCPServerForm", () => {
           }),
         );
 
-        // Mock triggerOAuthAuthorization to avoid window.open in tests
+        // Mock OAuth-related API calls to avoid unhandled MSW requests
         const triggerOAuthMock = vi
           .spyOn(serversApi, "triggerOAuthAuthorization")
           .mockResolvedValueOnce({
@@ -1034,6 +1034,11 @@ describe("useMCPServerForm", () => {
             status: "success",
             gatewayName: "Test OAuth Gateway",
           });
+        vi.spyOn(serversApi, "toggleEnabled").mockResolvedValue({ status: "ok", message: "" });
+        vi.spyOn(serversApi, "fetchToolsAfterOAuth").mockResolvedValue({
+          success: true,
+          message: "Done",
+        });
 
         const { result } = renderHook(() => useMCPServerForm());
         const mockEvent = {
@@ -1050,9 +1055,6 @@ describe("useMCPServerForm", () => {
           await result.current.handleSubmit(mockEvent);
         });
 
-        // Note: We can't easily test the actual OAuth popup behavior in unit tests
-        // since it requires window.open and postMessage. The OAuth flow is tested
-        // in the servers.test.ts file. Here we just verify the form state changes.
         await waitFor(() => {
           expect(result.current.isSubmitting).toBe(false);
           expect(triggerOAuthMock).toHaveBeenCalledWith("new-gateway-123");
@@ -1092,7 +1094,7 @@ describe("useMCPServerForm", () => {
           }),
         );
 
-        // Mock triggerOAuthAuthorization to avoid window.open in tests
+        // Mock OAuth-related API calls to avoid unhandled MSW requests
         const triggerOAuthMock = vi
           .spyOn(serversApi, "triggerOAuthAuthorization")
           .mockResolvedValueOnce({
@@ -1100,6 +1102,11 @@ describe("useMCPServerForm", () => {
             status: "success",
             gatewayName: "Updated OAuth Gateway",
           });
+        vi.spyOn(serversApi, "toggleEnabled").mockResolvedValue({ status: "ok", message: "" });
+        vi.spyOn(serversApi, "fetchToolsAfterOAuth").mockResolvedValue({
+          success: true,
+          message: "Done",
+        });
 
         const { result } = renderHook(() => useMCPServerForm("existing-gateway"));
         const mockEvent = {
@@ -1181,6 +1188,11 @@ describe("useMCPServerForm", () => {
             status: "success",
             gatewayName: "Test Gateway",
           });
+        vi.spyOn(serversApi, "toggleEnabled").mockResolvedValue({ status: "ok", message: "" });
+        vi.spyOn(serversApi, "fetchToolsAfterOAuth").mockResolvedValue({
+          success: true,
+          message: "Done",
+        });
 
         const { result } = renderHook(() => useMCPServerForm());
         const mockEvent = {
@@ -1227,6 +1239,11 @@ describe("useMCPServerForm", () => {
             status: "success",
             gatewayName: "Delay Test",
           });
+        vi.spyOn(serversApi, "toggleEnabled").mockResolvedValue({ status: "ok", message: "" });
+        vi.spyOn(serversApi, "fetchToolsAfterOAuth").mockResolvedValue({
+          success: true,
+          message: "Done",
+        });
 
         const { result } = renderHook(() => useMCPServerForm());
         const onSuccess = vi.fn();
@@ -1257,6 +1274,225 @@ describe("useMCPServerForm", () => {
 
         vi.useRealTimers();
         triggerOAuthMock.mockRestore();
+      });
+    });
+  });
+
+  describe("fetchToolsNotification", () => {
+    it("initializes fetchToolsNotification as null", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+      expect(result.current.fetchToolsNotification).toBeNull();
+    });
+
+    it("exposes clearFetchToolsNotification as a function", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+      expect(typeof result.current.clearFetchToolsNotification).toBe("function");
+    });
+
+    it("sets fetchToolsNotification to success after OAuth + successful tool fetch", async () => {
+      server.use(http.post("/gateways", () => HttpResponse.json({ id: "gw-ft-success" })));
+
+      vi.spyOn(serversApi, "triggerOAuthAuthorization").mockResolvedValueOnce({
+        type: "oauth_callback",
+        status: "success",
+        gatewayName: "FT Success Gateway",
+      });
+      vi.spyOn(serversApi, "toggleEnabled").mockResolvedValueOnce({
+        status: "ok",
+        message: "activated",
+      });
+      vi.spyOn(serversApi, "fetchToolsAfterOAuth").mockResolvedValueOnce({
+        success: true,
+        message: "Successfully fetched and created 5 tools",
+      });
+
+      const { result } = renderHook(() => useMCPServerForm());
+      const mockEvent = { preventDefault: vi.fn() } as unknown as React.FormEvent<HTMLFormElement>;
+
+      act(() => {
+        result.current.setName("FT Success Gateway");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("oauth");
+      });
+
+      await act(async () => {
+        await result.current.handleSubmit(mockEvent);
+      });
+
+      await waitFor(() => {
+        expect(result.current.fetchToolsNotification).toEqual({
+          type: "success",
+          message: "Successfully fetched and created 5 tools",
+        });
+      });
+    });
+
+    it("sets fetchToolsNotification to error with nested detail.message when fetch-tools fails", async () => {
+      server.use(http.post("/gateways", () => HttpResponse.json({ id: "gw-ft-err" })));
+
+      vi.spyOn(serversApi, "triggerOAuthAuthorization").mockResolvedValueOnce({
+        type: "oauth_callback",
+        status: "success",
+        gatewayName: "FT Error Gateway",
+      });
+      vi.spyOn(serversApi, "toggleEnabled").mockResolvedValueOnce({
+        status: "ok",
+        message: "activated",
+      });
+
+      // Simulate the ApiError with nested detail.message structure
+      const apiError = Object.assign(new Error("HTTP 400"), {
+        name: "ApiError",
+        status: 400,
+        body: { detail: { message: "Failed to connect to MCP server", success: false } },
+      });
+      vi.spyOn(serversApi, "fetchToolsAfterOAuth").mockRejectedValueOnce(apiError);
+
+      const { result } = renderHook(() => useMCPServerForm());
+      const mockEvent = { preventDefault: vi.fn() } as unknown as React.FormEvent<HTMLFormElement>;
+
+      act(() => {
+        result.current.setName("FT Error Gateway");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("oauth");
+      });
+
+      await act(async () => {
+        await result.current.handleSubmit(mockEvent);
+      });
+
+      await waitFor(() => {
+        expect(result.current.fetchToolsNotification).toEqual({
+          type: "error",
+          message: "Failed to connect to MCP server",
+        });
+      });
+    });
+
+    it("sets fetchToolsNotification to error with plain detail string when fetch-tools fails", async () => {
+      server.use(http.post("/gateways", () => HttpResponse.json({ id: "gw-ft-str-err" })));
+
+      vi.spyOn(serversApi, "triggerOAuthAuthorization").mockResolvedValueOnce({
+        type: "oauth_callback",
+        status: "success",
+        gatewayName: "FT String Error",
+      });
+      vi.spyOn(serversApi, "toggleEnabled").mockResolvedValueOnce({
+        status: "ok",
+        message: "activated",
+      });
+
+      const apiError = Object.assign(new Error("HTTP 404"), {
+        name: "ApiError",
+        status: 404,
+        body: { detail: "Gateway not found" },
+      });
+      vi.spyOn(serversApi, "fetchToolsAfterOAuth").mockRejectedValueOnce(apiError);
+
+      const { result } = renderHook(() => useMCPServerForm());
+      const mockEvent = { preventDefault: vi.fn() } as unknown as React.FormEvent<HTMLFormElement>;
+
+      act(() => {
+        result.current.setName("FT String Error");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("oauth");
+      });
+
+      await act(async () => {
+        await result.current.handleSubmit(mockEvent);
+      });
+
+      await waitFor(() => {
+        expect(result.current.fetchToolsNotification).toEqual({
+          type: "error",
+          message: "Gateway not found",
+        });
+      });
+    });
+
+    it("clearFetchToolsNotification resets fetchToolsNotification to null", async () => {
+      server.use(http.post("/gateways", () => HttpResponse.json({ id: "gw-clear-test" })));
+
+      vi.spyOn(serversApi, "triggerOAuthAuthorization").mockResolvedValueOnce({
+        type: "oauth_callback",
+        status: "success",
+      });
+      vi.spyOn(serversApi, "toggleEnabled").mockResolvedValueOnce({ status: "ok", message: "" });
+      vi.spyOn(serversApi, "fetchToolsAfterOAuth").mockResolvedValueOnce({
+        success: true,
+        message: "Done",
+      });
+
+      const { result } = renderHook(() => useMCPServerForm());
+      const mockEvent = { preventDefault: vi.fn() } as unknown as React.FormEvent<HTMLFormElement>;
+
+      act(() => {
+        result.current.setName("Clear Test");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("oauth");
+      });
+
+      await act(async () => {
+        await result.current.handleSubmit(mockEvent);
+      });
+
+      await waitFor(() => expect(result.current.fetchToolsNotification).not.toBeNull());
+
+      act(() => result.current.clearFetchToolsNotification());
+
+      expect(result.current.fetchToolsNotification).toBeNull();
+    });
+  });
+
+  describe("handleSubmit error parsing", () => {
+    it("extracts nested detail.message from API error on create failure", async () => {
+      server.use(
+        http.post("/gateways", () =>
+          HttpResponse.json(
+            { detail: { message: "A server with this name already exists", success: false } },
+            { status: 400 },
+          ),
+        ),
+      );
+
+      const { result } = renderHook(() => useMCPServerForm());
+      const mockEvent = { preventDefault: vi.fn() } as unknown as React.FormEvent<HTMLFormElement>;
+
+      act(() => {
+        result.current.setName("Duplicate Server");
+        result.current.setUrl("http://localhost:3000");
+      });
+
+      await act(async () => {
+        await result.current.handleSubmit(mockEvent);
+      });
+
+      await waitFor(() => {
+        expect(result.current.errors.submit).toBe("A server with this name already exists");
+      });
+    });
+
+    it("extracts plain detail string from API error on update failure", async () => {
+      server.use(
+        http.get("/gateways/edit-gw", () =>
+          HttpResponse.json({ name: "My Server", url: "http://localhost:3000" }),
+        ),
+        http.put("/gateways/edit-gw", () =>
+          HttpResponse.json({ detail: "Gateway not found" }, { status: 404 }),
+        ),
+      );
+
+      const { result } = renderHook(() => useMCPServerForm("edit-gw"));
+      const mockEvent = { preventDefault: vi.fn() } as unknown as React.FormEvent<HTMLFormElement>;
+
+      await waitFor(() => expect(result.current.name).toBe("My Server"));
+
+      await act(async () => {
+        await result.current.handleSubmit(mockEvent);
+      });
+
+      await waitFor(() => {
+        expect(result.current.errors.submit).toBe("Gateway not found");
       });
     });
   });

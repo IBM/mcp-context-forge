@@ -88,6 +88,22 @@ export const serversApi = {
   },
 
   /**
+   * Toggle the enabled state of an MCP server (activate/deactivate)
+   */
+  toggleEnabled: (id: string, enabled: boolean): Promise<{ status: string; message: string }> => {
+    const validId = validateServerId(id);
+    return api.post(`/gateways/${validId}/state?activate=${enabled}`);
+  },
+
+  /**
+   * Fetch tools, resources, and prompts from the MCP server after OAuth authorization
+   */
+  fetchToolsAfterOAuth: (id: string): Promise<{ success: boolean; message: string }> => {
+    const validId = validateServerId(id);
+    return api.post(`/oauth/fetch-tools/${validId}`);
+  },
+
+  /**
    * Trigger OAuth authorization flow for a gateway via a popup window.
    *
    * Opens /oauth/authorize/{id}?popup=true in a centered popup. The backend

@@ -2562,7 +2562,7 @@ class TestOAuthRouterPopupMode:
 
                     # Assert redirect response
                     assert isinstance(result, RedirectResponse)
-    
+
                     # Verify popup=False was passed to OAuth manager
                     call_args = mock_oauth_manager.initiate_authorization_code_flow.call_args
                     # popup is a Query object with default False, check its value
@@ -2711,7 +2711,7 @@ class TestOAuthRouterPopupMode:
                     # Assert HTMLResponse with postMessage script
                     assert isinstance(result, HTMLResponse)
                     body = result.body.decode()
-                    
+
                     # Verify postMessage script is present
                     assert '<script nonce="test-nonce-456">' in body
                     assert 'window.opener.postMessage' in body
@@ -2719,7 +2719,7 @@ class TestOAuthRouterPopupMode:
                     assert '"status": "success"' in body or '"status":"success"' in body
                     assert '"gatewayId": "test-gateway"' in body or '"gatewayId":"test-gateway"' in body
                     assert '"gatewayName": "Test Gateway"' in body or '"gatewayName":"Test Gateway"' in body
-                    
+
                     # Verify no legacy admin UI elements
                     assert 'Fetch Tools from MCP Server' not in body
 
@@ -2747,7 +2747,7 @@ class TestOAuthRouterPopupMode:
         assert isinstance(result, HTMLResponse)
         assert result.status_code == 400
         body = result.body.decode()
-        
+
         # Verify postMessage error script
         assert '<script nonce="test-nonce-789">' in body
         assert 'window.opener.postMessage' in body
@@ -2755,7 +2755,7 @@ class TestOAuthRouterPopupMode:
         assert '"status": "error"' in body or '"status":"error"' in body
         assert '"error": "access_denied"' in body or '"error":"access_denied"' in body
         assert '"errorDescription": "User denied authorization"' in body or '"errorDescription":"User denied authorization"' in body
-        
+
         # Verify no legacy admin UI elements
         assert 'Return to Admin Panel' not in body
 
@@ -2781,7 +2781,7 @@ class TestOAuthRouterPopupMode:
         assert isinstance(result, HTMLResponse)
         assert result.status_code == 400
         body = result.body.decode()
-        
+
         # Verify postMessage error script
         assert '<script nonce="test-nonce-missing">' in body
         assert '"type": "oauth_callback"' in body or '"type":"oauth_callback"' in body
@@ -2818,7 +2818,7 @@ class TestOAuthRouterPopupMode:
                 assert isinstance(result, HTMLResponse)
                 assert result.status_code == 400
                 body = result.body.decode()
-                
+
                 # Verify postMessage error script
                 assert '<script nonce="test-nonce-invalid">' in body
                 assert '"type": "oauth_callback"' in body or '"type":"oauth_callback"' in body
@@ -2875,12 +2875,12 @@ class TestOAuthRouterPopupMode:
                     # Assert HTMLResponse with legacy admin UI
                     assert isinstance(result, HTMLResponse)
                     body = result.body.decode()
-                    
+
                     # Verify legacy admin UI elements are present
                     assert 'OAuth Authorization Successful' in body
                     assert 'Fetch Tools from MCP Server' in body
                     assert 'Return to Admin Panel' in body
-                    
+
                     # Verify NO postMessage script (should use inline fetch script instead)
                     assert 'window.opener.postMessage' not in body
 
@@ -2908,12 +2908,12 @@ class TestOAuthRouterPopupMode:
         assert isinstance(result, HTMLResponse)
         assert result.status_code == 400
         body = result.body.decode()
-        
+
         # Verify legacy admin UI error elements
         assert 'OAuth Authorization Failed' in body
         assert 'access_denied' in body
         assert 'User denied authorization' in body
         assert 'Return to Admin Panel' in body
-        
+
         # Verify NO postMessage script
         assert 'window.opener.postMessage' not in body
