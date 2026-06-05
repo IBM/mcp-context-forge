@@ -121,6 +121,18 @@ export function Servers() {
     }
   };
 
+  const handleToggleEnabled = useCallback(
+    async (id: string, enabled: boolean) => {
+      try {
+        await serversApi.toggleEnabled(id, enabled);
+        await refetch();
+      } catch (err) {
+        console.error("Failed to toggle server state:", sanitizeError(err));
+      }
+    },
+    [refetch],
+  );
+
   const handleViewDetails = useCallback((id: string) => {
     setSelectedServerIdForDetails(id);
     setIsDetailsDrawerOpen(true);
@@ -237,6 +249,7 @@ export function Servers() {
                 onDelete={handleDelete}
                 onTest={handleTest}
                 onViewDetails={handleViewDetails}
+                onToggleEnabled={handleToggleEnabled}
               />
 
               <div className="flex items-center justify-between mt-6">

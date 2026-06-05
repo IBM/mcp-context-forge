@@ -14,6 +14,7 @@ interface ServerActionsMenuProps {
   onDelete: (id: string) => void;
   onTest: (id: string) => void;
   onViewDetails?: (id: string) => void;
+  onToggleEnabled?: (id: string, enabled: boolean) => void;
 }
 
 export function ServerActionsMenu({
@@ -22,6 +23,7 @@ export function ServerActionsMenu({
   onDelete,
   onTest,
   onViewDetails,
+  onToggleEnabled,
 }: ServerActionsMenuProps) {
   return (
     <DropdownMenu>
@@ -49,6 +51,14 @@ export function ServerActionsMenu({
         <DropdownMenuItem onClick={() => onTest(server.id)} role="menuitem">
           Test Connection
         </DropdownMenuItem>
+        {onToggleEnabled && (
+          <DropdownMenuItem
+            onClick={() => onToggleEnabled(server.id, !server.enabled)}
+            role="menuitem"
+          >
+            {server.enabled ? "Deactivate" : "Activate"}
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem
           onClick={() => onDelete(server.id)}
           className="text-red-600 dark:text-red-400"
