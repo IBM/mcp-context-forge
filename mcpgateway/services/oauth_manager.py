@@ -638,7 +638,7 @@ class OAuthManager:
 
         # Check if provider requires Basic Auth for client authentication (RFC 6749 Section 2.3.1)
         # Default to form-based auth for backward compatibility
-        use_basic_auth = runtime_credentials.get("token_endpoint_auth_method", "client_secret_post") == "client_secret_basic"
+        auth_method = runtime_credentials.get("token_endpoint_auth_method", "client_secret_post")
 
         # Prepare token exchange data and headers
         token_data = {
@@ -648,10 +648,15 @@ class OAuthManager:
         }
         headers = {}
 
-        if use_basic_auth and client_secret:
+        if auth_method == "none":
+            # RFC 7591 §2: Public client with no authentication
+            token_data["client_id"] = client_id
+            logger.debug("Using no authentication for token endpoint (public client)")
+        elif auth_method == "client_secret_basic" and client_secret:
+            # RFC 6749 §2.3.1: HTTP Basic Authentication
             headers["Authorization"] = self._build_basic_auth_header(client_id, client_secret)
             logger.debug("Using HTTP Basic Auth for token endpoint authentication")
-        elif use_basic_auth and not client_secret:
+        elif auth_method == "client_secret_basic" and not client_secret:
             # Public PKCE clients can't use Basic Auth (no secret to encode)
             logger.warning("Basic Auth requested but client_secret is missing - falling back to POST body mode (public client)")
             token_data["client_id"] = client_id

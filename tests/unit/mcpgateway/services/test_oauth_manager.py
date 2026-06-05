@@ -649,6 +649,36 @@ async def test_exchange_code_for_token_basic_auth_without_secret(oauth_manager):
     assert "headers" in call_kwargs
     assert "Authorization" not in call_kwargs["headers"]
 
+@pytest.mark.asyncio
+async def test_exchange_code_for_token_with_auth_method_none(oauth_manager):
+    """Test exchange_code_for_token with explicit token_endpoint_auth_method='none' (RFC 7591 §2)."""
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.headers = {"content-type": "application/json"}
+    mock_response.json.return_value = {"access_token": "public-none-tok"}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+    with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
+        result = await oauth_manager.exchange_code_for_token(
+            {
+                "client_id": "public-client",
+                "token_url": "https://auth/token",
+                "redirect_uri": "https://cb",
+                "token_endpoint_auth_method": "none",
+            },
+            code="auth-code",
+            state="state-123",
+        )
+    assert result == "public-none-tok"
+    # Verify only client_id in POST body, no client_secret, no Authorization header
+    call_kwargs = mock_client.post.call_args[1]
+    assert "client_id" in call_kwargs["data"]
+    assert "client_secret" not in call_kwargs["data"]
+    assert "headers" in call_kwargs
+    assert "Authorization" not in call_kwargs["headers"]
+
+
 
 # ---------- refresh_token ----------
 
