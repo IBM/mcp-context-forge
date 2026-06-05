@@ -18,7 +18,7 @@ import {
 // ===================================================================
 
 /**
- * Toggle UAID fields visibility based on checkbox state
+ * Toggle UAID fields visibility based on checkbox state.
  * @param {string} formSuffix - Form identifier suffix ('a2a' or 'a2a-edit')
  * @param {boolean} enabled - Whether UAID generation is enabled
  */
