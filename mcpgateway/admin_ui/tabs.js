@@ -670,7 +670,7 @@ export const showTab = function (tabName) {
           if (versionPanel && versionPanel.innerHTML.trim() === "") {
             fetchWithTimeout(
               `${window.ROOT_PATH}/version?partial=true`,
-              {},
+              { credentials: "include" }, // pragma: allowlist secret
               window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000
             )
               .then((resp) => {

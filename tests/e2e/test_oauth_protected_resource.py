@@ -185,9 +185,14 @@ async def oauth_test_db():
     sec_patcher = mock_patch("mcpgateway.middleware.auth_middleware.security_logger", mock_sec_logger)
     sec_patcher.start()
 
+    # Disable CSRF — auth is mocked via dependency overrides; no bearer token is sent
+    original_csrf_enabled = settings.csrf_enabled
+    settings.csrf_enabled = False
+
     yield engine
 
     # Cleanup
+    settings.csrf_enabled = original_csrf_enabled
     sec_patcher.stop()
     test_user_context_db.close()
     app.dependency_overrides.clear()
@@ -209,13 +214,13 @@ class TestOAuthProtectedResourceMetadata:
 
     async def _create_server(self, client: AsyncClient, payload: dict) -> str:
         """Helper to create a server and return its ID."""
-        response = await client.post("/servers", json=payload, headers=TEST_AUTH_HEADER)
+        response = await client.post("/servers", json=payload)
         assert response.status_code == 201, f"Failed to create server: {response.text}"
         return response.json()["id"]
 
     async def _disable_server(self, client: AsyncClient, server_id: str):
         """Helper to disable a server using the toggle endpoint."""
-        response = await client.post(f"/servers/{server_id}/state?activate=false", headers=TEST_AUTH_HEADER)
+        response = await client.post(f"/servers/{server_id}/state?activate=false")
         assert response.status_code == 200, f"Failed to disable server: {response.text}"
 
     async def test_server_without_oauth_returns_404(self, client: AsyncClient):
@@ -424,13 +429,13 @@ class TestVirtualServerWellKnownFiles:
 
     async def _create_server(self, client: AsyncClient, payload: dict) -> str:
         """Helper to create a server and return its ID."""
-        response = await client.post("/servers", json=payload, headers=TEST_AUTH_HEADER)
+        response = await client.post("/servers", json=payload)
         assert response.status_code == 201, f"Failed to create server: {response.text}"
         return response.json()["id"]
 
     async def _disable_server(self, client: AsyncClient, server_id: str):
         """Helper to disable a server using the toggle endpoint."""
-        response = await client.post(f"/servers/{server_id}/state?activate=false", headers=TEST_AUTH_HEADER)
+        response = await client.post(f"/servers/{server_id}/state?activate=false")
         assert response.status_code == 200, f"Failed to disable server: {response.text}"
 
     async def test_robots_txt_on_public_server(self, client: AsyncClient):
@@ -544,7 +549,7 @@ class TestWellKnownDisabledScenarios:
 
     async def _create_server(self, client: AsyncClient, payload: dict) -> str:
         """Helper to create a server and return its ID."""
-        response = await client.post("/servers", json=payload, headers=TEST_AUTH_HEADER)
+        response = await client.post("/servers", json=payload)
         assert response.status_code == 201, f"Failed to create server: {response.text}"
         return response.json()["id"]
 

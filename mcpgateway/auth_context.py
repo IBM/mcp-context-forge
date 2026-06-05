@@ -111,6 +111,7 @@ policy. The key invariants that this module enforces:
 """
 
 # Standard
+import asyncio
 import base64
 from functools import lru_cache
 import hashlib
@@ -121,6 +122,7 @@ from typing import Any, Dict, List, Optional
 # Third-Party
 from fastapi import Request
 import orjson
+from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import normalize_token_teams
@@ -567,3 +569,51 @@ def get_scoped_visibility_from_user_context(user_context: Optional[Dict[str, Any
         return user_email, []
 
     return user_email, token_teams
+
+
+async def set_user_context_from_token(request: Request, payload: dict, db: Session) -> None:
+    """Set user context on request state from JWT payload.
+
+    Resolves user ID to email and caches on request.state for performance.
+    This helper supports the token migration from email-based to user-ID-based
+    tokens by using get_user_email_from_token() which handles both formats.
+
+    Args:
+        request: FastAPI request object
+        payload: JWT payload dictionary
+        db: Database session for user lookup
+
+    Side Effects:
+        Sets the following attributes on request.state:
+        - user_email: Resolved user email (from UUID lookup or direct if legacy email sub)
+        - user_id: Value of the sub claim (UUID in new tokens, email in legacy tokens)
+        - is_admin: Admin flag resolved from DB (not from JWT)
+        - auth_provider: Auth provider from payload
+
+    Examples:
+        >>> # New format: sub contains UUID
+        >>> payload = {"sub": "550e8400-e29b-41d4-a716-446655440000", "auth_provider": "local"}
+        >>> await set_user_context_from_token(request, payload, db)  # doctest: +SKIP
+        >>> request.state.user_email  # doctest: +SKIP
+        'user@example.com'
+        >>> request.state.user_id  # doctest: +SKIP
+        '550e8400-e29b-41d4-a716-446655440000'
+
+        >>> # Legacy format: sub contains email
+        >>> payload = {"sub": "user@example.com"}
+        >>> await set_user_context_from_token(request, payload, db)  # doctest: +SKIP
+        >>> request.state.user_email  # doctest: +SKIP
+        'user@example.com'
+        >>> request.state.user_id  # doctest: +SKIP
+        'user@example.com'
+    """
+    from mcpgateway.auth import get_user_email_from_token
+
+    from mcpgateway.auth import _get_user_by_email_sync  # pylint: disable=import-outside-toplevel
+
+    user_email = await get_user_email_from_token(payload, db)
+    request.state.user_email = user_email
+    request.state.user_id = payload.get("sub")
+    db_user = await asyncio.to_thread(_get_user_by_email_sync, user_email) if user_email else None
+    request.state.is_admin = db_user.is_admin if db_user else False
+    request.state.auth_provider = payload.get("auth_provider", "local")

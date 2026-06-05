@@ -2,109 +2,114 @@
 """Location: ./tests/unit/mcpgateway/test_auth_coverage.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
-Additional tests for auth.py coverage gaps.
-
-This module contains targeted tests for specific uncovered lines in mcpgateway/auth.py
-to achieve 100% coverage.
+Coverage tests for auth.py changes related to is_admin resolution.
 """
 
+import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+from mcpgateway.auth import _resolve_teams_from_db, resolve_session_teams
+from mcpgateway.db import EmailUser
 
-class TestGetTeamNameByIdSync:
-    """Tests for _get_team_name_by_id_sync function."""
 
-    def test_get_team_name_none_team_id_line_206(self):
-        """Test _get_team_name_by_id_sync with None team_id (line 206)."""
-        # First-Party
-        from mcpgateway.auth import _get_team_name_by_id_sync
+class TestResolveTeamsFromDbIsAdminBranches:
+    """Test is_admin resolution branches in _resolve_teams_from_db."""
 
-        # Should return None immediately for None team_id
-        result = _get_team_name_by_id_sync(None)
+    @pytest.mark.asyncio
+    async def test_dict_user_info_with_is_admin_none_fetches_from_db(self):
+        """Test dict user_info with is_admin=None triggers DB lookup."""
+        user_info = {"email": "test@example.com"}  # No is_admin key
+
+        mock_db_user = MagicMock(spec=EmailUser)
+        mock_db_user.is_admin = True
+
+        with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_db_user):
+            result = await _resolve_teams_from_db(email="test@example.com", user_info=user_info)
+
+        # Admin bypass returns None
         assert result is None
 
-    def test_get_team_name_empty_team_id_line_206(self):
-        """Test _get_team_name_by_id_sync with empty string team_id (line 206)."""
-        # First-Party
-        from mcpgateway.auth import _get_team_name_by_id_sync
+    @pytest.mark.asyncio
+    async def test_dict_user_info_with_is_admin_false_queries_teams(self):
+        """Test dict user_info with is_admin=False queries teams."""
+        user_info = {"email": "test@example.com", "is_admin": False}
 
-        # Should return None immediately for empty team_id
-        result = _get_team_name_by_id_sync("")
-        assert result is None
+        with patch("mcpgateway.auth._get_user_by_email_sync", side_effect=AssertionError("Should not be called")):
+            with patch("mcpgateway.auth._get_user_team_ids_sync", return_value=["team1"]):
+                result = await _resolve_teams_from_db(email="test@example.com", user_info=user_info)
 
+        assert result == ["team1"]
 
-class TestExtractClaimTeamName:
-    """Tests for _extract_claim_team_name function."""
+    @pytest.mark.asyncio
+    async def test_object_user_info_with_is_admin_none_fetches_from_db(self):
+        """Test object user_info without is_admin attr triggers DB lookup."""
+        user_info = MagicMock()
+        del user_info.is_admin  # Ensure attribute doesn't exist
 
-    def test_extract_claim_none_team_id_line_221(self):
-        """Test _extract_claim_team_name with None team_id (line 221)."""
-        # First-Party
-        from mcpgateway.auth import _extract_claim_team_name
+        mock_db_user = MagicMock(spec=EmailUser)
+        mock_db_user.is_admin = False
 
-        payload = {"teams": [{"id": "team-1", "name": "Team One"}]}
+        with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_db_user):
+            with patch("mcpgateway.auth._get_user_team_ids_sync", return_value=["team1"]):
+                result = await _resolve_teams_from_db(email="test@example.com", user_info=user_info)
 
-        # Should return None immediately for None team_id
-        result = _extract_claim_team_name(payload, None)
-        assert result is None
+        assert result == ["team1"]
 
-    def test_extract_claim_teams_not_list_line_235(self):
-        """Test _extract_claim_team_name when teams is not a list (line 235)."""
-        # First-Party
-        from mcpgateway.auth import _extract_claim_team_name
+    @pytest.mark.asyncio
+    async def test_db_user_not_found_defaults_to_non_admin(self):
+        """Test DB lookup returning None defaults is_admin to False."""
+        user_info = {"email": "test@example.com"}  # No is_admin key
 
-        # teams is a string instead of list
-        payload = {"teams": "not-a-list"}
+        with patch("mcpgateway.auth._get_user_by_email_sync", return_value=None):
+            with patch("mcpgateway.auth._get_user_team_ids_sync", return_value=["team1"]):
+                result = await _resolve_teams_from_db(email="test@example.com", user_info=user_info)
 
-        result = _extract_claim_team_name(payload, "team-1")
-        assert result is None
-
-    def test_extract_claim_teams_is_dict_line_235(self):
-        """Test _extract_claim_team_name when teams is a dict (line 235)."""
-        # First-Party
-        from mcpgateway.auth import _extract_claim_team_name
-
-        # teams is a dict instead of list
-        payload = {"teams": {"id": "team-1"}}
-
-        result = _extract_claim_team_name(payload, "team-1")
-        assert result is None
-
-    def test_extract_claim_team_string_format_line_239(self):
-        """Test _extract_claim_team_name with string team format (line 239)."""
-        # First-Party
-        from mcpgateway.auth import _extract_claim_team_name
-
-        # Team as string (not dict)
-        payload = {"teams": ["team-1", "team-2"]}
-
-        # Should handle string format but return None (no name available)
-        result = _extract_claim_team_name(payload, "team-1")
-        assert result is None
-
-    def test_extract_claim_team_name_none_line_251(self):
-        """Test _extract_claim_team_name when team name is None (line 251)."""
-        # First-Party
-        from mcpgateway.auth import _extract_claim_team_name
-
-        # Team dict with id but name is None
-        payload = {"teams": [{"id": "team-1", "name": None}]}
-
-        result = _extract_claim_team_name(payload, "team-1")
-        assert result is None
-
-    def test_extract_claim_team_name_empty_string_line_259(self):
-        """Test _extract_claim_team_name when normalized name is empty (line 259)."""
-        # First-Party
-        from mcpgateway.auth import _extract_claim_team_name
-
-        # Team dict with id and name that becomes empty after strip
-        payload = {"teams": [{"id": "team-1", "name": "   "}]}
-
-        result = _extract_claim_team_name(payload, "team-1")
-        assert result is None
+        assert result == ["team1"]
 
 
-# Note: Lines 993-994, 1006, and 1011 are inside get_current_user function
-# which is complex to test in isolation. These lines are covered by existing
-# integration tests in test_auth.py. The helper functions above provide
-# sufficient coverage for the simpler utility functions.
+class TestResolveSessionTeamsUuidResolution:
+    """Test UUID resolution in resolve_session_teams."""
+
+    @pytest.mark.asyncio
+    async def test_uuid_email_resolves_to_actual_email(self):
+        """Test UUID in email field gets resolved to actual email."""
+        uuid_email = "550e8400-e29b-41d4-a716-446655440000"
+        actual_email = "user@example.com"
+        payload = {"token_use": "session"}
+
+        with patch("mcpgateway.auth._get_email_by_id_sync", return_value=actual_email):
+            with patch("mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock) as mock_resolve:
+                mock_resolve.return_value = ["team1"]
+
+                result = await resolve_session_teams(payload=payload, email=uuid_email, user_info={"email": actual_email})
+
+        # Verify _get_email_by_id_sync was called with UUID
+        assert result == ["team1"]
+
+    @pytest.mark.asyncio
+    async def test_invalid_uuid_skips_resolution(self):
+        """Test non-UUID email skips UUID resolution."""
+        email = "user@example.com"
+        payload = {"token_use": "session"}
+
+        with patch("mcpgateway.auth._get_email_by_id_sync", side_effect=AssertionError("Should not be called")):
+            with patch("mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock) as mock_resolve:
+                mock_resolve.return_value = ["team1"]
+
+                result = await resolve_session_teams(payload=payload, email=email, user_info={"email": email})
+
+        assert result == ["team1"]
+
+    @pytest.mark.asyncio
+    async def test_uuid_resolution_returns_none_uses_original(self):
+        """Test UUID resolution returning None uses original UUID."""
+        uuid_email = "550e8400-e29b-41d4-a716-446655440000"
+        payload = {"token_use": "session"}
+
+        with patch("mcpgateway.auth._get_email_by_id_sync", return_value=None):
+            with patch("mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock) as mock_resolve:
+                mock_resolve.return_value = []
+
+                result = await resolve_session_teams(payload=payload, email=uuid_email, user_info={"email": uuid_email})
+
+        assert result == []

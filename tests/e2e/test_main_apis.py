@@ -156,11 +156,13 @@ async def temp_db(main_app_with_admin_api):
     # This avoids patching RBAC decorators at import time, which leaks into other test modules.
     # First-Party
     from mcpgateway.db import EmailUser
+    import uuid
 
     seed_db = TestSessionLocal()
     try:
         seed_db.add(
             EmailUser(
+                id=str(uuid.uuid4()),
                 email="testuser@example.com",
                 password_hash="not-a-real-hash",
                 full_name="Test User",
@@ -1429,7 +1431,7 @@ class TestPromptAPIs:
         """Test POST /prompts with duplicate name returns 409 or 400."""
         prompt_data = {
             "prompt": {"name": "duplicate_prompt_case", "template": "Test", "arguments": [], "team_id": "1", "owner_email": "owner@example.com", "visibility": "private"},
-            "team_id": "1",
+            "team_id": "550e8400-e29b-41d4-a716-446655440001",
             "visibility": "private",
         }
         # Create first prompt

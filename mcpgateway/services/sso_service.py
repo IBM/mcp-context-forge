@@ -2122,17 +2122,9 @@ class SSOService:
 
         # Generate JWT token for user — session token (teams resolved server-side)
         token_data = {
-            "sub": resolved_email,
-            "email": resolved_email,
-            "full_name": resolved_full_name,
+            "sub": str(getattr(user, "id", None) or resolved_email),
             "auth_provider": resolved_auth_provider,
             "iat": int(utc_now().timestamp()),
-            "user": {
-                "email": resolved_email,
-                "full_name": resolved_full_name,
-                "is_admin": resolved_is_admin,
-                "auth_provider": resolved_auth_provider,
-            },
             "token_use": "session",  # nosec B105 - token type marker, not a password
             # Scopes
             "scopes": {"server_id": None, "permissions": ["*"] if resolved_is_admin else [], "ip_restrictions": [], "time_restrictions": {}},

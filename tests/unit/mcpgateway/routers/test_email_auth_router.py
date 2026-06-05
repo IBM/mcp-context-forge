@@ -313,8 +313,9 @@ class TestCreateAccessTokenTeamsFormat:
                 assert "teams" not in captured_payload, "session tokens should not embed teams"
                 assert "namespaces" not in captured_payload, "session tokens should not embed namespaces"
                 assert captured_payload.get("token_use") == "session", "session tokens must have token_use='session'"
-                assert "user" in captured_payload, "session tokens must have user info"
+                assert "user" not in captured_payload, "Phase 2: flattened structure, no nested user"
                 assert "scopes" in captured_payload, "session tokens must have scopes"
+                assert captured_payload.get("sub"), "session tokens must have sub with user ID"
 
     @pytest.mark.asyncio
     async def test_create_access_token_admin_is_session_token(self):
@@ -1096,6 +1097,7 @@ async def test_create_legacy_access_token():
     from mcpgateway.routers.email_auth import create_legacy_access_token
 
     user = MagicMock(spec=EmailUser)
+    user.id = "550e8400-e29b-41d4-a716-446655440000"
     user.email = "user@example.com"
     user.full_name = "User"
     user.is_admin = False
@@ -1116,8 +1118,7 @@ async def test_create_legacy_access_token():
 
     assert token == "legacy_tok"
     assert expires_in == 1800  # 30 minutes * 60
-    assert captured["payload"]["sub"] == "user@example.com"
-    assert captured["payload"]["email"] == "user@example.com"
+    assert captured["payload"]["sub"] == "550e8400-e29b-41d4-a716-446655440000"
     assert captured["payload"]["iss"] == "iss"
     assert "teams" not in captured["payload"]
 

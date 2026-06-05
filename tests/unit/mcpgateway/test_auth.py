@@ -51,8 +51,6 @@ class TestGetDb:
             db = next(get_db())
 
 
-
-
 class TestGetDb:
     """Test cases for the get_db dependency function."""
 
@@ -223,6 +221,66 @@ class TestGetCurrentUser:
                     user = await get_current_user(credentials=credentials)
 
                     assert user.email == mock_user.email
+
+    @pytest.mark.asyncio
+    async def test_jwt_uuid_sub_resolved_to_email(self, monkeypatch):
+        """UUID sub in JWT is resolved to email via _get_email_by_id_sync (lines 1488-1490)."""
+        import uuid as _uuid
+
+        user_uuid = str(_uuid.uuid4())
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="uuid_sub_token")  # pragma: allowlist secret
+        jwt_payload = {"sub": user_uuid, "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
+        mock_user = EmailUser(
+            email="resolved@example.com",
+            password_hash="hash",
+            full_name="Resolved User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        monkeypatch.setattr(settings, "auth_cache_enabled", False)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_email_by_id_sync", return_value="resolved@example.com"):
+                with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                    with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                        with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
+                            user = await get_current_user(credentials=credentials)
+
+        assert user.email == "resolved@example.com"
+
+    @pytest.mark.asyncio
+    async def test_jwt_uuid_sub_not_found_keeps_uuid_as_email(self, monkeypatch):
+        """UUID sub not found in DB: email stays as UUID (resolved is None path, line 1489)."""
+        import uuid as _uuid
+
+        user_uuid = str(_uuid.uuid4())
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="uuid_sub_token")  # pragma: allowlist secret
+        jwt_payload = {"sub": user_uuid, "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
+        mock_user = EmailUser(
+            email=user_uuid,
+            password_hash="hash",
+            full_name="UUID User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        monkeypatch.setattr(settings, "auth_cache_enabled", False)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_email_by_id_sync", return_value=None):
+                with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                    with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                        with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
+                            user = await get_current_user(credentials=credentials)
+
+        assert user.email == user_uuid
 
     @pytest.mark.asyncio
     async def test_jwt_without_email_or_sub_raises_401(self):
@@ -1020,9 +1078,7 @@ class TestGetSyncRedisClient:
             mock_redis_module = MagicMock()
             mock_redis_module.from_url.return_value = mock_redis_client
 
-            with patch("mcpgateway.auth.settings") as mock_settings, \
-                 patch("mcpgateway.auth.redis", mock_redis_module), \
-                 patch("mcpgateway.auth._build_ssl_kwargs", return_value={}):
+            with patch("mcpgateway.auth.settings") as mock_settings, patch("mcpgateway.auth.redis", mock_redis_module), patch("mcpgateway.auth._build_ssl_kwargs", return_value={}):
                 # Use actual string for redis_url
                 mock_settings.redis_url = "redis://localhost:6379/0"
                 mock_settings.cache_type = "redis"
@@ -1184,9 +1240,7 @@ class TestGetSyncRedisClient:
             mock_redis_module = MagicMock()
             mock_redis_module.from_url.side_effect = Exception("Connection refused")
 
-            with patch("mcpgateway.auth.settings") as mock_settings, \
-                 patch("mcpgateway.auth.redis", mock_redis_module), \
-                 patch("mcpgateway.auth._build_ssl_kwargs", return_value={}):
+            with patch("mcpgateway.auth.settings") as mock_settings, patch("mcpgateway.auth.redis", mock_redis_module), patch("mcpgateway.auth._build_ssl_kwargs", return_value={}):
                 # Use actual string for redis_url
                 mock_settings.redis_url = "redis://localhost:6379/0"
                 mock_settings.cache_type = "redis"
@@ -1990,6 +2044,54 @@ class TestGetUserByEmailSyncNone:
         assert result is None
 
 
+class TestGetEmailByIdSync:
+    """Test _get_email_by_id_sync helper (lines 946-951)."""
+
+    def test_returns_email_when_found(self, monkeypatch):
+        """Returns email string when UUID matches a DB row."""
+        from contextlib import contextmanager
+
+        class DummyResult:
+            def scalar_one_or_none(self):
+                return "found@example.com"
+
+        class DummySession:
+            def execute(self, _q):
+                return DummyResult()
+
+        @contextmanager
+        def _session_ctx():
+            yield DummySession()
+
+        monkeypatch.setattr("mcpgateway.auth.fresh_db_session", _session_ctx)
+        from mcpgateway.auth import _get_email_by_id_sync
+
+        result = _get_email_by_id_sync("550e8400-e29b-41d4-a716-446655440000")
+        assert result == "found@example.com"
+
+    def test_returns_none_when_not_found(self, monkeypatch):
+        """Returns None when UUID has no matching DB row."""
+        from contextlib import contextmanager
+
+        class DummyResult:
+            def scalar_one_or_none(self):
+                return None
+
+        class DummySession:
+            def execute(self, _q):
+                return DummyResult()
+
+        @contextmanager
+        def _session_ctx():
+            yield DummySession()
+
+        monkeypatch.setattr("mcpgateway.auth.fresh_db_session", _session_ctx)
+        from mcpgateway.auth import _get_email_by_id_sync
+
+        result = _get_email_by_id_sync("550e8400-e29b-41d4-a716-446655440000")
+        assert result is None
+
+
 class TestBatchedSyncNoPTeam:
     """Test _get_auth_context_batched_sync with user but no personal team."""
 
@@ -2417,7 +2519,7 @@ class TestCachePathBranches:
     @pytest.mark.asyncio
     async def test_cache_revoked_token(self, monkeypatch):
         """Cached context shows token revoked → 401 (line 713)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
         payload = {"sub": "user@example.com", "jti": "jti-1"}
 
         cached_ctx = SimpleNamespace(is_token_revoked=True, user=None, personal_team_id=None)
@@ -2431,7 +2533,7 @@ class TestCachePathBranches:
     @pytest.mark.asyncio
     async def test_cache_inactive_user(self, monkeypatch):
         """Cached user is inactive → 401 (line 721)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
         payload = {"sub": "user@example.com", "jti": "jti-1"}
 
         cached_ctx = SimpleNamespace(
@@ -2449,7 +2551,7 @@ class TestCachePathBranches:
     @pytest.mark.asyncio
     async def test_cache_admin_bypass_teams(self, monkeypatch):
         """Cached path with admin token (teams=None) → admin bypass (line 737)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
         payload = {
             "sub": "admin@example.com",
             "jti": "jti-1",
@@ -2476,7 +2578,7 @@ class TestCachePathBranches:
     @pytest.mark.asyncio
     async def test_cache_dict_team_id(self, monkeypatch):
         """Cached path with dict team ID → extract id (lines 743-746)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
         payload = {
             "sub": "user@example.com",
             "jti": "jti-1",
@@ -2501,7 +2603,7 @@ class TestCachePathBranches:
     @pytest.mark.asyncio
     async def test_cache_user_missing_fallthrough(self, monkeypatch):
         """Cached context exists but user is None → fall through to DB (line 773)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
         payload = {
             "sub": "user@example.com",
             "jti": "jti-1",
@@ -2528,7 +2630,7 @@ class TestCachePathBranches:
     @pytest.mark.asyncio
     async def test_cache_exception_fallthrough(self, monkeypatch):
         """Cache raises exception → fall through to DB (lines 777-778)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
         payload = {
             "sub": "user@example.com",
             "jti": "jti-1",
@@ -2552,7 +2654,7 @@ class TestCachePathBranches:
     @pytest.mark.asyncio
     async def test_cache_include_user_info(self, monkeypatch):
         """Cached path with include_user_info enabled (line 768)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
         payload = {
             "sub": "user@example.com",
             "jti": "jti-1",
@@ -2589,7 +2691,7 @@ class TestBatchedPathBranches:
     @pytest.mark.asyncio
     async def test_batch_revoked_token(self, monkeypatch):
         """Batched query shows token revoked → 401 (line 787)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
         payload = {"sub": "user@example.com", "jti": "jti-1"}
 
         monkeypatch.setattr(settings, "auth_cache_enabled", False)
@@ -2605,7 +2707,7 @@ class TestBatchedPathBranches:
     @pytest.mark.asyncio
     async def test_batch_admin_bypass(self, monkeypatch):
         """Batched path with admin token (teams=None) → admin bypass (line 802)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
         payload = {
             "sub": "admin@example.com",
             "jti": "jti-1",
@@ -2632,7 +2734,7 @@ class TestBatchedPathBranches:
     @pytest.mark.asyncio
     async def test_batch_dict_team_id(self, monkeypatch):
         """Batched path with dict team_id → extract id (lines 808-810)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
         payload = {
             "sub": "user@example.com",
             "jti": "jti-1",
@@ -2657,7 +2759,7 @@ class TestBatchedPathBranches:
     @pytest.mark.asyncio
     async def test_batch_cache_store(self, monkeypatch):
         """Batched result stored in cache (lines 818-832)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
         payload = {
             "sub": "user@example.com",
             "jti": "jti-1",
@@ -2681,14 +2783,14 @@ class TestBatchedPathBranches:
             patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx),
             patch("mcpgateway.cache.auth_cache.auth_cache", mock_cache),
         ):
-            user = await get_current_user(credentials=credentials)
+            user = await get_current_user(credentials=credentials)  # pragma: allowlist secret
 
         mock_cache.set_auth_context.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_batch_cache_store_fails(self, monkeypatch):
         """Cache store fails but doesn't break auth (line 832)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
         payload = {
             "sub": "user@example.com",
             "jti": "jti-1",
@@ -2712,7 +2814,7 @@ class TestBatchedPathBranches:
             patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx),
             patch("mcpgateway.cache.auth_cache.auth_cache", mock_cache),
         ):
-            user = await get_current_user(credentials=credentials)
+            user = await get_current_user(credentials=credentials)  # pragma: allowlist secret
 
         assert user.email == "user@example.com"
 
@@ -2732,7 +2834,7 @@ class TestBatchedPathBranches:
 
         with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx):
             with pytest.raises(HTTPException) as exc:
-                await get_current_user(credentials=credentials)
+                await get_current_user(credentials=credentials)  # pragma: allowlist secret
             assert exc.value.detail == "Account disabled"
 
     @pytest.mark.asyncio
@@ -2742,7 +2844,7 @@ class TestBatchedPathBranches:
 
     async def test_batch_platform_admin_required(self, monkeypatch):
         """Batched user not found and platform admin required → 401 (line 884)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
         payload = {"sub": "admin@example.com", "jti": "jti-1", "user": {"auth_provider": "local"}, "is_admin": True}
 
         auth_ctx = {"user": None, "personal_team_id": None, "is_token_revoked": False}
@@ -2752,7 +2854,7 @@ class TestBatchedPathBranches:
         monkeypatch.setattr(settings, "platform_admin_email", "admin@example.com")
 
         with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx):
-            user = await get_current_user(credentials=credentials)
+            user = await get_current_user(credentials=credentials)  # pragma: allowlist secret
 
         assert user.email == "admin@example.com"
         assert user.is_admin is True
@@ -2771,7 +2873,7 @@ class TestBatchedPathBranches:
 
         with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx):
             with pytest.raises(HTTPException) as exc:
-                await get_current_user(credentials=credentials)
+                await get_current_user(credentials=credentials)  # pragma: allowlist secret
             assert exc.value.detail == "User not found"
 
     @pytest.mark.asyncio
@@ -2798,7 +2900,7 @@ class TestBatchedPathBranches:
             patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx),
             patch("mcpgateway.auth._inject_userinfo_instate") as mock_inject,
         ):
-            user = await get_current_user(credentials=credentials)
+            user = await get_current_user(credentials=credentials)  # pragma: allowlist secret
 
         mock_inject.assert_called_once()
 
@@ -2829,7 +2931,7 @@ class TestBatchedPathBranches:
             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
             patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
         ):
-            user = await get_current_user(credentials=credentials)
+            user = await get_current_user(credentials=credentials)  # pragma: allowlist secret
 
         assert user.email == "user@example.com"
 
@@ -2864,7 +2966,7 @@ class TestFallbackPathWithRequest:
             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
             patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
         ):
-            user = await get_current_user(credentials=credentials, request=request)
+            user = await get_current_user(credentials=credentials, request=request)  # pragma: allowlist secret
 
         assert request.state.token_teams == ["team-1"]
         assert request.state.team_id == "team-1"
@@ -2901,7 +3003,7 @@ class TestFallbackPathWithRequest:
             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
             patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
         ):
-            await get_current_user(credentials=credentials, request=request)
+            await get_current_user(credentials=credentials, request=request)  # pragma: allowlist secret
 
         assert request.state.token_teams == ["team-1", "team-2"]
         assert request.state.team_id is None
