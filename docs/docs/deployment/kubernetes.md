@@ -161,7 +161,7 @@ You can load your `.env` as a ConfigMap:
     EOF
 
     kubectl create configmap mcpgateway-env --from-env-file=.env
-```
+    ```
 
 > Make sure it includes `JWT_SECRET_KEY`, `PLATFORM_ADMIN_EMAIL`, etc.
 
