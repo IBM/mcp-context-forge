@@ -120,7 +120,9 @@ def test_search_plugins(mock_manager):
     all_p = service.search_plugins()
     assert all_p
     assert service.search_plugins(query="sample")
-    assert service.search_plugins(mode=PluginMode.SEQUENTIAL)
+    # Search by operator label (enforce) not framework label (sequential)
+    # because the service now returns operator labels per issue #4709 fix
+    assert service.search_plugins(mode="enforce")
     assert service.search_plugins(hook="hookA")
     assert service.search_plugins(tag="tag1")
 

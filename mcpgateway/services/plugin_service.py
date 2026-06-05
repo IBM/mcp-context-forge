@@ -12,13 +12,46 @@ statistics, and configuration from the PluginManager.
 # Standard
 from collections import defaultdict
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 # Third-Party
 from cpex.framework import PluginManager
 from cpex.framework.models import PluginMode
 
 logger = logging.getLogger(__name__)
+
+
+def _framework_mode_to_operator_label(mode: Union[str, PluginMode]) -> str:
+    """Convert cpex framework mode to operator label.
+
+    The cpex framework internally migrates legacy operator labels to framework
+    labels (enforce→sequential, permissive→transform). This helper reverses
+    that mapping so the admin API echoes the operator vocabulary that was
+    originally configured, matching the behavior of the tool plugin bindings API.
+
+    Args:
+        mode: Framework mode (PluginMode enum or string value).
+
+    Returns:
+        Operator label string (enforce, permissive, disabled, or passthrough for unknown).
+
+    Examples:
+        >>> _framework_mode_to_operator_label(PluginMode.SEQUENTIAL)
+        'enforce'
+        >>> _framework_mode_to_operator_label("transform")
+        'permissive'
+        >>> _framework_mode_to_operator_label("disabled")
+        'disabled'
+    """
+    mode_str = mode.value if isinstance(mode, PluginMode) else mode
+    # Reverse the cpex migration mapping: framework → operator
+    mapping = {
+        "sequential": "enforce",
+        "transform": "permissive",
+        "disabled": "disabled",
+    }
+    return mapping.get(mode_str, mode_str)
+
 
 # Cache import (lazy to avoid circular dependencies)
 _ADMIN_STATS_CACHE = None
@@ -95,7 +128,7 @@ class PluginService:
                 "description": plugin_config.description if plugin_config and plugin_config.description else "",
                 "author": plugin_config.author if plugin_config and plugin_config.author else "Unknown",
                 "version": plugin_config.version if plugin_config and plugin_config.version else "0.0.0",
-                "mode": plugin_ref.mode if isinstance(plugin_ref.mode, str) else plugin_ref.mode.value if plugin_ref.mode else "disabled",
+                "mode": _framework_mode_to_operator_label(plugin_ref.mode) if plugin_ref.mode else "disabled",
                 "priority": plugin_ref.priority,
                 "hooks": [hook if isinstance(hook, str) else hook.value for hook in plugin_ref.hooks] if plugin_ref.hooks else [],
                 "tags": plugin_ref.tags or [],
@@ -123,7 +156,7 @@ class PluginService:
                         "description": plugin_config.description or "",
                         "author": plugin_config.author or "Unknown",
                         "version": plugin_config.version or "0.0.0",
-                        "mode": plugin_config.mode if isinstance(plugin_config.mode, str) else plugin_config.mode.value,
+                        "mode": _framework_mode_to_operator_label(plugin_config.mode),
                         "priority": plugin_config.priority or 100,
                         "hooks": [hook if isinstance(hook, str) else hook.value for hook in plugin_config.hooks] if plugin_config.hooks else [],
                         "tags": plugin_config.tags or [],
@@ -166,7 +199,7 @@ class PluginService:
                 "description": plugin_config.description if plugin_config and plugin_config.description else "",
                 "author": plugin_config.author if plugin_config and plugin_config.author else "Unknown",
                 "version": plugin_config.version if plugin_config and plugin_config.version else "0.0.0",
-                "mode": plugin_ref.mode if isinstance(plugin_ref.mode, str) else plugin_ref.mode.value if plugin_ref.mode else "disabled",
+                "mode": _framework_mode_to_operator_label(plugin_ref.mode) if plugin_ref.mode else "disabled",
                 "priority": plugin_ref.priority,
                 "hooks": [hook if isinstance(hook, str) else hook.value for hook in plugin_ref.hooks] if plugin_ref.hooks else [],
                 "tags": plugin_ref.tags or [],
@@ -193,7 +226,7 @@ class PluginService:
                         "description": plugin_config.description or "",
                         "author": plugin_config.author or "Unknown",
                         "version": plugin_config.version or "0.0.0",
-                        "mode": plugin_config.mode if isinstance(plugin_config.mode, str) else plugin_config.mode.value,
+                        "mode": _framework_mode_to_operator_label(plugin_config.mode),
                         "priority": plugin_config.priority or 100,
                         "hooks": [hook if isinstance(hook, str) else hook.value for hook in plugin_config.hooks] if plugin_config.hooks else [],
                         "tags": plugin_config.tags or [],
