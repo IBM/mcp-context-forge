@@ -93,7 +93,7 @@ from mcpgateway.common.query_params import (
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings, UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import EmailApiToken, EmailTeam, extract_json_field
+from mcpgateway.db import EmailApiToken, EmailTeam, EmailUser, extract_json_field
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
 from mcpgateway.db import Prompt as DbPrompt
@@ -944,6 +944,7 @@ async def _parse_gateway_data_from_request(request: Request) -> dict[str, Any]:
             oauth_username = str(data.get("oauth_username", ""))
             oauth_password = str(data.get("oauth_password", ""))
             oauth_scopes_str = str(data.get("oauth_scopes", ""))
+            oauth_audience = str(data.get("oauth_audience", ""))
 
             # If any OAuth field is provided, assemble oauth_config
             if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
@@ -966,6 +967,9 @@ async def _parse_gateway_data_from_request(request: Request) -> dict[str, Any]:
                     oauth_config["username"] = oauth_username
                 if oauth_password:
                     oauth_config["password"] = oauth_password
+                # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
+                if oauth_audience:
+                    oauth_config["audience"] = oauth_audience
                 if oauth_scopes_str:
                     scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
                     if scopes:
@@ -3022,6 +3026,11 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
                     oauth_config["scopes_supported"] = scopes_str.split()
                 if token_endpoint:
                     oauth_config["token_endpoint"] = token_endpoint
+
+                # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
+                oauth_audience = str(form.get("oauth_audience", "")).strip()
+                if oauth_audience:
+                    oauth_config["audience"] = oauth_audience
             else:
                 # Invalid or incomplete OAuth configuration; disable OAuth to avoid inconsistent state
                 LOGGER.warning(
@@ -3179,6 +3188,11 @@ async def admin_edit_server(
                     oauth_config["scopes_supported"] = scopes_str.split()
                 if token_endpoint:
                     oauth_config["token_endpoint"] = token_endpoint
+
+                # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
+                oauth_audience = str(form.get("oauth_audience", "")).strip()
+                if oauth_audience:
+                    oauth_config["audience"] = oauth_audience
             else:
                 # Invalid or incomplete OAuth configuration; disable OAuth to avoid inconsistent state
                 LOGGER.warning(
@@ -4137,16 +4151,17 @@ async def admin_ui(
                             auth_provider = "keycloak"
 
             # Generate a lightweight session JWT token
+            email_user = db.query(EmailUser).filter(EmailUser.email == admin_email).first()
+            sub_claim = str(email_user.id) if email_user else admin_email
             now = datetime.now(timezone.utc)
             payload = {
-                "sub": admin_email,
+                "sub": sub_claim,
                 "iss": settings.jwt_issuer,
                 "aud": settings.jwt_audience,
                 "iat": int(now.timestamp()),
                 "exp": int((now + timedelta(minutes=settings.token_expiry)).timestamp()),
                 "jti": str(uuid.uuid4()),
                 "auth_provider": auth_provider,
-                "user": {"email": admin_email, "full_name": full_name, "is_admin": is_admin_flag, "auth_provider": auth_provider},
                 "token_use": "session",  # nosec B105 - token type marker, not a password
                 "scopes": {"server_id": None, "permissions": ["*"] if is_admin_flag else [], "ip_restrictions": [], "time_restrictions": {}},
             }
@@ -4780,7 +4795,7 @@ async def _admin_logout(request: Request) -> Response:
 
                 payload = await verify_jwt_token_cached(token, request)
                 jti = payload.get("jti")
-                email = payload.get("email", "admin")
+                user_id = payload.get("sub") or payload.get("email", "admin")
 
                 if jti:
                     blocklist_service = get_token_blocklist_service()
@@ -4797,8 +4812,8 @@ async def _admin_logout(request: Request) -> Response:
                     if last_activity_ts:
                         last_activity = datetime.fromtimestamp(last_activity_ts, tz=timezone.utc)
 
-                    blocklist_service.revoke_token(jti=jti, revoked_by=email, reason="admin_logout", token_expiry=token_expiry, last_activity=last_activity)
-                    LOGGER.info(f"Token revoked during admin logout: jti={jti}", extra={"security_event": "admin_logout_token_revoked", "security_severity": "low", "jti": jti, "user_id": email})
+                    blocklist_service.revoke_token(jti=jti, revoked_by=user_id, reason="admin_logout", token_expiry=token_expiry, last_activity=last_activity)
+                    LOGGER.info(f"Token revoked during admin logout: jti={jti}", extra={"security_event": "admin_logout_token_revoked", "security_severity": "low", "jti": jti, "user_id": user_id})
             except Exception as revoke_error:
                 # Log but don't fail logout if token revocation fails
                 LOGGER.warning(f"Failed to revoke token during admin logout: {revoke_error}")
@@ -5063,9 +5078,6 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                     # pylint: disable=import-outside-toplevel
                     # Third-Party
                     from sqlalchemy import inspect as sa_inspect
-
-                    # First-Party
-                    from mcpgateway.db import EmailUser
 
                     insp = sa_inspect(current_user)
                     if insp.transient or insp.detached:
@@ -12787,6 +12799,7 @@ async def admin_edit_gateway(
             oauth_username = str(form.get("oauth_username", ""))
             oauth_password = str(form.get("oauth_password", ""))
             oauth_scopes_str = str(form.get("oauth_scopes", ""))
+            oauth_audience = str(form.get("oauth_audience", "")).strip()
 
             # If any OAuth field is provided, assemble oauth_config
             if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
@@ -12814,6 +12827,10 @@ async def admin_edit_gateway(
                     oauth_config["username"] = oauth_username
                 if oauth_password:
                     oauth_config["password"] = oauth_password
+
+                # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
+                if oauth_audience:
+                    oauth_config["audience"] = oauth_audience
 
                 # Parse scopes (comma or space separated)
                 if oauth_scopes_str:
@@ -15972,6 +15989,7 @@ async def admin_add_a2a_agent(
             oauth_username = str(form.get("oauth_username", ""))
             oauth_password = str(form.get("oauth_password", ""))
             oauth_scopes_str = str(form.get("oauth_scopes", ""))
+            oauth_audience = str(form.get("oauth_audience", "")).strip()
 
             # If any OAuth field is provided, assemble oauth_config
             if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
@@ -15999,6 +16017,10 @@ async def admin_add_a2a_agent(
                     oauth_config["username"] = oauth_username
                 if oauth_password:
                     oauth_config["password"] = oauth_password
+
+                # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
+                if oauth_audience:
+                    oauth_config["audience"] = oauth_audience
 
                 # Parse scopes (comma or space separated)
                 if oauth_scopes_str:
@@ -16237,6 +16259,7 @@ async def admin_edit_a2a_agent(
             oauth_username = str(form.get("oauth_username", ""))
             oauth_password = str(form.get("oauth_password", ""))
             oauth_scopes_str = str(form.get("oauth_scopes", ""))
+            oauth_audience = str(form.get("oauth_audience", "")).strip()
 
             # If any OAuth field is provided, assemble oauth_config
             if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
@@ -16264,6 +16287,10 @@ async def admin_edit_a2a_agent(
                     oauth_config["username"] = oauth_username
                 if oauth_password:
                     oauth_config["password"] = oauth_password
+
+                # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
+                if oauth_audience:
+                    oauth_config["audience"] = oauth_audience
 
                 # Parse scopes (comma or space separated)
                 if oauth_scopes_str:

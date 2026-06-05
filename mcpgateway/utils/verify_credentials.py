@@ -58,6 +58,7 @@ import binascii
 from time import monotonic
 from typing import Any, Optional, Union
 from urllib.parse import urlsplit, urlunsplit
+import uuid
 
 # Third-Party
 from fastapi import Cookie, Depends, HTTPException, Request, status
@@ -497,7 +498,7 @@ async def _enforce_revocation_and_active_user(payload: dict) -> None:
             or strict user-in-db mode rejects a missing user.
     """
     # First-Party
-    from mcpgateway.auth import _check_token_revoked_sync, _get_user_by_email_sync
+    from mcpgateway.auth import _check_token_revoked_sync, _get_email_by_id_sync, _get_user_by_email_sync
 
     jti = payload.get("jti")
     if jti:
@@ -515,6 +516,15 @@ async def _enforce_revocation_and_active_user(payload: dict) -> None:
 
     try:
         user = await asyncio.to_thread(_get_user_by_email_sync, username)
+        if user is None and payload.get("token_use") == "session":
+            # Session tokens use UUID as sub; resolve to email first
+            try:
+                uuid.UUID(username)
+                resolved = await asyncio.to_thread(_get_email_by_id_sync, username)
+                if resolved:
+                    user = await asyncio.to_thread(_get_user_by_email_sync, resolved)
+            except ValueError:
+                pass  # Not a UUID, skip resolution
     except Exception as exc:
         logger.warning("User status check failed for %s: %s", username, exc)
         return
@@ -1396,6 +1406,14 @@ async def require_admin_auth(
                         # Get user from database
                         auth_service = EmailAuthService(db_session)
                         current_user = await auth_service.get_user_by_email(username)
+                        if not current_user:
+                            # Session tokens use UUID as sub; resolve by ID
+                            import re as _re  # pylint: disable=import-outside-toplevel  # nosec B404
+
+                            if _re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", username, _re.IGNORECASE):
+                                from mcpgateway.db import EmailUser as _EmailUser  # pylint: disable=import-outside-toplevel
+
+                                current_user = db_session.query(_EmailUser).filter(_EmailUser.id == username).first()
 
                         if current_user and not getattr(current_user, "is_active", True):
                             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account disabled")

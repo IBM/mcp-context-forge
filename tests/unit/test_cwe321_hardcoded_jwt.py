@@ -113,16 +113,14 @@ class TestBootstrapIsAdmin:
         """Forged token with no is_admin claim must not receive is_admin=True."""
         from mcpgateway.auth import _bootstrap_platform_admin_user
 
-        payload = self._make_payload()  # no is_admin claim
-        user = _bootstrap_platform_admin_user(email="admin@example.com", payload=payload)
+        user = _bootstrap_platform_admin_user(email="regular-user@example.com")
         assert user.is_admin is False
 
     def test_bootstrap_with_is_admin_true_claim_grants_admin(self):
-        """Legitimate token with is_admin=true claim retains admin status."""
+        """Admin email receives admin status."""
         from mcpgateway.auth import _bootstrap_platform_admin_user
 
-        payload = self._make_payload(extra={"is_admin": True})
-        user = _bootstrap_platform_admin_user(email="admin@example.com", payload=payload)
+        user = _bootstrap_platform_admin_user(email="admin@example.com")
         assert user.is_admin is True
 
 
