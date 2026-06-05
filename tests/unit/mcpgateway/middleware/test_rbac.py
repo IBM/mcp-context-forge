@@ -168,7 +168,7 @@ async def test_cookie_auth_allowed_with_oauth_callback_referer():
         result = await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token="token123")
     assert result["email"] == "user@example.com"
 
-    
+
 async def test_cookie_auth_allowed_for_same_origin_react_app_fetch():
     """Same-origin React SPA fetches may use cookie auth for API requests."""
     mock_request = MagicMock(spec=Request)

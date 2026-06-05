@@ -270,7 +270,7 @@ class TestLogin:
             mock_generate.assert_called_once()
             mock_set_cookie.assert_called_once()
 
-    
+
 
     @pytest.mark.asyncio
     async def test_login_with_plain_username_fails(self, mock_request, mock_db):
