@@ -6,9 +6,9 @@ Comprehensive MCP Client Test for Token Scoping RBAC.
 Current tool state (5 tools total):
 - fast-time-get-system-time: visibility=team, team_id=12c794d92318414fbc6829bd455bee6d
 - fast-time-convert-time: visibility=public
-- fast-test-get-system-time: visibility=public
-- fast-test-get-stats: visibility=public
-- fast-test-echo: visibility=public
+- fast-time-get-system-time: visibility=public
+- fast-time-get-stats: visibility=public
+- fast-time-echo: visibility=public
 
 Security Model Notes:
 - Users must exist in the database for non-admin token validation
@@ -154,7 +154,7 @@ async def run_tests(base_url: str, team_id: str):
     print(f"\nCurrent tool state (5 tools):")
     print(f"  - fast-time-get-system-time: visibility=TEAM")
     print(f"  - fast-time-convert-time: visibility=public")
-    print(f"  - fast-test-*: 3 tools, visibility=public")
+    print(f"  - fast-time-*: 3 tools, visibility=public")
 
     results = []
 

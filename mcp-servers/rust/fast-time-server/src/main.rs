@@ -1,4 +1,4 @@
-// fast-test-server - Ultra-fast MCP server for performance testing
+// fast-time-server - Ultra-fast MCP server for performance testing
 //
 // Copyright 2025
 // SPDX-License-Identifier: Apache-2.0
@@ -34,7 +34,7 @@ use tracing::trace;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 const DEFAULT_BIND_ADDRESS: &str = "0.0.0.0:9080";
-const APP_NAME: &str = "fast-test-server";
+const APP_NAME: &str = "fast-time-server";
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 const SESSION_HEADER: &str = "mcp-session-id";
@@ -578,9 +578,9 @@ fn mcp_id_json(id: Option<&serde_json::Value>) -> String {
 fn mcp_initialize_response(id: Option<&serde_json::Value>) -> Response {
     let mut headers = mcp_base_headers();
     let session_id = SESSION_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let session_id = format!("fast-test-{session_id}");
+    let session_id = format!("fast-time-{session_id}");
     let session_header = HeaderValue::from_str(&session_id)
-        .unwrap_or_else(|_| HeaderValue::from_static("fast-test"));
+        .unwrap_or_else(|_| HeaderValue::from_static("fast-time"));
     remember_session(session_id);
     headers.insert(SESSION_HEADER, session_header);
     mcp_json_response(

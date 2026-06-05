@@ -112,7 +112,7 @@ redisCommander:
 minio:
   enabled: false
 
-# Enable testing profile (fast-test-server + auto-registration)
+# Enable testing profile (fast-time-server + auto-registration)
 testing:
   enabled: true
   registration:

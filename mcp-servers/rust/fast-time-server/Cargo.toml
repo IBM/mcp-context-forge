@@ -1,5 +1,5 @@
 [package]
-name = "fast-test-server"
+name = "fast-time-server"
 version = "0.1.0"
 edition = "2021"
 description = "Ultra-fast MCP test server with echo and time tools"

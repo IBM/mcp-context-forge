@@ -20,7 +20,7 @@ mcp-servers/
 │   ├── qr_code_server/            # QR code generation
 │   └── url_to_markdown_server/    # URL to markdown conversion
 ├── rust/                          # Rust MCP servers
-│   ├── fast-test-server/          # Fast testing server
+│   ├── fast-time-server/          # Fast testing server
 │   └── filesystem-server/         # Filesystem operations
 ├── templates/                     # Cookiecutter scaffolding templates
 │   ├── go/                        # Go server template

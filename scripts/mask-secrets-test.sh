@@ -204,7 +204,7 @@ TOOL_NAME="secret-test-2760-${RUN_ID}"
 TOOL_RESP=$(api POST "/tools" "$OWNER_T" "{
     \"tool\": {
         \"name\": \"$TOOL_NAME\",
-        \"url\": \"http://fast_test_server:8880/test-tool\",
+        \"url\": \"http://fast_time_server:8880/test-tool\",
         \"description\": \"Test tool with secret headers for issue 2760\",
         \"integration_type\": \"REST\",
         \"request_type\": \"POST\",

@@ -291,11 +291,11 @@ flowchart TD
     The Helm chart defaults to strict SSRF settings (`SSRF_ALLOW_PRIVATE_NETWORKS=false`,
     `SSRF_ALLOWED_NETWORKS=[]`). This is a good production baseline.
 
-    If you enable testing registrations for fast-time / fast-test, the registration jobs use
+    If you enable testing registrations for fast-time / fast-time, the registration jobs use
     private Service URLs:
 
     - `http://<release>-mcp-fast-time-server:80/http`
-    - `http://<release>-fast-test-server:8880/mcp`
+    - `http://<release>-fast-time-server:8880/mcp`
 
     Under strict defaults, gateway creation can fail with `422` ("private network address blocked").
 
@@ -335,7 +335,7 @@ flowchart TD
         ```bash
         kubectl get jobs -n mcp-private | grep register
         kubectl logs -n mcp-private job/mcp-stack-register-fast-time
-        kubectl logs -n mcp-private job/mcp-stack-register-fast-test
+        kubectl logs -n mcp-private job/mcp-stack-register-fast-time
         ```
 
 ---

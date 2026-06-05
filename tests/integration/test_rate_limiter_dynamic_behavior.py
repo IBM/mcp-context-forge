@@ -21,7 +21,7 @@ Requirements:
     - Running gateway (docker-compose with 3 replicas)
     - NGINX load balancer on port 8080
     - Redis available
-    - fast-test-server or fast-time-server registered
+    - fast-time-server or fast-time-server registered
 
 Usage:
     uv run pytest tests/integration/test_rate_limiter_dynamic_behavior.py -v --with-integration

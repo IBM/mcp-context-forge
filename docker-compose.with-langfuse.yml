@@ -57,10 +57,10 @@ services:
   # so end-to-end tool-call smoke flows can generate traces without relying
   # on stale registrations from the separate testing profile.
   # ──────────────────────────────────────────────────────────────────────
-  fast_test_server:
+  fast_time_server:
     profiles: []
 
-  register_fast_test:
+  register_fast_time:
     profiles: []
 
   a2a_echo_agent:

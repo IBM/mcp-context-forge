@@ -705,7 +705,7 @@ Observed behavior:
     produced `20` failures in `1,842,181` requests on the richer `fast_time`
     server profile.
 - After isolating the upstreams:
-  - the simpler `fast_test` server reduced the same class of load to `3`
+  - the simpler `fast_time` server reduced the same class of load to `3`
     failures in `1,042,973` requests, all plain `502`s
   - a controlled `fast_time` run with
     `MCP_RUST_USE_RMCP_UPSTREAM_CLIENT=false` removed the `HTTP 0` / ~30s tail

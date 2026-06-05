@@ -1064,12 +1064,12 @@ plugins:
                 resource_types: ["*"]
                 resource_ids: ["__health__"]
                 reason: "Health check bypass – this deny rule ensures the health endpoint rule doesn't accidentally allow real traffic"
-              - id: "allow.all-users-fast-test-echo"
+              - id: "allow.all-users-fast-time-echo"
                 roles: ["*"]
                 actions: ["tools.invoke.*echo"]
                 resource_types: ["tool"]
                 resource_ids: ["*echo"]
-                reason: "All users may invoke the fast-test-echo tool (glob matches server-prefixed name)"
+                reason: "All users may invoke the fast-time-echo tool (glob matches server-prefixed name)"
         - name: mac
           enabled: false
           priority: 2

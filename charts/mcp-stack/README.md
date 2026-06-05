@@ -39,7 +39,7 @@ When you enable testing registration jobs (`testing.fastTime.register.enabled` o
 in-cluster service URLs:
 
 - `fast-time`: `http://<release>-mcp-fast-time-server:80/http`
-- `fast-test`: `http://<release>-fast-test-server:8880/mcp`
+- `fast-time`: `http://<release>-fast-time-server:8880/mcp`
 
 Those destinations are private cluster addresses and will be blocked under strict SSRF defaults.
 
@@ -1434,7 +1434,7 @@ When `RATELIMITER_REDIS_URL` is not set during start time, the gateway automatic
 | testing.fastTime.register.virtualServerName | string | `"Fast Time Server"` |  |
 | testing.fastTime.register.virtualServerDescription | string | `"Virtual server exposing Fast Time MCP tools/resources/prompts"` |  |
 | testing.fastTestServer.enabled | bool | `true` |  |
-| testing.fastTestServer.image.repository | string | `"mcpgateway/fast-test-server"` |  |
+| testing.fastTestServer.image.repository | string | `"mcpgateway/fast-time-server"` |  |
 | testing.fastTestServer.image.tag | string | `"latest"` |  |
 | testing.fastTestServer.image.pullPolicy | string | `"IfNotPresent"` |  |
 | testing.fastTestServer.service.type | string | `"ClusterIP"` |  |
@@ -1462,7 +1462,7 @@ When `RATELIMITER_REDIS_URL` is not set during start time, the gateway automatic
 | testing.fastTestServer.probes.liveness.successThreshold | int | `1` |  |
 | testing.fastTestServer.probes.liveness.failureThreshold | int | `3` |  |
 | testing.fastTest.register.enabled | bool | `true` |  |
-| testing.fastTest.register.gatewayName | string | `"fast_test"` |  |
+| testing.fastTest.register.gatewayName | string | `"fast_time"` |  |
 | testing.fastTest.register.gatewayPath | string | `"/mcp"` |  |
 | testing.fastTest.register.transport | string | `"STREAMABLEHTTP"` |  |
 | testing.a2aEchoAgent.enabled | bool | `true` |  |

@@ -12,14 +12,14 @@ To cover a different plugin, copy this file and swap the plugin name, trigger
 input, and expected-when-enforcing values — the surrounding propagation and
 burst-cycle machinery is intentionally self-contained here.
 
-Uses the ReplaceBadWordsPlugin (SearchReplacePlugin) with the fast-test-echo
+Uses the ReplaceBadWordsPlugin (SearchReplacePlugin) with the fast-time-echo
 tool: the plugin replaces "crap" → "crud" → "yikes" in tool arguments and
 responses. When disabled, the echo returns the original text unchanged.
 
 Requirements:
     - Running gateway (docker-compose with 3 replicas)
     - NGINX load balancer on port 8080
-    - fast-test-server registered (provides echo tool)
+    - fast-time-server registered (provides echo tool)
     - ReplaceBadWordsPlugin configured in plugins/config.yaml with the above
       replacement rules
 
@@ -124,7 +124,7 @@ def _call_echo(server_id: str, message: str) -> str:
         "id": str(uuid.uuid4()),
         "method": "tools/call",
         "params": {
-            "name": "fast-test-echo",
+            "name": "fast-time-echo",
             "arguments": {"message": message},
         },
     }
