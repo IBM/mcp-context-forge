@@ -9,12 +9,6 @@ authors = ["ContextForge Contributors"]
 [workspace]
 
 [dependencies]
-# MCP protocol implementation
-rmcp = { version = "1.7.0", features = [
-    "server",
-    "macros",
-] }
-
 # Async runtime
 tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread", "signal", "time"] }
 
@@ -24,9 +18,6 @@ axum = "0.8.9"
 # Serialization
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
-
-# Schema generation (re-exported via rmcp with server feature)
-schemars = "1.2.1"
 
 # Random number generation (normal distribution for delay jitter)
 rand = "0.10.1"
@@ -42,6 +33,7 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 # Time handling
 chrono = { version = "0.4.44", features = ["serde"] }
 chrono-tz = "0.10.4"
+uuid = { version = "1.18.1", features = ["v4"] }
 
 [profile.release]
 lto = true

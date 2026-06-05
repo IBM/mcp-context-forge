@@ -20,273 +20,26 @@ use chrono::{DateTime, FixedOffset, SecondsFormat, TimeZone, Utc};
 use chrono_tz::Tz;
 use rand_distr::Distribution;
 use rand_distr::Normal;
-use rmcp::{
-    handler::server::router::tool::ToolRouter, model::*, schemars, service::RequestContext, tool,
-    tool_handler, tool_router, ErrorData as McpError, RoleServer, ServerHandler,
-};
 use serde_json::json;
 use std::collections::HashSet;
 use std::env;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, RwLock};
+use std::sync::{LazyLock, RwLock};
 use tracing::info;
 use tracing::trace;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use uuid::Uuid;
 
 const DEFAULT_BIND_ADDRESS: &str = "0.0.0.0:9080";
 const APP_NAME: &str = "fast-time-server";
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 const SESSION_HEADER: &str = "mcp-session-id";
+const MAX_ACTIVE_SESSIONS: usize = 10_000;
+const MAX_DELAY_MS: u64 = 60_000;
 static DIRECT_REQUEST_COUNT: AtomicU64 = AtomicU64::new(0);
-static SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
 static ACTIVE_SESSIONS: LazyLock<RwLock<HashSet<String>>> =
     LazyLock::new(|| RwLock::new(HashSet::new()));
-
-// ============================================================================
-// Request/Response Schemas
-// ============================================================================
-
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct EchoRequest {
-    /// The message to echo back
-    pub message: String,
-    /// Optional delay in milliseconds before responding (default 0)
-    #[serde(default)]
-    pub delay: Option<u64>,
-    /// Optional standard deviation in milliseconds for a normal distribution around the delay mean (default 0 = no randomness)
-    #[serde(default)]
-    pub delay_stddev: Option<f64>,
-}
-
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct GetTimeRequest {
-    /// IANA timezone name (e.g., 'America/New_York', 'Europe/London'). Defaults to UTC.
-    #[serde(default)]
-    pub timezone: Option<String>,
-}
-
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct ConvertTimeRequest {
-    /// Time to convert in RFC3339 format or common formats like '2006-01-02 15:04:05'
-    pub time: String,
-    /// Source IANA timezone name
-    pub source_timezone: String,
-    /// Target IANA timezone name
-    pub target_timezone: String,
-}
-
-/// Shape advertised by schema_* validation fixtures. `recognitionId` is the
-/// only required field; the handlers deliberately return payloads that match
-/// or violate this schema to exercise both branches of the gateway's output
-/// schema validator (including the error-response skip path from #4202).
-#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SchemaFixtureResponse {
-    pub recognition_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-}
-
-// ============================================================================
-// FastTestServer Implementation
-// ============================================================================
-
-#[derive(Clone)]
-pub struct FastTestServer {
-    #[allow(dead_code)]
-    tool_router: ToolRouter<FastTestServer>,
-    request_count: Arc<AtomicU64>,
-}
-
-impl Default for FastTestServer {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[tool_router]
-impl FastTestServer {
-    pub fn new() -> Self {
-        Self {
-            tool_router: Self::tool_router(),
-            request_count: Arc::new(AtomicU64::new(0)),
-        }
-    }
-
-    /// Echo back whatever message is sent
-    #[tool(
-        description = "Echo back the provided message. Useful for testing connectivity and
-        latency. Optionally delay the response by a specified number of milliseconds. If
-        delay_stddev is provided (and gt 0), the actual delay is sampled from a normal distribution
-        with mean=delay and the given standard deviation, clamped to  0."
-    )]
-    async fn echo(
-        &self,
-        rmcp::handler::server::wrapper::Parameters(req): rmcp::handler::server::wrapper::Parameters<
-            EchoRequest,
-        >,
-    ) -> Result<CallToolResult, McpError> {
-        self.request_count.fetch_add(1, Ordering::Relaxed);
-
-        if let Some(ms) = req.delay {
-            if ms > 0 {
-                let actual_ms = compute_delay(ms, req.delay_stddev);
-                tokio::time::sleep(std::time::Duration::from_millis(actual_ms)).await;
-            }
-        }
-
-        Ok(CallToolResult::success(vec![Content::text(&req.message)]))
-    }
-
-    /// Get current system time in specified timezone
-    #[tool(
-        description = "Get current system time in the specified IANA timezone. Defaults to UTC if no timezone provided."
-    )]
-    async fn get_system_time(
-        &self,
-        rmcp::handler::server::wrapper::Parameters(req): rmcp::handler::server::wrapper::Parameters<
-            GetTimeRequest,
-        >,
-    ) -> Result<CallToolResult, McpError> {
-        self.request_count.fetch_add(1, Ordering::Relaxed);
-
-        let tz_name = req.timezone.as_deref().unwrap_or("UTC");
-
-        // Get current time in UTC
-        let now_utc: DateTime<Utc> = Utc::now();
-
-        // Parse timezone and convert
-        let result = match parse_timezone(tz_name) {
-            Ok(timezone) => timezone.format_utc(now_utc),
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Invalid timezone '{}': {}",
-                    tz_name, e
-                ))]));
-            }
-        };
-
-        Ok(CallToolResult::success(vec![Content::text(result)]))
-    }
-
-    /// Convert a time value between two IANA timezones
-    #[tool(
-        description = "Convert a time value from a source IANA timezone to a target IANA timezone. Accepts RFC3339 or common formats like '2006-01-02 15:04:05'."
-    )]
-    async fn convert_time(
-        &self,
-        rmcp::handler::server::wrapper::Parameters(req): rmcp::handler::server::wrapper::Parameters<
-            ConvertTimeRequest,
-        >,
-    ) -> Result<CallToolResult, McpError> {
-        self.request_count.fetch_add(1, Ordering::Relaxed);
-
-        let source_timezone = match parse_timezone(&req.source_timezone) {
-            Ok(timezone) => timezone,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "invalid source timezone: {}",
-                    e
-                ))]));
-            }
-        };
-        let target_timezone = match parse_timezone(&req.target_timezone) {
-            Ok(timezone) => timezone,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "invalid target timezone: {}",
-                    e
-                ))]));
-            }
-        };
-
-        let parsed = parse_time_in_timezone(&req.time, &source_timezone).map_err(|e| {
-            // Surface as isError=true so the gateway forwards the message as-is.
-            McpError::invalid_params(e, None)
-        });
-        let parsed = match parsed {
-            Ok(p) => p,
-            Err(_) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "invalid time format: {}",
-                    req.time
-                ))]));
-            }
-        };
-
-        let converted = target_timezone.format_utc(parsed);
-        Ok(CallToolResult::success(vec![Content::text(converted)]))
-    }
-
-    /// Always returns isError=true while declaring an outputSchema.
-    /// Exercises the gateway's schema-validation skip path for error
-    /// responses (MCP specification #4202).
-    #[tool(
-        description = "Always returns isError=true. Declares an outputSchema the error text intentionally does not satisfy.",
-        output_schema = rmcp::handler::server::tool::schema_for_type::<SchemaFixtureResponse>()
-    )]
-    async fn schema_error(&self) -> Result<CallToolResult, McpError> {
-        self.request_count.fetch_add(1, Ordering::Relaxed);
-        Ok(CallToolResult::error(vec![Content::text(
-            "You cannot send more than 200 points",
-        )]))
-    }
-
-    /// Returns a success payload that conforms to the declared outputSchema,
-    /// surfaced as both text and structured content. Exercises the positive
-    /// branch of output-schema validation (MCP SDK + gateway both pass).
-    #[tool(
-        description = "Returns a JSON payload that conforms to the declared outputSchema.",
-        output_schema = rmcp::handler::server::tool::schema_for_type::<SchemaFixtureResponse>()
-    )]
-    async fn schema_success(&self) -> Result<CallToolResult, McpError> {
-        self.request_count.fetch_add(1, Ordering::Relaxed);
-        Ok(CallToolResult::structured(json!({
-            "recognitionId": "rec-123",
-            "message": "ok",
-        })))
-    }
-
-    /// Get server statistics
-    #[tool(description = "Get server statistics including request count and uptime.")]
-    async fn get_stats(&self) -> Result<CallToolResult, McpError> {
-        let count = self.request_count.load(Ordering::Relaxed);
-
-        let stats = json!({
-            "server": APP_NAME,
-            "version": APP_VERSION,
-            "requests_handled": count,
-        });
-
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(&stats).unwrap_or_default(),
-        )]))
-    }
-}
-
-#[tool_handler]
-impl ServerHandler for FastTestServer {
-    fn get_info(&self) -> ServerInfo {
-        let mut info = ServerInfo::default();
-        info.protocol_version = ProtocolVersion::LATEST;
-        info.capabilities = ServerCapabilities::builder().enable_tools().build();
-        info.server_info = Implementation::from_build_env();
-        info.instructions = Some(
-            "Ultra-fast MCP test server. Tools: echo, get_system_time, convert_time, get_stats, plus schema_error and schema_success validation fixtures.".to_string()
-        );
-        info
-    }
-
-    async fn initialize(
-        &self,
-        _request: InitializeRequestParams,
-        _context: RequestContext<RoleServer>,
-    ) -> Result<InitializeResult, McpError> {
-        info!("Client connected to {}", APP_NAME);
-        Ok(self.get_info())
-    }
-}
 
 // ============================================================================
 // Delay Helpers
@@ -300,10 +53,16 @@ fn compute_delay(mean_ms: u64, stddev: Option<f64>) -> u64 {
             let dist = Normal::new(mean_ms as f64, sd)
                 .unwrap_or_else(|_| Normal::new(mean_ms as f64, 0.0).unwrap());
             let sample = dist.sample(&mut rand::rng());
-            // Clamp to >= 0 (negative delays make no sense)
-            sample.round().max(0.0) as u64
+            sample.round().clamp(0.0, MAX_DELAY_MS as f64) as u64
         }
         _ => mean_ms,
+    }
+}
+
+fn validate_delay(delay: Option<u64>) -> Result<Option<u64>, &'static str> {
+    match delay {
+        Some(ms) if ms > MAX_DELAY_MS => Err("delay exceeds the 60000 ms limit"),
+        value => Ok(value),
     }
 }
 
@@ -328,7 +87,7 @@ impl ParsedTimezone {
         }
     }
 
-    fn from_local_datetime(self, naive: &chrono::NaiveDateTime) -> Option<DateTime<Utc>> {
+    fn local_datetime_to_utc(self, naive: &chrono::NaiveDateTime) -> Option<DateTime<Utc>> {
         match self {
             Self::Fixed(offset) => offset
                 .from_local_datetime(naive)
@@ -378,13 +137,13 @@ fn parse_time_in_timezone(
     }
     for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"] {
         if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(time_str, fmt) {
-            if let Some(dt) = timezone.from_local_datetime(&naive) {
+            if let Some(dt) = timezone.local_datetime_to_utc(&naive) {
                 return Ok(dt);
             }
         }
         if let Ok(date) = chrono::NaiveDate::parse_from_str(time_str, fmt) {
             if let Some(naive) = date.and_hms_opt(0, 0, 0) {
-                if let Some(dt) = timezone.from_local_datetime(&naive) {
+                if let Some(dt) = timezone.local_datetime_to_utc(&naive) {
                     return Ok(dt);
                 }
             }
@@ -557,17 +316,8 @@ async fn mcp_handler(
     }
 }
 
-fn mcp_base_headers() -> HeaderMap {
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/json"),
-    );
-    headers
-}
-
-fn mcp_json_response(headers: HeaderMap, body: String) -> Response {
-    (headers, body).into_response()
+fn mcp_json_response(body: String) -> Response {
+    ([(header::CONTENT_TYPE, "application/json")], body).into_response()
 }
 
 fn mcp_id_json(id: Option<&serde_json::Value>) -> String {
@@ -576,33 +326,44 @@ fn mcp_id_json(id: Option<&serde_json::Value>) -> String {
 }
 
 fn mcp_initialize_response(id: Option<&serde_json::Value>) -> Response {
-    let mut headers = mcp_base_headers();
-    let session_id = SESSION_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let session_id = format!("fast-time-{session_id}");
+    let session_id = Uuid::new_v4().to_string();
     let session_header = HeaderValue::from_str(&session_id)
         .unwrap_or_else(|_| HeaderValue::from_static("fast-time"));
-    remember_session(session_id);
-    headers.insert(SESSION_HEADER, session_header);
-    mcp_json_response(
-        headers,
-        format!(
-            r#"{{"jsonrpc":"2.0","id":{},"result":{{"protocolVersion":"{}","capabilities":{{"tools":{{}}}},"serverInfo":{{"name":"{}","version":"{}"}},"instructions":"Ultra-fast MCP test server."}}}}"#,
-            mcp_id_json(id),
-            MCP_PROTOCOL_VERSION,
-            APP_NAME,
-            APP_VERSION
-        ),
-    )
-}
-
-fn mcp_session_id(headers: &HeaderMap) -> Option<&str> {
-    headers.get(SESSION_HEADER)?.to_str().ok()
-}
-
-fn remember_session(session_id: String) {
-    if let Ok(mut sessions) = ACTIVE_SESSIONS.write() {
-        sessions.insert(session_id);
+    if !remember_session(session_id) {
+        return mcp_error_response_with_status(
+            StatusCode::SERVICE_UNAVAILABLE,
+            id,
+            -32000,
+            "Maximum active sessions reached",
+            Some(json!({ "max_sessions": MAX_ACTIVE_SESSIONS })),
+        );
     }
+    let mut response = mcp_json_response(format!(
+        r#"{{"jsonrpc":"2.0","id":{},"result":{{"protocolVersion":"{}","capabilities":{{"tools":{{}}}},"serverInfo":{{"name":"{}","version":"{}"}},"instructions":"Ultra-fast MCP test server."}}}}"#,
+        mcp_id_json(id),
+        MCP_PROTOCOL_VERSION,
+        APP_NAME,
+        APP_VERSION
+    ));
+    response
+        .headers_mut()
+        .insert(SESSION_HEADER, session_header);
+    response
+}
+
+fn remember_session(session_id: String) -> bool {
+    if let Ok(mut sessions) = ACTIVE_SESSIONS.write() {
+        remember_session_in(&mut sessions, session_id)
+    } else {
+        false
+    }
+}
+
+fn remember_session_in(sessions: &mut HashSet<String>, session_id: String) -> bool {
+    if sessions.len() >= MAX_ACTIVE_SESSIONS {
+        return false;
+    }
+    sessions.insert(session_id)
 }
 
 fn remove_session(session_id: &str) -> bool {
@@ -628,13 +389,14 @@ fn mcp_validate_active_session(headers: &HeaderMap) -> Result<(), StatusCode> {
 }
 
 fn mcp_tools_list_response(id: Option<&serde_json::Value>) -> Response {
-    mcp_json_response(
-        mcp_base_headers(),
-        format!(
-            r#"{{"jsonrpc":"2.0","id":{},"result":{{"tools":[{{"name":"echo","description":"Echo back the provided message.","inputSchema":{{"type":"object","properties":{{"message":{{"type":"string"}},"delay":{{"type":"integer","minimum":0}},"delay_stddev":{{"type":"number","minimum":0}}}},"required":["message"]}}}},{{"name":"get_system_time","description":"Get current system time in the specified IANA timezone.","inputSchema":{{"type":"object","properties":{{"timezone":{{"type":"string"}}}}}}}},{{"name":"convert_time","description":"Convert a time value from a source IANA timezone to a target IANA timezone.","inputSchema":{{"type":"object","properties":{{"time":{{"type":"string"}},"source_timezone":{{"type":"string"}},"target_timezone":{{"type":"string"}}}},"required":["time","source_timezone","target_timezone"]}}}},{{"name":"schema_error","description":"Always returns isError=true.","inputSchema":{{"type":"object","properties":{{}}}},"outputSchema":{{"type":"object","properties":{{"recognitionId":{{"type":"string"}},"message":{{"type":"string"}}}},"required":["recognitionId"]}}}},{{"name":"schema_success","description":"Returns a JSON payload that conforms to the declared outputSchema.","inputSchema":{{"type":"object","properties":{{}}}},"outputSchema":{{"type":"object","properties":{{"recognitionId":{{"type":"string"}},"message":{{"type":"string"}}}},"required":["recognitionId"]}}}},{{"name":"get_stats","description":"Get server statistics including request count and uptime.","inputSchema":{{"type":"object","properties":{{}}}}}}]}}}}"#,
-            mcp_id_json(id)
-        ),
-    )
+    mcp_json_response(format!(
+        r#"{{"jsonrpc":"2.0","id":{},"result":{{"tools":[{{"name":"echo","description":"Echo back the provided message.","inputSchema":{{"type":"object","properties":{{"message":{{"type":"string"}},"delay":{{"type":"integer","minimum":0,"maximum":60000}},"delay_stddev":{{"type":"number","minimum":0}}}},"required":["message"]}}}},{{"name":"get_system_time","description":"Get current system time in the specified IANA timezone.","inputSchema":{{"type":"object","properties":{{"timezone":{{"type":"string"}}}}}}}},{{"name":"convert_time","description":"Convert a time value from a source IANA timezone to a target IANA timezone.","inputSchema":{{"type":"object","properties":{{"time":{{"type":"string"}},"source_timezone":{{"type":"string"}},"target_timezone":{{"type":"string"}}}},"required":["time","source_timezone","target_timezone"]}}}},{{"name":"schema_error","description":"Always returns isError=true.","inputSchema":{{"type":"object","properties":{{}}}},"outputSchema":{{"type":"object","properties":{{"recognitionId":{{"type":"string"}},"message":{{"type":"string"}}}},"required":["recognitionId"]}}}},{{"name":"schema_success","description":"Returns a JSON payload that conforms to the declared outputSchema.","inputSchema":{{"type":"object","properties":{{}}}},"outputSchema":{{"type":"object","properties":{{"recognitionId":{{"type":"string"}},"message":{{"type":"string"}}}},"required":["recognitionId"]}}}},{{"name":"get_stats","description":"Get server statistics including request count and uptime.","inputSchema":{{"type":"object","properties":{{}}}}}}]}}}}"#,
+        mcp_id_json(id)
+    ))
+}
+
+fn mcp_session_id(headers: &HeaderMap) -> Option<&str> {
+    headers.get(SESSION_HEADER)?.to_str().ok()
 }
 
 async fn mcp_tools_call_response(
@@ -661,6 +423,9 @@ async fn mcp_tools_call_response(
             };
             let Some(delay_stddev) = mcp_optional_f64(id, arguments, "delay_stddev") else {
                 return mcp_invalid_params_response(id, "delay_stddev must be a number");
+            };
+            let Ok(delay) = validate_delay(delay) else {
+                return mcp_invalid_params_response(id, "delay exceeds the 60000 ms limit");
             };
 
             DIRECT_REQUEST_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -703,7 +468,7 @@ async fn mcp_tools_call_response(
             DIRECT_REQUEST_COUNT.fetch_add(1, Ordering::Relaxed);
             mcp_text_result_response(id, "You cannot send more than 200 points", true)
         }
-        "schema_success" => mcp_json_response(mcp_base_headers(), {
+        "schema_success" => mcp_json_response({
             DIRECT_REQUEST_COUNT.fetch_add(1, Ordering::Relaxed);
             format!(
                 r#"{{"jsonrpc":"2.0","id":{},"result":{{"content":[{{"type":"text","text":"{{\"recognitionId\":\"rec-123\",\"message\":\"ok\"}}"}}],"structuredContent":{{"recognitionId":"rec-123","message":"ok"}},"isError":false}}}}"#,
@@ -822,25 +587,19 @@ fn mcp_text_result_response(
     is_error: bool,
 ) -> Response {
     let escaped = serde_json::to_string(text).unwrap_or_else(|_| "\"\"".to_string());
-    mcp_json_response(
-        mcp_base_headers(),
-        format!(
-            r#"{{"jsonrpc":"2.0","id":{},"result":{{"content":[{{"type":"text","text":{}}}],"isError":{}}}}}"#,
-            mcp_id_json(id),
-            escaped,
-            is_error
-        ),
-    )
+    mcp_json_response(format!(
+        r#"{{"jsonrpc":"2.0","id":{},"result":{{"content":[{{"type":"text","text":{}}}],"isError":{}}}}}"#,
+        mcp_id_json(id),
+        escaped,
+        is_error
+    ))
 }
 
 fn mcp_empty_result_response(id: Option<&serde_json::Value>) -> Response {
-    mcp_json_response(
-        mcp_base_headers(),
-        format!(
-            r#"{{"jsonrpc":"2.0","id":{},"result":{{}}}}"#,
-            mcp_id_json(id)
-        ),
-    )
+    mcp_json_response(format!(
+        r#"{{"jsonrpc":"2.0","id":{},"result":{{}}}}"#,
+        mcp_id_json(id)
+    ))
 }
 
 fn mcp_error_response(
@@ -859,19 +618,17 @@ fn mcp_error_response_with_status(
     message: &str,
     data: Option<serde_json::Value>,
 ) -> Response {
+    let escaped_message = serde_json::to_string(message).unwrap_or_else(|_| "\"\"".to_string());
     let data = data
         .map(|value| format!(r#","data":{}"#, value))
         .unwrap_or_default();
-    let mut response = mcp_json_response(
-        mcp_base_headers(),
-        format!(
-            r#"{{"jsonrpc":"2.0","id":{},"error":{{"code":{},"message":"{}"{}}}}}"#,
-            mcp_id_json(id),
-            code,
-            message,
-            data
-        ),
-    );
+    let mut response = mcp_json_response(format!(
+        r#"{{"jsonrpc":"2.0","id":{},"error":{{"code":{},"message":{}{}}}}}"#,
+        mcp_id_json(id),
+        code,
+        escaped_message,
+        data
+    ));
     *response.status_mut() = status;
     response
 }
@@ -900,18 +657,25 @@ struct RestTimeQuery {
 }
 
 // POST /api/echo - Simple echo for benchmarking
-async fn rest_echo_handler(
-    axum::Json(req): axum::Json<RestEchoRequest>,
-) -> axum::Json<serde_json::Value> {
-    if let Some(ms) = req.delay {
+async fn rest_echo_handler(axum::Json(req): axum::Json<RestEchoRequest>) -> Response {
+    let delay = match validate_delay(req.delay) {
+        Ok(delay) => delay,
+        Err(message) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                [(header::CONTENT_TYPE, "application/json")],
+                serde_json::to_string(&json!({ "error": message })).unwrap_or_default(),
+            )
+                .into_response();
+        }
+    };
+    if let Some(ms) = delay {
         if ms > 0 {
             let actual_ms = compute_delay(ms, req.delay_stddev);
             tokio::time::sleep(std::time::Duration::from_millis(actual_ms)).await;
         }
     }
-    axum::Json(json!({
-        "message": req.message
-    }))
+    axum::Json(json!({ "message": req.message })).into_response()
 }
 
 // GET /api/time?tz=America/New_York - Get time for benchmarking
@@ -1005,14 +769,7 @@ mod tests {
     }
 
     #[test]
-    fn test_default_server() {
-        let _server = FastTestServer::default();
-    }
-
-    #[test]
     fn test_server_advertises_latest_protocol() {
-        let server = FastTestServer::default();
-        assert_eq!(server.get_info().protocol_version, ProtocolVersion::LATEST);
         assert_eq!(MCP_PROTOCOL_VERSION, "2025-11-25");
     }
 
@@ -1028,7 +785,7 @@ mod tests {
             Err(StatusCode::NOT_FOUND)
         );
 
-        remember_session(session_id.to_string());
+        assert!(remember_session(session_id.to_string()));
         assert_eq!(mcp_validate_active_session(&headers), Ok(()));
 
         assert!(remove_session(session_id));
@@ -1036,6 +793,29 @@ mod tests {
             mcp_validate_active_session(&headers),
             Err(StatusCode::NOT_FOUND)
         );
+    }
+
+    #[test]
+    fn test_session_cap_rejects_new_session_when_full() {
+        let mut sessions = HashSet::with_capacity(MAX_ACTIVE_SESSIONS);
+        for idx in 0..MAX_ACTIVE_SESSIONS {
+            assert!(remember_session_in(
+                &mut sessions,
+                format!("test-session-{idx}")
+            ));
+        }
+
+        assert!(!remember_session_in(
+            &mut sessions,
+            "overflow-session".to_string()
+        ));
+        assert_eq!(sessions.len(), MAX_ACTIVE_SESSIONS);
+    }
+
+    #[test]
+    fn test_delay_validation_rejects_values_above_limit() {
+        assert_eq!(validate_delay(Some(MAX_DELAY_MS)), Ok(Some(MAX_DELAY_MS)));
+        assert!(validate_delay(Some(MAX_DELAY_MS + 1)).is_err());
     }
 
     async fn response_text(response: Response) -> String {
@@ -1107,8 +887,18 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
         assert!(response.headers().contains_key(SESSION_HEADER));
+        let session_id = response
+            .headers()
+            .get(SESSION_HEADER)
+            .expect("initialize should issue session id")
+            .to_str()
+            .expect("session id should be ascii")
+            .to_string();
+        assert!(Uuid::parse_str(&session_id).is_ok());
+        assert!(!session_id.starts_with("fast-time-"));
         let body = response_text(response).await;
         assert!(body.contains(r#""protocolVersion":"2025-11-25""#));
+        assert!(remove_session(&session_id));
     }
 
     #[tokio::test]
@@ -1253,5 +1043,49 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let body = response_json(response).await;
         assert_eq!(body["result"]["content"][0]["text"], "2025-01-10T04:30:00Z");
+    }
+
+    #[tokio::test]
+    async fn test_error_response_escapes_dynamic_message_text() {
+        let response = mcp_error_response_with_status(
+            StatusCode::BAD_REQUEST,
+            Some(&json!(99)),
+            -32602,
+            r#"bad "message" } ,"injected":true"#,
+            None,
+        );
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = response_json(response).await;
+        assert_eq!(
+            body["error"]["message"],
+            r#"bad "message" } ,"injected":true"#
+        );
+        assert!(body["error"].get("injected").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_mcp_echo_rejects_delay_above_limit() {
+        let response = mcp_handler(
+            initialized_headers().await,
+            axum::Json(json!({
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {
+                    "name": "echo",
+                    "arguments": {
+                        "message": "hello",
+                        "delay": MAX_DELAY_MS + 1
+                    }
+                },
+                "id": 12
+            })),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["error"]["code"], -32602);
+        assert_eq!(body["error"]["message"], "delay exceeds the 60000 ms limit");
     }
 }

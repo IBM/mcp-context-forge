@@ -100,7 +100,7 @@ async def test_go_and_rust_fast_servers_match_time_conversion_through_contextfor
     """The Rust fast server must preserve Go fast-time behavior once federated."""
     tools = await client.list_tools()
     go_convert = _find_tool(tools, "fast-time-convert-time", ("fast-time", "fast-time-server"), "convert-time")
-    rust_convert = _find_tool(tools, "fast-test-convert-time", ("fast-test", "fast-test-server", "rust"), "convert-time")
+    rust_convert = _find_tool(tools, "fast-time-convert-time", ("fast-time", "fast-time-server"), "convert-time")
 
     cases = [
         (
@@ -125,7 +125,7 @@ async def test_rust_fast_server_latency_tracks_go_through_contextforge(client: C
     """A CF-routed Rust tool call should stay in the same latency band as Go."""
     tools = await client.list_tools()
     go_time = _find_tool(tools, "fast-time-get-system-time", ("fast-time", "fast-time-server"), "get-system-time")
-    rust_time = _find_tool(tools, "fast-test-get-system-time", ("fast-test", "fast-test-server", "rust"), "get-system-time")
+    rust_time = _find_tool(tools, "fast-time-get-system-time", ("fast-time", "fast-time-server"), "get-system-time")
 
     arguments = {"timezone": "UTC"}
     for _ in range(3):
@@ -137,7 +137,7 @@ async def test_rust_fast_server_latency_tracks_go_through_contextforge(client: C
     print(f"Go avg={go_avg:.6f}s Rust avg={rust_avg:.6f}s calls={_PARITY_CALLS}")
 
     assert rust_avg <= go_avg * _RUST_MAX_GO_RATIO, (
-        f"Rust fast-test latency through ContextForge ({rust_avg:.6f}s) exceeded "
+            f"Rust fast-time latency through ContextForge ({rust_avg:.6f}s) exceeded "
         f"{_RUST_MAX_GO_RATIO:.2f}x Go fast-time latency ({go_avg:.6f}s)"
     )
 
