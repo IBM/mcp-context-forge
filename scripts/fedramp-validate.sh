@@ -79,6 +79,12 @@ check "/app home dir permissions 0750 (RHEL-09-232050)" \
     "stat -c '%a' /app" \
     "750"
 
+# RHEL-09-232045: /app user dotfiles must be 0740 or less permissive
+# -perm /037 matches: group-write (020), group-execute (010), other-rwx (007)
+check "/app dotfiles permissions 0740 or less (RHEL-09-232045)" \
+    "find /app -maxdepth 1 -name '.*' -type f -perm /037 -printf '%f\n' | sort | tr '\n' ',' | sed 's/,$//'" \
+    ""
+
 echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="
 
