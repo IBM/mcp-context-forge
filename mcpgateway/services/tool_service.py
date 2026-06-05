@@ -1235,8 +1235,13 @@ class ToolService(BaseService):
         # Compute metrics in a single pass (matches server/resource/prompt service pattern)
         if include_metrics:
             metrics = tool.metrics_summary  # Single-pass computation
-            tool_dict["metrics"] = metrics
-            tool_dict["execution_count"] = metrics["total_executions"]
+            # Return None if there's no actual metrics data (total_executions is 0)
+            if metrics.get("total_executions", 0) == 0:
+                tool_dict["metrics"] = None
+                tool_dict["execution_count"] = None
+            else:
+                tool_dict["metrics"] = metrics
+                tool_dict["execution_count"] = metrics["total_executions"]
         else:
             tool_dict["metrics"] = None
             tool_dict["execution_count"] = None
