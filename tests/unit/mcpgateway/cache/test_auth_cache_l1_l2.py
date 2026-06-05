@@ -1345,3 +1345,44 @@ class TestSetNotRevoked:
 
         result = await auth_cache.is_token_revoked(jti)
         assert result is True
+
+
+class TestTeamToDictDefensiveAccess:
+    """team_to_dict must use getattr; _team_from_dict must use d.get() for optional fields."""
+
+    def test_team_to_dict_handles_missing_optional_attributes(self):
+        """team_to_dict must not raise AttributeError for optional fields."""
+        from unittest.mock import MagicMock
+
+        team = MagicMock()
+        team.id = "t1"
+        team.name = "Team1"
+        # Simulate a future-schema object where slug might not exist:
+        del team.slug
+        team.description = None
+        team.created_by = "admin@example.com"
+        team.is_personal = False
+        team.visibility = "public"
+        team.max_members = None
+        team.is_active = True
+        team.created_at = None
+        team.updated_at = None
+
+        # Must not raise AttributeError
+        d = AuthCache.team_to_dict(team)
+        assert d["id"] == "t1"
+        assert d.get("slug") is None  # missing attribute becomes None
+
+    def test_team_from_dict_handles_missing_optional_keys(self):
+        """_team_from_dict must tolerate a dict missing non-essential keys."""
+        # First-Party
+        from mcpgateway.services.team_management_service import _team_from_dict
+
+        # Minimal dict — keys added in a hypothetical future version are absent
+        d = {"id": "t2", "name": "T2"}
+        # Must not raise KeyError
+        team = _team_from_dict(d)
+        assert team.id == "t2"
+        assert team.name == "T2"
+        assert team.slug == ""  # default for missing key
+        assert team.is_active is True  # default

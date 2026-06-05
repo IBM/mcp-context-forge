@@ -2537,3 +2537,153 @@ class TestTeamManagementService:
 
             # Verify - member should still be removed
             assert result is True
+
+    @pytest.mark.asyncio
+    async def test_update_team_invalidates_member_team_object_caches(self, mock_db):
+        """update_team must fire invalidate_user_teams for each active member."""
+        from unittest.mock import AsyncMock, MagicMock, call, patch
+        from mcpgateway.db import EmailTeam, EmailTeamMember
+        from mcpgateway.services.team_management_service import TeamManagementService
+
+        team = MagicMock(spec=EmailTeam)
+        team.id = "team-001"
+        team.name = "Old Name"
+        team.is_personal = False
+
+        member_alice = MagicMock(spec=EmailTeamMember)
+        member_alice.user_email = "alice@example.com"
+        member_bob = MagicMock(spec=EmailTeamMember)
+        member_bob.user_email = "bob@example.com"
+
+        mock_db.query.return_value.filter.return_value.first.return_value = team
+        # Second query returns active memberships
+        mock_db.query.return_value.filter.return_value.all.return_value = [member_alice, member_bob]
+        mock_db.commit.return_value = None
+
+        service = TeamManagementService(mock_db)
+
+        mock_invalidate_user_teams = AsyncMock()
+        mock_invalidate_teams = AsyncMock()
+
+        with (
+            patch("mcpgateway.services.team_management_service.auth_cache.invalidate_user_teams", mock_invalidate_user_teams),
+            patch("mcpgateway.services.team_management_service.admin_stats_cache.invalidate_teams", mock_invalidate_teams),
+            patch.object(
+                service,
+                "_fire_and_forget",
+                side_effect=lambda coro: coro.close() if hasattr(coro, "close") else None,
+            ),
+        ):
+            result = await service.update_team("team-001", name="New Name", updated_by="admin@example.com")
+
+        assert result is True
+        called_emails = {c.args[0] for c in mock_invalidate_user_teams.call_args_list}
+        assert called_emails == {"alice@example.com", "bob@example.com"}
+        mock_invalidate_teams.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_team_cache_invalidation_exception_is_swallowed(self, mock_db):
+        """Exception in cache-invalidation block must not abort update_team (lines 716-717)."""
+        from unittest.mock import MagicMock
+        from mcpgateway.db import EmailTeam
+        from mcpgateway.services.team_management_service import TeamManagementService
+
+        team = MagicMock(spec=EmailTeam)
+        team.id = "team-001"
+        team.name = "Old Name"
+        team.is_personal = False
+
+        mock_db.query.return_value.filter.return_value.first.return_value = team
+        mock_db.query.return_value.filter.return_value.all.side_effect = RuntimeError("cache blast")
+        mock_db.commit.return_value = None
+
+        service = TeamManagementService(mock_db)
+        result = await service.update_team("team-001", name="New Name", updated_by="admin@example.com")
+
+        assert result is True
+
+
+class TestTransientTeamFromDict:
+    """Verify that _team_from_dict instances are safe to use without a DB session."""
+
+    def test_get_member_count_on_transient_instance_returns_zero(self):
+        """get_member_count on a cache-reconstructed EmailTeam must not crash."""
+        from mcpgateway.services.team_management_service import _team_from_dict
+        from datetime import datetime, timezone
+
+        d = {
+            "id": "team-abc",
+            "name": "Test Team",
+            "slug": "test-team",
+            "description": None,
+            "created_by": "admin@example.com",
+            "is_personal": False,
+            "visibility": "public",
+            "max_members": None,
+            "is_active": True,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        team = _team_from_dict(d)
+        # Must not raise AttributeError ('NoneType' has no attribute 'query')
+        count = team.get_member_count()
+        assert count == 0
+
+    def test_is_member_on_transient_instance_returns_false(self):
+        """is_member on a cache-reconstructed EmailTeam must return False, not crash."""
+        from mcpgateway.services.team_management_service import _team_from_dict
+        from datetime import datetime, timezone
+
+        d = {
+            "id": "team-abc",
+            "name": "Test Team",
+            "slug": "test-team",
+            "description": None,
+            "created_by": "admin@example.com",
+            "is_personal": False,
+            "visibility": "public",
+            "max_members": None,
+            "is_active": True,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        team = _team_from_dict(d)
+        # Must not raise DetachedInstanceError or AttributeError
+        result = team.is_member("someone@example.com")
+        assert result is False
+
+    def test_team_from_dict_scalar_fields_round_trip(self):
+        """All scalar fields serialised by team_to_dict must survive round-trip."""
+        from mcpgateway.cache.auth_cache import AuthCache
+        from mcpgateway.services.team_management_service import _team_from_dict
+        from unittest.mock import MagicMock
+        from datetime import datetime, timezone
+        from mcpgateway.db import EmailTeam
+
+        team = MagicMock(spec=EmailTeam)
+        team.id = "team-xyz"
+        team.name = "Eng"
+        team.slug = "eng"
+        team.description = "Engineering team"
+        team.created_by = "cto@example.com"
+        team.is_personal = False
+        team.visibility = "private"
+        team.max_members = 50
+        team.is_active = True
+        team.created_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        team.updated_at = datetime(2025, 6, 1, tzinfo=timezone.utc)
+
+        d = AuthCache.team_to_dict(team)
+        rebuilt = _team_from_dict(d)
+
+        assert rebuilt.id == "team-xyz"
+        assert rebuilt.name == "Eng"
+        assert rebuilt.slug == "eng"
+        assert rebuilt.description == "Engineering team"
+        assert rebuilt.created_by == "cto@example.com"
+        assert rebuilt.is_personal is False
+        assert rebuilt.visibility == "private"
+        assert rebuilt.max_members == 50
+        assert rebuilt.is_active is True
+        assert rebuilt.created_at is not None
+        assert rebuilt.updated_at is not None

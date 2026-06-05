@@ -1062,3 +1062,32 @@ class TestAuthCacheInvalidationSubscriber:
 
         # Cache must NOT have been evicted (wrong channel)
         assert "alice@test.com" in mock_auth._user_cache
+
+    @pytest.mark.asyncio
+    async def test_process_auth_teams_invalidation_clears_both_caches(self):
+        """teams: message must evict both _teams_list_cache and _team_objects_cache."""
+        subscriber = CacheInvalidationSubscriber()
+        mock_auth = create_mock_auth_cache(
+            teams_list_cache={
+                "user@example.com:True": ["t1"],
+                "user@example.com:False": ["t1"],
+                "other@example.com:True": ["t2"],
+            },
+        )
+        # Attach _team_objects_cache separately (not in create_mock_auth_cache helper)
+        mock_auth._team_objects_cache = {
+            "user@example.com:True": [{"id": "t1", "name": "T1"}],
+            "user@example.com:False": [{"id": "t1", "name": "T1"}],
+            "other@example.com:True": [{"id": "t2", "name": "T2"}],
+        }
+
+        with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth):
+            await subscriber._process_invalidation("teams:user@example.com", channel="mcpgw:auth:invalidate")
+
+        # Both buckets for the evicted user must be empty
+        assert not any(k.startswith("user@example.com:") for k in mock_auth._teams_list_cache)
+        assert not any(k.startswith("user@example.com:") for k in mock_auth._team_objects_cache)
+
+        # Other user's entries must be untouched
+        assert any(k.startswith("other@example.com:") for k in mock_auth._teams_list_cache)
+        assert any(k.startswith("other@example.com:") for k in mock_auth._team_objects_cache)
