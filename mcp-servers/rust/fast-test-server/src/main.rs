@@ -14,7 +14,10 @@ use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::serve::ListenerExt;
 use axum::Router;
-use chrono::{DateTime, FixedOffset, TimeZone, Utc};
+#[cfg(test)]
+use chrono::Offset;
+use chrono::{DateTime, FixedOffset, SecondsFormat, TimeZone, Utc};
+use chrono_tz::Tz;
 use rand_distr::Distribution;
 use rand_distr::Normal;
 use rmcp::{
@@ -155,10 +158,7 @@ impl FastTestServer {
 
         // Parse timezone and convert
         let result = match parse_timezone(tz_name) {
-            Ok(offset) => {
-                let local_time = now_utc.with_timezone(&offset);
-                local_time.to_rfc3339()
-            }
+            Ok(timezone) => timezone.format_utc(now_utc),
             Err(e) => {
                 return Ok(CallToolResult::error(vec![Content::text(format!(
                     "Invalid timezone '{}': {}",
@@ -182,8 +182,8 @@ impl FastTestServer {
     ) -> Result<CallToolResult, McpError> {
         self.request_count.fetch_add(1, Ordering::Relaxed);
 
-        let source_offset = match parse_timezone(&req.source_timezone) {
-            Ok(o) => o,
+        let source_timezone = match parse_timezone(&req.source_timezone) {
+            Ok(timezone) => timezone,
             Err(e) => {
                 return Ok(CallToolResult::error(vec![Content::text(format!(
                     "invalid source timezone: {}",
@@ -191,8 +191,8 @@ impl FastTestServer {
                 ))]));
             }
         };
-        let target_offset = match parse_timezone(&req.target_timezone) {
-            Ok(o) => o,
+        let target_timezone = match parse_timezone(&req.target_timezone) {
+            Ok(timezone) => timezone,
             Err(e) => {
                 return Ok(CallToolResult::error(vec![Content::text(format!(
                     "invalid target timezone: {}",
@@ -201,7 +201,7 @@ impl FastTestServer {
             }
         };
 
-        let parsed = parse_time_in_offset(&req.time, source_offset).map_err(|e| {
+        let parsed = parse_time_in_timezone(&req.time, &source_timezone).map_err(|e| {
             // Surface as isError=true so the gateway forwards the message as-is.
             McpError::invalid_params(e, None)
         });
@@ -215,7 +215,7 @@ impl FastTestServer {
             }
         };
 
-        let converted = parsed.with_timezone(&target_offset).to_rfc3339();
+        let converted = target_timezone.format_utc(parsed);
         Ok(CallToolResult::success(vec![Content::text(converted)]))
     }
 
@@ -311,89 +311,80 @@ fn compute_delay(mean_ms: u64, stddev: Option<f64>) -> u64 {
 // Timezone Parsing
 // ============================================================================
 
-/// Parse an IANA timezone name and return a FixedOffset.
-/// Supports common timezone names and UTC offsets.
-fn parse_timezone(tz: &str) -> Result<FixedOffset, String> {
+#[derive(Debug, Clone, Copy)]
+enum ParsedTimezone {
+    Fixed(FixedOffset),
+    Named(Tz),
+}
+
+impl ParsedTimezone {
+    fn format_utc(self, utc: DateTime<Utc>) -> String {
+        match self {
+            Self::Fixed(offset) if offset.local_minus_utc() == 0 => {
+                utc.to_rfc3339_opts(SecondsFormat::Secs, true)
+            }
+            Self::Fixed(offset) => utc.with_timezone(&offset).to_rfc3339(),
+            Self::Named(tz) => utc.with_timezone(&tz).to_rfc3339(),
+        }
+    }
+
+    fn from_local_datetime(self, naive: &chrono::NaiveDateTime) -> Option<DateTime<Utc>> {
+        match self {
+            Self::Fixed(offset) => offset
+                .from_local_datetime(naive)
+                .single()
+                .map(|dt| dt.with_timezone(&Utc)),
+            Self::Named(tz) => tz
+                .from_local_datetime(naive)
+                .single()
+                .map(|dt| dt.with_timezone(&Utc)),
+        }
+    }
+
+    #[cfg(test)]
+    fn offset_seconds_at(self, utc: DateTime<Utc>) -> i32 {
+        match self {
+            Self::Fixed(offset) => offset.local_minus_utc(),
+            Self::Named(tz) => utc.with_timezone(&tz).offset().fix().local_minus_utc(),
+        }
+    }
+}
+
+/// Parse an IANA timezone name or fixed UTC offset.
+fn parse_timezone(tz: &str) -> Result<ParsedTimezone, String> {
     // Handle UTC explicitly
     if tz.eq_ignore_ascii_case("UTC") || tz.eq_ignore_ascii_case("GMT") {
-        return Ok(FixedOffset::east_opt(0).unwrap());
+        return Ok(ParsedTimezone::Fixed(FixedOffset::east_opt(0).unwrap()));
     }
 
     // Handle fixed offsets like "+05:30" or "-08:00"
     if tz.starts_with('+') || tz.starts_with('-') {
-        return parse_offset(tz);
+        return parse_offset(tz).map(ParsedTimezone::Fixed);
     }
 
-    // Map common IANA timezone names to their typical offsets
-    // Note: This is simplified and doesn't handle DST
-    let offset_hours = match tz {
-        // Americas
-        "America/New_York" | "US/Eastern" => -5,
-        "America/Chicago" | "US/Central" => -6,
-        "America/Denver" | "US/Mountain" => -7,
-        "America/Los_Angeles" | "US/Pacific" => -8,
-        "America/Anchorage" | "US/Alaska" => -9,
-        "Pacific/Honolulu" | "US/Hawaii" => -10,
-        "America/Toronto" => -5,
-        "America/Vancouver" => -8,
-        "America/Mexico_City" => -6,
-        "America/Sao_Paulo" => -3,
-        "America/Buenos_Aires" | "America/Argentina/Buenos_Aires" => -3,
-
-        // Europe
-        "Europe/London" | "Europe/Dublin" | "GB" => 0,
-        "Europe/Paris" | "Europe/Berlin" | "Europe/Rome" | "Europe/Madrid" => 1,
-        "Europe/Moscow" => 3,
-        "Europe/Istanbul" => 3,
-        "Europe/Athens" => 2,
-        "Europe/Amsterdam" => 1,
-        "Europe/Zurich" => 1,
-
-        // Asia
-        "Asia/Tokyo" | "Japan" => 9,
-        "Asia/Shanghai" | "Asia/Hong_Kong" | "Asia/Singapore" | "Asia/Taipei" => 8,
-        "Asia/Seoul" => 9,
-        "Asia/Kolkata" | "Asia/Calcutta" => 5, // Actually +5:30 but we simplify
-        "Asia/Dubai" => 4,
-        "Asia/Bangkok" => 7,
-        "Asia/Jakarta" => 7,
-        "Asia/Manila" => 8,
-
-        // Oceania
-        "Australia/Sydney" | "Australia/Melbourne" => 10,
-        "Australia/Perth" => 8,
-        "Pacific/Auckland" | "NZ" => 12,
-
-        // Africa
-        "Africa/Cairo" => 2,
-        "Africa/Johannesburg" => 2,
-        "Africa/Lagos" => 1,
-
-        _ => return Err(format!("Unknown timezone: {}", tz)),
-    };
-
-    FixedOffset::east_opt(offset_hours * 3600)
-        .ok_or_else(|| format!("Invalid offset for timezone: {}", tz))
+    tz.parse::<Tz>()
+        .map(ParsedTimezone::Named)
+        .map_err(|_| format!("Unknown timezone: {}", tz))
 }
 
 /// Parse an input time string in the given offset, accepting RFC3339 and a
 /// handful of common formats used by the Go fast-time-server port.
-fn parse_time_in_offset(
+fn parse_time_in_timezone(
     time_str: &str,
-    offset: FixedOffset,
-) -> Result<DateTime<FixedOffset>, String> {
+    timezone: &ParsedTimezone,
+) -> Result<DateTime<Utc>, String> {
     if let Ok(parsed) = DateTime::parse_from_rfc3339(time_str) {
-        return Ok(parsed.with_timezone(&offset));
+        return Ok(parsed.with_timezone(&Utc));
     }
     for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"] {
         if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(time_str, fmt) {
-            if let Some(dt) = offset.from_local_datetime(&naive).single() {
+            if let Some(dt) = timezone.from_local_datetime(&naive) {
                 return Ok(dt);
             }
         }
         if let Ok(date) = chrono::NaiveDate::parse_from_str(time_str, fmt) {
             if let Some(naive) = date.and_hms_opt(0, 0, 0) {
-                if let Some(dt) = offset.from_local_datetime(&naive).single() {
+                if let Some(dt) = timezone.from_local_datetime(&naive) {
                     return Ok(dt);
                 }
             }
@@ -696,9 +687,8 @@ async fn mcp_tools_call_response(
 
             DIRECT_REQUEST_COUNT.fetch_add(1, Ordering::Relaxed);
             match parse_timezone(timezone) {
-                Ok(offset) => {
-                    let result = Utc::now().with_timezone(&offset).to_rfc3339();
-                    mcp_text_result_response(id, &result, false)
+                Ok(timezone) => {
+                    mcp_text_result_response(id, &timezone.format_utc(Utc::now()), false)
                 }
                 Err(err) => mcp_text_result_response(
                     id,
@@ -753,21 +743,21 @@ fn mcp_convert_time_response(
 
     DIRECT_REQUEST_COUNT.fetch_add(1, Ordering::Relaxed);
 
-    let source_offset = match parse_timezone(source_timezone) {
-        Ok(offset) => offset,
+    let source_timezone = match parse_timezone(source_timezone) {
+        Ok(timezone) => timezone,
         Err(err) => {
             return mcp_text_result_response(id, &format!("invalid source timezone: {err}"), true)
         }
     };
-    let target_offset = match parse_timezone(target_timezone) {
-        Ok(offset) => offset,
+    let target_timezone = match parse_timezone(target_timezone) {
+        Ok(timezone) => timezone,
         Err(err) => {
             return mcp_text_result_response(id, &format!("invalid target timezone: {err}"), true)
         }
     };
-    match parse_time_in_offset(time, source_offset) {
+    match parse_time_in_timezone(time, &source_timezone) {
         Ok(parsed) => {
-            let converted = parsed.with_timezone(&target_offset).to_rfc3339();
+            let converted = target_timezone.format_utc(parsed);
             mcp_text_result_response(id, &converted, false)
         }
         Err(_) => mcp_text_result_response(id, &format!("invalid time format: {time}"), true),
@@ -921,13 +911,10 @@ async fn rest_time_handler(
     let now_utc = Utc::now();
 
     match parse_timezone(tz_name) {
-        Ok(offset) => {
-            let local_time = now_utc.with_timezone(&offset);
-            axum::Json(json!({
-                "time": local_time.to_rfc3339(),
-                "timezone": tz_name
-            }))
-        }
+        Ok(timezone) => axum::Json(json!({
+            "time": timezone.format_utc(now_utc),
+            "timezone": tz_name
+        })),
         Err(e) => axum::Json(json!({
             "error": format!("Invalid timezone '{}': {}", tz_name, e)
         })),
@@ -941,32 +928,51 @@ mod tests {
 
     #[test]
     fn test_parse_utc() {
-        let offset = parse_timezone("UTC").unwrap();
-        assert_eq!(offset.local_minus_utc(), 0);
+        let timezone = parse_timezone("UTC").unwrap();
+        let utc = DateTime::parse_from_rfc3339("2025-06-21T16:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(timezone.offset_seconds_at(utc), 0);
     }
 
     #[test]
     fn test_parse_gmt() {
-        let offset = parse_timezone("GMT").unwrap();
-        assert_eq!(offset.local_minus_utc(), 0);
+        let timezone = parse_timezone("GMT").unwrap();
+        let utc = DateTime::parse_from_rfc3339("2025-06-21T16:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(timezone.offset_seconds_at(utc), 0);
     }
 
     #[test]
     fn test_parse_dublin() {
-        let offset = parse_timezone("Europe/Dublin").unwrap();
-        assert_eq!(offset.local_minus_utc(), 0);
+        let timezone = parse_timezone("Europe/Dublin").unwrap();
+        let utc = DateTime::parse_from_rfc3339("2025-01-21T16:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(timezone.offset_seconds_at(utc), 0);
     }
 
     #[test]
     fn test_parse_new_york() {
-        let offset = parse_timezone("America/New_York").unwrap();
-        assert_eq!(offset.local_minus_utc(), -5 * 3600);
+        let timezone = parse_timezone("America/New_York").unwrap();
+        let summer = DateTime::parse_from_rfc3339("2025-06-21T16:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let winter = DateTime::parse_from_rfc3339("2025-01-21T16:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(timezone.offset_seconds_at(summer), -4 * 3600);
+        assert_eq!(timezone.offset_seconds_at(winter), -5 * 3600);
     }
 
     #[test]
     fn test_parse_tokyo() {
-        let offset = parse_timezone("Asia/Tokyo").unwrap();
-        assert_eq!(offset.local_minus_utc(), 9 * 3600);
+        let timezone = parse_timezone("Asia/Tokyo").unwrap();
+        let utc = DateTime::parse_from_rfc3339("2025-06-21T16:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(timezone.offset_seconds_at(utc), 9 * 3600);
     }
 
     #[test]
@@ -1026,6 +1032,40 @@ mod tests {
             .await
             .expect("response body should be readable");
         String::from_utf8(bytes.to_vec()).expect("response body should be utf-8")
+    }
+
+    async fn response_json(response: Response) -> serde_json::Value {
+        serde_json::from_str(&response_text(response).await).expect("response body should be json")
+    }
+
+    async fn initialized_headers() -> HeaderMap {
+        let response = mcp_handler(
+            HeaderMap::new(),
+            axum::Json(json!({
+                "jsonrpc": "2.0",
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "go-parity",
+                        "version": "1.0"
+                    }
+                },
+                "id": 1
+            })),
+        )
+        .await;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            SESSION_HEADER,
+            response
+                .headers()
+                .get(SESSION_HEADER)
+                .expect("initialize should issue session id")
+                .clone(),
+        );
+        headers
     }
 
     #[tokio::test]
@@ -1136,5 +1176,58 @@ mod tests {
         )
         .await;
         assert_eq!(deleted.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_convert_time_matches_go_fast_time_dst_behavior() {
+        let response = mcp_handler(
+            initialized_headers().await,
+            axum::Json(json!({
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {
+                    "name": "convert_time",
+                    "arguments": {
+                        "time": "2025-06-21T16:00:00Z",
+                        "source_timezone": "UTC",
+                        "target_timezone": "America/New_York"
+                    }
+                },
+                "id": 10
+            })),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(
+            body["result"]["content"][0]["text"],
+            "2025-06-21T12:00:00-04:00"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_convert_time_matches_go_fast_time_half_hour_zones() {
+        let response = mcp_handler(
+            initialized_headers().await,
+            axum::Json(json!({
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {
+                    "name": "convert_time",
+                    "arguments": {
+                        "time": "2025-01-10 10:00:00",
+                        "source_timezone": "Asia/Kolkata",
+                        "target_timezone": "UTC"
+                    }
+                },
+                "id": 11
+            })),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["result"]["content"][0]["text"], "2025-01-10T04:30:00Z");
     }
 }

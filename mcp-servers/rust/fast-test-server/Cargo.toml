@@ -41,6 +41,7 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 # Time handling
 chrono = { version = "0.4.44", features = ["serde"] }
+chrono-tz = "0.10.4"
 
 [profile.release]
 lto = true
