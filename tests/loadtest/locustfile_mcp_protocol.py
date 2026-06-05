@@ -239,6 +239,15 @@ def _get_token() -> str:
     global _jwt_token  # pylint: disable=global-statement
     if BEARER_TOKEN:
         return BEARER_TOKEN
+    # When BENCHMARK_UNIQUE_TOKENS=1, mint a fresh JWT per call so each
+    # Locust User instance gets its own Authorization header. Needed for
+    # sticky-LB experiments (nginx hash $http_authorization) where the
+    # default shared-singleton token would collapse all 125 simulated
+    # users onto a single backend. The jti claim in _generate_jwt_token
+    # already varies per call, so each token is a distinct string while
+    # carrying the same user identity / permissions.
+    if os.environ.get("BENCHMARK_UNIQUE_TOKENS") == "1":
+        return _generate_jwt_token()
     if _jwt_token is None:
         _jwt_token = _generate_jwt_token()
     return _jwt_token
