@@ -535,6 +535,7 @@ async fn mcp_handler(
                 return StatusCode::ACCEPTED.into_response();
             }
             return match method {
+                "ping" => mcp_empty_result_response(id),
                 "tools/list" => mcp_tools_list_response(id),
                 "tools/call" => mcp_tools_call_response(id, &req).await,
                 _ => mcp_error_response(id, -32601, "Method not found", None),
@@ -828,6 +829,16 @@ fn mcp_text_result_response(
             mcp_id_json(id),
             escaped,
             is_error
+        ),
+    )
+}
+
+fn mcp_empty_result_response(id: Option<&serde_json::Value>) -> Response {
+    mcp_json_response(
+        mcp_base_headers(),
+        format!(
+            r#"{{"jsonrpc":"2.0","id":{},"result":{{}}}}"#,
+            mcp_id_json(id)
         ),
     )
 }
@@ -1137,6 +1148,19 @@ mod tests {
         )
         .await;
         assert_eq!(valid.status(), StatusCode::OK);
+
+        let ping = mcp_handler(
+            valid_headers.clone(),
+            axum::Json(json!({
+                "jsonrpc": "2.0",
+                "method": "ping",
+                "id": 6
+            })),
+        )
+        .await;
+        assert_eq!(ping.status(), StatusCode::OK);
+        let ping_body = response_json(ping).await;
+        assert_eq!(ping_body["result"], json!({}));
 
         let missing = mcp_handler(
             HeaderMap::new(),
