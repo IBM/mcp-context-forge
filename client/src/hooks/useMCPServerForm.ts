@@ -3,6 +3,8 @@ import { z } from "zod";
 import { useQuery } from "@/hooks/useQuery";
 import { serversApi } from "@/api/servers";
 import type { Visibility } from "@/types/server";
+import { parseApiError } from "@/lib/errorUtils";
+import { sanitizeError } from "@/utils/errors";
 import {
   sanitizeString,
   sanitizeUrl,
@@ -211,6 +213,8 @@ export interface UseMCPServerFormReturn {
   oauthPending: boolean;
   oauthNotification: { type: "success" | "error"; message: string } | null;
   clearOAuthNotification: () => void;
+  fetchToolsNotification: { type: "success" | "error"; message: string } | null;
+  clearFetchToolsNotification: () => void;
 
   // Setters
   setName: (value: string) => void;
@@ -328,6 +332,10 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
 
   const [oauthPending, setOAuthPending] = useState(false);
   const [oauthNotification, setOAuthNotification] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
+  const [fetchToolsNotification, setFetchToolsNotification] = useState<{
     type: "success" | "error";
     message: string;
   } | null>(null);
@@ -462,6 +470,7 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
   );
 
   const clearOAuthNotification = useCallback(() => setOAuthNotification(null), []);
+  const clearFetchToolsNotification = useCallback(() => setFetchToolsNotification(null), []);
 
   const isSubmitting = isCreating || isUpdating;
 
@@ -701,10 +710,31 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
             setOAuthPending(true);
             try {
               const oauthResult = await serversApi.triggerOAuthAuthorization(responseGatewayId);
+
+              // Auto-activate the gateway after successful OAuth authorization
+              try {
+                await serversApi.toggleEnabled(responseGatewayId, true);
+              } catch (activateError) {
+                console.error(
+                  "Failed to activate gateway after OAuth:",
+                  sanitizeError(activateError),
+                );
+                // Don't fail the OAuth flow if activation fails - user can manually activate later
+              }
+
               setOAuthNotification({
                 type: "success",
                 message: `OAuth authorization successful${oauthResult.gatewayName ? ` for ${oauthResult.gatewayName}` : ""}.`,
               });
+
+              // Fetch tools, resources, and prompts after successful OAuth
+              try {
+                const fetchResult = await serversApi.fetchToolsAfterOAuth(responseGatewayId);
+                setFetchToolsNotification({ type: "success", message: fetchResult.message });
+              } catch (fetchError) {
+                const msg = parseApiError(fetchError, "Failed to fetch tools from MCP server.");
+                setFetchToolsNotification({ type: "error", message: msg });
+              }
               // Delay closing so the success notification is visible before the form unmounts.
               successCloseTimeoutRef.current = setTimeout(() => {
                 if (onSuccess) onSuccess(response);
@@ -730,42 +760,11 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
             resetForm();
           }
         } catch (error) {
-          // Handle API errors from useQuery
           const action = isEditMode ? "update" : "create";
-
-          // Parse errors from API response
-          let errorMessage = `Failed to ${action} MCP gateway. Please try again.`;
-
-          if (error && typeof error === "object" && "body" in error) {
-            const errorWithBody = error as {
-              body?: {
-                detail?: Array<{ msg?: string; loc?: string[] }>;
-                message?: string;
-              };
-            };
-
-            // Check for simple message format first
-            if (errorWithBody.body?.message) {
-              errorMessage = errorWithBody.body.message;
-            }
-            // Then check for validation errors format
-            else {
-              const details = errorWithBody.body?.detail;
-
-              if (Array.isArray(details) && details.length > 0) {
-                // Extract error messages from validation errors
-                const messages = details
-                  .map((err) => {
-                    const field = err.loc && err.loc.length > 1 ? err.loc[err.loc.length - 1] : "";
-                    const msg = err.msg || "Invalid value";
-                    return field ? `${field}: ${msg}` : msg;
-                  })
-                  .join("; ");
-                errorMessage = messages;
-              }
-            }
-          }
-
+          const errorMessage = parseApiError(
+            error,
+            `Failed to ${action} MCP gateway. Please try again.`,
+          );
           setErrors({ submit: errorMessage });
         }
       }
@@ -841,6 +840,8 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
     oauthPending,
     oauthNotification,
     clearOAuthNotification,
+    fetchToolsNotification,
+    clearFetchToolsNotification,
 
     // Setters
     setName,
