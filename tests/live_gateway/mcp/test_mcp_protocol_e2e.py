@@ -13,7 +13,7 @@ binaries required.
 
 Requirements:
     - Gateway running (default: http://localhost:8080 via docker-compose)
-    - Upstreams ``fast_time_server`` + ``fast_time_server`` registered
+    - Upstreams ``fast_time_server`` + ``fast_test_server`` registered
       (provided by the default compose stack)
     - Environment variables (or defaults):
         MCP_CLI_BASE_URL       Gateway URL (default: http://localhost:8080)
@@ -242,7 +242,7 @@ class TestToolCalls:
     """tools/call against live upstream servers.
 
     Marked flaky(reruns=1) because these hit live upstream MCP servers
-    (fast_time_server, fast_time_server) which may be transiently unavailable.
+    (fast_time_server, fast_test_server) which may be transiently unavailable.
     """
 
     async def test_get_system_time(self, client: Client) -> None:
@@ -255,7 +255,7 @@ class TestToolCalls:
 
     async def test_echo(self, client: Client) -> None:
         test_message = "hello-from-mcp-protocol-e2e"
-        result = await client.call_tool_mcp(name="fast-time-echo", arguments={"message": test_message})
+        result = await client.call_tool_mcp(name="fast-test-echo", arguments={"message": test_message})
         assert result.isError is False, f"echo returned error (upstream may be down): {result.content}"
         text = result.content[0].text
         assert test_message in text, f"echo did not return message: {text}"
@@ -271,7 +271,7 @@ class TestToolCalls:
         print(f"    -> convert-time(UTC->NY) = {result.content[0].text}")
 
     async def test_get_stats(self, client: Client) -> None:
-        result = await client.call_tool_mcp(name="fast-time-get-stats", arguments={})
+        result = await client.call_tool_mcp(name="fast-test-get-stats", arguments={})
         assert result.isError is False, f"get-stats returned error (upstream may be down): {result.content}"
         print(f"    -> get-stats = {result.content[0].text[:120]}")
 
@@ -279,9 +279,9 @@ class TestToolCalls:
         """End-to-end regression guard for ContextForge #4202.
 
         Drives the full MCP-federation path — FastMCP client -> gateway ->
-        federated Rust fast_time_server -> gateway ingress validator ->
+        federated Rust fast_test_server -> gateway ingress validator ->
         gateway egress handler -> back to the client. The upstream
-        ``fast-time-schema-error`` tool declares an ``outputSchema`` of
+        ``fast-test-schema-error`` tool declares an ``outputSchema`` of
         ``{"required": ["recognitionId"], ...}`` and always returns
         ``isError=true`` with the verbatim user text "You cannot send
         more than 200 points". Every validator in the chain must honour
@@ -295,9 +295,9 @@ class TestToolCalls:
         Issue: https://github.com/IBM/mcp-context-forge/issues/4202
         MCP spec: 2025-11-25 "Error Handling".
         """
-        tool = await self._require_declared_output_schema(client, "fast-time-schema-error")
+        tool = await self._require_declared_output_schema(client, "fast-test-schema-error")
         assert tool is not None
-        result = await client.call_tool_mcp(name="fast-time-schema-error", arguments={})
+        result = await client.call_tool_mcp(name="fast-test-schema-error", arguments={})
         assert result.isError is True, f"expected isError=true, got: {result}"
         text = result.content[0].text if result.content else ""
         assert "200 points" in text, f"expected original error text preserved, got: {text!r}"
@@ -310,16 +310,16 @@ class TestToolCalls:
         Proves validation *still runs and succeeds* for legitimate
         responses — catching any over-broad fix that accidentally
         disables the success path. The upstream
-        ``fast-time-schema-success`` fixture declares the same
+        ``fast-test-schema-success`` fixture declares the same
         ``outputSchema`` as ``schema_error`` but returns
         ``isError=false`` with ``{"recognitionId": "rec-123", ...}``,
         which satisfies the schema. Also verifies that
         ``structuredContent`` propagates to the downstream client on
         successful validation.
         """
-        tool = await self._require_declared_output_schema(client, "fast-time-schema-success")
+        tool = await self._require_declared_output_schema(client, "fast-test-schema-success")
         assert tool is not None
-        result = await client.call_tool_mcp(name="fast-time-schema-success", arguments={})
+        result = await client.call_tool_mcp(name="fast-test-schema-success", arguments={})
         assert result.isError is False, f"expected success, got: {result}"
         payload = json.loads(result.content[0].text)
         assert payload.get("recognitionId") == "rec-123", f"unexpected payload: {payload}"
@@ -342,7 +342,7 @@ class TestToolCalls:
     async def _require_declared_output_schema(client: Client, tool_name: str):
         """Preflight: assert ``tool_name`` is advertised with a non-empty outputSchema.
 
-        Without this guard, a stale fast_time_server image or an incomplete
+        Without this guard, a stale fast_test_server image or an incomplete
         federation sync would cause the actual ``tools/call`` tests to
         fail with a misleading assertion. Fails fast with an actionable
         message.
@@ -350,7 +350,7 @@ class TestToolCalls:
         tools = await client.list_tools()
         match = next((t for t in tools if t.name == tool_name), None)
         assert match is not None, (
-            f"Tool {tool_name!r} is not registered in the gateway. " f"Rebuild the fast_time_server image and restart docker-compose so " f"register_fast_time picks up the new schema fixtures."
+            f"Tool {tool_name!r} is not registered in the gateway. " f"Rebuild the fast_test_server image and restart docker-compose so " f"register_fast_test picks up the new schema fixtures."
         )
         schema = match.outputSchema
         assert schema, (

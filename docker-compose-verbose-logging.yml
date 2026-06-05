@@ -1130,17 +1130,16 @@ services:
   #   FAST_TIME_IMAGE=mcpgateway/fast-time-server:local docker compose build fast_time_server
   ###############################################################################
   fast_time_server:
-    image: ${FAST_TIME_IMAGE:-mcpgateway/fast-time-server:latest}
+    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/fast-time-server:latest}
     build:
-      context: ./mcp-servers/rust/fast-time-server
+      context: ./mcp-servers/go/fast-time-server
       dockerfile: Dockerfile
     restart: unless-stopped
     networks: [mcpnet]
     ports:
       - "8888:8080"    # Map host port 8888 to container port 8080
-    environment:
-      - BIND_ADDRESS=0.0.0.0:8080
-      - RUST_LOG=info
+    # Use dual mode for both SSE (/sse) and Streamable HTTP (/http) endpoints
+    command: ["-transport=dual", "-listen=0.0.0.0", "-port=8080", "-log-level=info"]
 
   ###############################################################################
   # Auto-registration service - registers fast_time_server with gateway
@@ -1291,7 +1290,7 @@ services:
         try:
             result = api_request('POST', '/gateways', {
                 'name': 'fast_time',
-                'url': 'http://fast_time_server:8080/mcp',
+                'url': 'http://fast_time_server:8080/http',
                 'transport': 'STREAMABLEHTTP'
             })
             print(f'Registration response: {result}')
@@ -1399,6 +1398,118 @@ services:
         echo "Token written to /tmp/gateway-token.txt"
 
         echo "✅ Setup complete!"
+
+  ###############################################################################
+  # Fast Test Server - Ultra-fast Rust MCP server for performance testing
+  # Provides: echo, get_system_time, get_stats tools via MCP Streamable HTTP
+  # Also exposes REST API endpoints for baseline comparison
+  # Usage: docker compose --profile testing up -d
+  ###############################################################################
+  fast_test_server:
+    build:
+      context: ./mcp-servers/rust/fast-test-server
+      dockerfile: Containerfile
+    image: mcpgateway/fast-test-server:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "8880:8880"    # Port 8880 (avoids conflict with benchmark servers on 9000+)
+    environment:
+      - BIND_ADDRESS=0.0.0.0:8880
+      - RUST_LOG=info
+    # TCP kernel tuning for high-concurrency load testing
+    sysctls:
+      - net.ipv4.tcp_fin_timeout=15          # Faster cleanup of FIN_WAIT2 sockets
+      - net.ipv4.ip_local_port_range=1024 65535  # More ephemeral ports
+      - net.core.somaxconn=65535             # Max listen backlog
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+      nproc:
+        soft: 5000
+        hard: 5000
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8880/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 128M
+    profiles: ["testing", "monitoring"]
+
+  ###############################################################################
+  # Auto-registration service - registers fast_test_server with gateway
+  ###############################################################################
+  register_fast_test:
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    networks: [mcpnet]
+    depends_on:
+      gateway:
+        condition: service_healthy
+      fast_test_server:
+        condition: service_healthy
+    environment:
+      - JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Registering fast_test_server with gateway..."
+
+        # Generate JWT token
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes --algo HS256 2>/dev/null)
+
+        # Register using Python
+        python3 -c "
+        import urllib.request
+        import json
+        import os
+        import time
+
+        token = os.environ.get('MCPGATEWAY_BEARER_TOKEN', '')
+
+        def api_request(method, path, data=None):
+            url = f'http://gateway:4444{path}'
+            req = urllib.request.Request(url, method=method)
+            req.add_header('Authorization', f'Bearer {token}')
+            req.add_header('Content-Type', 'application/json')
+            if data:
+                req.data = json.dumps(data).encode('utf-8')
+            with urllib.request.urlopen(req) as response:
+                return json.loads(response.read().decode('utf-8'))
+
+        # Delete existing gateway if present
+        try:
+            gateways = api_request('GET', '/gateways')
+            for gw in gateways:
+                if gw.get('name') == 'fast_test':
+                    print(f'Deleting existing gateway {gw[\"id\"]}...')
+                    api_request('DELETE', f'/gateways/{gw[\"id\"]}')
+        except Exception as e:
+            print(f'Note: {e}')
+
+        # Register the gateway
+        try:
+            result = api_request('POST', '/gateways', {
+                'name': 'fast_test',
+                'url': 'http://fast_test_server:8880/mcp',
+                'transport': 'STREAMABLEHTTP'
+            })
+            print(f'✅ Registered fast_test_server: {result.get(\"id\", \"unknown\")}')
+        except Exception as e:
+            print(f'❌ Registration failed: {e}')
+            exit(1)
+        "
+        echo "✅ Registration complete!"
+    profiles: ["testing", "monitoring"]
 
   ###############################################################################
   # Benchmark Server - Multi-server MCP benchmark tool

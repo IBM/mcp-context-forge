@@ -8,7 +8,7 @@ Streamable HTTP echo-with-delay load test for ContextForge.
 Measures gateway throughput when the backend MCP tool has an artificial delay,
 exercising the full Streamable HTTP path: /servers/{server_id}/mcp.
 Each Locust user establishes one MCP session (initialize + Mcp-Session-Id) and
-then repeatedly calls fast-time-echo with a configurable delay (default 500ms).
+then repeatedly calls fast-test-echo with a configurable delay (default 500ms).
 Usage (containerized — recommended):
     make load-test-echo-delay          # headless, 200 users, 3min
     make load-test-echo-delay-ui       # web UI at http://localhost:8089
@@ -19,7 +19,7 @@ Usage (local):
 Environment Variables:
     MCPGATEWAY_BEARER_TOKEN:   JWT token (auto-loaded from /tokens/gateway.jwt in container)
     ECHO_DELAY_MS:             Delay in milliseconds for each echo call (default: 500)
-    ECHO_DELAY_SERVER_ID:      Virtual server ID (default: matches register_fast_time in docker-compose)
+    ECHO_DELAY_SERVER_ID:      Virtual server ID (default: matches register_fast_test in docker-compose)
     JWT_SECRET_KEY:            Secret for auto-generating JWT if token not provided
     NUM_TENANTS:               Number of discrete tenants to simulate (default: 10)
 """
@@ -95,14 +95,14 @@ if NUM_TENANTS < 1:
     raise ValueError(f"NUM_TENANTS must be >= 1, got {NUM_TENANTS}")
 TENANT_IDS = [f"tenant-{i:03d}" for i in range(NUM_TENANTS)]
 
-# Virtual server ID — matches the fixed ID created by register_fast_time in docker-compose
+# Virtual server ID — matches the fixed ID created by register_fast_test in docker-compose
 # Override via ECHO_DELAY_SERVER_ID to target a different virtual server
 FAST_TEST_SERVER_ID = _cfg("ECHO_DELAY_SERVER_ID", "b8e3f1a2c4d5e6f7a1b2c3d4e5f6a7b8")  # pragma: allowlist secret
 
-# Direct URL to the fast_time_server REST API (bypasses gateway entirely).
+# Direct URL to the fast_test_server REST API (bypasses gateway entirely).
 # Used as a baseline to isolate whether errors originate in the gateway or the backend.
 # In docker-compose this is the container hostname; override for local testing.
-FAST_TEST_DIRECT_URL = _cfg("FAST_TEST_DIRECT_URL", "http://fast_time_server:8880")
+FAST_TEST_DIRECT_URL = _cfg("FAST_TEST_DIRECT_URL", "http://fast_test_server:8880")
 
 # MCP protocol version (must match gateway config)
 MCP_PROTOCOL_VERSION = "2025-11-25"
@@ -253,11 +253,11 @@ def on_test_stop(environment, **_kwargs):
 
 
 class EchoDelayUser(User):
-    """Streamable HTTP MCP user that calls fast-time-echo with a delay.
+    """Streamable HTTP MCP user that calls fast-test-echo with a delay.
 
     Each user:
     1. Establishes an MCP session via initialize
-    2. Repeatedly calls fast-time-echo with the configured delay
+    2. Repeatedly calls fast-test-echo with the configured delay
     3. Reports metrics via Locust event system
     """
 
@@ -304,7 +304,7 @@ class EchoDelayUser(User):
         ]
 
     def on_start(self):
-        """Build the MCP URL targeting the fast_time virtual server."""
+        """Build the MCP URL targeting the fast_test virtual server."""
         host = self.host or "http://localhost:4444"
         self._mcp_url = f"{host}/servers/{FAST_TEST_SERVER_ID}/mcp"
 
@@ -438,13 +438,13 @@ class EchoDelayUser(User):
     @task(10)
     @tag("mcp", "echo", "delay")
     def call_echo_with_delay(self):
-        """Call fast-time-echo with the configured delay."""
+        """Call fast-test-echo with the configured delay."""
         self._ensure_initialized()
         message = random.choice(self._messages)
         result = self._mcp_post(
             "tools/call",
             {
-                "name": "fast-time-echo",
+                "name": "fast-test-echo",
                 "arguments": {"message": message, "delay": ECHO_DELAY_MS},
             },
             f"echo (delay={ECHO_DELAY_MS}ms)",
@@ -465,11 +465,11 @@ class EchoDelayUser(User):
     # @task(2)
     # @tag("direct", "baseline")
     def direct_echo_baseline(self):
-        """Call the fast_time_server REST API directly, bypassing the gateway.
+        """Call the fast_test_server REST API directly, bypassing the gateway.
 
         Reported as request_type="DIRECT" so it appears separately in Locust stats.
         If this succeeds while MCP tasks fail, the problem is in the gateway layer.
-        If this also fails, the fast_time_server itself is overloaded.
+        If this also fails, the fast_test_server itself is overloaded.
         """
         message = random.choice(self._messages)
         payload = {"message": message, "delay": ECHO_DELAY_MS}

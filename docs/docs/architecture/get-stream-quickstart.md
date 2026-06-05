@@ -77,7 +77,7 @@ fanout, listener-claim race resolution, POST affinity routing.
 - 24 gunicorn workers per replica (`GUNICORN_WORKERS=24`) — 72 worker
   processes total
 - nginx on `:8080` fronting them
-- PostgreSQL, Redis, Locust, fast_time_server, A2A echo agent, MCP Inspector
+- PostgreSQL, Redis, Locust, fast_test_server, A2A echo agent, MCP Inspector
 - `CACHE_TYPE=redis` already set in `docker-compose.yml`
 
 ### The two flags you need to enable
@@ -123,7 +123,7 @@ curl -N \
   http://localhost:8080/mcp
 
 # 2. From a third terminal, trigger an upstream notification (e.g., reload
-#    a tool on fast_time_server). The notification should appear in the
+#    a tool on fast_test_server). The notification should appear in the
 #    GET stream from step 1.
 
 # 3. Single-listener invariant: open a second GET on the same SID → 409
@@ -162,7 +162,7 @@ make testing-down
 
 - **No upstream MCP server registered = no notifications to fan out.** The
   GET stream stays open with keepalives but won't carry payloads. Register
-  an MCP server (the `fast_time_server` is auto-registered by
+  an MCP server (the `fast_test_server` is auto-registered by
   `make testing-up`) and exercise something that emits notifications.
 - **`USE_STATEFUL_SESSIONS=false` (the default) → 405.** This is by design
   per spec — the GET stream needs an event store.

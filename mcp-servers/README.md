@@ -46,7 +46,7 @@
 
 | Server | Description |
 |--------|-------------|
-| `fast-time-server` | Fast testing server |
+| `fast-test-server` | Fast testing server |
 | `filesystem-server` | Filesystem operations |
 
 ## Scaffolding New Servers

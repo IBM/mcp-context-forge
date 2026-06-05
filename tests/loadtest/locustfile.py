@@ -216,8 +216,8 @@ PROMPT_ARGUMENT_NAMES: dict[str, str] = {}
 TOOLS_WITH_REQUIRED_ARGS: set[str] = {
     "fast-time-convert-time",  # Requires: time, source_timezone, target_timezone
     "fast-time-get-system-time",  # Requires: timezone
-    "fast-time-echo",  # Requires: message
-    "fast-time-get-system-time",  # Requires: timezone
+    "fast-test-echo",  # Requires: message
+    "fast-test-get-system-time",  # Requires: timezone
 }
 
 # Tool name prefixes that indicate virtual/dummy tools with no backing MCP server
@@ -442,7 +442,7 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
             raise RuntimeError("Load test setup failed while fetching entity IDs") from e
         logger.info("Tests will continue without pre-fetched IDs")
 
-    # Note: All gateways (fast-time, fast-time, benchmark) are registered
+    # Note: All gateways (fast-time, fast-test, benchmark) are registered
     # at compose startup via dedicated registration services.
     # Locust only performs load testing, not registration.
 
@@ -1806,12 +1806,12 @@ class FastTimeUser(BaseUser):
 
 
 class FastTestEchoUser(BaseUser):
-    """User that calls the fast_time MCP server echo tool.
+    """User that calls the fast_test MCP server echo tool.
 
-    Tests the fast-time-echo tool via JSON-RPC.
+    Tests the fast-test-echo tool via JSON-RPC.
     Weight: Medium (echo testing)
 
-    NOTE: These tests require the fast_time MCP server to be running.
+    NOTE: These tests require the fast_test MCP server to be running.
     Start with: make testing-up
     502 errors are expected if no MCP server is connected.
     """
@@ -1851,42 +1851,42 @@ class FastTestEchoUser(BaseUser):
     @task(10)
     @tag("mcp", "fasttest", "echo")
     def call_echo(self):
-        """Call fast-time-echo with a random message."""
+        """Call fast-test-echo with a random message."""
         message = random.choice(self.ECHO_MESSAGES)
         payload = _json_rpc_request(
             "tools/call",
             {
-                "name": "fast-time-echo",
+                "name": "fast-test-echo",
                 "arguments": {"message": message},
             },
         )
-        self._rpc_request(payload, "/rpc fast-time-echo")
+        self._rpc_request(payload, "/rpc fast-test-echo")
 
     @task(5)
     @tag("mcp", "fasttest", "echo")
     def call_echo_short(self):
-        """Call fast-time-echo with a short message."""
+        """Call fast-test-echo with a short message."""
         payload = _json_rpc_request(
             "tools/call",
             {
-                "name": "fast-time-echo",
+                "name": "fast-test-echo",
                 "arguments": {"message": "ping"},
             },
         )
-        self._rpc_request(payload, "/rpc fast-time-echo [short]")
+        self._rpc_request(payload, "/rpc fast-test-echo [short]")
 
     @task(3)
     @tag("mcp", "fasttest", "echo")
     def call_echo_long(self):
-        """Call fast-time-echo with a longer message."""
+        """Call fast-test-echo with a longer message."""
         payload = _json_rpc_request(
             "tools/call",
             {
-                "name": "fast-time-echo",
+                "name": "fast-test-echo",
                 "arguments": {"message": "A" * 1000},
             },
         )
-        self._rpc_request(payload, "/rpc fast-time-echo [long]")
+        self._rpc_request(payload, "/rpc fast-test-echo [long]")
 
     @task(2)
     @tag("mcp", "fasttest", "list")
@@ -1897,12 +1897,12 @@ class FastTestEchoUser(BaseUser):
 
 
 class FastTestTimeUser(BaseUser):
-    """User that calls the fast_time MCP server get_system_time tool.
+    """User that calls the fast_test MCP server get_system_time tool.
 
-    Tests the fast-time-get-system-time tool via JSON-RPC.
+    Tests the fast-test-get-system-time tool via JSON-RPC.
     Weight: Medium (time testing)
 
-    NOTE: These tests require the fast_time MCP server to be running.
+    NOTE: These tests require the fast_test MCP server to be running.
     Start with: make testing-up
     502 errors are expected if no MCP server is connected.
     """
@@ -1948,50 +1948,50 @@ class FastTestTimeUser(BaseUser):
         payload = _json_rpc_request(
             "tools/call",
             {
-                "name": "fast-time-get-system-time",
+                "name": "fast-test-get-system-time",
                 "arguments": {"timezone": timezone},
             },
         )
-        self._rpc_request(payload, "/rpc fast-time-get-system-time")
+        self._rpc_request(payload, "/rpc fast-test-get-system-time")
 
     @task(5)
     @tag("mcp", "fasttest", "time")
     def call_get_system_time_utc(self):
-        """Call fast-time-get-system-time with UTC timezone."""
+        """Call fast-test-get-system-time with UTC timezone."""
         payload = _json_rpc_request(
             "tools/call",
             {
-                "name": "fast-time-get-system-time",
+                "name": "fast-test-get-system-time",
                 "arguments": {"timezone": "UTC"},
             },
         )
-        self._rpc_request(payload, "/rpc fast-time-get-system-time [UTC]")
+        self._rpc_request(payload, "/rpc fast-test-get-system-time [UTC]")
 
     @task(3)
     @tag("mcp", "fasttest", "time")
     def call_get_system_time_local(self):
-        """Call fast-time-get-system-time with America/New_York timezone."""
+        """Call fast-test-get-system-time with America/New_York timezone."""
         payload = _json_rpc_request(
             "tools/call",
             {
-                "name": "fast-time-get-system-time",
+                "name": "fast-test-get-system-time",
                 "arguments": {"timezone": "America/New_York"},
             },
         )
-        self._rpc_request(payload, "/rpc fast-time-get-system-time [NYC]")
+        self._rpc_request(payload, "/rpc fast-test-get-system-time [NYC]")
 
     @task(2)
     @tag("mcp", "fasttest", "stats")
     def call_get_stats(self):
-        """Call fast-time-get-stats to get server statistics."""
+        """Call fast-test-get-stats to get server statistics."""
         payload = _json_rpc_request(
             "tools/call",
             {
-                "name": "fast-time-get-stats",
+                "name": "fast-test-get-stats",
                 "arguments": {},
             },
         )
-        self._rpc_request(payload, "/rpc fast-time-get-stats")
+        self._rpc_request(payload, "/rpc fast-test-get-stats")
 
     @task(2)
     @tag("mcp", "fasttest", "list")

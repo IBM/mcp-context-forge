@@ -18,19 +18,19 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ $fullName }}-fast-time-server
+  name: {{ $fullName }}-fast-test-server
   labels:
     {{- include "mcp-stack.labels" . | nindent 4 }}
-    app: {{ $fullName }}-fast-time-server
+    app: {{ $fullName }}-fast-test-server
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: {{ $fullName }}-fast-time-server
+      app: {{ $fullName }}-fast-test-server
   template:
     metadata:
       labels:
-        app: {{ $fullName }}-fast-time-server
+        app: {{ $fullName }}-fast-test-server
     spec:
       {{- if .Values.global.imagePullSecrets }}
       imagePullSecrets:
@@ -43,7 +43,7 @@ spec:
       {{- end }}
       automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       containers:
-        - name: fast-time-server
+        - name: fast-test-server
           image: "{{ .Values.testing.fastTestServer.image.repository }}:{{ .Values.testing.fastTestServer.image.tag }}"
           imagePullPolicy: {{ .Values.testing.fastTestServer.image.pullPolicy }}
           ports:
@@ -68,14 +68,14 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ $fullName }}-fast-time-server
+  name: {{ $fullName }}-fast-test-server
   labels:
     {{- include "mcp-stack.labels" . | nindent 4 }}
-    app: {{ $fullName }}-fast-time-server
+    app: {{ $fullName }}-fast-test-server
 spec:
   type: {{ .Values.testing.fastTestServer.service.type }}
   selector:
-    app: {{ $fullName }}-fast-time-server
+    app: {{ $fullName }}-fast-test-server
   ports:
     - name: http
       port: {{ .Values.testing.fastTestServer.service.port }}

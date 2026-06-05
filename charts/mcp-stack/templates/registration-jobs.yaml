@@ -151,7 +151,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ $fullName }}-register-fast-time
+  name: {{ $fullName }}-register-fast-test
   labels:
     {{- include "mcp-stack.labels" . | nindent 4 }}
     app.kubernetes.io/component: registration
@@ -174,7 +174,7 @@ spec:
       {{- end }}
       automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       containers:
-        - name: register-fast-time
+        - name: register-fast-test
           image: {{ $registrationImage | quote }}
           imagePullPolicy: {{ .Values.testing.registration.image.pullPolicy }}
           command: ["/bin/sh", "-c"]
@@ -188,7 +188,7 @@ spec:
 
               targets = [
                   ("gateway", "http://{{ $gatewayHost }}:{{ $gatewayPort }}/health", 90),
-                  ("fast_time_server", "http://{{ $fullName }}-fast-time-server:{{ .Values.testing.fastTestServer.service.port }}/health", 60),
+                  ("fast_test_server", "http://{{ $fullName }}-fast-test-server:{{ .Values.testing.fastTestServer.service.port }}/health", 60),
               ]
 
               for name, url, tries in targets:
@@ -214,7 +214,7 @@ spec:
               token = os.environ["TOKEN"]
               base = "http://{{ $gatewayHost }}:{{ $gatewayPort }}"
               gateway_name = "{{ .Values.testing.fastTest.register.gatewayName }}"
-              gateway_url = "http://{{ $fullName }}-fast-time-server:{{ .Values.testing.fastTestServer.service.port }}{{ .Values.testing.fastTest.register.gatewayPath }}"
+              gateway_url = "http://{{ $fullName }}-fast-test-server:{{ .Values.testing.fastTestServer.service.port }}{{ .Values.testing.fastTest.register.gatewayPath }}"
               transport = "{{ .Values.testing.fastTest.register.transport }}"
 
               def api_request(method: str, path: str, payload=None):
@@ -236,7 +236,7 @@ spec:
                           pass
 
               api_request("POST", "/gateways", {"name": gateway_name, "url": gateway_url, "transport": transport})
-              print("fast_time registration complete")
+              print("fast_test registration complete")
               PY
 
               exit 0

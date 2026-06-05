@@ -48,6 +48,8 @@ services:
 
 {fast_time_server}
 
+{fast_test_server}
+
 {benchmark_servers}
 
 {load_balancer}
@@ -116,9 +118,28 @@ REDIS_SERVICE = """  redis:
 
 FAST_TIME_SERVER_TEMPLATE = """  fast_time_server:
     build:
-      context: ./mcp-servers/rust/fast-time-server
+      context: ./mcp-servers/go/fast-time-server
       dockerfile: Dockerfile
     container_name: fast_time_server
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["-transport=sse", "-port=8002"]
+    ports:
+      - "8002:8002"
+    networks:
+      - mcpnet
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8002/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+"""
+
+FAST_TEST_SERVER_TEMPLATE = """  fast_test_server:
+    build:
+      context: ./mcp-servers/rust/fast-test-server
+      dockerfile: Dockerfile
+    container_name: fast_test_server
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
@@ -230,8 +251,11 @@ class DockerComposeGenerator:
         # Generate gateway services
         gateway_services = self._generate_gateway_services(num_instances, server, redis_enabled)
 
-        # Generate fast-time server (Rust - always included for basic MCP testing)
+        # Generate fast-time server (Go - always included for basic MCP testing)
         fast_time_server = FAST_TIME_SERVER_TEMPLATE
+
+        # Generate fast-test server (Rust - always included for echo/stats tools)
+        fast_test_server = FAST_TEST_SERVER_TEMPLATE
 
         # Generate benchmark servers
         benchmark_servers = ""
@@ -252,6 +276,7 @@ class DockerComposeGenerator:
             redis_service=redis_service,
             gateway_services=gateway_services,
             fast_time_server=fast_time_server,
+            fast_test_server=fast_test_server,
             benchmark_servers=benchmark_servers,
             load_balancer=load_balancer,
             redis_volume=redis_volume,

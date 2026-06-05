@@ -7,7 +7,7 @@ Quick reference for running containerized load tests with `docker compose` and L
 ## Starting the Testing Stack
 
 ```bash
-# Default: starts gateway, nginx, fast_time_server, Locust (web UI at :8089)
+# Default: starts gateway, nginx, fast_test_server, Locust (web UI at :8089)
 make testing-up
 ```
 
@@ -102,7 +102,7 @@ These are read by `locustfile_echo_delay.py` inside the Locust container:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ECHO_DELAY_MS` | `500` | Milliseconds the echo tool waits before responding |
-| `ECHO_DELAY_SERVER_ID` | *(fixed UUID)* | Virtual server ID to target (matches `register_fast_time`) |
+| `ECHO_DELAY_SERVER_ID` | *(fixed UUID)* | Virtual server ID to target (matches `register_fast_test`) |
 
 The echo delay test sends MCP `tools/call` requests through the gateway's Streamable HTTP endpoint (`/servers/{id}/mcp`), measuring how efficiently the gateway handles I/O-bound backends.
 
@@ -129,7 +129,7 @@ The echo delay test sends MCP `tools/call` requests through the gateway's Stream
 Compare direct server performance vs. going through the gateway:
 
 ```bash
-# 1. Baseline: hit the fast_time_server REST API directly
+# 1. Baseline: hit the fast_test_server REST API directly
 hey -n 10000 -c 200 -m POST -T 'application/json' \
     -d '{"message":"hello"}' http://localhost:8880/api/echo
 

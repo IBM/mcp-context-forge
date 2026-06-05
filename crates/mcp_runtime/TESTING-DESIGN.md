@@ -183,7 +183,7 @@ The current isolation suite prefers a compose-backed time-capable streamable
 HTTP gateway:
 
 - canonical preference: `fast_time`
-- fallback: `fast_time`
+- fallback: `fast_test`
 
 That fallback is acceptable because the suite is proving session/auth binding,
 not benchmarking a specific upstream server.

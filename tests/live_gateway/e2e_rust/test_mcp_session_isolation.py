@@ -267,7 +267,7 @@ def _select_time_gateway(gateways: list[dict[str, Any]], tools: list[dict[str, A
     """Select a compose-backed streamable HTTP gateway with live time tools.
 
     Prefer the canonical ``fast_time`` gateway when available, but fall back
-    to ``fast_time`` on clean rebuilds where the ``register_fast_time`` helper
+    to ``fast_test`` on clean rebuilds where the ``register_fast_time`` helper
     has not yet succeeded. The isolation suite validates session/auth binding,
     so any live MCP gateway with a time tool is sufficient.
     """
@@ -277,7 +277,7 @@ def _select_time_gateway(gateways: list[dict[str, Any]], tools: list[dict[str, A
         if gateway_id:
             tool_counts_by_gateway[gateway_id] = tool_counts_by_gateway.get(gateway_id, 0) + 1
 
-    preferred_names = ("fast_time", "fast_time")
+    preferred_names = ("fast_time", "fast_test")
     for preferred_name in preferred_names:
         for candidate in gateways:
             if candidate.get("name") == preferred_name and candidate.get("transport") == "STREAMABLEHTTP" and tool_counts_by_gateway.get(candidate.get("id"), 0) > 0:
@@ -285,7 +285,7 @@ def _select_time_gateway(gateways: list[dict[str, Any]], tools: list[dict[str, A
 
     for candidate in gateways:
         url = str(candidate.get("url", ""))
-        if candidate.get("transport") == "STREAMABLEHTTP" and tool_counts_by_gateway.get(candidate.get("id"), 0) > 0 and ("fast_time_server:8080/http" in url or "fast_time_server:8880/mcp" in url):
+        if candidate.get("transport") == "STREAMABLEHTTP" and tool_counts_by_gateway.get(candidate.get("id"), 0) > 0 and ("fast_time_server:8080/http" in url or "fast_test_server:8880/mcp" in url):
             return candidate
 
     raise AssertionError("No compose-backed time-capable STREAMABLEHTTP gateway with synced tools found")

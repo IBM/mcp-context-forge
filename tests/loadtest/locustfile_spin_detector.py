@@ -162,8 +162,8 @@ PROMPT_NAMES: list[str] = []
 TOOLS_WITH_REQUIRED_ARGS: set[str] = {
     "fast-time-convert-time",
     "fast-time-get-system-time",
-    "fast-time-echo",
-    "fast-time-get-system-time",
+    "fast-test-echo",
+    "fast-test-get-system-time",
 }
 
 
@@ -874,7 +874,7 @@ class FastTimeUser(BaseUser):
 
 
 class FastTestEchoUser(BaseUser):
-    """User that calls the fast_time MCP server echo tool."""
+    """User that calls the fast_test MCP server echo tool."""
 
     weight = 3
     wait_time = between(0.01, 0.1)  # Aggressive
@@ -905,33 +905,33 @@ class FastTestEchoUser(BaseUser):
     @task(10)
     @tag("mcp", "fasttest", "echo")
     def call_echo(self):
-        """Call fast-time-echo with a random message."""
+        """Call fast-test-echo with a random message."""
         message = random.choice(self.ECHO_MESSAGES)
         payload = _json_rpc_request(
             "tools/call",
             {
-                "name": "fast-time-echo",
+                "name": "fast-test-echo",
                 "arguments": {"message": message},
             },
         )
-        self._rpc_request(payload, "/rpc fast-time-echo")
+        self._rpc_request(payload, "/rpc fast-test-echo")
 
     @task(5)
     @tag("mcp", "fasttest", "echo")
     def call_echo_short(self):
-        """Call fast-time-echo with a short message."""
+        """Call fast-test-echo with a short message."""
         payload = _json_rpc_request(
             "tools/call",
             {
-                "name": "fast-time-echo",
+                "name": "fast-test-echo",
                 "arguments": {"message": "ping"},
             },
         )
-        self._rpc_request(payload, "/rpc fast-time-echo [short]")
+        self._rpc_request(payload, "/rpc fast-test-echo [short]")
 
 
 class FastTestTimeUser(BaseUser):
-    """User that calls the fast_time MCP server get_system_time tool."""
+    """User that calls the fast_test MCP server get_system_time tool."""
 
     weight = 3
     wait_time = between(0.01, 0.1)  # Aggressive
@@ -968,24 +968,24 @@ class FastTestTimeUser(BaseUser):
         payload = _json_rpc_request(
             "tools/call",
             {
-                "name": "fast-time-get-system-time",
+                "name": "fast-test-get-system-time",
                 "arguments": {"timezone": timezone},
             },
         )
-        self._rpc_request(payload, "/rpc fast-time-get-system-time")
+        self._rpc_request(payload, "/rpc fast-test-get-system-time")
 
     @task(2)
     @tag("mcp", "fasttest", "stats")
     def call_get_stats(self):
-        """Call fast-time-get-stats to get server statistics."""
+        """Call fast-test-get-stats to get server statistics."""
         payload = _json_rpc_request(
             "tools/call",
             {
-                "name": "fast-time-get-stats",
+                "name": "fast-test-get-stats",
                 "arguments": {},
             },
         )
-        self._rpc_request(payload, "/rpc fast-time-get-stats")
+        self._rpc_request(payload, "/rpc fast-test-get-stats")
 
 
 class WriteAPIUser(BaseUser):

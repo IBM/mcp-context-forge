@@ -46,7 +46,7 @@ def normalize_tool_names(tools: Iterable[Any]) -> list[str]:
     """Return the sorted set of *bare* tool names from our reference upstream.
 
     When the gateway has multiple registered upstreams (e.g. the bundled
-    ``fast-time-*`` / ``fast-time-*`` test stack), gateway targets advertise
+    ``fast-test-*`` / ``fast-time-*`` test stack), gateway targets advertise
     tools from *all* of them. That's not drift — it's the ambient test
     environment. Normalization filters to just the ``compliance-reference-*``
     slug so cross-target comparison is apples-to-apples.

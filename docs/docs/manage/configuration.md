@@ -665,7 +665,7 @@ When deployed with the Helm chart, the testing registration jobs create gateways
 in-cluster Service DNS names:
 
 - Fast-time: `http://<release>-mcp-fast-time-server:80/http`
-- Fast-test: `http://<release>-fast-time-server:8880/mcp`
+- Fast-test: `http://<release>-fast-test-server:8880/mcp`
 
 Under strict defaults (`SSRF_ALLOW_PRIVATE_NETWORKS=false`, `SSRF_ALLOWED_NETWORKS=[]`), these private
 destinations are rejected with `422` during `/gateways` creation.
