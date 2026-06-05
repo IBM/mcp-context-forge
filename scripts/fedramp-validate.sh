@@ -85,6 +85,11 @@ check "/app dotfiles permissions 0740 or less (RHEL-09-232045)" \
     "find /app -maxdepth 1 -name '.*' -type f -perm /037 -printf '%f\n' | sort | tr '\n' ',' | sed 's/,$//'" \
     ""
 
+# RHEL-09-252035: /etc/resolv.conf must contain at least 2 nameserver entries
+check "/etc/resolv.conf has at least 2 nameserver entries (RHEL-09-252035)" \
+    "awk '/^nameserver/{c++} END{print (c>=2)?\"pass\":\"fail\"}' /etc/resolv.conf 2>/dev/null || echo fail" \
+    "pass"
+
 echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="
 
