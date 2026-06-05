@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -23,6 +23,7 @@ import {
 import { useQuery } from "@/hooks/useQuery";
 import { Loading } from "@/components/ui/loading";
 import { createVirtualServer } from "@/api/virtualServers";
+import { InlineNotification } from "@/components/ui/inline-notification";
 import { useRouter } from "@/router";
 import type { CreateServerDetails } from "@/components/gateways/types";
 import type { Visibility } from "@/types/server";
@@ -37,6 +38,11 @@ interface ExposeComponentsFormProps {
     message: string;
   } | null;
   clearOAuthNotification?: () => void;
+  fetchToolsNotification?: {
+    type: "success" | "error";
+    message: string;
+  } | null;
+  clearFetchToolsNotification?: () => void;
 }
 
 interface Tool {
@@ -135,6 +141,8 @@ export function ExposeComponentsForm({
   teamId,
   oauthNotification,
   clearOAuthNotification,
+  fetchToolsNotification,
+  clearFetchToolsNotification,
 }: ExposeComponentsFormProps) {
   const { navigate } = useRouter();
   const [expandedSection, setExpandedSection] = useState<string | null>("tools");
@@ -144,21 +152,35 @@ export function ExposeComponentsForm({
   const [requireOAuth, setRequireOAuth] = useState<boolean>(false);
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-
   const handleSkip = () => {
     navigate("/app/gateways");
   };
 
   // Fetch tools, resources, and prompts for this gateway
-  const { data: toolsData, isLoading: toolsLoading } = useQuery<ToolsResponse>(
-    `/tools?limit=1000&gateway_id=${gatewayId}`,
-  );
-  const { data: resourcesData, isLoading: resourcesLoading } = useQuery<ResourcesResponse>(
-    `/resources?limit=1000&gateway_id=${gatewayId}`,
-  );
-  const { data: promptsData, isLoading: promptsLoading } = useQuery<PromptsResponse>(
-    `/prompts?limit=1000&gateway_id=${gatewayId}`,
-  );
+  const {
+    data: toolsData,
+    isLoading: toolsLoading,
+    refetch: refetchTools,
+  } = useQuery<ToolsResponse>(`/tools?limit=1000&gateway_id=${gatewayId}`);
+  const {
+    data: resourcesData,
+    isLoading: resourcesLoading,
+    refetch: refetchResources,
+  } = useQuery<ResourcesResponse>(`/resources?limit=1000&gateway_id=${gatewayId}`);
+  const {
+    data: promptsData,
+    isLoading: promptsLoading,
+    refetch: refetchPrompts,
+  } = useQuery<PromptsResponse>(`/prompts?limit=1000&gateway_id=${gatewayId}`);
+
+  // Refetch lists after useMCPServerForm completes fetch-tools and sets oauthNotification
+  useEffect(() => {
+    if (oauthNotification?.type !== "success") return;
+    clearOAuthNotification?.();
+    refetchTools().catch((err) => console.error("Failed to refetch tools:", err));
+    refetchResources().catch((err) => console.error("Failed to refetch resources:", err));
+    refetchPrompts().catch((err) => console.error("Failed to refetch prompts:", err));
+  }, [oauthNotification, clearOAuthNotification, refetchTools, refetchResources, refetchPrompts]);
 
   const tools = useMemo(() => (Array.isArray(toolsData) ? toolsData : []), [toolsData]);
   const resources = useMemo(
@@ -276,36 +298,22 @@ export function ExposeComponentsForm({
   return (
     <div className="mx-auto mt-6 w-full max-w-5xl rounded-xl border border-neutral-200 bg-inherit p-0 shadow-[0_12px_40px_rgba(15,23,42,0.12)] dark:border-neutral-800">
       <div className="flex flex-col gap-8 p-6 sm:p-8">
-        {/* OAuth notification */}
         {oauthNotification && (
-          <div
-            role={oauthNotification.type === "error" ? "alert" : "status"}
-            className={`flex items-start justify-between rounded-md border p-3 ${
-              oauthNotification.type === "success"
-                ? "border-green-200 bg-green-50 dark:border-green-900/50 dark:bg-green-950/50"
-                : "border-red-200 bg-red-50 dark:border-red-900/50 dark:bg-red-950/50"
-            }`}
-          >
-            <p
-              className={`text-sm ${
-                oauthNotification.type === "success"
-                  ? "text-green-700 dark:text-green-300"
-                  : "text-red-600 dark:text-red-400"
-              }`}
-            >
-              {oauthNotification.message}
-            </p>
-            {clearOAuthNotification && (
-              <button
-                type="button"
-                onClick={clearOAuthNotification}
-                aria-label="Dismiss notification"
-                className="ml-2 shrink-0 p-1 opacity-60 hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
-              >
-                ×
-              </button>
-            )}
-          </div>
+          <InlineNotification
+            type={oauthNotification.type}
+            message={oauthNotification.message}
+            onDismiss={clearOAuthNotification}
+            dismissLabel="Dismiss OAuth notification"
+          />
+        )}
+
+        {fetchToolsNotification && (
+          <InlineNotification
+            type={fetchToolsNotification.type}
+            message={fetchToolsNotification.message}
+            onDismiss={clearFetchToolsNotification}
+            dismissLabel="Dismiss fetch tools notification"
+          />
         )}
 
         {/* Main content */}

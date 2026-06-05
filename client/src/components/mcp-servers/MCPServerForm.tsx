@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ChevronDown, CircleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { InlineNotification } from "@/components/ui/inline-notification";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { MCPIcon } from "@/components/icons/MCPIcon";
@@ -44,6 +45,8 @@ export function MCPServerForm({ isOpen, onToggle, serverId, onSuccess }: MCPServ
     oauthPending,
     oauthNotification,
     clearOAuthNotification,
+    fetchToolsNotification,
+    clearFetchToolsNotification,
     setName,
     setUrl,
     setDescription,
@@ -135,6 +138,8 @@ export function MCPServerForm({ isOpen, onToggle, serverId, onSuccess }: MCPServ
         teamId={teamId}
         oauthNotification={oauthNotification}
         clearOAuthNotification={clearOAuthNotification}
+        fetchToolsNotification={fetchToolsNotification}
+        clearFetchToolsNotification={clearFetchToolsNotification}
       />
     );
   }
@@ -370,32 +375,21 @@ export function MCPServerForm({ isOpen, onToggle, serverId, onSuccess }: MCPServ
               )}
 
               {oauthNotification && (
-                <div
-                  role={oauthNotification.type === "error" ? "alert" : "status"}
-                  className={`flex items-start justify-between rounded-md border p-3 ${
-                    oauthNotification.type === "success"
-                      ? "border-green-200 bg-green-50 dark:border-green-900/50 dark:bg-green-950/50"
-                      : "border-red-200 bg-red-50 dark:border-red-900/50 dark:bg-red-950/50"
-                  }`}
-                >
-                  <p
-                    className={`text-sm ${
-                      oauthNotification.type === "success"
-                        ? "text-green-700 dark:text-green-300"
-                        : "text-red-600 dark:text-red-400"
-                    }`}
-                  >
-                    {oauthNotification.message}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={clearOAuthNotification}
-                    aria-label="Dismiss notification"
-                    className="ml-2 shrink-0 p-1 opacity-60 hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
-                  >
-                    ×
-                  </button>
-                </div>
+                <InlineNotification
+                  type={oauthNotification.type}
+                  message={oauthNotification.message}
+                  onDismiss={clearOAuthNotification}
+                  dismissLabel="Dismiss OAuth notification"
+                />
+              )}
+
+              {fetchToolsNotification && (
+                <InlineNotification
+                  type={fetchToolsNotification.type}
+                  message={fetchToolsNotification.message}
+                  onDismiss={clearFetchToolsNotification}
+                  dismissLabel="Dismiss fetch tools notification"
+                />
               )}
 
               <div className="flex items-center justify-end gap-3 pt-6">
