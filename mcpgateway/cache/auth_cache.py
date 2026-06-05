@@ -866,18 +866,20 @@ class AuthCache:
         Returns:
             Dict with scalar fields only (no lazy-loaded relationships)
         """
+        created_at = getattr(team, "created_at", None)
+        updated_at = getattr(team, "updated_at", None)
         return {
             "id": team.id,
             "name": team.name,
-            "slug": team.slug,
-            "description": team.description,
-            "created_by": team.created_by,
-            "is_personal": team.is_personal,
-            "visibility": team.visibility,
-            "max_members": team.max_members,
-            "is_active": team.is_active,
-            "created_at": team.created_at.isoformat() if team.created_at else None,
-            "updated_at": team.updated_at.isoformat() if team.updated_at else None,
+            "slug": getattr(team, "slug", None),
+            "description": getattr(team, "description", None),
+            "created_by": getattr(team, "created_by", None),
+            "is_personal": getattr(team, "is_personal", False),
+            "visibility": getattr(team, "visibility", "public"),
+            "max_members": getattr(team, "max_members", None),
+            "is_active": getattr(team, "is_active", True),
+            "created_at": created_at.isoformat() if created_at else None,
+            "updated_at": updated_at.isoformat() if updated_at else None,
         }
 
     async def get_user_team_objects(self, cache_key: str) -> Optional[List[Dict[str, Any]]]:
