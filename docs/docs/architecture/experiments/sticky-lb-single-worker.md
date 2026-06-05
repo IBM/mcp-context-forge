@@ -235,6 +235,46 @@ upstream sessions, workers are stateless and dispatch through it. See
 | 4. Cookie stickiness | none | LB tech change | yes | Requires nginx Plus / HAProxy. Client SDK cookie support required. |
 | 5. Coordinator-worker | major | n/a | yes | Largest change. Sidesteps the routing problem. |
 
+## Alternatives considered but not pursued
+
+A couple of intra-container topologies were discussed during the experiment
+and rejected before any code was written. Captured here so a future reader
+knows the design space was explored.
+
+### Port-per-worker (multi-workers, each on a distinct port)
+
+Keep `GUNICORN_WORKERS=N` per container, but bind each worker to a distinct
+port instead of sharing one via `SO_REUSEPORT`. nginx upstream would list
+every `container:port` pair as a separate backend.
+
+- Theoretically valid. Each worker becomes its own routable endpoint, so
+  `hash $http_authorization` (or any deterministic hash) routes to a
+  specific worker, not just a container.
+- **Operationally unusual.** Requires either separate gunicorn instances
+  per port or a custom worker bootstrap. nginx upstream grows to N entries
+  per container (3 containers × 24 workers = 72 entries). Per-port health
+  checks. Port management per pod. Container restart re-binds all ports.
+- Not adopted by mainstream Python web deployments — the modern pattern
+  is one worker per pod and scale with replicas. We didn't see a strong
+  reason to swim against the current here.
+
+### Intra-container sidecar / coordinator
+
+A small process inside each container that reads `Mcp-Session-Id`, looks up
+the owning worker in a per-container map, and forwards via UDS or a local
+port.
+
+- This is the affinity layer relocated from the worker process to a
+  sidecar. Doesn't simplify the architecture; just moves the problem.
+- Adds a new failure mode (sidecar liveness), a new IPC contract, and
+  per-container state.
+- Effectively reinvents Approach 2 (coordinator-worker) at container scope.
+  If we want a coordinator, we'd do the full Approach 2 instead of a
+  partial sidecar version.
+
+Both options are documented in the parent architecture alternatives doc
+under Approach 1's intra-container stickiness bullet.
+
 ## What still needs to be measured
 
 The experiment stopped at the counter test failure. The original verification
