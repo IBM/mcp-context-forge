@@ -113,6 +113,9 @@ Move session ownership out of workers entirely. A single coordinator process per
 - **Significant refactor.** `UpstreamSessionRegistry`, `_handle_rpc_authenticated`, the streamable-HTTP transport, the session-lifecycle code — all need to move or learn to call the coordinator.
 - **Multi-replica sessions don't survive replica failure.** Coordinator-per-replica doesn't get you cluster-wide session migration. That would need a cluster-wide coordinator, which is a much bigger project.
 
+**Paper design — `experiment/coordinator-worker-design`.**
+A design-only doc on the branch [`experiment/coordinator-worker-design`](https://github.com/IBM/mcp-context-forge/tree/experiment/coordinator-worker-design) fills in what this section deliberately leaves abstract: the IPC framing (length-prefixed JSON over UDS), the per-session locking and concurrency model on the coordinator, the request-flow walk-through, the failure-mode comparison vs the current affinity layer (coordinator crash = 100% of in-replica sessions vs ~4% today on a 24-worker setup), the SSE / ADR-052 open question, an env-gated coexistence path so the prototype never forces a flag day, and a wall-clock prototype estimate (~22 hours / 2-3 focused days). No code yet; the doc is structured so it becomes the README scaffold for a follow-up prototype branch if the team greenlights the work. See the [design write-up](https://github.com/IBM/mcp-context-forge/blob/experiment/coordinator-worker-design/docs/docs/architecture/experiments/coordinator-worker-design.md) for the full breakdown, including the explicit decision points before any prototype code is written.
+
 **When to pick**
 If the project grows to need cluster-wide session migration (blue/green deploys, auto-scaling that doesn't drop sessions, multi-region failover), this becomes the natural architecture. Today's pub/sub model is a stepping stone toward this; the coordinator is the structural endpoint.
 
