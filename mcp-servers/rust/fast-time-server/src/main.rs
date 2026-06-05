@@ -10,10 +10,10 @@
 // Transport: Streamable HTTP (no auth)
 // Default: http://127.0.0.1:9080/mcp
 
-use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+use axum::Router;
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::serve::ListenerExt;
-use axum::Router;
 #[cfg(test)]
 use chrono::Offset;
 use chrono::{DateTime, FixedOffset, SecondsFormat, TimeZone, Utc};
@@ -136,17 +136,16 @@ fn parse_time_in_timezone(
         return Ok(parsed.with_timezone(&Utc));
     }
     for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"] {
-        if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(time_str, fmt) {
-            if let Some(dt) = timezone.local_datetime_to_utc(&naive) {
-                return Ok(dt);
-            }
+        if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(time_str, fmt)
+            && let Some(dt) = timezone.local_datetime_to_utc(&naive)
+        {
+            return Ok(dt);
         }
-        if let Ok(date) = chrono::NaiveDate::parse_from_str(time_str, fmt) {
-            if let Some(naive) = date.and_hms_opt(0, 0, 0) {
-                if let Some(dt) = timezone.local_datetime_to_utc(&naive) {
-                    return Ok(dt);
-                }
-            }
+        if let Ok(date) = chrono::NaiveDate::parse_from_str(time_str, fmt)
+            && let Some(naive) = date.and_hms_opt(0, 0, 0)
+            && let Some(dt) = timezone.local_datetime_to_utc(&naive)
+        {
+            return Ok(dt);
         }
     }
     Err(format!("unrecognized time format: {}", time_str))
@@ -429,11 +428,11 @@ async fn mcp_tools_call_response(
             };
 
             DIRECT_REQUEST_COUNT.fetch_add(1, Ordering::Relaxed);
-            if let Some(ms) = delay {
-                if ms > 0 {
-                    let actual_ms = compute_delay(ms, delay_stddev);
-                    tokio::time::sleep(std::time::Duration::from_millis(actual_ms)).await;
-                }
+            if let Some(ms) = delay
+                && ms > 0
+            {
+                let actual_ms = compute_delay(ms, delay_stddev);
+                tokio::time::sleep(std::time::Duration::from_millis(actual_ms)).await;
             }
             mcp_text_result_response(id, message, false)
         }
@@ -512,13 +511,13 @@ fn mcp_convert_time_response(
     let source_timezone = match parse_timezone(source_timezone) {
         Ok(timezone) => timezone,
         Err(err) => {
-            return mcp_text_result_response(id, &format!("invalid source timezone: {err}"), true)
+            return mcp_text_result_response(id, &format!("invalid source timezone: {err}"), true);
         }
     };
     let target_timezone = match parse_timezone(target_timezone) {
         Ok(timezone) => timezone,
         Err(err) => {
-            return mcp_text_result_response(id, &format!("invalid target timezone: {err}"), true)
+            return mcp_text_result_response(id, &format!("invalid target timezone: {err}"), true);
         }
     };
     match parse_time_in_timezone(time, &source_timezone) {
@@ -669,11 +668,11 @@ async fn rest_echo_handler(axum::Json(req): axum::Json<RestEchoRequest>) -> Resp
                 .into_response();
         }
     };
-    if let Some(ms) = delay {
-        if ms > 0 {
-            let actual_ms = compute_delay(ms, req.delay_stddev);
-            tokio::time::sleep(std::time::Duration::from_millis(actual_ms)).await;
-        }
+    if let Some(ms) = delay
+        && ms > 0
+    {
+        let actual_ms = compute_delay(ms, req.delay_stddev);
+        tokio::time::sleep(std::time::Duration::from_millis(actual_ms)).await;
     }
     axum::Json(json!({ "message": req.message })).into_response()
 }

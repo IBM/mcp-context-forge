@@ -1,7 +1,7 @@
 [package]
 name = "fast-time-server"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "Ultra-fast MCP test server with echo and time tools"
 license = "Apache-2.0"
 authors = ["ContextForge Contributors"]
