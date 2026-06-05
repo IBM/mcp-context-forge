@@ -107,8 +107,9 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """Process request and create observability trace.
 
-        Observability uses independent database sessions (issue #3883) that commit
-        immediately on a best-effort basis, separate from the main request transaction.
+        Uses a single database session for the entire trace lifecycle
+        (start_trace → start_span → end_span → end_trace) to reduce session
+        proliferation from 4-6 sessions to 1 session per traced request.
 
         Args:
             request: Incoming HTTP request
@@ -153,8 +154,13 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         span_id = None
         start_time = time.time()
 
+        # Create single observability session for entire trace lifecycle (issue #5072)
+        # First-Party
+        from mcpgateway.db import SessionLocal
+
+        obs_db = SessionLocal()
         try:
-            # Start trace (creates independent observability session)
+            # Start trace (reuses obs_db session, no commit yet)
             trace_id = self.service.start_trace(
                 name=f"{http_method} {request.url.path}",
                 trace_id=external_trace_id,  # Use external trace ID if provided
@@ -172,6 +178,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     "service.name": "mcp-gateway",
                     "service.version": getattr(settings, "version", "unknown"),
                 },
+                commit=False,  # Don't commit yet
+                obs_db=obs_db,  # Reuse session
             )
 
             # Store trace_id in request state for use in route handlers
@@ -187,17 +195,23 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             if hasattr(request.state, "db") and request.state.db is not None:
                 attach_trace_to_session(request.state.db, trace_id)
 
-            # Start request span (creates independent observability session)
+            # Start request span (reuses obs_db session, no commit yet)
             span_id = self.service.start_span(
                 trace_id=trace_id,
                 name="http.request",
                 kind="server",
                 attributes={"http.method": http_method, "http.url": http_url},
+                commit=False,  # Don't commit yet
+                obs_db=obs_db,  # Reuse session
             )
 
         except Exception as e:
             # If trace setup failed, log and continue without tracing
             logger.warning(f"Failed to setup observability trace: {e}")
+            try:
+                obs_db.close()
+            except Exception:
+                pass
             # Continue without tracing
             return await call_next(request)
 
@@ -206,7 +220,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
             status_code = response.status_code
 
-            # End span successfully (creates independent observability session)
+            # End span successfully (reuses obs_db session, no commit yet)
             if span_id:
                 try:
                     self.service.end_span(
@@ -216,11 +230,13 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                             "http.status_code": status_code,
                             "http.response_size": response.headers.get("content-length"),
                         },
+                        commit=False,  # Don't commit yet
+                        obs_db=obs_db,  # Reuse session
                     )
                 except Exception as end_span_error:
                     logger.warning(f"Failed to end span {span_id}: {end_span_error}")
 
-            # End trace (creates independent observability session)
+            # End trace (reuses obs_db session, commits all changes atomically)
             if trace_id:
                 duration_ms = (time.time() - start_time) * 1000
                 try:
@@ -229,6 +245,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         status="ok" if status_code < 400 else "error",
                         http_status_code=status_code,
                         attributes={"response_time_ms": duration_ms},
+                        commit=True,  # Commit all changes atomically
+                        obs_db=obs_db,  # Reuse session
                     )
                 except Exception as end_trace_error:
                     logger.warning(f"Failed to end trace {trace_id}: {end_trace_error}")
@@ -248,9 +266,11 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                             "exception.type": type(e).__name__,
                             "exception.message": sanitized_error,
                         },
+                        commit=False,  # Don't commit yet
+                        obs_db=obs_db,  # Reuse session
                     )
 
-                    # Add exception event (creates independent observability session)
+                    # Add exception event (reuses obs_db session for atomic commit)
                     self.service.add_event(
                         span_id,
                         name="exception",
@@ -259,11 +279,12 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         exception_type=type(e).__name__,
                         exception_message=sanitized_error,
                         exception_stacktrace=traceback.format_exc(),
+                        obs_db=obs_db,  # Reuse session
                     )
                 except Exception as log_error:
                     logger.warning(f"Failed to log exception in span: {log_error}")
 
-            # End trace with error (creates independent observability session)
+            # End trace with error (reuses obs_db session, commits all changes atomically)
             if trace_id:
                 try:
                     sanitized_error = sanitize_for_log(sanitize_trace_text(str(e)))
@@ -272,9 +293,17 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         status="error",
                         status_message=sanitized_error,
                         http_status_code=500,
+                        commit=True,  # Commit all changes atomically
+                        obs_db=obs_db,  # Reuse session
                     )
                 except Exception as trace_error:
                     logger.warning(f"Failed to end trace: {trace_error}")
 
             # Re-raise the original exception
             raise
+        finally:
+            # Always close the observability session
+            try:
+                obs_db.close()
+            except Exception as close_error:
+                logger.debug(f"Failed to close observability session: {close_error}")
