@@ -1970,19 +1970,23 @@ class ServerService(BaseService):
         """
         server = db.get(DbServer, server_id)
 
-        # Return not found for non-existent, disabled, or non-public servers
-        # (avoids leaking information about private/team servers)
+        # Return not found for non-existent or disabled servers.
         if not server:
             raise ServerNotFoundError(f"Server not found: {server_id}")
 
         if not server.enabled:
             raise ServerNotFoundError(f"Server not found: {server_id}")
 
-        if getattr(server, "visibility", "public") != "public":
+        # RFC 9728 metadata is intentionally unauthenticated discovery material.
+        # OAuth-enabled private/team servers advertise this URL from /servers/{id}/mcp;
+        # let those clients fetch only the non-secret authorization metadata while
+        # keeping non-OAuth private/team servers hidden.
+        oauth_enabled = getattr(server, "oauth_enabled", False)
+        if getattr(server, "visibility", "public") != "public" and not oauth_enabled:
             raise ServerNotFoundError(f"Server not found: {server_id}")
 
         # Check OAuth configuration
-        if not getattr(server, "oauth_enabled", False):
+        if not oauth_enabled:
             raise ServerError(f"OAuth not enabled for server: {server_id}")
 
         oauth_config = getattr(server, "oauth_config", None)
