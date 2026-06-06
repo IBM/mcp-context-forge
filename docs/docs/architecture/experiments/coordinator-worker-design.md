@@ -107,7 +107,11 @@ Response travels back the same path: upstream → coordinator → worker → cli
 
 ### What moves to the coordinator
 
-- `UpstreamSessionRegistry` (the entire registry — one process owns it).
+- `UpstreamSessionRegistry` (the entire registry — one process owns it). The
+  existing module-level `init_upstream_session_registry()` is suitable for
+  direct use in the coordinator process; the registry does not depend on
+  the FastAPI request scope, the user identity context, or any per-worker
+  singleton, so no extraction work is required to host it standalone.
 - Upstream `ClientSession` lifecycle: open, keepalive, close.
 - Per-session locks and ordering guarantees.
 - The dispatch step that actually calls `tools/call`, `tools/list`, etc.
@@ -275,13 +279,19 @@ in-process registry provides via `asyncio.Lock`.
 |---|---|---|
 | `mcpgateway/coordinator.py` | NEW: standalone process. asyncio UDS server, hosts `UpstreamSessionRegistry`, frame parser, dispatch loop. | ~300 |
 | `mcpgateway/transports/coordinator_client.py` | NEW: connection manager (reconnect, multiplex), `dispatch()` coroutine returning `asyncio.Future`. | ~150 |
-| `mcpgateway/transports/streamablehttp_transport.py` | MODIFY: when `COORDINATOR_UDS_PATH` is set, the dispatch path that today calls into the in-process registry instead calls `coordinator_client.dispatch()`. Env-gated so default behaviour is unchanged. | ~80 |
-| `mcpgateway/services/upstream_session_registry.py` | REFACTOR: the registry already exists. Confirm it can be imported into the coordinator process without dragging in worker-specific imports. Likely a small extraction. | ~50 |
+| `mcpgateway/services/tool_service.py` | MODIFY: at the two pooled-dispatch sites (the SSE and the StreamableHTTP branches of `call_tool`, both ~10 lines around the `registry.acquire(...)` block), env-gate on `COORDINATOR_UDS_PATH`. When set, call `coordinator_client.call_tool(...)` and reconstruct a `types.CallToolResult` from the response; otherwise fall through to the existing local-registry path. Default behaviour is unchanged. | ~80 |
 | `mcpgateway/main.py` | MODIFY: at startup, if running in worker mode and `COORDINATOR_UDS_PATH` is set, instantiate `coordinator_client` as a singleton bound to the FastAPI app's lifespan. | ~20 |
 | `mcpgateway/config.py` | MODIFY: new env vars (`COORDINATOR_UDS_PATH`, `COORDINATOR_DISPATCH_TIMEOUT_MS`, `COORDINATOR_MAX_INFLIGHT`). | ~10 |
 
-**Total**: ~600 LOC for the smoke prototype. Real prototype with chaos
+**Total**: ~560 LOC for the smoke prototype. Real prototype with chaos
 tests and proper observability is double that.
+
+> **Note on the dispatch site.** The pooled upstream call lives in
+> `tool_service.py`, *not* in `streamablehttp_transport.py`. The streamable-HTTP
+> transport handles the worker's *downstream* MCP session (with the client);
+> `tool_service.call_tool` is where the worker reaches into the
+> `UpstreamSessionRegistry` to dispatch the upstream tool call. The split is
+> easy to miss when scanning the codebase for the right hook point.
 
 ## Compose overlay
 
@@ -392,22 +402,19 @@ on the legacy path, compare metrics."
 
 These are the things most likely to surprise the prototype:
 
-1. **Can `UpstreamSessionRegistry` be lifted to a separate process as-is?**
-   Today it lives in the FastAPI app's memory and is initialized during
-   the worker lifespan. Confirm it has no implicit dependencies on the
-   request scope, the user object, or any per-worker singleton.
-2. **What's the per-request IPC overhead?**
+1. **What's the per-request IPC overhead under load?**
    UDS round-trip is ~10–30 μs on Linux. JSON encode + decode on a typical
    200-byte payload is another ~50–150 μs. Total ~100–200 μs per dispatch.
    Acceptable for tool calls that take 1–100 ms upstream, but worth
-   measuring before scaling claims.
-3. **Does asyncio + per-session locking inside one process scale to the
+   measuring under concurrency before making scaling claims — the
+   single-coordinator event loop is the ceiling per replica.
+2. **Does asyncio + per-session locking inside one process scale to the
    target session count?**
    The current registry is already this architecture; the only new thing
    is that all sessions in the replica now share *one* process's event
    loop, not 24. GIL contention is not the issue (single process), but
    event-loop latency under 1000+ active sessions might be.
-4. **How do plugin pre/post hooks interact with the IPC boundary?**
+3. **How do plugin pre/post hooks interact with the IPC boundary?**
    Today they run inline in the worker's request path. Under Approach 2,
    the question is: do plugins run in the worker (before/after dispatch)
    or in the coordinator (before/after the upstream call)? Different
@@ -415,13 +422,24 @@ These are the things most likely to surprise the prototype:
    worker by default; let opt-in plugins run in the coordinator if they
    need the upstream connection (e.g., observability of upstream
    responses).
-5. **SSE / GET-stream behaviour (ADR-052).**
+4. **Auth context propagation across the IPC.**
+   The dispatch frame must carry the worker-validated identity (user
+   email, teams, admin flag) so the coordinator has the user context it
+   needs without re-validating. The coordinator trusts the IPC payload
+   because the UDS socket is intra-replica and not network-addressable;
+   this trust boundary should be stated explicitly in code and audited.
+5. **Observability span context propagation.**
+   The dispatch frame should carry the OTel span context so the
+   coordinator-side dispatch resumes the worker's trace. Without it,
+   every span has a black box at the worker → coordinator boundary,
+   which is exactly where the interesting latency lives.
+6. **SSE / GET-stream behaviour (ADR-052).**
    The coordinator owns the upstream `ClientSession`, which is the source
    of server-initiated notifications. Workers can't easily relay SSE
    events from coordinator → client without an extra long-lived IPC
    channel per active stream. This is the most under-designed part right
    now; the smoke prototype should defer SSE and only handle POST /mcp.
-6. **Cluster-wide migration is still out of reach.**
+7. **Cluster-wide migration is still out of reach.**
    Approach 2 is *per-replica* coordinator, not cluster-wide. Sessions
    still die on replica failure. True session migration requires a
    cluster-wide owner with externalised state, which is Approach 4
