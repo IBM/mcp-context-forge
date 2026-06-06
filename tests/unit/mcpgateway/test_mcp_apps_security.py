@@ -7,17 +7,17 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
+from fastapi import HTTPException
 import orjson
 import pytest
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import MCPAppSession, Resource
 from mcpgateway.services.mcp_apps import (
+    mcp_app_session_service,
     MCP_UI_EXTENSION,
     MCPAppsValidationError,
-    mcp_app_session_service,
     validate_ui_resource,
 )
 from mcpgateway.services.tool_service import ToolNotFoundError, ToolService
@@ -127,9 +127,10 @@ class TestUIResourceSecurity:
 class FakeRequest:
     """Tiny request double for direct endpoint tests."""
 
-    def __init__(self, body: dict, headers: dict | None = None) -> None:
-        self._body = orjson.dumps(body)
+    def __init__(self, body, headers: dict | None = None) -> None:
+        self._body = body if isinstance(body, bytes) else orjson.dumps(body)
         self.headers = headers or {}
+        self.query_params = {}
         self.state = SimpleNamespace()
 
     async def body(self) -> bytes:
@@ -141,8 +142,70 @@ class TestAppBridgeEndpoints:
     """Endpoint-level AppBridge security tests."""
 
     @pytest.mark.asyncio
+    async def test_execute_rpc_initialize_advertises_authorized_extensions(self, monkeypatch, mock_db):
+        """Initialize should include extension capabilities for authorized callers."""
+        # First-Party
+        from mcpgateway import main as main_mod
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        request = FakeRequest({})
+
+        with patch.object(main_mod.session_registry, "handle_initialize_logic", new=AsyncMock(return_value={})):
+            result = await main_mod._execute_rpc_initialize(
+                request,
+                user={"email": "user@example.com"},
+                params={},
+                server_id="server-1",
+                mcp_session_id="mcp-session-1",
+            )
+
+        assert MCP_UI_EXTENSION in result["capabilities"]["extensions"]
+
+    @pytest.mark.asyncio
+    async def test_handle_rpc_extension_prefix_methods_return_method_not_found(self, monkeypatch, mock_db):
+        """Extension-prefixed methods should route through extension method validation."""
+        # First-Party
+        from mcpgateway import main as main_mod
+
+        request = FakeRequest({"jsonrpc": "2.0", "id": "ext-1", "method": "io.modelcontextprotocol/unknown", "params": {}})
+        response = await main_mod._handle_rpc_authenticated(request, db=mock_db, user={"email": "user@example.com"})
+
+        assert response["error"]["code"] == -32601
+        assert response["id"] == "ext-1"
+
+        request = FakeRequest({"jsonrpc": "2.0", "id": "ext-2", "method": "extensions/known", "params": {}})
+        with patch("mcpgateway.services.extension_registry.extension_registry.is_known_method", return_value=True):
+            response = await main_mod._handle_rpc_authenticated(request, db=mock_db, user={"email": "user@example.com"})
+
+        assert response["error"]["code"] == -32601
+        assert response["id"] == "ext-2"
+
+    @pytest.mark.asyncio
+    async def test_create_session_rejects_disabled_and_malformed_requests(self, monkeypatch, mock_db):
+        """App session creation should reject disabled, malformed, and unbound requests."""
+        # First-Party
+        from mcpgateway import main as main_mod
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", False)
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.create_mcp_app_session.__wrapped__(request=FakeRequest({}), db=mock_db, user={"email": "user@example.com"})
+        assert excinfo.value.status_code == 404
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        for request, expected_status in [
+            (FakeRequest(b"{"), 400),
+            (FakeRequest([]), 400),
+            (FakeRequest({"resourceUri": "https://example.com/widget"}), 422),
+            (FakeRequest({"resourceUri": "ui://widgets/example"}), 400),
+        ]:
+            with pytest.raises(HTTPException) as excinfo:
+                await main_mod.create_mcp_app_session.__wrapped__(request=request, db=mock_db, user={"email": "user@example.com"})
+            assert excinfo.value.status_code == expected_status
+
+    @pytest.mark.asyncio
     async def test_create_session_requires_verified_mcp_session(self, monkeypatch, mock_db):
         """App sessions cannot be minted for arbitrary MCP session ids."""
+        # First-Party
         from mcpgateway import main as main_mod
 
         monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
@@ -164,6 +227,7 @@ class TestAppBridgeEndpoints:
     @pytest.mark.asyncio
     async def test_create_session_requires_server_id(self, monkeypatch, mock_db):
         """App sessions must be bound to a virtual server."""
+        # First-Party
         from mcpgateway import main as main_mod
 
         monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
@@ -180,8 +244,156 @@ class TestAppBridgeEndpoints:
         assert excinfo.value.status_code == 400
 
     @pytest.mark.asyncio
+    async def test_create_session_uses_admin_bypass_scope_and_returns_payload(self, monkeypatch, mock_db):
+        """Admin app sessions should use unrestricted resource lookup and return session metadata."""
+        # First-Party
+        from mcpgateway import main as main_mod
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        expires_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        request = FakeRequest(
+            {"resourceUri": "ui://widgets/example", "serverId": "server-1"},
+            headers={"mcp-session-id": "mcp-session-1"},
+        )
+        app_session = SimpleNamespace(id="app-session-1", resource_uri="ui://widgets/example", server_id="server-1", expires_at=expires_at)
+
+        with (
+            patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
+            patch.object(main_mod, "get_rpc_filter_context", return_value=("admin@example.com", None, True)),
+            patch.object(main_mod.resource_service, "read_resource", new=AsyncMock(return_value=SimpleNamespace())) as read_mock,
+            patch.object(main_mod.mcp_app_session_service, "create_session", return_value=app_session) as create_mock,
+        ):
+            response = await main_mod.create_mcp_app_session.__wrapped__(request=request, db=mock_db, user={"email": "admin@example.com", "is_admin": True})
+
+        read_mock.assert_awaited_once()
+        assert read_mock.await_args.kwargs["user"] is None
+        assert read_mock.await_args.kwargs["token_teams"] is None
+        create_mock.assert_called_once()
+        assert create_mock.call_args.kwargs["token_teams"] is None
+        assert orjson.loads(response.body)["appSessionId"] == "app-session-1"
+
+    @pytest.mark.asyncio
+    async def test_create_session_rejects_user_without_email_after_resource_check(self, monkeypatch, mock_db):
+        """App sessions require a concrete requester identity before persistence."""
+        # First-Party
+        from mcpgateway import main as main_mod
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        request = FakeRequest(
+            {"resourceUri": "ui://widgets/example", "serverId": "server-1"},
+            headers={"mcp-session-id": "mcp-session-1"},
+        )
+
+        with (
+            patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
+            patch.object(main_mod, "get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch.object(main_mod, "get_user_email", return_value=None),
+            patch.object(main_mod.resource_service, "read_resource", new=AsyncMock(return_value=SimpleNamespace())),
+            patch.object(main_mod.mcp_app_session_service, "create_session") as create_mock,
+        ):
+            with pytest.raises(HTTPException) as excinfo:
+                await main_mod.create_mcp_app_session.__wrapped__(request=request, db=mock_db, user={})
+
+        assert excinfo.value.status_code == 403
+        create_mock.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_rpc_rejects_disabled_malformed_and_missing_session(self, monkeypatch, mock_db):
+        """AppBridge RPC should reject disabled, malformed, unsupported, and unbound requests."""
+        # First-Party
+        from mcpgateway import main as main_mod
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", False)
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.handle_mcp_app_session_rpc.__wrapped__("app-session-1", request=FakeRequest({}), db=mock_db, user={"email": "user@example.com"})
+        assert excinfo.value.status_code == 404
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.handle_mcp_app_session_rpc.__wrapped__("app-session-1", request=FakeRequest(b"{"), db=mock_db, user={"email": "user@example.com"})
+        assert excinfo.value.status_code == 400
+
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.handle_mcp_app_session_rpc.__wrapped__("app-session-1", request=FakeRequest([]), db=mock_db, user={"email": "user@example.com"})
+        assert excinfo.value.status_code == 400
+
+        result = await main_mod.handle_mcp_app_session_rpc.__wrapped__(
+            "app-session-1",
+            request=FakeRequest({"jsonrpc": "2.0", "id": "1", "method": "resources/read"}),
+            db=mock_db,
+            user={"email": "user@example.com"},
+        )
+        assert result["error"]["code"] == -32601
+
+        result = await main_mod.handle_mcp_app_session_rpc.__wrapped__(
+            "app-session-1",
+            request=FakeRequest({"jsonrpc": "2.0", "id": "1", "method": "tools/call"}),
+            db=mock_db,
+            user={"email": "user@example.com"},
+        )
+        assert result["error"]["code"] == -32003
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("status_code", "jsonrpc_code"), [(404, -32002), (403, -32003)])
+    async def test_rpc_maps_mcp_session_owner_failures_to_jsonrpc_errors(self, monkeypatch, mock_db, status_code, jsonrpc_code):
+        """Session ownership failures should return JSON-RPC errors instead of invoking tools."""
+        # First-Party
+        from mcpgateway import main as main_mod
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        request = FakeRequest(
+            {"jsonrpc": "2.0", "id": "1", "method": "tools/call", "params": {"name": "helper"}},
+            headers={"mcp-session-id": "mcp-session-1"},
+        )
+
+        with patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock(side_effect=HTTPException(status_code=status_code, detail="denied"))):
+            result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("app-session-1", request=request, db=mock_db, user={"email": "user@example.com"})
+
+        assert result["error"]["code"] == jsonrpc_code
+        assert result["error"]["message"] == "denied"
+
+    @pytest.mark.asyncio
+    async def test_rpc_rejects_missing_or_unusable_app_session_and_missing_tool_name(self, monkeypatch, mock_db, valid_app_session):
+        """AppBridge RPC should reject missing app sessions, unbound sessions, and missing tool names."""
+        # First-Party
+        from mcpgateway import main as main_mod
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        request = FakeRequest(
+            {"jsonrpc": "2.0", "id": "1", "method": "tools/call", "params": {"name": "helper"}},
+            headers={"mcp-session-id": "mcp-session-123"},
+        )
+
+        with (
+            patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
+            patch.object(main_mod, "get_request_identity", return_value=("user@example.com", False)),
+            patch.object(main_mod.mcp_app_session_service, "get_valid_session", return_value=None),
+        ):
+            result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("missing", request=request, db=mock_db, user={"email": "user@example.com"})
+        assert result["error"]["code"] == -32003
+
+        unbound_session = SimpleNamespace(**{**valid_app_session.__dict__, "server_id": None})
+        with (
+            patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
+            patch.object(main_mod, "get_request_identity", return_value=("user@example.com", False)),
+            patch.object(main_mod.mcp_app_session_service, "get_valid_session", return_value=unbound_session),
+        ):
+            result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("app-session-1", request=request, db=mock_db, user={"email": "user@example.com"})
+        assert result["error"]["code"] == -32003
+
+        request = FakeRequest({"jsonrpc": "2.0", "id": "1", "method": "tools/call", "params": {}}, headers={"mcp-session-id": "mcp-session-123"})
+        with (
+            patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
+            patch.object(main_mod, "get_request_identity", return_value=("user@example.com", False)),
+            patch.object(main_mod.mcp_app_session_service, "get_valid_session", return_value=valid_app_session),
+        ):
+            result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("app-session-1", request=request, db=mock_db, user={"email": "user@example.com"})
+        assert result["error"]["code"] == -32602
+
+    @pytest.mark.asyncio
     async def test_rpc_rejects_cross_server_request(self, monkeypatch, mock_db, valid_app_session):
         """AppBridge RPC cannot switch away from the session-bound server."""
+        # First-Party
         from mcpgateway import main as main_mod
 
         monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
@@ -204,6 +416,7 @@ class TestAppBridgeEndpoints:
     @pytest.mark.asyncio
     async def test_rpc_invokes_bound_app_visible_tool_without_direct_proxy_header(self, monkeypatch, mock_db, valid_app_session):
         """AppBridge RPC uses the stored server id and requires app-visible resolution."""
+        # First-Party
         from mcpgateway import main as main_mod
 
         monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
@@ -225,6 +438,49 @@ class TestAppBridgeEndpoints:
         assert call_kwargs["server_id"] == "server-123"
         assert call_kwargs["require_app_visible"] is True
         assert "x-context-forge-gateway-id" not in call_kwargs["request_headers"]
+
+    @pytest.mark.asyncio
+    async def test_rpc_serializes_model_dump_and_maps_tool_errors(self, monkeypatch, mock_db, valid_app_session):
+        """AppBridge RPC should serialize Pydantic-like results and map tool failures."""
+        # First-Party
+        from mcpgateway import main as main_mod
+
+        class Dumpable:
+            def model_dump(self, **kwargs):
+                assert kwargs == {"by_alias": True, "exclude_none": True}
+                return {"ok": True}
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        request = FakeRequest(
+            {"jsonrpc": "2.0", "id": "1", "method": "tools/call", "params": {"name": "helper"}},
+            headers={"mcp-session-id": "mcp-session-123"},
+        )
+        with (
+            patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
+            patch.object(main_mod, "get_request_identity", return_value=("user@example.com", False)),
+            patch.object(main_mod.mcp_app_session_service, "get_valid_session", return_value=valid_app_session),
+            patch.object(main_mod.tool_service, "invoke_tool", new=AsyncMock(return_value=Dumpable())),
+        ):
+            result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("app-session-1", request=request, db=mock_db, user={"email": "user@example.com"})
+        assert result["result"] == {"ok": True}
+
+        with (
+            patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
+            patch.object(main_mod, "get_request_identity", return_value=("user@example.com", False)),
+            patch.object(main_mod.mcp_app_session_service, "get_valid_session", return_value=valid_app_session),
+            patch.object(main_mod.tool_service, "invoke_tool", new=AsyncMock(side_effect=ToolNotFoundError("missing"))),
+        ):
+            result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("app-session-1", request=request, db=mock_db, user={"email": "user@example.com"})
+        assert result["error"]["code"] == -32601
+
+        with (
+            patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
+            patch.object(main_mod, "get_request_identity", return_value=("user@example.com", False)),
+            patch.object(main_mod.mcp_app_session_service, "get_valid_session", return_value=valid_app_session),
+            patch.object(main_mod.tool_service, "invoke_tool", new=AsyncMock(side_effect=RuntimeError("boom"))),
+        ):
+            result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("app-session-1", request=request, db=mock_db, user={"email": "user@example.com"})
+        assert result["error"]["code"] == -32603
 
 
 class TestAppBridgeSessionSecurity:
@@ -339,6 +595,7 @@ class TestAppOnlyToolSecurity:
         """App-only tools should not appear in model-facing tools/list."""
         monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
 
+        # First-Party
         from mcpgateway.services.mcp_apps import filter_model_visible_tools
 
         model_tool = SimpleNamespace(
@@ -366,6 +623,7 @@ class TestAppOnlyToolSecurity:
         """App-only tools should only be callable through valid AppBridge session."""
         monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
 
+        # First-Party
         from mcpgateway.services.mcp_apps import is_app_visible_tool
 
         app_only_tool = SimpleNamespace(

@@ -3,6 +3,7 @@
 
 # Standard
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 # Third-Party
 import pytest
@@ -10,12 +11,13 @@ import pytest
 # First-Party
 from mcpgateway.common.models import ServerCapabilities
 from mcpgateway.services.mcp_apps import (
-    MCP_UI_EXTENSION,
-    MCPAppsValidationError,
     apply_resource_meta,
     build_extension_capabilities,
     filter_model_visible_tools,
     is_app_visible_tool,
+    mcp_app_session_service,
+    MCP_UI_EXTENSION,
+    MCPAppsValidationError,
     merge_mcp_protocol_meta,
     validate_extension_metadata,
     validate_ui_resource,
@@ -85,3 +87,94 @@ def test_merge_mcp_protocol_meta_projects_ui_to_extension_metadata() -> None:
 
     assert payload["extensionMetadata"][MCP_UI_EXTENSION]["resourceUri"] == "ui://widgets/example"
     assert payload["extensionMetadata"][MCP_UI_EXTENSION]["audience"] == ["model"]
+
+
+def test_merge_mcp_protocol_meta_ignores_missing_ui_and_merges_existing_metadata() -> None:
+    """Protocol metadata merge should ignore non-UI metadata and preserve extension data."""
+    payload = {"_meta": {"ui": {}}}
+    merge_mcp_protocol_meta(payload)
+    assert "extensionMetadata" not in payload
+
+    payload = {
+        "_meta": {"ui": {"resourceUri": "ui://widgets/example"}},
+        "extensionMetadata": {MCP_UI_EXTENSION: {"audience": ["model"]}},
+    }
+    merge_mcp_protocol_meta(payload)
+
+    assert payload["extensionMetadata"][MCP_UI_EXTENSION] == {
+        "audience": ["model"],
+        "resourceUri": "ui://widgets/example",
+    }
+
+
+@pytest.mark.parametrize(
+    ("metadata", "message"),
+    [
+        ("bad", "extensionMetadata must be an object"),
+        ({MCP_UI_EXTENSION: {"resourceUri": "http://example.com"}}, "resourceUri must use the ui:// scheme"),
+        ({MCP_UI_EXTENSION: {"audience": ["operator"]}}, "audience entries"),
+        ({MCP_UI_EXTENSION: {"csp": "default-src 'self'"}}, "csp must be an object"),
+        ({MCP_UI_EXTENSION: {"csp": {"object-src": ["'none'"]}}}, "Unsupported MCP Apps CSP directive"),
+        ({MCP_UI_EXTENSION: {"sandbox": 123}}, "sandbox must be a string or list of strings"),
+        ({MCP_UI_EXTENSION: {"permissions": ["clipboard_read"]}}, "Unsupported MCP Apps permission"),
+    ],
+)
+def test_validate_extension_metadata_rejects_malformed_mcp_apps_values(metadata, message) -> None:
+    """MCP Apps metadata should fail closed for malformed policy fields."""
+    with pytest.raises(MCPAppsValidationError, match=message):
+        validate_extension_metadata(metadata)
+
+
+def test_validate_extension_metadata_accepts_absent_ui_block() -> None:
+    """Unknown extension metadata can be stored when known MCP Apps policy is absent."""
+    validate_extension_metadata({"io.example/custom": {"ok": True}})
+
+
+def test_validate_extension_metadata_accepts_string_audience_and_csp_source() -> None:
+    """String-or-list metadata fields should normalize as valid string lists."""
+    validate_extension_metadata(
+        {
+            MCP_UI_EXTENSION: {
+                "resourceUri": "ui://widgets/example",
+                "audience": "app",
+                "csp": {"default-src": "'self'"},
+                "sandbox": "allow-scripts",
+                "permissions": "clipboard-read",
+            }
+        }
+    )
+
+
+def test_apply_resource_meta_noops_without_enabled_extension_or_ui(monkeypatch) -> None:
+    """Resource metadata projection should no-op when disabled or UI metadata is absent."""
+    monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", False)
+    payload: dict = {}
+    apply_resource_meta(payload, {MCP_UI_EXTENSION: {"sandbox": ["allow-scripts"]}})
+    assert payload == {}
+
+    monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+    apply_resource_meta(payload, {"io.example/custom": {"sandbox": ["allow-scripts"]}})
+    assert payload == {}
+
+
+def test_create_app_session_persists_ttl_bound_record(monkeypatch) -> None:
+    """AppBridge session creation should persist and return the database record."""
+    monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_session_ttl", 60)
+    db = MagicMock()
+    db.refresh.side_effect = lambda session: setattr(session, "refreshed", True)
+
+    session = mcp_app_session_service.create_session(
+        db,
+        mcp_session_id="mcp-session-1",
+        user_email="user@example.com",
+        server_id="server-1",
+        resource_uri="ui://widgets/example",
+        token_teams=["team-1"],
+    )
+
+    db.add.assert_called_once_with(session)
+    db.commit.assert_called_once()
+    db.refresh.assert_called_once_with(session)
+    assert session.refreshed is True
+    assert session.mcp_session_id == "mcp-session-1"
+    assert session.token_teams == ["team-1"]

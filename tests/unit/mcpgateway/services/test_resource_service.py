@@ -28,6 +28,7 @@ from sqlalchemy.exc import IntegrityError, MultipleResultsFound
 # First-Party
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.schemas import ResourceCreate, ResourceRead, ResourceSubscription, ResourceUpdate
+from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
 from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService
 
 # Local
@@ -649,6 +650,22 @@ class TestResourceReading:
             assert call_kwargs["meta_data"] == meta_data
 
     @pytest.mark.asyncio
+    async def test_read_resource_projects_ui_extension_metadata(self, resource_service, mock_db, mock_resource, monkeypatch):
+        """Reading a UI resource should project stored MCP Apps policy into content meta."""
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        mock_resource.extension_metadata = {MCP_UI_EXTENSION: {"csp": {"default-src": ["'self'"]}, "sandbox": ["allow-scripts"], "permissions": ["clipboard-read"]}}
+        mock_scalar = MagicMock()
+        mock_scalar.scalar_one_or_none.return_value = mock_resource
+        mock_db.execute.return_value = mock_scalar
+        mock_db.get.return_value = mock_resource
+
+        with patch.object(resource_service, "invoke_resource", new=AsyncMock(return_value="Resource Content")):
+            result = await resource_service.read_resource(mock_db, resource_id=mock_resource.id)
+
+        assert result.meta["ui"]["sandbox"] == ["allow-scripts"]
+        assert result.meta["ui"]["permissions"] == ["clipboard-read"]
+
+    @pytest.mark.asyncio
     @patch("mcpgateway.services.resource_service.get_cached_ssl_context")
     async def test_read_resource_success(self, mock_ssl_cache, mock_db, mock_resource):
         mock_ctx = MagicMock()
@@ -1029,6 +1046,29 @@ class TestResourceManagement:
             assert mock_resource.name == "Updated Name"
             assert mock_resource.description == "Updated description"
             mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_resource_accepts_ui_extension_metadata(self, resource_service, mock_db, mock_resource, monkeypatch):
+        """Resource updates should validate and persist MCP Apps metadata."""
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        mock_resource.uri = "ui://widgets/example"
+        mock_resource.mime_type = "text/html"
+        metadata = {MCP_UI_EXTENSION: {"csp": {"default-src": ["'self'"]}, "sandbox": ["allow-scripts"]}}
+        update_data = ResourceUpdate(extensionMetadata=metadata)
+
+        mock_scalar = MagicMock()
+        mock_scalar.scalar_one_or_none.return_value = mock_resource
+        mock_db.execute.return_value = mock_scalar
+        mock_db.get.return_value = mock_resource
+
+        with (
+            patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock),
+            patch.object(resource_service, "convert_resource_to_read", return_value={"id": mock_resource.id}),
+        ):
+            result = await resource_service.update_resource(mock_db, mock_resource.id, update_data)
+
+        assert result == {"id": mock_resource.id}
+        assert mock_resource.extension_metadata == metadata
 
     @pytest.mark.asyncio
     async def test_update_resource_team_id_rejects_nonexistent_team(self, resource_service, mock_db, mock_resource):
@@ -5956,7 +5996,11 @@ class TestReadResourceCoverageEdges:
         """Cover plugin user_id extraction from dict (2120) and plugin_global_context update branch (2129-2134)."""
         # Standard
         from types import SimpleNamespace
+
+        # Third-Party
         from cpex.framework import ResourceHookType
+
+        # First-Party
         from mcpgateway.services.resource_service import ResourceService
 
         svc = ResourceService()
@@ -5997,7 +6041,11 @@ class TestReadResourceCoverageEdges:
         """Cover user email fallback via getattr(user, 'email', None) (2125)."""
         # Standard
         from types import SimpleNamespace
+
+        # Third-Party
         from cpex.framework import ResourceHookType
+
+        # First-Party
         from mcpgateway.services.resource_service import ResourceService
 
         svc = ResourceService()
@@ -6039,7 +6087,11 @@ class TestReadResourceCoverageEdges:
         """Cover falsy user_id and server_id update arcs (2131->2133, 2133->2140)."""
         # Standard
         from types import SimpleNamespace
+
+        # Third-Party
         from cpex.framework import ResourceHookType
+
+        # First-Party
         from mcpgateway.services.resource_service import ResourceService
 
         svc = ResourceService()
