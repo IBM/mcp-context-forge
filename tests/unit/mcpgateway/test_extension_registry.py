@@ -5,7 +5,7 @@
 import pytest
 
 # First-Party
-from mcpgateway.services.extension_registry import ExtensionRegistry, extension_registry
+from mcpgateway.services.extension_registry import extension_registry, ExtensionRegistry
 from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
 
 
@@ -39,6 +39,15 @@ class TestExtensionRegistry:
         methods = registry.get_extension_methods(MCP_UI_EXTENSION)
         assert methods is not None
         assert "tools/call" in methods
+        assert registry.is_extension_method("tools/call", MCP_UI_EXTENSION)
+
+    def test_non_core_extension_method_recognition_when_enabled(self, monkeypatch):
+        """Enabled extensions can make non-core extension methods known."""
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        registry = ExtensionRegistry()
+        registry._extensions[MCP_UI_EXTENSION] = frozenset({"ui/render"})
+
+        assert registry.is_known_method("ui/render")
 
     def test_extension_method_recognition_when_enabled(self, monkeypatch):
         """Extension methods should be recognized when extension is enabled."""
@@ -92,6 +101,7 @@ class TestExtensionMethodRouting:
         monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
 
         # Simulate RPC handler behavior
+        # First-Party
         from mcpgateway.services.extension_registry import extension_registry
 
         method = "extensions/unknown"
@@ -103,6 +113,7 @@ class TestExtensionMethodRouting:
         """Known extension prefix but unknown method should return method-not-found."""
         monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
 
+        # First-Party
         from mcpgateway.services.extension_registry import extension_registry
 
         # io.modelcontextprotocol/ prefix is known, but /unknown is not
@@ -113,6 +124,7 @@ class TestExtensionMethodRouting:
         """Core MCP methods should be handled before checking extensions."""
         monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
 
+        # First-Party
         from mcpgateway.services.extension_registry import extension_registry
 
         # tools/call is both core and extension method
