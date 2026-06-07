@@ -550,6 +550,52 @@ def test_build_azure_request_defaults(service):
     assert body["stream"] is True
 
 
+def test_build_azure_request_reasoning_model_uses_completion_tokens(service):
+    """Azure reasoning deployments use max_completion_tokens and omit non-default temperature."""
+    request = ChatCompletionRequest(
+        model="gpt-5.4-mini",
+        messages=[ChatMessage(role="user", content="hi")],
+        temperature=0.7,
+        max_tokens=123,
+    )
+    provider = _make_provider(
+        provider_type=LLMProviderType.AZURE_OPENAI,
+        api_base="https://res.openai.azure.com",
+        config={"deployment_name": "gpt-5.4-mini"},
+        default_temperature=0.3,
+        default_max_tokens=50,
+    )
+    model = _make_model(model_id="gpt-5.4-mini")
+
+    _url, _headers, body = service._build_azure_request(request, provider, model)
+
+    assert body["max_completion_tokens"] == 123
+    assert "max_tokens" not in body
+    assert "temperature" not in body
+
+
+def test_build_azure_request_reasoning_model_allows_temperature_one(service):
+    """Azure reasoning deployments may still send default temperature=1."""
+    request = ChatCompletionRequest(
+        model="chat-alias",
+        messages=[ChatMessage(role="user", content="hi")],
+    )
+    provider = _make_provider(
+        provider_type=LLMProviderType.AZURE_OPENAI,
+        api_base="https://res.openai.azure.com",
+        config={"deployment_name": "o3-mini"},
+        default_temperature=1,
+        default_max_tokens=50,
+    )
+    model = _make_model(model_id="internal-alias")
+
+    _url, _headers, body = service._build_azure_request(request, provider, model)
+
+    assert body["temperature"] == 1
+    assert body["max_completion_tokens"] == 50
+    assert "max_tokens" not in body
+
+
 def test_build_anthropic_request_temperature_default(service):
     """Anthropic request uses provider default temperature (lines 330-332)."""
     request = ChatCompletionRequest(
