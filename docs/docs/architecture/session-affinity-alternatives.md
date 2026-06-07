@@ -1,6 +1,6 @@
-# Session-Affinity — Candidate Solutions for #4557
+# Session-Affinity: Candidate Solutions for #4557
 
-[Issue #4557](https://github.com/IBM/mcp-context-forge/issues/4557) reports a severe multi-worker session-affinity regression: throughput on the 3 × 24 reference stack collapses from ~180 RPS down to ~9 RPS, with `tools/call` p99 pinned at the 30-second forward timeout. The [#4674](https://github.com/IBM/mcp-context-forge/pull/4674) reproducer hinted at an amplification — a single user issuing 1 request per second drove the per-user rate-limiter counter up by ~24× the expected rate, suggesting each request was being processed by ~24 workers instead of one.
+[Issue #4557](https://github.com/IBM/mcp-context-forge/issues/4557) reports a severe multi-worker session-affinity regression: 180 RPS → 9 RPS on the 3 × 24 reference stack, with `tools/call` p99 pinned at the 30 s forward timeout. The [#4674](https://github.com/IBM/mcp-context-forge/pull/4674) reproducer revealed ~24× amplification: one request per second drove the per-user rate-limit counter up at 24×, suggesting every request was being processed by all 24 workers.
 
 This doc lays out the candidate solutions, walks through where each one shines and breaks down, and recommends a starting point with a path for further improvement.
 
@@ -8,7 +8,7 @@ This doc lays out the candidate solutions, walks through where each one shines a
 
 ## The Core Problem
 
-A stateful MCP request carrying `Mcp-Session-Id` can land on any of N workers, but only one worker holds the live upstream session — the `UpstreamSessionRegistry` entry contains a live `ClientSession` with an open connection, which is not serializable and not movable. When the request lands on the wrong worker, the architecture has exactly three structural choices:
+A stateful MCP request carrying `Mcp-Session-Id` can land on any of N workers, but only one worker holds the live upstream session. The `UpstreamSessionRegistry` entry contains a live `ClientSession` with an open connection, which is not serializable and not movable. When the request lands on the wrong worker, the architecture has exactly three structural choices:
 
 1. **Route correctly upstream**, so the request always lands on the right worker.
 2. **Externalize session ownership**, so any worker can serve any session.
@@ -64,7 +64,7 @@ Client → nginx hashes on `$http_authorization` → pod → `/rpc` executes loc
 - Two layers of stickiness required. nginx handles Layer-1; Layer-2 (intra-container) needs more work (see options below).
 - Worker failures reshuffle sessions; sticky LB has no per-session migration. Today's pub/sub model handles this transparently via heartbeat-based dead-worker reclaim.
 - SSE / GET streams don't benefit (#4334).
-- Capacity coupled to stickiness ratio — heavy users concentrate on one worker.
+- Capacity coupled to stickiness ratio: heavy users concentrate on one worker.
 
 <details><summary>Layer-2 stickiness options</summary>
 
@@ -80,10 +80,10 @@ Client → nginx hashes on `$http_authorization` → pod → `/rpc` executes loc
 
 Two known mitigations for the `Mcp-Session-Id` variant of the problem:
 
-- **(a) Server-side session-id minting that encodes routing.** The worker generating the session id constructs it so the LB's hash function returns this worker — e.g., the id contains a prefix or slot identifier the LB hash respects. Requires a tight contract between the LB hash and the gateway's session-id format; brittle to LB config changes.
-- **(b) Bootstrap-then-pin.** `initialize` lands on any worker via non-hashed routing (least-conn or round-robin), the response returns the session id, and from then on the LB hashes on the session id. Requires the LB hash to be deterministic across requests AND deterministic from the worker's point of view at session-creation time — typically achieved by hashing into a slot ring known to both sides. Failure mode: if a worker dies before the bootstrap completes, the session id may map elsewhere.
+- **(a) Server-side session-id minting that encodes routing.** The worker generating the session id constructs it so the LB's hash function returns this worker (e.g., the id contains a prefix or slot identifier the LB hash respects). Requires a tight contract between the LB hash and the gateway's session-id format; brittle to LB config changes.
+- **(b) Bootstrap-then-pin.** `initialize` lands on any worker via non-hashed routing (least-conn or round-robin), the response returns the session id, and from then on the LB hashes on the session id. Requires the LB hash to be deterministic across requests AND deterministic from the worker's point of view at session-creation time (typically achieved by hashing into a slot ring known to both sides). Failure mode: if a worker dies before the bootstrap completes, the session id may map elsewhere.
 
-Neither mitigation is structurally complex, but both require the gateway to know — and round-trip through — the LB's hash function. The MCP Python SDK doesn't expose the session-id generator as a hook (today it's a hardcoded `uuid4().hex` inside `StreamableHTTPSessionManager`), so mitigation (a) needs either a small SDK patch upstreamed or a startup-time monkey-patch in the gateway. Both were superseded by the simpler answer: hash on `Authorization`, which is present on every request from the start.
+Neither mitigation is structurally complex, but both require the gateway to know (and round-trip through) the LB's hash function. The MCP Python SDK doesn't expose the session-id generator as a hook (today it's a hardcoded `uuid4().hex` inside `StreamableHTTPSessionManager`), so mitigation (a) needs either a small SDK patch upstreamed or a startup-time monkey-patch in the gateway. Both were superseded by the simpler answer: hash on `Authorization`, which is present on every request from the start.
 
 </details>
 
@@ -141,7 +141,7 @@ nginx → any worker → coordinator (per replica, owns sessions) → upstream M
 - Significant refactor: `UpstreamSessionRegistry`, RPC dispatch, transport, lifecycle.
 - No cluster-wide session migration; coordinator-per-replica is local only.
 
-<a id="paper-design-2"></a>**Paper design.** Full design — IPC framing (length-prefixed JSON over UDS), per-session locking, request-flow walk-through, failure-mode comparison, SSE / ADR-052 open question, env-gated coexistence, ~22h prototype estimate — in the [coordinator-worker design doc](https://github.com/IBM/mcp-context-forge/blob/experiment/coordinator-worker-design/docs/docs/architecture/experiments/coordinator-worker-design.md).
+<a id="paper-design-2"></a>**Paper design.** Full design (IPC framing, per-session locking, request-flow walk-through, failure-mode comparison, SSE / ADR-052 open question, env-gated coexistence, ~22h prototype estimate) in the [coordinator-worker design doc](https://github.com/IBM/mcp-context-forge/blob/experiment/coordinator-worker-design/docs/docs/architecture/experiments/coordinator-worker-design.md).
 
 **When to pick:** when cluster-wide session migration becomes a hard requirement (blue/green deploys, auto-scale without session loss, multi-region failover). Not justified today.
 
@@ -151,16 +151,16 @@ nginx → any worker → coordinator (per replica, owns sessions) → upstream M
 
 > **Status: in-flight hardening.** Three PRs (#4981, #4987, #4997) implement the four invariants below. Production-ready when those land.
 
-Redis stores `sid → owner_worker_id`; the receiving worker forwards the payload to the owner over an IPC transport, and the response comes back the same way. The architecture has no delta from the gateway's current design — the Redis directory, per-worker channels, and dead-worker reclaim are all already in place. The #4557 regression came from invariants not being honoured, not from the architecture being wrong. The four invariants below are what the in-flight PRs are fixing.
+Redis stores `sid → owner_worker_id`; the receiving worker forwards the payload to the owner over an IPC transport, and the response comes back the same way. The architecture has no delta from the gateway's current design: the Redis directory, per-worker channels, and dead-worker reclaim are all already in place. The #4557 regression came from invariants not being honoured, not from the architecture being wrong. The four invariants below are what the in-flight PRs are fixing.
 
 ### Invariants any Approach-3 implementation must satisfy
 
 These are non-negotiable properties of the design. The existing code violated several of them, which is what produced the regression in #4557.
 
-- **Unique per-worker `WORKER_ID` after fork.** `--preload` captures the master's id at import; workers must recompute in `post_fork`. A shared `WORKER_ID` collapses every worker onto one Redis channel — the source of the 24× amplification in #4557.
+- **Unique per-worker `WORKER_ID` after fork.** `--preload` captures the master's id at import; workers must recompute in `post_fork`. A shared `WORKER_ID` collapses every worker onto one Redis channel, the source of the 24× amplification in #4557.
 - **Exactly one subscriber per per-worker channel.** Follows from invariant 1, but worth stating independently because operators can verify it directly: `PUBSUB NUMSUB mcpgw:pool_http:{worker_id}` and `PUBSUB NUMSUB mcpgw:pool_rpc:{worker_id}` must each return 1, not N. Anything > 1 means a `WORKER_ID` collision is amplifying forwards on that transport.
 - **Forwarded requests execute in the owner process.** Network loopback to `127.0.0.1` hits the shared gunicorn socket, where `SO_REUSEPORT` scatters the call to a random worker that doesn't hold the bound upstream session. In-process dispatch (`httpx.ASGITransport(app=app)`) keeps execution on the correct worker.
-- **Forwarded requests preserve the original `streamable_http_auth()` context.** The originating worker already validated the inbound credentials (ContextForge JWT, virtual-server OAuth, or public-only mode). The owner must trust that decision rather than re-authenticate — OAuth bearers fail internal JWT verification, and public-only requests have no token to verify at all. Either failure manifests as 401 on the inner dispatch even though the edge auth was correct.
+- **Forwarded requests preserve the original `streamable_http_auth()` context.** The originating worker already validated the inbound credentials (ContextForge JWT, virtual-server OAuth, or public-only mode). The owner must trust that decision rather than re-authenticate: OAuth bearers fail internal JWT verification, and public-only requests have no token to verify at all. Either failure manifests as 401 on the inner dispatch even though the edge auth was correct.
 
 Transport choice is independent of these invariants; none of the sub-options below compensate for an invariant being violated.
 
@@ -381,7 +381,7 @@ Externalise session state to Redis so any worker can serve any session. Workers 
 - Stateful upstreams break by default: two workers reconnecting with the same sid get two separate counters, or the server rejects the duplicate.
 - Concurrency races: two workers handling the same downstream session in parallel send overlapping requests on different connections, fighting for state ordering upstream.
 - Redis becomes the data path, not just the directory. Hot-path Redis (~5–10 ms) is more expensive than ownership lookup (~0.5 ms); a Redis outage degrades from "no forwarding" to "no requests at all."
-- Server-initiated SSE / notifications break — only the worker holding the live connection receives upstream-pushed events. Fan-out reintroduces the cross-worker problem this approach was meant to remove.
+- Server-initiated SSE / notifications break: only the worker holding the live connection receives upstream-pushed events. Fan-out reintroduces the cross-worker problem this approach was meant to remove.
 
 **When to pick:** only if every upstream is stateless and supports cross-connection resumption, AND the per-call reconnect cost is acceptable. For a federating gateway over arbitrary third-party MCP servers, this bet doesn't hold.
 
@@ -391,7 +391,7 @@ Externalise session state to Redis so any worker can serve any session. Workers 
 
 ## Comparison Matrix
 
-Side-by-side comparison of all 8 variants — latency, cross-container support, operational delta, code-change size, and pub/sub dependency.
+Side-by-side comparison of all 8 variants: latency, cross-container support, operational delta, code-change size, and pub/sub dependency.
 
 <details><summary>Comparison table</summary>
 
@@ -416,12 +416,12 @@ Side-by-side comparison of all 8 variants — latency, cross-container support, 
 
 Priority order (try in this sequence; fall through if the constraints don't fit):
 
-1. **Approach 3 — Redis pub/sub forwarding (current architecture).** Smallest architectural delta. In-flight PRs ([#4981](https://github.com/IBM/mcp-context-forge/pull/4981), [#4987](https://github.com/IBM/mcp-context-forge/pull/4987), [#4997](https://github.com/IBM/mcp-context-forge/pull/4997)) already address the four invariants. The Redis directory, per-worker channels, and dead-worker reclaim are all in place. Try this first because no deployment-shape change is required and the work is already underway.
+1. **Approach 3: Redis pub/sub forwarding (current architecture).** Smallest architectural delta. In-flight PRs ([#4981](https://github.com/IBM/mcp-context-forge/pull/4981), [#4987](https://github.com/IBM/mcp-context-forge/pull/4987), [#4997](https://github.com/IBM/mcp-context-forge/pull/4997)) already address the four invariants. The Redis directory, per-worker channels, and dead-worker reclaim are all in place. Try this first because no deployment-shape change is required and the work is already underway.
 
-2. **Approach 1 — Sticky LB on `Authorization`.** Empirically validated at 117 RPS/worker (~21× the current per-worker efficiency). Try this if you can move to one-worker-per-pod and accept the user-pinning trade-offs (heavy-user concentration, session loss on token refresh). Smallest code change of any non-trivial option.
+2. **Approach 1: Sticky LB on `Authorization`.** Empirically validated at 117 RPS/worker (~21× the current per-worker efficiency). Try this if you can move to one-worker-per-pod and accept the user-pinning trade-offs (heavy-user concentration, session loss on token refresh). Smallest code change of any non-trivial option.
 
-3. **Approach 2 — Coordinator-Worker model.** Paper design ready (~22h prototype estimated). Try this only if Approaches 1 and 3 both prove unworkable — for instance if cluster-wide session migration becomes a hard requirement, or if you're willing to invest in a separate Rust/PyO3 coordinator process.
+3. **Approach 2: Coordinator-Worker model.** Paper design ready (~22h prototype estimated). Try this only if Approaches 1 and 3 both prove unworkable: for instance if cluster-wide session migration becomes a hard requirement, or if you're willing to invest in a separate Rust/PyO3 coordinator process.
 
-4. **Approach 4 — Redis-resident sessions.** Last resort. Only viable if every upstream MCP server supports cross-connection session resumption AND the per-call reconnect cost (50–500 ms) is acceptable. Most rmcp / Python SDK upstreams don't support this today.
+4. **Approach 4: Redis-resident sessions.** Last resort. Only viable if every upstream MCP server supports cross-connection session resumption AND the per-call reconnect cost (50–500 ms) is acceptable. Most rmcp / Python SDK upstreams don't support this today.
 
-Within Approach 3, the transport sub-options (3b / 3c / 3d / 3e) can be adopted incrementally as performance demands grow — see [Approach 3](#approach-3--redis-based-cross-worker-forwarding) above. They don't change the priority order.
+Within Approach 3, the transport sub-options (3b / 3c / 3d / 3e) can be adopted incrementally as performance demands grow. See [Approach 3](#approach-3--redis-based-cross-worker-forwarding) above. They don't change the priority order.
