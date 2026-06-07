@@ -391,6 +391,10 @@ Externalise session state to Redis so any worker can serve any session. Workers 
 
 ## Comparison Matrix
 
+Side-by-side comparison of all 8 variants — latency, cross-container support, operational delta, code-change size, and pub/sub dependency.
+
+<details><summary>Comparison table</summary>
+
 > **Latency figures are order-of-magnitude estimates** drawn from typical commodity hardware, included to support relative comparison between the approaches. They are sensitive to deployment specifics (kernel, container runtime, Redis version, network path, payload size) and must be measured against the gateway benchmark stack before being used for capacity planning or SLA commitments.
 
 | Approach | Latency / forward (est.) | Cross-container | Operational delta | Code change | Pub/sub still needed |
@@ -403,6 +407,8 @@ Externalise session state to Redis so any worker can serve any session. Workers 
 | **3d. Direct TCP per worker** | ~50 μs–5 ms | yes | per-worker port allocation, auth | medium | no |
 | **3e. ZeroMQ** | ~20–50 μs over ipc | yes | new dependency, custom observability | medium-large | no |
 | **4. Redis-resident sessions** | n/a (no forward; +50–500 ms per call to re-establish upstream) | yes | Redis becomes data path | very large | no |
+
+</details>
 
 ---
 
