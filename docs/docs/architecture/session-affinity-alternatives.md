@@ -414,39 +414,14 @@ Side-by-side comparison of all 8 variants — latency, cross-container support, 
 
 ## Recommendation
 
-**Adopt Approach 3 with Redis pub/sub over TCP (sub-option 3a) as the transport, and repair the existing implementation against the four Approach-3 invariants.**
+Priority order (try in this sequence; fall through if the constraints don't fit):
 
-The recommendation is not "stay with the existing code" — the existing implementation produced the regression in #4557. The recommendation is "keep the existing architecture (Redis-based cross-worker forwarding with pub/sub transport) and enforce the invariants the architecture depends on." Concretely, an Approach-3 implementation must:
+1. **Approach 3 — Redis pub/sub forwarding (current architecture).** Smallest architectural delta. In-flight PRs ([#4981](https://github.com/IBM/mcp-context-forge/pull/4981), [#4987](https://github.com/IBM/mcp-context-forge/pull/4987), [#4997](https://github.com/IBM/mcp-context-forge/pull/4997)) already address the four invariants. The Redis directory, per-worker channels, and dead-worker reclaim are all in place. Try this first because no deployment-shape change is required and the work is already underway.
 
-1. Recompute `WORKER_ID` per worker after fork (so each worker has a unique Redis channel).
-2. Maintain exactly one subscriber per worker's pub/sub channels — both `mcpgw:pool_http:{worker_id}` (Streamable HTTP) and `mcpgw:pool_rpc:{worker_id}` (SSE/RPC). A verifiable property: `PUBSUB NUMSUB` returns 1 for each, not N.
-3. Dispatch the forwarded request in the owner process, not via a network loopback that the shared gunicorn socket would scatter.
-4. Preserve the `streamable_http_auth()` context across the forward so OAuth and `MCP_REQUIRE_AUTH=false` requests survive without 401-ing on the inner dispatch.
+2. **Approach 1 — Sticky LB on `Authorization`.** Empirically validated at 117 RPS/worker (~21× the current per-worker efficiency). Try this if you can move to one-worker-per-pod and accept the user-pinning trade-offs (heavy-user concentration, session loss on token refresh). Smallest code change of any non-trivial option.
 
-The four invariants are listed in detail under [Approach 3 — Invariants](#invariants-any-approach-3-implementation-must-satisfy). This contract was implemented incrementally across three stacked PRs — [#4981](https://github.com/IBM/mcp-context-forge/pull/4981) (per-worker `WORKER_ID` + foundation), [#4987](https://github.com/IBM/mcp-context-forge/pull/4987) (in-process forward dispatch), and [#4997](https://github.com/IBM/mcp-context-forge/pull/4997) (auth-context propagation). The three were brought together on an integration branch, [`fix/session-affinity-multiworker-forwarding`](https://github.com/IBM/mcp-context-forge/compare/main...fix/session-affinity-multiworker-forwarding), to test the full approach end-to-end on the 3 × 24 reference stack (~390 RPS, 0% failures, `PUBSUB NUMSUB` = 1).
+3. **Approach 2 — Coordinator-Worker model.** Paper design ready (~22h prototype estimated). Try this only if Approaches 1 and 3 both prove unworkable — for instance if cluster-wide session migration becomes a hard requirement, or if you're willing to invest in a separate Rust/PyO3 coordinator process.
 
-### Why this approach over the alternatives
+4. **Approach 4 — Redis-resident sessions.** Last resort. Only viable if every upstream MCP server supports cross-connection session resumption AND the per-call reconnect cost (50–500 ms) is acceptable. Most rmcp / Python SDK upstreams don't support this today.
 
-- **No architectural delta.** The Redis directory, per-worker channels, and dead-worker reclaim are already in place. Approach 1 (sticky LB) requires LB-layer and deployment-shape changes plus the user-pinning trade-offs of routing on `Authorization` (heavy-user concentration, session loss on token refresh); the bootstrap-routing question now has an empirically validated answer (see the [follow-up experiment](#approach-1--sticky-load-balancing-on-mcp-session-id)). Approach 2 (coordinator-worker) is a significant refactor that introduces a new process type.
-- **No new operational burden.** Redis is already in the deployment; no new dependencies, no new process types to monitor and version.
-- **Fastest path to a working solution.** Bounded to honouring the four invariants — the surface is small and the validation criteria are explicit and verifiable.
-- **Doesn't foreclose the long-term options.** Picking 3a now leaves room to evolve toward 3c (worker-to-worker UDS) when perf demands grow, or pivot to Approach 1 / Approach 2 if the deployment shape or requirements change.
-
-### Further improvements within Approach 3
-
-These are transport-only upgrades — the surrounding architecture stays the same, so they can be adopted incrementally as the system matures.
-
-| Upgrade | When to consider it |
-|---|---|
-| **3b (Redis pub/sub over UDS)** | Single-node deployments where Redis is co-located with the gateway. Drop-in transport upgrade, no architectural change. Not useful for multi-Pod Kubernetes/OCP topologies where Redis is a separate Pod. |
-| **3c (worker-to-worker UDS)** | When affinity forwarding becomes a measured bottleneck. Removes Redis from the data path entirely (keeps it as the directory), 10–100× faster per forward, intra-container fast path covers the common case in the 24 × 3 deployment shape. The natural next step if 3a's ~1–2 ms per forward is shown to matter. |
-| **3d (per-worker TCP)** | When cross-container forwarding is a significant fraction of total forwards (low workers-per-container, many containers, no sticky LB). Niche; most deployments don't hit this. |
-| **3e (ZeroMQ)** | When MCP forwarding warrants its own bounded subsystem with custom observability. Adds a dependency and bypasses ASGI; rarely worth the trade for this use case. |
-
-### When to revisit and switch approach
-
-- **Pivot to Approach 1 (sticky LB)** if the deployment moves to one-worker-per-container. With no intra-container scatter, sticky LB at nginx is strictly simpler than any forwarding mechanism. This pivot is empirically de-risked: [`experiment/sticky-lb-auth-hash`](https://github.com/IBM/mcp-context-forge/tree/experiment/sticky-lb-auth-hash) demonstrated end-to-end correctness and **117 RPS per worker vs. 5.5 RPS per worker** for the current affinity baseline (#4987) — production rollout still needs a longer soak, real-hardware run, and the per-`$http_authorization` rate-limit recommended in the experiment write-up.
-- **Pivot to Approach 2 (coordinator-worker)** if cluster-wide session migration becomes a real requirement (auto-scale without dropping sessions, blue/green deploys preserving session state, multi-region failover). At that point the structural refactor is worth the cost.
-- **Approach 4 (Redis-resident sessions) stays out of scope** as long as ContextForge is a federating gateway over arbitrary third-party upstreams. It would only make sense if the gateway's role narrowed to stateless tool execution AND every supported upstream guaranteed cross-connection session resumption. Neither holds today.
-
-The question that drives any future revisit isn't *"should we replace pub/sub with X?"* — it's *"do the deployment shape or the requirements still match the assumptions behind Approach 3?"* As long as both hold, 3a (with 3b/3c as ready-to-pick upgrades) covers the problem cleanly.
+Within Approach 3, the transport sub-options (3b / 3c / 3d / 3e) can be adopted incrementally as performance demands grow — see [Approach 3](#approach-3--redis-based-cross-worker-forwarding) above. They don't change the priority order.
