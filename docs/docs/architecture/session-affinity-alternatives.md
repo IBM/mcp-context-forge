@@ -335,7 +335,11 @@ Use ZMQ's `REQ/REP` pattern over `ipc://` (UDS) or `tcp://`. Discovery still in 
 
 ## Approach 4 — Redis-Resident Sessions
 
-Externalise the session state into Redis so any worker can serve any downstream session. Workers don't keep upstream connections alive; they re-open one and resume on each request using the upstream session id stored in Redis.
+> **Status: ruled out for ContextForge.** Requires every upstream MCP server to support cross-connection session resumption, which most don't (rmcp / Python SDK tie state to the TCP connection). Not viable for a federating gateway over arbitrary third-party upstreams.
+
+Externalise session state to Redis so any worker can serve any session. Workers re-open upstream connections on each request and resume via the stored session id.
+
+<details><summary>Diagram, pros, cons</summary>
 
 ```
                        ┌───────────────────────────────────────┐
@@ -365,23 +369,23 @@ Externalise the session state into Redis so any worker can serve any downstream 
 ```
 
 **Pros**
-
-- No affinity layer needed. LB can round-robin freely; no `mcpgw:pool_owner` keys, no per-worker pub/sub channels.
+- No affinity layer needed. LB round-robins freely; no `pool_owner` keys, no per-worker channels.
 - No cross-worker forwarding. Removes the entire IPC sub-problem that Approach 3 has to solve.
-- Worker failure doesn't strand sessions; the next request opens a fresh upstream connection on a different worker.
+- Worker failure doesn't strand sessions; next request opens a fresh upstream on a different worker.
 - Sessions could survive worker restarts and rolling deploys.
-- Truly stateless workers, horizontal scale is trivial.
+- Truly stateless workers; horizontal scale is trivial.
 
 **Cons**
+- Requires every upstream MCP server to support cross-connection session resumption. The MCP spec doesn't standardise an upstream `resume(session_id)` primitive; most rmcp / Python SDK servers tie state to the TCP connection.
+- Per-request connection establishment adds 50–500 ms (TCP + TLS handshake + MCP `initialize` + `notifications/initialized` round-trip, every request).
+- Stateful upstreams break by default: two workers reconnecting with the same sid get two separate counters, or the server rejects the duplicate.
+- Concurrency races: two workers handling the same downstream session in parallel send overlapping requests on different connections, fighting for state ordering upstream.
+- Redis becomes the data path, not just the directory. Hot-path Redis (~5–10 ms) is more expensive than ownership lookup (~0.5 ms); a Redis outage degrades from "no forwarding" to "no requests at all."
+- Server-initiated SSE / notifications break — only the worker holding the live connection receives upstream-pushed events. Fan-out reintroduces the cross-worker problem this approach was meant to remove.
 
-- **Requires every upstream MCP server to support cross-connection session resumption.** The MCP spec has `Mcp-Session-Id` for client-side continuity but does not standardise an upstream `resume(session_id)` primitive. Most rmcp and Python SDK servers tie state to the TCP connection.
-- **Per-request connection establishment adds 50–500 ms.** TCP plus TLS handshake plus MCP `initialize` plus `notifications/initialized` round-trip, on the request critical path, every time.
-- **Stateful upstreams break by default.** Servers like the rmcp counter keep state keyed by connection. Two workers reconnecting with the same upstream session id will get two separate counters, or the server may reject the duplicate.
-- **Concurrency races on the upstream.** Two workers handling the same downstream session in parallel can send overlapping requests on different connections, fighting for state ordering on the upstream. The current single-writer model avoids this entirely.
-- **Redis becomes the data path, not just the directory.** Every request reads and writes session state. Hot-path Redis is more expensive than ownership lookup (~5-10 ms vs ~0.5 ms) and a Redis outage degrades to "no requests at all" rather than "no forwarding."
-- **Server-initiated SSE / notifications break.** Only the worker holding the live connection receives upstream-pushed events. You'd need a fan-out mechanism, which is exactly the cross-worker forwarding this approach was trying to avoid.
+**When to pick:** only if every upstream is stateless and supports cross-connection resumption, AND the per-call reconnect cost is acceptable. For a federating gateway over arbitrary third-party MCP servers, this bet doesn't hold.
 
-**When to pick**: only if you can guarantee all upstreams are stateless request-response tools (no counters, no resources, no subscriptions) AND every upstream supports cross-connection resumption AND you're willing to pay the per-call reconnect cost. For a federating gateway that has to handle arbitrary third-party MCP servers, this bet doesn't hold.
+</details>
 
 ---
 
