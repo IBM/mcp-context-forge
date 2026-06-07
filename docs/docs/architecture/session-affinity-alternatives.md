@@ -32,6 +32,10 @@ The three approaches below walk through each option in turn.
 
 Stop forwarding at the application layer. Route correctly at the LB layer.
 
+Client → nginx hashes on `$http_authorization` → pod → `/rpc` executes locally. No forwarding.
+
+<details><summary>Original architecture diagram (Mcp-Session-Id variant)</summary>
+
 ```
    Client      Mcp-Session-Id: sess-abc
      │
@@ -48,28 +52,40 @@ Stop forwarding at the application layer. Route correctly at the LB layer.
    /rpc executes — session is always here, no forward needed, no Redis pub/sub
 ```
 
+</details>
+
 **Pros**
-- Removes the entire forward path. No pub/sub. No `WORKER_ID`. No `post_fork` hook.
-- Lower steady-state latency — no Redis round-trip on the hot path.
-- The simplest possible architecture once it's wired up.
-- Easier to reason about: "session X lives on worker Y, always."
+- No forward path. No pub/sub. No `WORKER_ID`. No `post_fork` hook.
+- Lower latency: no Redis on the hot path.
+- Simplest architecture once wired.
+- Easy to reason about: session X on worker Y, always.
 
 **Cons**
-- **Two layers of stickiness** required. nginx handles Layer-1 easily (`hash ... consistent;`). Layer-2 (intra-container, between gunicorn workers sharing the socket via `SO_REUSEPORT`) is hard. Three paths:
-  - Disable `SO_REUSEPORT` and use one worker per container (then scale by running more containers). Costs you the per-container parallelism.
-  - Port-per-worker: each gunicorn worker binds a distinct port, nginx upstream lists `container:portN` for every worker, no shared socket. Workable but operationally unusual — N entries in nginx per container, per-port health checks, separate gunicorn instances or custom config. Few teams run this in production.
-  - Add an intra-container router (sidecar or coordinator). Adds complexity and a new failure mode.
-- **Worker failures reshuffle sessions.** Consistent hashing re-pins sessions when a worker dies. The new target worker doesn't have the live `UpstreamSession`, so requests fail until the session is re-established. Today's pub/sub model handles this via heartbeat-based dead-worker reclaim — transparently.
-- **SSE doesn't benefit.** Long-lived GET streams have their own connection-ownership problem (#4334) that sticky LB doesn't touch.
-- **Capacity planning gets coupled to stickiness ratio.** If one popular session pins to one worker, that worker becomes hot while others sit idle.
+- Two layers of stickiness required. nginx handles Layer-1; Layer-2 (intra-container) needs more work (see options below).
+- Worker failures reshuffle sessions; sticky LB has no per-session migration. Today's pub/sub model handles this transparently via heartbeat-based dead-worker reclaim.
+- SSE / GET streams don't benefit (#4334).
+- Capacity coupled to stickiness ratio — heavy users concentrate on one worker.
 
-**Bootstrap routing — the gating constraint for Approach 1.**
-The Streamable HTTP `initialize` request is what *creates* the session; it doesn't yet carry `Mcp-Session-Id`. Hashing on that header pins every request *after* the bootstrap, but the bootstrap itself routes to whichever pod the LB happens to pick (typically by hashing the empty string). For sticky LB to be a complete replacement for forwarding, the worker that serves `initialize` and mints the session id has to be the same worker the LB's hash function will route subsequent requests to. Two known mitigations:
+<details><summary>Layer-2 stickiness options</summary>
 
-- **(a) Server-side session-id minting that encodes routing.** The worker generating the session id constructs it so the LB's hash function returns this worker — e.g., the id contains a prefix or slot identifier the LB hash respects. Requires tight contract between the LB hash and the gateway's session-id format; brittle to LB config changes.
-- **(b) Bootstrap-then-pin.** `initialize` lands on any worker via non-hashed routing (least-conn or round-robin), the response returns the session id, and from then on the LB hashes on the session id. Requires the LB hash to be deterministic across requests AND deterministic from the worker's point of view at session-creation time — typically achieved by hashing into a slot ring that's known to both sides. Failure mode: if a worker dies before the bootstrap completes, the session id may map elsewhere.
+- **Disable `SO_REUSEPORT`** and use one worker per container; scale by running more containers. Costs per-container parallelism.
+- **Port-per-worker:** each gunicorn worker binds a distinct port; nginx upstream lists `container:portN` for every worker. Operationally unusual (N entries per container, per-port health checks, separate gunicorn instances). Few teams run this.
+- **Intra-container router** (sidecar or coordinator). Adds complexity and a new failure mode.
 
-Neither mitigation is structurally complex, but both require the gateway to know — and round-trip through — the LB's hash function. The MCP Python SDK doesn't expose the session-id generator as a hook (today it's a hardcoded `uuid4().hex` inside `StreamableHTTPSessionManager`), so mitigation (a) needs either a small SDK patch upstreamed or a startup-time monkey-patch in the gateway. The doc would be misleading to claim "just turn on `hash ... consistent;`" without acknowledging this.
+</details>
+
+**Bootstrap routing.** The `initialize` request doesn't yet carry `Mcp-Session-Id`, so hashing on that header can't pin the bootstrap itself. Solved empirically by hashing on `Authorization` instead (see [empirical summary](#empirical-summary)).
+
+<details><summary>Bootstrap design alternatives considered (before the auth-hash variant was tested)</summary>
+
+Two known mitigations for the `Mcp-Session-Id` variant of the problem:
+
+- **(a) Server-side session-id minting that encodes routing.** The worker generating the session id constructs it so the LB's hash function returns this worker — e.g., the id contains a prefix or slot identifier the LB hash respects. Requires a tight contract between the LB hash and the gateway's session-id format; brittle to LB config changes.
+- **(b) Bootstrap-then-pin.** `initialize` lands on any worker via non-hashed routing (least-conn or round-robin), the response returns the session id, and from then on the LB hashes on the session id. Requires the LB hash to be deterministic across requests AND deterministic from the worker's point of view at session-creation time — typically achieved by hashing into a slot ring known to both sides. Failure mode: if a worker dies before the bootstrap completes, the session id may map elsewhere.
+
+Neither mitigation is structurally complex, but both require the gateway to know — and round-trip through — the LB's hash function. The MCP Python SDK doesn't expose the session-id generator as a hook (today it's a hardcoded `uuid4().hex` inside `StreamableHTTPSessionManager`), so mitigation (a) needs either a small SDK patch upstreamed or a startup-time monkey-patch in the gateway. Both were superseded by the simpler answer: hash on `Authorization`, which is present on every request from the start.
+
+</details>
 
 <a id="empirical-summary"></a>**Empirical summary**
 
@@ -80,8 +96,7 @@ Neither mitigation is structurally complex, but both require the gateway to know
 
 Net: Approach 1 ships as a config-only change when the LB hash key is `Authorization` rather than `Mcp-Session-Id`.
 
-**When to pick**
-If you're willing to constrain the deployment shape (one worker per container, more containers) and accept failover behaviour that's coarser than dead-worker reclaim, this is the cleanest answer. Works well for edge/appliance deployments. Pushes back against the "many workers per container" pattern most teams default to. Bootstrap routing must be solved alongside.
+**When to pick:** moving to one-worker-per-pod (or already there). Auth-hash variant is the recommended config.
 
 ---
 
