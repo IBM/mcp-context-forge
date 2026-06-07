@@ -149,14 +149,9 @@ nginx → any worker → coordinator (per replica, owns sessions) → upstream M
 
 ## Approach 3 — Redis-Based Cross-Worker Forwarding
 
-Redis stores `sid → owner_worker_id`; when a request lands on the wrong worker, the receiving worker forwards the payload to the owner over an IPC transport, and the response comes back the same way. Two questions this approach has to answer:
+> **Status: in-flight hardening.** Three PRs (#4981, #4987, #4997) implement the four invariants below. Production-ready when those land.
 
-1. **What transport carries the forwarded payload?** (the sub-options 3a–3e below)
-2. **What invariants must the implementation satisfy** for the architecture to actually behave as point-to-point forwarding?
-
-The second question matters because the architecture is correct only when those invariants hold — and the existing implementation violates several of them, which is what produced the #4557 regression. The transport choice is independent of whether the invariants hold. Both have to be addressed.
-
-This approach has no architectural delta from the gateway's current design: the Redis directory (`mcpgw:pool_owner:{sid} → worker_id`), the per-worker channels, and the dead-worker reclaim path are all already in place. The work is bounded to honouring the invariants below and (optionally) upgrading the transport. No new process types, no LB-layer changes, no deployment-shape constraints. This makes it the **fastest path to a working solution**, with room to evolve the transport later (3a → 3c) as performance demands grow.
+Redis stores `sid → owner_worker_id`; the receiving worker forwards the payload to the owner over an IPC transport, and the response comes back the same way. The architecture has no delta from the gateway's current design — the Redis directory, per-worker channels, and dead-worker reclaim are all already in place. The #4557 regression came from invariants not being honoured, not from the architecture being wrong. The four invariants below are what the in-flight PRs are fixing.
 
 ### Invariants any Approach-3 implementation must satisfy
 
@@ -169,6 +164,10 @@ These are non-negotiable properties of the design. The existing code violated se
 
 These invariants are what make point-to-point semantics, owner-process execution, and end-to-end auth correctness all hold simultaneously. The transport sub-options below assume them; none of the sub-options compensate for an invariant being violated.
 
+Worker X reads `mcpgw:pool_owner:{sid}` from Redis to find the owner, then forwards the payload to that worker over the configured transport.
+
+<details><summary>Forwarding flow diagram</summary>
+
 ```
    Worker X
      │ Redis GET mcpgw:pool_owner:{sid} → "worker-7"
@@ -180,7 +179,9 @@ These invariants are what make point-to-point semantics, owner-process execution
    Worker X returns response to client
 ```
 
-The transport options below all share the same ownership lookup in Redis. They differ only in how the request/response payload travels between workers.
+</details>
+
+The transport options below all share this ownership lookup. They differ only in how the request/response payload travels between workers.
 
 ### Sub-option 3a — Redis pub/sub over TCP
 
