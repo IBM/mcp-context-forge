@@ -28,7 +28,7 @@ The three approaches below walk through each option in turn.
 
 ## Approach 1 — Sticky Load Balancing
 
-> **Status: empirically validated.** `hash $http_authorization` config-only variant measured at **352 RPS, 0% failures, p99 530 ms** on a 3-pod prototype. ~21× per-worker efficiency vs the current affinity-layer baseline. See [empirical summary](#empirical-summary) below.
+> **Status: validated in experimental conditions.** `hash $http_authorization` config-only variant measured at **352 RPS, 0% failures, p99 530 ms** on a 3 single-worker-pod prototype with per-user JWTs. ~21× per-worker efficiency vs the current affinity-layer baseline. See [empirical summary and caveats](#empirical-summary) below.
 
 Stop forwarding at the application layer. Route correctly at the LB layer.
 
@@ -95,10 +95,16 @@ Neither mitigation is structurally complex, but both require the gateway to know
 
 | Variant | Status | Notes |
 |---|---|---|
-| `hash $http_mcp_session_id` (naive) | failed | Initialize→follow-up bootstrap mismatch. [Single-worker experiment README](https://github.com/IBM/mcp-context-forge/blob/experiment/sticky-lb-single-worker/docs/docs/architecture/experiments/sticky-lb-single-worker.md). |
-| `hash $http_authorization` (variant that works) | **passed** | 352 RPS / 0% fail / p99 530 ms on 3 single-worker pods. 5/5 correctness tests pass. ~21× per-worker efficiency vs Approach 3. Mitigations for user-pinning trade-offs (rate-limit, JWT lifetime) covered in the README. [Auth-hash experiment README](https://github.com/IBM/mcp-context-forge/blob/experiment/sticky-lb-auth-hash/docs/docs/architecture/experiments/sticky-lb-auth-hash.md). |
+| `hash $http_mcp_session_id` (naive) | failed | Bootstrap mismatch without gateway-side sid encoding or client-supplied sids. [Single-worker experiment README](https://github.com/IBM/mcp-context-forge/blob/experiment/sticky-lb-single-worker/docs/docs/architecture/experiments/sticky-lb-single-worker.md). |
+| `hash $http_authorization` (variant that works) | **passed** | 352 RPS / 0% fail / p99 530 ms on 3 single-worker pods. 5/5 correctness tests pass. ~21× per-worker efficiency vs Approach 3. **Scope:** authenticated clients with stable `Authorization`, one worker per pod, 60 s benchmark, per-user JWTs. [Auth-hash experiment README](https://github.com/IBM/mcp-context-forge/blob/experiment/sticky-lb-auth-hash/docs/docs/architecture/experiments/sticky-lb-auth-hash.md). |
 
-Net: Approach 1 ships as a config-only change when the LB hash key is `Authorization` rather than `Mcp-Session-Id`.
+Net: for deployments that meet the scope above, Approach 1 ships as a config-only change when the LB hash key is `Authorization` rather than `Mcp-Session-Id`.
+
+**Caveats** (apply to the auth-hash variant):
+
+- **Public-only mode (`MCP_REQUIRE_AUTH=false`) is not covered.** Unauthenticated requests have no `Authorization` header, so all anonymous traffic hashes to the empty string and concentrates on a single backend. Public-only deployments need a separate stickiness key (a deliberate cookie, a request id, or another stable header). The auth-hash variant on its own is not sufficient for them.
+- **Token rotation strands sessions.** A refreshed JWT is a different string and may hash to a different pod. This happens during normal token refresh, not just on failover, so clients must be able to detect a session error and re-initialize routinely.
+- **One worker per pod is structural, not optional.** nginx can only pin to the pod; if the pod has multiple gunicorn workers sharing a socket via `SO_REUSEPORT`, the request still scatters inside the pod and the conclusion above doesn't hold.
 
 **When to pick:** moving to one-worker-per-pod (or already there). Auth-hash variant is the recommended config.
 
