@@ -102,7 +102,13 @@ Net: Approach 1 ships as a config-only change when the LB hash key is `Authoriza
 
 ## Approach 2 — Coordinator-Worker Model
 
-Move session ownership out of workers entirely. A single coordinator process per replica owns all upstream MCP sessions. Workers become stateless and proxy through the coordinator via cheap local IPC.
+> **Status: paper design only.** Significant architectural change (new process type, IPC layer, ~22h prototype estimated). Not implemented. See [paper design](#paper-design-2) below.
+
+Move session ownership out of workers. A single coordinator process per replica owns all upstream MCP sessions; workers become stateless and proxy through the coordinator via cheap local IPC.
+
+nginx → any worker → coordinator (per replica, owns sessions) → upstream MCP server.
+
+<details><summary>Architecture diagram</summary>
 
 ```
                        ┌─────────────────────────────────┐
@@ -119,25 +125,25 @@ Move session ownership out of workers entirely. A single coordinator process per
    nginx ──► gunicorn socket (any worker takes the request)
 ```
 
+</details>
+
 **Pros**
-- Removes the affinity problem at the source. Workers don't own sessions, so there's nothing to scatter.
+- Removes the affinity problem at the source. Workers don't own sessions.
 - No `WORKER_ID`, no pub/sub, no Redis ownership keys, no `post_fork` hook.
-- Coordinator can serve any worker via UDS (~10 μs) — way faster than Redis pub/sub (~1–2 ms).
-- Architecturally clean: stateful and stateless sides are explicitly separated.
-- Opens the door to a Rust/PyO3 coordinator later for further perf.
+- UDS IPC (~10 μs) is much faster than Redis pub/sub (~1–2 ms).
+- Clean separation: stateful and stateless sides are explicit.
+- Opens the door to a Rust/PyO3 coordinator later.
 
 **Cons**
-- **New process type to deploy and operate.** Today it's "just gunicorn workers." The coordinator is another thing to monitor, restart, version-skew-test.
-- **Single point of failure per replica.** Coordinator crash kills every session in that replica. Today's per-worker design only loses ~1/24 of sessions on a worker crash.
-- **Coordinator becomes the throughput ceiling.** Every MCP request crosses the IPC boundary. Even at 10 μs that's measurable at high RPS, and a single-process coordinator is capped by one GIL's worth of work.
-- **Significant refactor.** `UpstreamSessionRegistry`, `_handle_rpc_authenticated`, the streamable-HTTP transport, the session-lifecycle code — all need to move or learn to call the coordinator.
-- **Multi-replica sessions don't survive replica failure.** Coordinator-per-replica doesn't get you cluster-wide session migration. That would need a cluster-wide coordinator, which is a much bigger project.
+- New process type to deploy, monitor, version-skew-test.
+- Single point of failure per replica: coordinator crash = 100% of in-replica sessions lost (vs ~4% on a worker crash today).
+- Throughput ceiling: one GIL per replica; every request crosses the IPC boundary.
+- Significant refactor: `UpstreamSessionRegistry`, RPC dispatch, transport, lifecycle.
+- No cluster-wide session migration; coordinator-per-replica is local only.
 
-**Paper design.**
-The [coordinator-worker design doc](https://github.com/IBM/mcp-context-forge/blob/experiment/coordinator-worker-design/docs/docs/architecture/experiments/coordinator-worker-design.md) fills in what this section deliberately leaves abstract: the IPC framing (length-prefixed JSON over UDS), the per-session locking and concurrency model, the request-flow walk-through, the failure-mode comparison vs the current affinity layer (coordinator crash = 100% of in-replica sessions vs ~4% today on a 24-worker setup), the SSE / ADR-052 open question, the env-gated coexistence path, and a wall-clock prototype estimate (~22 hours / 2-3 focused days). Implementing Approach 2 is a significant architectural and code change; the design doc is the implementation starting point if this approach is picked up.
+<a id="paper-design-2"></a>**Paper design.** Full design — IPC framing (length-prefixed JSON over UDS), per-session locking, request-flow walk-through, failure-mode comparison, SSE / ADR-052 open question, env-gated coexistence, ~22h prototype estimate — in the [coordinator-worker design doc](https://github.com/IBM/mcp-context-forge/blob/experiment/coordinator-worker-design/docs/docs/architecture/experiments/coordinator-worker-design.md).
 
-**When to pick**
-If the project grows to need cluster-wide session migration (blue/green deploys, auto-scaling that doesn't drop sessions, multi-region failover), this becomes the natural architecture. Today's pub/sub model is a stepping stone toward this; the coordinator is the structural endpoint.
+**When to pick:** when cluster-wide session migration becomes a hard requirement (blue/green deploys, auto-scale without session loss, multi-region failover). Not justified today.
 
 ---
 
