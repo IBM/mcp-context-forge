@@ -91,6 +91,22 @@ Neither mitigation is structurally complex, but both require the gateway to know
 
 </details>
 
+<details><summary>Why the sid-hash variant fails for ContextForge specifically (and might work for other gateways)</summary>
+
+The MCP spec doesn't say how the upstream server generates the session id. ContextForge inherits the Python SDK's `StreamableHTTPSessionManager`, which generates `uuid4().hex` — completely opaque, no routing information encoded. nginx hashing that sid has no way to reverse-engineer which pod minted it, so the bootstrap → follow-up mismatch is unavoidable.
+
+A gateway shipping the same sticky-on-sid config could still have it work end-to-end if any of these is true:
+
+- **Server generates routing-encoded sids** (e.g., `pod-3-abc…` or `s7-abc…`). Same idea as mitigation (a) above — the sid format itself tells nginx where to route. Some MCP gateway products do this; the Python SDK does not.
+- **Clients supply the sid on `initialize`.** nginx then hashes the same value on every request including the bind, so the same pod handles both. Some MCP client libraries do this; ContextForge's reference clients do not.
+- **LB owns the stickiness via cookie or stick-table.** AWS ALB, nginx Plus, HAProxy, or Envoy with a stateful filter can remember which pod handled the initialize and route follow-ups there regardless of the sid hash. Requires the client to honour LB-set cookies; not all MCP clients do.
+- **A session-routing coordinator sits in front of workers.** A dedicated pod maintains the sid → backend map and forwards. Essentially relocates the affinity problem into a proxy layer (the Approach 2 shape).
+- **The upstream is stateless.** No per-session memory means the routing question doesn't exist. ContextForge holds long-lived `ClientSession` objects, so this doesn't apply.
+
+The `Authorization`-hash variant we measured sidesteps all of this by routing on a header the client already holds, at the cost of the public-only / token-rotation caveats listed below.
+
+</details>
+
 <a id="empirical-summary"></a>**Empirical summary**
 
 | Variant | Status | Notes |
