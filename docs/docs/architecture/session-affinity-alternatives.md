@@ -185,14 +185,14 @@ The transport options below all share this ownership lookup. They differ only in
 
 ### Sub-option 3a — Redis pub/sub over TCP (the baseline)
 
-<details><summary>Transport diagram</summary>
+Baseline transport. Operationally simplest; ~1–2 ms per round-trip. Being hardened by #4981 / #4987 / #4997.
+
+<details><summary>Diagram, pros, cons</summary>
 
 ```
    Worker X  ──PUBLISH──►  Redis (TCP)  ──fanout──►  Worker 7 (SUBSCRIBE)
    Worker X  ◄────── response via another pub/sub channel ──────────
 ```
-
-</details>
 
 **Pros**
 - Operationally simplest: Redis already in the stack.
@@ -203,13 +203,17 @@ The transport options below all share this ownership lookup. They differ only in
 - Latency ~1–2 ms per round-trip (transport + Redis fanout + ASGI dispatch).
 - Fire-and-forget: no persistence; message lost if the owner is restarting at publish time.
 
-This is the baseline being hardened by #4981 / #4987 / #4997. The other sub-options swap the transport without changing the surrounding architecture.
+The other sub-options swap the transport without changing the surrounding architecture (Redis directory, worker subscriptions, dead-worker reclaim).
+
+</details>
 
 ### Sub-option 3b — Redis pub/sub over Unix Domain Sockets
 
-Keep Redis as the broker; connect the gateway to it over UDS instead of TCP loopback.
+Transport tweak only: swap TCP loopback to Redis for UDS. ~15–25% net latency win. Dev / single-node / edge.
 
-<details><summary>Transport config</summary>
+<details><summary>Config, pros, cons</summary>
+
+Keep Redis as the broker; connect the gateway to it over UDS instead of TCP loopback.
 
 ```
    redis.conf:
@@ -219,8 +223,6 @@ Keep Redis as the broker; connect the gateway to it over UDS instead of TCP loop
    gateway:
      redis.Redis(unix_socket_path="/var/run/redis/redis.sock")
 ```
-
-</details>
 
 **Pros**
 - Smallest change of all the options: a few lines of config, no code change.
@@ -232,11 +234,15 @@ Keep Redis as the broker; connect the gateway to it over UDS instead of TCP loop
 
 **When to pick:** dev / single-node / edge. Don't pick for multi-Pod Kubernetes.
 
+</details>
+
 ### Sub-option 3c — Worker-to-Worker UDS (Redis as directory only)
 
-Remove Redis from the data path. Each worker opens a UDS listener; Redis only stores `worker_id → UDS path`. Forwarding is a direct HTTP POST over UDS, no broker.
+Remove Redis from the data path; forward worker-to-worker over UDS directly. 10–100× faster than 3a. Intra-container only.
 
-<details><summary>Transport diagram</summary>
+<details><summary>Diagram, pros, cons</summary>
+
+Each worker opens a UDS listener; Redis only stores `worker_id → UDS path`. Forwarding is a direct HTTP POST over UDS, no broker.
 
 ```
    Redis (directory only)
@@ -249,8 +255,6 @@ Remove Redis from the data path. Each worker opens a UDS listener; Redis only st
      ▼
    Worker 7  ◄── kernel-mediated direct copy, no network, no broker
 ```
-
-</details>
 
 **Pros**
 - ~10–100× faster than Redis pub/sub (~5–50 μs per round-trip).
@@ -265,11 +269,15 @@ Remove Redis from the data path. Each worker opens a UDS listener; Redis only st
 
 **When to pick:** when intra-container forwards dominate (e.g., 24 × 3 setup) and the cross-container case is rare enough to fall back.
 
+</details>
+
 ### Sub-option 3d — Direct TCP per worker
 
-Each worker binds an additional internal TCP port (e.g., `5000 + worker_idx`). Forwarding is a direct HTTP POST to that port.
+Each worker binds an internal TCP port; forward directly to it. Works cross-container. 2–10× faster than 3a.
 
-<details><summary>Transport diagram</summary>
+<details><summary>Diagram, pros, cons</summary>
+
+Each worker binds an additional internal TCP port (e.g., `5000 + worker_idx`). Forwarding is a direct HTTP POST to that port.
 
 ```
    Redis (directory):
@@ -277,8 +285,6 @@ Each worker binds an additional internal TCP port (e.g., `5000 + worker_idx`). F
 
    Worker X ────── direct TCP ──────► Worker 7  (10.0.0.5:5007)
 ```
-
-</details>
 
 **Pros**
 - Works across containers (UDS doesn't).
@@ -291,11 +297,15 @@ Each worker binds an additional internal TCP port (e.g., `5000 + worker_idx`). F
 
 **When to pick:** when cross-container forwarding is a significant fraction of total forwards (low workers-per-container, many containers, no sticky LB).
 
+</details>
+
 ### Sub-option 3e — ZeroMQ point-to-point messaging
 
-Use ZMQ's `REQ/REP` pattern over `ipc://` (UDS) or `tcp://`. Discovery still in Redis.
+ZMQ `REQ/REP` over `ipc://` (UDS) or `tcp://`. Purpose-built point-to-point messaging. New dependency; bypasses ASGI.
 
-<details><summary>Transport diagram</summary>
+<details><summary>Diagram, pros, cons</summary>
+
+Use ZMQ's `REQ/REP` pattern over `ipc://` (UDS) or `tcp://`. Discovery still in Redis.
 
 ```
    Worker X                                 Worker 7
@@ -304,8 +314,6 @@ Use ZMQ's `REQ/REP` pattern over `ipc://` (UDS) or `tcp://`. Discovery still in 
      └──────────┘                          └──────────┘
               ◄── reply ────────────────────────
 ```
-
-</details>
 
 **Pros**
 - Purpose-built for point-to-point messaging faster than a broker.
@@ -320,6 +328,8 @@ Use ZMQ's `REQ/REP` pattern over `ipc://` (UDS) or `tcp://`. Discovery still in 
 - `REQ/REP` doesn't give you application-level retry semantics (request IDs, timeouts, idempotency); caller still implements those.
 
 **When to pick:** when MCP forwarding is worth making its own bounded subsystem with custom observability, and per-call latency justifies the dependency. Probably not today.
+
+</details>
 
 ---
 
