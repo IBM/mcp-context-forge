@@ -183,24 +183,33 @@ Worker X reads `mcpgw:pool_owner:{sid}` from Redis to find the owner, then forwa
 
 The transport options below all share this ownership lookup. They differ only in how the request/response payload travels between workers.
 
-### Sub-option 3a — Redis pub/sub over TCP
+### Sub-option 3a — Redis pub/sub over TCP (the baseline)
+
+<details><summary>Transport diagram</summary>
 
 ```
    Worker X  ──PUBLISH──►  Redis (TCP)  ──fanout──►  Worker 7 (SUBSCRIBE)
    Worker X  ◄────── response via another pub/sub channel ──────────
 ```
 
-- **Latency**: ~1–2 ms per round-trip (transport ~50–200 μs each way + Redis-side fanout ~100–500 μs + serialization + ASGI dispatch ~500 μs–2 ms).
-- **Mechanics**: each worker subscribes to its own channel `mcpgw:pool_http:{worker_id}`. Pub/sub semantics are "broadcast to all subscribers of a channel" — constrained to point-to-point by giving each channel exactly one subscriber.
-- **Operationally simplest**: Redis is already in the stack; nothing else to deploy.
-- **Fire-and-forget**: pub/sub has no persistence. If the owner worker is restarting when the publish lands, the message is lost.
-- **Smallest mental model**: everything goes through Redis, which is also the observability and rate-limit substrate.
+</details>
 
-This is the baseline transport for Approach 3. The other sub-options swap it for something faster or more direct, but the surrounding architecture (Redis directory, worker subscriptions, dead-worker reclaim) is unchanged.
+**Pros**
+- Operationally simplest: Redis already in the stack.
+- Smallest mental model: everything goes through one substrate (also the observability and rate-limit layer).
+- Point-to-point constrained from broadcast by per-worker channels (invariant 2).
+
+**Cons**
+- Latency ~1–2 ms per round-trip (transport + Redis fanout + ASGI dispatch).
+- Fire-and-forget: no persistence; message lost if the owner is restarting at publish time.
+
+This is the baseline being hardened by #4981 / #4987 / #4997. The other sub-options swap the transport without changing the surrounding architecture.
 
 ### Sub-option 3b — Redis pub/sub over Unix Domain Sockets
 
-Keep Redis as the broker, but connect the gateway to Redis via UDS instead of TCP loopback.
+Keep Redis as the broker; connect the gateway to it over UDS instead of TCP loopback.
+
+<details><summary>Transport config</summary>
 
 ```
    redis.conf:
@@ -211,17 +220,23 @@ Keep Redis as the broker, but connect the gateway to Redis via UDS instead of TC
      redis.Redis(unix_socket_path="/var/run/redis/redis.sock")
 ```
 
-- **Latency win**: TCP loopback round-trip ~50–200 μs → UDS round-trip ~10–50 μs. **2–5× faster on the transport layer.**
-- **Overall win is smaller**: transport is only one slice of the per-call cost. Net latency improvement is roughly **15–25%**, not 2–5×.
-- **Requires co-located Redis**: gateway and Redis must share a filesystem path. Easy in docker-compose with a shared named volume; hard in Kubernetes/OCP where Redis is typically a separate Pod in a different namespace.
-- **Smallest change of all the options**: a few lines of config, no code change.
-- **Doesn't change the architecture**: pub/sub is still pub/sub; this is a transport tweak, not a redesign.
+</details>
 
-**When to pick**: dev environments, single-node deployments, or edge appliances where Redis is co-located. Don't pick for multi-Pod Kubernetes — UDS doesn't cross Pod boundaries.
+**Pros**
+- Smallest change of all the options: a few lines of config, no code change.
+- ~15–25% net latency improvement (transport layer is 2–5× faster; transport is one slice of the per-call cost).
+
+**Cons**
+- Requires co-located Redis (shared filesystem path). Easy in docker-compose; hard in Kubernetes where Redis is a separate Pod.
+- Transport tweak only; no architectural improvement over 3a.
+
+**When to pick:** dev / single-node / edge. Don't pick for multi-Pod Kubernetes.
 
 ### Sub-option 3c — Worker-to-Worker UDS (Redis as directory only)
 
-Remove Redis from the data path entirely. Each worker opens a UDS listener at a known path; Redis only stores the directory `worker_id → UDS path`. Forwarding is a direct HTTP POST over UDS, no broker.
+Remove Redis from the data path. Each worker opens a UDS listener; Redis only stores `worker_id → UDS path`. Forwarding is a direct HTTP POST over UDS, no broker.
+
+<details><summary>Transport diagram</summary>
 
 ```
    Redis (directory only)
@@ -235,19 +250,26 @@ Remove Redis from the data path entirely. Each worker opens a UDS listener at a 
    Worker 7  ◄── kernel-mediated direct copy, no network, no broker
 ```
 
-- **Latency**: ~5–50 μs per round-trip. **10–100× faster than Redis pub/sub.**
-- **httpx supports UDS natively**: `AsyncHTTPTransport(uds=...)`. No new dependency.
-- **Synchronous request/response**: the call is one round-trip; no correlation-id-keyed response channel, no subscription teardown. `forward_to_owner` becomes ~15 lines.
-- **Backpressure for free**: UDS has TCP-style flow control. Pub/sub has none.
-- **Doesn't cross pod/node boundaries**: UDS is host-local and requires a shared filesystem path. Cross-container use only works when containers are co-located on the same node *and* share a mount for the socket directory with compatible permissions. Cross-pod or cross-node forwards need a fallback (TCP loopback, or sticky LB at nginx so cross-container forwards don't happen in the first place).
-- **Lifecycle overhead**: workers must clean up their `.sock` file on shutdown. Stale entries accumulate otherwise.
-- **Shared mount required**: the UDS directory needs to be writable by all worker UIDs.
+</details>
 
-**When to pick**: most affinity forwards are intra-container (which they will be in our 24 × 3 setup), so the UDS fast path covers the common case. Falls back to current pub/sub (or sticky LB) for the rare cross-container case.
+**Pros**
+- ~10–100× faster than Redis pub/sub (~5–50 μs per round-trip).
+- Backpressure for free (UDS has TCP-style flow control; pub/sub has none).
+- Synchronous request/response; `forward_to_owner` shrinks to ~15 lines (no correlation-id channel, no subscription teardown).
+- `httpx` supports UDS natively (`AsyncHTTPTransport(uds=...)`). No new dependency.
+
+**Cons**
+- Doesn't cross pod/node boundaries. Needs fallback (TCP loopback, or sticky LB at nginx) for cross-container forwards.
+- Lifecycle overhead: workers must clean up their `.sock` on shutdown; stale entries accumulate otherwise.
+- Shared mount required: the UDS directory must be writable by all worker UIDs.
+
+**When to pick:** when intra-container forwards dominate (e.g., 24 × 3 setup) and the cross-container case is rare enough to fall back.
 
 ### Sub-option 3d — Direct TCP per worker
 
 Each worker binds an additional internal TCP port (e.g., `5000 + worker_idx`). Forwarding is a direct HTTP POST to that port.
+
+<details><summary>Transport diagram</summary>
 
 ```
    Redis (directory):
@@ -256,17 +278,24 @@ Each worker binds an additional internal TCP port (e.g., `5000 + worker_idx`). F
    Worker X ────── direct TCP ──────► Worker 7  (10.0.0.5:5007)
 ```
 
-- **Works across containers** (UDS doesn't).
-- **Latency**: ~50 μs intra-host, ~500 μs cross-container on the same node, ~1–5 ms across nodes. Still 2–10× faster than Redis pub/sub for the common case.
-- **More attack surface**: every worker exposes an internal port. Needs network policy + per-port auth (mTLS or HMAC, like the trusted-internal endpoint already uses).
-- **Port allocation contract**: 24 workers per container = 24 ports per container. Manageable but adds a deployment contract.
-- **More complex than UDS** for the intra-container case (which is most of our traffic). You're paying for cross-container support that you may not use.
+</details>
 
-**When to pick**: if cross-container forwarding is a significant fraction of total forwards (low workers-per-container, many containers, no sticky LB).
+**Pros**
+- Works across containers (UDS doesn't).
+- Still 2–10× faster than Redis pub/sub for the common case (~50 μs intra-host, ~500 μs cross-container same-node, ~1–5 ms cross-node).
+
+**Cons**
+- More attack surface: every worker exposes an internal port. Needs network policy + per-port auth (mTLS or HMAC, like the trusted-internal endpoint).
+- Port allocation contract: 24 workers per container = 24 ports per container.
+- More complex than UDS for the intra-container case (which is most traffic). Pays for cross-container support that may not be used.
+
+**When to pick:** when cross-container forwarding is a significant fraction of total forwards (low workers-per-container, many containers, no sticky LB).
 
 ### Sub-option 3e — ZeroMQ point-to-point messaging
 
 Use ZMQ's `REQ/REP` pattern over `ipc://` (UDS) or `tcp://`. Discovery still in Redis.
+
+<details><summary>Transport diagram</summary>
 
 ```
    Worker X                                 Worker 7
@@ -276,15 +305,21 @@ Use ZMQ's `REQ/REP` pattern over `ipc://` (UDS) or `tcp://`. Discovery still in 
               ◄── reply ────────────────────────
 ```
 
-- **Purpose-built**: ZMQ exists to be "point-to-point messaging that's faster than a broker." Exactly this use case.
-- **Single API across UDS and TCP**: switch transports with a URL change. Get UDS perf intra-host and TCP reach cross-host without two code paths.
-- **Latency**: ~20–50 μs over `ipc://`, comparable to UDS.
-- **Transport-level resilience**: ZMQ sockets reconnect automatically on transient drops, which pub/sub gives you nothing equivalent to. Application-level retry semantics (request IDs, timeouts, idempotency, exactly-once) are NOT handled by `REQ/REP` itself — those still need to be implemented in the caller, same as for any other transport.
-- **New dependency**: `pyzmq` + `libzmq` C library. Containerfile change.
-- **Bypasses ASGI**: ZMQ doesn't go through the FastAPI middleware stack, so observability, CSRF, RBAC, etc. don't apply automatically. You'd reimplement that or accept it.
-- **Heavier mental model**: socket types, framing, pattern semantics. Onboarding cost.
+</details>
 
-**When to pick**: if you're willing to make MCP forwarding its own bounded subsystem with custom observability, and per-call latency matters enough to justify the dependency. Probably not us, today.
+**Pros**
+- Purpose-built for point-to-point messaging faster than a broker.
+- Single API across UDS and TCP: switch transports with a URL change.
+- Transport-level resilience: sockets reconnect automatically on transient drops.
+- Latency ~20–50 μs over `ipc://`, comparable to UDS.
+
+**Cons**
+- New dependency: `pyzmq` + `libzmq` C library. Containerfile change.
+- Bypasses ASGI middleware (observability, CSRF, RBAC don't apply automatically; need re-implementation).
+- Heavier mental model (socket types, framing, pattern semantics). Onboarding cost.
+- `REQ/REP` doesn't give you application-level retry semantics (request IDs, timeouts, idempotency); caller still implements those.
+
+**When to pick:** when MCP forwarding is worth making its own bounded subsystem with custom observability, and per-call latency justifies the dependency. Probably not today.
 
 ---
 
