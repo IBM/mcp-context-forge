@@ -26,7 +26,7 @@ The three approaches below walk through each option in turn.
 
 ---
 
-## Approach 1 — Sticky Load Balancing on `Mcp-Session-Id`
+## Approach 1 — Sticky Load Balancing
 
 > **Status: empirically validated.** `hash $http_authorization` config-only variant measured at **352 RPS, 0% failures, p99 530 ms** on a 3-pod prototype. ~21× per-worker efficiency vs the current affinity-layer baseline. See [empirical summary](#empirical-summary) below.
 
@@ -149,7 +149,7 @@ nginx → any worker → coordinator (per replica, owns sessions) → upstream M
 
 ## Approach 3 — Redis-Based Cross-Worker Forwarding
 
-> **Status: in-flight hardening.** Three PRs (#4981, #4987, #4997) implement the four invariants below. Production-ready when those land.
+> **Status: in-flight hardening.** Three PRs (#4981, #4987, #4997) implement the four invariants below. Validated end-to-end on integration branch [`fix/session-affinity-multiworker-forwarding`](https://github.com/IBM/mcp-context-forge/compare/main...fix/session-affinity-multiworker-forwarding) (~390 RPS, 0% failures on the 3 × 24 reference stack). Production-ready when the PRs land.
 
 Redis stores `sid → owner_worker_id`; the receiving worker forwards the payload to the owner over an IPC transport, and the response comes back the same way. The architecture has no delta from the gateway's current design: the Redis directory, per-worker channels, and dead-worker reclaim are all already in place. The #4557 regression came from invariants not being honoured, not from the architecture being wrong. The four invariants below are what the in-flight PRs are fixing.
 
