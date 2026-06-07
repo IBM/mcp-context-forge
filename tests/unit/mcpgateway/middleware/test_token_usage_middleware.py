@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # First-Party
-from mcpgateway.middleware.token_usage_middleware import TokenUsageMiddleware
+from mcpgateway.middleware.token_usage_middleware import _is_internal_forward_scope, TokenUsageMiddleware
 
 
 async def _make_asgi_call(middleware, scope, receive=None, send=None):
@@ -895,4 +895,111 @@ async def test_skips_logging_on_jti_verification_db_error():
         await _make_asgi_call(middleware, scope)
 
     # Should NOT log usage because DB verification failed
+    mock_token_service.log_token_usage.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Internal-forward exemption: _is_internal_forward_scope + __call__ passthrough
+# ---------------------------------------------------------------------------
+
+
+def test_internal_forward_scope_true_for_loopback_x_forwarded_internally():
+    """Loopback client with x-forwarded-internally: true is a trusted internal forward."""
+    scope = {
+        "type": "http",
+        "path": "/rpc",
+        "client": ("127.0.0.1", 12345),
+        "headers": [(b"x-forwarded-internally", b"true")],
+    }
+
+    assert _is_internal_forward_scope(scope) is True
+
+
+def test_internal_forward_scope_true_for_loopback_affinity_marker_with_valid_hmac():
+    """Loopback client with affinity runtime marker and valid HMAC is a trusted internal forward."""
+    scope = {
+        "type": "http",
+        "path": "/rpc",
+        "client": ("127.0.0.1", 12345),
+        "headers": [(b"x-contextforge-mcp-runtime", b"affinity")],
+    }
+
+    with patch("mcpgateway.auth_context.has_valid_internal_mcp_runtime_auth_header", return_value=True):
+        assert _is_internal_forward_scope(scope) is True
+
+
+def test_internal_forward_scope_false_for_non_loopback_client():
+    """A non-loopback client must NOT be treated as internal even with the forwarded header (security property)."""
+    scope = {
+        "type": "http",
+        "path": "/rpc",
+        "client": ("203.0.113.5", 9),
+        "headers": [(b"x-forwarded-internally", b"true")],
+    }
+
+    assert _is_internal_forward_scope(scope) is False
+
+
+def test_internal_forward_scope_false_for_loopback_affinity_marker_with_invalid_hmac():
+    """Loopback affinity marker with an invalid HMAC and no forwarded header is not trusted."""
+    scope = {
+        "type": "http",
+        "path": "/rpc",
+        "client": ("127.0.0.1", 12345),
+        "headers": [(b"x-contextforge-mcp-runtime", b"affinity")],
+    }
+
+    with patch("mcpgateway.auth_context.has_valid_internal_mcp_runtime_auth_header", return_value=False):
+        assert _is_internal_forward_scope(scope) is False
+
+
+def test_internal_forward_scope_false_when_client_is_none():
+    """A scope without a client peer cannot be a loopback internal forward."""
+    scope = {
+        "type": "http",
+        "path": "/rpc",
+        "client": None,
+        "headers": [(b"x-forwarded-internally", b"true")],
+    }
+
+    assert _is_internal_forward_scope(scope) is False
+
+
+@pytest.mark.asyncio
+async def test_internal_forward_request_is_passed_through_without_recording():
+    """Middleware passes an internal-forward scope straight through without recording token usage."""
+    app = AsyncMock()
+
+    async def app_impl(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    app.side_effect = app_impl
+    middleware = TokenUsageMiddleware(app=app)
+
+    scope = {
+        "type": "http",
+        "path": "/rpc",
+        "method": "POST",
+        # Even with full api_token state, the internal-forward exemption must short-circuit.
+        "state": {"auth_method": "api_token", "jti": "jti-internal", "user_email": "user@example.com"},
+        "client": ("127.0.0.1", 12345),
+        "headers": [(b"x-forwarded-internally", b"true")],
+    }
+
+    mock_token_service = MagicMock()
+    mock_token_service.log_token_usage = AsyncMock()
+
+    with (
+        patch("mcpgateway.middleware.token_usage_middleware.fresh_db_session") as mock_fresh_session,
+        patch("mcpgateway.middleware.token_usage_middleware.TokenCatalogService", return_value=mock_token_service),
+    ):
+        send = await _make_asgi_call(middleware, scope)
+
+    # App invoked exactly once, with the original send (no send_wrapper) since we short-circuit.
+    app.assert_awaited_once()
+    assert app.await_args.args[0] is scope
+    assert app.await_args.args[2] is send
+    # No usage-recording path runs for the internal forward.
+    mock_fresh_session.assert_not_called()
     mock_token_service.log_token_usage.assert_not_awaited()

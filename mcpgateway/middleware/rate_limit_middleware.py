@@ -195,9 +195,58 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         return dimensions
 
+    @staticmethod
+    def _is_internal_forward(request: Request) -> bool:
+        """Return whether the request is a trusted, loopback-only internal forward.
+
+        Session-affinity dispatches an affinity-owned request a second time, in
+        process, to the worker that holds the bound upstream session — either to
+        the trusted ``/_internal/mcp/rpc`` endpoint (streamable paths) or to
+        public ``/rpc`` (generic JSON-RPC). That re-dispatch re-enters the full
+        ASGI middleware stack, so without this exemption the rate limiter would
+        count the same user action twice (the regression behind the per-user
+        counter ticking 2,4,6,... instead of 1,2,3,...).
+
+        The exemption is **loopback-gated** so an external caller cannot dodge
+        rate limiting by spoofing a header: ``request.client.host`` is set by the
+        server from the socket peer, so only genuine in-process / loopback calls
+        qualify. Two trusted shapes are recognized:
+
+        - ``/_internal/mcp/rpc`` carrying a valid runtime marker + shared-secret
+          HMAC (same gates as ``_is_trusted_internal_mcp_runtime_request``).
+        - public ``/rpc`` carrying ``x-forwarded-internally: true`` (same loop
+          guard the ``/rpc`` handler itself trusts).
+
+        Args:
+            request: Incoming request to inspect.
+
+        Returns:
+            ``True`` when the request is a trusted loopback internal forward.
+        """
+        client_host = getattr(getattr(request, "client", None), "host", None)
+        if client_host not in ("127.0.0.1", "::1"):
+            return False
+
+        runtime_marker = request.headers.get("x-contextforge-mcp-runtime")
+        if runtime_marker in ("rust", "affinity"):
+            # First-Party - lazy import avoids a circular dependency at module load.
+            # First-Party
+            from mcpgateway.auth_context import has_valid_internal_mcp_runtime_auth_header  # pylint: disable=import-outside-toplevel
+
+            if has_valid_internal_mcp_runtime_auth_header(request):
+                return True
+
+        return request.headers.get("x-forwarded-internally") == "true"
+
     async def dispatch(self, request: Request, call_next):
         """Process request with rate limiting."""
         if not self.enabled:
+            return await call_next(request)
+
+        # Trusted loopback internal forwards (session-affinity in-process
+        # re-dispatch) are not counted: the originating edge request was already
+        # metered, and counting the re-dispatch double-charges the same action.
+        if self._is_internal_forward(request):
             return await call_next(request)
 
         tier = self.get_endpoint_tier(request.url.path)

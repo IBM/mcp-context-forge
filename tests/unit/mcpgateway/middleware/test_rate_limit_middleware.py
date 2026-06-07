@@ -1305,3 +1305,103 @@ class TestRateLimitMiddlewareTiers:
 
         assert result is False
         assert hasattr(middleware, "_violation_expiry")
+
+
+class TestRateLimitInternalForwardExemption:
+    """Test the loopback-gated internal-forward exemption.
+
+    Session-affinity re-dispatches an affinity-owned request a second time in
+    process, which re-enters the middleware stack. These re-dispatches must not
+    be counted again, but the exemption is loopback-gated so external callers
+    cannot dodge rate limiting by spoofing the trust headers.
+    """
+
+    @pytest.fixture
+    def mock_app(self):
+        """Create mock FastAPI app."""
+        return MagicMock()
+
+    @pytest.fixture
+    def middleware(self, mock_app):
+        """Create middleware instance with rate limiting enabled (memory mode)."""
+        with patch("mcpgateway.middleware.rate_limit_middleware.settings") as mock_settings:
+            mock_settings.rate_limiting_enabled = True
+            mock_settings.rate_limiting_redis_enabled = False
+            mock_settings.trust_proxy_auth = True
+            mock_settings.rate_limit_critical_rpm = 10
+            mock_settings.rate_limit_critical_burst = 0
+            mock_settings.rate_limit_high_rpm = 30
+            mock_settings.rate_limit_high_burst = 0
+            mock_settings.rate_limit_medium_rpm = 100
+            mock_settings.rate_limit_medium_burst = 20
+            mock_settings.rate_limit_low_rpm = 500
+            mock_settings.rate_limit_low_burst = 100
+            mock_settings.rate_limit_lockout_enabled = True
+            mock_settings.rate_limit_lockout_threshold = 5
+            mock_settings.rate_limit_lockout_duration_minutes = 15
+
+            from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
+
+            yield RateLimitMiddleware(mock_app)
+
+    @staticmethod
+    def _make_request(client_host, headers):
+        """Build a request whose client.host and headers.get(...) are controllable."""
+        request = MagicMock()
+        request.client.host = client_host
+        request.headers = dict(headers)
+        request.url.path = "/rpc"
+        request.scope = {"client": (client_host, 12345)}
+        request.state = MagicMock()
+        request.state.user_email = "user@example.com"
+        request.state.user = None
+        request.state.team_id = None
+        return request
+
+    def test_internal_forward_true_for_loopback_forwarded_internally(self, middleware):
+        """Loopback client + x-forwarded-internally: true is recognized."""
+        request = self._make_request("127.0.0.1", {"x-forwarded-internally": "true"})
+
+        assert middleware._is_internal_forward(request) is True
+
+    def test_internal_forward_true_for_loopback_runtime_marker_with_valid_hmac(self, middleware):
+        """Loopback client + affinity runtime marker + valid HMAC is recognized."""
+        request = self._make_request("127.0.0.1", {"x-contextforge-mcp-runtime": "affinity"})
+
+        with patch("mcpgateway.auth_context.has_valid_internal_mcp_runtime_auth_header", return_value=True):
+            assert middleware._is_internal_forward(request) is True
+
+    def test_internal_forward_false_for_non_loopback_even_with_forwarded_header(self, middleware):
+        """External (non-loopback) caller cannot dodge limiting via the trust header."""
+        request = self._make_request("203.0.113.9", {"x-forwarded-internally": "true"})
+
+        assert middleware._is_internal_forward(request) is False
+
+    def test_internal_forward_false_for_loopback_runtime_marker_with_invalid_hmac(self, middleware):
+        """Loopback + runtime marker but invalid HMAC and no forward header is rejected."""
+        request = self._make_request("127.0.0.1", {"x-contextforge-mcp-runtime": "affinity"})
+
+        with patch("mcpgateway.auth_context.has_valid_internal_mcp_runtime_auth_header", return_value=False):
+            assert middleware._is_internal_forward(request) is False
+
+    @pytest.mark.asyncio
+    async def test_dispatch_does_not_count_internal_forward(self, middleware):
+        """Dispatch passes internal forwards through without rate-limit counting."""
+        request = self._make_request("127.0.0.1", {"x-forwarded-internally": "true"})
+
+        # Pre-fill the memory store so any counting would push the IP dimension
+        # over its limit and return 429.
+        now = time.time()
+        key = "ratelimit:ip:127.0.0.1:LOW"
+        middleware._memory_store = {key: [now - i * 0.1 for i in range(600)]}
+
+        mock_response = MagicMock()
+        mock_response.headers = {}
+        mock_call_next = AsyncMock(return_value=mock_response)
+
+        response = await middleware.dispatch(request, mock_call_next)
+
+        # call_next was invoked and no 429 produced despite the saturated store.
+        mock_call_next.assert_called_once()
+        assert response is mock_response
+        assert getattr(response, "status_code", None) != 429

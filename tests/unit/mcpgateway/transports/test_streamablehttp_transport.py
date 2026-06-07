@@ -8951,6 +8951,23 @@ async def test_affinity_forward_to_owner_worker(monkeypatch):
 
     await wrapper.shutdown()
     assert messages[0]["status"] == 200
+    # The forward carries an auth_context kwarg so the owner can dispatch via the
+    # trusted internal endpoint without re-authenticating.
+    assert "auth_context" in mock_pool.forward_to_owner.call_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_encode_affinity_auth_context_encodes_present_context_and_empty_when_absent(monkeypatch):
+    """_encode_affinity_auth_context encodes the live StreamableHTTP auth context,
+    and returns '' when there is none (so the endpoint falls back to its rules)."""
+    # Present context → delegates to encode_internal_mcp_auth_context.
+    monkeypatch.setattr(tr, "get_streamable_http_auth_context", lambda: {"email": "u@example.com"})
+    monkeypatch.setattr("mcpgateway.auth_context.encode_internal_mcp_auth_context", lambda ctx: f"enc:{ctx['email']}")
+    assert tr._encode_affinity_auth_context() == "enc:u@example.com"
+
+    # Absent context → empty string (no encode call needed).
+    monkeypatch.setattr(tr, "get_streamable_http_auth_context", lambda: {})
+    assert tr._encode_affinity_auth_context() == ""
 
 
 @pytest.mark.asyncio
@@ -16973,6 +16990,7 @@ async def test_normalize_jwt_payload_non_admin_without_db_record():
 
 
 def test_get_scoped_visibility_from_user_context_admin_missing_teams_key():
+    # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context
 
     user_email, token_teams = get_scoped_visibility_from_user_context({"email": "admin@x.com", "is_admin": True})
@@ -16982,6 +17000,7 @@ def test_get_scoped_visibility_from_user_context_admin_missing_teams_key():
 
 
 def test_get_scoped_visibility_from_user_context_admin_with_empty_teams():
+    # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context
 
     user_email, token_teams = get_scoped_visibility_from_user_context({"email": "admin@x.com", "is_admin": True, "teams": []})
@@ -16991,6 +17010,7 @@ def test_get_scoped_visibility_from_user_context_admin_with_empty_teams():
 
 
 def test_get_scoped_visibility_from_user_context_admin_with_team_scope():
+    # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context
 
     user_email, token_teams = get_scoped_visibility_from_user_context({"email": "admin@x.com", "is_admin": True, "teams": ["team1"]})

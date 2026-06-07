@@ -88,6 +88,7 @@ def on_starting(server):
 
     if ssl_enabled and ssl_key_password:
         try:
+            # First-Party
             from mcpgateway.utils.ssl_key_manager import prepare_ssl_key
 
             # Get the key file path from environment (set by run-gunicorn.sh)
@@ -121,11 +122,36 @@ def post_fork(server, worker):
     # This is necessary because --preload causes the client to be initialized
     # in the master process, but each forked worker needs its own event loop
     try:
+        # First-Party
         from mcpgateway.utils.redis_client import _reset_client
 
         _reset_client()
     except ImportError:
         pass
+
+    # Recompute the session-affinity WORKER_ID per worker. Captured at import time,
+    # so under --preload every worker would otherwise inherit the master's id
+    # ({hostname}:1) and subscribe to the same Redis channel — collapsing point-to-point
+    # forwarding into a per-container broadcast that fans every request out to all
+    # workers and degrades throughput by an order of magnitude.
+    try:
+        # Standard
+        import socket
+
+        # First-Party
+        from mcpgateway.services import session_affinity
+
+        session_affinity.WORKER_ID = f"{socket.gethostname()}:{worker.pid}"
+    except Exception as exc:  # noqa: BLE001 - fail loud, never crash the worker
+        # Silent fallback would re-introduce the per-container broadcast amplification.
+        server.log.warning(
+            "post_fork(pid=%s): failed to rebind session_affinity.WORKER_ID (%s: %s) — "
+            "workers may share the master's WORKER_ID and session-affinity forwarding "
+            "may broadcast each request to every worker in the container.",
+            worker.pid,
+            type(exc).__name__,
+            exc,
+        )
 
 
 def post_worker_init(worker):

@@ -38,6 +38,41 @@ from mcpgateway.utils.verify_credentials import get_auth_header_value, verify_jw
 logger = logging.getLogger(__name__)
 
 
+def _is_internal_forward_scope(scope: Scope) -> bool:
+    """Return whether an ASGI scope is a trusted, loopback-only internal forward.
+
+    Session-affinity re-dispatches an affinity-owned request a second time, in
+    process, to the worker that holds the bound upstream session. That
+    re-dispatch re-enters the full ASGI stack and, on the generic ``/rpc`` path,
+    re-authenticates with the same API token — so without this exemption the same
+    user action would be recorded as token usage twice. The exemption is
+    **loopback-gated** (``scope["client"]`` is set from the socket peer) so an
+    external caller cannot dodge auditing by spoofing a header.
+
+    Args:
+        scope: ASGI connection scope.
+
+    Returns:
+        ``True`` when the scope is a trusted loopback internal forward.
+    """
+    client = scope.get("client")
+    client_host = client[0] if client else None
+    if client_host not in ("127.0.0.1", "::1"):
+        return False
+
+    headers = Headers(scope=scope)
+    runtime_marker = headers.get("x-contextforge-mcp-runtime")
+    if runtime_marker in ("rust", "affinity"):
+        # First-Party - lazy import avoids a circular dependency at module load.
+        # First-Party
+        from mcpgateway.auth_context import has_valid_internal_mcp_runtime_auth_header  # pylint: disable=import-outside-toplevel
+
+        if has_valid_internal_mcp_runtime_auth_header(Request(scope)):
+            return True
+
+    return headers.get("x-forwarded-internally") == "true"
+
+
 class TokenUsageMiddleware:
     """Raw ASGI middleware for logging API token usage.
 
@@ -84,6 +119,13 @@ class TokenUsageMiddleware:
         # Skip health checks and static files
         path = scope.get("path", "")
         if should_skip_auth_context(path):
+            await self.app(scope, receive, send)
+            return
+
+        # Skip trusted loopback internal forwards (session-affinity in-process
+        # re-dispatch): the originating edge request already recorded usage, so
+        # recording the re-dispatch would double-count the same action.
+        if _is_internal_forward_scope(scope):
             await self.app(scope, receive, send)
             return
 

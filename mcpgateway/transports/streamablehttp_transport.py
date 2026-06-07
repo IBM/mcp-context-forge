@@ -91,13 +91,12 @@ from mcpgateway.transports.context import UserContext
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
 from mcpgateway.utils.identity_propagation import build_identity_headers
-from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
+from mcpgateway.utils.internal_http import post_internal_mcp_rpc_in_process
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
 from mcpgateway.utils.trace_context import set_trace_context_from_teams, set_trace_session_id
 from mcpgateway.utils.verify_credentials import (
-    _resolve_auth_header_name,
     get_auth_header_value,
     is_proxy_auth_trust_active,
     require_auth_header_first,
@@ -4146,55 +4145,40 @@ class SessionManagerWrapper:
                     body = orjson.dumps(json_body)
                     logger.debug("[HTTP_AFFINITY_FORWARDED] Injected server_id %s into /rpc params", server_id)
 
-                async with httpx.AsyncClient(verify=internal_loopback_verify()) as client:
-                    rpc_headers = {
-                        "content-type": "application/json",
-                        "x-mcp-session-id": mcp_session_id,  # Pass session for upstream affinity
-                        "x-forwarded-internally": "true",  # Prevent infinite forwarding loops
+                # Dispatch IN-PROCESS to the trusted internal endpoint so the bound
+                # upstream session in THIS worker serves the call, carrying the edge's
+                # already-validated identity (see post_internal_mcp_rpc_in_process).
+                response = await post_internal_mcp_rpc_in_process(
+                    content=body,
+                    timeout=30.0,
+                    session_id=mcp_session_id,
+                    auth_context=_encode_affinity_auth_context(),
+                    original_headers=headers,
+                )
+
+                # Return response to client
+                response_headers = [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(response.content)).encode()),
+                ]
+                if mcp_session_id != "not-provided":
+                    response_headers.append((b"mcp-session-id", mcp_session_id.encode()))
+
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": response.status_code,
+                        "headers": response_headers,
                     }
-                    # Forward the inbound gateway auth header (default: Authorization,
-                    # or AUTH_HEADER_NAME when customized) so /rpc can re-authenticate
-                    # the same caller. Hardcoding "authorization" here would silently
-                    # drop auth on deployments using a custom AUTH_HEADER_NAME.
-                    _gw_auth_lower = _resolve_auth_header_name(settings).lower()
-                    if _gw_auth_lower in headers:
-                        rpc_headers[_gw_auth_lower] = headers[_gw_auth_lower]
-                    # Forward passthrough headers for upstream MCP servers (see #3640).
-                    # First-Party
-                    from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
-
-                    rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
-
-                    response = await client.post(
-                        f"{internal_loopback_base_url()}/rpc",
-                        content=body,
-                        headers=rpc_headers,
-                        timeout=30.0,
-                    )
-
-                    # Return response to client
-                    response_headers = [
-                        (b"content-type", b"application/json"),
-                        (b"content-length", str(len(response.content)).encode()),
-                    ]
-                    if mcp_session_id != "not-provided":
-                        response_headers.append((b"mcp-session-id", mcp_session_id.encode()))
-
-                    await send(
-                        {
-                            "type": "http.response.start",
-                            "status": response.status_code,
-                            "headers": response_headers,
-                        }
-                    )
-                    await send(
-                        {
-                            "type": "http.response.body",
-                            "body": response.content,
-                        }
-                    )
-                    logger.debug("[HTTP_AFFINITY_FORWARDED] Response sent | Status: %s", response.status_code)
-                    return
+                )
+                await send(
+                    {
+                        "type": "http.response.body",
+                        "body": response.content,
+                    }
+                )
+                logger.debug("[HTTP_AFFINITY_FORWARDED] Response sent | Status: %s", response.status_code)
+                return
             except Exception as e:
                 logger.error("[HTTP_AFFINITY_FORWARDED] Error routing to /rpc: %s", e)
                 # Fall through to SDK handling as fallback
@@ -4225,7 +4209,9 @@ class SessionManagerWrapper:
                             return
                     body = b"".join(body_parts)
 
-                    # Forward to owner worker
+                    # Forward to owner worker, carrying the edge's already-validated
+                    # auth context so the owner can dispatch via the trusted internal
+                    # endpoint without re-authenticating (OAuth / public-only safe).
                     response = await pool.forward_to_owner(
                         owner_worker_id=owner,
                         mcp_session_id=mcp_session_id,
@@ -4234,6 +4220,7 @@ class SessionManagerWrapper:
                         headers=headers,
                         body=body,
                         query_string=query_string,
+                        auth_context=_encode_affinity_auth_context(),
                     )
 
                     if response:
@@ -4317,49 +4304,39 @@ class SessionManagerWrapper:
                             body = orjson.dumps(json_body)
                             logger.debug("[HTTP_AFFINITY_LOCAL] Injected server_id %s into /rpc params", server_id)
 
-                        async with httpx.AsyncClient(verify=internal_loopback_verify()) as client:
-                            rpc_headers = {
-                                "content-type": "application/json",
-                                "x-mcp-session-id": mcp_session_id,
-                                "x-forwarded-internally": "true",
+                        # Dispatch IN-PROCESS to the trusted internal endpoint so the
+                        # bound upstream session in THIS (owner) worker serves the call,
+                        # carrying the edge's already-validated identity so OAuth /
+                        # public-only requests don't 401 (see post_internal_mcp_rpc_in_process).
+                        response = await post_internal_mcp_rpc_in_process(
+                            content=body,
+                            timeout=30.0,
+                            session_id=mcp_session_id,
+                            auth_context=_encode_affinity_auth_context(),
+                            original_headers=headers,
+                        )
+
+                        response_headers = [
+                            (b"content-type", b"application/json"),
+                            (b"content-length", str(len(response.content)).encode()),
+                            (b"mcp-session-id", mcp_session_id.encode()),
+                        ]
+
+                        await send(
+                            {
+                                "type": "http.response.start",
+                                "status": response.status_code,
+                                "headers": response_headers,
                             }
-                            _gw_auth_lower = _resolve_auth_header_name(settings).lower()
-                            if _gw_auth_lower in headers:
-                                rpc_headers[_gw_auth_lower] = headers[_gw_auth_lower]
-                            # Forward passthrough headers for upstream MCP servers (see #3640).
-                            # First-Party
-                            from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
-
-                            rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
-
-                            response = await client.post(
-                                f"{internal_loopback_base_url()}/rpc",
-                                content=body,
-                                headers=rpc_headers,
-                                timeout=30.0,
-                            )
-
-                            response_headers = [
-                                (b"content-type", b"application/json"),
-                                (b"content-length", str(len(response.content)).encode()),
-                                (b"mcp-session-id", mcp_session_id.encode()),
-                            ]
-
-                            await send(
-                                {
-                                    "type": "http.response.start",
-                                    "status": response.status_code,
-                                    "headers": response_headers,
-                                }
-                            )
-                            await send(
-                                {
-                                    "type": "http.response.body",
-                                    "body": response.content,
-                                }
-                            )
-                            logger.debug("[HTTP_AFFINITY_LOCAL] Response sent | Status: %s", response.status_code)
-                            return
+                        )
+                        await send(
+                            {
+                                "type": "http.response.body",
+                                "body": response.content,
+                            }
+                        )
+                        logger.debug("[HTTP_AFFINITY_LOCAL] Response sent | Status: %s", response.status_code)
+                        return
                     except Exception as e:
                         logger.error("[HTTP_AFFINITY_LOCAL] Error routing to /rpc: %s", e)
                         # Fall through to SDK handling as fallback
@@ -4779,6 +4756,27 @@ def get_streamable_http_auth_context() -> dict[str, Any]:
         else:
             forwarded[key] = value
     return forwarded
+
+
+def _encode_affinity_auth_context() -> str:
+    """Encode the current StreamableHTTP auth context for an affinity forward.
+
+    Packages whatever ``streamable_http_auth()`` already established at the edge so
+    the owner worker can dispatch via the trusted internal ``/_internal/mcp/rpc``
+    endpoint without re-authenticating (which would 401 OAuth bearers and
+    ``MCP_REQUIRE_AUTH=false`` public-only requests). Returns an empty string when
+    there is no auth context, so the endpoint falls back to its existing
+    visibility rules.
+
+    Returns:
+        Encoded ``x-contextforge-auth-context`` value, or ``""`` when absent.
+    """
+    # First-Party - lazy import avoids a module-load circular dependency.
+    # First-Party
+    from mcpgateway.auth_context import encode_internal_mcp_auth_context  # pylint: disable=import-outside-toplevel
+
+    auth_context = get_streamable_http_auth_context()
+    return encode_internal_mcp_auth_context(auth_context) if auth_context else ""
 
 
 class _StreamableHttpAuthHandler:
