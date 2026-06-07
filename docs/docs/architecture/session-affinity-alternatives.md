@@ -341,7 +341,7 @@ The recommendation is not "stay with the existing code" — the existing impleme
 3. Dispatch the forwarded request in the owner process, not via a network loopback that the shared gunicorn socket would scatter.
 4. Preserve the `streamable_http_auth()` context across the forward so OAuth and `MCP_REQUIRE_AUTH=false` requests survive without 401-ing on the inner dispatch.
 
-The four invariants are listed in detail under [Approach 3 — Invariants](#invariants-any-approach-3-implementation-must-satisfy). The work in flight (PRs [#4981](https://github.com/IBM/mcp-context-forge/pull/4981), [#4987](https://github.com/IBM/mcp-context-forge/pull/4987), [#4997](https://github.com/IBM/mcp-context-forge/pull/4997)) is the implementation of this contract.
+The four invariants are listed in detail under [Approach 3 — Invariants](#invariants-any-approach-3-implementation-must-satisfy). This contract was implemented incrementally across three stacked PRs — [#4981](https://github.com/IBM/mcp-context-forge/pull/4981) (per-worker `WORKER_ID` + foundation), [#4987](https://github.com/IBM/mcp-context-forge/pull/4987) (in-process forward dispatch), and [#4997](https://github.com/IBM/mcp-context-forge/pull/4997) (auth-context propagation). The three were brought together on an integration branch, [`fix/session-affinity-multiworker-forwarding`](https://github.com/IBM/mcp-context-forge/compare/main...fix/session-affinity-multiworker-forwarding), to test the full approach end-to-end on the 3 × 24 reference stack (~390 RPS, 0% failures, `PUBSUB NUMSUB` = 1).
 
 ### Why this approach over the alternatives
 
