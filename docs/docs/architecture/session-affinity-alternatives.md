@@ -54,6 +54,8 @@ Client → nginx hashes on `$http_authorization` → pod → `/rpc` executes loc
 
 </details>
 
+<details><summary>Pros and Cons</summary>
+
 **Pros**
 - No forward path. No pub/sub. No `WORKER_ID`. No `post_fork` hook.
 - Lower latency: no Redis on the hot path.
@@ -71,6 +73,8 @@ Client → nginx hashes on `$http_authorization` → pod → `/rpc` executes loc
 - **Disable `SO_REUSEPORT`** and use one worker per container; scale by running more containers. Costs per-container parallelism.
 - **Port-per-worker:** each gunicorn worker binds a distinct port; nginx upstream lists `container:portN` for every worker. Operationally unusual (N entries per container, per-port health checks, separate gunicorn instances). Few teams run this.
 - **Intra-container router** (sidecar or coordinator). Adds complexity and a new failure mode.
+
+</details>
 
 </details>
 
@@ -127,6 +131,8 @@ nginx → any worker → coordinator (per replica, owns sessions) → upstream M
 
 </details>
 
+<details><summary>Pros and Cons</summary>
+
 **Pros**
 - Removes the affinity problem at the source. Workers don't own sessions.
 - No `WORKER_ID`, no pub/sub, no Redis ownership keys, no `post_fork` hook.
@@ -140,6 +146,8 @@ nginx → any worker → coordinator (per replica, owns sessions) → upstream M
 - Throughput ceiling: one GIL per replica; every request crosses the IPC boundary.
 - Significant refactor: `UpstreamSessionRegistry`, RPC dispatch, transport, lifecycle.
 - No cluster-wide session migration; coordinator-per-replica is local only.
+
+</details>
 
 <a id="paper-design-2"></a>**Paper design.** Full design (IPC framing, per-session locking, request-flow walk-through, failure-mode comparison, SSE / ADR-052 open question, env-gated coexistence, ~22h prototype estimate) in the [coordinator-worker design doc](https://github.com/IBM/mcp-context-forge/blob/experiment/coordinator-worker-design/docs/docs/architecture/experiments/coordinator-worker-design.md).
 
