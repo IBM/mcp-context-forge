@@ -137,7 +137,8 @@ FAST_TIME_SERVER_TEMPLATE = """  fast_time_server:
 
 FAST_TEST_SERVER_TEMPLATE = """  fast_test_server:
     build:
-      context: ./mcp-servers/rust/fast-test-server
+      # Context builds the renamed rust fast-time-server crate; image/service name kept as fast-test-server to avoid colliding with the Go fast_time_server.
+      context: ./mcp-servers/rust/fast-time-server
       dockerfile: Dockerfile
     container_name: fast_test_server
     extra_hosts:
