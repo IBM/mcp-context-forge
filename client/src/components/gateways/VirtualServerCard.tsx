@@ -1,5 +1,16 @@
 import { useIntl } from "react-intl";
-import { Box, EllipsisVertical, MessageSquareCode, Plus, Upload, Wrench } from "lucide-react";
+import {
+  Box,
+  Edit,
+  EllipsisVertical,
+  Eye,
+  MessageSquareCode,
+  Plus,
+  Power,
+  Trash2,
+  Upload,
+  Wrench,
+} from "lucide-react";
 import { MCPIcon } from "@/components/icons/MCPIcon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,6 +19,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { VirtualServer } from "@/types/server";
@@ -22,11 +34,17 @@ export function VirtualServerCard({
   server,
   onViewDetails,
   onAddComponents,
+  onEdit,
+  onDelete,
+  onToggleStatus,
   className,
 }: {
   server: VirtualServer;
   onViewDetails: (server: VirtualServer) => void;
   onAddComponents?: (server: VirtualServer) => void;
+  onEdit?: (server: VirtualServer) => void;
+  onDelete?: (server: VirtualServer) => void;
+  onToggleStatus?: (server: VirtualServer) => void;
   className?: string;
 }) {
   const intl = useIntl();
@@ -39,10 +57,12 @@ export function VirtualServerCard({
       size="sm"
       className={cn(
         isEmptyComposition ? "min-h-29 justify-center" : "min-h-35 justify-between",
+        "cursor-pointer transition-colors hover:bg-accent/50",
         className,
       )}
       data-testid="virtual-server-card"
       data-server-name={server.name}
+      onClick={() => onViewDetails(server)}
     >
       <CardHeader className="gap-3">
         <div className="flex items-center gap-3">
@@ -72,21 +92,59 @@ export function VirtualServerCard({
             )}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon-xs" aria-label={`Actions for ${server.name}`}>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={`Actions for ${server.name}`}
+                  onClick={(e) => e.stopPropagation()}
+                >
                   <EllipsisVertical className="size-4" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => onViewDetails(server)}>
+                <DropdownMenuItem
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onViewDetails(server);
+                  }}
+                >
+                  <Eye className="mr-2 size-4" />
                   {intl.formatMessage({ id: "gateways.card.viewDetails" })}
                 </DropdownMenuItem>
                 <DropdownMenuItem disabled>
+                  <Power className="mr-2 size-4" />
                   {intl.formatMessage({ id: "gateways.card.testConnection" })}
                 </DropdownMenuItem>
-                <DropdownMenuItem disabled>
+                <DropdownMenuItem
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onEdit?.(server);
+                  }}
+                  disabled={!onEdit}
+                >
+                  <Edit className="mr-2 size-4" />
                   {intl.formatMessage({ id: "gateways.card.editServer" })}
                 </DropdownMenuItem>
-                <DropdownMenuItem disabled className="text-destructive">
+                <DropdownMenuItem
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleStatus?.(server);
+                  }}
+                  disabled={!onToggleStatus}
+                >
+                  <Power className="mr-2 size-4" />
+                  {server.enabled ? "Deactivate" : "Activate"}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete?.(server);
+                  }}
+                  disabled={!onDelete}
+                  className="text-destructive focus:text-destructive"
+                >
+                  <Trash2 className="mr-2 size-4" />
                   {intl.formatMessage({ id: "common.button.delete" })}
                 </DropdownMenuItem>
               </DropdownMenuContent>

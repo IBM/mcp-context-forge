@@ -433,6 +433,61 @@ describe("Gateways", () => {
         };
       }
 
+      if (path === "/servers/gateway%2F1%3Fmode%3Ddetail/tools?include_inactive=true") {
+        return {
+          data: [
+            {
+              id: "tool-gh-issues",
+              name: "GITHUB_GET_REPO_ISSUES",
+              title: "Get Repo Issues",
+              originalName: "GITHUB_GET_REPO_ISSUES",
+            },
+            {
+              id: "tool-create-issue",
+              name: "GITHUB_CREATE_ISSUE",
+              title: "Create New Issue",
+              originalName: "GITHUB_CREATE_ISSUE",
+            },
+          ],
+          error: null,
+          isLoading: false,
+          execute: vi.fn(),
+          refetch: vi.fn(),
+        };
+      }
+
+      if (path === "/servers/gateway%2F1%3Fmode%3Ddetail/resources?include_inactive=true") {
+        return {
+          data: [
+            {
+              id: "resource-gh-repo",
+              name: "github repo",
+              uri: "github://repo/{owner}/{repo}",
+            },
+          ],
+          error: null,
+          isLoading: false,
+          execute: vi.fn(),
+          refetch: vi.fn(),
+        };
+      }
+
+      if (path === "/servers/gateway%2F1%3Fmode%3Ddetail/prompts?include_inactive=true") {
+        return {
+          data: [
+            {
+              id: "prompt-summarize-pr",
+              name: "summarize_pull_request",
+              originalName: "summarize_pull_request",
+            },
+          ],
+          error: null,
+          isLoading: false,
+          execute: vi.fn(),
+          refetch: vi.fn(),
+        };
+      }
+
       return {
         data: { servers: [mockServer] },
         error: null,
@@ -457,6 +512,22 @@ describe("Gateways", () => {
     await user.click(viewDetails);
 
     expect(mockUseQuery).toHaveBeenCalledWith("/servers/gateway%2F1%3Fmode%3Ddetail");
+    expect(mockUseQuery).toHaveBeenCalledWith(
+      "/servers/gateway%2F1%3Fmode%3Ddetail/tools?include_inactive=true",
+      { enabled: true },
+    );
+    expect(mockUseQuery).toHaveBeenCalledWith(
+      "/servers/gateway%2F1%3Fmode%3Ddetail/resources?include_inactive=true",
+      { enabled: true },
+    );
+    expect(mockUseQuery).toHaveBeenCalledWith(
+      "/servers/gateway%2F1%3Fmode%3Ddetail/prompts?include_inactive=true",
+      { enabled: true },
+    );
+    expect(mockUseQuery).not.toHaveBeenCalledWith(
+      expect.stringContaining("virtual_server_id"),
+      expect.anything(),
+    );
     expect(mockUseQuery).not.toHaveBeenCalledWith("/servers/__pending__", expect.anything());
     expect(screen.getByText("Virtual server details")).toBeInTheDocument();
     expect(
@@ -471,18 +542,17 @@ describe("Gateways", () => {
     expect(screen.getByText("Server ID")).toBeInTheDocument();
     expect(screen.getByLabelText("Copy URL")).toBeInTheDocument();
     expect(screen.getByText("Activity")).toBeInTheDocument();
-    const drawerAddSourcesButton = screen.getByRole("button", { name: "Add sources" });
+    const drawerAddSourcesButton = screen.getByRole("button", { name: "Add source" });
     expect(drawerAddSourcesButton).toBeInTheDocument();
     await user.click(drawerAddSourcesButton);
     expect(mockNavigate).toHaveBeenCalledWith("/app/gateways/create-server");
-    await user.click(screen.getByRole("button", { name: "Add components" }));
-    expect(mockNavigate).toHaveBeenCalledWith("/app/gateways/create-server");
+    expect(screen.queryByRole("button", { name: "Add components" })).not.toBeInTheDocument();
     expect(screen.getByText("Get Repo Issues")).toBeInTheDocument();
     expect(screen.getByText("GITHUB_GET_REPO_ISSUES")).toBeInTheDocument();
     expect(screen.getAllByText("github://repo/{owner}/{repo}").length).toBeGreaterThan(0);
     expect(screen.getAllByText("summarize_pull_request").length).toBeGreaterThan(0);
 
-    await user.click(screen.getByRole("button", { name: "Tools" }));
+    await user.click(screen.getByRole("tab", { name: "Tools" }));
 
     expect(screen.getByText("Create New Issue")).toBeInTheDocument();
     expect(screen.queryByText("github://repo/{owner}/{repo}")).not.toBeInTheDocument();

@@ -5,7 +5,7 @@ import { MCPIcon } from "@/components/icons/MCPIcon";
 import { ConnectSourceCard } from "@/components/gateways/ConnectSourceCard";
 import { SourceSelection } from "@/components/gateways/SourceSelection";
 import { VirtualServerCard } from "@/components/gateways/VirtualServerCard";
-import { VirtualServerDetailsDrawer } from "@/components/gateways/VirtualServerDetailsDrawer";
+import { VirtualServerDetailsPanel } from "@/components/gateways/VirtualServerDetailsPanel";
 import type { ActionCard } from "@/components/gateways/types";
 import { hasVirtualServerComponents } from "@/components/gateways/utils";
 import { Loading } from "@/components/ui/loading";
@@ -138,13 +138,11 @@ export function Gateways() {
         </div>
 
         {detailsServer && (
-          <VirtualServerDetailsDrawerContainer
+          <VirtualServerDetailsPanelContainer
             server={detailsServer}
-            onAddComponents={() => navigate(CREATE_SERVER_PATH)}
+            open={true}
+            onClose={() => setDetailsServer(null)}
             onAddSources={() => navigate(CREATE_SERVER_PATH)}
-            onOpenChange={(open) => {
-              if (!open) setDetailsServer(null);
-            }}
           />
         )}
       </div>
@@ -154,32 +152,30 @@ export function Gateways() {
   return <SourceSelection actionCards={actionCards} />;
 }
 
-function VirtualServerDetailsDrawerContainer({
+function VirtualServerDetailsPanelContainer({
   server,
-  onAddComponents,
+  open,
+  onClose,
   onAddSources,
-  onOpenChange,
 }: {
   server: VirtualServer;
-  onAddComponents: () => void;
+  open: boolean;
+  onClose: () => void;
   onAddSources: () => void;
-  onOpenChange: (open: boolean) => void;
 }) {
-  const {
-    data: serverDetails,
-    error,
-    isLoading,
-  } = useQuery<VirtualServer>(`/servers/${encodeURIComponent(server.id)}`);
+  const { data: serverDetails, error } = useQuery<VirtualServer>(
+    `/servers/${encodeURIComponent(server.id)}`,
+  );
   const hydratedServer = serverDetails?.id === server.id ? serverDetails : server;
 
   return (
-    <VirtualServerDetailsDrawer
+    <VirtualServerDetailsPanel
+      key={hydratedServer.id}
       server={hydratedServer}
-      isLoading={isLoading}
       error={error}
-      onAddComponents={onAddComponents}
+      open={open}
+      onClose={onClose}
       onAddSources={onAddSources}
-      onOpenChange={onOpenChange}
     />
   );
 }

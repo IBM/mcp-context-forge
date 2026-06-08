@@ -108,9 +108,9 @@ export function CreateServer() {
       <main className="bg-background px-6 py-10">
         <SourceSelection
           actionCards={actionCards}
+          associatedMCPServerIds={serverDetails?.associatedMCPServerIds}
           createServerActions={{
             onBack: () => setStep("details"),
-            onAddComponents: () => navigate("/app/tools"),
             onSkip: handleSkipForNow,
             isSkipping: isCreating,
             skipError: createError,
