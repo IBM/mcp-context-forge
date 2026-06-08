@@ -12123,20 +12123,24 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         const notificationDiv = document.getElementById('global-notification');
 
         if (error || success) {
-          let messageHtml = '';
+          const msgDiv = document.createElement('div');
           if (error) {
-            messageHtml = `<div class="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded dark:bg-red-800 dark:border-red-600 dark:text-red-200">❌ ${decodeURIComponent(error)}</div>`;
+            msgDiv.className = 'bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded dark:bg-red-800 dark:border-red-600 dark:text-red-200';
+            msgDiv.textContent = `❌ ${decodeURIComponent(error)}`;
           } else if (success) {
-            messageHtml = `<div class="bg-green-50 border border-green-300 text-green-700 px-4 py-3 rounded dark:bg-green-800 dark:border-green-600 dark:text-green-200">✅ ${decodeURIComponent(success)}</div>`;
+            msgDiv.className = 'bg-green-50 border border-green-300 text-green-700 px-4 py-3 rounded dark:bg-green-800 dark:border-green-600 dark:text-green-200';
+            msgDiv.textContent = `✅ ${decodeURIComponent(success)}`;
           }
 
-          notificationDiv.innerHTML = messageHtml;
+          notificationDiv.appendChild(msgDiv);
           notificationDiv.style.display = 'block';
 
           // Auto-dismiss after 5 seconds
           setTimeout(() => {
             notificationDiv.style.display = 'none';
-            notificationDiv.innerHTML = '';
+            if (msgDiv.parentNode) {
+              msgDiv.parentNode.removeChild(msgDiv);
+            }
 
             // Clean up URL by removing the message parameters
             const cleanUrl = new URL(window.location);
