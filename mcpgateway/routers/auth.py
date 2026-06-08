@@ -184,12 +184,14 @@ async def login(login_request: LoginRequest, request: Request, db: Session = Dep
                 # First-Party
                 from mcpgateway.services.csrf_service import generate_csrf_token, set_csrf_cookie
 
-                # Decode JWT to get jti (don't verify since we just created it)
+                # Decode JWT to get jti and sub (don't verify since we just created it)
                 payload = jwt.decode(access_token, options={"verify_signature": False})
                 session_id = payload.get("jti", "")
 
-                # Generate CSRF token
-                csrf_token = generate_csrf_token(user_id=user.email, session_id=session_id, secret=settings.csrf_secret_key, expiry=settings.csrf_token_expiry)
+                # Generate CSRF token bound to the JWT sub (UUID) — must match
+                # what the CSRF middleware extracts from payload.get("sub")
+                user_sub = payload.get("sub", user.email)
+                csrf_token = generate_csrf_token(user_id=user_sub, session_id=session_id, secret=settings.csrf_secret_key, expiry=settings.csrf_token_expiry)
 
                 auth_response = AuthenticationResponse(access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user))  # nosec B106 - OAuth2 token type, not a password
                 response = JSONResponse(content=auth_response.model_dump(mode="json"))

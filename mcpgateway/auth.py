@@ -2185,9 +2185,19 @@ async def get_current_user_from_cookie(
         logger.debug("JWT cookie validation failed: %s", e)
         raise_auth_error("invalid_token", "Invalid or expired token")
 
-    email = payload.get("sub")
-    if not email:
+    sub = payload.get("sub")
+    if not sub:
         raise_auth_error("invalid_token", "Invalid token: missing subject")
+
+    # If sub is a UUID (new token format), resolve to email via DB lookup
+    email = sub
+    try:
+        uuid.UUID(sub)
+        resolved = await asyncio.to_thread(_get_email_by_id_sync, sub)
+        if resolved is not None:
+            email = resolved
+    except ValueError:
+        pass  # sub is already an email (legacy format)
 
     jti = payload.get("jti")
     if jti:
