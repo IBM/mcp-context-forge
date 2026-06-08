@@ -38,6 +38,14 @@ describe("ServersTable", () => {
   it("renders a loading indicator when isLoading is true", () => {
     renderTable(
       <ServersTable servers={[]} isLoading onEdit={noop} onDelete={noop} onTest={noop} />,
+  it("renders loading state", () => {
+    renderWithProviders(<ServersTable servers={[]} isLoading={true} {...mockHandlers} />);
+    expect(screen.getAllByRole("status")[0]).toBeInTheDocument();
+  });
+
+  it("renders table with servers", () => {
+    renderWithProviders(
+      <ServersTable servers={[mockServer]} isLoading={false} {...mockHandlers} />,
     );
     // The Loading component should be present; the table must not
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
@@ -55,6 +63,8 @@ describe("ServersTable", () => {
         onTest={noop}
       />,
     );
+  it("renders table headers", () => {
+    renderWithProviders(<ServersTable servers={[]} isLoading={false} {...mockHandlers} />);
     expect(screen.getByText("Name")).toBeInTheDocument();
     expect(screen.getByText("Components")).toBeInTheDocument();
     expect(screen.getByText("Last response")).toBeInTheDocument();
@@ -88,6 +98,18 @@ describe("ServersTable", () => {
         onDelete={noop}
         onTest={noop}
       />,
+  it("renders empty table without servers", () => {
+    renderWithProviders(<ServersTable servers={[]} isLoading={false} {...mockHandlers} />);
+    expect(document.body).toBeTruthy();
+  });
+
+  it("shows Just now for recent last_seen", () => {
+    const recentServer = {
+      ...mockServer,
+      last_seen: new Date(Date.now() - 10000).toISOString(),
+    };
+    renderWithProviders(
+      <ServersTable servers={[recentServer]} isLoading={false} {...mockHandlers} />,
     );
     expect(screen.getByText("0 tools")).toBeInTheDocument();
   });
@@ -105,6 +127,13 @@ describe("ServersTable", () => {
         onDelete={noop}
         onTest={noop}
       />,
+  it("shows min ago for last_seen within an hour", () => {
+    const recentServer = {
+      ...mockServer,
+      last_seen: new Date(Date.now() - 5 * 60000).toISOString(),
+    };
+    renderWithProviders(
+      <ServersTable servers={[recentServer]} isLoading={false} {...mockHandlers} />,
     );
     expect(screen.getByText("3 resources")).toBeInTheDocument();
     expect(screen.getByText("2 prompts")).toBeInTheDocument();
@@ -119,6 +148,13 @@ describe("ServersTable", () => {
         onDelete={noop}
         onTest={noop}
       />,
+  it("shows hours ago for last_seen within a day", () => {
+    const recentServer = {
+      ...mockServer,
+      last_seen: new Date(Date.now() - 3 * 3600000).toISOString(),
+    };
+    renderWithProviders(
+      <ServersTable servers={[recentServer]} isLoading={false} {...mockHandlers} />,
     );
     expect(screen.getByText("0 resources")).toBeInTheDocument();
     expect(screen.getByText("0 prompts")).toBeInTheDocument();
@@ -135,6 +171,10 @@ describe("ServersTable", () => {
         onDelete={noop}
         onTest={noop}
       />,
+  it("shows Never used when last_seen is undefined", () => {
+    const recentServer = { ...mockServer, last_seen: undefined };
+    renderWithProviders(
+      <ServersTable servers={[recentServer]} isLoading={false} {...mockHandlers} />,
     );
     expect(screen.getByText("Never used")).toBeInTheDocument();
   });
@@ -148,6 +188,10 @@ describe("ServersTable", () => {
         onDelete={noop}
         onTest={noop}
       />,
+  it("renders multiple servers", () => {
+    const server2 = { ...mockServer, id: "2", name: "Server Two" };
+    renderWithProviders(
+      <ServersTable servers={[mockServer, server2]} isLoading={false} {...mockHandlers} />,
     );
     expect(screen.getByText("Never used")).toBeInTheDocument();
   });
@@ -365,3 +409,4 @@ describe("ServersTable", () => {
     expect(screen.getByText("Gamma")).toBeInTheDocument();
   });
 });
+

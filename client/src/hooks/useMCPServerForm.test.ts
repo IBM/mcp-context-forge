@@ -344,18 +344,32 @@ describe("useMCPServerForm", () => {
     });
 
     it("should be false when visibility is team but teamId is empty", () => {
+    it("should be false when URL has non-http protocol (e.g. ftp)", () => {
       const { result } = renderHook(() => useMCPServerForm());
 
       act(() => {
         result.current.setName("Test Server");
         result.current.setUrl("http://localhost:3000");
         result.current.setVisibility("team");
+        result.current.setUrl("ftp://files.example.com");
       });
 
       expect(result.current.isValid).toBe(false);
     });
 
     it("should be true when visibility is team and teamId is provided", () => {
+    it("should be false when URL is unparseable", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("not-a-valid-url");
+      });
+
+      expect(result.current.isValid).toBe(false);
+    });
+
+    it("should be false for oauth password grant when only username is missing", () => {
       const { result } = renderHook(() => useMCPServerForm());
 
       act(() => {
@@ -363,6 +377,40 @@ describe("useMCPServerForm", () => {
         result.current.setUrl("http://localhost:3000");
         result.current.setVisibility("team");
         result.current.setTeamId("team-abc");
+        result.current.setAuthType("oauth");
+        result.current.setOAuthGrantType("password");
+        result.current.setOAuthUsername("");
+        result.current.setOAuthPassword("my-pass");
+      });
+
+      expect(result.current.isValid).toBe(false);
+    });
+
+    it("should be false for oauth password grant when only password is missing", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("oauth");
+        result.current.setOAuthGrantType("password");
+        result.current.setOAuthUsername("my-user");
+        result.current.setOAuthPassword("");
+      });
+
+      expect(result.current.isValid).toBe(false);
+    });
+
+    it("should be true for oauth password grant when both username and password are provided", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("oauth");
+        result.current.setOAuthGrantType("password");
+        result.current.setOAuthUsername("my-user");
+        result.current.setOAuthPassword("my-pass");
       });
 
       expect(result.current.isValid).toBe(true);
@@ -1451,6 +1499,111 @@ describe("useMCPServerForm", () => {
           HttpResponse.json(
             { detail: { message: "A server with this name already exists", success: false } },
             { status: 400 },
+  describe("validateField Action", () => {
+    it("validates fields dynamically and sets errors appropriately", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.validateField("name", "");
+      });
+      expect(result.current.errors.name).toBe("Name is required");
+
+      act(() => {
+        result.current.validateField("name", "Valid Name");
+      });
+      expect(result.current.errors.name).toBeUndefined();
+
+      act(() => {
+        result.current.validateField("url", "not-a-url");
+      });
+      expect(result.current.errors.url).toBe("URL must start with http:// or https://");
+
+      act(() => {
+        result.current.validateField("url", "http://valid.com");
+      });
+      expect(result.current.errors.url).toBeUndefined();
+
+      act(() => {
+        result.current.validateField("passthroughHeaders", "H1, H2");
+      });
+      expect(result.current.errors.passthroughHeaders).toBeUndefined();
+    });
+  });
+
+  describe("Password Grant OAuth Validation", () => {
+    it("fails validation if username or password is missing in password grant", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Gateway");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("oauth");
+        result.current.setOAuthGrantType("password");
+        result.current.setOAuthUsername("");
+        result.current.setOAuthPassword("");
+      });
+
+      let isValid: boolean;
+      act(() => {
+        isValid = result.current.validateForm();
+      });
+
+      expect(isValid!).toBe(false);
+      expect(result.current.errors.oauthUsername).toBe("Username is required for password grant");
+      expect(result.current.errors.oauthPassword).toBe("Password is required for password grant");
+
+      act(() => {
+        result.current.setOAuthUsername("user");
+        result.current.setOAuthPassword("pass");
+      });
+
+      act(() => {
+        isValid = result.current.validateForm();
+      });
+      expect(isValid!).toBe(true);
+      expect(result.current.errors.oauthUsername).toBeUndefined();
+      expect(result.current.errors.oauthPassword).toBeUndefined();
+    });
+  });
+
+  describe("handleSubmit error branches", () => {
+    it("sets error.submit with body.message when API returns a message", async () => {
+      server.use(
+        http.post("/gateways", () =>
+          HttpResponse.json({ message: "Duplicate gateway name" }, { status: 409 }),
+        ),
+      );
+
+      const { result } = renderHook(() => useMCPServerForm());
+      const mockEvent = {
+        preventDefault: vi.fn(),
+      } as unknown as React.FormEvent<HTMLFormElement>;
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+      });
+
+      await act(async () => {
+        await result.current.handleSubmit(mockEvent);
+      });
+
+      await waitFor(() => {
+        expect(result.current.errors.submit).toBeDefined();
+      });
+    });
+
+    it("sets error.submit with validation detail messages from API", async () => {
+      server.use(
+        http.post("/gateways", () =>
+          HttpResponse.json(
+            {
+              detail: [
+                { msg: "field required", loc: ["body", "name"] },
+                { msg: "invalid url", loc: ["body", "url"] },
+              ],
+            },
+            { status: 422 },
           ),
         ),
       );
@@ -1460,6 +1613,12 @@ describe("useMCPServerForm", () => {
 
       act(() => {
         result.current.setName("Duplicate Server");
+      const mockEvent = {
+        preventDefault: vi.fn(),
+      } as unknown as React.FormEvent<HTMLFormElement>;
+
+      act(() => {
+        result.current.setName("Test Server");
         result.current.setUrl("http://localhost:3000");
       });
 
@@ -1486,6 +1645,22 @@ describe("useMCPServerForm", () => {
       const mockEvent = { preventDefault: vi.fn() } as unknown as React.FormEvent<HTMLFormElement>;
 
       await waitFor(() => expect(result.current.name).toBe("My Server"));
+        expect(result.current.errors.submit).toBeDefined();
+      });
+    });
+
+    it("sets generic error when API throws error without body", async () => {
+      server.use(http.post("/gateways", () => HttpResponse.error()));
+
+      const { result } = renderHook(() => useMCPServerForm());
+      const mockEvent = {
+        preventDefault: vi.fn(),
+      } as unknown as React.FormEvent<HTMLFormElement>;
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+      });
 
       await act(async () => {
         await result.current.handleSubmit(mockEvent);
@@ -1493,6 +1668,7 @@ describe("useMCPServerForm", () => {
 
       await waitFor(() => {
         expect(result.current.errors.submit).toBe("Gateway not found");
+        expect(result.current.errors.submit).toBeDefined();
       });
     });
   });
@@ -1502,3 +1678,4 @@ describe("useMCPServerForm", () => {
 afterEach(() => {
   vi.restoreAllMocks();
 });
+

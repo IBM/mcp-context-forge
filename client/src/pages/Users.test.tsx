@@ -13,6 +13,19 @@ vi.mock("@/api/client", () => ({
   },
 }));
 
+vi.mock("@/components/users/UserForm", () => ({
+  UserForm: ({ onToggle, onOptimisticCreate, onSuccess, onError }: any) => (
+    <div data-testid="mock-user-form">
+      <button onClick={onToggle}>Cancel Form</button>
+      <button onClick={() => onOptimisticCreate({ email: "opt@example.com", full_name: "Opt" })}>
+        Optimistic Create
+      </button>
+      <button onClick={onSuccess}>Success Form</button>
+      <button onClick={() => onError({ email: "opt@example.com" })}>Error Form</button>
+    </div>
+  ),
+}));
+
 import { api } from "@/api/client";
 
 function createMockUsers(startIndex: number, count: number) {
@@ -139,8 +152,8 @@ describe("Users", () => {
     });
 
     const options = screen.getAllByRole("option");
-    const values = options.map(opt => opt.getAttribute("value"));
-    
+    const values = options.map((opt) => opt.getAttribute("value"));
+
     expect(values).toContain("10");
     expect(values).toContain("25");
     expect(values).toContain("50");
@@ -262,12 +275,11 @@ describe("Users", () => {
 
     // Resolve the promise
     if (resolveLoadMore) {
-      resolveLoadMore();
-      vi.mocked(api.get).mockResolvedValueOnce({
+      (resolveLoadMore as any)({
         users: createMockUsers(10, 5),
         nextCursor: null,
       });
-      
+
       await waitFor(() => {
         expect(screen.getByText("user10@example.com")).toBeInTheDocument();
       });
@@ -404,5 +416,57 @@ describe("Users", () => {
       expect(header).toHaveClass("items-center");
       expect(header).toHaveClass("justify-between");
     });
+  });
+
+  it("handles UserForm callbacks: optimistic create, success, and error", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get).mockResolvedValueOnce({ users: [], nextCursor: null });
+
+    renderWithRouter(<Users />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Create User/i })).toBeInTheDocument();
+    });
+
+    // Open form
+    await user.click(screen.getByRole("button", { name: /Create User/i }));
+    expect(screen.getByTestId("mock-user-form")).toBeInTheDocument();
+
+    // Trigger optimistic create
+    await user.click(screen.getByRole("button", { name: /Optimistic Create/i }));
+
+    // Trigger error callback (should keep form open but rollback user)
+    await user.click(screen.getByRole("button", { name: /Error Form/i }));
+
+    // Trigger success callback (closes the form)
+    await user.click(screen.getByRole("button", { name: /Success Form/i }));
+    expect(screen.queryByTestId("mock-user-form")).not.toBeInTheDocument();
+  });
+
+  it("logs console error when load more fails", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get).mockResolvedValueOnce({
+      users: createMockUsers(0, 10),
+      nextCursor: "cursor-1",
+    });
+
+    renderWithRouter(<Users />);
+
+    await waitFor(() => {
+      expect(screen.getByText("user0@example.com")).toBeInTheDocument();
+    });
+
+    const loadMoreButton = screen.getByRole("button", { name: /load more users/i });
+
+    // Mock load more fetch failure
+    vi.mocked(api.get).mockRejectedValueOnce(new Error("Load more network failure"));
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await user.click(loadMoreButton);
+
+    await waitFor(() => {
+      expect(consoleErrorSpy).toHaveBeenCalledWith("Failed to load more users:", expect.any(Object));
+    });
+    consoleErrorSpy.mockRestore();
   });
 });
