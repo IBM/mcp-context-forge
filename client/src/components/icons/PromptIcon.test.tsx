@@ -36,7 +36,7 @@ describe("PromptIcon", () => {
   it("renders paths with fill currentColor", () => {
     const { container } = render(<PromptIcon />);
     const paths = container.querySelectorAll("path");
-    paths.forEach(path => {
+    paths.forEach((path) => {
       expect(path).toHaveAttribute("fill", "currentColor");
     });
   });
@@ -76,7 +76,7 @@ describe("PromptIcon", () => {
   it("preserves path data", () => {
     const { container } = render(<PromptIcon />);
     const paths = container.querySelectorAll("path");
-    paths.forEach(path => {
+    paths.forEach((path) => {
       expect(path.getAttribute("d")).toBeTruthy();
     });
   });
@@ -84,10 +84,10 @@ describe("PromptIcon", () => {
   it("renders icon with consistent properties", () => {
     const { container: container1 } = render(<PromptIcon />);
     const { container: container2 } = render(<PromptIcon />);
-    
+
     const svg1 = container1.querySelector("svg");
     const svg2 = container2.querySelector("svg");
-    
+
     expect(svg1?.getAttribute("viewBox")).toBe(svg2?.getAttribute("viewBox"));
     expect(svg1?.getAttribute("width")).toBe(svg2?.getAttribute("width"));
   });
