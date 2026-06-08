@@ -2,6 +2,7 @@
 """Location: ./tests/unit/mcpgateway/utils/test_verify_credentials_uuid.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Integration tests for UUID resolution in verify_credentials.
 """
