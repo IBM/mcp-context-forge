@@ -755,41 +755,52 @@ describe("MCPServerForm", () => {
     });
 
     it("disables the submit button when username is empty", async () => {
-      const user = await renderWithOAuthPassword();
-      await user.type(screen.getByLabelText(/^Name/i), "Test Server");
-      await user.type(screen.getByLabelText(/^URL/i), "http://localhost:3000");
+      await renderWithOAuthPassword();
+      fireEvent.change(screen.getByLabelText(/^Name/i), { target: { value: "Test Server" } });
+      fireEvent.change(screen.getByLabelText(/^URL/i), {
+        target: { value: "http://localhost:3000" },
+      });
       // Leave username empty, fill password
-      await user.type(screen.getByLabelText(/^Password/i), "secret");
+      fireEvent.change(screen.getByLabelText(/^Password/i), { target: { value: "secret" } });
       expect(screen.getByRole("button", { name: /Connect server/i })).toBeDisabled();
     });
 
     it("disables the submit button when password is empty", async () => {
-      const user = await renderWithOAuthPassword();
-      await user.type(screen.getByLabelText(/^Name/i), "Test Server");
-      await user.type(screen.getByLabelText(/^URL/i), "http://localhost:3000");
-      await user.type(screen.getByLabelText(/^Username/i), "service-account");
+      await renderWithOAuthPassword();
+      fireEvent.change(screen.getByLabelText(/^Name/i), { target: { value: "Test Server" } });
+      fireEvent.change(screen.getByLabelText(/^URL/i), {
+        target: { value: "http://localhost:3000" },
+      });
+      fireEvent.change(screen.getByLabelText(/^Username/i), {
+        target: { value: "service-account" },
+      });
       // Leave password empty
       expect(screen.getByRole("button", { name: /Connect server/i })).toBeDisabled();
     });
 
     it("enables the submit button when both username and password are provided", async () => {
-      const user = await renderWithOAuthPassword();
-      await user.type(screen.getByLabelText(/^Name/i), "Test Server");
-      await user.type(screen.getByLabelText(/^URL/i), "http://localhost:3000");
-      await user.type(screen.getByLabelText(/^Username/i), "service-account");
-      await user.type(screen.getByLabelText(/^Password/i), "secret");
+      await renderWithOAuthPassword();
+      fireEvent.change(screen.getByLabelText(/^Name/i), { target: { value: "Test Server" } });
+      fireEvent.change(screen.getByLabelText(/^URL/i), {
+        target: { value: "http://localhost:3000" },
+      });
+      fireEvent.change(screen.getByLabelText(/^Username/i), {
+        target: { value: "service-account" },
+      });
+      fireEvent.change(screen.getByLabelText(/^Password/i), { target: { value: "secret" } });
       expect(screen.getByRole("button", { name: /Connect server/i })).not.toBeDisabled();
     });
 
     it("marks username input as aria-invalid when username error is present", async () => {
-      const user = await renderWithOAuthPassword();
-      await user.type(screen.getByLabelText(/^Name/i), "Test Server");
-      await user.type(screen.getByLabelText(/^URL/i), "http://localhost:3000");
+      await renderWithOAuthPassword();
+      fireEvent.change(screen.getByLabelText(/^Name/i), { target: { value: "Test Server" } });
+      fireEvent.change(screen.getByLabelText(/^URL/i), {
+        target: { value: "http://localhost:3000" },
+      });
       // Only fill password, leave username empty
-      await user.type(screen.getByLabelText(/^Password/i), "secret");
+      fireEvent.change(screen.getByLabelText(/^Password/i), { target: { value: "secret" } });
 
-      // Temporarily type and clear username to expose the field without a value,
-      // then attempt form submission via the form element directly
+      // Expose the field without a value and attempt form submission
       const form = document.querySelector("form")!;
       fireEvent.submit(form);
 
@@ -799,10 +810,14 @@ describe("MCPServerForm", () => {
     });
 
     it("marks password input as aria-invalid when password error is present", async () => {
-      const user = await renderWithOAuthPassword();
-      await user.type(screen.getByLabelText(/^Name/i), "Test Server");
-      await user.type(screen.getByLabelText(/^URL/i), "http://localhost:3000");
-      await user.type(screen.getByLabelText(/^Username/i), "service-account");
+      await renderWithOAuthPassword();
+      fireEvent.change(screen.getByLabelText(/^Name/i), { target: { value: "Test Server" } });
+      fireEvent.change(screen.getByLabelText(/^URL/i), {
+        target: { value: "http://localhost:3000" },
+      });
+      fireEvent.change(screen.getByLabelText(/^Username/i), {
+        target: { value: "service-account" },
+      });
       // Leave password empty, submit the form
       const form = document.querySelector("form")!;
       fireEvent.submit(form);
@@ -814,8 +829,10 @@ describe("MCPServerForm", () => {
 
     it("shows inline error messages for both fields when both are empty", async () => {
       await renderWithOAuthPassword();
-      await userEvent.type(screen.getByLabelText(/^Name/i), "Test Server");
-      await userEvent.type(screen.getByLabelText(/^URL/i), "http://localhost:3000");
+      fireEvent.change(screen.getByLabelText(/^Name/i), { target: { value: "Test Server" } });
+      fireEvent.change(screen.getByLabelText(/^URL/i), {
+        target: { value: "http://localhost:3000" },
+      });
       fireEvent.submit(document.querySelector("form")!);
 
       await waitFor(() => {
@@ -830,8 +847,10 @@ describe("MCPServerForm", () => {
       await user.click(screen.getByRole("button", { name: /Advanced settings/i }));
       await user.click(screen.getByRole("radio", { name: /OAuth 2\.0/i }));
       // Leave on the default client_credentials grant
-      await user.type(screen.getByLabelText(/Name/i), "Test Server");
-      await user.type(screen.getByLabelText(/^URL/i), "http://localhost:3000");
+      fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: "Test Server" } });
+      fireEvent.change(screen.getByLabelText(/^URL/i), {
+        target: { value: "http://localhost:3000" },
+      });
       fireEvent.submit(document.querySelector("form")!);
 
       await waitFor(() => {
@@ -849,8 +868,10 @@ describe("MCPServerForm", () => {
       renderWithRouter(<MCPServerForm {...defaultProps} />);
       await user.click(screen.getByRole("button", { name: /Advanced settings/i }));
       await user.click(screen.getByRole("radio", { name: /Basic/i }));
-      await user.type(screen.getByLabelText(/^Name/i), "Test Server");
-      await user.type(screen.getByLabelText(/^URL/i), "http://localhost:3000");
+      fireEvent.change(screen.getByLabelText(/^Name/i), { target: { value: "Test Server" } });
+      fireEvent.change(screen.getByLabelText(/^URL/i), {
+        target: { value: "http://localhost:3000" },
+      });
       fireEvent.submit(document.querySelector("form")!);
 
       await waitFor(() => {

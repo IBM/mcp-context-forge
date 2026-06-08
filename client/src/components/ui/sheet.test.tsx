@@ -16,7 +16,7 @@ describe("Sheet Components", () => {
     render(
       <Sheet>
         <SheetTrigger>Open Sheet</SheetTrigger>
-      </Sheet>
+      </Sheet>,
     );
     expect(screen.getByText("Open Sheet")).toBeInTheDocument();
   });
@@ -25,7 +25,7 @@ describe("Sheet Components", () => {
     const { container } = render(
       <SheetHeader>
         <div>Header Content</div>
-      </SheetHeader>
+      </SheetHeader>,
     );
     expect(container).toBeTruthy();
   });
@@ -34,7 +34,7 @@ describe("Sheet Components", () => {
     const { container } = render(
       <SheetFooter>
         <div>Footer Content</div>
-      </SheetFooter>
+      </SheetFooter>,
     );
     expect(container).toBeTruthy();
   });
@@ -45,7 +45,7 @@ describe("Sheet Components", () => {
         <SheetContent>
           <SheetTitle>My Title</SheetTitle>
         </SheetContent>
-      </Sheet>
+      </Sheet>,
     );
     expect(document.querySelector('[data-slot="sheet-title"]')).toBeInTheDocument();
   });
@@ -57,22 +57,18 @@ describe("Sheet Components", () => {
           <SheetTitle>Title</SheetTitle>
           <SheetDescription>My Description</SheetDescription>
         </SheetContent>
-      </Sheet>
+      </Sheet>,
     );
     expect(document.querySelector('[data-slot="sheet-description"]')).toBeInTheDocument();
   });
 
   it("renders SheetHeader with custom className", () => {
-    const { container } = render(
-      <SheetHeader className="custom-header">Header</SheetHeader>
-    );
+    const { container } = render(<SheetHeader className="custom-header">Header</SheetHeader>);
     expect(container.firstChild).toHaveClass("custom-header");
   });
 
   it("renders SheetFooter with custom className", () => {
-    const { container } = render(
-      <SheetFooter className="custom-footer">Footer</SheetFooter>
-    );
+    const { container } = render(<SheetFooter className="custom-footer">Footer</SheetFooter>);
     expect(container.firstChild).toHaveClass("custom-footer");
   });
 
@@ -82,7 +78,7 @@ describe("Sheet Components", () => {
         <SheetContent>
           <SheetTitle className="custom-title">Title</SheetTitle>
         </SheetContent>
-      </Sheet>
+      </Sheet>,
     );
     expect(document.body).toBeTruthy();
   });
@@ -94,7 +90,7 @@ describe("Sheet Components", () => {
           <SheetTitle>Title</SheetTitle>
           <SheetDescription className="custom-desc">Description</SheetDescription>
         </SheetContent>
-      </Sheet>
+      </Sheet>,
     );
     expect(document.body).toBeTruthy();
   });
@@ -110,7 +106,7 @@ describe("Sheet Components", () => {
           </SheetHeader>
           <SheetFooter>Footer</SheetFooter>
         </SheetContent>
-      </Sheet>
+      </Sheet>,
     );
     expect(document.querySelector('[data-slot="sheet-content"]')).toBeInTheDocument();
   });
@@ -121,7 +117,7 @@ describe("Sheet Components", () => {
         <SheetContent side="left">
           <SheetTitle>Title</SheetTitle>
         </SheetContent>
-      </Sheet>
+      </Sheet>,
     );
     expect(document.body).toBeTruthy();
   });
@@ -132,7 +128,7 @@ describe("Sheet Components", () => {
         <SheetContent side="right">
           <SheetTitle>Title</SheetTitle>
         </SheetContent>
-      </Sheet>
+      </Sheet>,
     );
     expect(document.body).toBeTruthy();
   });
@@ -143,7 +139,7 @@ describe("Sheet Components", () => {
         <SheetContent side="top">
           <SheetTitle>Title</SheetTitle>
         </SheetContent>
-      </Sheet>
+      </Sheet>,
     );
     expect(document.body).toBeTruthy();
   });
@@ -154,7 +150,7 @@ describe("Sheet Components", () => {
         <SheetContent side="bottom">
           <SheetTitle>Title</SheetTitle>
         </SheetContent>
-      </Sheet>
+      </Sheet>,
     );
     expect(document.body).toBeTruthy();
   });
@@ -166,7 +162,7 @@ describe("Sheet Components", () => {
           <SheetTitle>Title</SheetTitle>
           <SheetClose>Close</SheetClose>
         </SheetContent>
-      </Sheet>
+      </Sheet>,
     );
     expect(document.body).toBeTruthy();
   });
