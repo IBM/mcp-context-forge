@@ -95,7 +95,7 @@ func TestVersionAndHealthJSON(t *testing.T) {
     if err := json.Unmarshal([]byte(versionJSON()), &v); err != nil {
         t.Fatalf("version JSON malformed: %v", err)
     }
-    if v.Name != appName || v.Version != appVersion || v.MCPVersion == "" {
+    if v.Name != appName || v.Version != appVersion || v.MCPVersion != mcp.LATEST_PROTOCOL_VERSION {
         t.Errorf("version JSON unexpected: %+v", v)
     }
 

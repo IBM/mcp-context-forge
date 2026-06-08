@@ -356,6 +356,55 @@ def api_request_context(playwright: Playwright) -> Generator[APIRequestContext, 
 
 
 @pytest.fixture(scope="session")
+def admin_api(playwright: Playwright) -> Generator[APIRequestContext, None, None]:
+    """Consolidated admin-authenticated API context for all Playwright tests.
+
+    Token resolution priority (fail-closed):
+    1. MCP_AUTH env var (from Makefile / compose bootstrap) — preferred
+    2. MCPGATEWAY_BEARER_TOKEN env var (legacy name used by other tools)
+    3. Locally-signed JWT using Settings().jwt_secret_key (fallback)
+
+    This fixture replaces the four duplicate admin_api/owasp_admin_api fixtures
+    previously scattered across entities, OWASP, operations, and teams conftests.
+    Per-directory non-admin fixtures (viewer_api, owasp_user_a_api, etc.) remain
+    local since they intentionally mint throwaway users.
+    """
+    headers = {"Accept": "application/json"}
+
+    # Priority 1: MCP_AUTH (Makefile-generated token signed with gateway's secret)
+    token = os.getenv("MCP_AUTH", "")
+    if not token:
+        # Priority 2: MCPGATEWAY_BEARER_TOKEN (legacy name)
+        token = os.getenv("MCPGATEWAY_BEARER_TOKEN", "")
+    if not token and not DISABLE_JWT_FALLBACK:
+        # Priority 3: Locally-signed JWT fallback
+        try:
+            token = _create_jwt_token(
+                {"sub": ADMIN_EMAIL},
+                user_data={
+                    "email": ADMIN_EMAIL,
+                    "full_name": "Test Admin",
+                    "is_admin": True,
+                    "auth_provider": "test",
+                },
+                teams=None,  # Admin bypass: null teams with is_admin=true
+            )
+        except Exception:
+            pass  # Use empty if generation fails
+
+    auth_header = _format_auth_header(token)
+    if auth_header:
+        headers["Authorization"] = auth_header
+
+    request_context = playwright.request.new_context(
+        base_url=BASE_URL,
+        extra_http_headers=headers,
+    )
+    yield request_context
+    request_context.dispose()
+
+
+@pytest.fixture(scope="session")
 def browser_context_args(
     pytestconfig,
     playwright: Playwright,

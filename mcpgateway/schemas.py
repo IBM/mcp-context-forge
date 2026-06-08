@@ -2849,7 +2849,9 @@ class GatewayCreate(BaseModelWithConfigDict):
     auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for authentication")
 
     # OAuth 2.0 configuration
-    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
+    oauth_config: Optional[Dict[str, Any]] = Field(
+        None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), and resource (RFC 8707)"
+    )
 
     # Query Parameter Authentication (INSECURE)
     auth_query_param_key: Optional[str] = Field(
@@ -3206,7 +3208,9 @@ class GatewayUpdate(BaseModelWithConfigDict):
     auth_value: Optional[str] = Field(None, validate_default=True)
 
     # OAuth 2.0 configuration
-    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
+    oauth_config: Optional[Dict[str, Any]] = Field(
+        None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), and resource (RFC 8707)"
+    )
 
     # Query Parameter Authentication (INSECURE)
     auth_query_param_key: Optional[str] = Field(
@@ -3559,7 +3563,9 @@ class GatewayRead(BaseModelWithConfigDict):
     auth_headers_unmasked: Optional[List[Dict[str, str]]] = Field(default=None, description="Unmasked custom headers for administrative views")
 
     # OAuth 2.0 configuration
-    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
+    oauth_config: Optional[Dict[str, Any]] = Field(
+        None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), and resource (RFC 8707)"
+    )
 
     # Query Parameter Authentication (masked for security)
     auth_query_param_key: Optional[str] = Field(
@@ -4639,7 +4645,9 @@ class A2AAgentCreate(BaseModel):
     auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for authentication")
 
     # OAuth 2.0 configuration
-    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
+    oauth_config: Optional[Dict[str, Any]] = Field(
+        None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), and resource (RFC 8707)"
+    )
 
     # Query Parameter Authentication (CWE-598 security concern - use only when required by upstream)
     auth_query_param_key: Optional[str] = Field(
@@ -4966,7 +4974,9 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
     auth_value: Optional[str] = Field(None, validate_default=True)
 
     # OAuth 2.0 configuration
-    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
+    oauth_config: Optional[Dict[str, Any]] = Field(
+        None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), and resource (RFC 8707)"
+    )
 
     # Query Parameter Authentication (CWE-598 security concern - use only when required by upstream)
     auth_query_param_key: Optional[str] = Field(
@@ -5302,7 +5312,9 @@ class A2AAgentRead(BaseModelWithConfigDict):
     auth_value: Optional[str] = Field(None, description="auth value: username/password or token or custom headers")
 
     # OAuth 2.0 configuration
-    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
+    oauth_config: Optional[Dict[str, Any]] = Field(
+        None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), and resource (RFC 8707)"
+    )
 
     # auth_value will populate the following fields
     auth_username: Optional[str] = Field(None, description="username for basic authentication")

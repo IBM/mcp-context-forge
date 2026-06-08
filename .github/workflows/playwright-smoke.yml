@@ -1,4 +1,4 @@
-name: Playwright CI Smoke
+name: Playwright Smoke
 
 on:
   pull_request:
@@ -8,6 +8,11 @@ on:
       - "mcpgateway/**"
       - "tests/playwright/**"
       - "pyproject.toml"
+      - "package.json"
+      - "package-lock.json"
+      - "tailwind.config.js"
+      - "vite.config.js"
+      - "postcss.config.js"
       - ".github/workflows/playwright.yml"
   workflow_dispatch:
 
@@ -23,7 +28,7 @@ jobs:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: playwright-ci-smoke
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 15
 
     env:
       PYTHONUNBUFFERED: "1"

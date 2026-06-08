@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Load testing for Rust fast-test-server via MCP Streamable HTTP and REST API.
+"""Load testing for Rust fast-time-server via MCP Streamable HTTP and REST API.
 
-This module tests the Rust fast-test-server using both:
+This module tests the Rust fast-time-server using both:
 - MCP Streamable HTTP protocol (with proper session management)
 - REST API (for baseline comparison)
 
@@ -141,7 +141,7 @@ def on_test_stop(environment, **kwargs):
 
 
 class RustMCPUser(FastHttpUser):
-    """Load test for Rust fast-test-server via MCP Streamable HTTP protocol.
+    """Load test for Rust fast-time-server via MCP Streamable HTTP protocol.
 
     Uses FastHttpUser (geventhttpclient) for maximum throughput.
     Tests the MCP protocol directly at /mcp endpoint.
@@ -414,7 +414,7 @@ class RustMCPStressUser(FastHttpUser):
 
 
 class RustRESTUser(FastHttpUser):
-    """Load test for Rust fast-test-server REST API.
+    """Load test for Rust fast-time-server REST API.
 
     Uses FastHttpUser (geventhttpclient) for maximum throughput.
     Tests REST API endpoints directly (no MCP protocol overhead).

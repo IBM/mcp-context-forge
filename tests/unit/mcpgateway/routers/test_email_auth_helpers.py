@@ -27,6 +27,7 @@ class DummyTeam:
 
 class DummyUser:
     def __init__(self, email, is_admin=False):
+        self.id = "00000000-0000-4000-a000-000000000001"
         self.email = email
         self.full_name = "User"
         self.is_admin = is_admin

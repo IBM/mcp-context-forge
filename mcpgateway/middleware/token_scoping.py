@@ -1248,8 +1248,7 @@ class TokenScopingMiddleware:
                 # Session token: resolve teams from DB/cache directly
                 # Cannot rely on request.state.token_teams — AuthContextMiddleware
                 # is gated by security_logging_enabled (defaults to False)
-                is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
-                user_info = {"is_admin": is_admin}
+                user_info = {}  # is_admin resolved from DB inside _resolve_teams_from_db
                 token_teams = await resolve_session_teams(payload, user_email, user_info)
             else:
                 # API token or legacy: use embedded teams with normalize_token_teams

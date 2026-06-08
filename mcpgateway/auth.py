@@ -459,7 +459,15 @@ async def _resolve_teams_from_db(email: str, user_info) -> Optional[List[str]]:
     Returns:
         None (admin bypass), [] (no teams), or list of team ID strings
     """
-    is_admin = user_info.get("is_admin", False) if isinstance(user_info, dict) else getattr(user_info, "is_admin", False)
+    if isinstance(user_info, dict):
+        is_admin = user_info.get("is_admin")  # None if key absent → fetch from DB
+    else:
+        is_admin = getattr(user_info, "is_admin", None)
+
+    if is_admin is None:
+        db_user = await asyncio.to_thread(_get_user_by_email_sync, email)
+        is_admin = db_user.is_admin if db_user else False
+
     if is_admin:
         return None  # Admin bypass
 
@@ -540,6 +548,16 @@ async def resolve_session_teams(
     """
     if not email:
         return []  # No identity — public-only; never admin bypass
+
+    # If sub is a UUID (new token format), resolve to email for DB lookups
+    try:
+        uuid.UUID(email)
+        resolved = await asyncio.to_thread(_get_email_by_id_sync, email)
+        if resolved:
+            email = resolved
+    except ValueError:
+        pass  # Already an email string
+
     if preresolved_db_teams is not _UNSET:
         db_teams: Optional[List[str]] = preresolved_db_teams
     else:
@@ -1008,6 +1026,25 @@ def _get_user_by_email_sync(email: str) -> Optional[EmailUser]:
         return None
 
 
+def _get_email_by_id_sync(user_id: str) -> Optional[str]:
+    """Synchronous helper to resolve user email from UUID id.
+
+    Used to convert new-format JWT sub (UUID) back to email for the existing auth flow.
+
+    Args:
+        user_id: The UUID string stored in EmailUser.id
+
+    Returns:
+        Email string if found, None otherwise.
+    """
+    with fresh_db_session() as db:
+        # Third-Party
+        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+        result = db.execute(select(EmailUser.email).where(EmailUser.id == user_id))
+        return result.scalar_one_or_none()
+
+
 def _resolve_plugin_authenticated_user_sync(user_dict: Dict[str, Any]) -> Optional[EmailUser]:
     """Resolve plugin-authenticated user against database-backed identity state.
 
@@ -1257,24 +1294,18 @@ async def validate_token_user(request: Request, token: str) -> EmailUser:
         ) from exc
 
 
-def _bootstrap_platform_admin_user(email: str, payload: dict) -> "EmailUser":
-    """Synthesise a virtual platform-admin EmailUser from a validated JWT payload.
+def _bootstrap_platform_admin_user(email: str) -> "EmailUser":
+    """Synthesise a virtual platform-admin EmailUser.
 
-    is_admin is derived from the token's own claim (default False) so that
-    the bootstrap path grants login access without unconditional admin elevation.
+    is_admin is derived from whether the email matches the configured platform admin
+    address, since session tokens no longer embed the is_admin claim.
     """
-    # Resolve is_admin: payload-level claim is authoritative; fall back to nested user dict.
-    resolved_is_admin = payload.get("is_admin", False)
-    if not resolved_is_admin:
-        user_info = payload.get("user", {})
-        if isinstance(user_info, dict):
-            resolved_is_admin = user_info.get("is_admin", False)
 
     return EmailUser(
         email=email,
         password_hash="",  # nosec B106 - not used for JWT authentication
         full_name=getattr(settings, "platform_admin_full_name", "Platform Administrator"),
-        is_admin=resolved_is_admin,
+        is_admin=bool(email == getattr(settings, "platform_admin_email", None)),
         is_active=True,
         auth_provider="local",
         password_change_required=False,
@@ -1316,7 +1347,7 @@ async def get_current_user(
         # NOTE: Cannot use structural check (scopes dict) because email login JWTs
         # also have scopes dict (see email_auth.py:160)
         user_info = payload.get("user", {})
-        auth_provider = user_info.get("auth_provider")
+        auth_provider = user_info.get("auth_provider") or payload.get("auth_provider")
 
         if auth_provider == "api_token":
             request.state.auth_method = "api_token"
@@ -1544,6 +1575,16 @@ async def get_current_user(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
+        # If sub is a UUID (new token format), resolve to email via DB lookup
+        if email is not None:
+            try:
+                uuid.UUID(email)
+                resolved = await asyncio.to_thread(_get_email_by_id_sync, email)
+                if resolved is not None:
+                    email = resolved
+            except ValueError:
+                pass  # sub is an email (legacy format), keep as-is
+
         logger.debug("JWT authentication successful for email: %s", email)
 
         # Extract JTI for revocation check
@@ -1582,7 +1623,7 @@ async def get_current_user(
 
                         if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
                             # Session token: resolve teams from DB/cache
-                            user_info = cached_ctx.user or {"is_admin": False}
+                            user_info = cached_ctx.user or {}
                             teams = await resolve_session_teams(payload, email, user_info)
                         else:
                             # API token or legacy: use embedded teams
@@ -1738,7 +1779,7 @@ async def get_current_user(
                             f"Platform admin bootstrap authentication for {email}. " "User authenticated via platform admin configuration.",
                             extra={"security_event": "platform_admin_bootstrap", "user_id": email},
                         )
-                        _batched_user = _bootstrap_platform_admin_user(email=email, payload=payload)
+                        _batched_user = _bootstrap_platform_admin_user(email=email)
                     else:
                         raise HTTPException(
                             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -1848,13 +1889,7 @@ async def get_current_user(
         token_use = payload.get("token_use")
         if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
             # Session token: resolve teams from DB/cache (fallback path — separate query OK)
-            # Resolve is_admin: payload-level claim is authoritative; fall back to nested user dict.
-            resolved_is_admin = payload.get("is_admin", False)
-            if not resolved_is_admin:
-                user_info_nested = payload.get("user", {})
-                if isinstance(user_info_nested, dict):
-                    resolved_is_admin = user_info_nested.get("is_admin", False)
-            user_info = {"is_admin": resolved_is_admin}
+            user_info = {}  # is_admin resolved from DB inside _resolve_teams_from_db
             normalized_teams = await resolve_session_teams(payload, email, user_info)
         else:
             # API token or legacy: use embedded teams
@@ -1965,7 +2000,7 @@ async def get_current_user(
                 extra={"security_event": "platform_admin_bootstrap", "user_id": email},
             )
             # Create a virtual admin user for authentication purposes
-            user = _bootstrap_platform_admin_user(email=email, payload=payload)
+            user = _bootstrap_platform_admin_user(email=email)
         else:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -2071,3 +2106,56 @@ def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[Em
 
     if request and global_context:
         request.state.plugin_global_context = global_context
+
+
+async def get_user_email_from_token(payload: dict, db: Session) -> Optional[str]:
+    """Resolve user email from JWT payload (supports both UUID and email in sub).
+
+    This helper enables backward-compatible token migration from email-based
+    to user-ID-based tokens. It checks if the 'sub' claim contains a UUID
+    (new format) or an email address (legacy format).
+
+    Args:
+        payload: JWT payload dictionary containing 'sub' claim
+        db: Database session for user lookup
+
+    Returns:
+        User email string if found, None otherwise
+
+    Examples:
+        >>> # New format: sub contains UUID
+        >>> payload = {"sub": "550e8400-e29b-41d4-a716-446655440000"}
+        >>> email = await get_user_email_from_token(payload, db)  # doctest: +SKIP
+        >>> email  # doctest: +SKIP
+        'user@example.com'
+
+        >>> # Legacy format: sub contains email
+        >>> payload = {"sub": "user@example.com"}
+        >>> email = await get_user_email_from_token(payload, db)  # doctest: +SKIP
+        >>> email  # doctest: +SKIP
+        'user@example.com'
+
+        >>> # Unknown UUID returns None
+        >>> payload = {"sub": "00000000-0000-0000-0000-000000000000"}
+        >>> email = await get_user_email_from_token(payload, db)  # doctest: +SKIP
+        >>> email is None  # doctest: +SKIP
+        True
+    """
+
+    sub = payload.get("sub")
+    if not sub:
+        return None
+
+    if not isinstance(sub, str):
+        return None
+
+    # Try as UUID (new format)
+    try:
+        uuid.UUID(sub)
+        user = db.query(EmailUser).filter(EmailUser.id == sub).first()
+        return user.email if user else None
+    except ValueError:
+        pass
+
+    # Fall back to email (legacy format)
+    return sub
