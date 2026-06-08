@@ -29,7 +29,7 @@ repos:
   # 🔐 Security - Detect Private Keys
   # -----------------------------------------------------------------------------
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: cef0300fd0fc4d2a87a85fa2093c6b283ea36f4b
+    rev: cef0300fd0fc4d2a87a85fa2093c6b283ea36f4b #v5.0.0
     hooks:
       - id: detect-private-key
         name: 🔐 Detect Private Key
@@ -123,7 +123,7 @@ repos:
 
   # 🔤 Unicode Text Normalization (via texthooks)
   - repo: https://github.com/sirosen/texthooks
-    rev: c1a669453f31baa33e32761cb670aa1f10141937
+    rev: c1a669453f31baa33e32761cb670aa1f10141937 #0.6.8
     hooks:
       - id: fix-smartquotes
         name: 📝 Normalize Smart Quotes
@@ -142,7 +142,7 @@ repos:
   # 🧹 Formatting Hooks (MODIFIES FILES)
   # -----------------------------------------------------------------------------
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: cef0300fd0fc4d2a87a85fa2093c6b283ea36f4b
+    rev: cef0300fd0fc4d2a87a85fa2093c6b283ea36f4b #v5.0.0 
     hooks:
       - id: end-of-file-fixer
         name: 🧹 Fix End of Files
@@ -187,7 +187,7 @@ repos:
   # ✅ Code Quality and Validation Hooks (LINTING ONLY)
   # -----------------------------------------------------------------------------
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: cef0300fd0fc4d2a87a85fa2093c6b283ea36f4b
+    rev: cef0300fd0fc4d2a87a85fa2093c6b283ea36f4b #v5.0.0
     hooks:
       - id: check-added-large-files
         name: ✅ Check Added Large Files
@@ -271,7 +271,7 @@ repos:
         types: [text]
 
   - repo: https://github.com/adrienverge/yamllint
-    rev: 79a6b2b1392eaf49cdd32ac4f14be1a809bbd8f7
+    rev: 79a6b2b1392eaf49cdd32ac4f14be1a809bbd8f7 #v1.37.1
     hooks:
       - id: yamllint
         name: ✅ YAMLlint - YAML Linter
@@ -285,7 +285,7 @@ repos:
   # 🐍 Python Code Quality Hooks (LINTING ONLY)
   # -----------------------------------------------------------------------------
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: cef0300fd0fc4d2a87a85fa2093c6b283ea36f4b
+    rev: cef0300fd0fc4d2a87a85fa2093c6b283ea36f4b #v5.0.0
     hooks:
       - id: check-ast
         name: 🐍 Check Python AST
@@ -343,7 +343,7 @@ repos:
   # 🚀 Performance and Optimization Hooks (MODIFIES FILES)
   # -----------------------------------------------------------------------------
   - repo: https://github.com/Lucas-C/pre-commit-hooks
-    rev: a30f0d816e5062a67d87c8de753cfe499672b959
+    rev: a30f0d816e5062a67d87c8de753cfe499672b959  #v1.5.5
     hooks:
       - id: remove-crlf
         name: 🚀 Remove CRLF
@@ -360,7 +360,7 @@ repos:
   #  Interrogate
   # -----------------------------------------------------------------------------
   - repo: https://github.com/econchick/interrogate
-    rev: 4894019dc8876092bc9b6d56878798c550fad998
+    rev: 4894019dc8876092bc9b6d56878798c550fad998  #v1.7.0
     hooks:
       - id: interrogate
         args: [--fail-under=100]
