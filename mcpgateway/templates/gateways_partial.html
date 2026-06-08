@@ -1,5 +1,12 @@
 <!-- htmlhint doctype-first:false -->
-<table id="gateways-table" class="min-w-full divide-y divide-gray-200">
+<table
+  id="gateways-table"
+  class="min-w-full divide-y divide-gray-200"
+  hx-get="{{ root_path }}/admin/gateways/partial{% if query_params %}?{{ query_params|urlencode }}{% endif %}"
+  hx-trigger="refresh from:body, every 5s[document.querySelector('#gateways-table-body tr span.bg-yellow-100, #gateways-table-body tr span.bg-orange-100')]"
+  hx-swap="outerHTML"
+  hx-indicator="#gateways-loading"
+>
   <thead class="bg-gray-50 dark:bg-gray-700">
     <tr>
       <th class="px-6 py-3 text-center text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Actions</th>
@@ -9,6 +16,7 @@
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider w-24">URL</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Tags</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Status</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Retry Info</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Last Seen</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Owner</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Team</th>
@@ -157,10 +165,40 @@
           {% endif %}
         </td>
         <td class="px-6 py-4 whitespace-nowrap text-sm">
-          {% if gateway.enabled %}
-          <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">Active</span>
+          {% if gateway.status is defined and gateway.status == 'pending' %}
+          <div class="flex flex-col gap-1">
+            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-800/40 dark:text-yellow-300">⏳ Pending</span>
+            {% if gateway.status_message is defined and gateway.status_message %}
+            <span class="text-xs text-gray-600 dark:text-gray-400">{{ gateway.status_message }}</span>
+            {% endif %}
+          </div>
+          {% elif gateway.status is defined and gateway.status == 'deleting' %}
+          <div class="flex flex-col gap-1">
+            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-orange-100 text-orange-800 dark:bg-orange-800/40 dark:text-orange-300">🗑️ Deleting</span>
+            {% if gateway.status_message is defined and gateway.status_message %}
+            <span class="text-xs text-gray-600 dark:text-gray-400">{{ gateway.status_message }}</span>
+            {% endif %}
+          </div>
+          {% elif gateway.status is defined and gateway.status == 'active' and gateway.enabled %}
+          <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800 dark:bg-green-800/40 dark:text-green-300">✓ Active</span>
+          {% elif gateway.enabled %}
+          <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800 dark:bg-green-800/40 dark:text-green-300">Active</span>
           {% else %}
-          <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">Inactive</span>
+          <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800 dark:bg-red-800/40 dark:text-red-300">✗ Inactive</span>
+          {% endif %}
+        </td>
+        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
+          {% if gateway.status is defined and gateway.status == 'pending' and gateway.registration_attempts is defined and gateway.registration_attempts > 0 %}
+          <div class="flex flex-col gap-1">
+            <span class="text-xs">Attempts: {{ gateway.registration_attempts }}</span>
+            {% if gateway.next_retry_at is defined and gateway.next_retry_at %}
+            <span class="text-xs text-gray-400 dark:text-gray-500">
+              Next: {{ gateway.next_retry_at[:19] if gateway.next_retry_at is string else gateway.next_retry_at.strftime('%H:%M:%S') }}
+            </span>
+            {% endif %}
+          </div>
+          {% else %}
+          <span class="text-gray-400 dark:text-gray-600 text-xs">—</span>
           {% endif %}
         </td>
         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
