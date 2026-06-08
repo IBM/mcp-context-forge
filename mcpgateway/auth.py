@@ -2162,7 +2162,7 @@ async def get_user_email_from_token(payload: dict, db: Session) -> Optional[str]
     # Fall back to email (legacy format)
     return sub
 
-    
+
 async def get_current_user_from_cookie(
     request: Request,
 ) -> tuple[EmailUser, Optional[str]]:
