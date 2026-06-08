@@ -159,6 +159,7 @@ RUN if [ "$ENABLE_FIPS" = "true" ]; then \
             | tee /usr/lib/tmpfiles.d/rootfiles.conf > /etc/tmpfiles.d/rootfiles.conf \
         && find /root -maxdepth 1 -name '.*' -type f -exec chmod 0740 {} \; \
         && chmod 0750 /root \
+        && (chgrp 0 /app 2>/dev/null || true) \
         && (chmod 0750 /app 2>/dev/null || true) \
         && (find /app -maxdepth 1 -name '.*' -type f -exec chmod 0740 {} \; 2>/dev/null || true) \
         && find /home -maxdepth 1 -mindepth 1 -type d -exec chmod 0750 {} \; \
