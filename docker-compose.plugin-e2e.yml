@@ -1,0 +1,56 @@
+# Docker Compose override for Plugin E2E Testing
+# Usage: docker compose -f docker-compose.yml -f docker-compose.plugin-e2e.yml up -d
+#
+# This overlay enables observability and plugin features required for E2E tests.
+# No external MCP server needed - tests use self-provisioned REST tools.
+
+services:
+  gateway:
+    environment:
+      # Enable plugins with E2E test configuration
+      - PLUGINS_ENABLED=true
+      - PLUGINS_CONFIG_FILE=tests/plugins/test_e2e_config.yaml
+
+      # Enable Admin API for plugin management tests
+      - MCPGATEWAY_ADMIN_API_ENABLED=true
+
+      # Disable password change enforcement for E2E tests
+      - PASSWORD_CHANGE_ENFORCEMENT_ENABLED=false
+
+      # Enable metrics for plugin performance tracking
+      - ENABLE_METRICS=true
+      - DB_METRICS_RECORDING_ENABLED=true
+
+      # Plugin test configuration (used by test fixtures)
+      - E2E_PLUGIN_UNDER_TEST=pii_filter
+      - E2E_PLUGIN_KIND=cpex_pii_filter.pii_filter.PIIFilterPlugin
+
+      # Enable structured logging for debugging
+      - STRUCTURED_LOGGING_DATABASE_ENABLED=true
+
+      # Reduce log noise during tests
+      - LOG_LEVEL=INFO
+
+    volumes:
+      # Mount plugin test configuration
+      - ./tests/plugins/test_e2e_config.yaml:/app/tests/plugins/test_e2e_config.yaml:ro
+
+      # Mount plugin source code for live testing
+      - ./plugins:/app/plugins:ro
+    
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Disable fast_time registration services (not needed for plugin tests)
+  register_fast_time:
+    profiles:
+      - disabled
+
+  register_fast_time_sse:
+    profiles:
+      - disabled
+
+# Made with Bob

@@ -16886,12 +16886,7 @@ async def get_resources_section(
         LOGGER.debug(f"User {user_email} requesting resources section with team_id={team_id}, token_teams={token_teams}")
 
         # Get all resources with token_teams for proper scoping
-        resources_result = await local_resource_service.list_resources(
-            db,
-            include_inactive=True,
-            user_email=user_email,
-            token_teams=token_teams
-        )
+        resources_result = await local_resource_service.list_resources(db, include_inactive=True, user_email=user_email, token_teams=token_teams)
         if isinstance(resources_result, tuple):
             resources_list = resources_result[0]
         else:
@@ -16952,12 +16947,7 @@ async def get_prompts_section(
         LOGGER.debug(f"User {user_email} requesting prompts section with team_id={team_id}, token_teams={token_teams}")
 
         # Get all prompts with token_teams for proper scoping
-        prompts_result = await local_prompt_service.list_prompts(
-            db,
-            include_inactive=True,
-            user_email=user_email,
-            token_teams=token_teams
-        )
+        prompts_result = await local_prompt_service.list_prompts(db, include_inactive=True, user_email=user_email, token_teams=token_teams)
         if isinstance(prompts_result, tuple):
             prompts_list = prompts_result[0]
         else:

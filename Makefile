@@ -868,6 +868,51 @@ test-mcp-plugin-parity: uv  ## MCP plugin parity E2E for current Python or Rust 
 		|| { echo "❌ MCP plugin parity tests failed!"; exit 1; }
 	@echo "✅ MCP plugin parity tests passed!"
 
+test-e2e-plugins: uv  ## Gateway-executed CPEX plugin E2E tests against a live plugin-enabled stack
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@echo "🧪 Running gateway-executed CPEX plugin E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+	@/bin/bash -c 'set -a && \
+		if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then \
+			export MCP_CLI_BASE_URL=http://localhost:8000; \
+		elif curl -fsS http://localhost:8080/health >/dev/null 2>&1; then \
+			export MCP_CLI_BASE_URL=http://localhost:8080; \
+		elif curl -fsS http://localhost:4444/health >/dev/null 2>&1; then \
+			export MCP_CLI_BASE_URL=http://localhost:4444; \
+		fi && \
+		source $(VENV_DIR)/bin/activate && \
+		$(UV_BIN) pip show cpex-pii-filter >/dev/null 2>&1 || \
+			{ echo "📦 Installing plugin extras..."; $(UV_BIN) pip install -q -e ".[plugins]" || { echo "❌ Failed to install plugin extras"; exit 1; }; } && \
+		if [ -z "$${MCP_CLI_BASE_URL:-}" ]; then \
+			if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then \
+				export MCP_CLI_BASE_URL=http://localhost:8000; \
+			elif curl -fsS http://localhost:8080/health >/dev/null 2>&1; then \
+				export MCP_CLI_BASE_URL=http://localhost:8080; \
+			elif curl -fsS http://localhost:4444/health >/dev/null 2>&1; then \
+				export MCP_CLI_BASE_URL=http://localhost:4444; \
+			fi; \
+		fi && \
+		echo "   Using base URL: $$MCP_CLI_BASE_URL" && \
+		echo "   Using plugin config: $${PLUGINS_CONFIG_FILE:-tests/plugins/test_e2e_config.yaml}" && \
+		echo "   Observability enabled: $${OBSERVABILITY_ENABLED:-true}" && \
+		echo "   Skipping /tools preflight because the plugin E2E harness now self-provisions its mock tool/server resources" && \
+		$(VENV_DIR)/bin/python -m pytest tests/e2e/plugins -v -s --tb=short \
+			|| { echo "❌ CPEX plugin E2E tests failed!"; exit 1; }; \
+		echo "✅ CPEX plugin E2E tests passed!"'
+
+plugin-e2e-docker-up:  ## Start Docker stack with plugin E2E configuration (observability enabled)
+	@echo "🐳 Starting Docker stack with plugin E2E configuration..."
+	@echo "   Rebuilding gateway image to pick up latest code changes..."
+	@docker compose -f docker-compose.yml -f docker-compose.plugin-e2e.yml build gateway
+	@docker compose -f docker-compose.yml -f docker-compose.plugin-e2e.yml up -d
+	@echo "⏳ Waiting for services to be healthy..."
+	@sleep 5
+	@echo "✅ Plugin E2E Docker stack is ready at http://localhost:8080"
+	@echo "   Run 'make test-e2e-plugins' to execute tests"
+
+plugin-e2e-docker-down:  ## Stop Docker stack with plugin E2E configuration
+	@echo "🐳 Stopping Docker stack with plugin E2E configuration..."
+	@docker compose -f docker-compose.yml -f docker-compose.plugin-e2e.yml down
+
 test-mcp-session-isolation: uv  ## MCP session/auth isolation tests for the Rust public transport path
 	@echo "🧪 Running MCP session/auth isolation tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: docker-compose stack rebuilt in Rust edge/full mode"

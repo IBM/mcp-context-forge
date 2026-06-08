@@ -9,5 +9,3 @@ Authors: Mihai Criveti
 
 Regression test suite for admin UI CRUD operations and state persistence.
 """
-
-# Made with Bob

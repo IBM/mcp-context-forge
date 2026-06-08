@@ -90,6 +90,7 @@ jobs:
           uv run --extra plugins pytest -n auto \
             --durations=10 \
             --ignore=tests/fuzz \
+            --ignore=tests/e2e/plugins \
             --cov=mcpgateway \
             --cov-report=xml \
             --cov-report=html \
