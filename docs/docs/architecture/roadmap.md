@@ -12,8 +12,8 @@
 | 1.5.0         | - |   0 %      | Open         | Ecosystem Integrations, Advanced Observability, Plugin Marketplace |
 | 1.4.0         | - |   0 %      | Open         | Enterprise Features, Federation Enhancements, Performance |
 | 1.3.0         | - |   0 %      | Open         | New MCP Servers and Agents |
-| 1.2.0         | - |   0 %      | Open         | Documentation, Technical Debt, Bugfixes |
-| 1.1.0         | - |   0 %      | Open         | Technical Debt and Quality |
+| 1.2.0         | 08 Jun 2026 |   100 %      | **Closed**           | Documentation, Technical Debt, Bugfixes |
+| 1.1.0         | 26 May 2026 |   100 %      | **Closed**           | Technical Debt and Quality |
 | 1.0.1         | 12 May 2026 | 100%.      | **Closed**   | Security Hardening, UI Improvements, and Bug Fixes |
 | 1.0.0         | 28 Apr 2026 | 100 %      | **Closed**   | General Availability - Technical Debt, Security Hardening, Catalog Improvements, A2A Improvements, MCP Standard Review and Sync |
 | 1.0.0-RC3     | 14 Apr 2026 | 100 %      | **Closed**   | Release Candidate 3 - Auth Hardening, Plugin Multi-Tenancy, Rust Runtime & Multi-Arch |
