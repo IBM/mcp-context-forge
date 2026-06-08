@@ -2,6 +2,46 @@
 
 > All notable changes to this project will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project **adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)**.
 
+## [Unreleased]
+
+### Added
+
+#### **⏳ Asynchronous Gateway Lifecycle** ([#4565](https://github.com/IBM/mcp-context-forge/issues/4565))
+
+- **HTTP 202 Accepted Pattern** – Gateway create, update, and delete operations return 202 Accepted when `GATEWAY_ASYNC_LIFECYCLE_ENABLED=true`, with background worker processing and automatic retry logic. Prevents API timeouts for slow MCP server connections.
+- **Background Worker** – Dedicated worker process polls pending gateways every 5 seconds (configurable), performs MCP operations with exponential backoff retry (1s → 2s → 4s → ... → 300s cap), and handles graceful shutdown (SIGTERM/SIGINT).
+- **Status Polling API** – GET /admin/gateways/{name} returns gateway status (`pending`, `active`, `deleting`), user-facing `status_message` field, and retry metadata (`registration_attempts`, `next_retry_at`).
+- **Idempotent Operations** – Duplicate create on pending gateway returns 202 with existing state, duplicate create on active gateway returns 409 Conflict, repeated delete returns 202 (idempotent).
+- **Graceful Cancellation** – DELETE on pending gateway transitions to `deleting` status, stops retry loop, and performs cleanup.
+- **Database Schema** – New columns: `status` (indexed), `status_message` (user-facing), `status_updated_at`, `registration_attempts`, `next_retry_at`, `last_error` (internal only), `created_by`, `team_id`.
+- **Observability Integration** – Traces for gateway acceptance, spans for worker operations (claim, initialize, update, cleanup), events for lifecycle transitions, metrics with cardinality controls (`gateway_status_total`, `gateway_registration_attempts`, `gateway_pending_duration_seconds`, `gateway_registration_errors_total`).
+- **PostgreSQL Concurrency** – Multiple workers supported via `FOR UPDATE SKIP LOCKED` (1-5 workers recommended), each claiming up to 10 gateways per cycle.
+- **SQLite Compatibility** – Single worker with status re-check prevents races (acceptable for dev/test).
+- **Documentation** – Comprehensive API reference ([gateway-lifecycle-async.md](docs/docs/manage/gateway-lifecycle-async.md)), rollout guide ([async-gateway-rollout.md](docs/docs/using/async-gateway-rollout.md)), troubleshooting guide ([gateway-troubleshooting.md](docs/docs/development/gateway-troubleshooting.md)), and Admin UI specification ([admin-ui-async-gateway-spec.md](docs/docs/development/admin-ui-async-gateway-spec.md)).
+
+**Configuration:**
+```bash
+GATEWAY_ASYNC_LIFECYCLE_ENABLED=false  # Default: disabled for zero breaking changes
+GATEWAY_WORKER_POLL_INTERVAL_SECONDS=5  # Worker polling interval
+GATEWAY_WORKER_BATCH_SIZE=10  # Gateways processed per cycle
+```
+
+**Benefits:**
+- No API timeouts for slow MCP servers
+- Better visibility into operation progress
+- Automatic retry with exponential backoff
+- Graceful cancellation via DELETE
+- Zero breaking changes (feature flag controlled)
+
+**Security:**
+- RBAC permissions checked at acceptance time (POST/PUT/DELETE)
+- Worker executes with system authority (not user context)
+- Token scoping enforced for GET operations
+- `status_message` field respects token scoping
+- `last_error` field NOT exposed in API responses (internal debugging only)
+
+---
+
 ## [1.0.2] - 2026-05-25 - Admin UI Rewrite, Database Migrations, Security Enhancements, and Bug Fixes
 
 ### Overview
