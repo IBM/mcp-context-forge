@@ -66,4 +66,11 @@ export default tseslint.config(
       "no-new-func": "error",
     },
   },
+  {
+    files: ["src/**/*.test.{ts,tsx}", "src/**/*.spec.{ts,tsx}"],
+    rules: {
+      "@typescript-eslint/no-unused-vars": "off",
+      "@typescript-eslint/no-explicit-any": "off",
+    },
+  }
 );

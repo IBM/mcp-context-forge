@@ -219,7 +219,9 @@ describe("Progress", () => {
 
       testCases.forEach(({ value, expected }) => {
         const { container } = render(<Progress value={value} />);
-        const indicator = container.querySelector('[data-slot="progress-indicator"]') as HTMLElement;
+        const indicator = container.querySelector(
+          '[data-slot="progress-indicator"]',
+        ) as HTMLElement;
         expect(indicator).toHaveStyle({ transform: expected });
       });
     });
@@ -237,9 +239,7 @@ describe("Progress", () => {
 
   describe("Props Forwarding", () => {
     it("should forward standard HTML attributes", () => {
-      const { container } = render(
-        <Progress value={50} id="test-progress" title="Loading" />,
-      );
+      const { container } = render(<Progress value={50} id="test-progress" title="Loading" />);
       const progressRoot = container.querySelector('[data-slot="progress"]');
 
       expect(progressRoot).toHaveAttribute("id", "test-progress");
@@ -289,9 +289,7 @@ describe("Progress", () => {
     });
 
     it("should maintain transform through re-renders", () => {
-      const { container, rerender } = render(
-        <Progress value={50} className="initial-class" />,
-      );
+      const { container, rerender } = render(<Progress value={50} className="initial-class" />);
       let indicator = container.querySelector('[data-slot="progress-indicator"]') as HTMLElement;
       expect(indicator).toHaveStyle({ transform: "translateX(-50%)" });
 
@@ -305,7 +303,9 @@ describe("Progress", () => {
 
       for (let i = 10; i <= 100; i += 10) {
         rerender(<Progress value={i} />);
-        const indicator = container.querySelector('[data-slot="progress-indicator"]') as HTMLElement;
+        const indicator = container.querySelector(
+          '[data-slot="progress-indicator"]',
+        ) as HTMLElement;
         const expectedTransform = `translateX(-${100 - i}%)`;
         expect(indicator).toHaveStyle({ transform: expectedTransform });
       }
@@ -322,9 +322,15 @@ describe("Progress", () => {
         </div>,
       );
 
-      const progress1 = container.querySelector('[data-testid="progress-1"] [data-slot="progress-indicator"]') as HTMLElement;
-      const progress2 = container.querySelector('[data-testid="progress-2"] [data-slot="progress-indicator"]') as HTMLElement;
-      const progress3 = container.querySelector('[data-testid="progress-3"] [data-slot="progress-indicator"]') as HTMLElement;
+      const progress1 = container.querySelector(
+        '[data-testid="progress-1"] [data-slot="progress-indicator"]',
+      ) as HTMLElement;
+      const progress2 = container.querySelector(
+        '[data-testid="progress-2"] [data-slot="progress-indicator"]',
+      ) as HTMLElement;
+      const progress3 = container.querySelector(
+        '[data-testid="progress-3"] [data-slot="progress-indicator"]',
+      ) as HTMLElement;
 
       expect(progress1).toHaveStyle({ transform: "translateX(-75%)" });
       expect(progress2).toHaveStyle({ transform: "translateX(-50%)" });
