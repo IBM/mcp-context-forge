@@ -37,7 +37,7 @@ services:
 
       # Mount plugin source code for live testing
       - ./plugins:/app/plugins:ro
-    
+
     depends_on:
       postgres:
         condition: service_healthy
