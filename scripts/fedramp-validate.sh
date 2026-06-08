@@ -79,6 +79,14 @@ check "/app home dir permissions 0750 (RHEL-09-232050)" \
     "stat -c '%a' /app" \
     "750"
 
+# /app must stay group-owned by root (GID 0): OpenShift's arbitrary-UID model always
+# runs containers with GID 0, and 0750 strips "other" access — without group=root,
+# arbitrary-UID pods lose all access to /app (ModuleNotFoundError: No module named
+# 'gunicorn' at startup). Owner-UID match (10001) still works via owner bits regardless.
+check "/app group ownership is root (OpenShift arbitrary-UID compatibility)" \
+    "stat -c '%G' /app" \
+    "root"
+
 # RHEL-09-232045: /app user dotfiles must be 0740 or less permissive
 # -perm /037 matches: group-write (020), group-execute (010), other-rwx (007)
 check "/app dotfiles permissions 0740 or less (RHEL-09-232045)" \
