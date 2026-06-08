@@ -288,15 +288,23 @@ async def test_handle_sso_callback_user_creation_failed(monkeypatch: pytest.Monk
 async def test_handle_sso_callback_success_sets_cookie(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(sso_router.settings, "sso_enabled", True)
 
+    # Create a valid JWT token with admin status
+    import jwt
+    admin_token = jwt.encode(
+        {"user": {"email": "admin@example.com", "is_admin": True}, "email": "admin@example.com"},
+        "secret",
+        algorithm="HS256"
+    )
+
     class DummyService:
         def __init__(self, _db):
             pass
 
         async def handle_oauth_callback_with_tokens(self, *_args, **_kwargs):
-            return {"email": "user@example.com"}, {}
+            return {"email": "admin@example.com"}, {}
 
         async def authenticate_or_create_user(self, *_args, **_kwargs):
-            return "token"
+            return admin_token
 
     monkeypatch.setattr(sso_router, "SSOService", DummyService)
 
@@ -326,15 +334,23 @@ async def test_handle_sso_callback_keycloak_sets_id_token_hint_cookie(monkeypatc
     monkeypatch.setattr(sso_router.settings, "app_root_path", "/")
     monkeypatch.setattr(sso_router.settings, "token_expiry", 60)
 
+    # Create a valid JWT token with admin status
+    import jwt
+    admin_token = jwt.encode(
+        {"user": {"email": "admin@example.com", "is_admin": True}, "email": "admin@example.com"},
+        "secret",
+        algorithm="HS256"
+    )
+
     class DummyService:
         def __init__(self, _db):
             pass
 
         async def handle_oauth_callback_with_tokens(self, *_args, **_kwargs):
-            return {"email": "user@example.com"}, {"id_token": "id-token-hint"}
+            return {"email": "admin@example.com"}, {"id_token": "id-token-hint"}
 
         async def authenticate_or_create_user(self, *_args, **_kwargs):
-            return "token"
+            return admin_token
 
     monkeypatch.setattr(sso_router, "SSOService", DummyService)
 
@@ -365,16 +381,24 @@ async def test_handle_sso_callback_keycloak_oversized_id_token_skips_hint_cookie
     monkeypatch.setattr(sso_router.settings, "app_root_path", "/")
     monkeypatch.setattr(sso_router.settings, "token_expiry", 60)
 
+    # Create a valid JWT token with admin status
+    import jwt
+    admin_token = jwt.encode(
+        {"user": {"email": "admin@example.com", "is_admin": True}, "email": "admin@example.com"},
+        "secret",
+        algorithm="HS256"
+    )
+
     class DummyService:
         def __init__(self, _db):
             pass
 
         async def handle_oauth_callback_with_tokens(self, *_args, **_kwargs):
             # Trigger "too large for cookie storage" branch in router callback.
-            return {"email": "user@example.com"}, {"id_token": "x" * 3900}
+            return {"email": "admin@example.com"}, {"id_token": "x" * 3900}
 
         async def authenticate_or_create_user(self, *_args, **_kwargs):
-            return "token"
+            return admin_token
 
     monkeypatch.setattr(sso_router, "SSOService", DummyService)
 
@@ -395,6 +419,221 @@ async def test_handle_sso_callback_keycloak_oversized_id_token_skips_hint_cookie
     assert "sso_id_token_hint=" not in response.headers.get("set-cookie", "")
     assert "id_token too large for cookie storage" in caplog.text
     assert set_cookie.called
+
+@pytest.mark.asyncio
+async def test_handle_sso_callback_non_admin_with_team_redirects_to_team(monkeypatch: pytest.MonkeyPatch):
+    """Test that non-admin users with teams are redirected to team-scoped admin."""
+    monkeypatch.setattr(sso_router.settings, "sso_enabled", True)
+
+    # Create a valid JWT token for non-admin user
+    import jwt
+    non_admin_token = jwt.encode(
+        {"user": {"email": "user@example.com", "is_admin": False}, "email": "user@example.com"},
+        "secret",
+        algorithm="HS256"
+    )
+
+    class DummyService:
+        def __init__(self, _db):
+            pass
+
+        async def handle_oauth_callback_with_tokens(self, *_args, **_kwargs):
+            return {"email": "user@example.com"}, {}
+
+        async def authenticate_or_create_user(self, *_args, **_kwargs):
+            return non_admin_token
+
+    monkeypatch.setattr(sso_router, "SSOService", DummyService)
+
+    # Mock TeamManagementService to return a team
+    class MockTeam:
+        id = "team-123"
+
+    class MockTeamService:
+        def __init__(self, _db):
+            pass
+
+        async def get_user_teams(self, *_args, **_kwargs):
+            return [MockTeam()]
+
+    monkeypatch.setattr(sso_router, "TeamManagementService", MockTeamService)
+
+    import mcpgateway.utils.security_cookies as cookie_module
+
+    set_cookie = MagicMock()
+    monkeypatch.setattr(cookie_module, "set_auth_cookie", set_cookie)
+
+    request = MagicMock()
+    request.scope = {"root_path": ""}
+    request.cookies = {"sso_session_id": "session-1"}
+
+    response = await sso_router.handle_sso_callback("provider", "code", "state", error=None, error_description=None, request=request, response=MagicMock(), db=MagicMock())
+
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 302
+    assert response.headers.get("location", "") == "/admin?team_id=team-123"
+    assert set_cookie.called
+
+
+@pytest.mark.asyncio
+async def test_handle_sso_callback_non_admin_no_teams_redirects_to_admin_gateways(monkeypatch: pytest.MonkeyPatch):
+    """Test that non-admin users without teams are redirected to admin gateways view.
+
+    This prevents a redirect loop when Admin UI is enabled, as root (/) redirects
+    back to /admin/. The gateways section is accessible to platform_viewer users.
+    """
+    monkeypatch.setattr(sso_router.settings, "sso_enabled", True)
+
+    # Create a valid JWT token for non-admin user
+    import jwt
+    non_admin_token = jwt.encode(
+        {"user": {"email": "user@example.com", "is_admin": False}, "email": "user@example.com"},
+        "secret",
+        algorithm="HS256"
+    )
+
+    class DummyService:
+        def __init__(self, _db):
+            pass
+
+        async def handle_oauth_callback_with_tokens(self, *_args, **_kwargs):
+            return {"email": "user@example.com"}, {}
+
+        async def authenticate_or_create_user(self, *_args, **_kwargs):
+            return non_admin_token
+
+    monkeypatch.setattr(sso_router, "SSOService", DummyService)
+
+    # Mock TeamManagementService to return no teams
+    class MockTeamService:
+        def __init__(self, _db):
+            pass
+
+        async def get_user_teams(self, *_args, **_kwargs):
+            return []
+
+    monkeypatch.setattr(sso_router, "TeamManagementService", MockTeamService)
+
+    import mcpgateway.utils.security_cookies as cookie_module
+
+    set_cookie = MagicMock()
+    monkeypatch.setattr(cookie_module, "set_auth_cookie", set_cookie)
+
+    request = MagicMock()
+    request.scope = {"root_path": ""}
+    request.cookies = {"sso_session_id": "session-1"}
+
+    response = await sso_router.handle_sso_callback("provider", "code", "state", error=None, error_description=None, request=request, response=MagicMock(), db=MagicMock())
+
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 302
+    assert response.headers.get("location", "") == "/admin/#gateways"
+    assert set_cookie.called
+
+
+@pytest.mark.asyncio
+async def test_handle_sso_callback_team_service_error_falls_back_to_admin(monkeypatch: pytest.MonkeyPatch):
+    """Test that team service errors fall back to /admin redirect."""
+    monkeypatch.setattr(sso_router.settings, "sso_enabled", True)
+
+    # Create a valid JWT token for non-admin user
+    import jwt
+    non_admin_token = jwt.encode(
+        {"user": {"email": "user@example.com", "is_admin": False}, "email": "user@example.com"},
+        "secret",
+        algorithm="HS256"
+    )
+
+    class DummyService:
+        def __init__(self, _db):
+            pass
+
+        async def handle_oauth_callback_with_tokens(self, *_args, **_kwargs):
+            return {"email": "user@example.com"}, {}
+
+        async def authenticate_or_create_user(self, *_args, **_kwargs):
+            return non_admin_token
+
+    monkeypatch.setattr(sso_router, "SSOService", DummyService)
+
+    # Mock TeamManagementService to raise an exception
+    class MockTeamService:
+        def __init__(self, _db):
+            pass
+
+        async def get_user_teams(self, *_args, **_kwargs):
+            raise Exception("Database connection error")
+
+    monkeypatch.setattr(sso_router, "TeamManagementService", MockTeamService)
+
+    import mcpgateway.utils.security_cookies as cookie_module
+
+    set_cookie = MagicMock()
+    monkeypatch.setattr(cookie_module, "set_auth_cookie", set_cookie)
+
+    request = MagicMock()
+    request.scope = {"root_path": ""}
+    request.cookies = {"sso_session_id": "session-1"}
+
+    response = await sso_router.handle_sso_callback("provider", "code", "state", error=None, error_description=None, request=request, response=MagicMock(), db=MagicMock())
+
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 302
+    assert response.headers.get("location", "") == "/admin"
+    assert set_cookie.called
+
+@pytest.mark.asyncio
+async def test_handle_sso_callback_invalid_jwt_falls_back_to_user_info(monkeypatch: pytest.MonkeyPatch):
+    """Test that invalid JWT token falls back to using user_info for redirect determination.
+
+    When JWT decoding fails, the code falls back to user_info to determine redirect.
+    Non-admin users without teams are redirected to admin gateways view.
+    """
+    monkeypatch.setattr(sso_router.settings, "sso_enabled", True)
+
+    # Return an invalid JWT token (not properly formatted)
+    invalid_token = "not-a-valid-jwt-token"
+
+    class DummyService:
+        def __init__(self, _db):
+            pass
+
+        async def handle_oauth_callback_with_tokens(self, *_args, **_kwargs):
+            return {"email": "user@example.com"}, {}
+
+        async def authenticate_or_create_user(self, *_args, **_kwargs):
+            return invalid_token
+
+    monkeypatch.setattr(sso_router, "SSOService", DummyService)
+
+    # Mock TeamManagementService to return no teams
+    class MockTeamService:
+        def __init__(self, _db):
+            pass
+
+        async def get_user_teams(self, *_args, **_kwargs):
+            return []
+
+    monkeypatch.setattr(sso_router, "TeamManagementService", MockTeamService)
+
+    import mcpgateway.utils.security_cookies as cookie_module
+
+    set_cookie = MagicMock()
+    monkeypatch.setattr(cookie_module, "set_auth_cookie", set_cookie)
+
+    request = MagicMock()
+    request.scope = {"root_path": ""}
+    request.cookies = {"sso_session_id": "session-1"}
+
+    response = await sso_router.handle_sso_callback("provider", "code", "state", error=None, error_description=None, request=request, response=MagicMock(), db=MagicMock())
+
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 302
+    # Should redirect to admin gateways view since user has no teams and is not admin
+    assert response.headers.get("location", "") == "/admin/#gateways"
+    assert set_cookie.called
+
+
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+import jwt
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -25,6 +26,7 @@ from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.sso_service import SSOService
+from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.paths import resolve_root_path
 
@@ -398,8 +400,46 @@ async def handle_sso_callback(
     if not access_token:
         return RedirectResponse(url=f"{root_path}/admin/login?error=user_creation_failed", status_code=302)
 
+    # Determine redirect URL based on user's admin status and team membership
+    # Decode token to get user info (no verification needed - we just created it)
+    try:
+        payload = jwt.decode(access_token, options={"verify_signature": False})
+        user_data = payload.get("user", {})
+        is_admin = user_data.get("is_admin", False)
+        user_email = user_data.get("email") or payload.get("email")
+    except Exception as e:
+        logger.warning(f"Failed to decode SSO token for redirect determination: {e}")
+        is_admin = False
+        user_email = user_info.get("email")
+
+    # Determine redirect URL
+    redirect_url = f"{root_path}/admin"
+
+    # For non-admin users, try to redirect to their first team's admin view
+    if not is_admin and user_email:
+        try:
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email, include_personal=False)
+
+            if user_teams:
+                # Redirect to first team's admin view
+                # Use first team in list (arbitrary selection - user can switch teams in UI)
+                first_team_id = user_teams[0].id
+                redirect_url = f"{root_path}/admin?team_id={first_team_id}"
+                logger.info(f"Redirecting non-admin SSO user {sanitize_for_log(user_email)} to team-scoped admin: {first_team_id}")
+            else:
+                # User has no teams - redirect to admin gateways view
+                # Redirecting to root (/) would create a loop when Admin UI is enabled,
+                # as root redirects back to /admin/. The gateways section is accessible
+                # to platform_viewer users (who have gateways.read permission).
+                redirect_url = f"{root_path}/admin/#gateways"
+                logger.info(f"Redirecting non-admin SSO user {sanitize_for_log(user_email)} with no teams to admin gateways view")
+        except Exception as e:
+            logger.warning(f"Failed to retrieve teams for SSO user {sanitize_for_log(user_email)}: {e}. Redirecting to /admin")
+            # Fall back to /admin - middleware will handle permission check
+
     # Create redirect response
-    redirect_response = RedirectResponse(url=f"{root_path}/admin", status_code=302)
+    redirect_response = RedirectResponse(url=redirect_url, status_code=302)
 
     # Set secure HTTP-only cookie using the same method as email auth
     # First-Party
