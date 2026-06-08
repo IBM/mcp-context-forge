@@ -48,6 +48,7 @@
 |--------|-------------|
 | `fast-test-server` | Fast testing server |
 | `filesystem-server` | Filesystem operations |
+| `slow-time-server` | Configurable latency and failure simulation for resilience testing |
 
 ## Scaffolding New Servers
 
