@@ -4638,6 +4638,14 @@ class Gateway(Base):
 
     import_batch_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     federation_source: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    # Async lifecycle fields (Issue #4565)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active", index=True)
+    status_message: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    status_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    registration_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_retry_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     # Header passthrough configuration
@@ -4730,6 +4738,7 @@ class Gateway(Base):
     __table_args__ = (
         UniqueConstraint("team_id", "owner_email", "slug", name="uq_team_owner_slug_gateway"),
         Index("idx_gateways_created_at_id", "created_at", "id"),
+        Index("ix_gateway_status_retry", "status", "next_retry_at"),
     )
 
 

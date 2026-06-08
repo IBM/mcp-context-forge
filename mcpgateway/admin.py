@@ -177,6 +177,7 @@ from mcpgateway.services.team_management_service import TeamManagementService, U
 from mcpgateway.services.token_catalog_service import TokenCatalogService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
+from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -12472,8 +12473,95 @@ async def admin_add_gateway(
     try:
         # Extract creation metadata
         metadata = MetadataCapture.extract_creation_metadata(request, user)
-
         team_id_cast = typing_cast(Optional[str], team_id)
+
+        # Check if async lifecycle is enabled
+        if settings.gateway_async_lifecycle_enabled:
+            # ASYNC PATH: Create pending gateway record
+            slug_name = slugify(gateway.name)
+            
+            # Check for existing pending gateway with same name (idempotent)
+            existing_pending = db.execute(
+                select(DbGateway).where(
+                    and_(
+                        DbGateway.slug == slug_name,
+                        DbGateway.status == "pending",
+                        DbGateway.team_id == team_id_cast if team_id_cast else DbGateway.team_id.is_(None),
+                        DbGateway.visibility == visibility,
+                    )
+                )
+            ).scalar_one_or_none()
+            
+            if existing_pending:
+                # Return existing pending gateway (idempotent)
+                return ORJSONResponse(
+                    content={
+                        "message": "Gateway registration already queued",
+                        "success": True,
+                        "status": "pending",
+                        "status_message": existing_pending.status_message or "Gateway registration queued",
+                        "retry_after": 5,
+                    },
+                    status_code=202,
+                    headers={"Retry-After": "5"},
+                )
+            
+            # Check for active gateway with same name (conflict)
+            existing_active = db.execute(
+                select(DbGateway).where(
+                    and_(
+                        DbGateway.slug == slug_name,
+                        DbGateway.status == "active",
+                        DbGateway.team_id == team_id_cast if team_id_cast else DbGateway.team_id.is_(None),
+                        DbGateway.visibility == visibility,
+                    )
+                )
+            ).scalar_one_or_none()
+            
+            if existing_active:
+                return ORJSONResponse(
+                    content={"message": f"Gateway with name '{gateway.name}' already exists", "success": False},
+                    status_code=409,
+                )
+            
+            # Create pending gateway record
+            normalized_url = gateway_service.normalize_url(str(gateway.url))
+            db_gateway = DbGateway(
+                name=gateway.name,
+                slug=slug_name,
+                url=normalized_url,
+                description=gateway.description,
+                tags=gateway.tags or [],
+                transport=gateway.transport,
+                status="pending",
+                status_message="Gateway registration queued",
+                status_updated_at=datetime.now(timezone.utc),
+                registration_attempts=0,
+                created_by=metadata["created_by"],
+                created_from_ip=metadata["created_from_ip"],
+                created_via=metadata["created_via"],
+                created_user_agent=metadata["created_user_agent"],
+                team_id=team_id_cast,
+                owner_email=user_email,
+                visibility=visibility,
+                version=1,
+            )
+            db.add(db_gateway)
+            db.commit()
+            
+            return ORJSONResponse(
+                content={
+                    "message": "Gateway registration queued",
+                    "success": True,
+                    "status": "pending",
+                    "status_message": "Gateway registration queued",
+                    "retry_after": 5,
+                },
+                status_code=202,
+                headers={"Retry-After": "5"},
+            )
+        
+        # SYNC PATH: Direct registration (flag OFF)
         result = await gateway_service.register_gateway(
             db,
             gateway,
@@ -12618,6 +12706,47 @@ async def admin_update_gateway_rest(
         # Create GatewayUpdate model from data
         gateway = GatewayUpdate(**data)
 
+        # Check if async lifecycle is enabled
+        if settings.gateway_async_lifecycle_enabled:
+            # ASYNC PATH: Set status to pending
+            db_gateway = db.get(DbGateway, gateway_id)
+            if not db_gateway:
+                return ORJSONResponse(content={"message": "Gateway not found", "success": False}, status_code=404)
+            
+            # Check if already pending (idempotent)
+            if db_gateway.status == "pending":
+                return ORJSONResponse(
+                    content={
+                        "message": "Gateway update already queued",
+                        "success": True,
+                        "status": "pending",
+                        "status_message": db_gateway.status_message or "Gateway update queued",
+                        "retry_after": 5,
+                    },
+                    status_code=202,
+                    headers={"Retry-After": "5"},
+                )
+            
+            # Update status to pending
+            db_gateway.status = "pending"
+            db_gateway.status_message = "Gateway update queued"
+            db_gateway.status_updated_at = datetime.now(timezone.utc)
+            db_gateway.registration_attempts = 0
+            db.commit()
+            
+            return ORJSONResponse(
+                content={
+                    "message": "Gateway update queued",
+                    "success": True,
+                    "status": "pending",
+                    "status_message": "Gateway update queued",
+                    "retry_after": 5,
+                },
+                status_code=202,
+                headers={"Retry-After": "5"},
+            )
+        
+        # SYNC PATH: Direct update (flag OFF)
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
         await gateway_service.update_gateway(
             db,
@@ -12688,6 +12817,42 @@ async def admin_delete_gateway_rest(
     LOGGER.debug(f"User {user_email} is deleting gateway ID {gateway_id}")
 
     try:
+        # Check if async lifecycle is enabled
+        if settings.gateway_async_lifecycle_enabled:
+            # ASYNC PATH: Set status to deleting
+            db_gateway = db.get(DbGateway, gateway_id)
+            if not db_gateway:
+                return ORJSONResponse(content={"message": "Gateway not found", "success": False}, status_code=404)
+            
+            # Check if already deleting (idempotent)
+            if db_gateway.status == "deleting":
+                return ORJSONResponse(
+                    content={
+                        "message": "Gateway deletion already queued",
+                        "success": True,
+                        "status": "deleting",
+                        "status_message": db_gateway.status_message or "Gateway deletion queued",
+                    },
+                    status_code=202,
+                )
+            
+            # Update status to deleting
+            db_gateway.status = "deleting"
+            db_gateway.status_message = "Gateway deletion queued"
+            db_gateway.status_updated_at = datetime.now(timezone.utc)
+            db.commit()
+            
+            return ORJSONResponse(
+                content={
+                    "message": "Gateway deletion queued",
+                    "success": True,
+                    "status": "deleting",
+                    "status_message": "Gateway deletion queued",
+                },
+                status_code=202,
+            )
+        
+        # SYNC PATH: Direct deletion (flag OFF)
         await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
         return Response(status_code=204)
     except PermissionError as e:
