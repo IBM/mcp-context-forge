@@ -2063,7 +2063,8 @@ services:
   ###############################################################################
   fast_test_server:
     build:
-      context: ./mcp-servers/rust/fast-test-server
+      # Context builds the renamed rust fast-time-server crate; image/service name kept as fast-test-server to avoid colliding with the Go fast_time_server.
+      context: ./mcp-servers/rust/fast-time-server
       dockerfile: Containerfile
     image: mcpgateway/fast-test-server:latest
     restart: unless-stopped
