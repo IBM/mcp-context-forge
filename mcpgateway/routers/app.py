@@ -129,8 +129,9 @@ async def auth_login(
 
         payload = await verify_jwt_token_cached(token, request)
         session_id = payload.get("jti", "")
+        user_sub = payload.get("sub", user.email)
         csrf_service = get_csrf_service()
-        csrf_token = csrf_service.generate_csrf_token(user_id=user.email, session_id=session_id)
+        csrf_token = csrf_service.generate_csrf_token(user_id=user_sub, session_id=session_id)
         set_csrf_cookie(response, csrf_token, settings)
 
         logger.debug("User authenticated via cookie auth")
@@ -167,93 +168,58 @@ async def get_me(
 
 @app_router.post("/auth/logout")
 async def logout(
+    request: Request,
     response: Response,
-    user_ctx: Annotated[tuple[EmailUser, str | None], Depends(get_current_user_from_cookie)],
 ) -> dict[str, str]:
-    """Revoke JWT server-side and clear auth cookies.
+    """Clear auth cookies and revoke JWT server-side (best-effort).
 
-    Security Flow:
-        1. CSRF validation (via Depends) - prevents cross-site logout attacks
-        2. Authentication check (via get_current_user_from_cookie)
-        3. Server-side token revocation (best-effort)
-        4. Cookie clearing (always succeeds)
+    Cookie clearing always succeeds regardless of auth or revocation state.
+    This endpoint is CSRF-exempt so that logout works even when the CSRF token
+    has expired or is missing (e.g., after a long idle session).
 
-    Token Revocation Pattern (Best-Effort):
-        Token revocation is attempted but not required for logout success. This design
-        prioritizes user experience and availability over strict revocation guarantees:
-
-        Success Case:
-            - Token added to blocklist (Redis/DB)
-            - User immediately logged out client-side (cookies cleared)
-            - Token rejected on subsequent requests (blocklist check)
-
-        Failure Case (Redis/DB unavailable):
-            - Revocation fails but logout succeeds (cookies still cleared)
-            - User immediately logged out client-side
-            - Token remains valid until natural expiry (settings.token_expiry)
-            - Failure logged with correlation ID for monitoring/alerting
-            - Metric recorded for observability (auth.token_revocation_failure)
-
-        Rationale:
-            - Logout must always succeed from user perspective (UX requirement)
-            - Cookie clearing provides immediate client-side protection
-            - Token TTL bounds exposure window (default: 20 minutes)
-            - Monitoring/alerting enables operational response to blocklist outages
-            - Alternative: Fail logout on revocation failure (poor UX, availability impact)
-
-        Security Considerations:
-            - Tokens without JTI cannot be revoked (logged as warning)
-            - Short token_expiry (5-20 min recommended) limits exposure
-            - Monitor auth.token_revocation_failure metric for blocklist health
-            - Consider token_idle_timeout for additional protection
+    Token revocation is best-effort: if the blocklist is unavailable, cookies
+    are still cleared and the token expires naturally (settings.token_expiry).
 
     Returns:
         dict: Success message with "message" key
-
-    Raises:
-        HTTPException: 401 if authentication fails
-        HTTPException: 403 if CSRF validation fails
-        HTTPException: 500 if internal error occurs
     """
-    try:
-        user, jti = user_ctx
-        if jti:
-            try:
+    # Always clear cookies first — regardless of what follows.
+    clear_auth_cookie(response, path=JWT_COOKIE_PATH)
+    clear_csrf_cookie(response, settings)
+
+    # Best-effort: revoke the JWT so it cannot be reused before natural expiry.
+    raw_token = request.cookies.get("jwt_token")
+    if raw_token:
+        try:
+            from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
+
+            payload = await verify_jwt_token_cached(raw_token, request)
+            jti = payload.get("jti")
+            user_email = payload.get("email") or payload.get("sub", "unknown")
+            if jti:
                 blocklist_service = get_token_blocklist_service()
-                await asyncio.to_thread(blocklist_service.revoke_token, jti, user.email, "logout")
-            except Exception as e:
-                # Best-effort revocation: log but don't fail logout if blocklist is unavailable
-                correlation_id = str(uuid.uuid4())
-                logger.warning("Token revocation failed [%s]: %s", correlation_id, e, extra={"user_id": user.id})
+                await asyncio.to_thread(blocklist_service.revoke_token, jti, user_email, "logout")
+            else:
+                logger.warning("Logout: token missing jti — server-side revocation skipped")
+        except Exception as e:
+            correlation_id = str(uuid.uuid4())
+            logger.warning("Logout revocation failed [%s]: %s", correlation_id, e)
 
-                # Record metric for monitoring/alerting (only when observability is enabled)
-                if settings.observability_enabled:
-                    try:
-                        _svc = ObservabilityService()
-                        await asyncio.to_thread(
-                            _svc.record_metric,
-                            "auth.token_revocation_failure",
-                            1,
-                            metric_type="counter",
-                            attributes={"user_id": str(user.id), "correlation_id": correlation_id, "error_type": type(e).__name__},
-                        )
-                    except Exception as metric_error:
-                        logger.debug("Failed to record token revocation failure metric: %s", metric_error)
-        else:
-            logger.warning("Logout: token missing jti — server-side revocation skipped", extra={"user_id": user.id})
+            if settings.observability_enabled:
+                try:
+                    _svc = ObservabilityService()
+                    await asyncio.to_thread(
+                        _svc.record_metric,
+                        "auth.token_revocation_failure",
+                        1,
+                        metric_type="counter",
+                        attributes={"correlation_id": correlation_id, "error_type": type(e).__name__},
+                    )
+                except Exception as metric_error:
+                    logger.debug("Failed to record token revocation failure metric: %s", metric_error)
 
-        clear_auth_cookie(response, path=JWT_COOKIE_PATH)
-        clear_csrf_cookie(response, settings)
-
-        logger.debug("User logged out via cookie auth")
-
-        return {"message": "Logged out successfully"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        correlation_id = str(uuid.uuid4())
-        logger.error("Logout failed [%s]: %s", correlation_id, e, exc_info=True)
-        raise_auth_error("internal_error", "Logout failed", status_code=500, correlation_id=correlation_id)
+    logger.debug("User logged out via cookie auth")
+    return {"message": "Logged out successfully"}
 
 
 # ---------------------------------------------------------------------------
