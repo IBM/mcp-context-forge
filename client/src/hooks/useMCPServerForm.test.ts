@@ -900,6 +900,48 @@ describe("useMCPServerForm", () => {
       expect(result.current.queryParamApiKey).toBe("*****");
     });
 
+    it("populates oauth config including string scopes and password grant fields", async () => {
+      server.use(
+        http.get("/gateways/gw-oauth", () =>
+          HttpResponse.json({
+            name: "OAuth Server",
+            url: "http://localhost:3000",
+            authType: "oauth",
+            oauthConfig: {
+              grant_type: "password",
+              scopes: "read write",
+              username: "test-user",
+              password: "test-password",
+              client_id: "test-client",
+              client_secret: "test-secret",
+              token_url: "http://token",
+              issuer: "http://issuer",
+              redirect_uri: "http://redirect",
+              authorization_url: "http://auth",
+              store_tokens: true,
+              auto_refresh: true,
+            },
+          }),
+        ),
+      );
+
+      const { result } = renderHook(() => useMCPServerForm("gw-oauth"));
+
+      await waitFor(() => expect(result.current.authType).toBe("oauth"));
+      expect(result.current.oauthScopes).toBe("read write");
+      expect(result.current.oauthUsername).toBe("test-user");
+      expect(result.current.oauthPassword).toBe("test-password");
+      expect(result.current.oauthGrantType).toBe("password");
+      expect(result.current.oauthClientId).toBe("test-client");
+      expect(result.current.oauthClientSecret).toBe("test-secret");
+      expect(result.current.oauthTokenUrl).toBe("http://token");
+      expect(result.current.oauthIssuerUrl).toBe("http://issuer");
+      expect(result.current.oauthRedirectUri).toBe("http://redirect");
+      expect(result.current.oauthAuthorizationUrl).toBe("http://auth");
+      expect(result.current.oauthStoreTokens).toBe(true);
+      expect(result.current.oauthAutoRefresh).toBe(true);
+    });
+
     it("populates basic auth username and masked password from API", async () => {
       server.use(
         http.get("/gateways/gw-3", () =>
