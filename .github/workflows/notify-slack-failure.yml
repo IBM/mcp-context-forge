@@ -60,6 +60,7 @@ jobs:
         with:
           webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
           webhook-type: incoming-webhook
+          # yamllint disable rule:line-length
           payload: |
             {
               "text": ":x: *${{ github.event.workflow_run.name || 'Manual test dispatch' }}* failed on `main`",
