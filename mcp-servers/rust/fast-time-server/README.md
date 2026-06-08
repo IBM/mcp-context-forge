@@ -1,4 +1,4 @@
-# Fast Test Server (Rust)
+# Fast Time Server (Rust)
 
 > Author: Mihai Criveti
 
