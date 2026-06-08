@@ -81,9 +81,7 @@ describe("Label", () => {
     });
 
     it("should merge multiple custom classes with default classes", () => {
-      const { container } = render(
-        <Label className="my-label label-custom">Label</Label>,
-      );
+      const { container } = render(<Label className="my-label label-custom">Label</Label>);
       const el = container.querySelector("label");
 
       expect(el).toHaveClass("my-label");
@@ -119,9 +117,7 @@ describe("Label", () => {
 
   describe("htmlFor Attribute", () => {
     it("should forward htmlFor attribute", () => {
-      const { container } = render(
-        <Label htmlFor="username-input">Username</Label>,
-      );
+      const { container } = render(<Label htmlFor="username-input">Username</Label>);
       const el = container.querySelector("label");
 
       expect(el).toHaveAttribute("for", "username-input");
@@ -171,18 +167,14 @@ describe("Label", () => {
     });
 
     it("should forward title prop", () => {
-      const { container } = render(
-        <Label title="Label tooltip">Label</Label>,
-      );
+      const { container } = render(<Label title="Label tooltip">Label</Label>);
       const el = container.querySelector("label");
 
       expect(el).toHaveAttribute("title", "Label tooltip");
     });
 
     it("should forward data-testid attribute", () => {
-      const { container } = render(
-        <Label data-testid="label-1">Label</Label>,
-      );
+      const { container } = render(<Label data-testid="label-1">Label</Label>);
       const el = container.querySelector("label");
 
       expect(el).toHaveAttribute("data-testid", "label-1");
@@ -202,9 +194,7 @@ describe("Label", () => {
 
     it("should forward style prop", () => {
       const { container } = render(
-        <Label style={{ color: "rgb(255, 0, 0)", fontSize: "16px" }}>
-          Label
-        </Label>,
+        <Label style={{ color: "rgb(255, 0, 0)", fontSize: "16px" }}>Label</Label>,
       );
       const el = container.querySelector("label");
 
@@ -221,10 +211,7 @@ describe("Label", () => {
 
     it("should forward aria-* attributes", () => {
       const { container } = render(
-        <Label
-          aria-label="Label text"
-          aria-describedby="desc-1"
-        >
+        <Label aria-label="Label text" aria-describedby="desc-1">
           Label
         </Label>,
       );
@@ -290,27 +277,21 @@ describe("Label", () => {
     });
 
     it("should support aria-label on label", () => {
-      const { container } = render(
-        <Label aria-label="Accessible label text">Label</Label>,
-      );
+      const { container } = render(<Label aria-label="Accessible label text">Label</Label>);
       const el = container.querySelector("label");
 
       expect(el).toHaveAttribute("aria-label", "Accessible label text");
     });
 
     it("should support aria-labelledby", () => {
-      const { container } = render(
-        <Label aria-labelledby="title-id">Label</Label>,
-      );
+      const { container } = render(<Label aria-labelledby="title-id">Label</Label>);
       const el = container.querySelector("label");
 
       expect(el).toHaveAttribute("aria-labelledby", "title-id");
     });
 
     it("should support aria-describedby", () => {
-      const { container } = render(
-        <Label aria-describedby="hint-id">Label</Label>,
-      );
+      const { container } = render(<Label aria-describedby="hint-id">Label</Label>);
       const el = container.querySelector("label");
 
       expect(el).toHaveAttribute("aria-describedby", "hint-id");
@@ -356,14 +337,22 @@ describe("Label", () => {
 
     it("should allow ref to access htmlFor attribute", () => {
       const ref = React.createRef<HTMLLabelElement>();
-      render(<Label ref={ref} htmlFor="input-1">Label</Label>);
+      render(
+        <Label ref={ref} htmlFor="input-1">
+          Label
+        </Label>,
+      );
 
       expect(ref.current?.getAttribute("for")).toBe("input-1");
     });
 
     it("should allow ref to access id attribute", () => {
       const ref = React.createRef<HTMLLabelElement>();
-      render(<Label ref={ref} id="label-1">Label</Label>);
+      render(
+        <Label ref={ref} id="label-1">
+          Label
+        </Label>,
+      );
 
       expect(ref.current?.getAttribute("id")).toBe("label-1");
     });
@@ -494,9 +483,7 @@ describe("Label", () => {
     });
 
     it("should maintain default classes when custom classes are added", () => {
-      const { container } = render(
-        <Label className="custom">Label</Label>,
-      );
+      const { container } = render(<Label className="custom">Label</Label>);
       const el = container.querySelector("label");
 
       expect(el).toHaveClass("text-sm");
@@ -506,9 +493,7 @@ describe("Label", () => {
     });
 
     it("should handle multiple rerenders with different props", () => {
-      const { rerender, container } = render(
-        <Label htmlFor="field1">Label 1</Label>,
-      );
+      const { rerender, container } = render(<Label htmlFor="field1">Label 1</Label>);
 
       let el = container.querySelector("label");
       expect(el).toHaveAttribute("for", "field1");
@@ -523,9 +508,7 @@ describe("Label", () => {
     });
 
     it("should handle changing className", () => {
-      const { rerender, container } = render(
-        <Label className="initial">Label</Label>,
-      );
+      const { rerender, container } = render(<Label className="initial">Label</Label>);
 
       let el = container.querySelector("label");
       expect(el).toHaveClass("initial");
@@ -551,9 +534,7 @@ describe("Label", () => {
     });
 
     it("should preserve default classes through all rerenders", () => {
-      const { rerender, container } = render(
-        <Label htmlFor="f1">Label</Label>,
-      );
+      const { rerender, container } = render(<Label htmlFor="f1">Label</Label>);
 
       rerender(
         <Label htmlFor="f2" className="custom">
@@ -569,9 +550,7 @@ describe("Label", () => {
     });
 
     it("should handle rapid prop changes", () => {
-      const { rerender, container } = render(
-        <Label htmlFor="f1">Label</Label>,
-      );
+      const { rerender, container } = render(<Label htmlFor="f1">Label</Label>);
 
       for (let i = 2; i <= 5; i++) {
         rerender(<Label htmlFor={`f${i}`}>Label</Label>);
@@ -584,13 +563,7 @@ describe("Label", () => {
   describe("Component Types", () => {
     it("should accept Radix UI label props", () => {
       const { container } = render(
-        <Label
-          htmlFor="test"
-          className="custom"
-          id="label-id"
-          data-testid="label"
-          title="test"
-        >
+        <Label htmlFor="test" className="custom" id="label-id" data-testid="label" title="test">
           Label
         </Label>,
       );

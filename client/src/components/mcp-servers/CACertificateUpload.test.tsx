@@ -95,4 +95,28 @@ describe("CACertificateUpload", () => {
     expect(screen.getByText(/Invalid file type/i)).toBeInTheDocument();
     expect(onFilesSelected).not.toHaveBeenCalled();
   });
+
+  it("handles drag leave event to reset drag styling", () => {
+    renderWithProviders(<CACertificateUpload onFilesSelected={onFilesSelected} />);
+    const dropZone = screen.getByText(/Public certificate files only/i).parentElement as HTMLElement;
+    fireEvent.dragOver(dropZone);
+    expect(dropZone.className).toContain("bg-neutral-100");
+    fireEvent.dragLeave(dropZone);
+    expect(dropZone.className).not.toContain("bg-neutral-100");
+  });
+
+  it("handles drop with empty files list gracefully", () => {
+    renderWithProviders(<CACertificateUpload onFilesSelected={onFilesSelected} />);
+    const dropZone = screen.getByText(/Public certificate files only/i).parentElement as HTMLElement;
+    const dataTransfer = new DataTransfer();
+    fireEvent.drop(dropZone, { dataTransfer });
+    expect(onFilesSelected).not.toHaveBeenCalled();
+  });
+
+  it("handles file input change with null files list", () => {
+    renderWithProviders(<CACertificateUpload onFilesSelected={onFilesSelected} />);
+    const input = document.querySelector("input[type=file]") as HTMLInputElement;
+    fireEvent.change(input, { target: { files: null } });
+    expect(onFilesSelected).not.toHaveBeenCalled();
+  });
 });

@@ -542,7 +542,9 @@ describe("RadioGroup", () => {
         );
 
         const items = container.querySelectorAll('[role="radio"]');
-        const selectedItem = Array.from(items).find((item) => item.getAttribute("aria-checked") === "true");
+        const selectedItem = Array.from(items).find(
+          (item) => item.getAttribute("aria-checked") === "true",
+        );
         expect(selectedItem).toHaveAttribute("aria-checked", "true");
       }
     });

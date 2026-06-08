@@ -30,7 +30,7 @@ describe("DropdownMenu Components", () => {
     render(
       <DropdownMenu>
         <DropdownMenuTrigger>Open</DropdownMenuTrigger>
-      </DropdownMenu>
+      </DropdownMenu>,
     );
     expect(screen.getByText("Open")).toBeInTheDocument();
   });
@@ -42,7 +42,7 @@ describe("DropdownMenu Components", () => {
         <DropdownMenuContent>
           <DropdownMenuLabel>My Label</DropdownMenuLabel>
         </DropdownMenuContent>
-      </DropdownMenu>
+      </DropdownMenu>,
     );
     await user.click(screen.getByRole("button"));
     await waitFor(() => expect(screen.getByText("My Label")).toBeInTheDocument());
@@ -55,7 +55,7 @@ describe("DropdownMenu Components", () => {
         <DropdownMenuContent>
           <DropdownMenuSeparator />
         </DropdownMenuContent>
-      </DropdownMenu>
+      </DropdownMenu>,
     );
     await user.click(screen.getByRole("button"));
     await waitFor(() => expect(document.querySelector('[role="separator"]')).toBeInTheDocument());
@@ -70,16 +70,14 @@ describe("DropdownMenu Components", () => {
           <DropdownMenuItem>Item 2</DropdownMenuItem>
           <DropdownMenuItem>Item 3</DropdownMenuItem>
         </DropdownMenuContent>
-      </DropdownMenu>
+      </DropdownMenu>,
     );
     await user.click(screen.getByRole("button"));
     await waitFor(() => expect(screen.getAllByRole("menuitem")).toHaveLength(3));
   });
 
   it("renders DropdownMenuShortcut with correct styling", () => {
-    render(
-      <DropdownMenuShortcut>⌘K</DropdownMenuShortcut>
-    );
+    render(<DropdownMenuShortcut>⌘K</DropdownMenuShortcut>);
     expect(screen.getByText("⌘K")).toBeInTheDocument();
   });
 
@@ -93,7 +91,7 @@ describe("DropdownMenu Components", () => {
             <DropdownMenuShortcut>⌘S</DropdownMenuShortcut>
           </DropdownMenuItem>
         </DropdownMenuContent>
-      </DropdownMenu>
+      </DropdownMenu>,
     );
     await user.click(screen.getByRole("button"));
     await waitFor(() => expect(screen.getByText("⌘S")).toBeInTheDocument());
@@ -109,7 +107,7 @@ describe("DropdownMenu Components", () => {
             <DropdownMenuItem>Item 2</DropdownMenuItem>
           </DropdownMenuGroup>
         </DropdownMenuContent>
-      </DropdownMenu>
+      </DropdownMenu>,
     );
     await user.click(screen.getByRole("button"));
     await waitFor(() => expect(screen.getAllByRole("menuitem")).toHaveLength(2));
@@ -120,11 +118,9 @@ describe("DropdownMenu Components", () => {
       <DropdownMenu>
         <DropdownMenuTrigger>Open</DropdownMenuTrigger>
         <DropdownMenuContent>
-          <DropdownMenuCheckboxItem checked={true}>
-            Checkbox
-          </DropdownMenuCheckboxItem>
+          <DropdownMenuCheckboxItem checked={true}>Checkbox</DropdownMenuCheckboxItem>
         </DropdownMenuContent>
-      </DropdownMenu>
+      </DropdownMenu>,
     );
     await user.click(screen.getByRole("button"));
     await waitFor(() => {
@@ -138,11 +134,9 @@ describe("DropdownMenu Components", () => {
       <DropdownMenu>
         <DropdownMenuTrigger>Open</DropdownMenuTrigger>
         <DropdownMenuContent>
-          <DropdownMenuCheckboxItem checked={false}>
-            Unchecked
-          </DropdownMenuCheckboxItem>
+          <DropdownMenuCheckboxItem checked={false}>Unchecked</DropdownMenuCheckboxItem>
         </DropdownMenuContent>
-      </DropdownMenu>
+      </DropdownMenu>,
     );
     await user.click(screen.getByRole("button"));
     await waitFor(() => {
@@ -161,7 +155,7 @@ describe("DropdownMenu Components", () => {
             <DropdownMenuRadioItem value="b">Option B</DropdownMenuRadioItem>
           </DropdownMenuRadioGroup>
         </DropdownMenuContent>
-      </DropdownMenu>
+      </DropdownMenu>,
     );
     await user.click(screen.getByRole("button"));
     await waitFor(() => expect(screen.getAllByRole("menuitemradio")).toHaveLength(2));
@@ -176,7 +170,7 @@ describe("DropdownMenu Components", () => {
             <DropdownMenuRadioItem value="a">Selected</DropdownMenuRadioItem>
           </DropdownMenuRadioGroup>
         </DropdownMenuContent>
-      </DropdownMenu>
+      </DropdownMenu>,
     );
     await user.click(screen.getByRole("button"));
     await waitFor(() => {
@@ -193,16 +187,25 @@ describe("DropdownMenu Components", () => {
           <DropdownMenuSub>
             <DropdownMenuSubTrigger>Sub Menu</DropdownMenuSubTrigger>
             <DropdownMenuPortal>
-              <DropdownMenuSubContent>
+              <DropdownMenuSubContent className="custom-sub-content">
                 <DropdownMenuItem>Sub Item</DropdownMenuItem>
               </DropdownMenuSubContent>
             </DropdownMenuPortal>
           </DropdownMenuSub>
         </DropdownMenuContent>
-      </DropdownMenu>
+      </DropdownMenu>,
     );
     await user.click(screen.getByRole("button"));
     await waitFor(() => expect(screen.getByText("Sub Menu")).toBeInTheDocument());
+    
+    // Open the submenu
+    await user.hover(screen.getByText("Sub Menu"));
+    await waitFor(() => {
+      const subItem = screen.getByText("Sub Item");
+      expect(subItem).toBeInTheDocument();
+      // Assert className on SubContent wrapper (parent or closest)
+      expect(subItem.closest('.custom-sub-content')).toBeInTheDocument();
+    });
   });
 
   it("renders DropdownMenuSubTrigger with inset prop", async () => {
@@ -214,7 +217,7 @@ describe("DropdownMenu Components", () => {
             <DropdownMenuSubTrigger inset>Inset Sub</DropdownMenuSubTrigger>
           </DropdownMenuSub>
         </DropdownMenuContent>
-      </DropdownMenu>
+      </DropdownMenu>,
     );
     await user.click(screen.getByRole("button"));
     await waitFor(() => expect(screen.getByText("Inset Sub")).toBeInTheDocument());
@@ -227,7 +230,7 @@ describe("DropdownMenu Components", () => {
         <DropdownMenuContent>
           <DropdownMenuItem inset>Inset Item</DropdownMenuItem>
         </DropdownMenuContent>
-      </DropdownMenu>
+      </DropdownMenu>,
     );
     await user.click(screen.getByRole("button"));
     await waitFor(() => expect(screen.getByText("Inset Item")).toBeInTheDocument());
@@ -240,7 +243,7 @@ describe("DropdownMenu Components", () => {
         <DropdownMenuContent>
           <DropdownMenuLabel inset>Inset Label</DropdownMenuLabel>
         </DropdownMenuContent>
-      </DropdownMenu>
+      </DropdownMenu>,
     );
     await user.click(screen.getByRole("button"));
     await waitFor(() => expect(screen.getByText("Inset Label")).toBeInTheDocument());
@@ -255,7 +258,7 @@ describe("DropdownMenu Components", () => {
             <DropdownMenuItem>Item</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenuPortal>
-      </DropdownMenu>
+      </DropdownMenu>,
     );
     await user.click(screen.getByRole("button"));
     await waitFor(() => expect(screen.getByText("Item")).toBeInTheDocument());
@@ -268,7 +271,7 @@ describe("DropdownMenu Components", () => {
         <DropdownMenuContent>
           <DropdownMenuItem className="custom-class">Styled Item</DropdownMenuItem>
         </DropdownMenuContent>
-      </DropdownMenu>
+      </DropdownMenu>,
     );
     await user.click(screen.getByRole("button"));
     await waitFor(() => {
@@ -282,9 +285,11 @@ describe("DropdownMenu Components", () => {
       <DropdownMenu>
         <DropdownMenuTrigger>Open</DropdownMenuTrigger>
         <DropdownMenuContent>
-          <DropdownMenuCheckboxItem className="custom-class">Styled Checkbox</DropdownMenuCheckboxItem>
+          <DropdownMenuCheckboxItem className="custom-class">
+            Styled Checkbox
+          </DropdownMenuCheckboxItem>
         </DropdownMenuContent>
-      </DropdownMenu>
+      </DropdownMenu>,
     );
     await user.click(screen.getByRole("button"));
     await waitFor(() => {
@@ -300,7 +305,7 @@ describe("DropdownMenu Components", () => {
         <DropdownMenuContent>
           <DropdownMenuLabel className="custom-label">Custom Label</DropdownMenuLabel>
         </DropdownMenuContent>
-      </DropdownMenu>
+      </DropdownMenu>,
     );
     await user.click(screen.getByRole("button"));
     await waitFor(() => {
@@ -318,7 +323,7 @@ describe("DropdownMenu Components", () => {
             <DropdownMenuSubTrigger className="custom-sub">Sub</DropdownMenuSubTrigger>
           </DropdownMenuSub>
         </DropdownMenuContent>
-      </DropdownMenu>
+      </DropdownMenu>,
     );
     await user.click(screen.getByRole("button"));
     await waitFor(() => {
@@ -334,7 +339,7 @@ describe("DropdownMenu Components", () => {
         <DropdownMenuContent>
           <DropdownMenuItem disabled>Disabled Item</DropdownMenuItem>
         </DropdownMenuContent>
-      </DropdownMenu>
+      </DropdownMenu>,
     );
     await user.click(screen.getByRole("button"));
     await waitFor(() => {
@@ -350,7 +355,7 @@ describe("DropdownMenu Components", () => {
         <DropdownMenuContent>
           <DropdownMenuCheckboxItem disabled>Disabled Checkbox</DropdownMenuCheckboxItem>
         </DropdownMenuContent>
-      </DropdownMenu>
+      </DropdownMenu>,
     );
     await user.click(screen.getByRole("button"));
     await waitFor(() => {
@@ -371,7 +376,7 @@ describe("DropdownMenu Components", () => {
           <DropdownMenuSeparator />
           <DropdownMenuCheckboxItem checked={true}>Show Details</DropdownMenuCheckboxItem>
         </DropdownMenuContent>
-      </DropdownMenu>
+      </DropdownMenu>,
     );
     await user.click(screen.getByRole("button"));
     await waitFor(() => {

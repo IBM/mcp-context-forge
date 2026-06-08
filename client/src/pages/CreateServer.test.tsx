@@ -5,6 +5,7 @@ import { http, HttpResponse } from "msw";
 import { server } from "@/test/mocks/server";
 import { renderWithProviders } from "@/test/test-utils";
 import { createVirtualServer, updateVirtualServer } from "@/api/virtualServers";
+import { ApiError } from "@/api/client";
 import { CreateServer } from "./CreateServer";
 
 const routerMock = vi.hoisted(() => ({
@@ -476,12 +477,67 @@ describe("CreateServer", () => {
     expect(mockNavigate).toHaveBeenCalledWith("/app/servers?openForm=true");
   });
 
-  it("shows validation errors before submit", async () => {
+  it("shows ApiError message when body contains message", async () => {
     const user = userEvent.setup();
+    const apiError = new ApiError(
+      { url: "", ok: false, status: 400, statusText: "Bad Request" },
+      { message: "Api message error" }
+    );
+    mockCreateVirtualServer.mockRejectedValueOnce(apiError);
     renderWithProviders(<CreateServer />);
 
+    await user.type(screen.getByLabelText(/Name/), "Research server");
     await user.click(screen.getByRole("button", { name: /Continue/ }));
+    await screen.findByRole("heading", { name: "Connect a source" });
+    await user.click(screen.getByRole("button", { name: "Skip for now" }));
 
-    expect(await screen.findByText("Server name is required.")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Api message error");
+  });
+
+  it("shows ApiError message when body contains detail as string", async () => {
+    const user = userEvent.setup();
+    const apiError = new ApiError(
+      { url: "", ok: false, status: 400, statusText: "Bad Request" },
+      { detail: "Api detail string error" }
+    );
+    mockCreateVirtualServer.mockRejectedValueOnce(apiError);
+    renderWithProviders(<CreateServer />);
+
+    await user.type(screen.getByLabelText(/Name/), "Research server");
+    await user.click(screen.getByRole("button", { name: /Continue/ }));
+    await screen.findByRole("heading", { name: "Connect a source" });
+    await user.click(screen.getByRole("button", { name: "Skip for now" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Api detail string error");
+  });
+
+  it("shows ApiError message when body contains detail as array of validation errors", async () => {
+    const user = userEvent.setup();
+    const apiError = new ApiError(
+      { url: "", ok: false, status: 400, statusText: "Bad Request" },
+      { detail: [{ msg: "Msg 1" }, "String msg 2"] }
+    );
+    mockCreateVirtualServer.mockRejectedValueOnce(apiError);
+    renderWithProviders(<CreateServer />);
+
+    await user.type(screen.getByLabelText(/Name/), "Research server");
+    await user.click(screen.getByRole("button", { name: /Continue/ }));
+    await screen.findByRole("heading", { name: "Connect a source" });
+    await user.click(screen.getByRole("button", { name: "Skip for now" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Msg 1; String msg 2");
+  });
+
+  it("shows fallback message when error is arbitrary object", async () => {
+    const user = userEvent.setup();
+    mockCreateVirtualServer.mockRejectedValueOnce({ raw: "some raw error" });
+    renderWithProviders(<CreateServer />);
+
+    await user.type(screen.getByLabelText(/Name/), "Research server");
+    await user.click(screen.getByRole("button", { name: /Continue/ }));
+    await screen.findByRole("heading", { name: "Connect a source" });
+    await user.click(screen.getByRole("button", { name: "Skip for now" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Unable to create server. Please try again.");
   });
 });
