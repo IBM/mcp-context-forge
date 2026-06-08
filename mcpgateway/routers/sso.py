@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+import jwt
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -401,9 +402,6 @@ async def handle_sso_callback(
 
     # Determine redirect URL based on user's admin status and team membership
     # Decode token to get user info (no verification needed - we just created it)
-    # Third-Party
-    import jwt
-
     try:
         payload = jwt.decode(access_token, options={"verify_signature": False})
         user_data = payload.get("user", {})
@@ -425,6 +423,7 @@ async def handle_sso_callback(
 
             if user_teams:
                 # Redirect to first team's admin view
+                # Use first team in list (arbitrary selection - user can switch teams in UI)
                 first_team_id = user_teams[0].id
                 redirect_url = f"{root_path}/admin?team_id={first_team_id}"
                 logger.info(f"Redirecting non-admin SSO user {sanitize_for_log(user_email)} to team-scoped admin: {first_team_id}")
