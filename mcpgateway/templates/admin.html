@@ -229,14 +229,12 @@
     <script defer src="{{ root_path }}/static/vendor/dompurify/purify.min.js"></script>
     {% else %}
     <script
-      defer
-      src="https://cdn.jsdelivr.net/npm/marked@18.0.3/lib/marked.umd.js"
+      src="https://cdn.jsdelivr.net/npm/marked@18.0.5/lib/marked.umd.js"
       integrity="{{ sri_hashes.marked }}"
       crossorigin="anonymous">
     </script>
     <script
-      defer
-      src="https://cdn.jsdelivr.net/npm/dompurify@3.4.2/dist/purify.min.js"
+      src="https://cdn.jsdelivr.net/npm/dompurify@3.4.8/dist/purify.min.js"
       integrity="{{ sri_hashes.dompurify }}"
       crossorigin="anonymous">
     </script>
