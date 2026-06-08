@@ -723,7 +723,7 @@ class TeamManagementService:
             self.db.commit()
 
             self._invalidate_team_member_caches(team_id)
-            
+
             logger.info("Updated team %s by %s", SecurityValidator.sanitize_log_message(team_id), updated_by)
             return True
 
