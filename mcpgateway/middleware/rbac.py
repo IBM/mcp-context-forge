@@ -373,6 +373,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
     sec_fetch_mode = request.headers.get("sec-fetch-mode", "")
     sec_fetch_site = request.headers.get("sec-fetch-site", "")
     is_admin_ui_request = "/admin" in referer
+    request_path = request.url.path
     # SPA shell/document navigations — path == "/app" covers navigations without text/html Accept.
     is_spa_document_request = request_path == "/app"
     referer_path = urlparse(referer).path if referer else ""
