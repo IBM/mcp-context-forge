@@ -44,11 +44,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     CSP Implementation:
     - Uses cryptographically secure nonces (secrets.token_urlsafe(16))
     - script-src-elem: nonce-based, no unsafe-inline (primary defense for modern browsers)
-    - script-src-attr: unsafe-inline for inline event handlers (transitional)
-    - script-src: unsafe-eval for HTMX hx-vals="js:{...}" and hx-on:* eval path (fallback for older browsers)
-    - style-src: retains unsafe-inline for dynamic inline styles
+    - script-src: strict policy, no unsafe-eval or unsafe-inline
+    - style-src: uses 'unsafe-inline' for style attributes (documented residual risk per PENTEST_ICACF51_RESPONSE.md)
     - Nonce stored in request.state.csp_nonce for template access
     - Inline scripts must include nonce="{{ csp_nonce(request) }}" attribute
+    - All HTMX hx-vals and hx-on attributes migrated to JavaScript event handlers
 
     Sensitive headers removed:
     - X-Powered-By: Removes server technology disclosure
@@ -391,32 +391,31 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # documentation UI render while keeping strict CSP everywhere else.
         skip_csp_for_docs = path in ("/docs", "/redoc", "/openapi.json")
 
-        # CSP directives with layered script security (CSP Level 3)
+        # CSP directives with strict nonce-based security (CSP Level 3)
         #
         # script-src-elem: Controls <script> tags - requires nonces for inline scripts.
         #   This prevents XSS via injected <script> blocks while allowing legitimate
         #   inline scripts that have the matching nonce attribute.
         #
-        # script-src-attr: Controls inline event handlers (onclick, onsubmit, etc.).
-        #   'unsafe-inline' is retained here because converting 200+ inline event
-        #   handlers to external JS is a large refactoring tracked separately.
-        #   The XSS risk is mitigated: event handlers are server-rendered (not
-        #   user-generated) and <script> injection is blocked by script-src-elem.
+        # script-src: Fallback for older browsers. No unsafe-eval or unsafe-inline.
+        #   All HTMX hx-vals="js:{...}" have been migrated to htmx:configRequest handlers.
+        #   All hx-on:* event handlers have been migrated to addEventListener.
+        #   Alpine.js has been migrated to @alpinejs/csp build (no eval required).
+        #   Tailwind CSS uses precompiled CSS (no eval required).
         #
-        # script-src: Fallback for older browsers and controls eval()/new Function().
-        #   'unsafe-eval' is still required: HTMX evaluates hx-vals="js:{...}" and
-        #   hx-on:* attributes via htmx.config.allowEval (defaults true). Tracked in
-        #   issue #4655. The nonce-based script-src-elem is the primary defense for
-        #   modern browsers.
-        #
-        # style-src: Retains 'unsafe-inline' for Alpine.js dynamic inline styles.
+        # style-src: 'unsafe-inline' for style attributes (documented residual risk).
+        #   Per PENTEST_ICACF51_RESPONSE.md, 'unsafe-inline' is accepted as low-risk
+        #   for inline style attributes (style="...") used for animation delays,
+        #   positioning, and dynamic styling in login/admin pages.
+        #   Note: Nonce cannot be used alongside 'unsafe-inline' in style-src because
+        #   the nonce takes precedence and causes the browser to ignore 'unsafe-inline',
+        #   which would block all style attributes since nonces can only apply to <style> blocks.
         if not skip_csp_for_docs:
             csp_directives = [
                 "default-src 'self'",
                 f"script-src-elem 'self' 'nonce-{csp_nonce}' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com",
-                "script-src-attr 'unsafe-inline'",
-                "script-src 'self' 'unsafe-eval'",
-                "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
+                "script-src 'self'",
+                f"style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
                 "img-src 'self' data: https:",
                 "font-src 'self' data: https://cdnjs.cloudflare.com",
                 "connect-src 'self' ws: wss: https:",

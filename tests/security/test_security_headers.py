@@ -173,7 +173,7 @@ class TestSecurityHeaders:
             f"Nonce must be at least 20 characters for 128 bits of entropy. Got {len(nonce)} chars: {nonce}"
         )
 
-        # Verify layered CSP architecture (CSP Level 3)
+        # Verify strict CSP architecture (CSP Level 3) - Pentest requirement
         # script-src-elem controls <script> tags and must have the nonce
         script_src_elem_match = re.search(r"script-src-elem ([^;]+)", csp_header)
         assert script_src_elem_match, "CSP must contain script-src-elem directive"
@@ -186,26 +186,35 @@ class TestSecurityHeaders:
             "script-src-elem must not contain 'unsafe-inline' (pentesting requirement)"
         )
 
-        # script-src-attr controls inline event handlers
-        script_src_attr_match = re.search(r"script-src-attr ([^;]+)", csp_header)
-        assert script_src_attr_match, "CSP must contain script-src-attr directive"
-        script_src_attr = script_src_attr_match.group(1)
-
-        assert "'unsafe-inline'" in script_src_attr, (
-            "script-src-attr should allow 'unsafe-inline' for inline event handlers (transitional)"
-        )
-
-        # script-src fallback controls eval() for Alpine.js
+        # script-src fallback for older browsers - must be strict (no unsafe-eval)
         script_src_match = re.search(r"script-src ([^;]+)", csp_header)
         assert script_src_match, "CSP must contain script-src directive"
         script_src = script_src_match.group(1)
 
-        assert "'unsafe-eval'" in script_src, (
-            "script-src must contain 'unsafe-eval' for Alpine.js compatibility"
+        assert "'unsafe-eval'" not in script_src, (
+            "script-src must NOT contain 'unsafe-eval' (pentesting requirement - all HTMX migrated)"
+        )
+        assert "'unsafe-inline'" not in script_src, (
+            "script-src must NOT contain 'unsafe-inline' (pentesting requirement)"
         )
         assert "'unsafe-hashes'" not in script_src, (
             "'unsafe-hashes' without accompanying hash values is a no-op and should be removed"
         )
+
+        # style-src uses 'unsafe-inline' for inline style attributes (documented residual risk)
+        # Per PENTEST_ICACF51_RESPONSE.md: 'unsafe-inline' accepted as low-risk for inline style
+        # attributes (style="...") used for animation delays, positioning, dynamic styling.
+        # This is INTENTIONAL and documented - CSS injection cannot execute JavaScript.
+        style_src_match = re.search(r"style-src ([^;]+)", csp_header)
+        assert style_src_match, "CSP must contain style-src directive"
+        style_src = style_src_match.group(1)
+
+        assert "'unsafe-inline'" in style_src, (
+            "style-src must contain 'unsafe-inline' for inline style attributes "
+            "(documented residual risk per PENTEST_ICACF51_RESPONSE.md)"
+        )
+        # Note: Nonce is NOT used in style-src when 'unsafe-inline' is present because
+        # nonce takes precedence and would block all style attributes (nonces only apply to <style> blocks)
 
 
 class TestCORSConfiguration:
@@ -380,7 +389,8 @@ class TestProductionSecurity:
             csp = responses[endpoint].headers.get("Content-Security-Policy", "")
             assert "default-src 'self'" in csp, f"Missing default-src in CSP for {endpoint}"
             assert "script-src-elem 'self' 'nonce-" in csp, f"Missing nonce-based script-src-elem in CSP for {endpoint}"
-            assert "script-src 'self' 'unsafe-eval'" in csp, f"Missing unsafe-eval in script-src fallback for {endpoint}"
+            assert "script-src 'self'" in csp, f"Missing script-src directive for {endpoint}"
+            assert "'unsafe-eval'" not in csp, f"CSP must not contain unsafe-eval for {endpoint}"
             assert "frame-ancestors 'none'" in csp, f"Missing frame-ancestors in CSP for {endpoint}"
 
 
