@@ -446,6 +446,7 @@ class Settings(BaseSettings):
             "/auth/email/forgot-password",
             "/auth/email/reset-password",
             "/app/auth/login",  # Exempt: React app login endpoint
+            "/app/auth/logout",  # Exempt: logout must clear cookies even if CSRF token is expired
             "/admin",  # Exempt: all admin routes use per-route enforce_admin_csrf dependency
             "/admin/login",
             "/admin/forgot-password",

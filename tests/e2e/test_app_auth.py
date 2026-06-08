@@ -202,9 +202,12 @@ class TestFullLoginFlow:
 class TestCSRFProtection:
     """Test CSRF protection on state-changing operations."""
 
-    def test_logout_without_csrf_token_fails(self, client, setup_test_user, test_user_credentials):
-        """Test logout without CSRF token returns 403."""
-        # Login
+    def test_logout_without_csrf_token_still_succeeds(self, client, setup_test_user, test_user_credentials):
+        """Test logout without CSRF token succeeds and clears cookies.
+
+        /app/auth/logout is CSRF-exempt so that logout always works even when
+        the CSRF cookie has expired (e.g. long idle session).
+        """
         login_response = client.post(
             "/app/auth/login",
             json={
@@ -215,44 +218,32 @@ class TestCSRFProtection:
         jwt_token = login_response.cookies.get("jwt_token")
         csrf_token_cookie = login_response.cookies.get("mcpgateway_csrf_token")
 
-        # Attempt logout without CSRF header
+        # Logout without CSRF header — must still succeed
         logout_response = client.post(
             "/app/auth/logout",
             cookies={"jwt_token": jwt_token, "mcpgateway_csrf_token": csrf_token_cookie},
-            # No X-CSRF-Token header
         )
 
-        # Verify CSRF protection
-        assert logout_response.status_code == status.HTTP_403_FORBIDDEN
-        assert "CSRF token" in logout_response.json()["detail"]["message"]
+        assert logout_response.status_code == status.HTTP_200_OK
+        set_cookie_headers = _set_cookie_headers(logout_response)
+        jwt_clear = next((c for c in set_cookie_headers if "jwt_token=" in c), "")
+        csrf_clear = next((c for c in set_cookie_headers if "mcpgateway_csrf_token=" in c), "")
+        assert "max-age=0" in jwt_clear.lower(), "jwt_token cookie not cleared"
+        assert "max-age=0" in csrf_clear.lower(), "csrf_token cookie not cleared"
 
-    def test_logout_with_invalid_csrf_token_fails(self, client, setup_test_user, test_user_credentials):
-        """Test logout with mismatched CSRF token returns 403."""
-        # Login
-        login_response = client.post(
-            "/app/auth/login",
-            json={
-                "email": test_user_credentials["email"],
-                "password": test_user_credentials["password"],
-            },
-        )
-        jwt_token = login_response.cookies.get("jwt_token")
-        csrf_token_cookie = login_response.cookies.get("mcpgateway_csrf_token")
+    def test_logout_clears_cookies_even_without_jwt_cookie(self, client):
+        """Test logout clears cookies even when no JWT is present (already expired/cleared)."""
+        logout_response = client.post("/app/auth/logout")
 
-        # Attempt logout with wrong CSRF header
-        logout_response = client.post(
-            "/app/auth/logout",
-            cookies={"jwt_token": jwt_token, "mcpgateway_csrf_token": csrf_token_cookie},
-            headers={"X-CSRF-Token": "wrong-csrf-token"},
-        )
-
-        # Verify CSRF protection
-        assert logout_response.status_code == status.HTTP_403_FORBIDDEN
-        assert "CSRF token" in logout_response.json()["detail"]["message"]
+        assert logout_response.status_code == status.HTTP_200_OK
+        set_cookie_headers = _set_cookie_headers(logout_response)
+        jwt_clear = next((c for c in set_cookie_headers if "jwt_token=" in c), "")
+        csrf_clear = next((c for c in set_cookie_headers if "mcpgateway_csrf_token=" in c), "")
+        assert "max-age=0" in jwt_clear.lower(), "jwt_token cookie not cleared"
+        assert "max-age=0" in csrf_clear.lower(), "csrf_token cookie not cleared"
 
     def test_logout_with_valid_csrf_token_succeeds(self, client, setup_test_user, test_user_credentials):
-        """Test logout with valid CSRF token succeeds."""
-        # Login
+        """Test logout with CSRF token also succeeds (CSRF is optional, not rejected)."""
         login_response = client.post(
             "/app/auth/login",
             json={
@@ -264,14 +255,12 @@ class TestCSRFProtection:
         csrf_token_cookie = login_response.cookies.get("mcpgateway_csrf_token")
         csrf_token_header = login_response.json()["mcpgateway_csrf_token"]
 
-        # Logout with matching CSRF tokens
         logout_response = client.post(
             "/app/auth/logout",
             cookies={"jwt_token": jwt_token, "mcpgateway_csrf_token": csrf_token_cookie},
             headers={"X-CSRF-Token": csrf_token_header},
         )
 
-        # Verify success
         assert logout_response.status_code == status.HTTP_200_OK
 
 
