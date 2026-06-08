@@ -1,0 +1,26 @@
+[package]
+name = "benchmark-server"
+version = "0.1.0"
+edition = "2024"
+description = "Configurable MCP benchmark server in Rust"
+license = "Apache-2.0"
+authors = ["ContextForge Contributors"]
+
+[workspace]
+
+[dependencies]
+anyhow = "1.0"
+axum = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tower-http = { version = "0.6", features = ["cors"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+strip = true
