@@ -74,10 +74,10 @@ describe("GitHubIcon", () => {
   it("renders consistently across multiple renders", () => {
     const { container: container1 } = render(<GitHubIcon />);
     const { container: container2 } = render(<GitHubIcon />);
-    
+
     const svg1 = container1.querySelector("svg");
     const svg2 = container2.querySelector("svg");
-    
+
     expect(svg1?.getAttribute("viewBox")).toBe(svg2?.getAttribute("viewBox"));
     expect(svg1?.getAttribute("fill")).toBe(svg2?.getAttribute("fill"));
   });

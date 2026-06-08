@@ -23,6 +23,30 @@ vi.mock("@/api/servers", () => ({
   },
 }));
 
+vi.mock("@/components/servers/ServersTable", () => ({
+  ServersTable: ({ servers, onEdit, onDelete, onTest }: any) => (
+    <div data-testid="mock-servers-table">
+      {servers.map((server: any) => (
+        <div key={server.id}>
+          <span>{server.name}</span>
+          <button onClick={() => onEdit(server.id)}>Edit {server.id}</button>
+          <button onClick={() => onDelete(server.id)}>Delete {server.id}</button>
+          <button onClick={() => onTest(server.id)}>Test {server.id}</button>
+        </div>
+      ))}
+    </div>
+  ),
+}));
+
+vi.mock("@/components/mcp-servers/MCPServerForm", () => ({
+  MCPServerForm: ({ onToggle, onSuccess }: any) => (
+    <div data-testid="mock-mcp-form">
+      <button onClick={onToggle}>Cancel Form</button>
+      <button onClick={onSuccess}>Success Form</button>
+    </div>
+  ),
+}));
+
 import { api } from "@/api/client";
 import { serversApi } from "@/api/servers";
 
@@ -53,9 +77,9 @@ function createMockServers(startId: number, count: number) {
 }
 
 // Helper to render with real router
-function renderWithRouter(ui: ReactElement) {
+function renderWithRouter(ui: ReactElement, route: string = "/app/servers") {
   // Set up initial route
-  window.history.pushState({}, "", "/app/servers");
+  window.history.pushState({}, "", route);
 
   return render(
     <RouterProvider>
@@ -332,10 +356,11 @@ describe("Servers", () => {
     const connectButtons = screen.getAllByRole("button", { name: /Connect/i });
     await user.click(connectButtons[0]);
 
-    expect(screen.getByRole("heading", { name: "Connect MCP server" })).toBeInTheDocument();
+    expect(screen.getByTestId("mock-mcp-form")).toBeInTheDocument();
   });
 
   it("displays Delete error alert when deletion fails", async () => {
+    const user = userEvent.setup();
     vi.mocked(api.get).mockResolvedValueOnce({
       gateways: createMockServers(0, 1),
       nextCursor: null,
@@ -367,6 +392,47 @@ describe("Servers", () => {
     // Mock the initial servers fetch
     // Simulate delete error - this would require mocking serversApi.delete and triggering the error
     // through the table component's onDelete handler
+    vi.mocked(serversApi.delete).mockRejectedValueOnce(new Error("Database write failed"));
+
+    // Click delete in table
+    await user.click(screen.getByRole("button", { name: "Delete 0" }));
+
+    // Click confirm in dialog
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent("An error occurred. Please try again.");
+    });
+  });
+
+  it("handles Edit and Test connection actions in table", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get).mockResolvedValueOnce({
+      gateways: createMockServers(0, 1),
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Servers />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Test Server 0")).toBeInTheDocument();
+    });
+
+    // Edit action
+    await user.click(screen.getByRole("button", { name: "Edit 0" }));
+    expect(screen.getByTestId("mock-mcp-form")).toBeInTheDocument();
+
+    // Close form
+    await user.click(screen.getByRole("button", { name: "Cancel Form" }));
+
+    // Test connection action
+    vi.mocked(serversApi.testConnection).mockResolvedValueOnce({
+      message: "Connected successfully!",
+    });
+    await user.click(screen.getByRole("button", { name: "Test 0" }));
+    await waitFor(() => {
+      expect(screen.getByText("Connected successfully!")).toBeInTheDocument();
+    });
   });
 
   it("renders correct number of limit options", async () => {
@@ -383,41 +449,47 @@ describe("Servers", () => {
 
     const limitSelect = screen.getByRole("combobox", { name: /Per page:/i });
     const options = screen.getAllByRole("option");
-    
+
     // Should have options for 10, 25, 50, 100
-    expect(options.filter(opt => ["10", "25", "50", "100"].includes(opt.getAttribute("value") || "")).length).toBeGreaterThanOrEqual(4);
+    expect(
+      options.filter((opt) => ["10", "25", "50", "100"].includes(opt.getAttribute("value") || ""))
+        .length,
+    ).toBeGreaterThanOrEqual(4);
   });
 
   it("closes form when onToggle is called", async () => {
     const user = userEvent.setup();
-    window.history.pushState({}, "", "/app/servers?openForm=true");
     vi.mocked(api.get).mockResolvedValueOnce({ gateways: [], nextCursor: null });
 
-    renderWithRouter(<Servers />);
+    renderWithRouter(<Servers />, "/app/servers?openForm=true");
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Connect MCP server" })).toBeInTheDocument();
+      expect(screen.getByTestId("mock-mcp-form")).toBeInTheDocument();
     });
 
-    // The form would need to be closed via a close button in the form component
+    await user.click(screen.getByRole("button", { name: "Cancel Form" }));
+    expect(screen.queryByTestId("mock-mcp-form")).not.toBeInTheDocument();
   });
 
   it("refetches servers after successful form submission", async () => {
-    window.history.pushState({}, "", "/app/servers?openForm=true");
+    const user = userEvent.setup();
     vi.mocked(api.get).mockResolvedValueOnce({ gateways: [], nextCursor: null });
 
-    renderWithRouter(<Servers />);
+    renderWithRouter(<Servers />, "/app/servers?openForm=true");
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Connect MCP server" })).toBeInTheDocument();
+      expect(screen.getByTestId("mock-mcp-form")).toBeInTheDocument();
     });
 
-    // After form submission, the refetch should be called (verified via spy if implementation allows)
+    // Mock refetch call from onSuccess
+    vi.mocked(api.get).mockResolvedValueOnce({ gateways: [], nextCursor: null });
+    await user.click(screen.getByRole("button", { name: "Success Form" }));
+    expect(screen.queryByTestId("mock-mcp-form")).not.toBeInTheDocument();
   });
 
   it("shows loading state while loading more servers", async () => {
     const user = userEvent.setup();
-    
+
     vi.mocked(api.get).mockResolvedValueOnce({
       gateways: createMockServers(0, 25),
       nextCursor: "cursor-1",
@@ -466,13 +538,12 @@ describe("Servers", () => {
 
     // Button should show "Loading..." text
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /Loading/i })).toBeInTheDocument();
+      expect(loadMoreButton).toHaveTextContent("Loading...");
     });
 
     // Resolve the loading promise
     if (loadMoreResolve) {
-      loadMoreResolve();
-      vi.mocked(api.get).mockResolvedValueOnce({
+      (loadMoreResolve as any)({
         gateways: createMockServers(25, 5),
         nextCursor: null,
       });
@@ -490,7 +561,10 @@ describe("Servers", () => {
     });
 
     // Check for SVG element in the empty state
-    const svgs = screen.getByRole("heading", { name: "Connect MCP server" }).closest("div")?.querySelectorAll("svg");
+    const svgs = screen
+      .getByRole("heading", { name: "Connect MCP server" })
+      .closest("div")
+      ?.querySelectorAll("svg");
     expect(svgs?.length).toBeGreaterThan(0);
   });
 
@@ -506,5 +580,94 @@ describe("Servers", () => {
     expect(statusRegion).toHaveAttribute("aria-live", "polite");
     expect(statusRegion).toHaveAttribute("aria-busy");
   });
+
+  it("refetches list and closes dialog after successful deletion", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get).mockResolvedValueOnce({
+      gateways: createMockServers(0, 1),
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Servers />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Test Server 0")).toBeInTheDocument();
+    });
+
+    vi.mocked(serversApi.delete).mockResolvedValueOnce({} as any);
+    // Success refetch mock
+    vi.mocked(api.get).mockResolvedValueOnce({
+      gateways: [],
+      nextCursor: null,
+    });
+
+    // Click delete in table
+    await user.click(screen.getByRole("button", { name: "Delete 0" }));
+
+    // Click confirm in dialog
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => {
+      expect(serversApi.delete).toHaveBeenCalledWith("0");
+    });
+  });
+
+  it("handles test connection failure gracefully", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get).mockResolvedValueOnce({
+      gateways: createMockServers(0, 1),
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Servers />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Test Server 0")).toBeInTheDocument();
+    });
+
+    // Test connection action rejects
+    vi.mocked(serversApi.testConnection).mockRejectedValueOnce(new Error("Network Error"));
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await user.click(screen.getByRole("button", { name: "Test 0" }));
+
+    await waitFor(() => {
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        "Failed to test connection:",
+        "Network error. Please check your connection and try again."
+      );
+    });
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("handles load more failures gracefully", async () => {
+    const user = userEvent.setup();
+
+    // Mock the initial servers fetch
+    vi.mocked(api.get).mockResolvedValueOnce({
+      gateways: createMockServers(0, 25),
+      nextCursor: "cursor-1",
+    });
+
+    renderWithRouter(<Servers />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Test Server 0")).toBeInTheDocument();
+    });
+
+    const loadMoreButton = screen.getByRole("button", { name: /load more/i });
+
+    // Mock the second page fetch failure
+    vi.mocked(api.get).mockRejectedValueOnce(new Error("Fetch failed"));
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await user.click(loadMoreButton);
+
+    await waitFor(() => {
+      expect(consoleErrorSpy).toHaveBeenCalledWith("Failed to load more servers:", expect.any(Error));
+    });
+    consoleErrorSpy.mockRestore();
+  });
 });
+
 

@@ -83,6 +83,65 @@ describe("useQuery", () => {
       await waitFor(() => {
         expect(result.current.data).toEqual({ created: true });
       });
+import { renderHook } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+import { useQuery } from "./useQuery";
+
+describe("useQuery", () => {
+  describe("input validation", () => {
+    it("throws when path is empty", () => {
+      expect(() => {
+        renderHook(() => useQuery(""));
+      }).toThrow("useQuery: path must be a non-empty string");
+    });
+
+    it("throws when path starts with //", () => {
+      expect(() => {
+        renderHook(() => useQuery("//example.com/api"));
+      }).toThrow("useQuery: path must be relative (no protocol)");
+    });
+  });
+
+  describe("initial state", () => {
+    it("starts loading for GET with no initialData", () => {
+      const { result } = renderHook(() => useQuery("/api/test"));
+
+      expect(result.current.isLoading).toBe(true);
+      expect(result.current.data).toBeUndefined();
+      expect(result.current.error).toBeNull();
+    });
+
+    it("uses initialData when provided", () => {
+      const { result } = renderHook(() =>
+        useQuery("/api/test", { initialData: { name: "test" } }),
+      );
+
+      expect(result.current.data).toEqual({ name: "test" });
+    });
+
+    it("does not fetch when enabled is false", () => {
+      const { result } = renderHook(() =>
+        useQuery("/api/test", { enabled: false }),
+      );
+
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    it("does not fetch immediately for POST by default", () => {
+      const { result } = renderHook(() =>
+        useQuery("/api/test", { method: "POST" }),
+      );
+
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    it("fetches immediately for POST when immediate is true", () => {
+      const { result } = renderHook(() =>
+        useQuery("/api/test", { method: "POST", immediate: true }),
+      );
+
+      expect(result.current.isLoading).toBe(true);
     });
   });
 });
+

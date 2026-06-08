@@ -36,7 +36,7 @@ describe("MCPIcon", () => {
   it("renders paths with fill currentColor", () => {
     const { container } = render(<MCPIcon />);
     const paths = container.querySelectorAll("path");
-    paths.forEach(path => {
+    paths.forEach((path) => {
       expect(path).toHaveAttribute("fill", "currentColor");
     });
   });
@@ -76,10 +76,10 @@ describe("MCPIcon", () => {
   it("has consistent SVG properties across renders", () => {
     const { container: container1 } = render(<MCPIcon />);
     const { container: container2 } = render(<MCPIcon />);
-    
+
     const svg1 = container1.querySelector("svg");
     const svg2 = container2.querySelector("svg");
-    
+
     expect(svg1?.getAttribute("viewBox")).toBe(svg2?.getAttribute("viewBox"));
     expect(svg1?.getAttribute("width")).toBe(svg2?.getAttribute("width"));
     expect(svg1?.getAttribute("height")).toBe(svg2?.getAttribute("height"));
@@ -88,7 +88,7 @@ describe("MCPIcon", () => {
   it("preserves path data integrity", () => {
     const { container } = render(<MCPIcon />);
     const paths = container.querySelectorAll("path");
-    paths.forEach(path => {
+    paths.forEach((path) => {
       expect(path.getAttribute("d")).toBeTruthy();
     });
   });

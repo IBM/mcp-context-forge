@@ -8,7 +8,9 @@ function LocaleConsumer() {
   return (
     <>
       <span>{locale}</span>
-      <button type="button" onClick={() => setLocale("pt-BR")}>Set pt-BR</button>
+      <button type="button" onClick={() => setLocale("pt-BR")}>
+        Set pt-BR
+      </button>
     </>
   );
 }

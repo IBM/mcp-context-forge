@@ -49,9 +49,7 @@ describe("Skeleton", () => {
     });
 
     it("should merge multiple custom classes with default classes", () => {
-      const { container } = render(
-        <Skeleton className="my-skeleton custom-styling" />,
-      );
+      const { container } = render(<Skeleton className="my-skeleton custom-styling" />);
       const el = container.querySelector('[data-slot="skeleton"]');
 
       expect(el).toHaveClass("my-skeleton");
@@ -61,9 +59,7 @@ describe("Skeleton", () => {
     });
 
     it("should allow custom className to override default bg color", () => {
-      const { container } = render(
-        <Skeleton className="bg-red-500" />,
-      );
+      const { container } = render(<Skeleton className="bg-red-500" />);
       const el = container.querySelector('[data-slot="skeleton"]');
 
       expect(el).toHaveClass("bg-red-500");
@@ -71,9 +67,7 @@ describe("Skeleton", () => {
     });
 
     it("should allow custom className to override animation", () => {
-      const { container } = render(
-        <Skeleton className="animate-bounce" />,
-      );
+      const { container } = render(<Skeleton className="animate-bounce" />);
       const el = container.querySelector('[data-slot="skeleton"]');
 
       expect(el).toHaveClass("animate-bounce");
@@ -92,9 +86,7 @@ describe("Skeleton", () => {
 
   describe("Props Forwarding", () => {
     it("should forward standard HTML attributes", () => {
-      const { container } = render(
-        <Skeleton id="my-skeleton" title="Loading skeleton" />,
-      );
+      const { container } = render(<Skeleton id="my-skeleton" title="Loading skeleton" />);
       const el = container.querySelector('[data-slot="skeleton"]');
 
       expect(el).toHaveAttribute("id", "my-skeleton");
@@ -102,9 +94,7 @@ describe("Skeleton", () => {
     });
 
     it("should forward data-* attributes", () => {
-      const { container } = render(
-        <Skeleton data-testid="skeleton-1" data-custom="value" />,
-      );
+      const { container } = render(<Skeleton data-testid="skeleton-1" data-custom="value" />);
       const el = container.querySelector('[data-slot="skeleton"]');
 
       expect(el).toHaveAttribute("data-testid", "skeleton-1");
@@ -112,12 +102,7 @@ describe("Skeleton", () => {
     });
 
     it("should forward aria-* attributes", () => {
-      const { container } = render(
-        <Skeleton
-          aria-label="Loading content"
-          aria-busy="true"
-        />,
-      );
+      const { container } = render(<Skeleton aria-label="Loading content" aria-busy="true" />);
       const el = container.querySelector('[data-slot="skeleton"]');
 
       expect(el).toHaveAttribute("aria-label", "Loading content");
@@ -125,9 +110,7 @@ describe("Skeleton", () => {
     });
 
     it("should forward role attribute", () => {
-      const { container } = render(
-        <Skeleton role="presentation" />,
-      );
+      const { container } = render(<Skeleton role="presentation" />);
       const el = container.querySelector('[data-slot="skeleton"]');
 
       expect(el).toHaveAttribute("role", "presentation");
@@ -135,11 +118,7 @@ describe("Skeleton", () => {
 
     it("should forward className along with other props", () => {
       const { container } = render(
-        <Skeleton
-          className="custom-skeleton"
-          id="skeleton-2"
-          data-testid="skel-test"
-        />,
+        <Skeleton className="custom-skeleton" id="skeleton-2" data-testid="skel-test" />,
       );
       const el = container.querySelector('[data-slot="skeleton"]');
 
@@ -149,9 +128,7 @@ describe("Skeleton", () => {
     });
 
     it("should forward style prop", () => {
-      const { container } = render(
-        <Skeleton style={{ width: "100px", height: "20px" }} />,
-      );
+      const { container } = render(<Skeleton style={{ width: "100px", height: "20px" }} />);
       const el = container.querySelector('[data-slot="skeleton"]');
 
       expect(el).toHaveStyle("width: 100px");
@@ -208,54 +185,42 @@ describe("Skeleton", () => {
 
   describe("Accessibility", () => {
     it("should support aria-label for accessibility", () => {
-      const { container } = render(
-        <Skeleton aria-label="Content loading" />,
-      );
+      const { container } = render(<Skeleton aria-label="Content loading" />);
       const el = container.querySelector('[data-slot="skeleton"]');
 
       expect(el).toHaveAttribute("aria-label", "Content loading");
     });
 
     it("should support aria-busy for loading state", () => {
-      const { container } = render(
-        <Skeleton aria-busy="true" />,
-      );
+      const { container } = render(<Skeleton aria-busy="true" />);
       const el = container.querySelector('[data-slot="skeleton"]');
 
       expect(el).toHaveAttribute("aria-busy", "true");
     });
 
     it("should support aria-hidden for decorative skeletons", () => {
-      const { container } = render(
-        <Skeleton aria-hidden="true" />,
-      );
+      const { container } = render(<Skeleton aria-hidden="true" />);
       const el = container.querySelector('[data-slot="skeleton"]');
 
       expect(el).toHaveAttribute("aria-hidden", "true");
     });
 
     it("should support role=presentation for purely decorative", () => {
-      const { container } = render(
-        <Skeleton role="presentation" />,
-      );
+      const { container } = render(<Skeleton role="presentation" />);
       const el = container.querySelector('[data-slot="skeleton"]');
 
       expect(el).toHaveAttribute("role", "presentation");
     });
 
     it("should support aria-labelledby", () => {
-      const { container } = render(
-        <Skeleton aria-labelledby="label-id" />,
-      );
+      const { container } = render(<Skeleton aria-labelledby="label-id" />);
       const el = container.querySelector('[data-slot="skeleton"]');
 
       expect(el).toHaveAttribute("aria-labelledby", "label-id");
     });
 
     it("should support aria-describedby", () => {
-      const { container } = render(
-        <Skeleton aria-describedby="desc-id" />,
-      );
+      const { container } = render(<Skeleton aria-describedby="desc-id" />);
       const el = container.querySelector('[data-slot="skeleton"]');
 
       expect(el).toHaveAttribute("aria-describedby", "desc-id");
@@ -333,9 +298,7 @@ describe("Skeleton", () => {
 
   describe("Edge Cases", () => {
     it("should handle multiple rerenders with different props", () => {
-      const { container, rerender } = render(
-        <Skeleton className="initial" />,
-      );
+      const { container, rerender } = render(<Skeleton className="initial" />);
 
       let el = container.querySelector('[data-slot="skeleton"]');
       expect(el).toHaveClass("initial");
@@ -350,17 +313,9 @@ describe("Skeleton", () => {
     });
 
     it("should preserve data-slot through all prop changes", () => {
-      const { container, rerender } = render(
-        <Skeleton id="sk-1" />,
-      );
+      const { container, rerender } = render(<Skeleton id="sk-1" />);
 
-      rerender(
-        <Skeleton
-          className="test"
-          id="sk-2"
-          data-testid="skel"
-        />,
-      );
+      rerender(<Skeleton className="test" id="sk-2" data-testid="skel" />);
 
       const el = container.querySelector('[data-slot="skeleton"]');
       expect(el).toHaveAttribute("data-slot", "skeleton");
@@ -378,9 +333,7 @@ describe("Skeleton", () => {
     });
 
     it("should handle undefined className prop", () => {
-      const { container } = render(
-        <Skeleton className={undefined} />,
-      );
+      const { container } = render(<Skeleton className={undefined} />);
       const el = container.querySelector('[data-slot="skeleton"]');
 
       expect(el).toBeInTheDocument();
@@ -388,9 +341,7 @@ describe("Skeleton", () => {
     });
 
     it("should handle whitespace-only className", () => {
-      const { container } = render(
-        <Skeleton className="   " />,
-      );
+      const { container } = render(<Skeleton className="   " />);
       const el = container.querySelector('[data-slot="skeleton"]');
 
       expect(el).toBeInTheDocument();
@@ -398,9 +349,7 @@ describe("Skeleton", () => {
     });
 
     it("should maintain default classes when className is provided", () => {
-      const { container } = render(
-        <Skeleton className="h-10 w-10" />,
-      );
+      const { container } = render(<Skeleton className="h-10 w-10" />);
       const el = container.querySelector('[data-slot="skeleton"]');
 
       // All default classes should still be present
@@ -415,36 +364,28 @@ describe("Skeleton", () => {
 
   describe("Size and Layout Customization", () => {
     it("should support custom width", () => {
-      const { container } = render(
-        <Skeleton className="w-96" />,
-      );
+      const { container } = render(<Skeleton className="w-96" />);
       const el = container.querySelector('[data-slot="skeleton"]');
 
       expect(el).toHaveClass("w-96");
     });
 
     it("should support custom height", () => {
-      const { container } = render(
-        <Skeleton className="h-64" />,
-      );
+      const { container } = render(<Skeleton className="h-64" />);
       const el = container.querySelector('[data-slot="skeleton"]');
 
       expect(el).toHaveClass("h-64");
     });
 
     it("should support border radius override", () => {
-      const { container } = render(
-        <Skeleton className="rounded-full" />,
-      );
+      const { container } = render(<Skeleton className="rounded-full" />);
       const el = container.querySelector('[data-slot="skeleton"]');
 
       expect(el).toHaveClass("rounded-full");
     });
 
     it("should support margin classes", () => {
-      const { container } = render(
-        <Skeleton className="mb-4 mt-2" />,
-      );
+      const { container } = render(<Skeleton className="mb-4 mt-2" />);
       const el = container.querySelector('[data-slot="skeleton"]');
 
       expect(el).toHaveClass("mb-4");
@@ -452,9 +393,7 @@ describe("Skeleton", () => {
     });
 
     it("should support padding classes", () => {
-      const { container } = render(
-        <Skeleton className="p-4" />,
-      );
+      const { container } = render(<Skeleton className="p-4" />);
       const el = container.querySelector('[data-slot="skeleton"]');
 
       expect(el).toHaveClass("p-4");
@@ -464,12 +403,7 @@ describe("Skeleton", () => {
   describe("Component Types", () => {
     it("should accept React.ComponentProps<'div'> type", () => {
       const { container } = render(
-        <Skeleton
-          id="test"
-          className="custom"
-          data-testid="skeleton"
-          aria-label="test"
-        />,
+        <Skeleton id="test" className="custom" data-testid="skeleton" aria-label="test" />,
       );
       const el = container.querySelector('[data-slot="skeleton"]');
 

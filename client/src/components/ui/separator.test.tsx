@@ -64,9 +64,7 @@ describe("Separator", () => {
     });
 
     it("should allow custom className to be combined with multiple default classes", () => {
-      const { container } = render(
-        <Separator className="my-custom-separator custom-styling" />,
-      );
+      const { container } = render(<Separator className="my-custom-separator custom-styling" />);
       const el = container.querySelector('[data-slot="separator"]');
 
       expect(el).toHaveClass("my-custom-separator");
@@ -151,18 +149,14 @@ describe("Separator", () => {
     });
 
     it("should support custom aria-label", () => {
-      const { container } = render(
-        <Separator aria-label="Section divider" decorative={false} />,
-      );
+      const { container } = render(<Separator aria-label="Section divider" decorative={false} />);
       const el = container.querySelector('[data-slot="separator"]');
 
       expect(el).toHaveAttribute("aria-label", "Section divider");
     });
 
     it("should support aria-labelledby", () => {
-      const { container } = render(
-        <Separator aria-labelledby="sep-label" decorative={false} />,
-      );
+      const { container } = render(<Separator aria-labelledby="sep-label" decorative={false} />);
       const el = container.querySelector('[data-slot="separator"]');
 
       expect(el).toHaveAttribute("aria-labelledby", "sep-label");
@@ -171,9 +165,7 @@ describe("Separator", () => {
 
   describe("Props Forwarding", () => {
     it("should forward standard HTML attributes", () => {
-      const { container } = render(
-        <Separator id="my-separator" title="A separator" />,
-      );
+      const { container } = render(<Separator id="my-separator" title="A separator" />);
       const el = container.querySelector('[data-slot="separator"]');
 
       expect(el).toHaveAttribute("id", "my-separator");
@@ -181,9 +173,7 @@ describe("Separator", () => {
     });
 
     it("should forward data-* attributes", () => {
-      const { container } = render(
-        <Separator data-testid="sep-1" data-custom="value" />,
-      );
+      const { container } = render(<Separator data-testid="sep-1" data-custom="value" />);
       const el = container.querySelector('[data-slot="separator"]');
 
       expect(el).toHaveAttribute("data-testid", "sep-1");
@@ -192,11 +182,7 @@ describe("Separator", () => {
 
     it("should forward aria-* attributes", () => {
       const { container } = render(
-        <Separator
-          aria-label="Divider"
-          aria-describedby="desc-1"
-          decorative={false}
-        />,
+        <Separator aria-label="Divider" aria-describedby="desc-1" decorative={false} />,
       );
       const el = container.querySelector('[data-slot="separator"]');
 
@@ -206,11 +192,7 @@ describe("Separator", () => {
 
     it("should forward className along with other props", () => {
       const { container } = render(
-        <Separator
-          className="custom-sep"
-          id="sep-2"
-          data-testid="sep-test"
-        />,
+        <Separator className="custom-sep" id="sep-2" data-testid="sep-test" />,
       );
       const el = container.querySelector('[data-slot="separator"]');
 
@@ -221,11 +203,7 @@ describe("Separator", () => {
 
     it("should accept all Radix Root props", () => {
       const { container } = render(
-        <Separator
-          orientation="vertical"
-          decorative={false}
-          className="my-sep"
-        />,
+        <Separator orientation="vertical" decorative={false} className="my-sep" />,
       );
       const el = container.querySelector('[data-slot="separator"]');
 
@@ -306,11 +284,7 @@ describe("Separator", () => {
 
     it("should combine orientation, decorative, and className", () => {
       const { container } = render(
-        <Separator
-          orientation="vertical"
-          decorative={false}
-          className="my-divider"
-        />,
+        <Separator orientation="vertical" decorative={false} className="my-divider" />,
       );
 
       const el = container.querySelector('[data-slot="separator"]');
@@ -331,9 +305,7 @@ describe("Separator", () => {
     });
 
     it("should handle multiple rerenders with different props", () => {
-      const { container, rerender } = render(
-        <Separator orientation="horizontal" />,
-      );
+      const { container, rerender } = render(<Separator orientation="horizontal" />);
 
       let el = container.querySelector('[data-slot="separator"]');
       expect(el).toHaveAttribute("data-orientation", "horizontal");
@@ -348,9 +320,7 @@ describe("Separator", () => {
     });
 
     it("should handle changing decorative state", () => {
-      const { container, rerender } = render(
-        <Separator decorative={true} />,
-      );
+      const { container, rerender } = render(<Separator decorative={true} />);
 
       let el = container.querySelector('[data-slot="separator"]');
       expect(el).toHaveAttribute("role", "none");
@@ -361,9 +331,7 @@ describe("Separator", () => {
     });
 
     it("should handle changing className", () => {
-      const { container, rerender } = render(
-        <Separator className="initial" />,
-      );
+      const { container, rerender } = render(<Separator className="initial" />);
 
       let el = container.querySelector('[data-slot="separator"]');
       expect(el).toHaveClass("initial");
@@ -374,17 +342,9 @@ describe("Separator", () => {
     });
 
     it("should preserve data-slot through all prop changes", () => {
-      const { container, rerender } = render(
-        <Separator orientation="horizontal" />,
-      );
+      const { container, rerender } = render(<Separator orientation="horizontal" />);
 
-      rerender(
-        <Separator
-          orientation="vertical"
-          decorative={false}
-          className="test"
-        />,
-      );
+      rerender(<Separator orientation="vertical" decorative={false} className="test" />);
 
       const el = container.querySelector('[data-slot="separator"]');
       expect(el).toHaveAttribute("data-slot", "separator");

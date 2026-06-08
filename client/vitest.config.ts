@@ -28,12 +28,22 @@ export default defineConfig({
       reporter: ["text", "json", "html"],
       exclude: [
         "node_modules/",
+        "e2e/",
         "src/test/",
+        "src/types/",
+        "**/types.ts",
+        "src/main.tsx",
         "**/*.d.ts",
         "**/*.config.*",
         "**/mockData",
         "**/*.test.{ts,tsx}",
       ],
+      thresholds: {
+        statements: 95,
+        branches: 95,
+        functions: 95,
+        lines: 95,
+      },
     },
   },
   resolve: {

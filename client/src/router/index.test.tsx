@@ -33,16 +33,11 @@ function renderAuthGuard(
   );
 }
 
-function renderWithRouter(
-  ui: ReactNode,
-  path: string = "/app/test",
-) {
+function renderWithRouter(ui: ReactNode, path: string = "/app/test") {
   window.history.pushState({}, "", path);
   return render(
     <I18nProvider>
-      <RouterProvider>
-        {ui}
-      </RouterProvider>
+      <RouterProvider>{ui}</RouterProvider>
     </I18nProvider>,
   );
 }
@@ -124,7 +119,7 @@ describe("AuthGuard", () => {
     it("accepts custom publicPaths", () => {
       mockUseAuthContext.mockReturnValue({ isAuthenticated: false, isLoading: false });
       window.history.pushState({}, "", "/app/custom-public");
-      
+
       render(
         <I18nProvider>
           <RouterProvider>
@@ -141,7 +136,7 @@ describe("AuthGuard", () => {
     it("accepts custom publicPrefixes", () => {
       mockUseAuthContext.mockReturnValue({ isAuthenticated: false, isLoading: false });
       window.history.pushState({}, "", "/app/custom/path");
-      
+
       render(
         <I18nProvider>
           <RouterProvider>
@@ -212,10 +207,7 @@ describe("RouterProvider and useRouter", () => {
 describe("Route component", () => {
   it("renders component when pattern matches", () => {
     const TestComponent = () => (
-      <Route
-        path="/app/test"
-        component={() => <div>route matched</div>}
-      />
+      <Route path="/app/test" component={() => <div>route matched</div>} />
     );
 
     renderWithRouter(<TestComponent />, "/app/test");
@@ -225,10 +217,7 @@ describe("Route component", () => {
 
   it("does not render component when pattern does not match", () => {
     const TestComponent = () => (
-      <Route
-        path="/app/test"
-        component={() => <div>route matched</div>}
-      />
+      <Route path="/app/test" component={() => <div>route matched</div>} />
     );
 
     renderWithRouter(<TestComponent />, "/app/other");
@@ -238,10 +227,7 @@ describe("Route component", () => {
 
   it("ignores query string when matching", () => {
     const TestComponent = () => (
-      <Route
-        path="/app/test"
-        component={() => <div>route matched</div>}
-      />
+      <Route path="/app/test" component={() => <div>route matched</div>} />
     );
 
     renderWithRouter(<TestComponent />, "/app/test?foo=bar");
@@ -251,10 +237,7 @@ describe("Route component", () => {
 
   it("passes route params to component", () => {
     const TestComponent = () => (
-      <Route
-        path="/app/users/:id"
-        component={({ id }) => <div>user id: {id}</div>}
-      />
+      <Route path="/app/users/:id" component={({ id }) => <div>user id: {id}</div>} />
     );
 
     renderWithRouter(<TestComponent />, "/app/users/123");
@@ -264,10 +247,7 @@ describe("Route component", () => {
 
   it("decodes URL-encoded params", () => {
     const TestComponent = () => (
-      <Route
-        path="/app/search/:query"
-        component={({ query }) => <div>query: {query}</div>}
-      />
+      <Route path="/app/search/:query" component={({ query }) => <div>query: {query}</div>} />
     );
 
     renderWithRouter(<TestComponent />, "/app/search/hello%20world");
@@ -277,10 +257,7 @@ describe("Route component", () => {
 
   it("does not match when params are malformed", () => {
     const TestComponent = () => (
-      <Route
-        path="/app/search/:query"
-        component={({ query }) => <div>query: {query}</div>}
-      />
+      <Route path="/app/search/:query" component={({ query }) => <div>query: {query}</div>} />
     );
 
     renderWithRouter(<TestComponent />, "/app/search/%");
@@ -292,7 +269,11 @@ describe("Route component", () => {
     const TestComponent = () => (
       <Route
         path="/app/users/:userId/posts/:postId"
-        component={({ userId, postId }) => <div>user: {userId}, post: {postId}</div>}
+        component={({ userId, postId }) => (
+          <div>
+            user: {userId}, post: {postId}
+          </div>
+        )}
       />
     );
 
@@ -336,11 +317,7 @@ describe("Destination validation", () => {
   it("accepts /app paths", async () => {
     const TestComponent = () => {
       const router = useRouter();
-      return (
-        <button onClick={() => router.navigate("/app/test")}>
-          navigate
-        </button>
-      );
+      return <button onClick={() => router.navigate("/app/test")}>navigate</button>;
     };
 
     renderWithRouter(<TestComponent />, "/app");
@@ -405,11 +382,7 @@ describe("Destination validation", () => {
   it("accepts /app with query string", async () => {
     const TestComponent = () => {
       const router = useRouter();
-      return (
-        <button onClick={() => router.navigate("/app/test?foo=bar")}>
-          navigate
-        </button>
-      );
+      return <button onClick={() => router.navigate("/app/test?foo=bar")}>navigate</button>;
     };
 
     renderWithRouter(<TestComponent />, "/app");
@@ -426,11 +399,7 @@ describe("Destination validation", () => {
   it("accepts exactly /app", async () => {
     const TestComponent = () => {
       const router = useRouter();
-      return (
-        <button onClick={() => router.navigate("/app")}>
-          navigate
-        </button>
-      );
+      return <button onClick={() => router.navigate("/app")}>navigate</button>;
     };
 
     renderWithRouter(<TestComponent />, "/app/test");
@@ -447,11 +416,7 @@ describe("Destination validation", () => {
   it("accepts /app/", async () => {
     const TestComponent = () => {
       const router = useRouter();
-      return (
-        <button onClick={() => router.navigate("/app/")}>
-          navigate
-        </button>
-      );
+      return <button onClick={() => router.navigate("/app/")}>navigate</button>;
     };
 
     renderWithRouter(<TestComponent />, "/app/test");

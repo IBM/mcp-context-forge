@@ -301,18 +301,14 @@ describe("Dialog Components", () => {
     });
 
     it("should render as div element", () => {
-      const { container } = render(
-        <DialogHeader data-testid="header">Content</DialogHeader>,
-      );
+      const { container } = render(<DialogHeader data-testid="header">Content</DialogHeader>);
 
       const header = screen.getByTestId("header");
       expect(header.tagName).toBe("DIV");
     });
 
     it("should have flex layout classes", () => {
-      render(
-        <DialogHeader data-testid="header">Content</DialogHeader>,
-      );
+      render(<DialogHeader data-testid="header">Content</DialogHeader>);
 
       const header = screen.getByTestId("header");
       expect(header).toHaveClass("flex");
@@ -347,18 +343,14 @@ describe("Dialog Components", () => {
     });
 
     it("should render as div element", () => {
-      const { container } = render(
-        <DialogFooter data-testid="footer">Content</DialogFooter>,
-      );
+      const { container } = render(<DialogFooter data-testid="footer">Content</DialogFooter>);
 
       const footer = screen.getByTestId("footer");
       expect(footer.tagName).toBe("DIV");
     });
 
     it("should have flex layout classes", () => {
-      render(
-        <DialogFooter data-testid="footer">Content</DialogFooter>,
-      );
+      render(<DialogFooter data-testid="footer">Content</DialogFooter>);
 
       const footer = screen.getByTestId("footer");
       expect(footer).toHaveClass("flex");
