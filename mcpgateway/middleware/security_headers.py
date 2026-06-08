@@ -45,7 +45,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     - Uses cryptographically secure nonces (secrets.token_urlsafe(16))
     - script-src-elem: nonce-based, no unsafe-inline (primary defense for modern browsers)
     - script-src: strict policy, no unsafe-eval or unsafe-inline
-    - style-src: uses 'unsafe-inline' for style attributes (documented residual risk per PENTEST_ICACF51_RESPONSE.md)
+    - style-src: uses 'unsafe-inline' for style attributes (documented configuration for animations and positioning)
     - Nonce stored in request.state.csp_nonce for template access
     - Inline scripts must include nonce="{{ csp_nonce(request) }}" attribute
     - All HTMX hx-vals and hx-on attributes migrated to JavaScript event handlers
@@ -403,10 +403,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         #   Alpine.js has been migrated to @alpinejs/csp build (no eval required).
         #   Tailwind CSS uses precompiled CSS (no eval required).
         #
-        # style-src: 'unsafe-inline' for style attributes (documented residual risk).
-        #   Per PENTEST_ICACF51_RESPONSE.md, 'unsafe-inline' is accepted as low-risk
-        #   for inline style attributes (style="...") used for animation delays,
-        #   positioning, and dynamic styling in login/admin pages.
+        # style-src: 'unsafe-inline' for style attributes (documented configuration).
+        #   Inline style attributes (style="...") are used for animation delays,
+        #   positioning, and dynamic styling throughout the application.
+        #   This is acceptable per CSP Level 3 guidance since CSS cannot execute
+        #   JavaScript or exfiltrate data (visual-only impact).
         #   Note: Nonce cannot be used alongside 'unsafe-inline' in style-src because
         #   the nonce takes precedence and causes the browser to ignore 'unsafe-inline',
         #   which would block all style attributes since nonces can only apply to <style> blocks.

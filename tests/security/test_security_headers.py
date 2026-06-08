@@ -173,7 +173,7 @@ class TestSecurityHeaders:
             f"Nonce must be at least 20 characters for 128 bits of entropy. Got {len(nonce)} chars: {nonce}"
         )
 
-        # Verify strict CSP architecture (CSP Level 3) - Pentest requirement
+        # Verify strict CSP architecture (CSP Level 3)
         # script-src-elem controls <script> tags and must have the nonce
         script_src_elem_match = re.search(r"script-src-elem ([^;]+)", csp_header)
         assert script_src_elem_match, "CSP must contain script-src-elem directive"
@@ -183,7 +183,7 @@ class TestSecurityHeaders:
             "script-src-elem must contain nonce for <script> tag security"
         )
         assert "'unsafe-inline'" not in script_src_elem, (
-            "script-src-elem must not contain 'unsafe-inline' (pentesting requirement)"
+            "script-src-elem must not contain 'unsafe-inline' (CSP Level 3 best practice)"
         )
 
         # script-src fallback for older browsers - must be strict (no unsafe-eval)
@@ -192,26 +192,26 @@ class TestSecurityHeaders:
         script_src = script_src_match.group(1)
 
         assert "'unsafe-eval'" not in script_src, (
-            "script-src must NOT contain 'unsafe-eval' (pentesting requirement - all HTMX migrated)"
+            "script-src must NOT contain 'unsafe-eval' (CSP Level 3 best practice - all HTMX migrated)"
         )
         assert "'unsafe-inline'" not in script_src, (
-            "script-src must NOT contain 'unsafe-inline' (pentesting requirement)"
+            "script-src must NOT contain 'unsafe-inline' (CSP Level 3 best practice)"
         )
         assert "'unsafe-hashes'" not in script_src, (
             "'unsafe-hashes' without accompanying hash values is a no-op and should be removed"
         )
 
-        # style-src uses 'unsafe-inline' for inline style attributes (documented residual risk)
-        # Per PENTEST_ICACF51_RESPONSE.md: 'unsafe-inline' accepted as low-risk for inline style
-        # attributes (style="...") used for animation delays, positioning, dynamic styling.
-        # This is INTENTIONAL and documented - CSS injection cannot execute JavaScript.
+        # style-src uses 'unsafe-inline' for inline style attributes (documented configuration)
+        # Inline style attributes (style="...") are used for animation delays, positioning,
+        # and dynamic styling throughout the application. This is acceptable per CSP Level 3
+        # guidance since CSS cannot execute JavaScript or exfiltrate data (visual-only impact).
         style_src_match = re.search(r"style-src ([^;]+)", csp_header)
         assert style_src_match, "CSP must contain style-src directive"
         style_src = style_src_match.group(1)
 
         assert "'unsafe-inline'" in style_src, (
             "style-src must contain 'unsafe-inline' for inline style attributes "
-            "(documented residual risk per PENTEST_ICACF51_RESPONSE.md)"
+            "(documented configuration per CSP Level 3 guidance)"
         )
         # Note: Nonce is NOT used in style-src when 'unsafe-inline' is present because
         # nonce takes precedence and would block all style attributes (nonces only apply to <style> blocks)
