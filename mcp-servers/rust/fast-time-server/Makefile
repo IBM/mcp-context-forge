@@ -18,7 +18,7 @@ help:
 # =============================================================================
 # 📦 PROJECT METADATA
 # =============================================================================
-BIN_NAME        := fast-test-server
+BIN_NAME        := fast-time-server
 VERSION         ?= $(shell cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[0].version' || echo "0.1.0")
 DIST_DIR        := target
 RELEASE_BIN     := $(DIST_DIR)/release/$(BIN_NAME)
@@ -120,7 +120,7 @@ run-port: build
 CONTAINER_RT := $(or $(CONTAINER_RUNTIME),$(shell command -v docker 2>/dev/null || command -v podman 2>/dev/null))
 CONTAINER_RT_NAME := $(notdir $(CONTAINER_RT))
 
-IMAGE_NAME ?= mcpgateway/fast-test-server
+IMAGE_NAME ?= mcpgateway/fast-time-server
 IMAGE_TAG ?= $(VERSION)
 IMAGE ?= $(IMAGE_NAME):$(IMAGE_TAG)
 
@@ -131,15 +131,15 @@ container-build:
 
 container-run: container-build
 	@echo "$(C_BLUE)➜ Running container on :9080...$(C_RESET)"
-	@$(CONTAINER_RT) run --rm --name fast-test-server -p 9080:9080 $(IMAGE)
+	@$(CONTAINER_RT) run --rm --name fast-time-server -p 9080:9080 $(IMAGE)
 
 container-run-detached: container-build
 	@echo "$(C_BLUE)➜ Running container in background on :9080...$(C_RESET)"
-	@$(CONTAINER_RT) run -d --rm --name fast-test-server -p 9080:9080 $(IMAGE)
+	@$(CONTAINER_RT) run -d --rm --name fast-time-server -p 9080:9080 $(IMAGE)
 	@echo "$(C_GREEN)Container started. Use 'make container-stop' to stop.$(C_RESET)"
 
 container-stop:
-	@$(CONTAINER_RT) stop fast-test-server 2>/dev/null || true
+	@$(CONTAINER_RT) stop fast-time-server 2>/dev/null || true
 
 container-push: container-build
 	@echo "$(C_BLUE)➜ Pushing $(IMAGE) to registry...$(C_RESET)"

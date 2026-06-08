@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# fast-test-server - Ultra-fast MCP server in Rust for performance testing
+# fast-time-server - Ultra-fast MCP server in Rust for performance testing
 # Multi-stage build for minimal image size (~15MB)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -21,7 +21,7 @@ COPY Cargo.toml Cargo.lock* ./
 
 # Create dummy src to cache dependencies (Docker layer caching optimization)
 RUN mkdir src && echo "fn main() {}" > src/main.rs
-RUN cargo build --release && rm -rf src target/release/deps/fast_test_server* target/release/.fingerprint/fast-test-server*
+RUN cargo build --release && rm -rf src target/release/deps/fast_time_server* target/release/.fingerprint/fast-time-server*
 
 # Copy actual source
 COPY src ./src
@@ -46,7 +46,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Copy binary from builder
-COPY --from=builder /app/target/release/fast-test-server /app/fast-test-server
+COPY --from=builder /app/target/release/fast-time-server /app/fast-time-server
 
 USER mcpuser
 
@@ -58,7 +58,7 @@ ENV BIND_ADDRESS=0.0.0.0:9080
 ENV RUST_LOG=info
 
 # Labels for container registry
-LABEL org.opencontainers.image.title="fast-test-server"
+LABEL org.opencontainers.image.title="fast-time-server"
 LABEL org.opencontainers.image.description="Ultra-fast MCP server in Rust for performance testing"
 LABEL org.opencontainers.image.source="https://github.com/IBM/mcp-context-forge"
 LABEL org.opencontainers.image.vendor="IBM"
@@ -68,4 +68,4 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -sf http://localhost:9080/health || exit 1
 
-ENTRYPOINT ["/app/fast-test-server"]
+ENTRYPOINT ["/app/fast-time-server"]

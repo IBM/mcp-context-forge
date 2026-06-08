@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# fast-test-server - Multi-stage Rust build for minimal image size
+# fast-time-server - Multi-stage Rust build for minimal image size
 
 # Build stage
 FROM docker.io/rustlang/rust:nightly-slim AS builder
@@ -16,7 +16,7 @@ COPY Cargo.toml Cargo.lock* ./
 
 # Create dummy src to cache dependencies
 RUN mkdir src && echo "fn main() {}" > src/main.rs
-RUN cargo build --release && rm -rf src target/release/deps/fast_test_server* target/release/.fingerprint/fast-test-server*
+RUN cargo build --release && rm -rf src target/release/deps/fast_time_server* target/release/.fingerprint/fast-time-server*
 
 # Copy actual source
 COPY src ./src
@@ -35,7 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Copy binary from builder
-COPY --from=builder /app/target/release/fast-test-server /app/fast-test-server
+COPY --from=builder /app/target/release/fast-time-server /app/fast-time-server
 
 # Non-root user
 RUN useradd -r -s /bin/false mcpuser
@@ -52,4 +52,4 @@ ENV RUST_LOG=info
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8880/health || exit 1
 
-ENTRYPOINT ["/app/fast-test-server"]
+ENTRYPOINT ["/app/fast-time-server"]
