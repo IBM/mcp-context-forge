@@ -6743,3 +6743,137 @@ class TestAuthJwtRoutingReturn:
             result = await handler._auth_jwt(token="unused")
 
         assert result is False
+
+
+class TestGetCurrentUserFromCookie:
+    """Tests for get_current_user_from_cookie — cookie-based auth used by the React SPA."""
+
+    @pytest.mark.asyncio
+    async def test_uuid_sub_resolved_to_email(self):
+        """JWT sub containing a UUID is resolved to email via _get_email_by_id_sync."""
+        from mcpgateway.auth import get_current_user_from_cookie
+
+        user_uuid = str(__import__("uuid").uuid4())
+        user_email = "cookie-user@example.com"
+
+        mock_user = MagicMock(spec=EmailUser)
+        mock_user.email = user_email
+        mock_user.is_active = True
+
+        jwt_payload = {
+            "sub": user_uuid,
+            "jti": str(__import__("uuid").uuid4()),
+            "exp": (__import__("datetime").datetime.now(__import__("datetime").timezone.utc) + __import__("datetime").timedelta(hours=1)).timestamp(),
+        }
+
+        mock_request = MagicMock()
+        mock_request.cookies = {"jwt_token": "fake.jwt.token"}
+        mock_request.state = SimpleNamespace()
+
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", return_value=jwt_payload),
+            patch("mcpgateway.auth._get_email_by_id_sync", return_value=user_email),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
+        ):
+            user, jti = await get_current_user_from_cookie(mock_request)
+
+        assert user is mock_user
+        assert jti == jwt_payload["jti"]
+
+    @pytest.mark.asyncio
+    async def test_email_sub_used_directly(self):
+        """Legacy JWT where sub is already an email address works without DB UUID lookup."""
+        from mcpgateway.auth import get_current_user_from_cookie
+
+        user_email = "legacy@example.com"
+
+        mock_user = MagicMock(spec=EmailUser)
+        mock_user.email = user_email
+        mock_user.is_active = True
+
+        jwt_payload = {
+            "sub": user_email,
+            "jti": str(__import__("uuid").uuid4()),
+            "exp": (__import__("datetime").datetime.now(__import__("datetime").timezone.utc) + __import__("datetime").timedelta(hours=1)).timestamp(),
+        }
+
+        mock_request = MagicMock()
+        mock_request.cookies = {"jwt_token": "fake.jwt.token"}
+        mock_request.state = SimpleNamespace()
+
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", return_value=jwt_payload),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
+            patch("mcpgateway.auth._get_email_by_id_sync", side_effect=AssertionError("must not be called for email sub")),
+        ):
+            user, jti = await get_current_user_from_cookie(mock_request)
+
+        assert user is mock_user
+
+    @pytest.mark.asyncio
+    async def test_missing_jwt_cookie_raises_401(self):
+        """Request without jwt_token cookie raises 401."""
+        from mcpgateway.auth import get_current_user_from_cookie
+
+        mock_request = MagicMock()
+        mock_request.cookies = {}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_current_user_from_cookie(mock_request)
+
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+
+    @pytest.mark.asyncio
+    async def test_revoked_token_raises_401(self):
+        """Revoked token raises 401."""
+        from mcpgateway.auth import get_current_user_from_cookie
+
+        user_uuid = str(__import__("uuid").uuid4())
+        jwt_payload = {
+            "sub": user_uuid,
+            "jti": "revoked-jti",
+            "exp": (__import__("datetime").datetime.now(__import__("datetime").timezone.utc) + __import__("datetime").timedelta(hours=1)).timestamp(),
+        }
+
+        mock_request = MagicMock()
+        mock_request.cookies = {"jwt_token": "fake.jwt.token"}
+        mock_request.state = SimpleNamespace()
+
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", return_value=jwt_payload),
+            patch("mcpgateway.auth._get_email_by_id_sync", return_value="user@example.com"),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=True),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await get_current_user_from_cookie(mock_request)
+
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+
+    @pytest.mark.asyncio
+    async def test_uuid_not_in_db_raises_401(self):
+        """UUID sub that resolves to no user raises 401."""
+        from mcpgateway.auth import get_current_user_from_cookie
+
+        user_uuid = str(__import__("uuid").uuid4())
+        jwt_payload = {
+            "sub": user_uuid,
+            "jti": str(__import__("uuid").uuid4()),
+            "exp": (__import__("datetime").datetime.now(__import__("datetime").timezone.utc) + __import__("datetime").timedelta(hours=1)).timestamp(),
+        }
+
+        mock_request = MagicMock()
+        mock_request.cookies = {"jwt_token": "fake.jwt.token"}
+        mock_request.state = SimpleNamespace()
+
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", return_value=jwt_payload),
+            patch("mcpgateway.auth._get_email_by_id_sync", return_value="user@example.com"),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=None),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await get_current_user_from_cookie(mock_request)
+
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
