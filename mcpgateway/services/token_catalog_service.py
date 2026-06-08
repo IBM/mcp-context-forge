@@ -987,6 +987,7 @@ class TokenCatalogService:
             >>> # Returns bool: True if token is revoked
         """
         try:
+            # First-Party
             from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
             cached = await auth_cache.is_token_revoked(jti)
@@ -999,6 +1000,7 @@ class TokenCatalogService:
 
         if revocation is None:
             try:
+                # First-Party
                 from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
                 await auth_cache.set_not_revoked(jti)
@@ -1219,6 +1221,7 @@ class TokenCatalogService:
             >>> # Returns Optional[TokenRevocation] if token is revoked
         """
         try:
+            # First-Party
             from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
             cached = await auth_cache.is_token_revoked(jti)
@@ -1234,6 +1237,7 @@ class TokenCatalogService:
 
         if revocation is None:
             try:
+                # First-Party
                 from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
                 await auth_cache.set_not_revoked(jti)
