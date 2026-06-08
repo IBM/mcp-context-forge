@@ -736,11 +736,7 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
           // Call the appropriate API based on mode (create or update)
           let responseGatewayId: string | undefined;
           let response: unknown;
-          if (isEditMode) {
-            if (!gatewayId) {
-              setErrors({ submit: "Cannot update: gateway ID is missing." });
-              return;
-            }
+          if (gatewayId) {
             response = await updateGateway(formData);
             responseGatewayId = gatewayId;
           } else if (authType === "oauth" && pendingOAuthGatewayId) {

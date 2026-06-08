@@ -237,10 +237,10 @@ describe("AdvancedSettings", () => {
       expect(screen.getByLabelText(/Username/i)).toBeInTheDocument();
 
       rerender(<AdvancedSettings {...makeProps({ authType: "bearer" })} />);
-      expect(screen.getByLabelText("Token*(required)")).toBeInTheDocument();
+      expect(screen.getByPlaceholderText(/Paste bearer token/i)).toBeInTheDocument();
 
       rerender(<AdvancedSettings {...makeProps({ authType: "custom" })} />);
-      expect(screen.getByRole("button", { name: "Add header" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /\+?\s*Add header/i })).toBeInTheDocument();
 
       rerender(<AdvancedSettings {...makeProps({ authType: "oauth" })} />);
       expect(screen.getByLabelText(/Client ID/i)).toBeInTheDocument();
@@ -250,7 +250,7 @@ describe("AdvancedSettings", () => {
 
       rerender(<AdvancedSettings {...makeProps({ authType: "invalid-type" as never })} />);
       expect(screen.queryByLabelText(/Username/i)).not.toBeInTheDocument();
-      expect(screen.queryByLabelText(/Token/i)).not.toBeInTheDocument();
+      expect(screen.queryByPlaceholderText(/Paste bearer token/i)).not.toBeInTheDocument();
       expect(screen.queryByLabelText(/Parameter name/i)).not.toBeInTheDocument();
     });
 
