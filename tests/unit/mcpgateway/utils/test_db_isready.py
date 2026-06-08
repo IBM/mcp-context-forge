@@ -78,7 +78,7 @@ class FakeEngine:
 
 
 def test_sanitize_redacts_credentials() -> None:
-    txt = "postgresql://user:secret@localhost/db?password=hunter2"
+    txt = "postgresql://user:secret@localhost/db?password=hunter2"  # pragma: allowlist secret
     redacted = db_isready._sanitize(txt)
     assert "secret" not in redacted
     assert "hunter2" not in redacted

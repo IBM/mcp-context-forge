@@ -14,20 +14,15 @@ async def main():
 
     # Generate JWT token
     token_result = subprocess.run(
-        [
-            sys.executable, "-m", "mcpgateway.utils.create_jwt_token",
-            "--username", "admin@example.com",
-            "--exp", "0",
-            "--secret", "my-test-key-but-now-longer-than-32-bytes"
-        ],
+        [sys.executable, "-m", "mcpgateway.utils.create_jwt_token", "--username", "admin@example.com", "--exp", "0", "--secret", "my-test-key-but-now-longer-than-32-bytes"],
         capture_output=True,
-        text=True
+        text=True,
     )
     token = token_result.stdout.strip()
 
     # Test URLs
     base_url = "http://localhost:8000"
-    server_id = "da73bd23fa0f4850999ffb391569dcf1"
+    server_id = "da73bd23fa0f4850999ffb391569dcf1"  # pragma: allowlist secret
 
     endpoints = [
         (f"{base_url}/mcp/", "Global MCP endpoint"),
@@ -58,9 +53,7 @@ async def main():
                     print(f"   Server name:      {init_result.serverInfo.name}")
                     print(f"   Server version:   {init_result.serverInfo.version}")
                     caps = init_result.capabilities
-                    print(f"   Capabilities:     tools={caps.tools is not None}, "
-                          f"resources={caps.resources is not None}, "
-                          f"prompts={caps.prompts is not None}")
+                    print(f"   Capabilities:     tools={caps.tools is not None}, " f"resources={caps.resources is not None}, " f"prompts={caps.prompts is not None}")
 
                     # List tools
                     print("\n2. TOOLS/LIST")
@@ -120,7 +113,7 @@ async def main():
                             call_result = await session.call_tool(tool_to_call.name, args)
                             print(f"   Result:")
                             for content in call_result.content:
-                                if hasattr(content, 'text'):
+                                if hasattr(content, "text"):
                                     text = content.text
                                     if len(text) > 200:
                                         text = text[:200] + "..."
@@ -139,6 +132,7 @@ async def main():
         except Exception as e:
             print(f"\n✗ {description} - FAILED: {e}")
             import traceback
+
             traceback.print_exc()
 
     print("\n" + "=" * 70)

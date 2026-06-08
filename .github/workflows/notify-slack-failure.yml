@@ -1,0 +1,75 @@
+# ======================================================================
+# Notify Slack on Post-Merge Build Failure
+# ======================================================================
+#
+# Listens for the completion of main-branch build workflows and sends
+# a single Slack notification to #contextforge-ci-alerts when any of
+# them fail.  No changes are needed in the watched workflow files.
+#
+# Watched workflows (matched by the workflow `name:` field):
+#   - Multiplatform Docker Build    → docker-multiplatform.yml
+#   - Helm chart - lint and publish → helm-publish.yml
+#   - linting-full                  → linting-full.yml
+#
+# Required secret (repo Settings → Secrets and variables → Actions):
+#   SLACK_WEBHOOK_URL — Slack Incoming Webhook URL for #contextforge-build-notifications
+#
+# To add more workflows to the watch list, append their `name:` values
+# to the `workflows:` list below.
+#
+# ======================================================================
+
+name: Notify Slack on Build Failure
+
+on:
+  workflow_run:
+    workflows:
+      - "Multiplatform Docker Build"
+      - "Helm chart - lint and publish"
+      - "linting-full"
+    types: [completed]
+    branches: [main]
+  # workflow_dispatch allows manually triggering this workflow from any branch
+  # to verify the Slack integration (secret + action) works before merging to main.
+  # Remove after confirming end-to-end delivery.
+  workflow_dispatch:
+
+# Each workflow_run completion event is unique — do not cancel in-progress
+# notifications so every failure produces exactly one Slack message.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    name: Send Slack failure notification
+    # Only fire when the upstream workflow actually failed, or when manually dispatched for testing
+    if: github.event.workflow_run.conclusion == 'failure' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Send Slack notification
+        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": ":x: *${{ github.event.workflow_run.name || 'Manual test dispatch' }}* failed on `main`",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": ":x: *${{ github.event.workflow_run.name || 'Manual test dispatch' }}* failed on `main`\n• *Commit:* <${{ github.server_url }}/${{ github.repository }}/commit/${{ github.event.workflow_run.head_sha || github.sha }}|`${{ github.event.workflow_run.head_sha || github.sha }}`>\n• *Author:* `${{ github.event.workflow_run.head_commit.author.name || github.actor }}`\n• *Merged by:* `${{ github.event.workflow_run.actor.login || github.actor }}`\n• *Run:* <${{ github.event.workflow_run.html_url || format('{0}/{1}/actions/runs/{2}', github.server_url, github.repository, github.run_id) }}|View run>"
+                  }
+                }
+              ]
+            }

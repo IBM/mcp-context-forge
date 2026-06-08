@@ -258,7 +258,7 @@ class NormalizedMappings:
             View of environment variable names
 
         Examples:
-            >>> mappings = NormalizedMappings({"Authorization": "AUTH", "X-Api-Key": "KEY"})
+            >>> mappings = NormalizedMappings({"Authorization": "AUTH", "X-Api-Key": "KEY"})  # pragma: allowlist secret
             >>> sorted(mappings.values())
             ['AUTH', 'KEY']
         """

@@ -113,7 +113,7 @@ class TestHeaderFilterPluginFunctionality:
                     "Content-Type": "application/json",
                     "Authorization": "Bearer token",
                     "Cookie": "session=xyz",
-                    "X-API-Key": "secret_key",
+                    "X-API-Key": "secret_key",  # pragma: allowlist secret
                     "User-Agent": "TestClient/1.0",
                 }
             ),
@@ -414,7 +414,7 @@ class TestHeaderFilterPluginFunctionality:
     def test_filter_headers_all_removed(self, plugin_config):
         """Test _filter_headers when all headers are sensitive."""
         plugin = HeaderFilter(plugin_config)
-        headers = {"Authorization": "Bearer token", "Cookie": "session=xyz", "X-API-Key": "key"}
+        headers = {"Authorization": "Bearer token", "Cookie": "session=xyz", "X-API-Key": "key"}  # pragma: allowlist secret
 
         filtered, removed = plugin._filter_headers(headers, "test:context")
 
@@ -459,7 +459,7 @@ class TestHeaderFilterPluginFunctionality:
                 {
                     "Authorization": "Bearer vault_token",
                     "Cookie": "session=abc",
-                    "X-API-Key": "secret_key",
+                    "X-API-Key": "secret_key",  # pragma: allowlist secret
                     "Content-Type": "application/json",
                 }
             ),

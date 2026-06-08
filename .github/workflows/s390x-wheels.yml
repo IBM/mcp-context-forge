@@ -13,6 +13,15 @@
 name: s390x Wheel Builder
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/s390x/Containerfile"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/s390x-wheels.yml"
+  schedule:
+    - cron: "0 2 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -63,8 +72,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}
           tags: |
-            type=raw,value=${{ github.sha }}
-            type=raw,value={{date 'YYYYMMDD'}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=long
 
       - name: Build and push
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
@@ -77,3 +86,32 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=s390x-wheels
           cache-to: type=gha,mode=max,scope=s390x-wheels
+
+  notify-failure:
+    name: Send Slack failure notification
+    needs: build-and-push
+    if: failure() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+
+    steps:
+      - name: Send Slack notification
+        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": ":x: *s390x wheel Builder* failed on `main`",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": ":x: *s390x Wheel Builder* failed on `main`\n• *Commit:* <${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}|`${{ github.sha }}`>\n• *Actor:* `${{ github.actor }}`\n• *Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>"
+                  }
+                }
+              ]
+            }

@@ -44,6 +44,37 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 
+def _team_from_dict(d: Dict[str, Any]) -> EmailTeam:
+    """Construct a transient EmailTeam from a serialised dict (no DB session needed).
+
+    The returned instance is **never attached to a SQLAlchemy session**.
+    Scalar attributes (id, name, slug, etc.) are fully populated and safe to read.
+    Lazy-loaded relationships (members, invitations, api_tokens, creator) are NOT
+    available — accessing them raises DetachedInstanceError or returns empty collections.
+    get_member_count() returns 0 on transient instances. is_member() returns False.
+    Only use the scalar fields that are present in AuthCache.team_to_dict().
+
+    Args:
+        d: Dict produced by AuthCache.team_to_dict()
+
+    Returns:
+        EmailTeam instance with scalar attributes set; never attached to a session.
+    """
+    return EmailTeam(
+        id=d["id"],
+        name=d["name"],
+        slug=d.get("slug", ""),
+        description=d.get("description"),
+        created_by=d.get("created_by", ""),
+        is_personal=d.get("is_personal", False),
+        visibility=d.get("visibility", "public"),
+        max_members=d.get("max_members"),
+        is_active=d.get("is_active", True),
+        created_at=datetime.fromisoformat(d["created_at"]) if d.get("created_at") else None,
+        updated_at=datetime.fromisoformat(d["updated_at"]) if d.get("updated_at") else None,
+    )
+
+
 def get_user_team_count(db: Session, user_email: str) -> int:
     """Get the number of active teams a user belongs to.
 
@@ -379,6 +410,25 @@ class TeamManagementService:
         except Exception as cache_error:
             logger.debug(f"Failed to invalidate membership caches for {SecurityValidator.sanitize_log_message(user_email)}: {cache_error}")
 
+    def _invalidate_team_member_caches(self, team_id: str) -> None:
+        """Invalidate cached team objects for all active members after a team update.
+
+        Errors are logged at warning level but do not propagate.
+
+        Args:
+            team_id: ID of the team whose member caches should be invalidated.
+        """
+        try:
+            memberships = self.db.query(EmailTeamMember).filter(
+                EmailTeamMember.team_id == team_id,
+                EmailTeamMember.is_active.is_(True),
+            ).all()
+            for membership in memberships:
+                self._fire_and_forget(auth_cache.invalidate_user_teams(membership.user_email))
+            self._fire_and_forget(admin_stats_cache.invalidate_teams())
+        except Exception as cache_error:
+            logger.warning(f"Failed to invalidate caches after team update for {SecurityValidator.sanitize_log_message(team_id)}: {cache_error}")
+
     def _check_user_team_limit(self, user_email: str) -> None:
         """Raise if the user has reached the maximum team membership limit.
 
@@ -671,6 +721,8 @@ class TeamManagementService:
 
             team.updated_at = utc_now()
             self.db.commit()
+
+            self._invalidate_team_member_caches(team_id)
 
             logger.info(f"Updated team {SecurityValidator.sanitize_log_message(team_id)} by {updated_by}")
             return True
@@ -1048,7 +1100,10 @@ class TeamManagementService:
             include_personal: Whether to include personal teams
 
         Returns:
-            List[EmailTeam]: List of teams the user belongs to
+            List[EmailTeam]: List of teams the user belongs to.
+            Cache-hit path returns transient EmailTeam instances (no DB session).
+            Accessing lazy relationships (.members, .creator, etc.) is not safe on
+            cache-hit objects. Use scalar attributes only.
 
         Examples:
             User dashboard showing team memberships.
@@ -1058,19 +1113,11 @@ class TeamManagementService:
         cache_key = f"{user_email}:{include_personal}"
 
         if cache:
-            cached_team_ids = await cache.get_user_teams(cache_key)
-            if cached_team_ids is not None:
-                if not cached_team_ids:  # Empty list = user has no teams
+            cached_team_dicts = await cache.get_user_team_objects(cache_key)
+            if cached_team_dicts is not None:
+                if not cached_team_dicts:  # Empty list = user has no teams
                     return []
-                # Fetch full team objects by IDs (fast indexed lookup)
-                try:
-                    teams = self.db.query(EmailTeam).filter(EmailTeam.id.in_(cached_team_ids), EmailTeam.is_active.is_(True)).all()
-                    self.db.commit()  # Release transaction to avoid idle-in-transaction
-                    return teams
-                except Exception as e:
-                    self.db.rollback()
-                    logger.warning(f"Failed to fetch teams by IDs from cache: {e}")
-                    # Fall through to full query
+                return [_team_from_dict(d) for d in cached_team_dicts]
 
         # Cache miss or caching disabled - do full query
         try:
@@ -1082,10 +1129,10 @@ class TeamManagementService:
             teams = query.all()
             self.db.commit()  # Release transaction to avoid idle-in-transaction
 
-            # Update cache with team IDs
+            # Update cache with full team objects
             if cache:
-                team_ids = [t.id for t in teams]
-                await cache.set_user_teams(cache_key, team_ids)
+                team_dicts = [cache.team_to_dict(t) for t in teams]
+                await cache.set_user_team_objects(cache_key, team_dicts)
 
             return teams
 

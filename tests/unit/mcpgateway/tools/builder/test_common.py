@@ -670,7 +670,7 @@ class TestGenerateKubernetesManifests:
                         "image": "postgres:17",
                         "database": "testdb",
                         "user": "testuser",
-                        "password": "testpass",
+                        "password": "testpass",  # pragma: allowlist secret
                     },
                     "redis": {
                         "enabled": True,
@@ -958,7 +958,7 @@ class TestGenerateComposeManifests:
                         "image": "postgres:17",
                         "database": "mcpdb",
                         "user": "mcpuser",
-                        "password": "secret123",
+                        "password": "secret123",  # pragma: allowlist secret
                     },
                     "redis": {
                         "enabled": True,

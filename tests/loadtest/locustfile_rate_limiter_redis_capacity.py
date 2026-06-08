@@ -78,7 +78,13 @@ def _cfg(key: str, default: str = "") -> str:
     return os.environ.get(key) or _ENV.get(key) or default
 
 
-JWT_SECRET_KEY = _cfg("JWT_SECRET_KEY", "my-test-key")
+JWT_SECRET_KEY = _cfg("JWT_SECRET_KEY", "")
+if not JWT_SECRET_KEY:
+    raise RuntimeError(
+        "JWT_SECRET_KEY env var (or .env entry) is required for this load test — "
+        "set it to the same value the gateway is signing with. A hard-coded "
+        "fallback would silently let any reader forge admin tokens (PR #4635 S1)."
+    )
 JWT_ALGORITHM = _cfg("JWT_ALGORITHM", "HS256")
 JWT_AUDIENCE = _cfg("JWT_AUDIENCE", "mcpgateway-api")
 JWT_ISSUER = _cfg("JWT_ISSUER", "mcpgateway")
@@ -155,10 +161,10 @@ def _default_prompt_argument_value(prompt_name: str, argument_name: str) -> str:
 def _make_token(email: str) -> str:
     """Generate a rich admin token with explicit teams=null for admin bypass."""
     # First-Party
-    from mcpgateway.utils.create_jwt_token import _create_jwt_token  # pylint: disable=import-outside-toplevel
+    from tests.helpers.auth import make_test_jwt  # pylint: disable=import-outside-toplevel
 
-    return _create_jwt_token(
-        {"sub": email},
+    return make_test_jwt(
+        email,
         expires_in_minutes=int(timedelta(hours=24).total_seconds() // 60),
         secret=JWT_SECRET_KEY,
         algorithm=JWT_ALGORITHM,
@@ -169,6 +175,7 @@ def _make_token(email: str) -> str:
             "auth_provider": "local",
         },
         teams=None,
+        is_admin=True,
     )
 
 

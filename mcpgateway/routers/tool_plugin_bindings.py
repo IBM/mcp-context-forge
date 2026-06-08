@@ -47,7 +47,10 @@ def _allowed_teams_from_ctx(ctx: Dict[str, Any]) -> Optional[set[str]]:
     """
     is_admin: bool = ctx.get("is_admin", False)
     token_teams = ctx.get("token_teams")
-    return None if (is_admin and token_teams is None) else set(token_teams or [])
+    # Admin bypass: full bypass unless the token is explicitly scoped to teams.
+    if is_admin and not token_teams:
+        return None
+    return set(token_teams or [])
 
 
 async def _invalidate_and_broadcast(bindings: List[ToolPluginBindingResponse]) -> None:

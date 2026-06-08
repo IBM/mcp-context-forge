@@ -39,10 +39,9 @@ pw = pytest.importorskip("playwright", reason="playwright is not installed – p
 # Third-Party
 from playwright.sync_api import APIRequestContext, Playwright  # noqa: E402
 
-# First-Party
-from mcpgateway.utils.create_jwt_token import _create_jwt_token  # noqa: E402
-
 # Local
+from tests.helpers.auth import make_playwright_api_context, make_test_jwt  # noqa: E402
+
 from ..helpers.mcp_test_helpers import BASE_URL, JWT_SECRET, skip_no_gateway, TEST_PASSWORD  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -99,19 +98,11 @@ pytestmark.append(skip_no_keycloak)
 # Helpers
 # ---------------------------------------------------------------------------
 def _make_jwt(email: str, is_admin: bool = False, teams=None) -> str:
-    return _create_jwt_token(
-        {"sub": email},
-        user_data={"email": email, "is_admin": is_admin, "auth_provider": "local"},
-        teams=teams,
-        secret=_JWT_SECRET,
-    )
+    return make_test_jwt(email, is_admin=is_admin, teams=teams, secret=_JWT_SECRET)
 
 
 def _api_context(playwright: Playwright, token: str) -> APIRequestContext:
-    return playwright.request.new_context(
-        base_url=BASE_URL,
-        extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-    )
+    return make_playwright_api_context(playwright, BASE_URL, token)
 
 
 def _get_keycloak_token(email: str, password: str = KEYCLOAK_TEST_PASSWORD) -> str:

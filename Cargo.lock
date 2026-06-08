@@ -528,7 +528,7 @@ checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 
 [[package]]
 name = "contextforge_a2a_runtime"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -557,7 +557,7 @@ dependencies = [
 
 [[package]]
 name = "contextforge_mcp_runtime"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "async-stream",
  "axum",
@@ -1744,7 +1744,7 @@ dependencies = [
 
 [[package]]
 name = "mcp_stdio_wrapper"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "actson",
  "arc-swap",
@@ -2715,7 +2715,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "request_logging_masking_native_extension"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "pyo3",
  "pyo3-stub-gen",
@@ -2820,9 +2820,9 @@ dependencies = [
 
 [[package]]
 name = "rmcp"
-version = "1.6.0"
+version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e12ca9067b5ebfbd5b3fcdc4acfceb81aa7d5ab2a879dff7cb75d22434276aad"
+checksum = "0810a9f717d9828f475fe1f629f4c305c8464b7f496c3a854b58d29e65f4058e"
 dependencies = [
  "async-trait",
  "chrono",

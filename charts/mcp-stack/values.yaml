@@ -292,6 +292,22 @@ mcpContextForge:
     AUTH_CACHE_TEAMS_TTL: "60"       # User teams list cache TTL (seconds)
     AUTH_CACHE_BATCH_QUERIES: "true" # Batch auth DB queries into single call
 
+    # ─ Rate Limiter Redis (Optional) ─
+    # Dedicated Redis instance for rate limiting to prevent contention with main Redis
+    # When unset, rate limiting uses REDIS_URL (backward compatible)
+    # Must start with redis:// or rediss:// (validated at startup)
+    # Example: RATELIMITER_REDIS_URL: "redis://rate-limiter-redis:6379/0"
+    RATELIMITER_REDIS_URL: ""
+    RATELIMITER_REDIS_MAX_CONNECTIONS: "50"
+    RATELIMITER_REDIS_SOCKET_TIMEOUT: "2.0"
+    RATELIMITER_REDIS_SOCKET_CONNECT_TIMEOUT: "2.0"
+    RATELIMITER_REDIS_SSL: "false"
+    RATELIMITER_REDIS_SSL_CA_CERTS: /certs/ca.crt
+    RATELIMITER_REDIS_SSL_CERTFILE: /certs/client.crt
+    RATELIMITER_REDIS_SSL_KEYFILE: /certs/client.key
+    RATELIMITER_REDIS_SSL_CHECK_HOSTNAME: "true"
+
+
     # ─ Registry Cache (reduces DB queries for list endpoints) ─
     REGISTRY_CACHE_ENABLED: "true"     # Enable registry list caching
     REGISTRY_CACHE_TOOLS_TTL: "20"     # Tools list cache TTL (seconds)

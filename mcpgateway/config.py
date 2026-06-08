@@ -66,6 +66,9 @@ import orjson
 from pydantic import AliasChoices, Field, field_validator, HttpUrl, model_validator, PositiveInt, SecretStr, ValidationInfo
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+# First-Party
+from mcpgateway._security_constants import WEAK_VALUES as _CANONICAL_WEAK_VALUES
+
 # Only configure basic logging if no handlers exist yet
 # This prevents conflicts with LoggingService while ensuring config logging works
 if not logging.getLogger().handlers:
@@ -246,11 +249,10 @@ class Settings(BaseSettings):
         description=(
             "Database connection URL. Supports SQLite (dev) and PostgreSQL (production). "
             "For PostgreSQL with custom schema, use the 'options' query parameter: "
-            "postgresql://user:pass@host:5432/db?options=-c%20search_path=schema_name "
+            "postgresql://user:pass@host:5432/db?options=-c%20search_path=schema_name "  # pragma: allowlist secret
             "(See Issue #1535 for details)"
         ),
     )
-
     # Absolute paths resolved at import-time (still override-able via env vars)
     templates_dir: Path = Field(default_factory=lambda: Path(str(files("mcpgateway") / "templates")))
     static_dir: Path = Field(default_factory=lambda: Path(str(files("mcpgateway") / "static")))
@@ -391,7 +393,7 @@ class Settings(BaseSettings):
     basic_auth_user: str = "admin"
     basic_auth_password: SecretStr = Field(default=SecretStr("changeme"))
     jwt_algorithm: str = "HS256"
-    jwt_secret_key: SecretStr = Field(default=SecretStr("my-test-key-but-now-longer-than-32-bytes"))
+    jwt_secret_key: SecretStr = Field(default=SecretStr("changeme"))
     jwt_public_key_path: str = ""
     jwt_private_key_path: str = ""
     jwt_audience: str = "mcpgateway-api"
@@ -415,8 +417,8 @@ class Settings(BaseSettings):
     require_token_expiration: bool = Field(default=True, description="Require all JWT tokens to have expiration claims (secure default)")
     require_jti: bool = Field(default=True, description="Require JTI (JWT ID) claim in all tokens for revocation support (secure default)")
     require_user_in_db: bool = Field(
-        default=False,
-        description="Require all authenticated users to exist in the database. When true, disables the platform admin bootstrap mechanism. WARNING: Enabling this on a fresh deployment will lock you out.",
+        default=True,
+        description="Require all authenticated users to exist in the database. When true, disables the platform admin bootstrap mechanism. Set REQUIRE_USER_IN_DB=false in .env for development environments that use the bootstrap admin path.",
     )
     embed_environment_in_tokens: bool = Field(default=False, description="Embed environment claim in gateway-issued JWTs for environment isolation")
     validate_token_environment: bool = Field(default=False, description="Reject tokens with mismatched environment claim (tokens without env claim are allowed)")
@@ -568,6 +570,10 @@ class Settings(BaseSettings):
     sso_generic_jwks_uri: Optional[str] = Field(default=None, description="OIDC JWKS endpoint URL for token signature verification")
 
     sso_generic_scope: Optional[str] = Field(default="openid profile email", description="OAuth scopes (space-separated)")
+    sso_generic_groups_claim: str = Field(default="groups", description="JWT claim for generic OIDC groups (e.g. 'groups', 'roles')")
+    sso_generic_admin_groups: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Generic OIDC groups granting platform_admin (CSV/JSON)")
+    sso_generic_role_mappings: Dict[str, str] = Field(default_factory=dict, description="Map generic OIDC groups to ContextForge roles (JSON: {group_name: role_name})")
+    sso_generic_default_role: Optional[str] = Field(default=None, description="Default role for generic OIDC users without a matching group mapping (None = no role assigned)")
 
     sso_generic_groups_claim: str = Field(default="groups", description="JWT claim for Generic OIDC groups (groups/roles/custom)")
     sso_generic_admin_groups: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Generic OIDC groups granting platform_admin role (CSV/JSON)")
@@ -622,7 +628,7 @@ class Settings(BaseSettings):
     proxy_user_header: str = Field(default="X-Authenticated-User", description="Header containing authenticated username from proxy")
 
     #  Encryption key phrase for auth storage
-    auth_encryption_secret: SecretStr = Field(default=SecretStr("my-test-salt"))
+    auth_encryption_secret: SecretStr = Field(default=SecretStr("changeme"))
 
     # Query Parameter Authentication (INSECURE - disabled by default)
     insecure_allow_queryparam_auth: bool = Field(
@@ -742,6 +748,12 @@ class Settings(BaseSettings):
             "base URLs in the database. When false, uses gateway_test_allowed_hosts patterns. "
             "Default true for maximum security (test only what's already registered)."
         ),
+    )
+    gateway_test_dns_timeout: float = Field(
+        default=5.0,
+        gt=0.0,
+        le=30.0,
+        description="Timeout in seconds for DNS resolution performed during /admin/gateways/test validation.",
     )
 
     # UAID Cross-Gateway Routing Security
@@ -987,6 +999,7 @@ class Settings(BaseSettings):
     password_policy_enabled: bool = Field(default=True, description="Enable password complexity validation for new/changed passwords")
     password_prevent_reuse: bool = Field(default=True, description="Prevent reusing the current password when changing")
     password_max_age_days: int = Field(default=90, description="Password maximum age in days before expiry forces a change")
+    password_error_message_max_length: int = Field(default=200, description="Maximum length for password validation error messages in URL redirects (prevents URL overflow)")
     # Account Security Configuration
     max_failed_login_attempts: int = Field(default=5, description="Maximum failed login attempts before account lockout")
     account_lockout_duration_minutes: int = Field(default=60, description="Account lockout duration in minutes")
@@ -1038,6 +1051,25 @@ class Settings(BaseSettings):
     # UI/Admin Feature Flags
     mcpgateway_ui_enabled: bool = False
     mcpgateway_admin_api_enabled: bool = False
+
+    # Migration runner ownership.
+    # When True, the gateway lifespan does NOT call bootstrap_db.main();
+    # the deployment is expected to run migrations as a separate step
+    # (Helm pre-install Job, init container, CI step, etc.). The library
+    # default is False so `docker run mcpgateway:latest` continues to
+    # bootstrap its own schema without operator action. The Helm chart
+    # ships this as True when the migration Job is enabled, so the
+    # contract "Job runs migrations, app pods skip" is enforced at the
+    # chart layer.
+    mcpgateway_skip_migrations: bool = Field(
+        default=False,
+        description=(
+            "When True, gateway pods skip the in-pod bootstrap_db call. "
+            "Pair with a dedicated migration runner (Helm pre-install Job, "
+            "init container, etc.) that ensures the schema is at head before "
+            "pods start."
+        ),
+    )
     mcpgateway_ui_airgapped: bool = Field(default=False, description="Use local CDN assets instead of external CDNs for airgapped deployments")
     mcpgateway_ui_embedded: bool = Field(default=False, description="Enable embedded UI mode (hides select header controls by default)")
     mcpgateway_ui_hide_sections: Annotated[list[str], NoDecode] = Field(
@@ -1215,17 +1247,7 @@ class Settings(BaseSettings):
 
     # Values used to detect unconfigured or insecure deployment states
     SENTINEL_VALUES: ClassVar[list[str]] = ["", "UNCONFIGURED"]
-    WEAK_VALUES: ClassVar[list[str]] = [
-        "my-test-key",
-        "my-test-key-but-now-longer-than-32-bytes",
-        "my-test-salt",
-        "changeme",
-        "secret",
-        "password",
-        "test-secret",
-        "my-secret",
-        "12345678",
-    ]
+    WEAK_VALUES: ClassVar[list[str]] = list(_CANONICAL_WEAK_VALUES)
 
     # database-backed polling settings for session message delivery
     poll_interval: float = Field(default=1.0, description="Initial polling interval in seconds for checking new session messages")
@@ -1323,12 +1345,11 @@ class Settings(BaseSettings):
         else:
             value = str(v)
 
-        # Check for default/weak secrets
-        if not info.data.get("client_mode"):
-            weak_secrets = ["my-test-key", "my-test-key-but-now-longer-than-32-bytes", "my-test-salt", "changeme", "secret", "password"]
-            if value.lower() in weak_secrets:
-                logger.warning(f"🔓 SECURITY WARNING - {field_name}: Default/weak secret detected! Please set a strong, unique value for production.")
+        # Check for default/weak secrets — applies regardless of client_mode
+        if value.lower() in [v.lower() for v in cls.WEAK_VALUES]:
+            logger.warning(f"🔓 SECURITY WARNING - {field_name}: Default/weak secret detected! Please set a strong, unique value for production.")
 
+        if not info.data.get("client_mode"):
             # Check minimum length
             if len(value) < 32:
                 logger.warning(f"⚠️  SECURITY WARNING - {field_name}: Secret should be at least 32 characters long. Current length: {len(value)}")
@@ -1444,6 +1465,26 @@ class Settings(BaseSettings):
         Returns:
             Itself.
         """
+        # __REPLACE_ME__ placeholders block startup only in production; warn in other environments.
+        # Weak/default secrets are rejected in any non-development environment (staging + production).
+        # client_mode is intentionally NOT exempted — secret-strength enforcement is always active.
+        weak_secrets = {v.lower() for v in self.WEAK_VALUES}
+        env = str(self.environment).lower()
+        for field_name, secret_field in (("jwt_secret_key", self.jwt_secret_key), ("auth_encryption_secret", self.auth_encryption_secret)):
+            val = secret_field.get_secret_value()
+            if val.lower().startswith("__replace_me__"):
+                if env == "production":
+                    raise SecurityConfigurationError(f"{field_name}: Value is an unset placeholder (__REPLACE_ME__). " "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
+                logger.warning(f"🔓 SECURITY WARNING - {field_name}: Value is an unset placeholder (__REPLACE_ME__). Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
+            if val.lower() in weak_secrets:
+                if env != "development":
+                    raise SecurityConfigurationError(
+                        f"{field_name}: Weak/default secret rejected in '{env}' environment. " "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values."
+                    )
+        # In non-production environments, unset placeholder secrets emit SECURITY WARNINGs but
+        # do not block startup. Production always rejects them. Weak secrets are rejected in
+        # staging and production; development allows them with warnings from the field validator.
+
         if not self.client_mode:
             # Check for dangerous combinations - only log warnings, don't raise errors
             if not self.auth_required and self.mcpgateway_ui_enabled:
@@ -1556,7 +1597,7 @@ class Settings(BaseSettings):
         for name, value in critical_secrets.items():
             if name == "BASIC_AUTH_PASSWORD" and not (self.mcpgateway_ui_enabled or self.api_allow_basic_auth or self.docs_allow_basic_auth):
                 continue
-            is_sentinel = value in self.SENTINEL_VALUES
+            is_sentinel = value in self.SENTINEL_VALUES or value.lower().startswith("__replace_me__")
             is_weak = value.lower() in self.WEAK_VALUES or calculate_entropy(value) < 3.5
 
             if is_sentinel:
@@ -1902,6 +1943,15 @@ class Settings(BaseSettings):
     metrics_aggregation_backfill_hours: int = Field(default=6, ge=0, le=168, description="Hours of structured logs to backfill into performance metrics on startup")
     metrics_aggregation_window_minutes: int = Field(default=5, description="Time window for metrics aggregation (minutes)")
     metrics_aggregation_auto_start: bool = Field(default=False, description="Automatically run the log aggregation loop on application startup")
+    metrics_aggregation_interval_seconds: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Seconds between aggregation runs. "
+            "Defaults to metrics_aggregation_window_minutes * 60 when unset. "
+            "Set higher (e.g. 900) to reduce background DB pressure on multi-worker deployments."
+        ),
+    )
     yield_batch_size: int = Field(
         default=1000,
         ge=100,
@@ -1934,6 +1984,9 @@ class Settings(BaseSettings):
     metrics_retention_days: int = Field(default=7, ge=1, le=365, description="Days to retain raw metrics before cleanup (fallback when rollup disabled)")
     metrics_cleanup_interval_hours: int = Field(default=1, ge=1, le=168, description="Hours between automatic cleanup runs")
     metrics_cleanup_batch_size: int = Field(default=10000, ge=100, le=100000, description="Batch size for metrics deletion (prevents long locks)")
+    metrics_cleanup_batch_sleep_ms: int = Field(
+        default=50, ge=0, le=5000, description="Milliseconds to sleep between batch DELETEs in cleanup (0 = no sleep). Use to reduce DB pressure during background cleanup."
+    )
 
     # Metrics Rollup Configuration (hourly aggregation for historical queries)
     metrics_rollup_enabled: bool = Field(default=True, description="Enable hourly metrics rollup for efficient historical queries")
@@ -2514,6 +2567,18 @@ class Settings(BaseSettings):
     redis_retry_on_timeout: bool = Field(default=True, description="Retry commands on timeout")
     redis_health_check_interval: int = Field(default=30, description="Seconds between connection health checks (0=disabled)")
 
+    # Redis TLS Configuration
+    # Local dev:  leave redis_ssl=False and use a plain redis:// URL (default behaviour, no certs needed).
+    # Production: set REDIS_SSL=true and change REDIS_URL to rediss://<host>:6380/0, then supply
+    #             cert paths via REDIS_SSL_CA_CERTS / REDIS_SSL_CERTFILE / REDIS_SSL_KEYFILE.
+    redis_ssl: bool = Field(default=False, description="Enable TLS for Redis connections (set True in production with a rediss:// URL)")
+    redis_ssl_ca_certs: Optional[str] = Field(default=None, description="Path to CA certificate bundle used to verify the Redis server certificate")
+    redis_ssl_certfile: Optional[str] = Field(default=None, description="Path to client certificate for mutual TLS (mTLS) authentication with Redis")
+    redis_ssl_keyfile: Optional[str] = Field(default=None, description="Path to client private key for mutual TLS (mTLS) authentication with Redis")
+    redis_ssl_check_hostname: bool = Field(
+        default=True, description="Verify the Redis TLS certificate chain and hostname. Set False only for self-signed certs (pair with REDIS_SSL_CA_CERTS for the CA bundle)"
+    )
+
     redis_operation_timeout: float = Field(
         default=0.5, gt=0.0, description="Timeout for individual Redis operations in seconds (get/set/delete). " "Should be lower than redis_socket_timeout for faster fallback to in-memory cache."
     )
@@ -2527,6 +2592,31 @@ class Settings(BaseSettings):
         gt=0.0,
         description="Seconds the circuit remains open before a single probe is allowed. A successful probe closes the circuit; a failed probe extends the cooldown.",
     )
+
+    # Dedicated Redis instance for rate limiting to prevent contention with main Redis
+    ratelimiter_redis_url: Optional[str] = Field(
+        default=None, description="Optional Redis URL for rate limiting middleware. Falls back to main Redis when unset. Must start with redis:// or rediss://"
+    )
+    ratelimiter_redis_max_connections: int = Field(default=50, description="Connection pool size for rate limiter Redis")
+    ratelimiter_redis_socket_timeout: float = Field(default=2.0, description="Socket read/write timeout for rate limiter Redis")
+    ratelimiter_redis_socket_connect_timeout: float = Field(default=2.0, description="Connection timeout for rate limiter Redis")
+    ratelimiter_redis_ssl: bool = Field(default=False, description="Enable TLS for Redis connections (set True in production with a rediss:// URL)")
+    ratelimiter_redis_ssl_ca_certs: Optional[str] = Field(default=None, description="Path to CA certificate bundle used to verify the Redis server certificate")
+    ratelimiter_redis_ssl_certfile: Optional[str] = Field(default=None, description="Path to client certificate for mutual TLS (mTLS) authentication with Redis")
+    ratelimiter_redis_ssl_keyfile: Optional[str] = Field(default=None, description="Path to client private key for mutual TLS (mTLS) authentication with Redis")
+    ratelimiter_redis_ssl_check_hostname: bool = Field(
+        default=True, description="Verify the Redis TLS certificate chain and hostname. Set False only for self-signed certs (pair with REDIS_SSL_CA_CERTS for the CA bundle)"
+    )
+
+    @field_validator("ratelimiter_redis_url")
+    @classmethod
+    def validate_ratelimiter_redis_url(cls, v: Optional[str]) -> Optional[str]:
+        """Validate rate limiter Redis URL format."""
+        if v is not None and v.strip():
+            v = v.strip()
+            if not (v.startswith("redis://") or v.startswith("rediss://")):
+                raise ValueError("RATELIMITER_REDIS_URL must start with redis:// or rediss://")
+        return v
 
     # Redis Leader Election - Multi-Node Deployments
     redis_leader_ttl: int = Field(default=15, description="Leader election TTL in seconds")
@@ -2606,8 +2696,6 @@ class Settings(BaseSettings):
     otel_bsp_schedule_delay: int = Field(default=5000, description="Schedule delay in milliseconds")
 
     # ===================================
-
-    # ===================================
     # OpenTelemetry Baggage Configuration
     # ===================================
 
@@ -2646,6 +2734,14 @@ class Settings(BaseSettings):
     otel_baggage_log_sanitization: bool = Field(
         default=True,
         description="Log sanitization events for compliance tracking",
+    )
+
+    # ===================================
+    # Experimental dataplane config
+    # ===================================
+
+    dataplane_publisher: bool = Field(default=False,
+        description="Send data from CF to Rust experimental dataplane"
     )
 
     # Well-Known URI Configuration
@@ -2930,7 +3026,7 @@ Disallow: /
             >>> settings = Settings(basic_auth_user="admin", basic_auth_password="secret")
             >>> settings.api_key
             'admin:secret'
-            >>> settings = Settings(basic_auth_user="user123", basic_auth_password="pass456")
+            >>> settings = Settings(basic_auth_user="user123", basic_auth_password="pass456")  # pragma: allowlist secret
             >>> settings.api_key
             'user123:pass456'
         """

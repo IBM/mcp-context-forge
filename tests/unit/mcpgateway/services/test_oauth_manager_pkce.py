@@ -64,7 +64,7 @@ class TestPKCEGeneration:
         pkce = manager._generate_pkce_params()
 
         # Base64url uses [A-Za-z0-9-_] (no padding)
-        allowed_chars = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+        allowed_chars = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")  # pragma: allowlist secret
         challenge_chars = set(pkce["code_challenge"])
         assert challenge_chars.issubset(allowed_chars)
 
@@ -270,7 +270,12 @@ class TestExchangeCodeForTokensWithPKCE:
         """Test that token exchange includes code_verifier in request."""
         manager = OAuthManager()
 
-        credentials = {"client_id": "test-client", "client_secret": "test-secret", "token_url": "https://as.example.com/token", "redirect_uri": "http://localhost:4444/callback"}
+        credentials = {
+            "client_id": "test-client",
+            "client_secret": "test-secret",  # pragma: allowlist secret
+            "token_url": "https://as.example.com/token",
+            "redirect_uri": "http://localhost:4444/callback",
+        }
         code = "auth-code-123"
         code_verifier = "test-verifier-xyz"
 
@@ -299,7 +304,12 @@ class TestExchangeCodeForTokensWithPKCE:
         """Test backward compatibility - token exchange without PKCE."""
         manager = OAuthManager()
 
-        credentials = {"client_id": "test-client", "client_secret": "test-secret", "token_url": "https://as.example.com/token", "redirect_uri": "http://localhost:4444/callback"}
+        credentials = {
+            "client_id": "test-client",
+            "client_secret": "test-secret",  # pragma: allowlist secret
+            "token_url": "https://as.example.com/token",
+            "redirect_uri": "http://localhost:4444/callback",
+        }  # pragma: allowlist secret
         code = "auth-code-123"
 
         mock_response = {"access_token": "access-token-123", "token_type": "Bearer", "expires_in": 3600}
@@ -368,7 +378,12 @@ class TestCompleteAuthorizationCodeFlowWithPKCE:
         gateway_id = "test-gateway"
         code = "auth-code-123"
         state = "state-123"
-        credentials = {"client_id": "test-client", "client_secret": "test-secret", "token_url": "https://as.example.com/token", "redirect_uri": "http://localhost:4444/callback"}
+        credentials = {
+            "client_id": "test-client",
+            "client_secret": "test-secret",  # pragma: allowlist secret
+            "token_url": "https://as.example.com/token",
+            "redirect_uri": "http://localhost:4444/callback",
+        }  # pragma: allowlist secret
 
         with (
             patch.object(manager, "_validate_and_retrieve_state") as mock_validate,
@@ -452,7 +467,7 @@ class TestRFC8707MultipleResources:
 
         credentials = {
             "client_id": "test_client",
-            "client_secret": "test_secret",
+            "client_secret": "test_secret",  # pragma: allowlist secret
             "redirect_uri": "https://gateway.example.com/callback",
             "token_url": "https://oauth.example.com/token",
             "resource": ["https://api1.example.com", "https://api2.example.com"],
@@ -491,7 +506,7 @@ class TestRFC8707MultipleResources:
 
         credentials = {
             "client_id": "test_client",
-            "client_secret": "test_secret",
+            "client_secret": "test_secret",  # pragma: allowlist secret
             "token_url": "https://oauth.example.com/token",
             "resource": ["https://api1.example.com", "https://api2.example.com"],
         }

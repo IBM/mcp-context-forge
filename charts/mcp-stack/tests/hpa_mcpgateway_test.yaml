@@ -1,0 +1,39 @@
+suite: mcpgateway HPA
+templates:
+  - templates/hpa-mcpgateway.yaml
+tests:
+  - it: renders as HorizontalPodAutoscaler when enabled
+    asserts:
+      - isKind:
+          of: HorizontalPodAutoscaler
+
+  - it: name uses release fullname
+    asserts:
+      - equal:
+          path: metadata.name
+          value: RELEASE-NAME-mcp-stack-mcpgateway
+
+  - it: scale target references mcpgateway deployment
+    asserts:
+      - equal:
+          path: spec.scaleTargetRef.kind
+          value: Deployment
+      - equal:
+          path: spec.scaleTargetRef.name
+          value: RELEASE-NAME-mcp-stack-mcpgateway
+
+  - it: default min/max replicas from values
+    asserts:
+      - equal:
+          path: spec.minReplicas
+          value: 2
+      - equal:
+          path: spec.maxReplicas
+          value: 10
+
+  - it: no resource rendered when HPA disabled
+    set:
+      mcpContextForge.hpa.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0

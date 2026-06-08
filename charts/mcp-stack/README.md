@@ -1044,6 +1044,66 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | redis.external.port | int | `6379` |  |
 | redis.external.db | int | `0` |  |
 | redis.auth.enabled | bool | `true` |  |
+
+
+### Rate Limiter Redis (Optional)
+
+Separate Redis instance for rate limiting to prevent contention:
+
+#### Using Kubernetes Secrets (Recommended)
+
+Create a Secret for the rate limiter Redis URL:
+
+```bash
+kubectl create secret generic rate-limiter-redis-secret \
+  --from-literal=RATELIMITER_REDIS_URL='redis://:password@rate-limiter-redis:6379/0' \
+  --from-literal=RATELIMITER_REDIS_SSL_CA_CERTS='path/to/ca.crt' \
+  --from-literal=RATELIMITER_REDIS_SSL_CERTFILE='path/to/client.crt' \
+  --from-literal=RATELIMITER_REDIS_SSL_KEYFILE='path/to/client.key' \
+  --from-literal=RATELIMITER_REDIS_SSL_CHECK_HOSTNAME='true'
+```
+
+Reference the Secret in your `values.yaml`:
+
+```yaml
+mcpContextForge:
+  extraEnvFrom:
+    - secretRef:
+        name: rate-limiter-redis-secret
+
+  config:
+    # Connection pool settings for rate limiter Redis
+    RATELIMITER_REDIS_MAX_CONNECTIONS: "50"
+    RATELIMITER_REDIS_SOCKET_TIMEOUT: "2.0"
+    RATELIMITER_REDIS_SOCKET_CONNECT_TIMEOUT: "2.0"
+    RATELIMITER_REDIS_SSL: false
+```
+
+#### Direct Configuration (Development Only)
+
+```yaml
+mcpContextForge:
+  config:
+    RATELIMITER_REDIS_URL: "redis://rate-limiter-redis:6379/0"
+    RATELIMITER_REDIS_MAX_CONNECTIONS: "50"
+    RATELIMITER_REDIS_SOCKET_TIMEOUT: "2.0"
+    RATELIMITER_REDIS_SOCKET_CONNECT_TIMEOUT: "2.0"
+    RATELIMITER_REDIS_SSL: false
+    RATELIMITER_REDIS_SSL_CA_CERTS: /certs/ca.crt
+    RATELIMITER_REDIS_SSL_CERTFILE: /certs/client.crt
+    RATELIMITER_REDIS_SSL_KEYFILE: /certs/client.key
+    RATELIMITER_REDIS_SSL_CHECK_HOSTNAME: true
+```
+
+#### Fallback Behavior
+
+When `RATELIMITER_REDIS_URL` is not set during start time, the gateway automatically falls back to the main Redis instance configured via `REDIS_URL`. But during mid-runtime if `RATELIMITER_REDIS_URL` becomes unavailable, rather than falling back to `REDIS_URL`, it falls back to in-memory. This ensures backward compatibility with existing deployments.
+
+**Notes:**
+- **Migration:** Unset = uses main `REDIS_URL` (backward compatible)
+- **URL Validation:** Must start with `redis://` or `rediss://` (validated at startup)
+- **Independent:** Operates independently of `CACHE_TYPE` setting
+
 | redis.auth.existingSecret | string | `""` |  |
 | redis.auth.passwordKey | string | `"REDIS_PASSWORD"` |  |
 | redis.auth.password | string | `"change-me-redis"` |  |

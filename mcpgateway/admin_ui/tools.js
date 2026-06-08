@@ -1793,7 +1793,7 @@ export const loadTools = async function () {
 
       const rows = tools
         .map((tool) => {
-          const { id, name, integrationType, enabled, reachable } = tool;
+          const { id, name, integrationType, enabled, reachable, deprecated } = tool;
           let statusText = "";
           let statusClass = "";
           if (enabled && reachable) {
@@ -1806,6 +1806,15 @@ export const loadTools = async function () {
             statusText = "Inactive";
             statusClass = "bg-red-100 text-red-800";
           }
+
+          // Build status badges HTML
+          const statusBadges = `
+            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${statusClass}">
+              ${statusText}
+            </span>
+            ${deprecated ? '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800 ml-1">⚠️ Deprecated</span>' : ''}
+          `;
+
           return `
                 <tr data-name="${name.toLowerCase()}" data-status="${enabled ? "enabled" : "disabled"}">
                     <td class="px-4 py-3">
@@ -1815,9 +1824,7 @@ export const loadTools = async function () {
                     <td class="px-4 py-3">${name}</td>
                     <td class="px-4 py-3">${integrationType || "-"}</td>
                     <td class="px-2 py-4 whitespace-nowrap text-sm w-12">
-                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${statusClass}">
-                        ${statusText}
-                    </span>
+                    ${statusBadges}
                     </td>
                     <td class="px-2 py-4 whitespace-nowrap text-sm font-medium w-32">
                     <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">

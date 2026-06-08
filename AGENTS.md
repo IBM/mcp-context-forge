@@ -73,6 +73,14 @@ make ruff bandit interrogate pylint verify
 cd tools_rust/mcp_runtime && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 ```
 
+#### Secret Detection (detect-secrets)
+
+When `detect-secrets` identifies false positives:
+
+- **Python files**: Suppress inline using `# pragma: allowlist secret` comment so they don't appear in `.secrets.baseline` after running `make detect-secrets-scan`
+  - The one exception to this is doctest strings where the content contains a false positive secret as the comment will interfere with assertions. In this case rely on the .secrets.baseline file and audit the result with 'make detect-secrest-audit'.
+- **All other file types**: Regenerate the baseline using `make detect-secrets-scan` to update `.secrets.baseline`
+
 ## Authentication & RBAC Overview
 
 ContextForge implements a **two-layer security model**:

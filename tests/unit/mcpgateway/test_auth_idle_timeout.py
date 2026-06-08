@@ -7,14 +7,16 @@ Authors: Mihai Criveti
 Unit tests for the idle-timeout enforcement block inside
 ``mcpgateway.auth.get_current_user``.
 
-These tests exercise the activity-source precedence chain introduced by PR
-#4371 (Redis ``token:activity:{jti}`` → JWT ``last_activity`` claim → JWT
-``iat`` claim) and the four behaviour branches that flow from it:
+These tests exercise the activity-source precedence chain (Redis
+``token:activity:{jti}`` → JWT ``last_activity`` claim) and the behaviour
+branches that flow from it. API tokens (``token_use="api"``) are exempt from
+idle timeout — they have their own expiry and revocation mechanisms.
 
 * Recent activity → request passes, ``update_activity`` is called.
 * Idle exceeded → token revoked + 401 raised.
 * Idle exceeded with ``revoke_token`` raising → still 401.
 * ``update_activity`` raising on a valid request → debug-log only.
+* API tokens skip the idle check regardless of ``iat`` age.
 
 The diff-coverage report after PR #4371's rebase showed lines 1615-1651 of
 ``mcpgateway/auth.py`` as uncovered. Each test below is named for the
@@ -105,14 +107,16 @@ def _jwt_secret() -> str:
     return secret.get_secret_value() if hasattr(secret, "get_secret_value") else secret
 
 
-def _build_token(*, last_activity: int | None, iat_offset_minutes: int = 0, include_jti: bool = True) -> tuple[str, str]:
-    """Build a signed session JWT with controllable claims.
+def _build_token(*, last_activity: int | None, iat_offset_minutes: int = 0, include_jti: bool = True, token_use: str | None = None) -> tuple[str, str]:
+    """Build a signed JWT with controllable claims.
 
     Args:
         last_activity: explicit ``last_activity`` claim value, or ``None`` to omit.
         iat_offset_minutes: subtracted from "now" to age ``iat``.
         include_jti: when ``False``, the token has no ``jti`` (skips the
             entire revocation+idle block).
+        token_use: ``"session"`` or ``"api"`` — controls whether idle timeout
+            applies. Default ``None`` (legacy, treated as session).
 
     Returns:
         Tuple of (encoded JWT, jti).
@@ -134,6 +138,8 @@ def _build_token(*, last_activity: int | None, iat_offset_minutes: int = 0, incl
         payload["jti"] = jti
     if last_activity is not None:
         payload["last_activity"] = last_activity
+    if token_use is not None:
+        payload["token_use"] = token_use
     token = jwt.encode(payload, _jwt_secret(), algorithm=settings.jwt_algorithm)
     return token, jti
 
@@ -242,7 +248,13 @@ class TestIdleTimeoutJwtFallback:
         assert mock_blocklist.revoke_token.called
         assert mock_blocklist.revoke_token.call_args.kwargs["jti"] == jti
 
-    def test_iat_used_when_redis_none_and_no_last_activity_claim(self, client):
+    def test_idle_check_skipped_when_no_redis_and_no_last_activity(self, client):
+        """Session token with no Redis activity and no last_activity claim skips idle check.
+
+        ``iat`` is no longer used as an idle-activity fallback — without Redis or
+        a ``last_activity`` claim, the check is skipped rather than assuming
+        creation time is recent activity.
+        """
         token, jti = _build_token(last_activity=None, iat_offset_minutes=120)
         mock_blocklist = _make_blocklist_mock(last_activity_returns=None)
 
@@ -255,8 +267,11 @@ class TestIdleTimeoutJwtFallback:
         ):
             response = client.post("/auth/logout", headers={"Authorization": f"Bearer {token}"})
 
-        assert response.status_code == 401
-        assert "idle timeout" in response.json()["detail"].lower()
+        # Request passes — idle check sees last_activity=None and skips (no iat fallback)
+        assert response.status_code == 200
+        mock_blocklist.get_last_activity.assert_any_call(jti)
+        # update_activity not called because last_activity was None → idle block exited before reaching it
+        mock_blocklist.update_activity.assert_not_called()
 
 
 class TestIdleTimeoutErrorPaths:
@@ -298,7 +313,8 @@ class TestIdleTimeoutErrorPaths:
         assert "idle timeout" in response.json()["detail"].lower()
 
     def test_update_activity_failure_does_not_block_request(self, client):
-        token, _ = _build_token(last_activity=None, iat_offset_minutes=5)
+        recent_ts = int((datetime.now(timezone.utc) - timedelta(minutes=5)).timestamp())
+        token, _ = _build_token(last_activity=recent_ts, iat_offset_minutes=5)
         mock_blocklist = _make_blocklist_mock(last_activity_returns=None, update_activity_raises=True)
 
         with (
@@ -333,3 +349,49 @@ class TestIdleTimeoutDisabled:
         assert response.status_code == 200
         mock_blocklist.get_last_activity.assert_not_called()
         mock_blocklist.update_activity.assert_not_called()
+
+
+class TestIdleTimeoutApiToken:
+    """API tokens (``token_use="api"``) are exempt from idle timeout."""
+
+    def test_api_token_not_revoked_by_idle_timeout_with_old_iat(self, client):
+        """API token with old iat and no Redis activity should pass."""
+        token, jti = _build_token(
+            last_activity=None,
+            iat_offset_minutes=43200,  # 30 days old
+            token_use="api",
+        )
+        mock_blocklist = _make_blocklist_mock(last_activity_returns=None)
+
+        with (
+            _patched_settings(token_idle_timeout=60),
+            patch(
+                "mcpgateway.services.token_blocklist_service.get_token_blocklist_service",
+                return_value=mock_blocklist,
+            ),
+        ):
+            response = client.post("/auth/logout", headers={"Authorization": f"Bearer {token}"})
+
+        # Request passes — idle timeout block skipped entirely for API tokens
+        assert response.status_code == 200
+        mock_blocklist.get_last_activity.assert_not_called()
+        mock_blocklist.update_activity.assert_not_called()
+
+    def test_session_token_still_revoked_by_idle_timeout(self, client):
+        """Session token idle timeout enforcement still works."""
+        old_ts = int((datetime.now(timezone.utc) - timedelta(minutes=120)).timestamp())
+        token, jti = _build_token(last_activity=old_ts, token_use="session")
+        mock_blocklist = _make_blocklist_mock(last_activity_returns=None)
+
+        with (
+            _patched_settings(token_idle_timeout=60),
+            patch(
+                "mcpgateway.services.token_blocklist_service.get_token_blocklist_service",
+                return_value=mock_blocklist,
+            ),
+        ):
+            response = client.post("/auth/logout", headers={"Authorization": f"Bearer {token}"})
+
+        assert response.status_code == 401
+        assert "idle timeout" in response.json()["detail"].lower()
+        assert mock_blocklist.revoke_token.called

@@ -150,7 +150,7 @@ class SessionBackend:
             redis_url: Redis connection URL. Required when backend='redis'.
                 Format: 'redis://[:password]@host:port/db'
             database_url: Database connection URL. Required when backend='database'.
-                Format depends on database type (e.g., 'postgresql://user:pass@host/db')
+                Format depends on database type (e.g., 'postgresql://user:pass@host/db')  # pragma: allowlist secret
             session_ttl: Session time-to-live in seconds. Sessions are automatically
                 cleaned up after this duration of inactivity. Default: 3600 (1 hour).
             message_ttl: Message time-to-live in seconds. Undelivered messages are
@@ -2302,9 +2302,7 @@ class SessionRegistry(SessionBackend):
                 "id": req_id,
             }
             # Get the token from the current authentication context
-            # The user object should contain auth_token, token_teams, and is_admin from the SSE endpoint
             token = None
-            is_admin = user.get("is_admin", False)  # Preserve admin status from SSE endpoint
 
             try:
                 if hasattr(user, "get") and user.get("auth_token"):
@@ -2319,13 +2317,8 @@ class SessionRegistry(SessionBackend):
                         "aud": settings.jwt_audience,
                         "iat": int(now.timestamp()),
                         "jti": str(uuid.uuid4()),
+                        "auth_provider": "internal",
                         "token_use": "session",  # nosec B105 - token type marker, not a password
-                        "user": {
-                            "email": user.get("email", "system"),
-                            "full_name": user.get("full_name", "System"),
-                            "is_admin": is_admin,  # Preserve admin status for cookie-authenticated admins
-                            "auth_provider": "internal",
-                        },
                     }
                     # Generate token using centralized token creation
                     token = await create_jwt_token(payload)

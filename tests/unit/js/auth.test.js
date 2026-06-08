@@ -28,6 +28,13 @@ vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
   safeGetElement: vi.fn((id) => document.getElementById(id)),
   showSuccessMessage: vi.fn(),
   showErrorMessage: vi.fn(),
+  getCookie: vi.fn((name) => {
+    if (name === "mcpgateway_csrf_token") return "test-csrf-token";
+    return "";
+  }),
+}));
+vi.mock("../../../mcpgateway/admin_ui/tokens.js", () => ({
+  getAuthToken: vi.fn(() => Promise.resolve(null)),
 }));
 
 afterEach(() => {
@@ -366,7 +373,7 @@ describe("fetchToolsForGateway", () => {
     window.ROOT_PATH = "";
     document.body.innerHTML = '<button id="fetch-tools-gw1">Fetch Tools</button>';
 
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ success: true, message: "Fetched 5 tools" }),
     });
@@ -384,6 +391,15 @@ describe("fetchToolsForGateway", () => {
     const button = document.getElementById("fetch-tools-gw1");
     expect(button.textContent).toContain("Tools Fetched");
     expect(showSuccessMessage).toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/oauth/fetch-tools/gw1",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          "X-CSRF-Token": "test-csrf-token",
+        }),
+      }),
+    );
   });
 
   test("shows error on fetch failure", async () => {

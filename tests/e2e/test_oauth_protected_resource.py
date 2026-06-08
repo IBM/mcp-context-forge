@@ -31,13 +31,11 @@ Well-Known Files Test Scenarios:
 # Standard Library
 import os
 import tempfile
-import time
 from typing import AsyncGenerator
 from unittest.mock import MagicMock
 from unittest.mock import patch as mock_patch
 
 # Third-Party
-import jwt
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
@@ -52,11 +50,12 @@ with mock_patch("mcpgateway.bootstrap_db.main"):
     from mcpgateway.db import Base
     from mcpgateway.db import get_db as db_get_db
     from mcpgateway.main import app, get_db
+    from tests.helpers.auth import make_auth_header_for_email, make_test_jwt
 
 
 # Test Configuration
 TEST_USER = "testuser"
-TEST_JWT_SECRET = "e2e-test-jwt-secret-key-with-minimum-32-bytes"
+TEST_JWT_SECRET = "e2e-test-jwt-secret-key-with-minimum-32-bytes"  # pragma: allowlist secret
 
 # Ensure test tokens use a strong signing key to avoid weak-key warnings.
 if hasattr(settings.jwt_secret_key, "get_secret_value") and callable(getattr(settings.jwt_secret_key, "get_secret_value", None)):
@@ -67,19 +66,25 @@ else:
 
 def generate_test_jwt():
     """Generate a valid JWT token for testing."""
-    payload = {
-        "sub": "test_user",
-        "exp": int(time.time()) + 3600,
-        "teams": [],
-    }
     secret = settings.jwt_secret_key
     if hasattr(secret, "get_secret_value") and callable(getattr(secret, "get_secret_value", None)):
         secret = secret.get_secret_value()
-    algorithm = settings.jwt_algorithm
-    return jwt.encode(payload, secret, algorithm=algorithm)
+    return make_test_jwt(
+        "test_user",
+        teams=[],
+        expires_in_minutes=60,
+        secret=secret,
+        algorithm=settings.jwt_algorithm,
+    )
 
 
-TEST_AUTH_HEADER = {"Authorization": f"Bearer {generate_test_jwt()}"}
+TEST_AUTH_HEADER = make_auth_header_for_email(
+    "test_user",
+    teams=[],
+    expires_in_minutes=60,
+    secret=TEST_JWT_SECRET,
+    algorithm=settings.jwt_algorithm,
+)
 
 
 @pytest_asyncio.fixture
@@ -180,9 +185,14 @@ async def oauth_test_db():
     sec_patcher = mock_patch("mcpgateway.middleware.auth_middleware.security_logger", mock_sec_logger)
     sec_patcher.start()
 
+    # Disable CSRF — auth is mocked via dependency overrides; no bearer token is sent
+    original_csrf_enabled = settings.csrf_enabled
+    settings.csrf_enabled = False
+
     yield engine
 
     # Cleanup
+    settings.csrf_enabled = original_csrf_enabled
     sec_patcher.stop()
     test_user_context_db.close()
     app.dependency_overrides.clear()
@@ -204,13 +214,13 @@ class TestOAuthProtectedResourceMetadata:
 
     async def _create_server(self, client: AsyncClient, payload: dict) -> str:
         """Helper to create a server and return its ID."""
-        response = await client.post("/servers", json=payload, headers=TEST_AUTH_HEADER)
+        response = await client.post("/servers", json=payload)
         assert response.status_code == 201, f"Failed to create server: {response.text}"
         return response.json()["id"]
 
     async def _disable_server(self, client: AsyncClient, server_id: str):
         """Helper to disable a server using the toggle endpoint."""
-        response = await client.post(f"/servers/{server_id}/state?activate=false", headers=TEST_AUTH_HEADER)
+        response = await client.post(f"/servers/{server_id}/state?activate=false")
         assert response.status_code == 200, f"Failed to disable server: {response.text}"
 
     async def test_server_without_oauth_returns_404(self, client: AsyncClient):
@@ -419,13 +429,13 @@ class TestVirtualServerWellKnownFiles:
 
     async def _create_server(self, client: AsyncClient, payload: dict) -> str:
         """Helper to create a server and return its ID."""
-        response = await client.post("/servers", json=payload, headers=TEST_AUTH_HEADER)
+        response = await client.post("/servers", json=payload)
         assert response.status_code == 201, f"Failed to create server: {response.text}"
         return response.json()["id"]
 
     async def _disable_server(self, client: AsyncClient, server_id: str):
         """Helper to disable a server using the toggle endpoint."""
-        response = await client.post(f"/servers/{server_id}/state?activate=false", headers=TEST_AUTH_HEADER)
+        response = await client.post(f"/servers/{server_id}/state?activate=false")
         assert response.status_code == 200, f"Failed to disable server: {response.text}"
 
     async def test_robots_txt_on_public_server(self, client: AsyncClient):
@@ -539,7 +549,7 @@ class TestWellKnownDisabledScenarios:
 
     async def _create_server(self, client: AsyncClient, payload: dict) -> str:
         """Helper to create a server and return its ID."""
-        response = await client.post("/servers", json=payload, headers=TEST_AUTH_HEADER)
+        response = await client.post("/servers", json=payload)
         assert response.status_code == 201, f"Failed to create server: {response.text}"
         return response.json()["id"]
 

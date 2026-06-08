@@ -276,6 +276,58 @@ class TestApplyAccessControl:
             mock_filter.assert_called_once_with(query, "user@example.com", [], None)
             assert result == "filtered"
 
+    @pytest.mark.asyncio
+    async def test_admin_public_only_token_respects_layer1_scoping(self, service, mock_db):
+        """Admin user with token_teams=[] (explicit public-only API token) should NOT see another user's private rows.
+
+        PR #4788 review comment: API tokens with teams: [] are deliberately limited and should
+        stay public-only even for admin users. This is Layer 1 token scoping, not RBAC.
+        """
+        base_query = sa.select(_FakeItem)
+
+        with patch("mcpgateway.services.base_service.is_user_admin", return_value=True):
+            result = await service._apply_access_control(
+                base_query,
+                mock_db,
+                user_email="admin@test.com",
+                token_teams=[],
+            )
+
+        compiled = _compile_where(result)
+        # Must have public visibility condition
+        assert "visibility = 'public'" in compiled, f"public-only token should only see public resources: {compiled}"
+        # Must NOT have owner_email clause (no owner access for empty token_teams)
+        assert "owner_email" not in compiled, f"token_teams=[] should not grant owner access even to admins: {compiled}"
+        # Must NOT include private visibility
+        assert "visibility = 'private'" not in compiled, f"token_teams=[] should exclude private resources: {compiled}"
+
+    @pytest.mark.asyncio
+    async def test_admin_with_team_scoped_token_sees_own_private_rows(self, service, mock_db):
+        """Admin user with token_teams=['t1'] (narrowed session token) should see their own private resources.
+
+        PR #4788 review comment: Session-token admins with team scopes should preserve owner access
+        to their own private resources.
+        """
+        base_query = sa.select(_FakeItem)
+
+        with patch("mcpgateway.services.base_service.is_user_admin", return_value=True):
+            result = await service._apply_access_control(
+                base_query,
+                mock_db,
+                user_email="admin@test.com",
+                token_teams=["team-1"],
+            )
+
+        compiled = _compile_where(result)
+        # Should have team visibility condition
+        assert "team_id IN ('team-1')" in compiled, f"should see team-scoped resources: {compiled}"
+        # Should have owner_email clause (preserves owner access)
+        assert "owner_email = 'admin@test.com'" in compiled, f"admin with team scope should see own private resources: {compiled}"
+        # Should include private visibility in owner clause
+        assert "visibility = 'private'" in compiled, f"should allow private resources for owner: {compiled}"
+        # Should include public visibility
+        assert "visibility = 'public'" in compiled or "visibility IN ('team', 'public')" in compiled, f"should include public resources: {compiled}"
+
 
 # ---------------------------------------------------------------------------
 # _apply_visibility_filter
@@ -337,20 +389,22 @@ class TestApplyVisibilityFilter:
         assert "team_id" not in sql
 
     def test_team_scoped_in_token_teams(self, service, base_query):
-        """Team-scoped (team_id in token_teams): returns team+public and private-owner conditions."""
+        """Team-scoped (team_id in token_teams): returns team+public, private-owner, and global-public conditions."""
         result = service._apply_visibility_filter(base_query, user_email="owner@test.com", token_teams=["team-1"], team_id="team-1")
         sql = _compile_where(result)
         assert "team_id = 'team-1'" in sql
         assert "visibility IN ('team', 'public')" in sql
         assert "owner_email = 'owner@test.com'" in sql
         assert "visibility = 'private'" in sql
+        assert "visibility = 'public'" in sql  # globally public items are always included
 
     def test_team_scoped_in_token_teams_no_email(self, service, base_query):
-        """Team-scoped (team_id in token_teams, no user_email): team+public but no private-owner."""
+        """Team-scoped (team_id in token_teams, no user_email): team+public, global-public, no private-owner."""
         result = service._apply_visibility_filter(base_query, user_email=None, token_teams=["team-1"], team_id="team-1")
         sql = _compile_where(result)
         assert "team_id = 'team-1'" in sql
         assert "visibility IN ('team', 'public')" in sql
+        assert "visibility = 'public'" in sql  # globally public items are always included
         assert "owner_email" not in sql
 
     def test_team_scoped_not_in_token_teams(self, service, base_query):
@@ -360,3 +414,15 @@ class TestApplyVisibilityFilter:
         # SQLAlchemy compiles where(False) as "WHERE false" or "WHERE 1!=1"
         lower_sql = sql.lower()
         assert "false" in lower_sql or "1 != 1" in lower_sql or "1!=1" in lower_sql
+
+    def test_team_scoped_always_includes_globally_public_items(self, service, base_query):
+        """Team-scoped filter always ORs in a global public condition.
+
+        When team_id=X is supplied, items with visibility='public' owned by *other*
+        teams must still be returned.  The generated WHERE clause must contain the
+        standalone ``visibility = 'public'`` condition (not gated on team_id).
+        """
+        result = service._apply_visibility_filter(base_query, user_email=None, token_teams=["team-1"], team_id="team-1")
+        sql = _compile_where(result)
+        # The standalone public condition must be present in addition to the team-scoped one
+        assert "visibility = 'public'" in sql

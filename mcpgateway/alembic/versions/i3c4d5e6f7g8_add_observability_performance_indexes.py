@@ -19,7 +19,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "i3c4d5e6f7g8"
-down_revision: Union[str, Sequence[str], None] = "a23a08d61eb0"
+down_revision: Union[str, Sequence[str], None] = "a23a08d61eb0"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -57,17 +57,17 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Remove observability performance indexes."""
     # Drop ObservabilityEvent composite index
-    op.drop_index("ix_observability_events_span_id_timestamp", table_name="observability_events")
+    op.drop_index("ix_observability_events_span_id_timestamp", table_name="observability_events", if_exists=True)
 
     # Drop ObservabilitySpan composite indexes
-    op.drop_index("ix_observability_spans_name", table_name="observability_spans")
-    op.drop_index("ix_observability_spans_duration_ms", table_name="observability_spans")
-    op.drop_index("ix_observability_spans_kind_status", table_name="observability_spans")
-    op.drop_index("ix_observability_spans_resource_type_start_time", table_name="observability_spans")
-    op.drop_index("ix_observability_spans_trace_id_start_time", table_name="observability_spans")
+    op.drop_index("ix_observability_spans_name", table_name="observability_spans", if_exists=True)
+    op.drop_index("ix_observability_spans_duration_ms", table_name="observability_spans", if_exists=True)
+    op.drop_index("ix_observability_spans_kind_status", table_name="observability_spans", if_exists=True)
+    op.drop_index("ix_observability_spans_resource_type_start_time", table_name="observability_spans", if_exists=True)
+    op.drop_index("ix_observability_spans_trace_id_start_time", table_name="observability_spans", if_exists=True)
 
     # Drop ObservabilityTrace composite indexes
-    op.drop_index("ix_observability_traces_name", table_name="observability_traces")
-    op.drop_index("ix_observability_traces_http_method_start_time", table_name="observability_traces")
-    op.drop_index("ix_observability_traces_duration_ms", table_name="observability_traces")
-    op.drop_index("ix_observability_traces_status_start_time", table_name="observability_traces")
+    op.drop_index("ix_observability_traces_name", table_name="observability_traces", if_exists=True)
+    op.drop_index("ix_observability_traces_http_method_start_time", table_name="observability_traces", if_exists=True)
+    op.drop_index("ix_observability_traces_duration_ms", table_name="observability_traces", if_exists=True)
+    op.drop_index("ix_observability_traces_status_start_time", table_name="observability_traces", if_exists=True)

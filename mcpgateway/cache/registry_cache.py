@@ -1173,7 +1173,8 @@ class CacheInvalidationSubscriber:
             email = message[len("teams:") :]
             with auth_cache._lock:  # pyright: ignore[reportPrivateUsage]
                 self._evict_keys(auth_cache._teams_list_cache, lambda k: k.startswith(f"{email}:"))  # pyright: ignore[reportPrivateUsage]
-            logger.debug("CacheInvalidationSubscriber: Cleared local auth teams list cache for %s", email)
+                self._evict_keys(auth_cache._team_objects_cache, lambda k: k.startswith(f"{email}:"))  # pyright: ignore[reportPrivateUsage]
+            logger.debug("CacheInvalidationSubscriber: Cleared local auth teams list and team objects caches for %s", email)
 
         elif message.startswith("team:"):
             email = message[len("team:") :]

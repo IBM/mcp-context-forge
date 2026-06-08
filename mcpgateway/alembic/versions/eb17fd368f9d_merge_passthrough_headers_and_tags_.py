@@ -7,7 +7,7 @@ Authors: Mihai Criveti
 merge passthrough headers and tags support
 
 Revision ID: eb17fd368f9d
-Revises: 3b17fdc40a8d, cc7b95fec5d9
+Revises: cc7b95fec5d9
 Create Date: 2025-08-08 05:31:10.857718
 """
 
@@ -15,8 +15,8 @@ Create Date: 2025-08-08 05:31:10.857718
 from typing import Sequence, Union
 
 # revision identifiers, used by Alembic.
-revision: str = "eb17fd368f9d"
-down_revision: Union[str, Sequence[str], None] = ("3b17fdc40a8d", "cc7b95fec5d9")
+revision: str = "eb17fd368f9d"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "cc7b95fec5d9"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -31,25 +31,29 @@ You can now access the UI at [http://localhost:4444/admin](http://localhost:4444
     The Admin UI uses email/password authentication (`PLATFORM_ADMIN_EMAIL`/`PASSWORD`). Basic auth for API endpoints is disabled by default for security. Use JWT tokens for API access.
 
 ### Multi-architecture containers
+
 Note: the container build process creates container images for 'amd64', 'arm64', 's390x', and 'ppc64le' architectures. The version `ghcr.io/ibm/mcp-context-forge:VERSION`
 points to a manifest so that all commands will pull the correct image for the architecture being used (whether that be locally or on Kubernetes or OpenShift).
 
 If the specific image is needed for one architecture on a different architecture use the appropriate arguments for your given container execution tool:
 
 With docker run:
+
 ```
 docker run [... all your options...] --platform linux/arm64 ghcr.io/ibm/mcp-context-forge:VERSION
 ```
 
 With podman run:
+
 ```
 podman run [... all your options...] --platform linux/arm64 ghcr.io/ibm/mcp-context-forge:VERSION
 ```
+
 Or
+
 ```
 podman run [... all your options...] --arch arm64 ghcr.io/ibm/mcp-context-forge:VERSION
 ```
-
 
 ## 🐳 Build the Container
 
@@ -121,11 +125,11 @@ This downloads and bundles:
 
 - Tailwind CSS (~404KB)
 - HTMX (bundled in main JS via npm/Vite)
+- Alpine.js CSP build (bundled in main JS via npm/Vite)
 - CodeMirror (~216KB)
-- Alpine.js (~48KB)
 - Chart.js (~208KB)
 
-**Total: ~932KB of UI assets**
+**Total: ~884KB of UI assets**
 
 ### Run in Airgapped Mode
 
@@ -179,8 +183,8 @@ https://localhost:4444
 
 All environment variables can be passed via:
 
-* `docker run -e KEY=value`
-* A mounted `.env` file (`--env-file .env`)
+- `docker run -e KEY=value`
+- A mounted `.env` file (`--env-file .env`)
 
 ---
 

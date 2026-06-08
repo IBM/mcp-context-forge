@@ -236,3 +236,55 @@ class TestBaggageTracingE2E:
                     # Verify span was created with baggage attributes
                     mock_tracer.start_as_current_span.assert_called_once()
                     # The span should have baggage attributes set via the wrapper
+
+    def test_baggage_span_attribute_policy_applied(self):
+        """Test that baggage span attribute policy filters and formats attributes correctly."""
+        # First-Party
+        from mcpgateway.observability import BaggageSpanAttributePolicy, _baggage_span_attributes, configure_baggage_span_attribute_policy
+
+        # Test baggage with multiple keys
+        baggage_dict = {
+            "tenant.id": "tenant-123",
+            "user.id": "user-456",  # Should be filtered out
+            "request.id": "req-789",  # Should be filtered out
+        }
+
+        # Test 1: Configure policy to only allow tenant.id, emit without prefix
+        policy = BaggageSpanAttributePolicy(
+            emit_prefixed=False,
+            allowed_keys=frozenset({"tenant.id"})
+        )
+        configure_baggage_span_attribute_policy(policy)
+
+        result = _baggage_span_attributes(baggage_dict)
+
+        # Should have tenant.id without baggage. prefix
+        assert "tenant.id" in result
+        assert result["tenant.id"] == "tenant-123"
+
+        # Should NOT have filtered keys
+        assert "user.id" not in result
+        assert "request.id" not in result
+        assert "baggage.user.id" not in result
+        assert "baggage.request.id" not in result
+        assert "baggage.tenant.id" not in result
+
+        # Verify only one key was emitted
+        assert len(result) == 1
+
+        # Test 2: Configure policy with prefixed mode
+        policy_prefixed = BaggageSpanAttributePolicy(
+            emit_prefixed=True,
+            allowed_keys=frozenset({"tenant.id"})
+        )
+        configure_baggage_span_attribute_policy(policy_prefixed)
+
+        result_prefixed = _baggage_span_attributes(baggage_dict)
+
+        # Should have baggage.tenant.id with prefix
+        assert "baggage.tenant.id" in result_prefixed
+        assert result_prefixed["baggage.tenant.id"] == "tenant-123"
+        assert "tenant.id" not in result_prefixed
+
+        # Reset policy for other tests
+        configure_baggage_span_attribute_policy(BaggageSpanAttributePolicy())

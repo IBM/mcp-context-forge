@@ -18,7 +18,7 @@ import {
 // ===================================================================
 
 /**
- * Toggle UAID fields visibility based on checkbox state
+ * Toggle UAID fields visibility based on checkbox state.
  * @param {string} formSuffix - Form identifier suffix ('a2a' or 'a2a-edit')
  * @param {boolean} enabled - Whether UAID generation is enabled
  */
@@ -357,6 +357,11 @@ export const editA2AAgent = async function (agentId) {
     agentType.value = agent.agentType;
 
     console.log("Agent Type: ", agent.agentType);
+
+    const protocolVersionField = safeGetElement("a2a-protocol-version-edit");
+    if (protocolVersionField) {
+      protocolVersionField.value = agent.protocolVersion || "1.0";
+    }
 
     if (nameField && nameValidation.valid) {
       nameField.value = nameValidation.value;

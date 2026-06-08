@@ -438,6 +438,7 @@ def mock_tool(mock_gateway):
     tool.visibility = "public"  # Use public for tests that don't test authorization
     tool.owner_email = "admin@admin.org"
     tool.enabled = True
+    tool.deprecated = False
     tool.reachable = True
     tool.auth_type = None
     tool.auth_username = None
@@ -516,9 +517,9 @@ class TestToolService:
         mock_tool.auth_type = "basic"
         # Create auth_value with the following values
         # user = "test_user"
-        # password = "test_password"
-        # mock_tool.auth_value = "FpZyxAu5PVpT0FN-gJ0JUmdovCMS0emkwW1Vb8HvkhjiBZhj1gDgDRF1wcWNrjTJSLtkz1rLzKibXrhk4GbxXnV6LV4lSw_JDYZ2sPNRy68j_UKOJnf_"
-        # mock_tool.auth_value = encode_auth({"user": "test_user", "password": "test_password"})
+        # password = "test_password"  # pragma: allowlist secret
+        # mock_tool.auth_value = "FpZyxAu5PVpT0FN-gJ0JUmdovCMS0emkwW1Vb8HvkhjiBZhj1gDgDRF1wcWNrjTJSLtkz1rLzKibXrhk4GbxXnV6LV4lSw_JDYZ2sPNRy68j_UKOJnf_"  # pragma: allowlist secret
+        # mock_tool.auth_value = encode_auth({"user": "test_user", "password": "test_password"})  # pragma: allowlist secret
         tool_read = tool_service.convert_tool_to_read(mock_tool)
 
         assert tool_read.auth.auth_type == "basic"
@@ -544,9 +545,9 @@ class TestToolService:
 
         mock_tool.auth_type = "authheaders"
         # Create auth_value with the following values
-        # {"test-api-key": "test-api-value"}
-        # mock_tool.auth_value = "8pvPTCegaDhrx0bmBf488YvGg9oSo4cJJX68WCTvxjMY-C2yko_QSPGVggjjNt59TPvlGLsotTZvAiewPRQ"
-        mock_tool.auth_value = encode_auth({"test-api-key": "test-api-value"})
+        # {"test-api-key": "test-api-value"}  # pragma: allowlist secret
+        # mock_tool.auth_value = "8pvPTCegaDhrx0bmBf488YvGg9oSo4cJJX68WCTvxjMY-C2yko_QSPGVggjjNt59TPvlGLsotTZvAiewPRQ"  # pragma: allowlist secret
+        mock_tool.auth_value = encode_auth({"test-api-key": "test-api-value"})  # pragma: allowlist secret
         tool_read = tool_service.convert_tool_to_read(mock_tool)
 
         assert tool_read.auth.auth_type == "authheaders"
@@ -562,7 +563,7 @@ class TestToolService:
     async def test_convert_tool_to_read_authheaders_multi(self, tool_service, mock_tool):
         """Check auth for authheaders with multiple headers returns all headers."""
         mock_tool.auth_type = "authheaders"
-        mock_tool.auth_value = encode_auth({"X-API-Key": "secret1", "X-Custom": "secret2"})
+        mock_tool.auth_value = encode_auth({"X-API-Key": "secret1", "X-Custom": "secret2"})  # pragma: allowlist secret
         tool_read = tool_service.convert_tool_to_read(mock_tool)
 
         assert tool_read.auth.auth_type == "authheaders"
@@ -703,6 +704,7 @@ class TestToolService:
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
                 enabled=True,
+                deprecated=False,
                 reachable=True,
                 gateway_id=None,
                 execution_count=0,
@@ -1115,6 +1117,7 @@ class TestToolService:
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
             enabled=True,
+            deprecated=False,
             reachable=True,
             gateway_id=None,
             execution_count=0,
@@ -1310,6 +1313,7 @@ class TestToolService:
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
             enabled=False,
+            deprecated=False,
             reachable=True,
             gateway_id=None,
             execution_count=0,
@@ -1466,6 +1470,7 @@ class TestToolService:
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
             enabled=True,
+            deprecated=False,
             reachable=True,
             gateway_id=None,
             execution_count=0,
@@ -1605,6 +1610,7 @@ class TestToolService:
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
             enabled=False,
+            deprecated=False,
             reachable=True,
             gateway_id=None,
             execution_count=0,
@@ -1762,6 +1768,7 @@ class TestToolService:
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
             enabled=True,
+            deprecated=False,
             reachable=True,
             gateway_id=None,
             execution_count=0,
@@ -1834,6 +1841,7 @@ class TestToolService:
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
             enabled=True,
+            deprecated=False,
             reachable=True,
             gateway_id=None,
             execution_count=0,
@@ -1977,11 +1985,11 @@ class TestToolService:
         # Basic auth_value
         # Create auth_value with the following values
         # user = "test_user"
-        # password = "test_password"
+        # password = "test_password"  # pragma: allowlist secret
         creds = base64.b64encode(b"test_user:test_password").decode()
         auth_dict = {"Authorization": f"Basic {creds}"}
         basic_auth_value = encode_auth(auth_dict)
-        # basic_auth_value = "FpZyxAu5PVpT0FN-gJ0JUmdovCMS0emkwW1Vb8HvkhjiBZhj1gDgDRF1wcWNrjTJSLtkz1rLzKibXrhk4GbxXnV6LV4lSw_JDYZ2sPNRy68j_UKOJnf_"
+        # basic_auth_value = "FpZyxAu5PVpT0FN-gJ0JUmdovCMS0emkwW1Vb8HvkhjiBZhj1gDgDRF1wcWNrjTJSLtkz1rLzKibXrhk4GbxXnV6LV4lSw_JDYZ2sPNRy68j_UKOJnf_"  # pragma: allowlist secret
 
         # Create update request
         tool_update = ToolUpdate(auth=AuthenticationValues(auth_type="basic", auth_value=basic_auth_value))
@@ -2528,7 +2536,7 @@ class TestToolService:
         # Payload contains: path param (user_id), query param (api_key), and body params (title, content)
         payload = {
             "user_id": 456,  # Will be substituted into URL path
-            "api_key": "secret123",  # Template in query string portion of URL; substituted then extracted as query param
+            "api_key": "secret123",  # Template in query string portion of URL; substituted then extracted as query param  # pragma: allowlist secret
             "title": "New Post",  # Will go to JSON body
             "content": "Hello World",  # Will go to JSON body
         }
@@ -2680,6 +2688,45 @@ class TestToolService:
             assert "Required URL parameter 'type' not found in arguments" in str(exc_info.value)
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_grpc_dispatch_success(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Test that invoke_tool dispatches to GrpcServiceManager for gRPC tools."""
+        # Configure tool as gRPC
+        mock_tool.integration_type = "gRPC"
+        mock_tool.grpc_service_id = "grpc-svc-123"
+        mock_tool.original_name = "test.Service.Method"
+        mock_tool.jsonpath_filter = ""
+
+        # Mock DB to return the tool and GlobalConfig
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        # Mock GrpcServiceManager.invoke_method to return a response
+        mock_grpc_response = {"result": "ok", "data": {"value": 42}}
+
+        # Patch at the source module where GrpcService is defined (lazy import in tool_service)
+        with patch("mcpgateway.services.grpc_service.GrpcService") as mock_grpc_service_class:
+            mock_grpc_manager = AsyncMock()
+            mock_grpc_manager.invoke_method = AsyncMock(return_value=mock_grpc_response)
+            mock_grpc_service_class.return_value = mock_grpc_manager
+
+            # Invoke the tool
+            result = await tool_service.invoke_tool(test_db, "test_tool", {"input": "value"}, request_headers=None)
+
+            # Verify GrpcServiceManager.invoke_method was called
+            mock_grpc_manager.invoke_method.assert_awaited_once()
+            call_args = mock_grpc_manager.invoke_method.call_args
+
+            # Verify the arguments passed to invoke_method
+            # invoke_method signature: (db, service_id, method_name, request_data, timeout=None)
+            assert call_args[0][1] == "grpc-svc-123"  # service_id (positional arg 1)
+            assert call_args[0][2] == "test.Service.Method"  # method_name (positional arg 2)
+            assert call_args[0][3] == {"input": "value"}  # request_data (positional arg 3)
+
+            # Verify the result is properly JSON-serialized
+            assert result.content[0].type == "text"
+            result_json = json.loads(result.content[0].text)
+            assert result_json == mock_grpc_response
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_mcp_streamablehttp(self, tool_service, mock_tool, test_db):
         """Test invoking a REST tool."""
         # Standard
@@ -2691,6 +2738,7 @@ class TestToolService:
             slug="test-gateway",
             url="http://fake-mcp:8080/mcp",
             enabled=True,
+            deprecated=False,
             reachable=True,
             auth_type="bearer",  # attribute your error complained about
             auth_value="Bearer abc123",
@@ -2798,6 +2846,7 @@ class TestToolService:
             slug="test-gateway",
             url="http://fake-mcp:8080/mcp",
             enabled=True,
+            deprecated=False,
             reachable=True,
             auth_type="bearer",
             auth_value="Bearer abc123",
@@ -2880,6 +2929,7 @@ class TestToolService:
             slug="test-gateway",
             url="http://fake-mcp:8080/sse",
             enabled=True,
+            deprecated=False,
             reachable=True,
             auth_type="bearer",
             auth_value="Bearer abc123",
@@ -2953,6 +3003,7 @@ class TestToolService:
             slug="test-gateway",
             url="http://fake-mcp:8080/mcp",
             enabled=True,
+            deprecated=False,
             reachable=True,
             auth_type="bearer",
             auth_value="Bearer abc123",
@@ -3052,6 +3103,7 @@ class TestToolService:
             slug="test-gateway",
             url="http://fake-mcp:8080/mcp",
             enabled=True,
+            deprecated=False,
             reachable=True,
             auth_type="bearer",
             auth_value="Bearer abc123",
@@ -3156,6 +3208,7 @@ class TestToolService:
             slug="test-gateway",
             url="http://fake-mcp:8080/mcp",
             enabled=True,
+            deprecated=False,
             reachable=True,
             auth_type="bearer",
             auth_value="Bearer abc123",
@@ -3252,6 +3305,7 @@ class TestToolService:
             slug="test-gateway",
             url="http://fake-mcp:8080/mcp",
             enabled=True,
+            deprecated=False,
             reachable=True,
             auth_type="bearer",
             auth_value="Bearer abc123",
@@ -3335,6 +3389,7 @@ class TestToolService:
             slug="test-gateway",
             url="http://fake-mcp:8080/sse",
             enabled=True,
+            deprecated=False,
             reachable=True,
             auth_type="bearer",  # attribute your error complained about
             auth_value="Bearer abc123",
@@ -3567,7 +3622,7 @@ class TestToolService:
         # Basic auth_value
         # Create auth_value with the following values
         # user = "test_user"
-        # password = "test_password"
+        # password = "test_password"  # pragma: allowlist secret
         basic_auth_value = encode_auth({"Authorization": "Basic " + base64.b64encode(b"test_user:test_password").decode()})
 
         # Configure tool as REST
@@ -4154,7 +4209,7 @@ class TestToolService:
         mock_tool.integration_type = "REST"
         mock_tool.request_type = "POST"
         mock_tool.auth_type = "oauth"
-        mock_tool.oauth_config = {"client_id": "test_id", "client_secret": "test_secret"}
+        mock_tool.oauth_config = {"client_id": "test_id", "client_secret": "test_secret"}  # pragma: allowlist secret
 
         # Mock DB to return the tool and GlobalConfig
         setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
@@ -4201,7 +4256,7 @@ class TestToolService:
         mock_tool.integration_type = "REST"
         mock_tool.request_type = "POST"
         mock_tool.auth_type = "oauth"
-        mock_tool.oauth_config = {"client_id": "test_id", "client_secret": "test_secret"}
+        mock_tool.oauth_config = {"client_id": "test_id", "client_secret": "test_secret"}  # pragma: allowlist secret
 
         # Mock DB to return the tool and GlobalConfig
         setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
@@ -7482,6 +7537,7 @@ class TestToolServiceHelpers:
             gateway_id=None,
             grpc_service_id=None,
             enabled=True,
+            deprecated=False,
             reachable=True,
             tags=None,
             team_id="team-1",
@@ -7506,6 +7562,7 @@ class TestToolServiceHelpers:
             ca_certificate=None,
             ca_certificate_sig=None,
             enabled=True,
+            deprecated=False,
             reachable=True,
             team_id="team-1",
             owner_email="owner@example.com",
@@ -7523,7 +7580,8 @@ class TestToolServiceHelpers:
         assert "auth_value" not in payload["tool"]
         assert "oauth_config" not in payload["tool"]
         assert payload["gateway"]["passthrough_headers"] == []
-        assert "auth_value" not in payload["gateway"]
+        # auth_value is now included in gateway cache payload (required by Gateway Pydantic model)
+        assert payload["gateway"]["auth_value"] == "secret"
         assert "oauth_config" not in payload["gateway"]
         assert "auth_query_params" not in payload["gateway"]
 
@@ -7585,7 +7643,7 @@ class TestToolServiceHelpers:
                 assert result["auth"]["token"] == settings.masked_auth_value
 
             headers_tool = make_tool("authheaders", "secret")
-            with patch("mcpgateway.services.tool_service.decode_auth", return_value={"X-Api-Key": "token"}):
+            with patch("mcpgateway.services.tool_service.decode_auth", return_value={"X-Api-Key": "token"}):  # pragma: allowlist secret
                 result = service.convert_tool_to_read(headers_tool, include_metrics=False, include_auth=True)
                 assert result["auth"]["auth_type"] == "authheaders"
                 assert result["auth"]["auth_header_key"] == "X-Api-Key"
@@ -8077,7 +8135,7 @@ class TestConvertToolToReadHeaderMasking:
     @pytest.fixture
     def tool_with_headers(self, mock_tool):
         """A mock tool with sensitive headers set."""
-        mock_tool.headers = {"Authorization": "Bearer secret-token", "X-Api-Key": "my-api-key"}
+        mock_tool.headers = {"Authorization": "Bearer secret-token", "X-Api-Key": "my-api-key"}  # pragma: allowlist secret
         mock_tool.auth_type = None
         mock_tool.auth_value = None
         return mock_tool
@@ -8617,6 +8675,7 @@ class TestInvokeToolDirectProxyViaHeader:
             url="http://remote-mcp:8080/mcp",
             gateway_mode="direct_proxy",
             enabled=True,
+            deprecated=False,
             reachable=True,
             auth_type="bearer",
             auth_value={"Authorization": "Bearer remote-token"},
@@ -8642,6 +8701,7 @@ class TestInvokeToolDirectProxyViaHeader:
             url="http://remote-mcp:8080/mcp",
             gateway_mode="cache",
             enabled=True,
+            deprecated=False,
             reachable=True,
             auth_type=None,
             auth_value=None,
@@ -8782,6 +8842,7 @@ class TestRustMcpExecutionPlan:
             url="http://remote-mcp:8080/mcp",
             gateway_mode="direct_proxy",
             enabled=True,
+            deprecated=False,
             reachable=True,
             auth_type="bearer",
             auth_value={"Authorization": "Bearer remote-token"},
@@ -8817,6 +8878,7 @@ class TestRustMcpExecutionPlan:
             "name": "tool-one",
             "original_name": "tool-one",
             "enabled": True,
+            "deprecated": False,
             "reachable": True,
             "integration_type": "MCP",
             "request_type": "streamablehttp",
@@ -9218,6 +9280,7 @@ class TestRustMcpExecutionPlan:
         cache = self._cache_mock(None)
         candidate_a = SimpleNamespace(
             enabled=True,
+            deprecated=False,
             reachable=True,
             visibility="team",
             team_id="team-a",
@@ -9226,6 +9289,7 @@ class TestRustMcpExecutionPlan:
         )
         candidate_b = SimpleNamespace(
             enabled=True,
+            deprecated=False,
             reachable=True,
             visibility="team",
             team_id="team-b",
@@ -9262,6 +9326,7 @@ class TestRustMcpExecutionPlan:
         candidate_team = SimpleNamespace(
             id="tool-team",
             enabled=True,
+            deprecated=False,
             reachable=True,
             visibility="team",
             team_id="team-a",
@@ -9271,6 +9336,7 @@ class TestRustMcpExecutionPlan:
         candidate_public = SimpleNamespace(
             id="tool-public",
             enabled=True,
+            deprecated=False,
             reachable=True,
             visibility="public",
             team_id=None,
@@ -9424,10 +9490,11 @@ class TestRustMcpExecutionPlan:
             capabilities={},
             auth_type="basic",
             auth_value={"Authorization": "Bearer live-token"},
-            auth_query_params={"api_key": "live-query"},
+            auth_query_params={"api_key": "live-query"},  # pragma: allowlist secret
             oauth_config={"grant_type": "client_credentials"},
             ca_certificate=None,
             enabled=True,
+            deprecated=False,
             reachable=True,
             team_id=None,
             owner_email=None,
@@ -9442,6 +9509,7 @@ class TestRustMcpExecutionPlan:
             description="tool-one",
             original_description="tool-one",
             enabled=True,
+            deprecated=False,
             reachable=True,
             visibility="public",
             team_id=None,
@@ -9503,6 +9571,7 @@ class TestRustMcpExecutionPlan:
             oauth_config=None,
             ca_certificate=None,
             enabled=True,
+            deprecated=False,
             reachable=True,
             team_id=None,
             owner_email=None,
@@ -9517,6 +9586,7 @@ class TestRustMcpExecutionPlan:
             description="tool-one",
             original_description="tool-one",
             enabled=True,
+            deprecated=False,
             reachable=True,
             visibility="public",
             team_id=None,
@@ -9568,7 +9638,7 @@ class TestRustMcpExecutionPlan:
         tool_auth_row = SimpleNamespace(
             gateway=SimpleNamespace(
                 auth_value={"Authorization": "Bearer hydrated-token"},
-                auth_query_params={"api_key": "hydrated"},
+                auth_query_params={"api_key": "hydrated"},  # pragma: allowlist secret
                 oauth_config={"grant_type": "client_credentials"},
             )
         )
@@ -10049,7 +10119,7 @@ class TestRustMcpExecutionPlan:
             modified = ToolPreInvokePayload(
                 name=payload.name,
                 args={"cleaned_arg": "value"},
-                headers=HttpHeaderPayload({"x-injected-cred": "secret123"}),
+                headers=HttpHeaderPayload({"x-injected-cred": "secret123"}),  # pragma: allowlist secret
             )
             return PluginResult(modified_payload=modified, continue_processing=True), {}
 
@@ -10542,6 +10612,7 @@ class TestGrpcToolInvocation:
         tool.custom_name_slug = "test-svc-dostuff"
         tool.display_name = "Test Svc Dostuff"
         tool.enabled = True
+        tool.deprecated = False
         tool.reachable = True
         tool.tags = []
         tool.team_id = None

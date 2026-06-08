@@ -273,7 +273,7 @@ sys.stdout.flush()
         env_vars = {
             "GITHUB_TOKEN": "github-token-123",
             "TENANT_ID": "acme-corp",
-            "API_KEY": "api-key-456",
+            "API_KEY": "api-key-456",  # pragma: allowlist secret
             "ENVIRONMENT": "production",
             "DEBUG": "false",
         }

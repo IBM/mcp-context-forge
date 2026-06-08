@@ -7,7 +7,7 @@ Authors: Mihai Criveti
 store ca-certs for gateways
 
 Revision ID: f9101f3b00e3
-Revises: a706a3320c56
+Revises: j4d5e6f7g8h9
 Create Date: 2025-11-05 15:18:16.659224
 """
 
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "f9101f3b00e3"
-down_revision: Union[str, Sequence[str], None] = "a706a3320c56"
+down_revision: Union[str, Sequence[str], None] = "j4d5e6f7g8h9"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

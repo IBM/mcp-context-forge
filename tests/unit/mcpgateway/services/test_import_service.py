@@ -285,13 +285,13 @@ async def test_rekey_auth_data_success(import_service):
 
     try:
         # Create entity with auth data using a specific secret
-        settings.auth_encryption_secret = "original-key"
+        settings.auth_encryption_secret = "original-key"  # pragma: allowlist secret
         original_auth = {"type": "bearer", "token": "test_token"}
         entity_data = {"name": "test_tool", "auth_type": "bearer", "auth_value": encode_auth(original_auth)}
         original_auth_value = entity_data["auth_value"]
 
         # Test re-keying with different secret
-        new_secret = "new-encryption-key"
+        new_secret = "new-encryption-key"  # pragma: allowlist secret
         result = import_service._rekey_auth_data(entity_data, new_secret)
 
         # Should have the same basic structure but potentially different auth_value
@@ -488,7 +488,7 @@ async def test_import_with_rekey_secret(import_service, mock_db):
     import_service.tool_service.register_tools_bulk.return_value = {"created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
 
     # Execute import with rekey secret
-    status = await import_service.import_configuration(db=mock_db, import_data=import_data, rekey_secret="new-encryption-key", imported_by="test_user")
+    status = await import_service.import_configuration(db=mock_db, import_data=import_data, rekey_secret="new-encryption-key", imported_by="test_user")  # pragma: allowlist secret
 
     # Validate status
     assert status.status == "completed"
@@ -1368,7 +1368,7 @@ async def test_gateway_auth_conversion_authheaders_single(import_service):
     from mcpgateway.utils.services_auth import encode_auth
 
     # Create auth headers data (single header)
-    headers_auth = {"X-API-Key": "api_key_value"}
+    headers_auth = {"X-API-Key": "api_key_value"}  # pragma: allowlist secret
     encrypted_auth = encode_auth(headers_auth)
 
     gateway_data = {"name": "headers_gateway", "url": "https://example.com", "auth_type": "authheaders", "auth_value": encrypted_auth}
@@ -1387,7 +1387,7 @@ async def test_gateway_auth_conversion_authheaders_multiple(import_service):
     from mcpgateway.utils.services_auth import encode_auth
 
     # Create auth headers data (multiple headers)
-    headers_auth = {"X-API-Key": "api_key_value", "X-Client-ID": "client_123"}
+    headers_auth = {"X-API-Key": "api_key_value", "X-Client-ID": "client_123"}  # pragma: allowlist secret
     encrypted_auth = encode_auth(headers_auth)
 
     gateway_data = {"name": "multi_headers_gateway", "url": "https://example.com", "auth_type": "authheaders", "auth_value": encrypted_auth}
@@ -1540,7 +1540,7 @@ async def test_gateway_update_auth_conversion_basic_and_headers(import_service):
     assert basic_update.auth_password == "pass"
 
     # Test authheaders with single header in gateway update
-    single_header_auth = {"X-API-Key": "single_key_value"}
+    single_header_auth = {"X-API-Key": "single_key_value"}  # pragma: allowlist secret
     encrypted_single = encode_auth(single_header_auth)
 
     single_header_data = {"name": "single_header_gateway", "url": "https://example.com", "transport": "SSE", "auth_type": "authheaders", "auth_value": encrypted_single}
@@ -1551,7 +1551,7 @@ async def test_gateway_update_auth_conversion_basic_and_headers(import_service):
     assert single_update.auth_header_value == "single_key_value"
 
     # Test authheaders with multiple headers in gateway update
-    multi_headers_auth = {"X-API-Key": "key_value", "X-Client-ID": "client_value"}
+    multi_headers_auth = {"X-API-Key": "key_value", "X-Client-ID": "client_value"}  # pragma: allowlist secret
     encrypted_multi = encode_auth(multi_headers_auth)
 
     multi_header_data = {"name": "multi_header_gateway", "url": "https://example.com", "transport": "SSE", "auth_type": "authheaders", "auth_value": encrypted_multi}
@@ -2381,7 +2381,7 @@ async def test_gateway_create_with_authheaders_single(import_service):
         "name": "auth_gw",
         "url": "https://gw.example.com",
         "auth_type": "authheaders",
-        "auth_value": encode_auth({"X-API-Key": "secret-key"}),
+        "auth_value": encode_auth({"X-API-Key": "secret-key"}),  # pragma: allowlist secret
     }
 
     result = import_service._convert_to_gateway_create(gateway_data)
@@ -2398,7 +2398,7 @@ async def test_gateway_create_with_authheaders_multiple(import_service):
         "name": "auth_gw",
         "url": "https://gw.example.com",
         "auth_type": "authheaders",
-        "auth_value": encode_auth({"X-API-Key": "key1", "X-Custom": "val2"}),
+        "auth_value": encode_auth({"X-API-Key": "key1", "X-Custom": "val2"}),  # pragma: allowlist secret
     }
 
     result = import_service._convert_to_gateway_create(gateway_data)
@@ -2490,7 +2490,7 @@ async def test_gateway_auth_conversion_query_param_success(import_service):
     # First-Party
     from mcpgateway.config import settings
 
-    gateway_data = {"name": "qp_gateway", "url": "https://example.com", "auth_type": "query_param", "auth_query_params": {"api_key": "enc"}}
+    gateway_data = {"name": "qp_gateway", "url": "https://example.com", "auth_type": "query_param", "auth_query_params": {"api_key": "enc"}}  # pragma: allowlist secret
 
     original_allow = settings.insecure_allow_queryparam_auth
     original_hosts = settings.insecure_queryparam_auth_allowed_hosts
@@ -2515,7 +2515,7 @@ async def test_gateway_auth_conversion_query_param_decode_error(import_service):
     # First-Party
     from mcpgateway.config import settings
 
-    gateway_data = {"name": "qp_gateway", "url": "https://example.com", "auth_type": "query_param", "auth_query_params": {"api_key": "enc"}}
+    gateway_data = {"name": "qp_gateway", "url": "https://example.com", "auth_type": "query_param", "auth_query_params": {"api_key": "enc"}}  # pragma: allowlist secret
 
     original_allow = settings.insecure_allow_queryparam_auth
     original_hosts = settings.insecure_queryparam_auth_allowed_hosts
@@ -2533,7 +2533,7 @@ async def test_gateway_auth_conversion_query_param_decode_error(import_service):
 @pytest.mark.asyncio
 async def test_gateway_update_auth_conversion_query_param_success(import_service):
     """Cover query_param auth conversion path in _convert_to_gateway_update."""
-    gateway_data = {"name": "qp_gateway", "url": "https://example.com", "auth_type": "query_param", "auth_query_params": {"api_key": "enc"}}
+    gateway_data = {"name": "qp_gateway", "url": "https://example.com", "auth_type": "query_param", "auth_query_params": {"api_key": "enc"}}  # pragma: allowlist secret
 
     with patch("mcpgateway.services.import_service.decode_auth", return_value={"api_key": "secret"}):
         gw = import_service._convert_to_gateway_update(gateway_data)
@@ -2547,7 +2547,7 @@ async def test_gateway_update_auth_conversion_query_param_success(import_service
 @pytest.mark.asyncio
 async def test_gateway_update_auth_conversion_query_param_decode_error(import_service):
     """Cover query_param auth conversion exception logging path in _convert_to_gateway_update."""
-    gateway_data = {"name": "qp_gateway", "url": "https://example.com", "auth_type": "query_param", "auth_query_params": {"api_key": "enc"}}
+    gateway_data = {"name": "qp_gateway", "url": "https://example.com", "auth_type": "query_param", "auth_query_params": {"api_key": "enc"}}  # pragma: allowlist secret
 
     with patch("mcpgateway.services.import_service.decode_auth", side_effect=Exception("boom")):
         with pytest.raises(Exception):

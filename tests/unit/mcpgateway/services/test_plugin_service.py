@@ -8,11 +8,13 @@ Authors: Mihai Criveti
 Module documentation...
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
-from mcpgateway.services.plugin_service import PluginService, get_plugin_service
-import mcpgateway.services.plugin_service as plugin_service_module
+
+import pytest
 from cpex.framework.models import PluginMode
+
+import mcpgateway.services.plugin_service as plugin_service_module
+from mcpgateway.services.plugin_service import PluginService, get_plugin_service
 
 
 @pytest.fixture(autouse=True)
@@ -118,7 +120,9 @@ def test_search_plugins(mock_manager):
     all_p = service.search_plugins()
     assert all_p
     assert service.search_plugins(query="sample")
-    assert service.search_plugins(mode=PluginMode.SEQUENTIAL)
+    # Search by operator label (enforce) not framework label (sequential)
+    # because the service now returns operator labels per issue #4709 fix
+    assert service.search_plugins(mode="enforce")
     assert service.search_plugins(hook="hookA")
     assert service.search_plugins(tag="tag1")
 
@@ -175,6 +179,9 @@ def test_get_all_plugins_enabled_without_config_has_empty_summary():
     plugins = service.get_all_plugins()
 
     assert plugins[0]["name"] == "sample-no-config"
+    assert plugins[0]["description"] == ""
+    assert plugins[0]["author"] == "Unknown"
+    assert plugins[0]["version"] == "0.0.0"
     assert plugins[0]["config_summary"] == {}
 
 

@@ -19,10 +19,14 @@ from typing import Dict
 sys.path.insert(0, ".")
 
 # Third-Party
-from mcp_eval_server.tools.judge_tools import JudgeTools  # noqa: E402  # pylint: disable=wrong-import-position,no-name-in-module
+from mcp_eval_server.tools.judge_tools import (
+    JudgeTools,
+)  # noqa: E402  # pylint: disable=wrong-import-position,no-name-in-module
 
 # Set up logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -78,13 +82,25 @@ async def test_judge_functionality(judge_tools: JudgeTools, judge_name: str) -> 
     """
     try:
         # Simple test evaluation
-        criteria = [{"name": "accuracy", "description": "Factual accuracy", "scale": "1-5", "weight": 1.0}]
+        criteria = [
+            {"name": "accuracy", "description": "Factual accuracy", "scale": "1-5", "weight": 1.0}
+        ]
         rubric = {"criteria": [], "scale_description": {"1": "Wrong", "5": "Correct"}}
 
-        result = await judge_tools.evaluate_response(response="Paris is the capital of France.", criteria=criteria, rubric=rubric, judge_model=judge_name)
+        result = await judge_tools.evaluate_response(
+            response="Paris is the capital of France.",
+            criteria=criteria,
+            rubric=rubric,
+            judge_model=judge_name,
+        )
 
         # Check if we got a valid result
-        return isinstance(result, dict) and "overall_score" in result and "scores" in result and result["overall_score"] > 0
+        return (
+            isinstance(result, dict)
+            and "overall_score" in result
+            and "scores" in result
+            and result["overall_score"] > 0
+        )
 
     except Exception as e:
         logger.error(f"   ❌ Test failed for {judge_name}: {e}")
@@ -201,13 +217,19 @@ async def main():
 
     # Provider-specific recommendations
     if not env_vars.get("OPENAI_API_KEY"):
-        logger.info("   💡 For OpenAI models: export OPENAI_API_KEY='sk-...'")
+        logger.info(
+            "   💡 For OpenAI models: export OPENAI_API_KEY='<your-key>'"  # pragma: allowlist secret
+        )  # pragma: allowlist secret
 
     if not env_vars.get("ANTHROPIC_API_KEY"):
-        logger.info("   💡 For Anthropic models: export ANTHROPIC_API_KEY='sk-ant-...'")
+        logger.info(
+            "   💡 For Anthropic models: export ANTHROPIC_API_KEY='<your-key>'"  # pragma: allowlist secret
+        )  # pragma: allowlist secret
 
     if not env_vars.get("AZURE_OPENAI_API_KEY"):
-        logger.info("   💡 For Azure OpenAI: export AZURE_OPENAI_API_KEY='...' and AZURE_OPENAI_ENDPOINT='...'")
+        logger.info(
+            "   💡 For Azure OpenAI: export AZURE_OPENAI_API_KEY='<your-key>' and AZURE_OPENAI_ENDPOINT='<your-key>'"  # pragma: allowlist secret
+        )
 
     # Rule-based judge always works
     if "rule-based" in available_judges:

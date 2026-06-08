@@ -9,10 +9,8 @@ STATIC_DIR="${SCRIPT_DIR}/../app/mcpgateway/static/vendor"
 
 # Create vendor directory structure
 mkdir -p "${STATIC_DIR}/tailwindcss"
-mkdir -p "${STATIC_DIR}/htmx"
 mkdir -p "${STATIC_DIR}/codemirror/mode/javascript"
 mkdir -p "${STATIC_DIR}/codemirror/theme"
-mkdir -p "${STATIC_DIR}/alpinejs"
 mkdir -p "${STATIC_DIR}/chartjs"
 mkdir -p "${STATIC_DIR}/fontawesome/css"
 mkdir -p "${STATIC_DIR}/fontawesome/webfonts"
@@ -23,11 +21,6 @@ echo "📦 Downloading CDN assets for airgapped deployment..."
 echo "  ⬇️  Tailwind CSS..."
 curl -fsSL "https://cdn.tailwindcss.com/3.4.17" \
   -o "${STATIC_DIR}/tailwindcss/tailwind.min.js"
-
-# Download HTMX
-echo "  ⬇️  HTMX 1.9.12..."
-curl -fsSL "https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js" \
-  -o "${STATIC_DIR}/htmx/htmx.min.js"
 
 # Download CodeMirror
 echo "  ⬇️  CodeMirror 5.65.20..."
@@ -42,11 +35,6 @@ curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/codemirror
 
 curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/theme/monokai.min.css" \
   -o "${STATIC_DIR}/codemirror/theme/monokai.min.css"
-
-# Download Alpine.js (pinned to 3.15.11 for reproducibility)
-echo "  ⬇️  Alpine.js 3.15.12..."
-curl -fsSL "https://cdn.jsdelivr.net/npm/alpinejs@3.15.12/dist/cdn.min.js" \
-  -o "${STATIC_DIR}/alpinejs/alpine.min.js"
 
 # Download Chart.js (pinned to 4.5.1 for reproducibility)
 echo "  ⬇️  Chart.js 4.5.1..."

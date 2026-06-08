@@ -147,7 +147,7 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
     # Create JWT payload — session token (teams resolved server-side at request time)
     payload = {
         # Standard JWT claims
-        "sub": user.email,
+        "sub": str(user.id),
         "iss": settings.jwt_issuer,
         "aud": settings.jwt_audience,
         "iat": issued_at,
@@ -156,13 +156,7 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
         # Idle-timeout bootstrap: first request after issuance uses this until
         # `TokenBlocklistService.update_activity()` writes a fresher value to Redis.
         "last_activity": issued_at,
-        # User profile information
-        "user": {
-            "email": str(getattr(user, "email", "")),
-            "full_name": str(getattr(user, "full_name", "")),
-            "is_admin": bool(getattr(user, "is_admin", False)),
-            "auth_provider": str(getattr(user, "auth_provider", "local")),
-        },
+        "auth_provider": str(getattr(user, "auth_provider", "local")),
         "token_use": "session",  # nosec B105 - token type marker, not a password
         # Token scoping (if provided)
         "scopes": token_scopes or {"server_id": None, "permissions": ["*"], "ip_restrictions": [], "time_restrictions": {}},
@@ -189,10 +183,7 @@ async def create_legacy_access_token(user: EmailUser) -> tuple[str, int]:
 
     # Create simple JWT payload (original format) with primitives only
     payload = {
-        "sub": str(getattr(user, "email", "")),
-        "email": str(getattr(user, "email", "")),
-        "full_name": str(getattr(user, "full_name", "")),
-        "is_admin": bool(getattr(user, "is_admin", False)),
+        "sub": str(getattr(user, "id", "")),
         "auth_provider": str(getattr(user, "auth_provider", "local")),
         "iat": int(now.timestamp()),
         "exp": int(expire.timestamp()),
@@ -230,7 +221,7 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
         Request JSON:
             {
               "email": "user@example.com",
-              "password": "secure_password"
+              "password": "secure_password"  # pragma: allowlist secret
             }
     """
     auth_service = EmailAuthService(db)
@@ -357,7 +348,7 @@ async def register(registration_request: PublicRegistrationRequest, request: Req
         Request JSON:
             {
               "email": "new@example.com",
-              "password": "secure_password",
+              "password": "secure_password",  # pragma: allowlist secret
               "full_name": "New User"
             }
     """
@@ -425,8 +416,8 @@ async def change_password(password_request: ChangePasswordRequest, request: Requ
     Examples:
         Request JSON (with Bearer token in Authorization header):
             {
-              "old_password": "current_password",
-              "new_password": "new_secure_password"
+              "old_password": "current_password",  # pragma: allowlist secret
+              "new_password": "new_secure_password"  # pragma: allowlist secret
             }
     """
     auth_service = EmailAuthService(db)
@@ -708,7 +699,7 @@ async def create_user(user_request: AdminCreateUserRequest, current_user_ctx: di
         Request JSON:
             {
               "email": "newuser@example.com",
-              "password": "secure_password",
+              "password": "secure_password",  # pragma: allowlist secret
               "full_name": "New User",
               "is_admin": false
             }
