@@ -213,15 +213,16 @@ class TestGetCurrentUser:
 class TestLogout:
     """Tests for POST /app/auth/logout endpoint."""
 
-    def test_logout_without_authentication(self, client):
-        """Test logout without authentication returns 401."""
+    def test_logout_without_authentication_still_clears_cookies(self, client):
+        """Logout without any cookies still returns 200.
+
+        /app/auth/logout is CSRF-exempt and always clears cookies so that
+        users can log out even when their session has already expired.
+        """
         response = client.post("/app/auth/logout")
 
-        # Should return 401 or 403 depending on auth middleware
-        assert response.status_code in [
-            status.HTTP_401_UNAUTHORIZED,
-            status.HTTP_403_FORBIDDEN,
-        ]
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["message"] == "Logged out successfully"
 
 
 class TestCSRFProtection:
@@ -296,8 +297,13 @@ class TestSecurityVectors:
         # Should fail safely with 401 (invalid credentials)
         assert response.status_code == 401
 
-    def test_csrf_token_wrong_length_rejected(self, client):
-        """Test CSRF validation rejects tokens that are not 64 characters."""
+    def test_logout_succeeds_with_wrong_length_csrf_token(self, client):
+        """Logout is CSRF-exempt so it succeeds even with a malformed CSRF token.
+
+        /app/auth/logout is exempt from CSRF validation to ensure users can
+        always log out — even when their CSRF token is expired or malformed.
+        Cookie clearing must not be gated on CSRF validity.
+        """
         short_token = "token-with-wrong-len"  # 20 chars, not 64
         response = client.post(
             "/app/auth/logout",
@@ -307,11 +313,10 @@ class TestSecurityVectors:
             },
             headers={"X-CSRF-Token": short_token},
         )
-        # Fails due to token length check (not XSS — JSON body is never reflected)
-        assert response.status_code in [401, 403]
+        assert response.status_code == status.HTTP_200_OK
 
-    def test_csrf_token_length_validation_oversized(self, client):
-        """Test CSRF validation rejects oversized tokens."""
+    def test_logout_succeeds_with_oversized_csrf_token(self, client):
+        """Logout is CSRF-exempt so it succeeds even with an oversized CSRF token."""
         oversized_token = "x" * 1000
         response = client.post(
             "/app/auth/logout",
@@ -321,13 +326,10 @@ class TestSecurityVectors:
             },
             headers={"X-CSRF-Token": oversized_token},
         )
-        # Should fail with 403 (invalid token format)
-        assert response.status_code in [401, 403]
-        if response.status_code == 403:
-            assert response.json()["detail"]["message"] == "Invalid CSRF token format"
+        assert response.status_code == status.HTTP_200_OK
 
-    def test_csrf_token_length_validation_undersized(self, client):
-        """Test CSRF validation rejects undersized tokens."""
+    def test_logout_succeeds_with_undersized_csrf_token(self, client):
+        """Logout is CSRF-exempt so it succeeds even with an undersized CSRF token."""
         undersized_token = "short"
         response = client.post(
             "/app/auth/logout",
@@ -337,10 +339,7 @@ class TestSecurityVectors:
             },
             headers={"X-CSRF-Token": undersized_token},
         )
-        # Should fail with 403 (invalid token format)
-        assert response.status_code in [401, 403]
-        if response.status_code == 403:
-            assert response.json()["detail"]["message"] == "Invalid CSRF token format"
+        assert response.status_code == status.HTTP_200_OK
 
 
 class TestRBACMiddleware:
