@@ -235,11 +235,7 @@ describe("api client", () => {
 
   describe("Response Handling", () => {
     it("returns parsed JSON response", async () => {
-      server.use(
-        http.get("*/api/data", () =>
-          HttpResponse.json({ name: "test", value: 42 }),
-        ),
-      );
+      server.use(http.get("*/api/data", () => HttpResponse.json({ name: "test", value: 42 })));
 
       const result = await api.get("/api/data");
 
@@ -247,9 +243,7 @@ describe("api client", () => {
     });
 
     it("handles 204 No Content responses", async () => {
-      server.use(
-        http.delete("*/api/item", () => new HttpResponse(null, { status: 204 })),
-      );
+      server.use(http.delete("*/api/item", () => new HttpResponse(null, { status: 204 })));
 
       const result = await api.delete("/api/item");
 
@@ -258,9 +252,7 @@ describe("api client", () => {
 
     it("throws ApiError on non-2xx responses", async () => {
       server.use(
-        http.get("*/api/error", () =>
-          HttpResponse.json({ error: "Not found" }, { status: 404 }),
-        ),
+        http.get("*/api/error", () => HttpResponse.json({ error: "Not found" }, { status: 404 })),
       );
 
       await expect(api.get("/api/error")).rejects.toThrow(ApiError);
@@ -268,11 +260,7 @@ describe("api client", () => {
 
     it("includes status and body in ApiError", async () => {
       const errorBody = { error: "validation failed" };
-      server.use(
-        http.post("*/api/validate", () =>
-          HttpResponse.json(errorBody, { status: 400 }),
-        ),
-      );
+      server.use(http.post("*/api/validate", () => HttpResponse.json(errorBody, { status: 400 })));
 
       try {
         await api.post("/api/validate", {});
@@ -284,11 +272,7 @@ describe("api client", () => {
     });
 
     it("handles invalid JSON in error response", async () => {
-      server.use(
-        http.get("*/api/error", () =>
-          new HttpResponse("Invalid JSON", { status: 500 }),
-        ),
-      );
+      server.use(http.get("*/api/error", () => new HttpResponse("Invalid JSON", { status: 500 })));
 
       try {
         await api.get("/api/error");
@@ -302,13 +286,12 @@ describe("api client", () => {
 
   describe("Authentication", () => {
     it("redirects to login on 401 response", async () => {
-      const replaceLocationSpy = vi.spyOn(window.location, "replace");
+      const originalLocation = window.location;
+      const mockReplace = vi.fn();
+      delete (window as any).location;
+      window.location = { ...originalLocation, replace: mockReplace } as any;
 
-      server.use(
-        http.get("*/api/protected", () =>
-          new HttpResponse(null, { status: 401 }),
-        ),
-      );
+      server.use(http.get("*/api/protected", () => new HttpResponse(null, { status: 401 })));
 
       try {
         await api.get("/api/protected");
@@ -316,19 +299,18 @@ describe("api client", () => {
         // expected
       }
 
-      expect(replaceLocationSpy).toHaveBeenCalledWith("/app/login");
+      expect(mockReplace).toHaveBeenCalledWith("/app/login");
 
-      replaceLocationSpy.mockRestore();
+      window.location = originalLocation;
     });
 
     it("does not redirect to login on 401 for /app/auth/me", async () => {
-      const replaceLocationSpy = vi.spyOn(window.location, "replace");
+      const originalLocation = window.location;
+      const mockReplace = vi.fn();
+      delete (window as any).location;
+      window.location = { ...originalLocation, replace: mockReplace } as any;
 
-      server.use(
-        http.get("*/app/auth/me", () =>
-          new HttpResponse(null, { status: 401 }),
-        ),
-      );
+      server.use(http.get("*/app/auth/me", () => new HttpResponse(null, { status: 401 })));
 
       try {
         await api.get("/app/auth/me");
@@ -336,9 +318,9 @@ describe("api client", () => {
         // expected
       }
 
-      expect(replaceLocationSpy).not.toHaveBeenCalled();
+      expect(mockReplace).not.toHaveBeenCalled();
 
-      replaceLocationSpy.mockRestore();
+      window.location = originalLocation;
     });
 
     it("sends credentials same-origin for authenticated requests", async () => {
@@ -458,9 +440,7 @@ describe("api client", () => {
     });
 
     it("passes through options to request function", async () => {
-      server.use(
-        http.delete("*/api/item", () => HttpResponse.json({ deleted: true })),
-      );
+      server.use(http.delete("*/api/item", () => HttpResponse.json({ deleted: true })));
 
       const result = await api.delete("/api/item", { authenticated: true });
 

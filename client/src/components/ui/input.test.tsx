@@ -106,9 +106,7 @@ describe("Input", () => {
     });
 
     it("should merge multiple custom classes with default classes", () => {
-      const { container } = render(
-        <Input className="my-input custom-styling" />,
-      );
+      const { container } = render(<Input className="my-input custom-styling" />);
       const el = container.querySelector('input[data-slot="input"]');
 
       expect(el).toHaveClass("my-input");
@@ -143,7 +141,6 @@ describe("Input", () => {
   });
 
   describe("Input Type", () => {
-
     it("should support type=password", () => {
       const { container } = render(<Input type="password" />);
       const el = container.querySelector('input[data-slot="input"]');
@@ -203,9 +200,7 @@ describe("Input", () => {
 
   describe("Props Forwarding", () => {
     it("should forward standard HTML attributes", () => {
-      const { container } = render(
-        <Input id="my-input" title="Input field" />,
-      );
+      const { container } = render(<Input id="my-input" title="Input field" />);
       const el = container.querySelector('input[data-slot="input"]');
 
       expect(el).toHaveAttribute("id", "my-input");
@@ -213,9 +208,7 @@ describe("Input", () => {
     });
 
     it("should forward data-* attributes", () => {
-      const { container } = render(
-        <Input data-testid="input-1" data-custom="value" />,
-      );
+      const { container } = render(<Input data-testid="input-1" data-custom="value" />);
       const el = container.querySelector('input[data-slot="input"]');
 
       expect(el).toHaveAttribute("data-testid", "input-1");
@@ -272,10 +265,7 @@ describe("Input", () => {
 
     it("should forward aria-* attributes", () => {
       const { container } = render(
-        <Input
-          aria-label="Email input"
-          aria-describedby="email-help"
-        />,
+        <Input aria-label="Email input" aria-describedby="email-help" />,
       );
       const el = container.querySelector('input[data-slot="input"]');
 
@@ -285,12 +275,7 @@ describe("Input", () => {
 
     it("should forward multiple standard div attributes", () => {
       const { container } = render(
-        <Input
-          id="inp1"
-          title="Input"
-          data-testid="test-inp"
-          tabIndex={0}
-        />,
+        <Input id="inp1" title="Input" data-testid="test-inp" tabIndex={0} />,
       );
       const el = container.querySelector('input[data-slot="input"]');
 
@@ -327,18 +312,14 @@ describe("Input", () => {
     });
 
     it("should support aria-labelledby", () => {
-      const { container } = render(
-        <Input aria-labelledby="label-id" />,
-      );
+      const { container } = render(<Input aria-labelledby="label-id" />);
       const el = container.querySelector('input[data-slot="input"]');
 
       expect(el).toHaveAttribute("aria-labelledby", "label-id");
     });
 
     it("should support aria-describedby", () => {
-      const { container } = render(
-        <Input aria-describedby="desc-id" />,
-      );
+      const { container } = render(<Input aria-describedby="desc-id" />);
       const el = container.querySelector('input[data-slot="input"]');
 
       expect(el).toHaveAttribute("aria-describedby", "desc-id");
@@ -487,7 +468,7 @@ describe("Input", () => {
         </div>,
       );
 
-      const input = container.querySelector('#username');
+      const input = container.querySelector("#username");
       expect(input).toBeInTheDocument();
     });
 
@@ -495,25 +476,18 @@ describe("Input", () => {
       const { container } = render(
         <div>
           <label htmlFor="email">Email</label>
-          <Input
-            id="email"
-            type="email"
-            aria-invalid="true"
-            aria-describedby="email-error"
-          />
+          <Input id="email" type="email" aria-invalid="true" aria-describedby="email-error" />
           <span id="email-error">Invalid email</span>
         </div>,
       );
 
-      const input = container.querySelector('#email');
+      const input = container.querySelector("#email");
       expect(input).toHaveAttribute("aria-invalid", "true");
       expect(input).toHaveAttribute("aria-describedby", "email-error");
     });
 
     it("should support size customization via className", () => {
-      const { container } = render(
-        <Input className="h-12 text-lg" />,
-      );
+      const { container } = render(<Input className="h-12 text-lg" />);
       const el = container.querySelector('input[data-slot="input"]');
 
       expect(el).toHaveClass("h-12");
@@ -521,9 +495,7 @@ describe("Input", () => {
     });
 
     it("should work with max/minLength attributes", () => {
-      const { container } = render(
-        <Input maxLength={50} minLength={5} />,
-      );
+      const { container } = render(<Input maxLength={50} minLength={5} />);
       const el = container.querySelector('input[data-slot="input"]');
 
       expect(el).toHaveAttribute("maxlength", "50");
@@ -531,9 +503,7 @@ describe("Input", () => {
     });
 
     it("should work with pattern attribute", () => {
-      const { container } = render(
-        <Input type="text" pattern="[0-9]+" />,
-      );
+      const { container } = render(<Input type="text" pattern="[0-9]+" />);
       const el = container.querySelector('input[data-slot="input"]');
 
       expect(el).toHaveAttribute("pattern", "[0-9]+");
@@ -571,9 +541,7 @@ describe("Input", () => {
     });
 
     it("should handle multiple rerenders with different props", () => {
-      const { container, rerender } = render(
-        <Input placeholder="initial" />,
-      );
+      const { container, rerender } = render(<Input placeholder="initial" />);
 
       let el = container.querySelector('input[data-slot="input"]');
       expect(el).toHaveAttribute("placeholder", "initial");
@@ -588,17 +556,9 @@ describe("Input", () => {
     });
 
     it("should preserve data-slot through all prop changes", () => {
-      const { container, rerender } = render(
-        <Input id="inp-1" />,
-      );
+      const { container, rerender } = render(<Input id="inp-1" />);
 
-      rerender(
-        <Input
-          className="test"
-          id="inp-2"
-          placeholder="changed"
-        />,
-      );
+      rerender(<Input className="test" id="inp-2" placeholder="changed" />);
 
       const el = container.querySelector('input[data-slot="input"]');
       expect(el).toHaveAttribute("data-slot", "input");

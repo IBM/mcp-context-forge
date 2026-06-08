@@ -78,9 +78,7 @@ describe("Badge", () => {
 
   describe("Class merging & edge cases", () => {
     it("should merge custom className with default classes", () => {
-      const { getByText } = render(
-        <Badge className="custom-class">Merged</Badge>,
-      );
+      const { getByText } = render(<Badge className="custom-class">Merged</Badge>);
       const el = getByText("Merged");
 
       expect(el).toHaveClass("custom-class");

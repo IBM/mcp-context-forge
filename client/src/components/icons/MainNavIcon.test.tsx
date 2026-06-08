@@ -37,7 +37,7 @@ describe("MainNavIcon", () => {
     const { container } = render(<MainNavIcon />);
     const paths = container.querySelectorAll("path");
     let hasCurrentColorFill = false;
-    paths.forEach(path => {
+    paths.forEach((path) => {
       if (path.getAttribute("fill") === "currentColor") {
         hasCurrentColorFill = true;
       }
@@ -49,7 +49,7 @@ describe("MainNavIcon", () => {
     const { container } = render(<MainNavIcon />);
     const paths = container.querySelectorAll("path");
     let hasRedFill = false;
-    paths.forEach(path => {
+    paths.forEach((path) => {
       if (path.getAttribute("fill") === "#FF4540") {
         hasRedFill = true;
       }
@@ -92,7 +92,7 @@ describe("MainNavIcon", () => {
   it("preserves path data", () => {
     const { container } = render(<MainNavIcon />);
     const paths = container.querySelectorAll("path");
-    paths.forEach(path => {
+    paths.forEach((path) => {
       expect(path.getAttribute("d")).toBeTruthy();
     });
   });
@@ -100,10 +100,10 @@ describe("MainNavIcon", () => {
   it("renders icon with consistent properties", () => {
     const { container: container1 } = render(<MainNavIcon />);
     const { container: container2 } = render(<MainNavIcon />);
-    
+
     const svg1 = container1.querySelector("svg");
     const svg2 = container2.querySelector("svg");
-    
+
     expect(svg1?.getAttribute("viewBox")).toBe(svg2?.getAttribute("viewBox"));
     expect(svg1?.getAttribute("width")).toBe(svg2?.getAttribute("width"));
     expect(svg1?.getAttribute("height")).toBe(svg2?.getAttribute("height"));

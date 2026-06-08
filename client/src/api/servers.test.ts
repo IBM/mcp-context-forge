@@ -159,7 +159,11 @@ describe("serversApi", () => {
 
       const result = await serversApi.list();
 
-      expect(api.get).toHaveBeenCalledWith("/gateways?include_pagination=true", undefined, undefined);
+      expect(api.get).toHaveBeenCalledWith(
+        "/gateways?include_pagination=true",
+        undefined,
+        undefined,
+      );
       expect(result).toEqual(response);
     });
 
@@ -182,7 +186,11 @@ describe("serversApi", () => {
 
       await serversApi.list({ limit: Number.NaN });
 
-      expect(api.get).toHaveBeenCalledWith("/gateways?limit=25&include_pagination=true", undefined, undefined);
+      expect(api.get).toHaveBeenCalledWith(
+        "/gateways?limit=25&include_pagination=true",
+        undefined,
+        undefined,
+      );
     });
 
     it("should proxy get, delete, and testConnection requests using validated gateway IDs", async () => {
@@ -204,7 +212,9 @@ describe("serversApi", () => {
     it("should reject invalid gateway IDs for get, delete, and testConnection", () => {
       expect(() => serversApi.get("invalid id!" as any)).toThrow("Invalid server ID format");
       expect(() => serversApi.delete("invalid id!" as any)).toThrow("Invalid server ID format");
-      expect(() => serversApi.testConnection("invalid id!" as any)).toThrow("Invalid server ID format");
+      expect(() => serversApi.testConnection("invalid id!" as any)).toThrow(
+        "Invalid server ID format",
+      );
     });
 
     it("should handle multiple rapid messages (only first should settle)", async () => {
