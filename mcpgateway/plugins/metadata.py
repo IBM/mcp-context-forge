@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Resolve plugin display metadata from installed packages."""
+"""Location: ./mcpgateway/plugins/metadata.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Resolve plugin display metadata from installed packages.
+"""
 
 # Standard
 from importlib import metadata as importlib_metadata

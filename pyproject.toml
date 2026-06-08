@@ -8,7 +8,7 @@ requires = ["setuptools>=78.1.1", "wheel>=0.46.2"]
 build-backend = "setuptools.build_meta"
 
 [tool.uv]
-exclude-newer = "6 days"
+exclude-newer = "10 days"
 
 [tool.uv.exclude-newer-package]
 cpex = "2026-06-08T10:56:34Z"
@@ -28,6 +28,8 @@ opentelemetry-exporter-otlp-proto-common = "2026-06-08T10:56:34Z"
 opentelemetry-proto = "2026-06-08T10:56:34Z"
 opentelemetry-semantic-conventions = "2026-06-08T10:56:34Z"
 prometheus-fastapi-instrumentator = "2026-06-08T10:56:34Z"
+aiohttp = "2026-06-08T10:56:34Z"
+
 
 [tool.uv.sources]
 compliance-reference-server = { path = "mcp-servers/python/compliance_reference_server", editable = true }
