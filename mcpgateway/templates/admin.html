@@ -242,10 +242,10 @@
       window.htmxConfig = window.htmxConfig || {};
       window.htmxConfig.inlineScriptNonce = "{{ csp_nonce(request) }}";
     </script>
-    <script src="{{ root_path }}/static/{{ bundle_js }}"></script>
+    <script defer src="{{ root_path }}/static/{{ bundle_js }}"></script>
     {% if is_admin %}
-    <script src="{{ root_path }}/static/gantt-chart.js?v=3"></script>
-    <script src="{{ root_path }}/static/flame-graph.js?v=1"></script>
+    <script defer src="{{ root_path }}/static/gantt-chart.js?v=3"></script>
+    <script defer src="{{ root_path }}/static/flame-graph.js?v=1"></script>
     {% endif %}
     <!-- CodeMirror CSS -->
     {% if ui_airgapped %}
