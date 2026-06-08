@@ -1318,6 +1318,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     aggregation_backfill_task: Optional[asyncio.Task] = None
     siem_export_service: Optional[Any] = None
     dataplane_publisher_service: Optional[Any] = None
+    gateway_worker: Optional[Any] = None
 
     # Initialize logging service FIRST to ensure all logging goes to dual output
     await logging_service.initialize()
@@ -1624,6 +1625,16 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if settings.sso_enabled:
             await attempt_to_bootstrap_sso_providers()
 
+        # Initialize gateway worker for async lifecycle operations (Issue #4565)
+        gateway_worker = None
+        if settings.gateway_async_lifecycle_enabled:
+            # First-Party
+            from mcpgateway.workers import GatewayWorker  # pylint: disable=import-outside-toplevel
+            
+            gateway_worker = GatewayWorker()
+            gateway_worker.start()
+            logger.info("Gateway worker started (async lifecycle enabled)")
+        
         logger.info("All services initialized successfully")
 
         # Warn about unsafe UAID configuration if A2A is enabled
@@ -1761,6 +1772,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         except Exception as e:
             logger.debug(f"Error stopping runtime-mode coordinator: {e}")
 
+        # Stop gateway worker first (before other services)
+        if gateway_worker is not None:
+            try:
+                gateway_worker.stop()
+                logger.info("Gateway worker stopped")
+            except Exception as e:
+                logger.error(f"Error stopping gateway worker: {e}")
+        
         logger.info("Shutting down ContextForge services")
         # await stop_streamablehttp()
         # Build service list conditionally

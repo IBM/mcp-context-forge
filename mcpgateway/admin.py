@@ -158,6 +158,7 @@ from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayNameConflictError, GatewayNotFoundError, GatewayService
 from mcpgateway.services.import_service import ConflictStrategy
+from mcpgateway.services.observability_service import ObservabilityService
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.logging_service import LoggingService
@@ -12549,6 +12550,23 @@ async def admin_add_gateway(
             db.add(db_gateway)
             db.commit()
             
+            # Task 27: Create OTEL trace for async operation
+            if settings.observability_enabled:
+                observability = ObservabilityService()
+                trace_id = observability.start_trace(
+                    name="gateway.create",
+                    attributes={
+                        "gateway.name": gateway.name,
+                        "gateway.url": normalized_url,
+                        "gateway.transport": gateway.transport,
+                        "gateway.visibility": visibility,
+                        "operation": "create",
+                    }
+                )
+                # Store trace_id in gateway record for worker correlation
+                db_gateway.trace_id = trace_id
+                db.commit()
+            
             return ORJSONResponse(
                 content={
                     "message": "Gateway registration queued",
@@ -12734,6 +12752,21 @@ async def admin_update_gateway_rest(
             db_gateway.registration_attempts = 0
             db.commit()
             
+            # Task 27: Create OTEL trace for async operation
+            if settings.observability_enabled:
+                observability = ObservabilityService()
+                trace_id = observability.start_trace(
+                    name="gateway.update",
+                    attributes={
+                        "gateway.id": gateway_id,
+                        "gateway.name": db_gateway.name,
+                        "operation": "update",
+                    }
+                )
+                # Store trace_id in gateway record for worker correlation
+                db_gateway.trace_id = trace_id
+                db.commit()
+            
             return ORJSONResponse(
                 content={
                     "message": "Gateway update queued",
@@ -12841,6 +12874,21 @@ async def admin_delete_gateway_rest(
             db_gateway.status_message = "Gateway deletion queued"
             db_gateway.status_updated_at = datetime.now(timezone.utc)
             db.commit()
+            
+            # Task 27: Create OTEL trace for async operation
+            if settings.observability_enabled:
+                observability = ObservabilityService()
+                trace_id = observability.start_trace(
+                    name="gateway.delete",
+                    attributes={
+                        "gateway.id": gateway_id,
+                        "gateway.name": db_gateway.name,
+                        "operation": "delete",
+                    }
+                )
+                # Store trace_id in gateway record for worker correlation
+                db_gateway.trace_id = trace_id
+                db.commit()
             
             return ORJSONResponse(
                 content={
