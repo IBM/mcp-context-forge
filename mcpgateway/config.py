@@ -1118,6 +1118,24 @@ class Settings(BaseSettings):
 
     # Direct Proxy Configuration (disabled by default)
     mcpgateway_direct_proxy_enabled: bool = Field(default=False, description="Enable direct_proxy gateway mode for pass-through MCP operations")
+    # Gateway Async Lifecycle Configuration (Issue #4565)
+    gateway_async_lifecycle_enabled: bool = Field(
+        default=False,
+        description="Enable asynchronous gateway lifecycle operations (create, update, delete) with 202 Accepted responses and background worker processing"
+    )
+    gateway_worker_poll_interval_seconds: int = Field(
+        default=5,
+        ge=1,
+        le=60,
+        description="Background worker polling interval in seconds for pending gateway operations"
+    )
+    gateway_worker_batch_size: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Maximum number of pending gateways to process per worker cycle"
+    )
+
     mcpgateway_direct_proxy_timeout: int = Field(default=30, description="Default timeout in seconds for direct proxy MCP operations")
 
     # ===================================

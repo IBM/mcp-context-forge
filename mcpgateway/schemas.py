@@ -3620,6 +3620,14 @@ class GatewayRead(BaseModelWithConfigDict):
     gateway_mode: str = Field(default="cache", description="Gateway mode: 'cache' (database caching, default) or 'direct_proxy' (pass-through mode with no caching)")
 
     # Per-gateway identity propagation configuration
+
+    # Async lifecycle fields (Issue #4565)
+    status: str = Field(default="active", description="Gateway lifecycle status: pending, active, deleting")
+    status_message: Optional[str] = Field(None, description="User-facing status description")
+    status_updated_at: Optional[datetime] = Field(None, description="Timestamp of last status change")
+    registration_attempts: int = Field(default=0, description="Number of registration retry attempts")
+    next_retry_at: Optional[datetime] = Field(None, description="Timestamp for next retry attempt")
+    # Note: last_error is NOT exposed in API responses (internal only)
     identity_propagation: Optional[Dict[str, Any]] = Field(None, description="Per-gateway identity propagation config")
 
     _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
