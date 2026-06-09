@@ -6,10 +6,10 @@
 
 ### Overview
 
-Release 1.0.3 consolidates **72 PRs** focused on **authentication and JWT hardening**, **continued React Admin UI rewrite**, **FedRAMP/FIPS compliance**, **rate-limiter and plugin improvements**, **performance/caching**, and a broad set of **bug fixes**. This release cleans up the JWT token model, standardizes CSRF handling, advances the React-based Admin UI, strengthens FIPS/STIG compliance, and improves multi-architecture builds and CI reliability:
+Release 1.0.3 consolidates **61 PRs** focused on **authentication and JWT hardening**, **FedRAMP/FIPS compliance**, **rate-limiter and plugin improvements**, **performance/caching**, and a broad set of **bug fixes**. This release cleans up the JWT token model, strengthens FIPS/STIG compliance, and improves multi-architecture builds and CI reliability:
 
 - **🔐 Security & Auth** - JWT token cleanup (UUID-based subjects, JIT credential resolution), OAuth audience parameter support, CSRF cookie name standardization, same-origin cookie auth for OAuth callbacks, API-token idle-timeout handling, SSO callback redirect fixes, PII redaction in logs, and CA-cert validation handling for authless MCPs.
-- **🖥️ Admin UI (React Rewrite)** - MCP Servers page redesign to the Figma spec, users list table, virtual server "expose components" step, MCP server details view, Alpine.js CSP migration, Teams panel loading fix, and React auth bug fixes.
+- **🖥️ Admin UI** - Alpine.js CSP migration and component consolidation, Teams panel loading fix, script-defer race-condition fix, SRI hash fixes, and plugin operator labels.
 - **🛡️ FedRAMP / FIPS Compliance** - Opt-in FIPS compliance mode with parameterized base images, additional STIG controls, dotfile permission modes, and `/app` ownership adjustments.
 - **🧩 Plugins & Rate Limiting** - Tightened plugin-bindings payload surface, dedicated Redis instance support for the rate limiter, CPEX plugin regression fixes and metadata resolution, and tool pre-invoke diagnostics.
 - **⚡ Performance & Caching** - AuthCache full-team-object storage, token-revocation caching, team cache hardening, metrics aggregation throttling, and a faster Rust fast-test server.
@@ -22,13 +22,6 @@ Release 1.0.3 consolidates **72 PRs** focused on **authentication and JWT harden
 
 - **🎫 OAuth Audience Parameter** ([#4795](https://github.com/IBM/mcp-context-forge/pull/4795)) – Added OAuth `audience` parameter support for Atlassian and Auth0. Improves OAuth interoperability with providers that require an audience claim.
 - **🕵️ PII Redaction in Logs** ([#5013](https://github.com/IBM/mcp-context-forge/pull/5013)) – Redact PII from log output. Strengthens privacy and compliance posture.
-
-#### **🖥️ Admin UI (React Rewrite)**
-
-- **📋 MCP Servers Page Redesign** ([#4885](https://github.com/IBM/mcp-context-forge/pull/4885)) – Redesigned the MCP Servers page to match the Figma specification, covering both frontend layout and the backend data to power it. Modernizes server management UX.
-- **👥 Users List Table** ([#4917](https://github.com/IBM/mcp-context-forge/pull/4917)) – Added a table to list the users page. Improves user administration visibility.
-- **🧱 Virtual Server "Expose Components" Step** ([#4919](https://github.com/IBM/mcp-context-forge/pull/4919)) – Added an expose-components step for virtual server creation. Streamlines the virtual server build flow.
-- **🔎 MCP Server Details View** ([#4986](https://github.com/IBM/mcp-context-forge/pull/4986)) – Added an MCP server details view. Provides richer server inspection in the new UI.
 
 #### **🛡️ FedRAMP / FIPS Compliance**
 
@@ -48,7 +41,6 @@ Release 1.0.3 consolidates **72 PRs** focused on **authentication and JWT harden
 #### **🔐 Security & Auth**
 
 - **🎫 JWT Cleanup** ([#4816](https://github.com/IBM/mcp-context-forge/pull/4816)) – Removed unused data from JWT tokens, moved token subjects to user IDs (UUID), and resolved credentials just-in-time. Simplifies the token model and reduces token payload surface.
-- **🍪 CSRF Cookie Name Standardization** ([#4938](https://github.com/IBM/mcp-context-forge/pull/4938), [#5010](https://github.com/IBM/mcp-context-forge/pull/5010)) – Standardized the CSRF cookie name to `mcpgateway_csrf_token` and removed the legacy CSRF utility. Aligns CSRF handling across the app.
 - **🧩 Alpine.js CSP Build** ([#4676](https://github.com/IBM/mcp-context-forge/pull/4676)) – Migrated Alpine.js to the Vite-bundled `@alpinejs/csp` build and eliminated `unsafe-eval`. Strengthens Content Security Policy compliance.
 
 #### **🗄️ Database & API**
@@ -76,15 +68,12 @@ Release 1.0.3 consolidates **72 PRs** focused on **authentication and JWT harden
 - **🔒 CA Cert Validation on Authless MCPs** ([#5075](https://github.com/IBM/mcp-context-forge/pull/5075)) – Disable CA cert validation on authless MCPs. Fixes connectivity to authless upstreams.
 - **👁️ Admin Private Resource Visibility** ([#4878](https://github.com/IBM/mcp-context-forge/pull/4878)) – Admin users can now view and edit their own private resources (tools, prompts, resources, servers, gateways). Fixes admin UX inconsistency.
 
-#### **🖥️ Admin UI (React Rewrite)**
+#### **🖥️ Admin UI**
 
-- **🔐 React UI Auth Bugs** ([#5128](https://github.com/IBM/mcp-context-forge/pull/5128)) – Fixed React UI auth bugs. Improves login/session reliability in the new UI.
 - **🏷️ Plugin Operator Labels** ([#4718](https://github.com/IBM/mcp-context-forge/pull/4718)) – Return operator labels in `GET /admin/plugins` to match PUT input. Fixes plugin admin round-trips.
 - **🔁 Script Defer / Alpine Race** ([#5117](https://github.com/IBM/mcp-context-forge/pull/5117)) – Added `defer` to script tags to prevent an Alpine.js race condition. Fixes intermittent UI initialization failures.
 - **👥 Teams Panel Loading** ([#5085](https://github.com/IBM/mcp-context-forge/pull/5085)) – Fixed the Admin UI Teams panel stuck on loading. Restores team management visibility.
-- **🔗 Visibility / Team Carry-Through** ([#5030](https://github.com/IBM/mcp-context-forge/pull/5030)) – Carry `visibility` and `team_id` through from the MCP server form to the virtual server. Fixes ownership propagation.
 - **🔑 Alpine.js SRI Hashes** ([#5025](https://github.com/IBM/mcp-context-forge/pull/5025)) – Fixed the Alpine.js SRI hashes. Restores subresource-integrity validation.
-- **⚙️ CSRF .env.example** ([#5047](https://github.com/IBM/mcp-context-forge/pull/5047)) – Updated `.env.example` for CSRF. Aligns sample config with the standardized cookie.
 
 #### **🛡️ FedRAMP / FIPS Compliance**
 
@@ -124,10 +113,6 @@ Release 1.0.3 consolidates **72 PRs** focused on **authentication and JWT harden
 - **🔒 Container Image Hardening** ([#4973](https://github.com/IBM/mcp-context-forge/pull/4973)) – Hardened container images on fast-test, slow-test, and a2a-test-echo servers. Strengthens test-image security.
 - **🦀 Rust Dependency Pins** ([#4832](https://github.com/IBM/mcp-context-forge/pull/4832)) – Updated Rust dependency pins. Keeps the Rust toolchain current.
 
-#### **📦 Helm Charts**
-
-- **⏱️ TOKEN_EXPIRY Default Alignment** ([#5147](https://github.com/IBM/mcp-context-forge/pull/5147)) – Aligned the chart `TOKEN_EXPIRY` default with the `config.py` `le=1440` constraint. Prevents invalid token-expiry values in Helm deployments.
-
 #### **🔧 CI**
 
 - **📢 Slack Notify JSON Payload** ([#5028](https://github.com/IBM/mcp-context-forge/pull/5028)) – Use a valid JSON string in the Slack notify payload instead of YAML. Fixes CI notifications.
@@ -146,7 +131,7 @@ Release 1.0.3 consolidates **72 PRs** focused on **authentication and JWT harden
 - **🔑 Secrets Correction** ([#5029](https://github.com/IBM/mcp-context-forge/pull/5029)) – Corrected secrets following a bad addition and linting issues. Fixes secret-detection baseline.
 - **🧹 YAML Whitespace Cleanup** ([#5120](https://github.com/IBM/mcp-context-forge/pull/5120)) – Removed extra spaces introduced in YAML files (#4983). Restores YAML lint cleanliness.
 - **📦 CPEX Plugin Bumps** ([#4979](https://github.com/IBM/mcp-context-forge/pull/4979), [#4985](https://github.com/IBM/mcp-context-forge/pull/4985)) – Bumped CPEX detection plugins and updated CPEX to 0.1.1.dev1 for `CopyOnWriteDict` support. Keeps plugins current.
-- **📦 Dependency Upgrades** ([#5006](https://github.com/IBM/mcp-context-forge/pull/5006), [#5126](https://github.com/IBM/mcp-context-forge/pull/5126)) – Upgraded `prometheus-fastapi-instrumentator` to 8.0.0, updated `starlette`, and bumped `marked` to 18.0.5 and `dompurify` to 3.4.8. Maintains dependency freshness and security.
+- **📦 Dependency Upgrades** ([#5006](https://github.com/IBM/mcp-context-forge/pull/5006)) – Upgraded `prometheus-fastapi-instrumentator` to 8.0.0, updated `starlette`. Maintains dependency freshness and security.
 - **📝 Rate-Limiter Plugin-Bindings Docs** ([#4848](https://github.com/IBM/mcp-context-forge/pull/4848)) – Tightened the plugin-bindings payload surface documentation. Clarifies binding configuration scope.
 - **🧪 gRPC Integration Test Depth** ([#4658](https://github.com/IBM/mcp-context-forge/pull/4658)) – Expanded gRPC integration test depth for PR #3202. Improves protocol coverage.
 - **🧪 Loadtest Gaps** ([#4698](https://github.com/IBM/mcp-context-forge/pull/4698)) – Closed load-test gaps. Improves performance-test coverage.
