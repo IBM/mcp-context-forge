@@ -128,8 +128,8 @@ export function AdvancedSettings({
 
   useEffect(() => {
     if (visibility === "team") {
-      if (selectedTeamId && !teamId) {
-        onTeamIdChange(selectedTeamId);
+      if ((selectedTeamId ?? "") !== teamId) {
+        onTeamIdChange(selectedTeamId ?? "");
       }
     } else if (teamId) {
       onTeamIdChange("");
