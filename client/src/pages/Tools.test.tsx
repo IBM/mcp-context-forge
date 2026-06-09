@@ -7,6 +7,7 @@ import { server } from "@/test/mocks/server";
 import { Tools } from "./Tools";
 import { RouterProvider } from "@/router";
 import { I18nProvider } from "@/i18n";
+import { AuthProvider } from "@/auth/AuthContext";
 import type { ReactElement } from "react";
 import type { Tool } from "@/types/tool";
 
@@ -34,15 +35,16 @@ function createMockTool(id: number, gatewaySlug: string, enabled = true, reachab
   };
 }
 
-// Helper to render with real router
+// Helper to render with real router and auth context driven by MSW /app/auth/me
 function renderWithRouter(ui: ReactElement) {
-  // Set up initial route
   window.history.pushState({}, "", "/app/tools");
 
   return render(
-    <RouterProvider>
-      <I18nProvider>{ui}</I18nProvider>
-    </RouterProvider>,
+    <AuthProvider>
+      <RouterProvider>
+        <I18nProvider>{ui}</I18nProvider>
+      </RouterProvider>
+    </AuthProvider>,
   );
 }
 
@@ -147,6 +149,50 @@ describe("Tools", () => {
     await user.keyboard("{Enter}");
     // Space key should also activate the card without throwing
     await user.keyboard(" ");
+  });
+
+  it("clicking Add tools card opens the ToolForm", async () => {
+    const user = userEvent.setup();
+    server.use(http.get("/tools", () => HttpResponse.json([])));
+
+    renderWithRouter(<Tools />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Add tools")).toBeInTheDocument();
+    });
+
+    const addToolsCard = screen.getByText("Add tools").closest('[data-slot="card"]');
+    expect(addToolsCard).toBeInTheDocument();
+    await user.click(addToolsCard!);
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Add tool" })).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Add tools")).not.toBeInTheDocument();
+  });
+
+  it("ToolForm Cancel button closes the form and shows the tools list again", async () => {
+    const user = userEvent.setup();
+    server.use(http.get("/tools", () => HttpResponse.json([])));
+
+    renderWithRouter(<Tools />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Add tools")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText("Add tools").closest('[data-slot="card"]')!);
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Add tool" })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /Cancel/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Add tools")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("heading", { name: "Add tool" })).not.toBeInTheDocument();
   });
 
   it("displays error message when API call fails", async () => {
@@ -279,7 +325,7 @@ describe("Tools", () => {
     expect(gridContainer).toHaveClass("2xl:grid-cols-3");
   });
 
-  it("handles tools without gateway slug (standalone)", async () => {
+  it("groups tools without a gateway slug under 'REST tools'", async () => {
     const mockTools: Tool[] = [
       {
         ...createMockTool(1, ""),
@@ -292,7 +338,7 @@ describe("Tools", () => {
     renderWithRouter(<Tools />);
 
     await waitFor(() => {
-      expect(screen.getByText("standalone")).toBeInTheDocument();
+      expect(screen.getByText("REST tools")).toBeInTheDocument();
     });
 
     expect(screen.getByText("1 tool")).toBeInTheDocument();
