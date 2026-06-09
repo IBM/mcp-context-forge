@@ -934,6 +934,112 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         return None  # No duplicate found
 
+    async def _perform_gateway_registration(self, gateway: DbGateway) -> dict:
+        """Perform MCP initialization for a gateway.
+        
+        Extracted from register_gateway for reuse in async worker.
+        
+        Args:
+            gateway: Database gateway object with all fields populated
+            
+        Returns:
+            dict: Capabilities from MCP initialization
+            
+        Raises:
+            GatewayConnectionError: If connection fails
+            asyncio.TimeoutError: If initialization times out
+        """
+        # Prepare auth headers
+        authentication_headers: Optional[Dict[str, str]] = None
+        auth_query_params_decrypted: Optional[Dict[str, str]] = None
+        init_url = gateway.url
+        
+        # Handle query_param auth
+        if gateway.auth_type == "query_param" and gateway.auth_query_params:
+            first_key = next(iter(gateway.auth_query_params.keys()), None)
+            if first_key:
+                encrypted_value = gateway.auth_query_params.get(first_key, "")
+                if encrypted_value:
+                    decrypted = decode_auth(encrypted_value)
+                    auth_query_params_decrypted = {first_key: decrypted.get(first_key, "")}
+                    init_url = apply_query_param_auth(gateway.url, auth_query_params_decrypted)
+        elif isinstance(gateway.auth_value, dict):
+            authentication_headers = {str(k): str(v) for k, v in gateway.auth_value.items()}
+        elif isinstance(gateway.auth_value, str) and gateway.auth_value:
+            decoded = decode_auth(gateway.auth_value)
+            authentication_headers = {str(k): str(v) for k, v in decoded.items()}
+        
+        # Decrypt client_key if present
+        client_key = gateway.client_key
+        if client_key:
+            try:
+                _enc = get_encryption_service(settings.auth_encryption_secret)
+                client_key = _enc.decrypt_secret_or_plaintext(client_key)
+            except Exception:
+                logger.debug("client_key decryption skipped during gateway registration")
+        
+        # Initialize gateway
+        capabilities, tools, resources, prompts, validation_errors = await self._initialize_gateway(
+            init_url,
+            authentication_headers,
+            gateway.transport,
+            gateway.auth_type,
+            gateway.oauth_config,
+            gateway.ca_certificate,
+            auth_query_params=auth_query_params_decrypted,
+            client_cert=gateway.client_cert,
+            client_key=client_key,
+        )
+        
+        return {
+            "capabilities": capabilities,
+            "tools": tools,
+            "resources": resources,
+            "prompts": prompts,
+            "validation_errors": validation_errors,
+        }
+
+    async def _perform_gateway_update(self, gateway: DbGateway) -> dict:
+        """Perform MCP reconnection/update for a gateway.
+        
+        Extracted from update_gateway for reuse in async worker.
+        
+        Args:
+            gateway: Database gateway object with updated fields
+            
+        Returns:
+            dict: Updated capabilities and entities
+            
+        Raises:
+            GatewayConnectionError: If connection fails
+        """
+        # Reuse registration logic since update follows same pattern
+        return await self._perform_gateway_registration(gateway)
+
+    async def _perform_gateway_cleanup(self, gateway: DbGateway) -> None:
+        """Perform MCP disconnection/cleanup for a gateway.
+        
+        Extracted from delete_gateway for reuse in async worker.
+        Best-effort cleanup - logs errors but doesn't raise.
+        
+        Args:
+            gateway: Database gateway object to clean up
+        """
+        try:
+            # Evict upstream sessions
+            await _evict_upstream_sessions_for_gateway(gateway.id)
+            
+            # Remove from active tracking
+            self._active_gateways.discard(gateway.url)
+            
+            # Notify subscribers
+            await self._notify_gateway_deleted(gateway)
+            
+            logger.info(f"Gateway cleanup completed: {SecurityValidator.sanitize_log_message(gateway.name)}")
+        except Exception as e:
+            # Best-effort cleanup - log but don't raise
+            logger.warning(f"Gateway cleanup encountered error (non-fatal): {e}")
+
     async def register_gateway(
         self,
         db: Session,
@@ -1110,37 +1216,38 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if gateway_mode == "direct_proxy" and not settings.mcpgateway_direct_proxy_enabled:
                 raise GatewayError("direct_proxy gateway mode is disabled. Set MCPGATEWAY_DIRECT_PROXY_ENABLED=true to enable.")
 
+            # Create temporary gateway object for _perform_gateway_registration
+            temp_gateway = DbGateway(
+                name=gateway.name,
+                url=init_url,
+                transport=gateway.transport,
+                auth_type=auth_type,
+                auth_value=auth_value,
+                auth_query_params=auth_query_params_encrypted,
+                oauth_config=oauth_config,
+                ca_certificate=ca_certificate,
+                client_cert=init_client_cert,
+                client_key=init_client_key,
+            )
+
+            # Call extracted method with timeout handling
             if initialize_timeout is not None:
                 try:
-                    capabilities, tools, resources, prompts, validation_errors = await asyncio.wait_for(
-                        self._initialize_gateway(
-                            init_url,  # URL with query params if applicable
-                            authentication_headers,
-                            gateway.transport,
-                            auth_type,
-                            oauth_config,
-                            ca_certificate,
-                            auth_query_params=auth_query_params_decrypted,
-                            client_cert=init_client_cert,
-                            client_key=init_client_key,
-                        ),
+                    result = await asyncio.wait_for(
+                        self._perform_gateway_registration(temp_gateway),
                         timeout=initialize_timeout,
                     )
                 except asyncio.TimeoutError as exc:
                     sanitized = sanitize_url_for_logging(init_url, auth_query_params_decrypted)
                     raise GatewayConnectionError(f"Gateway initialization timed out after {initialize_timeout}s for {sanitized}") from exc
             else:
-                capabilities, tools, resources, prompts, validation_errors = await self._initialize_gateway(
-                    init_url,  # URL with query params if applicable
-                    authentication_headers,
-                    gateway.transport,
-                    auth_type,
-                    oauth_config,
-                    ca_certificate,
-                    auth_query_params=auth_query_params_decrypted,
-                    client_cert=init_client_cert,
-                    client_key=init_client_key,
-                )
+                result = await self._perform_gateway_registration(temp_gateway)
+
+            capabilities = result["capabilities"]
+            tools = result["tools"]
+            resources = result["resources"]
+            prompts = result["prompts"]
+            validation_errors = result["validation_errors"]
 
             if gateway.one_time_auth:
                 # For one-time auth, clear auth_type and auth_value after initialization
@@ -2442,27 +2549,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 reinit_succeeded = False
 
                 try:
-                    ca_certificate = getattr(gateway, "ca_certificate", None)
-                    update_client_cert = getattr(gateway, "client_cert", None)
-                    update_client_key = getattr(gateway, "client_key", None)
-                    # Decrypt client_key for initialization (stored encrypted)
-                    if update_client_key:
-                        try:
-                            _enc = get_encryption_service(settings.auth_encryption_secret)
-                            update_client_key = _enc.decrypt_secret_or_plaintext(update_client_key)
-                        except Exception:
-                            logger.debug("client_key decryption skipped during gateway re-init")
-                    capabilities, tools, resources, prompts, _ = await self._initialize_gateway(
-                        init_url,
-                        gateway.auth_value,
-                        gateway.transport,
-                        gateway.auth_type,
-                        gateway.oauth_config,
-                        ca_certificate,
-                        auth_query_params=auth_query_params_decrypted,
-                        client_cert=update_client_cert,
-                        client_key=update_client_key,
-                    )
+                    # Call extracted method for MCP update/reconnection
+                    result = await self._perform_gateway_update(gateway)
+                    capabilities = result["capabilities"]
+                    tools = result["tools"]
+                    resources = result["resources"]
+                    prompts = result["prompts"]
                     new_tool_names = [tool.name for tool in tools]
                     new_resource_uris = [resource.uri for resource in resources]
                     new_prompt_names = [prompt.name for prompt in prompts]
@@ -3428,34 +3520,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             db.commit()
 
-            # #4205: close any upstream MCP sessions bound to this gateway
-            # so in-flight downstream sessions can't keep talking to the
-            # deleted gateway's URL. Best-effort — registry may not be
-            # initialized in some test paths.
-            await _evict_upstream_sessions_for_gateway(str(gateway_id))
-
-            # Invalidate cache after successful deletion
-            cache = _get_registry_cache()
-            await cache.invalidate_gateways()
-            tool_lookup_cache = _get_tool_lookup_cache()
-            await tool_lookup_cache.invalidate_gateway(str(gateway_id))
-            # Also invalidate tags cache since gateway tags may have changed
-            # First-Party
-            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
-
-            await admin_stats_cache.invalidate_tags()
-
-            # Invalidate loopback passthrough cache when a gateway is deleted (#3640)
-            # First-Party
-            from mcpgateway.utils.passthrough_headers import invalidate_passthrough_header_caches  # pylint: disable=import-outside-toplevel
-
-            invalidate_passthrough_header_caches()
-
-            # Update tracking
-            self._active_gateways.discard(gateway_url)
-
-            # Notify subscribers
-            await self._notify_gateway_deleted(gateway_info)
+            # Call extracted cleanup method
+            await self._perform_gateway_cleanup(gateway)
 
             logger.info(f"Permanently deleted gateway: {gateway_name}")
 
