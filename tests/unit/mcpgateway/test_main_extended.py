@@ -12578,8 +12578,7 @@ class TestRemainingCoverageGaps:
 
         response = await main_mod.request_validation_exception_handler(request, exc)
         assert response.status_code == 422
-        import json as _json
-        assert _json.loads(response.body.decode()) == {"detail": "An error occurred, please try again."}
+        assert json.loads(response.body.decode()) == {"detail": "An error occurred, please try again."}
 
     async def test_request_validation_exception_handler_ctx_non_dict(self):
         # First-Party

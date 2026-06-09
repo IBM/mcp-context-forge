@@ -255,9 +255,17 @@ async def temp_db(main_app_with_admin_api):
     sec_patcher = patch("mcpgateway.middleware.auth_middleware.security_logger", mock_sec_logger)
     sec_patcher.start()
 
+    # Expose full validation details so e2e tests can assert on specific error messages.
+    expose_patcher_main = patch("mcpgateway.main.should_expose_error_details", new=lambda: True)
+    expose_patcher_fmt = patch("mcpgateway.utils.error_formatter.should_expose_error_details", new=lambda: True)
+    expose_patcher_main.start()
+    expose_patcher_fmt.start()
+
     yield engine
 
     # Cleanup
+    expose_patcher_main.stop()
+    expose_patcher_fmt.stop()
     sec_patcher.stop()
     test_user_context_db.close()
     main_mod.SessionLocal = original_session_local

@@ -79,7 +79,7 @@ class ErrorFormatter:
 
         for err in error.errors():
             loc = err.get("loc", ["field"])
-            field = loc[-1] if loc else "field"
+            field = str(loc[-1]) if loc else "field"
             msg = err.get("msg", "Invalid value")
 
             # Map technical messages to user-friendly ones
