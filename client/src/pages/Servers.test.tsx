@@ -186,6 +186,62 @@ describe("Servers", () => {
     });
   });
 
+  it("shows inline error notification when toggleEnabled fails", async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(api.get).mockResolvedValueOnce({
+      gateways: [{ ...createMockServers(0, 1)[0], enabled: true }],
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Servers />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Test Server 0")).toBeInTheDocument();
+    });
+
+    vi.mocked(api.post).mockRejectedValueOnce(new Error("403 Forbidden"));
+
+    const actionsButtons = screen.getAllByRole("button", { name: /actions for/i });
+    await user.click(actionsButtons[0]);
+
+    const deactivateItem = await screen.findByRole("menuitem", { name: /deactivate/i });
+    await user.click(deactivateItem);
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+      expect(screen.getByText(/you don't have permission/i)).toBeInTheDocument();
+    });
+  });
+
+  it("shows inline error notification when testConnection fails", async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(api.get).mockResolvedValueOnce({
+      gateways: createMockServers(0, 1),
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Servers />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Test Server 0")).toBeInTheDocument();
+    });
+
+    vi.mocked(api.post).mockRejectedValueOnce(new Error("500 Internal Server Error"));
+
+    const actionsButtons = screen.getAllByRole("button", { name: /actions for/i });
+    await user.click(actionsButtons[0]);
+
+    const testItem = await screen.findByRole("menuitem", { name: /test connection/i });
+    await user.click(testItem);
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+      expect(screen.getByText(/server error/i)).toBeInTheDocument();
+    });
+  });
+
   it("displays server metadata in details panel", async () => {
     const user = userEvent.setup();
 
