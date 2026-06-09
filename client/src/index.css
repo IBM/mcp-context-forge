@@ -64,6 +64,11 @@
   --color-tool-badge-bg: var(--tool-badge-bg);
   --color-tool-add-icon-bg: var(--tool-add-icon-bg);
   --color-tool-add-icon-fg: var(--tool-add-icon-fg);
+  /* Alert status icon tokens (shadcn accent-*-foreground) */
+  --color-accent-emerald-foreground: var(--accent-emerald-foreground);
+  --color-accent-amber-foreground: var(--accent-amber-foreground);
+  --color-accent-sky-foreground: var(--accent-sky-foreground);
+  --color-accent-red-foreground: var(--accent-red-foreground);
   --radius-xl: calc(var(--radius) * 1.4);
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
@@ -107,6 +112,10 @@
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
   --destructive: oklch(0.577 0.245 27.325);
+  --accent-emerald-foreground: #059669;
+  --accent-amber-foreground: #d97706;
+  --accent-sky-foreground: #0284c7;
+  --accent-red-foreground: #dc2626;
   --tool-icon-bg: var(--color-fuchsia-400);
   --tool-status-active: var(--color-emerald-500);
   --tool-status-inactive: var(--color-gray-500);
@@ -138,6 +147,10 @@
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
+  --accent-emerald-foreground: #34d399;
+  --accent-amber-foreground: #fcd34d;
+  --accent-sky-foreground: #38bdf8;
+  --accent-red-foreground: #f87171;
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
