@@ -1,14 +1,15 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Plus, MoreHorizontal, Wrench } from "lucide-react";
 import { useQuery } from "@/hooks/useQuery";
 import type { Tool, ToolGroup } from "@/types/tool";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { ToolForm } from "@/components/tools/ToolForm";
 
 function buildGroups(tools: Tool[]): ToolGroup[] {
   const map = new Map<string, ToolGroup>();
   for (const tool of tools) {
-    const slug = tool.gatewaySlug || "standalone";
+    const slug = tool.gatewaySlug || "REST tools";
     if (!map.has(slug)) {
       map.set(slug, { gatewaySlug: slug, gatewayId: tool.gatewayId, tools: [], isActive: false });
     }
@@ -81,18 +82,18 @@ function ToolGroupCard({ group }: { group: ToolGroup }) {
   );
 }
 
-function AddToolsCard({ onAddServer }: { onAddServer: () => void }) {
+function AddToolsCard({ onAddTool }: { onAddTool: () => void }) {
   return (
     <Card
       size="sm"
       role="button"
       tabIndex={0}
       className="cursor-pointer transition-opacity hover:opacity-90"
-      onClick={onAddServer}
+      onClick={onAddTool}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          onAddServer();
+          onAddTool();
         }
       }}
     >
@@ -115,44 +116,60 @@ function AddToolsCard({ onAddServer }: { onAddServer: () => void }) {
 }
 
 export function Tools() {
-  const { data: toolsData, error, isLoading } = useQuery<Tool[]>("/tools?limit=0");
+  const { data: toolsData, error, isLoading, refetch } = useQuery<Tool[]>("/tools?limit=0");
+  const [isFormOpen, setIsFormOpen] = useState(false);
 
   const groups = useMemo(() => buildGroups(toolsData ?? []), [toolsData]);
 
+  const handleFormSuccess = () => {
+    setIsFormOpen(false);
+    refetch();
+  };
+
   return (
     <div className="p-6">
-      <h1 className="mb-6 text-base font-semibold text-neutral-900 dark:text-white">Tools</h1>
+      {isFormOpen ? (
+        <ToolForm
+          isOpen={isFormOpen}
+          onToggle={() => setIsFormOpen(false)}
+          onSuccess={handleFormSuccess}
+        />
+      ) : (
+        <>
+          <h1 className="mb-6 text-base font-semibold text-neutral-900 dark:text-white">Tools</h1>
 
-      {isLoading && (
-        <div
-          role="status"
-          aria-live="polite"
-          aria-busy="true"
-          className="flex items-center justify-center p-12"
-        >
-          <span className="sr-only">Loading tools, please wait...</span>
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-blue-600 dark:border-gray-700 dark:border-t-blue-400" />
-        </div>
-      )}
+          {isLoading && (
+            <div
+              role="status"
+              aria-live="polite"
+              aria-busy="true"
+              className="flex items-center justify-center p-12"
+            >
+              <span className="sr-only">Loading tools, please wait...</span>
+              <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-blue-600 dark:border-gray-700 dark:border-t-blue-400" />
+            </div>
+          )}
 
-      {error && (
-        <div
-          className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-800 dark:bg-red-900/20"
-          role="alert"
-          aria-live="assertive"
-        >
-          <h3 className="mb-1 font-semibold">Error loading tools</h3>
-          <p className="text-red-800 dark:text-red-200">{error.message}</p>
-        </div>
-      )}
+          {error && (
+            <div
+              className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-800 dark:bg-red-900/20"
+              role="alert"
+              aria-live="assertive"
+            >
+              <h3 className="mb-1 font-semibold">Error loading tools</h3>
+              <p className="text-red-800 dark:text-red-200">{error.message}</p>
+            </div>
+          )}
 
-      {!isLoading && (
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-3">
-          <AddToolsCard onAddServer={() => {}} />
-          {groups.map((group) => (
-            <ToolGroupCard key={group.gatewaySlug} group={group} />
-          ))}
-        </div>
+          {!isLoading && (
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-3">
+              <AddToolsCard onAddTool={() => setIsFormOpen(true)} />
+              {groups.map((group) => (
+                <ToolGroupCard key={group.gatewaySlug} group={group} />
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
