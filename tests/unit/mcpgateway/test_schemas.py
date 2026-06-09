@@ -1816,7 +1816,7 @@ class TestAuthValidationErrors:
                 auth_headers=[],
             )
 
-        assert "at least one valid header with a key must be provided" in str(exc_info.value)
+        assert "either 'auth_headers' list or both" in str(exc_info.value).lower()
 
     def test_gateway_create_authheaders_no_valid_keys(self):
         """Test GatewayCreate validation when auth_headers has no valid keys."""
@@ -1874,7 +1874,7 @@ class TestAuthValidationErrors:
         from mcpgateway.schemas import GatewayCreate
         import logging
 
-        with caplog.at_level(logging.WARNING):
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.schemas"):
             gw = GatewayCreate(
                 name="test-gateway",
                 url="http://example.com",
@@ -1906,22 +1906,21 @@ class TestAuthValidationErrors:
 
         assert gw.auth_type == "authheaders"
 
-    def test_gateway_create_authheaders_non_dict_items_skipped(self):
-        """Test GatewayCreate skips non-dict items in auth_headers."""
+    def test_gateway_create_authheaders_non_dict_items_rejected(self):
+        """Test GatewayCreate rejects non-dict items in auth_headers."""
         from mcpgateway.schemas import GatewayCreate
 
-        gw = GatewayCreate(
-            name="test-gateway",
-            url="http://example.com",
-            auth_type="authheaders",
-            auth_headers=[
-                "invalid-string",  # Skipped
-                {"key": "Valid-Header", "value": "test"},
-                None,  # Skipped
-            ],
-        )
-
-        assert gw.auth_type == "authheaders"
+        with pytest.raises(ValidationError):
+            GatewayCreate(
+                name="test-gateway",
+                url="http://example.com",
+                auth_type="authheaders",
+                auth_headers=[
+                    "invalid-string",
+                    {"key": "Valid-Header", "value": "test"},
+                    None,
+                ],
+            )
 
     def test_gateway_create_authheaders_legacy_missing_key(self):
         """Test GatewayCreate validation for legacy format missing key."""

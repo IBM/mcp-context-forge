@@ -3121,7 +3121,7 @@ class GatewayCreate(BaseModelWithConfigDict):
         if auth_type == "authheaders":
             # Support both new multi-headers format and legacy single header format
             auth_headers = data.get("auth_headers")
-            if auth_headers is not None and isinstance(auth_headers, list):
+            if auth_headers and isinstance(auth_headers, list):
                 # New multi-headers format with enhanced validation
                 header_dict = {}
                 duplicate_keys = set()
@@ -3180,7 +3180,7 @@ class GatewayCreate(BaseModelWithConfigDict):
             return None
 
         # Handle no authentication (None or already normalized from "none")
-        if auth_type is None:
+        if auth_type is None or auth_type == "":
             return None
 
         raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, query_param, or none.")
@@ -3537,7 +3537,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
             return None
 
         # Handle no authentication (None or already normalized from "none")
-        if auth_type is None:
+        if auth_type is None or auth_type == "":
             return None
 
         raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, query_param, or none.")
@@ -5009,7 +5009,7 @@ class A2AAgentCreate(BaseModel):
             return None
 
         # Handle no authentication (None or already normalized from "none")
-        if auth_type is None:
+        if auth_type is None or auth_type == "":
             return None
 
         raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, query_param, or none.")
@@ -5361,7 +5361,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
             return None
 
         # Handle no authentication (None or already normalized from "none")
-        if auth_type is None:
+        if auth_type is None or auth_type == "":
             return None
 
         raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, query_param, or none.")
