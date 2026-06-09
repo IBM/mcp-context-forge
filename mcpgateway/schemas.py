@@ -2891,16 +2891,19 @@ class GatewayCreate(BaseModelWithConfigDict):
     @field_validator("auth_type", mode="before")
     @classmethod
     def normalize_auth_type(cls, v: Any) -> Optional[str]:
-        """Normalize auth_type: convert string 'none' or 'None' to None.
+        """Normalize auth_type: convert string 'none' or 'None' to empty string.
+
+        The service layer treats empty string as the clear-auth sentinel.
+        Converting "none" to None would cause the update to be ignored.
 
         Args:
             v: The auth_type value (may be string "none" or "None")
 
         Returns:
-            None if v is "none" or "None", otherwise returns v unchanged
+            Empty string if v is "none" or "None", otherwise returns v unchanged
         """
         if isinstance(v, str) and v.lower() == "none":
-            return None
+            return ""
         return v
 
     tags: Optional[List[Union[str, Dict[str, str]]]] = Field(default_factory=list, description="Tags for categorizing the gateway")
@@ -3247,16 +3250,19 @@ class GatewayUpdate(BaseModelWithConfigDict):
     @field_validator("auth_type", mode="before")
     @classmethod
     def normalize_auth_type(cls, v: Any) -> Optional[str]:
-        """Normalize auth_type: convert string 'none' or 'None' to None.
+        """Normalize auth_type: convert string 'none' or 'None' to empty string.
+
+        The service layer treats empty string as the clear-auth sentinel.
+        Converting "none" to None would cause the update to be ignored.
 
         Args:
             v: The auth_type value (may be string "none" or "None")
 
         Returns:
-            None if v is "none" or "None", otherwise returns v unchanged
+            Empty string if v is "none" or "None", otherwise returns v unchanged
         """
         if isinstance(v, str) and v.lower() == "none":
-            return None
+            return ""
         return v
 
     # OAuth 2.0 configuration
@@ -4739,16 +4745,19 @@ class A2AAgentCreate(BaseModel):
     @field_validator("auth_type", mode="before")
     @classmethod
     def normalize_auth_type(cls, v: Any) -> Optional[str]:
-        """Normalize auth_type: convert string 'none' or 'None' to None.
+        """Normalize auth_type: convert string 'none' or 'None' to empty string.
+
+        The service layer treats empty string as the clear-auth sentinel.
+        Converting "none" to None would cause auth to not be cleared properly.
 
         Args:
             v: The auth_type value (may be string "none" or "None")
 
         Returns:
-            None if v is "none" or "None", otherwise returns v unchanged
+            Empty string if v is "none" or "None", otherwise returns v unchanged
         """
         if isinstance(v, str) and v.lower() == "none":
-            return None
+            return ""
         return v
 
     tags: List[str] = Field(default_factory=list, description="Tags for categorizing the agent")
@@ -5099,19 +5108,19 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
     @field_validator("auth_type")
     @classmethod
     def normalize_auth_type(cls, v: Any) -> Optional[str]:
-        """Normalize auth_type by converting string 'none' or 'None' to Python None.
+        """Normalize auth_type: convert string 'none' or 'None' to empty string.
 
-        This allows the UI to send "none" as a string value which gets converted
-        to Python None for proper handling throughout the system.
+        The service layer treats empty string as the clear-auth sentinel.
+        Converting "none" to None would cause the update to be ignored.
 
         Args:
             v: The auth_type value (can be str or None)
 
         Returns:
-            The normalized auth_type (None if input was "none"/"None", otherwise unchanged)
+            Empty string if v is "none" or "None", otherwise returns v unchanged
         """
         if isinstance(v, str) and v.lower() == "none":
-            return None
+            return ""
         return v
 
     @field_validator("tags")

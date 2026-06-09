@@ -407,55 +407,55 @@ def test_email_registration_request_deprecated_alias():
 
 
 def test_gateway_create_auth_type_none_lowercase():
-    """Test GatewayCreate converts auth_type='none' to None."""
+    """Test GatewayCreate converts auth_type='none' to empty string."""
     gateway = GatewayCreate(name="gw", url="https://example.com", auth_type="none")
-    assert gateway.auth_type is None
+    assert gateway.auth_type == ""
     assert gateway.auth_value is None
 
 
 def test_gateway_create_auth_type_none_capitalized():
-    """Test GatewayCreate converts auth_type='None' to None."""
+    """Test GatewayCreate converts auth_type='None' to empty string."""
     gateway = GatewayCreate(name="gw", url="https://example.com", auth_type="None")
-    assert gateway.auth_type is None
+    assert gateway.auth_type == ""
     assert gateway.auth_value is None
 
 
 def test_gateway_update_auth_type_none_lowercase():
-    """Test GatewayUpdate converts auth_type='none' to None."""
+    """Test GatewayUpdate converts auth_type='none' to empty string."""
     gateway = GatewayUpdate(auth_type="none")
-    assert gateway.auth_type is None
+    assert gateway.auth_type == ""
 
 
 def test_gateway_update_auth_type_none_capitalized():
-    """Test GatewayUpdate converts auth_type='None' to None."""
+    """Test GatewayUpdate converts auth_type='None' to empty string."""
     gateway = GatewayUpdate(auth_type="None")
-    assert gateway.auth_type is None
+    assert gateway.auth_type == ""
 
 
 def test_a2a_agent_create_auth_type_none_lowercase():
-    """Test A2AAgentCreate converts auth_type='none' to None."""
+    """Test A2AAgentCreate converts auth_type='none' to empty string."""
     agent = A2AAgentCreate(name="agent", endpoint_url="https://example.com", auth_type="none")
-    assert agent.auth_type is None
+    assert agent.auth_type == ""
     assert agent.auth_value is None
 
 
 def test_a2a_agent_create_auth_type_none_capitalized():
-    """Test A2AAgentCreate converts auth_type='None' to None."""
+    """Test A2AAgentCreate converts auth_type='None' to empty string."""
     agent = A2AAgentCreate(name="agent", endpoint_url="https://example.com", auth_type="None")
-    assert agent.auth_type is None
+    assert agent.auth_type == ""
     assert agent.auth_value is None
 
 
 def test_a2a_agent_update_auth_type_none_lowercase():
-    """Test A2AAgentUpdate converts auth_type='none' to None."""
+    """Test A2AAgentUpdate converts auth_type='none' to empty string."""
     agent = A2AAgentUpdate(auth_type="none")
-    assert agent.auth_type is None
+    assert agent.auth_type == ""
 
 
 def test_a2a_agent_update_auth_type_none_capitalized():
-    """Test A2AAgentUpdate converts auth_type='None' to None."""
+    """Test A2AAgentUpdate converts auth_type='None' to empty string."""
     agent = A2AAgentUpdate(auth_type="None")
-    assert agent.auth_type is None
+    assert agent.auth_type == ""
 
 
 # =========================================================================
@@ -496,28 +496,44 @@ def test_gateway_update_query_param_empty_key(monkeypatch):
 
 
 def test_gateway_create_process_auth_fields_none_auth_type():
-    """GatewayCreate._process_auth_fields returns None when auth_type is None."""
+    """GatewayCreate._process_auth_fields returns None when auth_type is None or empty string."""
     info = Mock()
     info.data = {"auth_type": None}
     assert GatewayCreate._process_auth_fields(info) is None
 
+    # Empty string should also return None (clear auth sentinel)
+    info.data = {"auth_type": ""}
+    assert GatewayCreate._process_auth_fields(info) is None
+
 
 def test_gateway_update_process_auth_fields_none_auth_type():
-    """GatewayUpdate._process_auth_fields returns None when auth_type is None."""
+    """GatewayUpdate._process_auth_fields returns None when auth_type is None or empty string."""
     info = Mock()
     info.data = {"auth_type": None}
     assert GatewayUpdate._process_auth_fields(info) is None
 
+    # Empty string should also return None (clear auth sentinel)
+    info.data = {"auth_type": ""}
+    assert GatewayUpdate._process_auth_fields(info) is None
+
 
 def test_a2a_agent_create_process_auth_fields_none_auth_type():
-    """A2AAgentCreate._process_auth_fields returns None when auth_type is None."""
+    """A2AAgentCreate._process_auth_fields returns None when auth_type is None or empty string."""
     info = Mock()
     info.data = {"auth_type": None}
     assert A2AAgentCreate._process_auth_fields(info) is None
 
+    # Empty string should also return None (clear auth sentinel)
+    info.data = {"auth_type": ""}
+    assert A2AAgentCreate._process_auth_fields(info) is None
+
 
 def test_a2a_agent_update_process_auth_fields_none_auth_type():
-    """A2AAgentUpdate._process_auth_fields returns None when auth_type is None."""
+    """A2AAgentUpdate._process_auth_fields returns None when auth_type is None or empty string."""
     info = Mock()
     info.data = {"auth_type": None}
+    assert A2AAgentUpdate._process_auth_fields(info) is None
+
+    # Empty string should also return None (clear auth sentinel)
+    info.data = {"auth_type": ""}
     assert A2AAgentUpdate._process_auth_fields(info) is None
