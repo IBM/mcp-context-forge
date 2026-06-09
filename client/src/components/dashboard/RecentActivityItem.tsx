@@ -35,14 +35,14 @@ export function RecentActivityItem({ item }: { item: ActivityItem }) {
       )}
     >
       <Icon aria-hidden="true" />
-      <AlertTitle className="col-start-2 row-start-1 text-foreground">{item.title}</AlertTitle>
+      <AlertTitle className="col-start-2 row-start-1 text-muted-foreground">{item.title}</AlertTitle>
       <time
         dateTime={item.timestamp}
-        className="col-start-3 row-start-1 self-start pl-4 text-xs whitespace-nowrap text-muted-foreground tabular-nums"
+        className="col-start-3 row-span-2 row-start-1 self-center pl-4 text-xs whitespace-nowrap text-muted-foreground tabular-nums"
       >
         {formatTimestamp(item.timestamp)}
       </time>
-      <AlertDescription className="col-span-2 col-start-2 row-start-2">
+      <AlertDescription className="col-span-2 col-start-2 row-start-2 text-xs">
         {item.description}
       </AlertDescription>
     </Alert>
