@@ -2857,18 +2857,54 @@ class GatewayCreate(BaseModelWithConfigDict):
     auth_query_param_key: Optional[str] = Field(
         None,
         description="Query parameter name for authentication (e.g., 'api_key', 'tavilyApiKey')",
-        pattern=r"^[a-zA-Z_][a-zA-Z0-9_\-]*$",
     )
     auth_query_param_value: Optional[SecretStr] = Field(
         None,
         description="Query parameter value (API key). Stored encrypted.",
     )
 
+    @field_validator("auth_query_param_key")
+    @classmethod
+    def validate_auth_query_param_key(cls, v: Optional[str]) -> Optional[str]:
+        """Validate query param key format only if provided and non-empty.
+
+        Args:
+            v: Query parameter key to validate
+
+        Returns:
+            The validated query parameter key
+
+        Raises:
+            ValueError: If the key format is invalid
+        """
+        if v is not None and v != "":
+            if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_\-]*$", v):
+                raise ValueError("Query parameter key must start with a letter or underscore, " "followed by letters, numbers, underscores, or hyphens")
+        return v
+
     # Adding `auth_value` as an alias for better access post-validation
     auth_value: Optional[str] = Field(None, validate_default=True)
 
     # One time auth - do not store the auth in gateway flag
     one_time_auth: Optional[bool] = Field(default=False, description="The authentication should be used only once and not stored in the gateway")
+
+    @field_validator("auth_type", mode="before")
+    @classmethod
+    def normalize_auth_type(cls, v: Any) -> Optional[str]:
+        """Normalize auth_type: convert string 'none' or 'None' to empty string.
+
+        The service layer treats empty string as the clear-auth sentinel.
+        Converting "none" to None would cause the update to be ignored.
+
+        Args:
+            v: The auth_type value (may be string "none" or "None")
+
+        Returns:
+            Empty string if v is "none" or "None", otherwise returns v unchanged
+        """
+        if isinstance(v, str) and v.lower() == "none":
+            return ""
+        return v
 
     tags: Optional[List[Union[str, Dict[str, str]]]] = Field(default_factory=list, description="Tags for categorizing the gateway")
 
@@ -3143,7 +3179,11 @@ class GatewayCreate(BaseModelWithConfigDict):
             # Validation is handled by model_validator
             return None
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, or query_param.")
+        # Handle no authentication (None or already normalized from "none")
+        if auth_type is None or auth_type == "":
+            return None
+
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, query_param, or none.")
 
     @model_validator(mode="after")
     def validate_query_param_auth(self) -> "GatewayCreate":
@@ -3207,6 +3247,24 @@ class GatewayUpdate(BaseModelWithConfigDict):
     # Adding `auth_value` as an alias for better access post-validation
     auth_value: Optional[str] = Field(None, validate_default=True)
 
+    @field_validator("auth_type", mode="before")
+    @classmethod
+    def normalize_auth_type(cls, v: Any) -> Optional[str]:
+        """Normalize auth_type: convert string 'none' or 'None' to empty string.
+
+        The service layer treats empty string as the clear-auth sentinel.
+        Converting "none" to None would cause the update to be ignored.
+
+        Args:
+            v: The auth_type value (may be string "none" or "None")
+
+        Returns:
+            Empty string if v is "none" or "None", otherwise returns v unchanged
+        """
+        if isinstance(v, str) and v.lower() == "none":
+            return ""
+        return v
+
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(
         None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), and resource (RFC 8707)"
@@ -3216,12 +3274,30 @@ class GatewayUpdate(BaseModelWithConfigDict):
     auth_query_param_key: Optional[str] = Field(
         None,
         description="Query parameter name for authentication",
-        pattern=r"^[a-zA-Z_][a-zA-Z0-9_\-]*$",
     )
     auth_query_param_value: Optional[SecretStr] = Field(
         None,
         description="Query parameter value (API key)",
     )
+
+    @field_validator("auth_query_param_key")
+    @classmethod
+    def validate_auth_query_param_key(cls, v: Optional[str]) -> Optional[str]:
+        """Validate query param key format only if provided and non-empty.
+
+        Args:
+            v: Query parameter key to validate
+
+        Returns:
+            The validated query parameter key
+
+        Raises:
+            ValueError: If the key format is invalid
+        """
+        if v is not None and v != "":
+            if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_\-]*$", v):
+                raise ValueError("Query parameter key must start with a letter or underscore, " "followed by letters, numbers, underscores, or hyphens")
+        return v
 
     # One time auth - do not store the auth in gateway flag
     one_time_auth: Optional[bool] = Field(default=False, description="The authentication should be used only once and not stored in the gateway")
@@ -3460,7 +3536,11 @@ class GatewayUpdate(BaseModelWithConfigDict):
             # Validation is handled by model_validator
             return None
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, or query_param.")
+        # Handle no authentication (None or already normalized from "none")
+        if auth_type is None or auth_type == "":
+            return None
+
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, query_param, or none.")
 
     @model_validator(mode="after")
     def validate_query_param_auth(self) -> "GatewayUpdate":
@@ -4661,6 +4741,25 @@ class A2AAgentCreate(BaseModel):
 
     # Adding `auth_value` as an alias for better access post-validation
     auth_value: Optional[str] = Field(None, validate_default=True)
+
+    @field_validator("auth_type", mode="before")
+    @classmethod
+    def normalize_auth_type(cls, v: Any) -> Optional[str]:
+        """Normalize auth_type: convert string 'none' or 'None' to empty string.
+
+        The service layer treats empty string as the clear-auth sentinel.
+        Converting "none" to None would cause auth to not be cleared properly.
+
+        Args:
+            v: The auth_type value (may be string "none" or "None")
+
+        Returns:
+            Empty string if v is "none" or "None", otherwise returns v unchanged
+        """
+        if isinstance(v, str) and v.lower() == "none":
+            return ""
+        return v
+
     tags: List[str] = Field(default_factory=list, description="Tags for categorizing the agent")
 
     # Team scoping fields
@@ -4909,7 +5008,11 @@ class A2AAgentCreate(BaseModel):
             # Validation is handled by model_validator
             return None
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, or query_param.")
+        # Handle no authentication (None or already normalized from "none")
+        if auth_type is None or auth_type == "":
+            return None
+
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, query_param, or none.")
 
     @model_validator(mode="after")
     def validate_query_param_auth(self) -> "A2AAgentCreate":
@@ -5001,6 +5104,24 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
     uaid_protocol: Optional[str] = Field(default=None, description="Protocol for UAID (a2a, mcp, rest, grpc)")
     version: Optional[str] = Field(default=None, description="Agent version for UAID generation")
     uaid_native_id_override: Optional[str] = Field(None, description="Override nativeId in UAID for cross-gateway routing (defaults to endpoint_url if not provided)")
+
+    @field_validator("auth_type")
+    @classmethod
+    def normalize_auth_type(cls, v: Any) -> Optional[str]:
+        """Normalize auth_type: convert string 'none' or 'None' to empty string.
+
+        The service layer treats empty string as the clear-auth sentinel.
+        Converting "none" to None would cause the update to be ignored.
+
+        Args:
+            v: The auth_type value (can be str or None)
+
+        Returns:
+            Empty string if v is "none" or "None", otherwise returns v unchanged
+        """
+        if isinstance(v, str) and v.lower() == "none":
+            return ""
+        return v
 
     @field_validator("tags")
     @classmethod
@@ -5239,7 +5360,11 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
             # Validation is handled by model_validator
             return None
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, or query_param.")
+        # Handle no authentication (None or already normalized from "none")
+        if auth_type is None or auth_type == "":
+            return None
+
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, query_param, or none.")
 
     @model_validator(mode="after")
     def validate_query_param_auth(self) -> "A2AAgentUpdate":

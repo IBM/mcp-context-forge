@@ -1538,6 +1538,10 @@ class A2AAgentService(BaseService):
                 if hasattr(agent, field):
                     setattr(agent, field, value)
 
+            # Clear auth_value when auth_type is explicitly set to empty string
+            if agent_data.auth_type is not None and agent_data.auth_type == "":
+                agent.auth_value = ""
+
             # Handle query_param auth updates
             # Clear auth_query_params when switching away from query_param auth
             if original_auth_type == "query_param" and agent_data.auth_type is not None and agent_data.auth_type != "query_param":
