@@ -153,8 +153,10 @@ class TokenStorageService:
                     SecurityValidator.sanitize_log_message(gateway_id),
                 )
                 expires_at = None
-            # Create or update token record - now scoped by app_user_email
-            token_record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).scalar_one_or_none()
+            # Create or update token record - scoped by gateway, app user, and OAuth provider user ID
+            token_record = self.db.execute(
+                select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email, OAuthToken.user_id == user_id)
+            ).scalar_one_or_none()
 
             if token_record:
                 # Update existing record
@@ -194,6 +196,9 @@ class TokenStorageService:
     async def get_user_token(self, gateway_id: str, app_user_email: str, threshold_seconds: int = 300) -> Optional[str]:
         """Get a valid access token for a specific ContextForge user, refreshing if necessary.
 
+        When multiple OAuth identities exist for the same ContextForge user and gateway,
+        this method selects the most recently updated token (most recent authorization).
+
         Args:
             gateway_id: ID of the gateway
             app_user_email: ContextForge user email (required)
@@ -203,7 +208,11 @@ class TokenStorageService:
             Valid access token or None if no valid token available for this user
         """
         try:
-            token_record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).scalar_one_or_none()
+            # Multi-identity support: Select the most recently updated token
+            # This allows a single ContextForge user to have multiple OAuth provider identities
+            token_record = (
+                self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email).order_by(OAuthToken.updated_at.desc())).scalars().first()
+            )
 
             if not token_record:
                 logger.debug("No OAuth tokens found for gateway %s, app user %s", SecurityValidator.sanitize_log_message(gateway_id), SecurityValidator.sanitize_log_message(app_user_email))
@@ -472,6 +481,8 @@ class TokenStorageService:
     async def get_token_info(self, gateway_id: str, app_user_email: str) -> Optional[Dict[str, Any]]:
         """Get information about stored OAuth tokens.
 
+        When multiple OAuth identities exist, returns info for the most recently updated token.
+
         Args:
             gateway_id: ID of the gateway
             app_user_email: ContextForge user email
@@ -486,9 +497,12 @@ class TokenStorageService:
             >>> now = datetime.now(tz=timezone.utc)
             >>> future = now + timedelta(seconds=60)
             >>> rec = SimpleNamespace(user_id='u1', app_user_email='u1', token_type='bearer', expires_at=future, scopes=['s1'], created_at=now, updated_at=now)
-            >>> class _Res:
-            ...     def scalar_one_or_none(self):
+            >>> class _Scalars:
+            ...     def first(self):
             ...         return rec
+            >>> class _Res:
+            ...     def scalars(self):
+            ...         return _Scalars()
             >>> class _DB:
             ...     def execute(self, *_args, **_kw):
             ...         return _Res()
@@ -501,7 +515,10 @@ class TokenStorageService:
             True
         """
         try:
-            token_record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).scalar_one_or_none()
+            # Multi-identity support: Return info for most recently updated token
+            token_record = (
+                self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email).order_by(OAuthToken.updated_at.desc())).scalars().first()
+            )
 
             if not token_record:
                 return None
@@ -522,7 +539,9 @@ class TokenStorageService:
             return None
 
     async def revoke_user_tokens(self, gateway_id: str, app_user_email: str) -> bool:
-        """Revoke OAuth tokens for a specific user.
+        """Revoke ALL OAuth tokens for a specific ContextForge user and gateway.
+
+        This revokes all OAuth identities for the user, not just the most recent one.
 
         Args:
             gateway_id: ID of the gateway
@@ -535,25 +554,26 @@ class TokenStorageService:
             >>> from types import SimpleNamespace
             >>> from unittest.mock import MagicMock
             >>> svc = TokenStorageService(MagicMock())
-            >>> rec = SimpleNamespace()
-            >>> svc.db.execute.return_value.scalar_one_or_none.return_value = rec
-            >>> svc.db.delete = lambda obj: None
+            >>> mock_result = MagicMock()
+            >>> mock_result.rowcount = 1
+            >>> svc.db.execute.return_value = mock_result
             >>> svc.db.commit = lambda: None
             >>> import asyncio
             >>> asyncio.run(svc.revoke_user_tokens('g1', 'u1'))
             True
             >>> # Not found
-            >>> svc.db.execute.return_value.scalar_one_or_none.return_value = None
+            >>> mock_result.rowcount = 0
             >>> asyncio.run(svc.revoke_user_tokens('g1', 'u1'))
             False
         """
         try:
-            token_record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).scalar_one_or_none()
+            # Multi-identity support: Delete ALL tokens for this user and gateway
+            result = self.db.execute(delete(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email))
+            count = result.rowcount
+            self.db.commit()
 
-            if token_record:
-                self.db.delete(token_record)
-                self.db.commit()
-                logger.info("Revoked OAuth tokens for gateway %s, user %s", SecurityValidator.sanitize_log_message(gateway_id), SecurityValidator.sanitize_log_message(app_user_email))
+            if count > 0:
+                logger.info(f"Revoked {count} OAuth token(s) for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, user {SecurityValidator.sanitize_log_message(app_user_email)}")
                 return True
 
             return False
