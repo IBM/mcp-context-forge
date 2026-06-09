@@ -1,16 +1,8 @@
-import { useIntl } from "react-intl";
 import {
-  Box,
-  Edit,
-  EllipsisVertical,
-  Eye,
-  MessageSquareCode,
-  Plus,
-  Power,
-  Trash2,
-  Upload,
-  Wrench,
-} from "lucide-react";
+  formatServerTimestamp,
+  getTagDisplay,
+  getVirtualServerComponentCounts,
+} from "@/components/gateways/utils";
 import { MCPIcon } from "@/components/icons/MCPIcon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,13 +14,17 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
 import type { VirtualServer } from "@/types/server";
 import {
-  formatServerTimestamp,
-  getTagDisplay,
-  getVirtualServerComponentCounts,
-} from "@/components/gateways/utils";
-import { cn } from "@/lib/utils";
+  Box,
+  EllipsisVertical,
+  MessageSquareCode,
+  Plus,
+  Upload,
+  Wrench
+} from "lucide-react";
+import { useIntl } from "react-intl";
 
 export function VirtualServerCard({
   server,
@@ -108,21 +104,14 @@ export function VirtualServerCard({
                     onViewDetails(server);
                   }}
                 >
-                  <Eye className="mr-2 size-4" />
                   {intl.formatMessage({ id: "gateways.card.viewDetails" })}
-                </DropdownMenuItem>
-                <DropdownMenuItem disabled>
-                  <Power className="mr-2 size-4" />
-                  {intl.formatMessage({ id: "gateways.card.testConnection" })}
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={(e) => {
                     e.stopPropagation();
                     onEdit?.(server);
                   }}
-                  disabled={!onEdit}
                 >
-                  <Edit className="mr-2 size-4" />
                   {intl.formatMessage({ id: "gateways.card.editServer" })}
                 </DropdownMenuItem>
                 <DropdownMenuItem
@@ -130,9 +119,7 @@ export function VirtualServerCard({
                     e.stopPropagation();
                     onToggleStatus?.(server);
                   }}
-                  disabled={!onToggleStatus}
                 >
-                  <Power className="mr-2 size-4" />
                   {server.enabled ? "Deactivate" : "Activate"}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
@@ -141,10 +128,8 @@ export function VirtualServerCard({
                     e.stopPropagation();
                     onDelete?.(server);
                   }}
-                  disabled={!onDelete}
                   className="text-destructive focus:text-destructive"
                 >
-                  <Trash2 className="mr-2 size-4" />
                   {intl.formatMessage({ id: "common.button.delete" })}
                 </DropdownMenuItem>
               </DropdownMenuContent>
