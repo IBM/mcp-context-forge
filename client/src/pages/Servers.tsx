@@ -12,6 +12,7 @@ import { serversApi } from "@/api/servers";
 import { sanitizeError } from "@/utils/errors";
 import type { MCPServer, ServersResponse } from "@/types/server";
 import { Loading } from "@/components/ui/loading";
+import { InlineNotification } from "@/components/ui/inline-notification";
 
 // Pagination constants
 const DEFAULT_PAGE_SIZE = 10;
@@ -26,6 +27,8 @@ export function Servers() {
   const [updateServerId, setUpdateServerId] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [toggleError, setToggleError] = useState<string | null>(null);
+  const [testError, setTestError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [selectedServerIdForDetails, setSelectedServerIdForDetails] = useState<string | null>(null);
   const [isDetailsDrawerOpen, setIsDetailsDrawerOpen] = useState(false);
@@ -112,22 +115,28 @@ export function Servers() {
   };
 
   const handleTest = async (id: string) => {
+    setTestError(null);
     try {
       const result = await serversApi.testConnection(id);
       setTestResult(result.message);
       setTestDialogOpen(true);
     } catch (err) {
-      console.error("Failed to test connection:", sanitizeError(err));
+      const errorMsg = sanitizeError(err);
+      setTestError(errorMsg);
+      console.error("Failed to test connection:", errorMsg);
     }
   };
 
   const handleToggleEnabled = useCallback(
     async (id: string, enabled: boolean) => {
+      setToggleError(null);
       try {
         await serversApi.toggleEnabled(id, enabled);
         await refetch();
       } catch (err) {
-        console.error("Failed to toggle server state:", sanitizeError(err));
+        const errorMsg = sanitizeError(err);
+        setToggleError(errorMsg);
+        console.error("Failed to toggle server state:", errorMsg);
       }
     },
     [refetch],
@@ -225,6 +234,26 @@ export function Servers() {
             >
               <h3 className="font-semibold mb-1">Error deleting server</h3>
               <p className="text-red-800 dark:text-red-200">{deleteError}</p>
+            </div>
+          )}
+
+          {toggleError && (
+            <div className="mb-6">
+              <InlineNotification
+                type="error"
+                message={toggleError}
+                onDismiss={() => setToggleError(null)}
+              />
+            </div>
+          )}
+
+          {testError && (
+            <div className="mb-6">
+              <InlineNotification
+                type="error"
+                message={testError}
+                onDismiss={() => setTestError(null)}
+              />
             </div>
           )}
 
