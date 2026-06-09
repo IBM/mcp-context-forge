@@ -210,6 +210,70 @@ class TestTokenRevocation:
         assert revocation is not None
         assert revocation.reason == "logout"
 
+    def test_revoke_token_sets_api_token_inactive_without_db_session(self, test_db):
+        """Test that revoking a token sets EmailApiToken.is_active to False when using fresh_db_session."""
+        # First-Party
+        from mcpgateway.db import EmailApiToken, EmailTeam
+
+        # Create a test team
+        team = EmailTeam(
+            id=str(uuid.uuid4()),
+            name="Test Team No Session",
+            slug="test-team-no-session",
+            created_by="test@example.com",
+            is_active=True
+        )
+        test_db.add(team)
+        test_db.commit()
+
+        # Create an API token
+        jti = str(uuid.uuid4())
+        api_token = EmailApiToken(
+            id=str(uuid.uuid4()),
+            user_email="test@example.com",
+            team_id=team.id,
+            name="Test Token No Session",
+            jti=jti,
+            token_hash="test_hash",
+            is_active=True
+        )
+        test_db.add(api_token)
+        test_db.commit()
+
+        # Verify token is initially active
+        assert api_token.is_active is True
+
+        # Create service without db to test fresh_db_session path
+        service = TokenBlocklistService(db=None)
+
+        # Mock fresh_db_session to use test_db
+        with patch("mcpgateway.services.token_blocklist_service.fresh_db_session") as mock_session:
+            mock_session.return_value.__enter__.return_value = test_db
+            mock_session.return_value.__exit__.return_value = None
+
+            # Revoke the token
+            result = service.revoke_token(
+                jti=jti,
+                revoked_by="test@example.com",
+                reason="security"
+            )
+
+            assert result is True
+
+        # Refresh the token from database
+        test_db.refresh(api_token)
+
+        # Verify token is now inactive
+        assert api_token.is_active is False
+
+        # Verify revocation record exists
+        revocation = test_db.execute(
+            select(TokenRevocation).where(TokenRevocation.jti == jti)
+        ).scalar_one_or_none()
+
+        assert revocation is not None
+        assert revocation.reason == "security"
+
 
 class TestRevocationCheck:
     """Tests for checking if tokens are revoked."""
