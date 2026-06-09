@@ -30,7 +30,7 @@ export function RecentActivityItem({ item }: { item: ActivityItem }) {
       variant={variant}
       data-testid={`activity-item-${item.id}`}
       className={cn(
-        "items-start gap-x-3 rounded-md border-border/40 bg-muted/30 px-4 py-2.5",
+        "items-start gap-x-3 rounded-md border-border/40 bg-transparent px-4 py-2.5",
         "has-[>svg]:grid-cols-[auto_1fr_auto] has-[>svg]:gap-x-3",
       )}
     >
