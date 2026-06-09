@@ -294,12 +294,10 @@ class MCPRegistryPage(BasePage):
             document.getElementById('search-input').value = '';
         """)
 
-        # Trigger a single HTMX request and wait for the response to land.
-        with self.page.expect_response("**/admin/mcp-registry/partial**", timeout=5000):
-            self.category_filter.select_option("")
-
-        # Wait for HTMX swap to complete and DOM to settle
-        self.wait_for_registry_results_ready(timeout=10000)
+        # Use _wait_for_registry_refresh to properly wait for DOM update after clearing.
+        # This waits for the HTMX response AND verifies the DOM has actually changed,
+        # which is more robust than just waiting for a network response.
+        self._wait_for_registry_refresh(lambda: self.category_filter.select_option(""))
 
     def click_category_badge(self, category: str) -> None:
         """Click on a category badge to filter by that category.
