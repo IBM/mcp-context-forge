@@ -3,5 +3,16 @@
   "dashboard.welcome": "Bienvenido a ContextForge",
   "dashboard.overview": "Resumen",
   "dashboard.stats": "Estadísticas",
-  "dashboard.recentActivity": "Actividad Reciente"
+  "dashboard.recentActivity": "Actividad Reciente",
+  "dashboard.recentActivity.title": "Actividad reciente",
+  "dashboard.recentActivity.tabs.ariaLabel": "Filtrar actividad",
+  "dashboard.recentActivity.tabs.all": "Todas",
+  "dashboard.recentActivity.tabs.alerts": "Alertas",
+  "dashboard.recentActivity.search.placeholder": "Buscar...",
+  "dashboard.recentActivity.search.ariaLabel": "Buscar actividad",
+  "dashboard.recentActivity.filter.ariaLabel": "Más filtros",
+  "dashboard.recentActivity.viewMore": "Ver más",
+  "dashboard.recentActivity.empty": "Sin actividad para mostrar.",
+  "dashboard.recentActivity.error": "No se pudo cargar la actividad reciente.",
+  "dashboard.recentActivity.retry": "Reintentar"
 }
