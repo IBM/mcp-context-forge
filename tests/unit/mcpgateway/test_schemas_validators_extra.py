@@ -387,6 +387,82 @@ def test_gateway_update_query_param_validation():
     assert updated.auth_query_param_key == "api_key"
 
 
+def test_gateway_create_auth_query_param_key_empty_string_handling():
+    """Test that empty strings for auth_query_param_key are converted to None.
+
+    Regression test for issue #5133 - form submissions send empty strings for
+    optional auth fields, which should be treated as None.
+    """
+    # Empty string should be converted to None (with bearer auth)
+    gateway = GatewayCreate(
+        name="test-gateway",
+        url="http://localhost:9000/mcp",
+        auth_type="bearer",
+        auth_token="token123",
+        auth_query_param_key="",
+    )
+    assert gateway.auth_query_param_key is None
+
+    # Whitespace-only string should be converted to None
+    gateway = GatewayCreate(
+        name="test-gateway",
+        url="http://localhost:9000/mcp",
+        auth_type="bearer",
+        auth_token="token123",
+        auth_query_param_key="   ",
+    )
+    assert gateway.auth_query_param_key is None
+
+    # None should remain None (omitting auth_query_param_key entirely)
+    gateway = GatewayCreate(
+        name="test-gateway",
+        url="http://localhost:9000/mcp",
+        auth_type="bearer",
+        auth_token="token123",
+    )
+    assert gateway.auth_query_param_key is None
+
+
+def test_gateway_create_auth_query_param_key_pattern_validation():
+    """Test that non-empty auth_query_param_key values are validated against pattern.
+
+    The pattern requires: start with letter/underscore, contain only letters/numbers/underscores/hyphens.
+    """
+    # Valid patterns (testing the validator independent of auth_type)
+    valid_keys = ["api_key", "tavilyApiKey", "_private", "key123", "my-api-key", "a", "_"]
+
+    for key in valid_keys:
+        gateway = GatewayCreate(
+            name="test-gateway",
+            url="http://localhost:9000/mcp",
+            auth_type="bearer",
+            auth_token="token123",
+            auth_query_param_key=key,
+        )
+        assert gateway.auth_query_param_key == key
+
+    # Invalid patterns
+    invalid_keys = [
+        "123invalid",  # starts with number
+        "-invalid",  # starts with hyphen
+        "invalid key",  # contains space
+        "invalid!key",  # contains special char
+        "invalid@key",  # contains @
+        "invalid.key",  # contains dot
+    ]
+
+    for key in invalid_keys:
+        with pytest.raises(ValidationError) as exc_info:
+            GatewayCreate(
+                name="test-gateway",
+                url="http://localhost:9000/mcp",
+                auth_type="bearer",
+                auth_token="token123",
+                auth_query_param_key=key,
+            )
+        assert "Query parameter key must start with a letter or underscore" in str(exc_info.value)
+
+
 def test_gateway_read_mask_and_populate_auth():
     masked = GatewayRead._mask_query_param_auth({"auth_query_params": {"api_key": "enc"}})  # pragma: allowlist secret
     assert masked["auth_query_param_key"] == "api_key"
