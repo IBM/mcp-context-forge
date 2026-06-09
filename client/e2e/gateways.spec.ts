@@ -3,7 +3,7 @@ import { APP } from "./utils/paths";
 import type { VirtualServer } from "../src/types/server";
 
 const MOCK_VIRTUAL_SERVER: VirtualServer = {
-  id: "76c7b637dafc4d7197f14817ddffeda9",
+  id: "76c7b637dafc4d7197f14817ddffeda9", // pragma: allowlist secret
   name: "testVS",
   description: "Test virtual server",
   icon: "",
@@ -28,7 +28,7 @@ const MOCK_VIRTUAL_SERVER: VirtualServer = {
   importBatchId: null,
   federationSource: null,
   version: 1,
-  teamId: "0a9b06bd22974fe386dcacb18548ed61",
+  teamId: "0a9b06bd22974fe386dcacb18548ed61", // pragma: allowlist secret
   team: "Platform Administrator's Team",
   ownerEmail: "admin@example.com",
   visibility: "public",

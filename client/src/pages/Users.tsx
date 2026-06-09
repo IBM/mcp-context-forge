@@ -4,7 +4,12 @@ import { useIntl } from "react-intl";
 import { Button } from "@/components/ui/button";
 import { UserForm } from "@/components/users/UserForm";
 import { UsersTable } from "@/components/users/UsersTable";
+import { DeleteUserDialog } from "@/components/users/DeleteUserDialog";
 import { useQuery } from "@/hooks/useQuery";
+import { useToast } from "@/hooks/useToast";
+import { ToastContainer } from "@/components/ui/toast";
+import { usersApi } from "@/api/users";
+import { ApiError } from "@/api/client";
 import type { User, UsersResponse, CreateUserRequest } from "@/types/user";
 
 const DEFAULT_PAGE_SIZE = 10;
@@ -15,6 +20,10 @@ export function Users() {
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<User | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const { toasts, success, error: showError, dismissToast } = useToast();
 
   const queryPath = useMemo(() => {
     const params = new URLSearchParams();
@@ -70,6 +79,60 @@ export function Users() {
 
   const handleLimitChange = useCallback((newLimit: number) => {
     setLimit(newLimit);
+  }, []);
+
+  const handleDeleteClick = useCallback((user: User) => {
+    setUserToDelete(user);
+    setDeleteDialogOpen(true);
+  }, []);
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (!userToDelete) return;
+
+    setIsDeleting(true);
+
+    // Optimistic update: remove from list immediately
+    const previousUsers = allUsers;
+    setAllUsers((prev) => prev.filter((u) => u.email !== userToDelete.email));
+
+    try {
+      await usersApi.delete(userToDelete.email);
+      success(
+        intl.formatMessage({ id: "users.delete.success" }, { email: userToDelete.email }),
+      );
+      setDeleteDialogOpen(false);
+      setUserToDelete(null);
+    } catch (err) {
+      // Rollback optimistic update
+      setAllUsers(previousUsers);
+
+      let errorMessage = intl.formatMessage(
+        { id: "users.delete.error.generic" },
+        { error: err instanceof Error ? err.message : "Unknown error" },
+      );
+
+      if (err instanceof ApiError) {
+        if (err.status === 400) {
+          const detail = (err.body as { detail?: string })?.detail || "";
+          if (detail.includes("own account")) {
+            errorMessage = intl.formatMessage({ id: "users.delete.error.self" });
+          } else if (detail.includes("last remaining admin")) {
+            errorMessage = intl.formatMessage({ id: "users.delete.error.lastAdmin" });
+          }
+        } else if (err.status === 404) {
+          errorMessage = intl.formatMessage({ id: "users.delete.error.notFound" });
+        }
+      }
+
+      showError(errorMessage);
+    } finally {
+      setIsDeleting(false);
+    }
+  }, [userToDelete, allUsers, intl, success, showError]);
+
+  const handleDeleteCancel = useCallback(() => {
+    setDeleteDialogOpen(false);
+    setUserToDelete(null);
   }, []);
 
   const error = queryError ? queryError.message : null;
@@ -151,7 +214,7 @@ export function Users() {
 
               {allUsers.length > 0 ? (
                 <>
-                  <UsersTable users={allUsers} />
+                  <UsersTable users={allUsers} onDeleteClick={handleDeleteClick} />
 
                   <div className="mt-6 flex items-center justify-between">
                     <div className="flex items-center gap-4">
@@ -204,6 +267,15 @@ export function Users() {
           )}
         </div>
       )}
+      <DeleteUserDialog
+        isOpen={deleteDialogOpen}
+        userEmail={userToDelete?.email || ""}
+        userName={userToDelete?.full_name || userToDelete?.email || ""}
+        onConfirm={handleDeleteConfirm}
+        onCancel={handleDeleteCancel}
+        isDeleting={isDeleting}
+      />
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </main>
   );
 }

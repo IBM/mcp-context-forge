@@ -2717,9 +2717,10 @@ class TestEmailAuthServiceUserDeletion:
             mock_teams_result,
             mock_no_owners,  # No other owners
             mock_single_member,  # Just the user as member
-            mock_empty,  # Delete team members
+            mock_empty,  # Delete team member history
+            mock_empty,  # Delete team members (for the team)
+            mock_empty,  # Delete team members (remove user from all teams)
             mock_empty,  # Delete auth events
-            mock_empty,  # Delete user team members
         ]
 
         mock_role_svc = MagicMock()
