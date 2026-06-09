@@ -34,7 +34,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import fresh_db_session, TokenRevocation, utc_now
+from mcpgateway.db import EmailApiToken, fresh_db_session, TokenRevocation, utc_now
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging
@@ -109,6 +109,13 @@ class TokenBlocklistService:
                     logger.debug("Token %s already revoked", jti)
                     return True
 
+                # Update EmailApiToken.is_active if token exists
+                # Note: Session tokens don't have EmailApiToken records, so this is optional
+                api_token = db.execute(select(EmailApiToken).where(EmailApiToken.jti == jti)).scalar_one_or_none()
+                if api_token:
+                    api_token.is_active = False
+                    logger.debug(f"Set EmailApiToken.is_active=False for jti={jti}")
+
                 # Create revocation record
                 revocation = TokenRevocation(jti=jti, revoked_by=revoked_by, reason=reason, token_expiry=token_expiry, last_activity=last_activity or utc_now())
 
@@ -123,6 +130,13 @@ class TokenBlocklistService:
                     if existing:
                         logger.debug("Token %s already revoked", jti)
                         return True
+
+                    # Update EmailApiToken.is_active if token exists
+                    # Note: Session tokens don't have EmailApiToken records, so this is optional
+                    api_token = db.execute(select(EmailApiToken).where(EmailApiToken.jti == jti)).scalar_one_or_none()
+                    if api_token:
+                        api_token.is_active = False
+                        logger.debug(f"Set EmailApiToken.is_active=False for jti={jti}")
 
                     # Create revocation record
                     revocation = TokenRevocation(jti=jti, revoked_by=revoked_by, reason=reason, token_expiry=token_expiry, last_activity=last_activity or utc_now())

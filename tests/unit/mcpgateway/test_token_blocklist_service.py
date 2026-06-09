@@ -132,6 +132,84 @@ class TestTokenRevocation:
         assert revocation.last_activity is not None
         assert revocation.reason == "idle_timeout"
 
+    def test_revoke_token_sets_api_token_inactive(self, blocklist_service, test_db):
+        """Test that revoking a token sets EmailApiToken.is_active to False."""
+        # First-Party
+        from mcpgateway.db import EmailApiToken, EmailTeam
+
+        # Create a test team
+        team = EmailTeam(
+            id=str(uuid.uuid4()),
+            name="Test Team",
+            slug="test-team",
+            created_by="test@example.com",
+            is_active=True
+        )
+        test_db.add(team)
+        test_db.commit()
+
+        # Create an API token
+        jti = str(uuid.uuid4())
+        api_token = EmailApiToken(
+            id=str(uuid.uuid4()),
+            user_email="test@example.com",
+            team_id=team.id,
+            name="Test Token",
+            jti=jti,
+            token_hash="test_hash",
+            is_active=True
+        )
+        test_db.add(api_token)
+        test_db.commit()
+
+        # Verify token is initially active
+        assert api_token.is_active is True
+
+        # Revoke the token
+        result = blocklist_service.revoke_token(
+            jti=jti,
+            revoked_by="test@example.com",
+            reason="idle_timeout"
+        )
+
+        assert result is True
+
+        # Refresh the token from database
+        test_db.refresh(api_token)
+
+        # Verify token is now inactive
+        assert api_token.is_active is False
+
+        # Verify revocation record exists
+        revocation = test_db.execute(
+            select(TokenRevocation).where(TokenRevocation.jti == jti)
+        ).scalar_one_or_none()
+
+        assert revocation is not None
+        assert revocation.reason == "idle_timeout"
+
+    def test_revoke_token_without_api_token_record(self, blocklist_service, test_db):
+        """Test that revoking a session token (no EmailApiToken) works correctly."""
+        # Session tokens don't have EmailApiToken records
+        jti = str(uuid.uuid4())
+
+        # Revoke the token (should not fail even though no EmailApiToken exists)
+        result = blocklist_service.revoke_token(
+            jti=jti,
+            revoked_by="test@example.com",
+            reason="logout"
+        )
+
+        assert result is True
+
+        # Verify revocation record exists
+        revocation = test_db.execute(
+            select(TokenRevocation).where(TokenRevocation.jti == jti)
+        ).scalar_one_or_none()
+
+        assert revocation is not None
+        assert revocation.reason == "logout"
+
 
 class TestRevocationCheck:
     """Tests for checking if tokens are revoked."""
