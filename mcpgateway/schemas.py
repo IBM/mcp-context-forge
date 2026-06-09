@@ -2908,6 +2908,39 @@ class GatewayCreate(BaseModelWithConfigDict):
         """
         return v if v is not None else "cache"
 
+    @field_validator("auth_query_param_key", mode="before")
+    @classmethod
+    def validate_auth_query_param_key(cls, v: Optional[str]) -> Optional[str]:
+        """Validate query parameter key, converting empty strings to None.
+
+        Handles form submissions where empty string values are passed for optional
+        authentication fields. Only validates pattern when a non-empty value is provided.
+
+        Args:
+            v: Query parameter key value (may be empty string from form submission)
+
+        Returns:
+            None for empty/whitespace-only strings, otherwise validates against pattern
+
+        Raises:
+            ValueError: If non-empty value doesn't match required pattern
+
+        Examples:
+            >>> GatewayCreate.validate_auth_query_param_key('')
+            >>> GatewayCreate.validate_auth_query_param_key('   ')
+            >>> GatewayCreate.validate_auth_query_param_key('tavilyApiKey')
+            'tavilyApiKey'
+            >>> GatewayCreate.validate_auth_query_param_key('invalid-key!')
+            Traceback (most recent call last):
+                ...
+            ValueError: Query parameter key must start with a letter or underscore and contain only letters, numbers, underscores, and hyphens
+        """
+        if not v or (isinstance(v, str) and not v.strip()):
+            return None
+        if isinstance(v, str) and not re.match(r"^[a-zA-Z_][a-zA-Z0-9_\-]*$", v):
+            raise ValueError("Query parameter key must start with a letter or underscore and contain only letters, numbers, underscores, and hyphens")
+        return v
+
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
