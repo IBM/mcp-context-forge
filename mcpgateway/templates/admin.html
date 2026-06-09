@@ -14752,7 +14752,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         const relationship = activeFilterBtn ? activeFilterBtn.getAttribute('data-filter') : 'all';
 
         // Preserve current pagination state (use inline Admin.getPaginationParams)
-        const paginationState = getPaginationParams('teams');
+        const paginationState = Admin.getPaginationParams('teams');
         const params = new URLSearchParams();
         params.set('page', paginationState.page);
         params.set('per_page', paginationState.perPage);
