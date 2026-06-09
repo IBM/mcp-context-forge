@@ -901,7 +901,7 @@ class TestTokenScopingMiddleware:
                     result = await middleware(mock_request, call_next)
 
                     assert result == "success"
-                    mock_resolve.assert_awaited_once_with(session_payload, "user@example.com", {"is_admin": False})
+                    mock_resolve.assert_awaited_once_with(session_payload, "user@example.com", {})
 
     @pytest.mark.asyncio
     async def test_session_token_skips_membership_check_on_stale_jwt_teams(self, middleware, mock_request):

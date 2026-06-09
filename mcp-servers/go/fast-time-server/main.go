@@ -243,7 +243,7 @@ func logAt(l logLvl, f string, v ...any) {
 
 // versionJSON returns server version information as JSON
 func versionJSON() string {
-    return fmt.Sprintf(`{"name":%q,"version":%q,"mcp_version":"1.0"}`, appName, appVersion)
+    return fmt.Sprintf(`{"name":%q,"version":%q,"mcp_version":%q}`, appName, appVersion, mcp.LATEST_PROTOCOL_VERSION)
 }
 
 // healthJSON returns server health status as JSON

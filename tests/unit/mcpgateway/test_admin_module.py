@@ -827,6 +827,7 @@ async def test_admin_ui_with_team_filter_and_cookie(monkeypatch):
     monkeypatch.setattr(admin, "verify_jwt_token_cached", AsyncMock(return_value={"user": {"auth_provider": "keycloak"}}))
     create_jwt = AsyncMock(return_value="jwt")
     monkeypatch.setattr(admin, "create_jwt_token", create_jwt)
+    mock_db.query.return_value.filter.return_value.first.return_value = None  # no EmailUser row → sub falls back to email
 
     response = await admin.admin_ui(request, "team-1", True, mock_db, user=user)
     assert isinstance(response, HTMLResponse)
@@ -837,8 +838,9 @@ async def test_admin_ui_with_team_filter_and_cookie(monkeypatch):
     assert context["selected_team_id"] == "team-1"
     assert len(context["tools"]) == 1
     refreshed_payload = create_jwt.await_args.args[0]
+    assert refreshed_payload["sub"] == "user@example.com"
     assert refreshed_payload["auth_provider"] == "keycloak"
-    assert refreshed_payload["user"]["auth_provider"] == "keycloak"
+    assert refreshed_payload["token_use"] == "session"
 
 
 @pytest.mark.asyncio
@@ -1018,13 +1020,15 @@ async def test_admin_ui_refresh_uses_dict_user_auth_provider(monkeypatch):
 
     create_jwt = AsyncMock(return_value="jwt")
     monkeypatch.setattr(admin, "create_jwt_token", create_jwt)
+    mock_db.query.return_value.filter.return_value.first.return_value = None  # no EmailUser row → sub falls back to email
 
     response = await admin.admin_ui(request, None, False, mock_db, user=user)
 
     assert isinstance(response, HTMLResponse)
     refreshed_payload = create_jwt.await_args.args[0]
+    assert refreshed_payload["sub"] == "user@example.com"
     assert refreshed_payload["auth_provider"] == "keycloak"
-    assert refreshed_payload["user"]["auth_provider"] == "keycloak"
+    assert refreshed_payload["token_use"] == "session"
 
 
 @pytest.mark.asyncio
@@ -1038,14 +1042,16 @@ async def test_admin_ui_refresh_uses_object_user_full_name_and_provider(monkeypa
 
     create_jwt = AsyncMock(return_value="jwt")
     monkeypatch.setattr(admin, "create_jwt_token", create_jwt)
+    mock_db.query.return_value.filter.return_value.first.return_value = None  # no EmailUser row → sub falls back to email
 
     admin_ui_func = _unwrap(admin.admin_ui)
     response = await admin_ui_func(request, None, False, mock_db, user=user)
 
     assert isinstance(response, HTMLResponse)
     refreshed_payload = create_jwt.await_args.args[0]
-    assert refreshed_payload["user"]["full_name"] == "Object User"
+    assert refreshed_payload["sub"] == "user@example.com"
     assert refreshed_payload["auth_provider"] == "keycloak"
+    assert refreshed_payload["token_use"] == "session"
 
 
 @pytest.mark.asyncio
@@ -1080,13 +1086,15 @@ async def test_admin_ui_refresh_provider_lookup_failure_keeps_local_provider(mon
     monkeypatch.setattr(admin, "verify_jwt_token_cached", AsyncMock(side_effect=RuntimeError("boom")))
     create_jwt = AsyncMock(return_value="jwt")
     monkeypatch.setattr(admin, "create_jwt_token", create_jwt)
+    mock_db.query.return_value.filter.return_value.first.return_value = None  # no EmailUser row → sub falls back to email
 
     response = await admin.admin_ui(request, None, False, mock_db, user=user)
 
     assert isinstance(response, HTMLResponse)
     refreshed_payload = create_jwt.await_args.args[0]
+    assert refreshed_payload["sub"] == "user@example.com"
     assert refreshed_payload["auth_provider"] == "local"
-    assert refreshed_payload["user"]["auth_provider"] == "local"
+    assert refreshed_payload["token_use"] == "session"
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,5 @@
 import { AppState } from "./appState.js";
 import { initializeCACertUpload } from "./caCertificate.js";
-import { overflowMenu } from "./components/overflow-menu.js";
 import { TABLE_TO_ENTITY_TYPE } from "./constants.js";
 import { initializeEventDelegation } from "./eventDelegation.js";
 import { toggleViewPublic, updateFilterStatus } from "./filters.js";
@@ -1005,7 +1004,6 @@ import {
   // Alpine Components
   // ===================================================================
   document.addEventListener("alpine:init", () => {
-    Alpine.data("overflowMenu", (wrapperId = null) => overflowMenu(wrapperId));
     Alpine.data("paginationData", () => Admin.paginationData());
     Alpine.data("overviewDashboard", () => Admin.overviewDashboard());
     Alpine.data("llmApiInfoApp", () => Admin.llmApiInfoApp());

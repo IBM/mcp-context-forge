@@ -1407,7 +1407,8 @@ class EmailUser(Base):
     instead of usernames.
 
     Attributes:
-        email (str): Primary key, unique email identifier
+        id (str): Primary key, UUID string
+        email (str): Unique email identifier
         password_hash (str): Argon2id hashed password
         full_name (str): Optional display name for professional appearance
         is_admin (bool): Admin privileges flag
@@ -1439,7 +1440,8 @@ class EmailUser(Base):
     __tablename__ = "email_users"
 
     # Core identity fields
-    email: Mapped[str] = mapped_column(String(255), primary_key=True, index=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -1951,9 +1953,7 @@ class EmailTeam(Base):
 
         session = object_session(self)
         if session is None:
-            # Fallback for detached objects (e.g., in doctests)
-            return len([m for m in self.members if m.is_active])
-
+            return sum(1 for m in self.members if m.is_active)
         count = session.query(func.count(EmailTeamMember.id)).filter(EmailTeamMember.team_id == self.id, EmailTeamMember.is_active.is_(True)).scalar()  # pylint: disable=not-callable
         return count or 0
 
@@ -1978,7 +1978,6 @@ class EmailTeam(Base):
 
         session = object_session(self)
         if session is None:
-            # Fallback for detached objects (e.g., in doctests)
             return any(m.user_email == user_email and m.is_active for m in self.members)
 
         exists = session.query(EmailTeamMember.id).filter(EmailTeamMember.team_id == self.id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)).first()
