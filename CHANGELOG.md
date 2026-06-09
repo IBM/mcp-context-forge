@@ -137,6 +137,11 @@ Release 1.0.3 consolidates **61 PRs** focused on **authentication and JWT harden
 - **🧪 Loadtest Gaps** ([#4698](https://github.com/IBM/mcp-context-forge/pull/4698)) – Closed load-test gaps. Improves performance-test coverage.
 - **🧪 Playwright admin_api Fixture** ([#4265](https://github.com/IBM/mcp-context-forge/pull/4265)) – Stopped the Playwright `admin_api` fixture from duplicating JWT auth and fixed linting. Improves UI-test reliability.
 
+### Known Issues
+
+- **🔒 CSRF Validation Failure on Some Admin UI Actions** ([#5151](https://github.com/IBM/mcp-context-forge/issues/5151)) – Several Admin UI actions may fail with `{"detail":"CSRF validation failed","code":"CSRF_TOKEN_INVALID"}`. This happens when the `jwt_token` cookie is set with the `HttpOnly` flag: the global `CSRFMiddleware` applies to all non-exempt routes, and some Admin UI endpoints are currently missing from `csrf_exempt_paths`.
+  - **Workaround:** Set `CSRF_EXEMPT_PATHS` in your `.env`. Copy the `CSRF_EXEMPT_PATHS` value from `.env.example` into `.env`, then restart the application.
+
 ---
 
 ## [1.0.2] - 2026-05-25 - Admin UI Rewrite, Database Migrations, Security Enhancements, and Bug Fixes
