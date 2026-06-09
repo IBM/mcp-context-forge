@@ -717,6 +717,7 @@ async def test_csrf_form_post_without_header_is_rejected_without_consuming_body(
         "/teams/456/join-requests/789/approve",
         "/llmchat/connect",
         "/llmchat/disconnect",
+        "/api/logs/search",
     ],
 )
 async def test_post_to_issue_5151_exempt_paths_passes_without_csrf_token(path):
@@ -759,6 +760,7 @@ async def test_post_to_issue_5151_exempt_paths_passes_without_csrf_token(path):
             "/tokens",
             "/teams/",
             "/llmchat/",
+            "/api/logs/",
         ]
 
         response = await middleware.dispatch(request, call_next)
@@ -776,7 +778,7 @@ def test_csrf_exempt_paths_default_contains_issue_5151_paths():
     from mcpgateway.config import Settings
 
     defaults = Settings.model_fields["csrf_exempt_paths"].default_factory()
-    required = ["/api/metrics/", "/toolops/", "/tokens", "/teams/", "/llmchat/"]
+    required = ["/api/metrics/", "/toolops/", "/tokens", "/teams/", "/llmchat/", "/api/logs/"]
     missing = [p for p in required if p not in defaults]
     assert not missing, f"csrf_exempt_paths default_factory missing: {missing}"
 

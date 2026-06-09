@@ -463,6 +463,7 @@ class Settings(BaseSettings):
             "/tokens",  # Exempt: token management API, authenticated via session cookie
             "/teams/",  # Exempt: team management API, authenticated via session cookie
             "/llmchat/",  # Exempt: LLM chat API, authenticated via session cookie
+            "/api/logs/",  # Exempt: structured log search API, authenticated via session cookie
         ],
         description="Paths exempt from CSRF protection",
     )
