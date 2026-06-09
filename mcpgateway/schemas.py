@@ -2846,7 +2846,7 @@ class GatewayCreate(BaseModelWithConfigDict):
     auth_token: Optional[str] = Field(None, description="Token for bearer authentication")
     auth_header_key: Optional[str] = Field(None, description="Key for custom headers authentication")
     auth_header_value: Optional[str] = Field(None, description="Value for custom headers authentication")
-    auth_headers: Optional[List[Union[Dict[str, str], str, None]]] = Field(None, description="List of custom headers for authentication")
+    auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for authentication")
 
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(
