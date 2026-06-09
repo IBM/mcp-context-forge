@@ -80,12 +80,12 @@ class TestAgentsEntity:
         option_values = []
         for i in range(options.count()):
             value = options.nth(i).get_attribute("value")
-            option_values.append(value)  # Include empty string for "None"
+            option_values.append(value)
 
         # Verify expected auth types
-        expected_auth_types = ["", "basic", "bearer", "authheaders", "oauth", "query_param"]
+        expected_auth_types = ["none", "basic", "bearer", "authheaders", "oauth", "query_param"]
         for expected_auth in expected_auth_types:
-            assert expected_auth in option_values, f"Auth type '{expected_auth or 'none'}' should be available"
+            assert expected_auth in option_values, f"Auth type '{expected_auth}' should be available"
 
     def test_visibility_enum_values(self, agents_page: AgentsPage):
         """Test that visibility has correct enum values."""
@@ -110,9 +110,9 @@ class TestAgentsEntity:
         default_agent_type = agents_page.agent_type_select.input_value()
         assert default_agent_type == "generic", "Default agent type should be 'generic'"
 
-        # Check default auth type (should be empty/none)
+        # Check default auth type (should be 'none')
         default_auth_type = agents_page.auth_type_select.input_value()
-        assert default_auth_type == "", "Default auth type should be empty (none)"
+        assert default_auth_type == "none", "Default auth type should be 'none'"
 
         # Check default visibility (should be public)
         assert agents_page.visibility_public_radio.is_checked(), "Default visibility should be public"

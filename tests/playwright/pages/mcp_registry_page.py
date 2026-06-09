@@ -287,19 +287,16 @@ class MCPRegistryPage(BasePage):
         race conditions where one filter's HTMX request includes stale values from other filters.
         We clear all inputs first, then trigger a single HTMX request.
         """
-        # Clear all inputs without triggering HTMX
+        # Clear auth and search inputs without triggering HTMX; category will be
+        # reset by select_option("") below which also fires the HTMX request.
         self.page.evaluate("""
-            document.getElementById('category-filter').value = '';
             document.getElementById('auth-filter').value = '';
             document.getElementById('search-input').value = '';
         """)
 
-        # Trigger a single HTMX request and wait for the response to land.
-        with self.page.expect_response("**/admin/mcp-registry/partial**", timeout=5000):
-            self.category_filter.select_option("")
-
-        # Wait for HTMX swap to complete and DOM to settle
-        self.wait_for_registry_results_ready(timeout=10000)
+        # Trigger a single HTMX request via category-filter and wait for both the
+        # network response and the DOM swap to complete.
+        self._wait_for_registry_refresh(lambda: self.category_filter.select_option(""))
 
     def click_category_badge(self, category: str) -> None:
         """Click on a category badge to filter by that category.

@@ -390,7 +390,7 @@ class AgentsPage(BasePage):
         Args:
             auth_type: Authentication type (none, basic, bearer, authheaders, oauth, query_param)
         """
-        self.auth_type_select.select_option(auth_type if auth_type != "none" else "")
+        self.auth_type_select.select_option(auth_type)
 
     def fill_basic_auth(self, username: str, password: str) -> None:
         """Fill basic authentication fields.

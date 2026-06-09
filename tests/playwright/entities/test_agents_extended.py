@@ -452,7 +452,7 @@ class TestA2AEditModal:
         auth_type = agents_page.page.locator("#auth-type-a2a-edit")
         expect(auth_type).to_be_visible()
 
-        for value in ["", "basic", "bearer", "authheaders", "oauth", "query_param"]:
+        for value in ["none", "basic", "bearer", "authheaders", "oauth", "query_param"]:
             expect(auth_type.locator(f'option[value="{value}"]')).to_be_attached()
 
         _close_edit_modal(agents_page)

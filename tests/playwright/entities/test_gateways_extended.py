@@ -531,7 +531,7 @@ class TestGatewayEditModal:
         auth_select = gateways_page.edit_modal_auth_type_select
         expect(auth_select).to_be_visible()
 
-        for value in ["", "basic", "bearer", "authheaders", "oauth", "query_param"]:
+        for value in ["none", "basic", "bearer", "authheaders", "oauth", "query_param"]:
             expect(auth_select.locator(f'option[value="{value}"]')).to_be_attached()
 
         gateways_page.close_edit_modal()
@@ -598,7 +598,7 @@ class TestGatewayEditModal:
 
         # Reset auth type to a known-empty state so the test is independent of whichever
         # auth type the first gateway happens to use.
-        gateways_page.edit_modal_auth_type_select.select_option("")
+        gateways_page.edit_modal_auth_type_select.select_option("none")
         expect(gateways_page.edit_auth_headers_fields).to_be_hidden()
 
         gateways_page.edit_modal_auth_type_select.select_option("authheaders")
@@ -1278,7 +1278,7 @@ class TestAuthTypeSwitching:
         gateways_page.auth_type_select.select_option("oauth")
         expect(gateways_page.oauth_fields).to_be_visible()
 
-        gateways_page.auth_type_select.select_option("")
+        gateways_page.auth_type_select.select_option("none")
         expect(gateways_page.oauth_fields).to_be_hidden()
 
     def test_all_auth_fields_hidden_when_none_selected(self, gateways_page: GatewaysPage):
@@ -1286,7 +1286,7 @@ class TestAuthTypeSwitching:
         gateways_page.navigate_to_gateways_tab()
 
         # Select None (default)
-        gateways_page.auth_type_select.select_option("")
+        gateways_page.auth_type_select.select_option("none")
 
         expect(gateways_page.auth_basic_fields).to_be_hidden()
         expect(gateways_page.auth_bearer_fields).to_be_hidden()

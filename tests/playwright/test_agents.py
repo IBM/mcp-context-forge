@@ -90,7 +90,7 @@ class TestAgentsUI:
         option_values = [options.nth(i).get_attribute("value") for i in range(options.count())]
 
         # Verify expected options are present
-        assert "" in option_values  # None option
+        assert "none" in option_values  # None option
         assert "basic" in option_values
         assert "bearer" in option_values
         assert "authheaders" in option_values

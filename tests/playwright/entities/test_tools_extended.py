@@ -225,8 +225,8 @@ class TestToolsAddForm:
 
         auth_type = tools_page.add_tool_form.locator('[name="auth_type"]')
 
-        # None (empty value), Basic, Bearer Token, Custom Headers, OAuth 2.0
-        for value in ["", "basic", "bearer", "authheaders", "oauth"]:
+        # None, Basic, Bearer Token, Custom Headers, OAuth 2.0
+        for value in ["none", "basic", "bearer", "authheaders", "oauth"]:
             expect(auth_type.locator(f'option[value="{value}"]')).to_be_attached()
 
     def test_visibility_radios_present(self, tools_page: ToolsPage):
@@ -534,7 +534,7 @@ class TestToolsEditModal:
         auth_select = tools_page.tool_edit_modal.locator("#edit-auth-type")
         expect(auth_select).to_be_visible()
 
-        for value in ["", "basic", "bearer", "authheaders"]:
+        for value in ["none", "basic", "bearer", "authheaders"]:
             expect(auth_select.locator(f'option[value="{value}"]')).to_be_attached()
 
         tools_page.cancel_tool_edit()
@@ -563,7 +563,7 @@ class TestToolsEditModal:
         expect(basic_fields).to_be_visible()
 
         # Switch back to None
-        auth_select.select_option("")
+        auth_select.select_option("none")
         tools_page.page.wait_for_timeout(300)
         expect(basic_fields).to_be_hidden()
 
@@ -591,7 +591,7 @@ class TestToolsEditModal:
         tools_page.page.wait_for_timeout(300)
         expect(bearer_fields).to_be_visible()
 
-        auth_select.select_option("")
+        auth_select.select_option("none")
         tools_page.page.wait_for_timeout(300)
         expect(bearer_fields).to_be_hidden()
 

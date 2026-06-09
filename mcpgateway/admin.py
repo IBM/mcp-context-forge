@@ -18023,6 +18023,12 @@ async def catalog_partial(
 
     root_path = _resolve_root_path(request)
 
+    # Treat empty strings or the sentinel "none" value (from unrelated admin UI form
+    # elements inadvertently captured by broad hx-include selectors) as no filter.
+    category = category or None
+    auth_type = auth_type if (auth_type and auth_type != "none") else None
+    search = search or None
+
     # Calculate pagination
     page_size = settings.mcpgateway_catalog_page_size
     offset = (page - 1) * page_size

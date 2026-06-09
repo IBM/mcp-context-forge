@@ -99,7 +99,7 @@
           hx-get="{{ root_path }}/admin/mcp-registry/partial"
           hx-trigger="change"
           hx-target="#mcp-registry-servers"
-          hx-include="[name='auth_type'],[name='search']"
+          hx-include="#auth-filter,#search-input"
         >
           <option value="" {% if not filter_params.category %}selected{% endif %}>All Categories</option>
           {% for category in stats.categories %}
@@ -120,7 +120,7 @@
           hx-get="{{ root_path }}/admin/mcp-registry/partial"
           hx-trigger="change"
           hx-target="#mcp-registry-servers"
-          hx-include="[name='category'],[name='search']"
+          hx-include="#category-filter,#search-input"
         >
           <option value="" {% if not filter_params.auth_type %}selected{% endif %}>All Auth Types</option>
           {% for auth_type in stats.auth_types %}
@@ -144,7 +144,7 @@
           hx-get="{{ root_path }}/admin/mcp-registry/partial"
           hx-trigger="keyup changed delay:500ms"
           hx-target="#mcp-registry-servers"
-          hx-include="[name='category'],[name='auth_type']"
+          hx-include="#category-filter,#auth-filter"
         />
       </div>
     </div>

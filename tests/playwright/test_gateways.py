@@ -110,7 +110,7 @@ class TestGatewaysPage:
         expect(auth_select).to_be_visible()
 
         # Verify auth type options
-        expect(auth_select.locator('option[value=""]')).to_be_attached()  # None
+        expect(auth_select.locator('option[value="none"]')).to_be_attached()  # None
         expect(auth_select.locator('option[value="basic"]')).to_be_attached()
         expect(auth_select.locator('option[value="bearer"]')).to_be_attached()
         expect(auth_select.locator('option[value="authheaders"]')).to_be_attached()
