@@ -2,6 +2,7 @@
 """Location: ./tests/unit/mcpgateway/utils/test_safe_log_user.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Tests for safe_log_user() function combining PII redaction and log injection protection.
 """

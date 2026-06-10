@@ -4839,7 +4839,7 @@ async def _admin_logout(request: Request) -> Response:
                 # Match if referer host matches request host and path contains /admin or /oauth/callback
                 if referer_parsed.netloc == request_host and ("/admin" in referer_parsed.path or "/oauth/callback" in referer_parsed.path):
                     is_same_origin_referer = True
-            except Exception:
+            except Exception: # nosec B110
                 pass  # Invalid referer URL, treat as not same-origin
 
         is_browser_request = "text/html" in accept_header or is_htmx or is_same_origin_referer

@@ -607,9 +607,9 @@ async def set_user_context_from_token(request: Request, payload: dict, db: Sessi
         >>> request.state.user_id  # doctest: +SKIP
         'user@example.com'
     """
-    from mcpgateway.auth import get_user_email_from_token
-
+    # First-Party
     from mcpgateway.auth import _get_user_by_email_sync  # pylint: disable=import-outside-toplevel
+    from mcpgateway.auth import get_user_email_from_token
 
     user_email = await get_user_email_from_token(payload, db)
     request.state.user_email = user_email

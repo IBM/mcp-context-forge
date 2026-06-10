@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Go/Rust fast server parity through a live ContextForge MCP gateway."""
+"""Location: ./tests/live_gateway/mcp/test_fast_server_go_rust_parity.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Go/Rust fast server parity through a live ContextForge MCP gateway.
+"""
 
 from __future__ import annotations
 

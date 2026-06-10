@@ -47,9 +47,9 @@ ARG ENABLE_PROFILING=false
 #     --build-arg NODEJS_IMAGE=<internal-registry>/ubi9/nodejs-20:latest \
 #     --build-arg UBI_MINIMAL=<internal-registry>/ubi9/ubi-minimal:latest \
 #     .
-ARG UBI_BASE=registry.access.redhat.com/ubi10/ubi:10.1-1778562845
-ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:10.1-1778561468
-ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:10.1-1778576723
+ARG UBI_BASE=registry.access.redhat.com/ubi10:1780550950
+ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:1780432202
+ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:1780550884
 # s390x wheels stage - pulls pre-built wheels from GHCR
 FROM --platform=linux/s390x ghcr.io/ibm/mcp-context-forge-s390x-wheels:latest AS s390x-wheels
 
@@ -380,7 +380,7 @@ LABEL maintainer="Mihai Criveti" \
     org.opencontainers.image.title="mcp/mcpgateway" \
     org.opencontainers.image.description="ContextForge: An enterprise-ready Model Context Protocol Gateway" \
     org.opencontainers.image.licenses="Apache-2.0" \
-    org.opencontainers.image.version="1.0.2"
+    org.opencontainers.image.version="1.0.3"
 
 # ----------------------------------------------------------------------------
 # Install minimal runtime dependencies

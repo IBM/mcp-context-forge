@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Regression tests for paths migrated from the in-repo plugin framework."""
+"""Location: ./tests/unit/mcpgateway/plugins/test_cpex_migration_paths.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Regression tests for paths migrated from the in-repo plugin framework.
+"""
 
 from __future__ import annotations
 

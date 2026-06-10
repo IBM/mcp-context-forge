@@ -200,6 +200,7 @@ def safe_log_user(user: Any) -> str:
         True
     """
     # Import here to avoid circular dependency
+    # First-Party
     from mcpgateway.common.validators import SecurityValidator
 
     if isinstance(user, dict):

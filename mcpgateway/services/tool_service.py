@@ -287,7 +287,7 @@ def _log_tool_pre_invoke_result(tool_name: str, original_args: Any, original_hea
     except Exception:  # noqa: BLE001
         try:
             logger.debug("tool_pre_invoke diagnostic logging failed", exc_info=False)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001  # nosec B110
             pass
 
 

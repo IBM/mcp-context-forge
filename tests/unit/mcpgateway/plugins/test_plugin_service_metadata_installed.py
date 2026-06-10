@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for installed plugin metadata through the real manager path."""
+"""Location: ./tests/unit/mcpgateway/plugins/test_plugin_service_metadata_installed.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for installed plugin metadata through the real manager path.
+"""
 
 # Standard
 from importlib import metadata

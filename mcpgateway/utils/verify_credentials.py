@@ -1408,9 +1408,11 @@ async def require_admin_auth(
                         current_user = await auth_service.get_user_by_email(username)
                         if not current_user:
                             # Session tokens use UUID as sub; resolve by ID
+                            # Standard
                             import re as _re  # pylint: disable=import-outside-toplevel  # nosec B404
 
                             if _re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", username, _re.IGNORECASE):
+                                # First-Party
                                 from mcpgateway.db import EmailUser as _EmailUser  # pylint: disable=import-outside-toplevel
 
                                 current_user = db_session.query(_EmailUser).filter(_EmailUser.id == username).first()

@@ -1,29 +1,42 @@
-"""Experimental Dataplane publisher service for periodically exporting user configuration to Redis.
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/services/dataplane_publisher.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Experimental Dataplane publisher service for periodically exporting user configuration to Redis.
 NOTE: This publisher backs dataplane wip feature and it is disabled by default.
 Be careful not to overfit production-grade assumptions onto the design.
 """
 
+# Standard
 import asyncio
 from collections import defaultdict
 import logging
 import os
 import socket
 from typing import Any, TypedDict
-from sqlalchemy import select
+
+# Third-Party
 import msgpack
+from sqlalchemy import select
+
+# First-Party
 from mcpgateway.db import (
-    EmailUser,
     EmailTeamMember,
-    Gateway as DbGateway,
-    Prompt as DbPrompt,
-    Resource as DbResource,
-    Server as DbServer,
-    Tool as DbTool,
+    EmailUser,
     fresh_db_session,
+)
+from mcpgateway.db import (
     server_prompt_association,
     server_resource_association,
     server_tool_association,
 )
+from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import Prompt as DbPrompt
+from mcpgateway.db import Resource as DbResource
+from mcpgateway.db import Server as DbServer
+from mcpgateway.db import Tool as DbTool
 from mcpgateway.utils.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
