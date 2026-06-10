@@ -1,4 +1,10 @@
-"""Unit tests for JWT token PII cleanup migration (Phase 1).
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/test_token_migration.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for JWT token PII cleanup migration (Phase 1).
 
 Tests the helper functions that enable backward-compatible token migration
 from email-based to user-ID-based tokens.

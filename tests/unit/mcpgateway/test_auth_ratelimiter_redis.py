@@ -1,4 +1,11 @@
-"""Unit tests for rate limiter Redis client initialization in auth.py."""
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/test_auth_ratelimiter_redis.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for rate limiter Redis client initialization in auth.py.
+"""
 
 import time
 from unittest.mock import MagicMock, patch
