@@ -103,8 +103,7 @@ export interface ApiToolPayload {
     auth_username?: string;
     auth_password?: string; // pragma: allowlist secret
     auth_token?: string;
-    auth_header_key?: string;
-    auth_header_value?: string;
+    auth_headers?: Array<{ key: string; value: string }>;
     oauth_config?: {
       grant_type?: string;
       client_id?: string;
@@ -130,6 +129,7 @@ export interface FormErrors {
   requestType?: string;
   responseFilter?: string;
   tags?: string;
+  teamId?: string;
   schema?: string;
   submit?: string;
 }
@@ -404,17 +404,17 @@ export function useToolForm(): UseToolFormReturn {
     };
 
     const tool: ApiToolPayload["tool"] = {
-      name,
-      url: url || undefined,
-      description: description || undefined,
+      name: sanitizeString(name, 100),
+      url: sanitizeUrl(url, 2000),
+      description: description ? sanitizeString(description, 500) : undefined,
       request_type: requestType,
       inputSchema: parseSchemaJson(inputSchema),
       outputSchema: parseSchemaJson(outputSchema),
-      jsonpath_filter: responseFilter || undefined,
+      jsonpath_filter: responseFilter ? sanitizeString(responseFilter, 500) : undefined,
       tags: tags
         ? tags
             .split(",")
-            .map((t) => t.trim())
+            .map((t) => sanitizeString(t.trim(), 200))
             .filter(Boolean)
         : undefined,
       visibility: visibility || undefined,
@@ -424,15 +424,17 @@ export function useToolForm(): UseToolFormReturn {
     if (apiAuthType) {
       tool.auth_type = apiAuthType;
       if (authType === "basic") {
-        if (authUsername) tool.auth_username = authUsername;
-        if (authPassword) tool.auth_password = authPassword; // pragma: allowlist secret
+        if (authUsername) tool.auth_username = sanitizeString(authUsername, 200);
+        if (authPassword) tool.auth_password = sanitizePassword(authPassword, 1000); // pragma: allowlist secret
       } else if (authType === "bearer") {
-        if (bearerToken) tool.auth_token = bearerToken;
+        if (bearerToken) tool.auth_token = sanitizeToken(bearerToken, 2000);
       } else if (authType === "custom") {
-        const firstHeader = customHeaders.find((h) => h.key.trim());
-        if (firstHeader) {
-          tool.auth_header_key = firstHeader.key;
-          tool.auth_header_value = firstHeader.value;
+        const validHeaders = customHeaders.filter((h) => h.key.trim());
+        if (validHeaders.length > 0) {
+          tool.auth_headers = validHeaders.map((h) => ({
+            key: sanitizeString(h.key, 200),
+            value: sanitizeString(h.value, 1000),
+          }));
         }
       } else if (authType === "oauth") {
         const scopesArray = oauthScopes ? oauthScopes.split(/\s+/).filter(Boolean) : undefined;
@@ -629,30 +631,28 @@ export function useToolForm(): UseToolFormReturn {
           if (error && typeof error === "object" && "body" in error) {
             const errorWithBody = error as {
               body?: {
-                detail?: Array<{ msg?: string; loc?: string[] }>;
+                detail?: Array<{ msg?: string; loc?: string[] }> | string;
                 message?: string;
               };
             };
 
-            // Check for simple message format first
-            if (errorWithBody.body?.message) {
-              errorMessage = errorWithBody.body.message;
-            }
-            // Then check for validation errors format
-            else {
-              const details = errorWithBody.body?.detail;
+            const { message: bodyMessage, detail } = errorWithBody.body ?? {};
 
-              if (Array.isArray(details) && details.length > 0) {
-                // Extract error messages from validation errors
-                const messages = details
-                  .map((err) => {
-                    const field = err.loc && err.loc.length > 1 ? err.loc[err.loc.length - 1] : "";
-                    const msg = err.msg || "Invalid value";
-                    return field ? `${field}: ${msg}` : msg;
-                  })
-                  .join("; ");
-                errorMessage = messages;
-              }
+            if (bodyMessage) {
+              // 403 ORJSONResponse shape: { message: "..." }
+              errorMessage = bodyMessage;
+            } else if (typeof detail === "string" && detail) {
+              // HTTPException shape: { detail: "..." }
+              errorMessage = detail;
+            } else if (Array.isArray(detail) && detail.length > 0) {
+              // Pydantic validation shape: { detail: [{ loc, msg }] }
+              errorMessage = detail
+                .map((err) => {
+                  const field = err.loc && err.loc.length > 1 ? err.loc[err.loc.length - 1] : "";
+                  const msg = err.msg || "Invalid value";
+                  return field ? `${field}: ${msg}` : msg;
+                })
+                .join("; ");
             }
           }
 
@@ -664,19 +664,42 @@ export function useToolForm(): UseToolFormReturn {
   );
 
   const isValid = useMemo(() => {
-    if (!name.trim() || !url.trim()) return false;
-    try {
-      const parsed = new URL(url.trim());
-      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
-    } catch {
-      return false;
+    if (inputSchema.trim()) {
+      try {
+        JSON.parse(inputSchema);
+      } catch {
+        return false;
+      }
     }
-    // Require teamId when visibility is "team"
-    if (visibility === "team" && (!teamId || !teamId.trim())) {
-      return false;
+    if (outputSchema.trim()) {
+      try {
+        JSON.parse(outputSchema);
+      } catch {
+        return false;
+      }
     }
-    return true;
-  }, [name, url, visibility, teamId]);
+    return toolFormSchema.safeParse({
+      name,
+      url,
+      description: description || undefined,
+      requestType,
+      responseFilter: responseFilter || undefined,
+      tags: tags || undefined,
+      visibility: visibility || undefined,
+      teamId: visibility === "team" ? teamId || undefined : undefined,
+    }).success;
+  }, [
+    name,
+    url,
+    description,
+    requestType,
+    responseFilter,
+    tags,
+    visibility,
+    teamId,
+    inputSchema,
+    outputSchema,
+  ]);
 
   return {
     // State
