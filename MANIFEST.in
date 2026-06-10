@@ -146,6 +146,7 @@ prune a2a-agents
 prune agent_runtimes
 prune llms
 prune crates/tools
+prune client
 
 # Development and CI/CD artifacts
 prune .github
