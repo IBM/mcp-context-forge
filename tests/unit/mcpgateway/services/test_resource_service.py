@@ -28,7 +28,7 @@ from sqlalchemy.exc import IntegrityError, MultipleResultsFound
 # First-Party
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.schemas import ResourceCreate, ResourceRead, ResourceSubscription, ResourceUpdate
-from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService
+from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService, ResourceURIConflictError, ResourceNameConflictError
 
 # Local
 from tests.helpers.admin_mocks import install_admin_user
@@ -302,30 +302,65 @@ class TestResourceRegistration:
     @pytest.mark.asyncio
     async def test_register_resource_uri_conflict_active(self, resource_service, mock_db, sample_resource_create, mock_resource):
         """URI conflict when an **active** resource already exists."""
-        mock_scalar = MagicMock()
-        mock_scalar.scalar_one_or_none.return_value = mock_resource  # active
-        mock_db.execute.return_value = mock_scalar
-
         # Ensure visibility is a string, not a MagicMock
         mock_resource.visibility = "public"
 
-        with pytest.raises(ResourceError) as exc_info:
+        # First execute() call is the name check (return None = no name conflict),
+        # second is the URI check (return mock_resource = URI conflict).
+        no_match = MagicMock()
+        no_match.scalar_one_or_none.return_value = None
+        uri_match = MagicMock()
+        uri_match.scalar_one_or_none.return_value = mock_resource
+        mock_db.execute.side_effect = [no_match, uri_match]
+
+        with pytest.raises(ResourceURIConflictError) as exc_info:
             await resource_service.register_resource(mock_db, sample_resource_create)
 
-        # Accept the wrapped error message
         assert "Public Resource already exists with URI" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_register_resource_uri_conflict_inactive(self, resource_service, mock_db, sample_resource_create, mock_inactive_resource):
         """URI conflict when an **inactive** resource already exists."""
-        mock_scalar = MagicMock()
-        mock_scalar.scalar_one_or_none.return_value = mock_inactive_resource  # inactive
-        mock_db.execute.return_value = mock_scalar
+        # First execute() call is the name check (return None = no name conflict),
+        # second is the URI check (return mock_inactive_resource = URI conflict).
+        no_match = MagicMock()
+        no_match.scalar_one_or_none.return_value = None
+        uri_match = MagicMock()
+        uri_match.scalar_one_or_none.return_value = mock_inactive_resource
+        mock_db.execute.side_effect = [no_match, uri_match]
 
-        with pytest.raises(ResourceError) as exc_info:
+        with pytest.raises(ResourceURIConflictError) as exc_info:
             await resource_service.register_resource(mock_db, sample_resource_create)
 
         assert "Resource already exists with URI" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_register_resource_name_conflict_active(self, resource_service, mock_db, sample_resource_create, mock_resource):
+        """Name conflict when an active resource already has the same name."""
+        mock_resource.visibility = "public"
+        name_match = MagicMock()
+        name_match.scalar_one_or_none.return_value = mock_resource
+        mock_db.execute.side_effect = [name_match]
+
+        with pytest.raises(ResourceNameConflictError) as exc_info:
+            await resource_service.register_resource(mock_db, sample_resource_create)
+
+        assert "already exists" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_register_resource_name_conflict_inactive(self, resource_service, mock_db, sample_resource_create, mock_inactive_resource):
+        """Name conflict when an **inactive** resource already has the same name (covers enabled=False path)."""
+        mock_inactive_resource.visibility = "public"
+        name_match = MagicMock()
+        name_match.scalar_one_or_none.return_value = mock_inactive_resource
+        mock_db.execute.side_effect = [name_match]
+
+        with pytest.raises(ResourceNameConflictError) as exc_info:
+            await resource_service.register_resource(mock_db, sample_resource_create)
+
+        err = exc_info.value
+        assert err.enabled is False
+        assert "currently inactive" in str(err)
 
     @pytest.mark.asyncio
     async def test_resource_create_with_invalid_uri(self):
@@ -3359,7 +3394,7 @@ class TestResourceGatewayNamespacing:
             await resource_service.register_resource(mock_db, sample_resource_create)
 
         # Verification
-        assert "Resource already exists" in str(exc_info.value)
+        assert "already exists" in str(exc_info.value)
         assert "gateway-1" in str(existing_resource.gateway_id)
 
     @pytest.mark.asyncio
@@ -3396,7 +3431,7 @@ class TestResourceGatewayNamespacing:
             await resource_service.register_resource(mock_db, sample_resource_create)
 
         # Verification
-        assert "Resource already exists" in str(exc_info.value)
+        assert "already exists" in str(exc_info.value)
 
 
 class TestResourceBulkRegistration:
@@ -3542,6 +3577,7 @@ class TestResourceBulkRegistration:
                 raise ValueError("boom")
 
         mock_db.execute.return_value.scalars.return_value.all.return_value = []
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
         resource_service._notify_resource_added = AsyncMock()
@@ -3556,10 +3592,55 @@ class TestResourceBulkRegistration:
         assert result["failed"] == 1
         assert any("Failed to process resource" in err for err in result["errors"])
 
+    @pytest.mark.asyncio
+    async def test_register_resources_bulk_name_conflict_skip(self, resource_service, mock_db):
+        """Bulk register skips a resource when its name conflicts (skip strategy, lines 952-954)."""
+        existing = MagicMock(spec=DbResource)
+        existing.uri = "file:///other.txt"  # different URI — triggers name-conflict branch
+        existing.name = "Dup"
+        existing.enabled = True
+        existing.id = "abc"
+        existing.visibility = "public"
+        existing.gateway_id = None
 
-# --------------------------------------------------------------------------- #
-# Additional coverage tests                                                    #
-# --------------------------------------------------------------------------- #
+        batch_result = MagicMock()
+        batch_result.scalars.return_value.all.return_value = []
+        name_match = MagicMock()
+        name_match.scalar_one_or_none.return_value = existing
+        mock_db.execute.side_effect = [batch_result, name_match]
+        mock_db.commit = MagicMock()
+        resource_service._notify_resource_added = AsyncMock()
+
+        resources = [ResourceCreate(name="Dup", uri="file:///new.txt", content="body")]
+        result = await resource_service.register_resources_bulk(db=mock_db, resources=resources, created_by="tester", conflict_strategy="skip")
+
+        assert result["skipped"] == 1
+        assert any("name already exists" in err for err in result["errors"])
+
+    @pytest.mark.asyncio
+    async def test_register_resources_bulk_name_conflict_fail(self, resource_service, mock_db):
+        """Bulk register fails a chunk when name conflicts and strategy is fail (line 956)."""
+        existing = MagicMock(spec=DbResource)
+        existing.uri = "file:///other.txt"
+        existing.name = "Dup"
+        existing.enabled = True
+        existing.id = "abc"
+        existing.visibility = "public"
+        existing.gateway_id = None
+
+        batch_result = MagicMock()
+        batch_result.scalars.return_value.all.return_value = []
+        name_match = MagicMock()
+        name_match.scalar_one_or_none.return_value = existing
+        mock_db.execute.side_effect = [batch_result, name_match]
+        mock_db.rollback = MagicMock()
+        resource_service._notify_resource_added = AsyncMock()
+
+        resources = [ResourceCreate(name="Dup", uri="file:///new.txt", content="body")]
+        result = await resource_service.register_resources_bulk(db=mock_db, resources=resources, created_by="tester", conflict_strategy="fail")
+
+        assert result["failed"] == 1
+        assert any("already exists" in err for err in result["errors"])
 
 
 class TestResourceMetricRecording:
@@ -4930,14 +5011,19 @@ class TestResourceServiceCoverageEdges:
 
     @pytest.mark.asyncio
     async def test_register_resource_uri_conflict_team(self, resource_service, mock_db, sample_resource_create):
-        """Cover team visibility URI conflict path (line 449)."""
+        """Cover team visibility URI conflict path."""
         existing = MagicMock()
         existing.enabled = True
         existing.id = "existing-id"
         existing.visibility = "team"
-        mock_db.execute.return_value.scalar_one_or_none.return_value = existing
+        # First execute() call is the name check (no conflict), second is the URI check (conflict).
+        no_match = MagicMock()
+        no_match.scalar_one_or_none.return_value = None
+        uri_match = MagicMock()
+        uri_match.scalar_one_or_none.return_value = existing
+        mock_db.execute.side_effect = [no_match, uri_match]
 
-        with pytest.raises(ResourceError) as exc_info:
+        with pytest.raises(ResourceURIConflictError) as exc_info:
             await resource_service.register_resource(mock_db, sample_resource_create, visibility="team", team_id="team-1")
         assert "Team Resource already exists with URI" in str(exc_info.value)
 
@@ -4992,6 +5078,7 @@ class TestResourceServiceCoverageEdges:
     async def test_register_resources_bulk_mime_validation_passes_for_allowed_type(self, resource_service, mock_db):
         """MIME type validation in bulk: allowed type (text/plain) passes and resource is created."""
         mock_db.execute.return_value.scalars.return_value.all.return_value = []
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
         mock_db.add_all = MagicMock()
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()

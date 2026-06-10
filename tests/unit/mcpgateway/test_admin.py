@@ -2600,12 +2600,32 @@ class TestAdminResourceRoutes:
         assert isinstance(result, JSONResponse)
         assert result.status_code == 409
 
+        # Test ResourceNameConflictError
+        from mcpgateway.services.resource_service import ResourceNameConflictError
+
+        mock_register_resource.side_effect = ResourceNameConflictError("test_resource")
+        result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 409
+        body = json.loads(result.body)
+        assert "test_resource" in body.get("message", "")
+
         # Test generic exception
         mock_register_resource.side_effect = Exception("Generic error")
 
         result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, JSONResponse)
         assert result.status_code == 500
+
+    @patch.object(ResourceService, "register_resource")
+    async def test_admin_add_resource_validation_error(self, mock_register_resource, mock_request, mock_db):
+        """ResourceValidationError in admin_add_resource returns 422 (lines 13169-13170)."""
+        from mcpgateway.services.resource_service import ResourceValidationError
+
+        mock_register_resource.side_effect = ResourceValidationError("invalid team id")
+        result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 422
 
     @patch.object(ResourceService, "register_resource")
     async def test_admin_add_resource_content_size_error(self, mock_register_resource, mock_request, mock_db, monkeypatch):
@@ -2814,6 +2834,24 @@ class TestAdminResourceRoutes:
         monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
         response = await admin_edit_resource("550e8400e29b41d4a7164466554400c1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
         assert response.status_code == 409
+
+        # Test ResourceNameConflictError (lines 13307-13308)
+        from mcpgateway.services.resource_service import ResourceNameConflictError
+
+        mock_update = AsyncMock(side_effect=ResourceNameConflictError("dup-name"))
+        monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
+        response = await admin_edit_resource("550e8400e29b41d4a7164466554400c1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
+        assert response.status_code == 409
+        body = json.loads(response.body)
+        assert "dup-name" in body.get("message", "")
+
+        # Test ResourceValidationError (lines 13304-13305)
+        from mcpgateway.services.resource_service import ResourceValidationError
+
+        mock_update = AsyncMock(side_effect=ResourceValidationError("bad team"))
+        monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
+        response = await admin_edit_resource("550e8400e29b41d4a7164466554400c1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
+        assert response.status_code == 422
 
         # Test generic Exception
         mock_update = AsyncMock(side_effect=Exception("boom"))
@@ -6761,6 +6799,7 @@ class TestOAuthFunctionality:
             assert gateway_update.oauth_config["client_id"] == "client-id"
             assert gateway_update.oauth_config["client_secret"] == "enc-secret"
             assert gateway_update.oauth_config["scopes"] == ["a", "b", "c"]
+
     @patch.object(GatewayService, "update_gateway")
     async def test_admin_edit_gateway_oauth_with_audience_parameter(self, mock_update_gateway, mock_request, mock_db):
         """Test editing gateway with OAuth audience parameter (for Atlassian, Auth0, etc.)."""
@@ -6797,7 +6836,6 @@ class TestOAuthFunctionality:
             assert gateway_update.oauth_config["audience"] == "api.atlassian.com"
             assert gateway_update.oauth_config["client_id"] == "client-id"
             assert gateway_update.oauth_config["scopes"] == ["read:jira-work", "write:jira-work"]
-
 
     @patch.object(GatewayService, "update_gateway")
     async def test_admin_edit_gateway_oauth_assembled_minimal_fields_covers_false_branches(self, mock_update_gateway, mock_request, mock_db, monkeypatch):
@@ -17485,6 +17523,7 @@ async def test_admin_add_a2a_agent_oauth_assembled_from_form_fields(monkeypatch,
     assert agent_data.oauth_config["client_secret"] == "enc"
     assert agent_data.oauth_config["scopes"] == ["a", "b", "c"]
 
+
 @pytest.mark.asyncio
 async def test_admin_add_a2a_agent_oauth_with_audience(monkeypatch, mock_db):
     """Test adding A2A agent with OAuth audience parameter (for Atlassian, Auth0, etc.)."""
@@ -17759,6 +17798,7 @@ async def test_admin_edit_a2a_agent_oauth_config_invalid_json(monkeypatch, mock_
     assert response.status_code == 200
     agent_update = service.update_agent.call_args.kwargs["agent_data"]
     assert agent_update.oauth_config is None
+
 
 @pytest.mark.asyncio
 async def test_admin_edit_a2a_agent_oauth_with_audience(monkeypatch, mock_db):
