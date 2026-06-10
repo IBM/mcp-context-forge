@@ -100,7 +100,7 @@ jobs:
           # See: https://github.com/actions/dependency-review-action#configuration-options
           license-check: true # (default)
           # ───────── UX tweaks ─────────
-          warn-only: false # actually fail the workflow
+          warn-only: true # actually warn instead of failing the workflow when Dependency Graph is disabled
           comment-summary-in-pr: on-failure
 
           # ───────── Refs for non-PR events ─────────

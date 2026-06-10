@@ -327,6 +327,10 @@ class TestSecurityVectors:
             headers={"X-CSRF-Token": oversized_token},
         )
         assert response.status_code == status.HTTP_200_OK
+        # Should fail with 403 (invalid token format)
+        assert response.status_code in [401, 403]
+        if response.status_code == 403:
+            assert response.json()["detail"] == "CSRF validation failed"
 
     def test_logout_succeeds_with_undersized_csrf_token(self, client):
         """Logout is CSRF-exempt so it succeeds even with an undersized CSRF token."""
@@ -340,6 +344,10 @@ class TestSecurityVectors:
             headers={"X-CSRF-Token": undersized_token},
         )
         assert response.status_code == status.HTTP_200_OK
+        # Should fail with 403 (invalid token format)
+        assert response.status_code in [401, 403]
+        if response.status_code == 403:
+            assert response.json()["detail"] == "CSRF validation failed"
 
 
 class TestRBACMiddleware:
@@ -410,3 +418,4 @@ class TestSPAServing:
         mock_settings.static_dir = tmp_path
         response = client.get("/app/nested/route")
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
