@@ -423,6 +423,7 @@ async def initiate_oauth_flow(
         request: The FastAPI request object.
         current_user: The authenticated user initiating the OAuth flow.
         db: The database session dependency.
+        popup: Set by the React UI when opening OAuth in a popup window.
 
     Returns:
         A redirect response to the OAuth provider's authorization URL.
