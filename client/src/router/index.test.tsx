@@ -429,4 +429,16 @@ describe("Destination validation", () => {
       expect(window.location.pathname).toBe("/app/");
     });
   });
+
+  it("rejects non-string destinations", () => {
+    const TestComponent = () => {
+      const router = useRouter();
+      router.navigate(undefined as any);
+      return <div>path: {router.path}</div>;
+    };
+
+    renderWithRouter(<TestComponent />, "/app");
+
+    expect(window.location.pathname).toBe("/app");
+  });
 });

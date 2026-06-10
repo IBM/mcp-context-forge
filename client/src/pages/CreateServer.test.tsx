@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/mocks/server";
@@ -12,6 +12,41 @@ const routerMock = vi.hoisted(() => ({
   navigate: vi.fn(),
   path: "/app/gateways/create-server",
 }));
+
+const componentMockState = vi.hoisted(() => ({
+  mockForm: false,
+  capturedProps: null as any,
+  mockSourceSelection: false,
+  capturedSourceSelectionProps: null as any,
+}));
+
+vi.mock("@/components/gateways/CreateServerForm", async (importOriginal) => {
+  const actual = (await importOriginal()) as any;
+  return {
+    ...actual,
+    CreateServerForm: (props: any) => {
+      if (componentMockState.mockForm) {
+        componentMockState.capturedProps = props;
+        return <div data-testid="mock-create-server-form" />;
+      }
+      return actual.CreateServerForm(props);
+    },
+  };
+});
+
+vi.mock("@/components/gateways/SourceSelection", async (importOriginal) => {
+  const actual = (await importOriginal()) as any;
+  return {
+    ...actual,
+    SourceSelection: (props: any) => {
+      if (componentMockState.mockSourceSelection) {
+        componentMockState.capturedSourceSelectionProps = props;
+        return <div data-testid="mock-source-selection" />;
+      }
+      return actual.SourceSelection(props);
+    },
+  };
+});
 
 vi.mock("@/router", () => ({
   useRouter: () => ({
@@ -34,6 +69,10 @@ describe("CreateServer", () => {
   beforeEach(() => {
     mockNavigate.mockClear();
     routerMock.path = "/app/gateways/create-server";
+    componentMockState.mockForm = false;
+    componentMockState.mockSourceSelection = false;
+    componentMockState.capturedProps = null;
+    componentMockState.capturedSourceSelectionProps = null;
     mockCreateVirtualServer.mockReset();
     mockUpdateVirtualServer.mockReset();
     mockCreateVirtualServer.mockResolvedValue({
@@ -539,5 +578,32 @@ describe("CreateServer", () => {
     await user.click(screen.getByRole("button", { name: "Skip for now" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Unable to create server. Please try again.");
+  });
+
+  it("should set step back to details if handleSkipForNow is called and serverDetails is null", async () => {
+    componentMockState.mockForm = true;
+    componentMockState.mockSourceSelection = true;
+    try {
+      renderWithProviders(<CreateServer />);
+
+      // Step 1: Trigger success on the form with null details
+      act(() => {
+        componentMockState.capturedProps.onSuccess(null);
+      });
+
+      // Now step should be sources, and SourceSelection should render
+      expect(screen.getByTestId("mock-source-selection")).toBeInTheDocument();
+
+      // Step 2: Trigger onSkip from SourceSelection
+      await act(async () => {
+        componentMockState.capturedSourceSelectionProps.createServerActions.onSkip();
+      });
+
+      // Step should set back to details, rendering CreateServerForm again
+      expect(screen.getByTestId("mock-create-server-form")).toBeInTheDocument();
+    } finally {
+      componentMockState.mockForm = false;
+      componentMockState.mockSourceSelection = false;
+    }
   });
 });

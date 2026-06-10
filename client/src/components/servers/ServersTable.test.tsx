@@ -171,6 +171,35 @@ describe("ServersTable", () => {
         onDelete={noop}
         onTest={noop}
       />,
+  it("shows 1 hour ago for last_seen exactly 1 hour ago", () => {
+    const recentServer = {
+      ...mockServer,
+      last_seen: new Date(Date.now() - 65 * 60000).toISOString(),
+    };
+    renderWithProviders(
+      <ServersTable servers={[recentServer]} isLoading={false} {...mockHandlers} />,
+    );
+    expect(screen.getByText("1 hour ago")).toBeInTheDocument();
+  });
+
+  it("shows local date string for last_seen older than 24 hours", () => {
+    const oldDate = new Date("2026-01-01T10:00:00Z");
+    const oldServer = {
+      ...mockServer,
+      last_seen: oldDate.toISOString(),
+    };
+    renderWithProviders(<ServersTable servers={[oldServer]} isLoading={false} {...mockHandlers} />);
+    // Since local date formatting varies, we can just assert that it is rendered in the cell
+    const expected = oldDate.toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    expect(screen.getByText(expected)).toBeInTheDocument();
+  });
+
   it("shows Never used when last_seen is undefined", () => {
     const recentServer = { ...mockServer, last_seen: undefined };
     renderWithProviders(
@@ -409,4 +438,5 @@ describe("ServersTable", () => {
     expect(screen.getByText("Gamma")).toBeInTheDocument();
   });
 });
+
 

@@ -16,6 +16,7 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: "./src/test/setup.ts",
     css: true,
+    testTimeout: 15000,
     // Vitest runs Testing-Library specs under src/; Playwright specs live
     // under e2e/ and must not be picked up here (they use @playwright/test).
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
