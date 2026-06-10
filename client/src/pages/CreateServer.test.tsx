@@ -147,6 +147,7 @@ describe("CreateServer", () => {
         name: "Research server",
         visibility: "team",
         oauthEnabled: false,
+        associatedMCPServerIds: [],
       });
     });
     expect(mockNavigate).toHaveBeenCalledWith("/app/gateways");
@@ -177,6 +178,7 @@ describe("CreateServer", () => {
         oauthEnabled: true,
         tags: ["research", "tools"],
         description: "A composed endpoint for research tools.",
+        associatedMCPServerIds: [],
       });
     });
     expect(mockNavigate).toHaveBeenCalledWith("/app/gateways");

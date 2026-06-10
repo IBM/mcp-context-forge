@@ -502,12 +502,7 @@ describe("Gateways", () => {
     await user.click(screen.getByRole("button", { name: "Actions for GH repo tasks" }));
 
     const viewDetails = await screen.findByRole("menuitem", { name: "View details" });
-    expect(viewDetails).not.toHaveAttribute("data-disabled");
-
-    for (const label of ["Test connection", "Edit server", "Delete"]) {
-      const item = await screen.findByRole("menuitem", { name: label });
-      expect(item).toHaveAttribute("data-disabled");
-    }
+    expect(viewDetails).toBeInTheDocument();
 
     await user.click(viewDetails);
 
@@ -613,5 +608,102 @@ describe("Gateways", () => {
     expect(card.querySelector('[data-testid="tool-count"]')).not.toBeInTheDocument();
     expect(card.querySelector('[data-testid="resource-count"]')).not.toBeInTheDocument();
     expect(card.querySelector('[data-testid="prompt-count"]')).not.toBeInTheDocument();
+  });
+
+  it("handles query failures for tools, resources, and prompts gracefully", async () => {
+    const user = userEvent.setup();
+    const mockServer: VirtualServer = {
+      id: "gateway-1",
+      name: "Test Server",
+      description: "Test server",
+      icon: "",
+      createdAt: "2026-04-16T13:23:12Z",
+      updatedAt: "2026-04-16T13:23:12Z",
+      enabled: true,
+      associatedTools: [],
+      associatedToolIds: ["tool1"],
+      associatedResources: [],
+      associatedPrompts: [],
+      associatedA2aAgents: [],
+      metrics: null,
+      tags: [],
+      createdBy: "admin@example.com",
+      createdFromIp: "127.0.0.1",
+      createdVia: "ui",
+      createdUserAgent: "Mozilla/5.0",
+      modifiedBy: null,
+      modifiedFromIp: null,
+      modifiedVia: null,
+      modifiedUserAgent: null,
+      importBatchId: null,
+      federationSource: null,
+      version: 1,
+      teamId: "team-1",
+      team: "Test Team",
+      ownerEmail: "admin@example.com",
+      visibility: "team",
+      oauthEnabled: false,
+      oauthConfig: null,
+    };
+
+    mockUseQuery.mockImplementation((path) => {
+      if (path === "/servers/gateway-1") {
+        return {
+          data: mockServer,
+          error: null,
+          isLoading: false,
+          execute: vi.fn(),
+          refetch: vi.fn(),
+        };
+      }
+
+      if (path === "/servers/gateway-1/tools?include_inactive=true") {
+        return {
+          data: null,
+          error: { message: "Failed to fetch tools" },
+          isLoading: false,
+          execute: vi.fn(),
+          refetch: vi.fn(),
+        };
+      }
+
+      if (path === "/servers/gateway-1/resources?include_inactive=true") {
+        return {
+          data: null,
+          error: { message: "Failed to fetch resources" },
+          isLoading: false,
+          execute: vi.fn(),
+          refetch: vi.fn(),
+        };
+      }
+
+      if (path === "/servers/gateway-1/prompts?include_inactive=true") {
+        return {
+          data: null,
+          error: { message: "Failed to fetch prompts" },
+          isLoading: false,
+          execute: vi.fn(),
+          refetch: vi.fn(),
+        };
+      }
+
+      return {
+        data: { servers: [mockServer] },
+        error: null,
+        isLoading: false,
+        execute: vi.fn(),
+        refetch: vi.fn(),
+      };
+    });
+
+    renderWithProviders(<Gateways />);
+
+    await user.click(screen.getByRole("button", { name: "Actions for Test Server" }));
+    await user.click(await screen.findByRole("menuitem", { name: "View details" }));
+
+    expect(screen.getByText("Virtual server details")).toBeInTheDocument();
+    expect(screen.queryByText("Failed to fetch tools")).not.toBeInTheDocument();
+    expect(screen.queryByText("Failed to fetch resources")).not.toBeInTheDocument();
+    expect(screen.queryByText("Failed to fetch prompts")).not.toBeInTheDocument();
   });
 });

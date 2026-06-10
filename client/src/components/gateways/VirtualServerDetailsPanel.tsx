@@ -209,19 +209,19 @@ export function VirtualServerDetailsPanel({
 
   // Build API paths - only when server exists
   const toolsPath = useMemo(() => {
-    if (!server?.id) return "/tools";
+    if (!server?.id) return "";
     const params = new URLSearchParams({ include_inactive: "true" });
     return `/servers/${encodeURIComponent(server.id)}/tools?${params}`;
   }, [server?.id]);
 
   const resourcesPath = useMemo(() => {
-    if (!server?.id) return "/resources";
+    if (!server?.id) return "";
     const params = new URLSearchParams({ include_inactive: "true" });
     return `/servers/${encodeURIComponent(server.id)}/resources?${params}`;
   }, [server?.id]);
 
   const promptsPath = useMemo(() => {
-    if (!server?.id) return "/prompts";
+    if (!server?.id) return "";
     const params = new URLSearchParams({ include_inactive: "true" });
     return `/servers/${encodeURIComponent(server.id)}/prompts?${params}`;
   }, [server?.id]);
@@ -397,6 +397,7 @@ export function VirtualServerDetailsPanel({
         role="region"
         aria-labelledby={headingId}
         aria-hidden={!open}
+        inert={!open ? ("" as unknown as undefined) : undefined}
         data-state={open ? "open" : "closed"}
         className={cn(
           "absolute inset-y-0 right-0 z-20 flex w-[min(1236px,calc(100%-2rem))] border-l border-border bg-popover text-[13px] shadow-lg",
@@ -526,7 +527,6 @@ export function VirtualServerDetailsPanel({
                   <Input
                     ref={searchInputRef}
                     type="search"
-                    aria-label="Search components"
                     tabIndex={isSearchExpanded || searchQuery.length > 0 ? 0 : -1}
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
@@ -555,14 +555,11 @@ export function VirtualServerDetailsPanel({
               <div
                 role="tabpanel"
                 aria-labelledby={`tab-${componentFilter}`}
+                aria-live="polite"
                 className="mt-5 divide-y divide-transparent"
               >
                 {componentsLoading && (
-                  <div
-                    role="status"
-                    aria-live="polite"
-                    className="flex items-center gap-2 py-8 text-muted-foreground"
-                  >
+                  <div role="status" className="flex items-center gap-2 py-8 text-muted-foreground">
                     <Loader2 className="size-4 animate-spin" aria-hidden="true" />
                     <span>Loading components...</span>
                   </div>

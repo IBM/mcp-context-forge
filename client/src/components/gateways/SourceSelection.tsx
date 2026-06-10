@@ -116,9 +116,11 @@ export function SourceSelection({
   actionCards,
   createServerActions,
   associatedMCPServerIds = [],
+  onSelectSources,
 }: {
   actionCards: ActionCard[];
   associatedMCPServerIds?: string[];
+  onSelectSources?: (selectedIds: string[]) => void;
   createServerActions?: {
     onBack: () => void;
     onSkip: () => void;
@@ -164,6 +166,7 @@ export function SourceSelection({
       const next = new Set(current);
       if (checked) next.add(serverId);
       else next.delete(serverId);
+      onSelectSources?.(Array.from(next));
       return next;
     });
   };
@@ -307,7 +310,10 @@ export function SourceSelection({
                     variant="outline"
                     size="xs"
                     className="h-7 rounded-sm bg-background px-2 text-[13px]"
-                    onClick={actionCards[0]?.onAction}
+                    onClick={() => {
+                      const firstEnabledCard = actionCards.find((card) => !card.disabled);
+                      firstEnabledCard?.onAction();
+                    }}
                   >
                     <Plus className="size-3" />
                     {intl.formatMessage({ id: "gateways.source.addSource" })}
