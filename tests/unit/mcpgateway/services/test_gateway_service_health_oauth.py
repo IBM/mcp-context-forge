@@ -310,19 +310,18 @@ class TestCheckSingleGatewayHealthReal:
 
     @pytest.mark.asyncio
     async def test_streamablehttp_health_uses_per_call_session(self):
-        """#4205: gateway health checks always use per-call sessions (no registry, no pool).
+        """streamablehttp gateway health probe uses a stateless JSON-RPC initialize POST.
 
-        Health checks are system operations with no downstream MCP session, so they
-        can't key the registry. A fresh per-call initialize() round-trip is the
-        whole probe — cheap enough that pooling isn't worth it.
+        Forterro replaced the SDK ``streamablehttp_client``/``ClientSession`` round-trip
+        with a lightweight ``client.post(...)`` carrying a JSON-RPC ``initialize`` payload.
+        The SDK opens a follow-up GET SSE stream that returns 405 on servers without
+        server-initiated message support (M365, Kubernetes MCP, GitHub), so a successful
+        POST is sufficient proof of liveness.
         """
         service = GatewayService()
         service._handle_gateway_failure = AsyncMock()
 
         gateway = self._make_gateway(transport="streamablehttp")
-
-        session = AsyncMock()
-        session.initialize = AsyncMock(return_value=None)
 
         update_db = MagicMock()
         db_gateway = MagicMock()
@@ -343,11 +342,16 @@ class TestCheckSingleGatewayHealthReal:
             def __exit__(self, *exc):
                 return False
 
-        class _IsoClientCM:
-            async def __aenter__(self):
-                return MagicMock()
+        post_response = MagicMock(status_code=200)
+        post_response.raise_for_status = MagicMock()
+        http_client = MagicMock()
+        http_client.post = AsyncMock(return_value=post_response)
 
-            async def __aexit__(self, *exc):
+        class _IsoClientCM:
+            async def __aenter__(self_inner):
+                return http_client
+
+            async def __aexit__(self_inner, *exc):
                 return False
 
         with (
@@ -366,23 +370,27 @@ class TestCheckSingleGatewayHealthReal:
             ),
             patch("mcpgateway.services.gateway_service.create_span", return_value=_SpanCM()),
             patch("mcpgateway.services.gateway_service.get_isolated_http_client", return_value=_IsoClientCM()),
-            patch("mcpgateway.services.gateway_service.streamablehttp_client") as mock_http,
-            patch("mcpgateway.services.gateway_service.ClientSession") as MockCS,
             patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=_DBCM()),
         ):
-            mock_http.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
-            mock_http.return_value.__aexit__ = AsyncMock(return_value=False)
-            MockCS.return_value.__aenter__ = AsyncMock(return_value=session)
-            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
-
             await service._check_single_gateway_health(gateway)
 
-        session.initialize.assert_awaited_once()
+        http_client.post.assert_awaited_once()
+        # Verify the JSON-RPC initialize payload is sent
+        _, kwargs = http_client.post.call_args
+        assert kwargs["json"]["method"] == "initialize"
+        assert kwargs["json"]["jsonrpc"] == "2.0"
+        post_response.raise_for_status.assert_called_once()
         service._handle_gateway_failure.assert_not_called()
         update_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_oauth_authorization_code_missing_user_email_marks_unhealthy_and_handles_failure(self):
+        """auth_code gateway with no user_email falls back to an unauthenticated probe.
+
+        Forterro changed the behaviour: a missing system token is no longer fatal.
+        We treat 401/403 from the upstream as proof of liveness, so the gateway is
+        only marked unhealthy on real connectivity failures.
+        """
         service = GatewayService()
         service._handle_gateway_failure = AsyncMock()
 
@@ -393,6 +401,9 @@ class TestCheckSingleGatewayHealthReal:
         )
 
         update_db = MagicMock()
+        db_gateway = MagicMock()
+        update_db.execute.return_value.scalar_one_or_none.return_value = db_gateway
+        update_db.commit = MagicMock()
 
         class _DBCM:
             def __enter__(self):
@@ -408,11 +419,19 @@ class TestCheckSingleGatewayHealthReal:
             def __exit__(self, *exc):
                 return False
 
-        class _IsoClientCM:
-            async def __aenter__(self):
-                return MagicMock()
+        # SSE probe: client.stream("GET", ...) yields a 401 → liveness proven.
+        response_mock = MagicMock(status_code=401)
+        stream_ctx = AsyncMock()
+        stream_ctx.__aenter__ = AsyncMock(return_value=response_mock)
+        stream_ctx.__aexit__ = AsyncMock(return_value=False)
+        http_client = MagicMock()
+        http_client.stream = MagicMock(return_value=stream_ctx)
 
-            async def __aexit__(self, *exc):
+        class _IsoClientCM:
+            async def __aenter__(self_inner):
+                return http_client
+
+            async def __aexit__(self_inner, *exc):
                 return False
 
         with (
@@ -434,12 +453,11 @@ class TestCheckSingleGatewayHealthReal:
             patch("mcpgateway.services.gateway_service.create_span", return_value=_SpanCM()),
             patch("mcpgateway.services.gateway_service.get_isolated_http_client", return_value=_IsoClientCM()),
             patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=_DBCM()),
-            patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
         ):
-            mock_tss.return_value.get_user_token = AsyncMock(return_value="token")
             await service._check_single_gateway_health(gateway, user_email=None)
 
-        service._handle_gateway_failure.assert_awaited_once()
+        http_client.stream.assert_called_once()
+        service._handle_gateway_failure.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_oauth_client_credentials_failure_marks_unhealthy_and_handles_failure(self):

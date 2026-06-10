@@ -4298,6 +4298,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # Use isolated client for gateway health checks (each gateway may have custom CA cert)
             # Use admin timeout for health checks (fail fast, don't wait 120s for slow upstreams)
             # Pass ssl_context if present, otherwise let get_isolated_http_client use skip_ssl_verify setting
+            # Track whether this is an unauthenticated liveness probe
+            # (authorization_code gateway without system token).  When True,
+            # HTTP 401/403 responses are treated as "server alive" rather
+            # than health-check failures.
+            unauthenticated_probe = False
+
             async with get_isolated_http_client(timeout=settings.httpx_admin_read_timeout, verify=ssl_context) as client:
                 logger.debug("Checking health of gateway: %s (%s)", gateway_name, gateway_url_sanitized)
                 try:
@@ -4308,40 +4314,40 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         grant_type = gateway_oauth_config.get("grant_type", "client_credentials")
 
                         if grant_type == "authorization_code":
-                            # For Authorization Code flow, try to get stored tokens
+                            # Authorization Code flow requires an interactive user
+                            # to complete the OAuth dance.  The health-check runs
+                            # under a system identity (platform_admin_email) which
+                            # typically has NO stored token for these gateways.
+                            #
+                            # Strategy: try to use a stored token if available;
+                            # otherwise proceed WITHOUT auth.  An unauthenticated
+                            # probe still tests connectivity:
+                            #   - 401/403 → server is alive (auth rejected, not down)
+                            #   - timeout/DNS/connection error → real outage
+                            # This avoids the old behaviour of marking the gateway
+                            # as failed just because the system account has no token.
+                            access_token = None
                             try:
                                 # First-Party
                                 from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
 
-                                # Use fresh session for OAuth token lookup
-                                with fresh_db_session() as token_db:
-                                    token_storage = TokenStorageService(token_db)
-
-                                    # Get user-specific OAuth token
-                                    if not user_email:
-                                        if span:
-                                            set_span_attribute(span, "health.status", "unhealthy")
-                                            set_span_error(span, "User email required for OAuth token")
-                                        await self._handle_gateway_failure(gateway)
-                                        return
-
-                                    access_token = await token_storage.get_user_token(gateway_id, user_email)
-
-                                if access_token:
-                                    headers["Authorization"] = f"Bearer {access_token}"
-                                else:
-                                    if span:
-                                        set_span_attribute(span, "health.status", "unhealthy")
-                                        set_span_error(span, "No valid OAuth token for user")
-                                    await self._handle_gateway_failure(gateway)
-                                    return
+                                if user_email:
+                                    with fresh_db_session() as token_db:
+                                        token_storage = TokenStorageService(token_db)
+                                        access_token = await token_storage.get_user_token(gateway_id, user_email)
                             except Exception as e:
-                                logger.error("Failed to obtain stored OAuth token for gateway %s: %s", gateway_name, e)
-                                if span:
-                                    set_span_attribute(span, "health.status", "unhealthy")
-                                    set_span_error(span, "Failed to obtain stored OAuth token")
-                                await self._handle_gateway_failure(gateway)
-                                return
+                                logger.debug(f"Could not look up OAuth token for health check on {gateway_name}: {e}")
+
+                            if access_token:
+                                headers["Authorization"] = f"Bearer {access_token}"
+                            else:
+                                # No token — proceed without auth.  The probe will
+                                # likely get 401/403 which is fine (proves liveness).
+                                unauthenticated_probe = True
+                                logger.debug(
+                                    f"Health-checking authorization_code gateway "
+                                    f"{gateway_name} without auth (no system token)"
+                                )
                         else:
                             # For Client Credentials flow, get token directly
                             try:
@@ -4365,26 +4371,49 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         else:
                             headers = {}
 
-                    # Perform the GET and raise on 4xx/5xx
+                    # Perform the actual connectivity probe.
+                    # For unauthenticated probes (auth_code gateways without
+                    # a system token), 401/403 proves the server is alive —
+                    # only network errors indicate a real outage.
                     if (gateway_transport).lower() == "sse":
                         timeout = httpx.Timeout(settings.health_check_timeout)
                         async with client.stream("GET", gateway_url, headers=headers, timeout=timeout) as response:
-                            # This will raise immediately if status is 4xx/5xx
-                            response.raise_for_status()
+                            if unauthenticated_probe and response.status_code in (401, 403):
+                                logger.debug(f"Gateway {gateway_name} returned {response.status_code} (auth rejected, server alive)")
+                            else:
+                                response.raise_for_status()
                             if span:
                                 set_span_attribute(span, "http.status_code", response.status_code)
                     elif (gateway_transport).lower() == "streamablehttp":
-                        # Health checks are system operations with no downstream MCP session,
-                        # so they don't go through the UpstreamSessionRegistry (which requires
-                        # a downstream session id). A fresh per-call session suffices — the
-                        # probe is cheap and verifies that an initialize round-trip works.
-                        async with streamablehttp_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=get_httpx_client_factory) as (
-                            read_stream,
-                            write_stream,
-                            _get_session_id,
-                        ):
-                            async with ClientSession(read_stream, write_stream) as session:
-                                response = await session.initialize()
+                        # Use a lightweight JSON-RPC POST ``initialize`` instead of the
+                        # full SDK client.  The SDK opens a GET SSE stream after
+                        # initialize, which returns 405 on servers that don't support
+                        # server-initiated messages (M365, Kubernetes MCP, GitHub).
+                        # The MCP spec says GET is optional, so a successful POST
+                        # ``initialize`` is sufficient proof of health.
+                        # NOTE: ``ping`` would require an existing session, so
+                        # ``initialize`` is the only stateless RPC we can send.
+                        init_payload = {
+                            "jsonrpc": "2.0",
+                            "id": "health-check",
+                            "method": "initialize",
+                            "params": {
+                                "protocolVersion": "2024-11-05",
+                                "capabilities": {},
+                                "clientInfo": {"name": "mcpgateway-health", "version": "1.0.0"},
+                            },
+                        }
+                        init_headers = {
+                            **headers,
+                            "Content-Type": "application/json",
+                            "Accept": "application/json, text/event-stream",
+                        }
+                        timeout = httpx.Timeout(settings.health_check_timeout)
+                        response = await client.post(gateway_url, json=init_payload, headers=init_headers, timeout=timeout)
+                        if unauthenticated_probe and response.status_code in (401, 403):
+                            logger.debug(f"Gateway {gateway_name} returned {response.status_code} (auth rejected, server alive)")
+                        else:
+                            response.raise_for_status()
 
                     # Reactivate gateway if it was previously inactive and health check passed now
                     if gateway_enabled and not gateway_reachable:
@@ -4462,6 +4491,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     if span:
                         set_span_attribute(span, "health.status", "healthy")
                         set_span_attribute(span, "success", True)
+                        if unauthenticated_probe:
+                            set_span_attribute(span, "health.probe_type", "unauthenticated_liveness")
 
                 except Exception as e:
                     if span:
