@@ -3,6 +3,8 @@ import { z } from "zod";
 import { useQuery } from "@/hooks/useQuery";
 import { serversApi } from "@/api/servers";
 import type { Visibility } from "@/types/server";
+import { parseApiError } from "@/lib/errorUtils";
+import { sanitizeError } from "@/utils/errors";
 import {
   sanitizeString,
   sanitizeUrl,
@@ -211,6 +213,8 @@ export interface UseMCPServerFormReturn {
   oauthPending: boolean;
   oauthNotification: { type: "success" | "error"; message: string } | null;
   clearOAuthNotification: () => void;
+  fetchToolsNotification: { type: "success" | "error"; message: string } | null;
+  clearFetchToolsNotification: () => void;
 
   // Setters
   setName: (value: string) => void;
@@ -328,6 +332,10 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
 
   const [oauthPending, setOAuthPending] = useState(false);
   const [oauthNotification, setOAuthNotification] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
+  const [fetchToolsNotification, setFetchToolsNotification] = useState<{
     type: "success" | "error";
     message: string;
   } | null>(null);
@@ -462,6 +470,7 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
   );
 
   const clearOAuthNotification = useCallback(() => setOAuthNotification(null), []);
+  const clearFetchToolsNotification = useCallback(() => setFetchToolsNotification(null), []);
 
   const isSubmitting = isCreating || isUpdating;
 
@@ -660,6 +669,60 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
     setPendingOAuthGatewayId(undefined);
   }, []);
 
+  // Handles the OAuth popup flow after a gateway has been saved.
+  // The form stays open (oauthPending=true) so the inline notification is visible
+  // when the popup posts its result back via postMessage.
+  const handleOAuthFlow = useCallback(
+    async (
+      responseGatewayId: string,
+      response: unknown,
+      onSuccess?: (response?: unknown) => void,
+    ) => {
+      setOAuthPending(true);
+      try {
+        const oauthResult = await serversApi.triggerOAuthAuthorization(responseGatewayId);
+
+        // Auto-activate the gateway after successful OAuth authorization
+        try {
+          await serversApi.toggleEnabled(responseGatewayId, true);
+        } catch (activateError) {
+          // TODO: raise a toast notification for this error when the toast component is implemented
+          console.error("Failed to activate gateway after OAuth:", sanitizeError(activateError));
+          // Don't fail the OAuth flow if activation fails - user can manually activate later
+        }
+
+        setOAuthNotification({
+          type: "success",
+          message: `OAuth authorization successful${oauthResult.gatewayName ? ` for ${oauthResult.gatewayName}` : ""}.`,
+        });
+
+        // Fetch tools, resources, and prompts after successful OAuth
+        try {
+          const fetchResult = await serversApi.fetchToolsAfterOAuth(responseGatewayId);
+          setFetchToolsNotification({ type: "success", message: fetchResult.message });
+        } catch (fetchError) {
+          const msg = parseApiError(fetchError, "Failed to fetch tools from MCP server.");
+          setFetchToolsNotification({ type: "error", message: msg });
+        }
+
+        // Delay closing so the success notification is visible before the form unmounts.
+        successCloseTimeoutRef.current = setTimeout(() => {
+          if (onSuccess) onSuccess(response);
+          resetForm();
+        }, 2000);
+      } catch (oauthError) {
+        setOAuthNotification({
+          type: "error",
+          message: oauthError instanceof Error ? oauthError.message : "OAuth authorization failed.",
+        });
+        // Do not call onSuccess — leave the form open so the user can see the error.
+      } finally {
+        setOAuthPending(false);
+      }
+    },
+    [resetForm],
+  );
+
   const handleSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>, onSuccess?: (response?: unknown) => void) => {
       event.preventDefault();
@@ -695,78 +758,18 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
           }
 
           if (authType === "oauth" && responseGatewayId) {
-            // Gateway saved — now open the OAuth popup and wait for the result.
-            // The form stays open (oauthPending=true) so the inline notification
-            // is visible when the popup posts its result back via postMessage.
-            setOAuthPending(true);
-            try {
-              const oauthResult = await serversApi.triggerOAuthAuthorization(responseGatewayId);
-              setOAuthNotification({
-                type: "success",
-                message: `OAuth authorization successful${oauthResult.gatewayName ? ` for ${oauthResult.gatewayName}` : ""}.`,
-              });
-              // Delay closing so the success notification is visible before the form unmounts.
-              successCloseTimeoutRef.current = setTimeout(() => {
-                if (onSuccess) onSuccess(response);
-                resetForm();
-              }, 2000);
-            } catch (oauthError) {
-              setOAuthNotification({
-                type: "error",
-                message:
-                  oauthError instanceof Error ? oauthError.message : "OAuth authorization failed.",
-              });
-              // Do not call onSuccess — leave the form open so the user can see the error.
-            } finally {
-              setOAuthPending(false);
-            }
+            await handleOAuthFlow(responseGatewayId, response, onSuccess);
           } else {
-            // Call success callback if provided
             if (onSuccess) {
               onSuccess(response);
             }
-
-            // Reset form after successful submission
             resetForm();
           }
         } catch (error) {
-          // Handle API errors from useQuery
           const action = isEditMode ? "update" : "create";
-
-          // Parse errors from API response
-          let errorMessage = `Failed to ${action} MCP gateway. Please try again.`;
-
-          if (error && typeof error === "object" && "body" in error) {
-            const errorWithBody = error as {
-              body?: {
-                detail?: Array<{ msg?: string; loc?: string[] }>;
-                message?: string;
-              };
-            };
-
-            // Check for simple message format first
-            if (errorWithBody.body?.message) {
-              errorMessage = errorWithBody.body.message;
-            }
-            // Then check for validation errors format
-            else {
-              const details = errorWithBody.body?.detail;
-
-              if (Array.isArray(details) && details.length > 0) {
-                // Extract error messages from validation errors
-                const messages = details
-                  .map((err) => {
-                    const field = err.loc && err.loc.length > 1 ? err.loc[err.loc.length - 1] : "";
-                    const msg = err.msg || "Invalid value";
-                    return field ? `${field}: ${msg}` : msg;
-                  })
-                  .join("; ");
-                errorMessage = messages;
-              }
-            }
-          }
-
-          setErrors({ submit: errorMessage });
+          setErrors({
+            submit: parseApiError(error, `Failed to ${action} MCP gateway. Please try again.`),
+          });
         }
       }
     },
@@ -780,6 +783,7 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
       gatewayId,
       authType,
       pendingOAuthGatewayId,
+      handleOAuthFlow,
     ],
   );
 
@@ -841,6 +845,8 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
     oauthPending,
     oauthNotification,
     clearOAuthNotification,
+    fetchToolsNotification,
+    clearFetchToolsNotification,
 
     // Setters
     setName,
