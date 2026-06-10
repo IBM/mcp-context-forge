@@ -1989,12 +1989,33 @@ class ServerService(BaseService):
         if not oauth_config:
             raise ServerError(f"OAuth not configured for server: {server_id}")
 
-        # Extract authorization server(s) - support both list and single value in config
-        authorization_servers = oauth_config.get("authorization_servers", [])
-        if not authorization_servers:
-            auth_server = oauth_config.get("authorization_server")
-            if auth_server:
-                authorization_servers = [auth_server] if isinstance(auth_server, str) else auth_server
+        # Determine authorization server(s) to return in resource metadata.
+        #
+        # When the oauth_config contains a ``client_id``, ContextForge acts as
+        # an OAuth 2.0 Authorization Server proxy (MCP OAuth proxy mode).
+        # In this mode, return ContextForge's own URL so that MCP clients
+        # discover ContextForge endpoints (DCR, authorize, token) instead of
+        # the external IdP directly.  This avoids DCR failures with providers
+        # that do not support RFC 7591 (e.g. Microsoft Entra ID).
+        #
+        # When no ``client_id`` is present, return the external authorization
+        # server URL(s) as before (pass-through mode).
+        has_mcp_oauth_proxy = bool(oauth_config.get("client_id"))
+
+        if has_mcp_oauth_proxy:
+            # Derive ContextForge base URL from the resource URL.
+            # resource_base_url is like "https://cf.example.com/servers/{id}/mcp"
+            # We need "https://cf.example.com/servers/{id}" as the issuer.
+            base_parts = resource_base_url.rsplit("/mcp", 1)
+            cf_issuer = base_parts[0] if base_parts else resource_base_url
+            authorization_servers = [cf_issuer]
+        else:
+            # Extract external authorization server(s) - support both list and single value
+            authorization_servers = oauth_config.get("authorization_servers", [])
+            if not authorization_servers:
+                auth_server = oauth_config.get("authorization_server")
+                if auth_server:
+                    authorization_servers = [auth_server] if isinstance(auth_server, str) else auth_server
 
         if not authorization_servers:
             raise ServerError(f"OAuth authorization_server not configured for server: {server_id}")

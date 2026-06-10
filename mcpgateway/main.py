@@ -12253,6 +12253,16 @@ try:
 except ImportError:
     logger.debug("OAuth router not available")
 
+# Include MCP OAuth proxy router (virtual server OAuth for MCP clients)
+try:
+    # First-Party
+    from mcpgateway.routers.mcp_oauth import mcp_oauth_router
+
+    app.include_router(mcp_oauth_router)
+    logger.info("MCP OAuth proxy router included")
+except ImportError:
+    logger.debug("MCP OAuth proxy router not available")
+
 # Include reverse proxy router if enabled
 if settings.mcpgateway_reverse_proxy_enabled:
     try:
