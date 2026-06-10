@@ -23,12 +23,22 @@ function validateUserEmail(email: string): string {
     throw new Error("Invalid user email");
   }
 
-  // Basic email format validation
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  const normalized = email.trim().toLowerCase();
+
+  // RFC 5321: max 254 chars
+  if (normalized.length > 254) {
+    throw new Error("Email too long");
+  }
+
+  // Stricter RFC 5322 subset: rejects quoted local-parts, bare IPs, etc.
+  const emailRegex =
+    /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i;
+
+  if (!emailRegex.test(normalized)) {
     throw new Error("Invalid email format");
   }
 
-  return email;
+  return normalized;
 }
 
 export const usersApi = {

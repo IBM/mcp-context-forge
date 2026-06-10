@@ -48,7 +48,6 @@ export function DeleteUserDialog({
             variant="destructive"
             onClick={onConfirm}
             disabled={isDeleting}
-            aria-describedby="delete-user-description"
             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
           >
             {isDeleting

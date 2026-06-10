@@ -26,7 +26,7 @@ export function ToastComponent({ toast, onDismiss }: ToastProps) {
       <span id={`toast-message-${toast.id}`}>{toast.message}</span>
       <button
         onClick={() => onDismiss(toast.id)}
-        className="ml-4 hover:opacity-80 focus:outline-none focus:ring-2 focus:ring-white/50 rounded"
+        className="ml-4 hover:opacity-80 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-current rounded"
         aria-label={`Dismiss notification: ${toast.message}`}
         aria-describedby={`toast-message-${toast.id}`}
       >

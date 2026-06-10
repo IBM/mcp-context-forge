@@ -2074,14 +2074,15 @@ class EmailAuthService:
                         if len(all_members) == 1 and all_members[0].user_email == email:
                             # This is a single-user personal team - cascade delete it
                             logger.info(f"Deleting personal team '{SecurityValidator.sanitize_log_message(team.name)}' (single member: {SecurityValidator.sanitize_log_message(email)})")
-                            # Delete history records first (they reference team_members.id)
-                            delete_history_stmt = delete(EmailTeamMemberHistory).where(EmailTeamMemberHistory.team_id == team.id)
-                            self.db.execute(delete_history_stmt)
-                            # Delete team members next
-                            delete_team_members_stmt = delete(EmailTeamMember).where(EmailTeamMember.team_id == team.id)
-                            self.db.execute(delete_team_members_stmt)
-                            # Delete the team last
-                            self.db.delete(team)
+                            with self.db.begin_nested():
+                                # Delete history records first (they reference team_members.id)
+                                delete_history_stmt = delete(EmailTeamMemberHistory).where(EmailTeamMemberHistory.team_id == team.id)
+                                self.db.execute(delete_history_stmt)
+                                # Delete team members next
+                                delete_team_members_stmt = delete(EmailTeamMember).where(EmailTeamMember.team_id == team.id)
+                                self.db.execute(delete_team_members_stmt)
+                                # Delete the team last
+                                self.db.delete(team)
                         else:
                             # Multi-member team with no other owners - cannot delete user
                             raise ValueError(f"Cannot delete user {email}: owns team '{team.name}' with {len(all_members)} members but no other owners to transfer ownership to")
@@ -2131,6 +2132,10 @@ class EmailAuthService:
             logger.info(f"User {SecurityValidator.sanitize_log_message(email)} deleted permanently")
             return True
 
+        except IntegrityError as e:
+            self.db.rollback()
+            logger.error(f"FK constraint violation deleting user {SecurityValidator.sanitize_log_message(email)}: {e}")
+            raise ValueError("Cannot delete user due to existing references") from e
         except Exception as e:
             self.db.rollback()
             logger.error(f"Error deleting user {SecurityValidator.sanitize_log_message(email)}: {e}")
