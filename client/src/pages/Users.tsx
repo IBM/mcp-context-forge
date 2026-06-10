@@ -1,13 +1,24 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Plus } from "lucide-react";
 import { useIntl } from "react-intl";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { UserForm } from "@/components/users/UserForm";
 import { UsersTable } from "@/components/users/UsersTable";
-import { useQuery } from "@/hooks/useQuery";
-import type { User, UsersResponse, CreateUserRequest } from "@/types/user";
+import { DeleteUserDialog } from "@/components/users/DeleteUserDialog";
+import { useUsersList } from "@/hooks/useUsersList";
+import { usersApi } from "@/api/users";
+import { ApiError } from "@/api/client";
+import type { User, CreateUserRequest } from "@/types/user";
 
 const DEFAULT_PAGE_SIZE = 10;
+
+// Backend error message constants (coupled to mcpgateway/routers/email_auth.py)
+// TODO: Replace with structured error codes from API
+const ERROR_MESSAGES = {
+  CANNOT_DELETE_SELF: "own account",
+  CANNOT_DELETE_LAST_ADMIN: "last remaining admin",
+} as const;
 
 export function Users() {
   const intl = useIntl();
@@ -15,33 +26,20 @@ export function Users() {
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
-
-  const queryPath = useMemo(() => {
-    const params = new URLSearchParams();
-    params.set("limit", DEFAULT_PAGE_SIZE.toString());
-    params.set("include_pagination", "true");
-    return `/auth/email/admin/users?${params.toString()}`;
-  }, []);
-
-  const { data: response, error: queryError, isLoading } = useQuery<UsersResponse>(queryPath);
-
-  const loadMorePath = useMemo(() => {
-    if (!nextCursor) return "";
-    const params = new URLSearchParams();
-    params.set("cursor", nextCursor);
-    params.set("limit", limit.toString());
-    params.set("include_pagination", "true");
-    return `/auth/email/admin/users?${params.toString()}`;
-  }, [nextCursor, limit]);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<User | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const {
+    data: response,
+    error: queryError,
+    isLoading,
+  } = useUsersList({ limit: DEFAULT_PAGE_SIZE });
 
   const {
     execute: executeLoadMore,
     isLoading: isLoadingMore,
     error: loadMoreError,
-  } = useQuery<UsersResponse>(loadMorePath || "/auth/email/admin/users", {
-    enabled: false,
-    immediate: false,
-  });
+  } = useUsersList({ cursor: nextCursor ?? undefined, limit, enabled: false, immediate: false });
 
   useEffect(() => {
     if (response) {
@@ -70,6 +68,60 @@ export function Users() {
 
   const handleLimitChange = useCallback((newLimit: number) => {
     setLimit(newLimit);
+  }, []);
+
+  const handleDeleteClick = useCallback((user: User) => {
+    setUserToDelete(user);
+    setDeleteDialogOpen(true);
+  }, []);
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (!userToDelete) return;
+
+    setIsDeleting(true);
+
+    // Optimistic update: remove from list immediately
+    const previousUsers = allUsers;
+    setAllUsers((prev) => prev.filter((u) => u.email !== userToDelete.email));
+
+    try {
+      await usersApi.delete(userToDelete.email);
+      toast.success(
+        intl.formatMessage({ id: "users.delete.success" }, { email: userToDelete.email }),
+      );
+      setDeleteDialogOpen(false);
+      setUserToDelete(null);
+    } catch (err) {
+      // Rollback optimistic update
+      setAllUsers(previousUsers);
+
+      let errorMessage = intl.formatMessage(
+        { id: "users.delete.error.generic" },
+        { error: err instanceof Error ? err.message : "Unknown error" },
+      );
+
+      if (err instanceof ApiError) {
+        if (err.status === 400) {
+          const detail = (err.body as { detail?: string })?.detail || "";
+          if (detail.includes(ERROR_MESSAGES.CANNOT_DELETE_SELF)) {
+            errorMessage = intl.formatMessage({ id: "users.delete.error.self" });
+          } else if (detail.includes(ERROR_MESSAGES.CANNOT_DELETE_LAST_ADMIN)) {
+            errorMessage = intl.formatMessage({ id: "users.delete.error.lastAdmin" });
+          }
+        } else if (err.status === 404) {
+          errorMessage = intl.formatMessage({ id: "users.delete.error.notFound" });
+        }
+      }
+
+      toast.error(errorMessage);
+    } finally {
+      setIsDeleting(false);
+    }
+  }, [userToDelete, allUsers, intl]);
+
+  const handleDeleteCancel = useCallback(() => {
+    setDeleteDialogOpen(false);
+    setUserToDelete(null);
   }, []);
 
   const error = queryError ? queryError.message : null;
@@ -151,7 +203,7 @@ export function Users() {
 
               {allUsers.length > 0 ? (
                 <>
-                  <UsersTable users={allUsers} />
+                  <UsersTable users={allUsers} onDeleteClick={handleDeleteClick} />
 
                   <div className="mt-6 flex items-center justify-between">
                     <div className="flex items-center gap-4">
@@ -203,6 +255,16 @@ export function Users() {
             </>
           )}
         </div>
+      )}
+      {userToDelete && (
+        <DeleteUserDialog
+          isOpen={deleteDialogOpen}
+          userEmail={userToDelete.email}
+          userName={userToDelete.full_name || userToDelete.email}
+          onConfirm={handleDeleteConfirm}
+          onCancel={handleDeleteCancel}
+          isDeleting={isDeleting}
+        />
       )}
     </main>
   );
