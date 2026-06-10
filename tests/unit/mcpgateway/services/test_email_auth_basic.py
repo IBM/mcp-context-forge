@@ -2718,9 +2718,9 @@ class TestEmailAuthServiceUserDeletion:
             mock_no_owners,  # No other owners
             mock_single_member,  # Just the user as member
             mock_empty,  # Delete team member history records
-            mock_empty,  # Delete team members
+            mock_empty,  # Delete team members (for the team)
+            mock_empty,  # Delete team members (remove user from all teams)
             mock_empty,  # Delete auth events
-            mock_empty,  # Delete user team members
         ]
 
         mock_role_svc = MagicMock()
@@ -2775,6 +2775,97 @@ class TestEmailAuthServiceUserDeletion:
         mock_db.commit.side_effect = Exception("Database error")
 
         with pytest.raises(Exception, match="Database error"):
+            await service.delete_user("test@example.com")
+
+        mock_db.rollback.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_delete_user_integrity_error_raises_value_error(self, service, mock_db, mock_user):
+        """FK constraint violation on commit raises ValueError with user-friendly message."""
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_user
+        mock_result.scalars.return_value.all.return_value = []
+        mock_db.execute.return_value = mock_result
+        mock_db.commit.side_effect = IntegrityError("fk violation", None, None)
+
+        with pytest.raises(ValueError, match="Cannot delete user due to existing references"):
+            await service.delete_user("test@example.com")
+
+        mock_db.rollback.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_delete_user_cascade_uses_savepoint(self, service, mock_db, mock_user, mock_team):
+        """Personal team cascade deletion uses begin_nested() savepoint."""
+        single_member = MagicMock(spec=EmailTeamMember)
+        single_member.user_email = "test@example.com"
+        single_member.team_id = 1
+
+        mock_user_result = MagicMock()
+        mock_user_result.scalar_one_or_none.return_value = mock_user
+
+        mock_teams_result = MagicMock()
+        mock_teams_result.scalars.return_value.all.return_value = [mock_team]
+
+        mock_no_owners = MagicMock()
+        mock_no_owners.scalars.return_value.all.return_value = []
+
+        mock_single_member = MagicMock()
+        mock_single_member.scalars.return_value.all.return_value = [single_member]
+
+        mock_empty = MagicMock()
+        mock_db.execute.side_effect = [
+            mock_user_result,
+            mock_teams_result,
+            mock_no_owners,
+            mock_single_member,
+            mock_empty,  # delete history
+            mock_empty,  # delete team members
+            mock_empty,  # delete user memberships
+            mock_empty,  # delete auth events
+        ]
+
+        # begin_nested() must return a context manager
+        mock_savepoint = MagicMock()
+        mock_savepoint.__enter__ = MagicMock(return_value=mock_savepoint)
+        mock_savepoint.__exit__ = MagicMock(return_value=False)
+        mock_db.begin_nested.return_value = mock_savepoint
+
+        mock_role_svc = MagicMock()
+        mock_role_svc.delete_all_user_roles = AsyncMock(return_value=0)
+
+        with patch.object(type(service), "role_service", new_callable=lambda: property(lambda self: mock_role_svc)):
+            result = await service.delete_user("test@example.com")
+
+        assert result is True
+        mock_db.begin_nested.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_delete_user_cascade_savepoint_failure_rolls_back(self, service, mock_db, mock_user, mock_team):
+        """If cascade savepoint raises, the whole transaction rolls back."""
+        single_member = MagicMock(spec=EmailTeamMember)
+        single_member.user_email = "test@example.com"
+        single_member.team_id = 1
+
+        mock_user_result = MagicMock()
+        mock_user_result.scalar_one_or_none.return_value = mock_user
+
+        mock_teams_result = MagicMock()
+        mock_teams_result.scalars.return_value.all.return_value = [mock_team]
+
+        mock_no_owners = MagicMock()
+        mock_no_owners.scalars.return_value.all.return_value = []
+
+        mock_single_member = MagicMock()
+        mock_single_member.scalars.return_value.all.return_value = [single_member]
+
+        mock_db.execute.side_effect = [mock_user_result, mock_teams_result, mock_no_owners, mock_single_member]
+
+        mock_savepoint = MagicMock()
+        mock_savepoint.__enter__ = MagicMock(return_value=mock_savepoint)
+        mock_savepoint.__exit__ = MagicMock(side_effect=Exception("savepoint failed"))
+        mock_db.begin_nested.return_value = mock_savepoint
+
+        with pytest.raises(Exception):
             await service.delete_user("test@example.com")
 
         mock_db.rollback.assert_called()
