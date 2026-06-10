@@ -325,7 +325,8 @@ docs/docs/design/images/code2flow.dot
 docs/docs/test/
 mcp.prof
 mcp.pstats
-coverage_re
+coverage_re*
+coverage_final*
 
 # Dependency tools
 .depsorter_cache.json
