@@ -711,16 +711,17 @@ describe("MCPServerForm", () => {
 
   describe("OAuth Password Grant Validation", () => {
     // Helper: open advanced settings, switch to OAuth auth, select password grant
-    const renderWithOAuthPassword = async () => {
-      const user = userEvent.setup();
-      renderWithRouter(<MCPServerForm {...defaultProps} />);
-      await user.click(screen.getByRole("button", { name: /Advanced settings/i }));
-      await user.click(screen.getByRole("radio", { name: /OAuth 2\.0/i }));
-      // Grant type defaults to client_credentials; switch to password
-      await user.click(screen.getByRole("combobox", { name: /Grant type/i }));
-      await user.click(screen.getByRole("option", { name: /Resource owner password/i }));
-      return user;
-    };
+    const renderWithOAuthPassword = // pragma: allowlist secret
+      async () => {
+        const user = userEvent.setup();
+        renderWithRouter(<MCPServerForm {...defaultProps} />);
+        await user.click(screen.getByRole("button", { name: /Advanced settings/i }));
+        await user.click(screen.getByRole("radio", { name: /OAuth 2\.0/i }));
+        // Grant type defaults to client_credentials; switch to password
+        await user.click(screen.getByRole("combobox", { name: /Grant type/i }));
+        await user.click(screen.getByRole("option", { name: /Resource owner password/i }));
+        return user;
+      };
 
     it("shows username and password fields when password grant is selected", async () => {
       await renderWithOAuthPassword();

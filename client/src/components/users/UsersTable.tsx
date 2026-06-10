@@ -1,8 +1,9 @@
-import { Check, Laptop, Lock, MoreVertical, User as UserIcon } from "lucide-react";
+import { Check, Laptop, Lock, User as UserIcon } from "lucide-react";
 import type { IntlShape } from "react-intl";
 import { useIntl } from "react-intl";
 
 import type { User } from "../../types/user";
+import { UserActionsMenu } from "./UserActionsMenu";
 import {
   Table,
   TableBody,
@@ -35,9 +36,10 @@ function getDisplayName(user: User, intl: IntlShape): string {
 
 interface UsersTableProps {
   users: User[];
+  onDeleteClick: (user: User) => void;
 }
 
-export function UsersTable({ users }: UsersTableProps) {
+export function UsersTable({ users, onDeleteClick }: UsersTableProps) {
   const intl = useIntl();
 
   return (
@@ -164,14 +166,20 @@ export function UsersTable({ users }: UsersTableProps) {
                   {formatDate(intl, user.last_login)}
                 </TableCell>
                 <TableCell className="rounded-r-lg px-3 py-2.5 text-muted-foreground">
-                  <button
-                    type="button"
-                    className="inline-flex h-5 w-5 items-center justify-center rounded-sm transition-colors hover:text-card-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    aria-label={`${displayName} actions`}
-                    aria-haspopup="menu"
-                  >
-                    <MoreVertical className="h-5 w-5" strokeWidth={1.25} aria-hidden="true" />
-                  </button>
+                  <UserActionsMenu
+                    user={user}
+                    displayName={displayName}
+                    onEdit={(u) => {
+                      // TODO: Implement edit functionality
+                      console.log("Edit user:", u);
+                    }}
+                    onDelete={(email) => {
+                      const userToDelete = users.find((u) => u.email === email);
+                      if (userToDelete) {
+                        onDeleteClick(userToDelete);
+                      }
+                    }}
+                  />
                 </TableCell>
               </TableRow>
             );
