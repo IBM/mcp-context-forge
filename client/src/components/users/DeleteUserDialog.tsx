@@ -30,7 +30,11 @@ export function DeleteUserDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onCancel()}>
-      <DialogContent role="alertdialog" aria-busy={isDeleting}>
+      <DialogContent
+        role="alertdialog"
+        aria-busy={isDeleting}
+        aria-describedby="delete-user-description"
+      >
         <DialogHeader>
           <DialogTitle>{intl.formatMessage({ id: "users.delete.dialog.title" })}</DialogTitle>
           <DialogDescription id="delete-user-description">

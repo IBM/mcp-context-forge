@@ -55,41 +55,4 @@ export const usersApi = {
       `/auth/email/admin/users/${encodeURIComponent(validEmail)}`,
     );
   },
-
-  /**
-   * Fetch all users with cursor-based pagination.
-   */
-  list: (params?: {
-    cursor?: string;
-    limit?: number;
-    signal?: AbortSignal;
-  }): Promise<UsersResponse> => {
-    const searchParams = new URLSearchParams();
-
-    if (params?.cursor) {
-      searchParams.set("cursor", params.cursor);
-    }
-
-    // Validate and clamp limit (1-100)
-    if (params?.limit !== undefined) {
-      const limit = Number.isFinite(params.limit)
-        ? Math.max(1, Math.min(100, Math.floor(params.limit)))
-        : 25;
-      searchParams.set("limit", limit.toString());
-    }
-
-    // Always request pagination metadata to get structured response
-    searchParams.set("include_pagination", "true");
-
-    const query = searchParams.toString();
-    return api.get<UsersResponse>(
-      `/auth/email/admin/users${query ? `?${query}` : ""}`,
-      undefined,
-      params?.signal,
-    );
-  },
 };
-
-// Re-export for backward compatibility
-export const deleteUser = usersApi.delete;
-export const fetchUsers = usersApi.list;

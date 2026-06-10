@@ -14,6 +14,13 @@ import type { User, UsersResponse, CreateUserRequest } from "@/types/user";
 
 const DEFAULT_PAGE_SIZE = 10;
 
+// Backend error message constants (coupled to mcpgateway/routers/email_auth.py)
+// TODO: Replace with structured error codes from API
+const ERROR_MESSAGES = {
+  CANNOT_DELETE_SELF: "own account",
+  CANNOT_DELETE_LAST_ADMIN: "last remaining admin",
+} as const;
+
 export function Users() {
   const intl = useIntl();
   const [limit, setLimit] = useState(DEFAULT_PAGE_SIZE);
@@ -112,9 +119,9 @@ export function Users() {
       if (err instanceof ApiError) {
         if (err.status === 400) {
           const detail = (err.body as { detail?: string })?.detail || "";
-          if (detail.includes("own account")) {
+          if (detail.includes(ERROR_MESSAGES.CANNOT_DELETE_SELF)) {
             errorMessage = intl.formatMessage({ id: "users.delete.error.self" });
-          } else if (detail.includes("last remaining admin")) {
+          } else if (detail.includes(ERROR_MESSAGES.CANNOT_DELETE_LAST_ADMIN)) {
             errorMessage = intl.formatMessage({ id: "users.delete.error.lastAdmin" });
           }
         } else if (err.status === 404) {
@@ -265,14 +272,16 @@ export function Users() {
           )}
         </div>
       )}
-      <DeleteUserDialog
-        isOpen={deleteDialogOpen}
-        userEmail={userToDelete?.email || ""}
-        userName={userToDelete?.full_name || userToDelete?.email || ""}
-        onConfirm={handleDeleteConfirm}
-        onCancel={handleDeleteCancel}
-        isDeleting={isDeleting}
-      />
+      {userToDelete && (
+        <DeleteUserDialog
+          isOpen={deleteDialogOpen}
+          userEmail={userToDelete.email}
+          userName={userToDelete.full_name || userToDelete.email}
+          onConfirm={handleDeleteConfirm}
+          onCancel={handleDeleteCancel}
+          isDeleting={isDeleting}
+        />
+      )}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </main>
   );
