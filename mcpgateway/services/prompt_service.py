@@ -64,7 +64,7 @@ from mcpgateway.services.upstream_session_registry import downstream_session_id_
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.create_slug import slugify
-from mcpgateway.utils.gateway_access import build_gateway_auth_headers
+from mcpgateway.utils.gateway_access import resolve_gateway_auth_headers
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
@@ -379,13 +379,14 @@ class PromptService(BaseService):
         """
         return bool(getattr(prompt, "gateway_id", None)) and not bool(getattr(prompt, "template", ""))
 
-    async def _fetch_gateway_prompt_result(self, prompt: DbPrompt, arguments: Optional[Dict[str, str]], meta_data: Optional[Dict[str, Any]] = None) -> PromptResult:
+    async def _fetch_gateway_prompt_result(self, prompt: DbPrompt, arguments: Optional[Dict[str, str]], meta_data: Optional[Dict[str, Any]] = None, user_identity: Optional[str] = None) -> PromptResult:
         """Fetch a rendered prompt from the upstream MCP gateway.
 
         Args:
             prompt: Gateway-backed prompt record from the catalog.
             arguments: Optional prompt-rendering arguments.
             meta_data: Optional metadata dict forwarded as ``_meta`` in the upstream MCP request.
+            user_identity: Effective requester email for session-pool isolation.
 
         Returns:
             Prompt result normalized into ContextForge models.
@@ -398,7 +399,10 @@ class PromptService(BaseService):
             raise PromptError(f"Prompt '{prompt.name}' is gateway-backed but missing gateway metadata")
 
         gateway_url = str(gateway.url)
-        headers = build_gateway_auth_headers(gateway)
+        # Resolve per-user credentials (falls back to gateway defaults)
+        from mcpgateway.db import SessionLocal  # pylint: disable=import-outside-toplevel
+        with SessionLocal() as db:
+            headers = await resolve_gateway_auth_headers(gateway, app_user_email=user_identity, db=db)
         auth_query_params_decrypted: Optional[Dict[str, str]] = None
 
         if getattr(gateway, "auth_type", None) == "query_param" and getattr(gateway, "auth_query_params", None):
@@ -1920,7 +1924,7 @@ class PromptService(BaseService):
                 None = unrestricted admin, [] = public-only, [...] = team-scoped.
             plugin_context_table: Optional plugin context table from previous hooks for cross-hook state sharing.
             plugin_global_context: Optional global context from middleware for consistency across hooks.
-            _meta_data: Optional metadata forwarded as _meta to the upstream MCP gateway during prompt retrieval.
+            _meta_data: Optional metadata for prompt retrieval (not used currently).
 
         Returns:
             Prompt result with rendered messages
@@ -2081,7 +2085,7 @@ class PromptService(BaseService):
                 if self._should_fetch_gateway_prompt(prompt):
                     # Release the read transaction before any remote network I/O.
                     db.commit()
-                    result = await self._fetch_gateway_prompt_result(prompt, arguments, meta_data=_meta_data)
+                    result = await self._fetch_gateway_prompt_result(prompt, arguments, meta_data=_meta_data, user_identity=user)
                 elif not arguments:
                     result = PromptResult(
                         messages=[

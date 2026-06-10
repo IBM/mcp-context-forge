@@ -9678,6 +9678,55 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         </div>
       </div>
 
+      <!-- Personal Credential Modal -->
+      <div id="credential-modal" class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center hidden">
+        <div class="bg-white dark:bg-gray-900 w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-lg shadow-lg p-6">
+          <h2 class="text-xl font-bold mb-4 text-gray-800 dark:text-gray-100">
+            🔑 Store Personal Credential
+          </h2>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
+            Store a personal API key, token, or credential for gateway: <strong id="credential-gateway-name"></strong>
+          </p>
+          <input type="hidden" id="credential-gateway-id" />
+          <div class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Credential Type</label>
+              <select id="credential-type" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-indigo-500">
+                <option value="api_key">API Key (sent as Basic auth)</option>
+                <option value="bearer_token">Bearer Token</option>
+                <option value="basic_auth">Basic Auth (username:password)</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Credential Value</label>
+              <input type="password" id="credential-value" autocomplete="off" placeholder="Enter your API key, token, or username:password"
+                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-indigo-500" />
+              <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">The credential is encrypted at rest and only used when you invoke tools on this gateway.</p>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Label (optional)</label>
+              <input type="text" id="credential-label" placeholder="e.g., My Freshservice API Key"
+                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-indigo-500" />
+            </div>
+          </div>
+          <div id="credential-status" class="mt-3 text-sm hidden"></div>
+          <div class="mt-6 flex justify-end space-x-3">
+            <button type="button" onclick="Admin.revokeCredential()"
+              class="px-4 py-2 text-sm font-medium text-red-600 dark:text-red-400 border border-red-300 dark:border-red-600 rounded-md hover:bg-red-50 dark:hover:bg-red-900/20">
+              Revoke
+            </button>
+            <button type="button" onclick="Admin.closeModal('credential-modal')"
+              class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">
+              Cancel
+            </button>
+            <button type="button" onclick="Admin.submitCredential()"
+              class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 focus:ring-2 focus:ring-indigo-500">
+              Store Credential
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- Test Gateway Modal -->
       <div
         id="gateway-test-modal"

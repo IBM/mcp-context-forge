@@ -1817,6 +1817,7 @@ class TestToolServiceIdentityPropagationCoverage:
         with (
             patch("mcpgateway.services.tool_service.fresh_db_session", return_value=_FreshDBSession(db)),
             patch("mcpgateway.services.tool_service.check_gateway_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.resolve_gateway_auth_headers", AsyncMock(return_value={})),
             patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
             patch("mcpgateway.services.tool_service.build_identity_headers", return_value={"X-Identity": "1"}) as mock_build_headers,
             patch("mcpgateway.services.tool_service.build_identity_meta", return_value={"identity": True}) as mock_build_meta,

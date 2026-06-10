@@ -4742,6 +4742,9 @@ class Gateway(Base):
     # Relationship with OAuth tokens
     oauth_tokens: Mapped[List["OAuthToken"]] = relationship("OAuthToken", back_populates="gateway", cascade="all, delete-orphan")
 
+    # Relationship with per-user personal credentials
+    user_credentials: Mapped[List["UserGatewayCredential"]] = relationship("UserGatewayCredential", back_populates="gateway", cascade="all, delete-orphan")
+
     # Relationship with registered OAuth clients (DCR)
 
     registered_oauth_clients: Mapped[List["RegisteredOAuthClient"]] = relationship("RegisteredOAuthClient", back_populates="gateway", cascade="all, delete-orphan")
@@ -5282,6 +5285,33 @@ class OAuthToken(Base):
 
     # Unique constraint: one token per user per gateway
     __table_args__ = (UniqueConstraint("gateway_id", "app_user_email", name="uq_oauth_gateway_user"),)
+
+
+class UserGatewayCredential(Base):
+    """ORM model for per-user personal credentials (API keys, PATs, basic auth) for gateways.
+
+    Unlike OAuthToken which stores tokens obtained via OAuth flows, this model stores
+    credentials that users manually provide for gateways where OAuth is not supported
+    (e.g., API keys, personal access tokens, basic auth credentials).
+    """
+
+    __tablename__ = "user_gateway_credentials"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    gateway_id: Mapped[str] = mapped_column(String(36), ForeignKey("gateways.id", ondelete="CASCADE"), nullable=False)
+    app_user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email", ondelete="CASCADE"), nullable=False)
+    credential_type: Mapped[str] = mapped_column(String(50), nullable=False)  # "api_key", "bearer_token", "basic_auth"
+    credential_value: Mapped[str] = mapped_column(EncryptedText(), nullable=False)
+    label: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+    # Relationships
+    gateway: Mapped["Gateway"] = relationship("Gateway", back_populates="user_credentials")
+    app_user: Mapped["EmailUser"] = relationship("EmailUser", foreign_keys=[app_user_email])
+
+    # Unique constraint: one credential per user per gateway
+    __table_args__ = (UniqueConstraint("gateway_id", "app_user_email", name="uq_credential_gateway_user"),)
 
 
 class OAuthState(Base):
