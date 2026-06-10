@@ -1,6 +1,9 @@
 name: Pre-commit Checks
 
 on:
+  push:
+    branches: ["main"]
+    tags: ["*"]
   pull_request:
     types: [opened, synchronize, ready_for_review]
     branches: ["main"]
@@ -10,11 +13,39 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
+  ci-decision:
+    name: Full CI decision
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run-full-ci: ${{ steps.decision.outputs.run-full-ci }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Decide full CI scope
+        id: decision
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_FILE: pre-commit.yml
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_JSON: ${{ toJson(github.event) }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          GITHUB_REPOSITORY_NAME: ${{ github.repository }}
+          GITHUB_REF_TYPE_VALUE: ${{ github.ref_type }}
+          GITHUB_SHA_VALUE: ${{ github.sha }}
+        run: python3 .github/scripts/secret_baseline_ci_decision.py
+
   pre-commit:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: ci-decision
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     name: Run pre-commit hooks
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -24,7 +55,7 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           persist-credentials: false
-          fetch-depth: 0
+          fetch-depth: 2
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
@@ -32,6 +63,7 @@ jobs:
           python-version: "3.12"
 
       - name: Set up Go
+        if: needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false'
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: "1.25.x"
@@ -40,4 +72,9 @@ jobs:
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
 
       - name: Run pre-commit
+        if: needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false'
         run: make --no-print-directory pre-commit
+
+      - name: Run detect-secrets validation
+        if: needs.ci-decision.result == 'success' && needs.ci-decision.outputs.run-full-ci == 'false'
+        run: make --no-print-directory detect-secrets-hook

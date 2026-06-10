@@ -28,11 +28,38 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
+  ci-decision:
+    name: Full CI decision
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run-full-ci: ${{ steps.decision.outputs.run-full-ci }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Decide full CI scope
+        id: decision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_FILE: rust.yml
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_JSON: ${{ toJson(github.event) }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          GITHUB_REPOSITORY_NAME: ${{ github.repository }}
+          GITHUB_REF_TYPE_VALUE: ${{ github.ref_type }}
+          GITHUB_SHA_VALUE: ${{ github.sha }}
+        run: python3 .github/scripts/secret_baseline_ci_decision.py
+
   rust-build:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: ci-decision
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false')
     name: Rust build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
@@ -79,7 +106,8 @@ jobs:
         run: make rust-verify-stubs
 
   rust-fmt:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: ci-decision
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false')
     name: Rust fmt
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -108,7 +136,8 @@ jobs:
         run: make rust-fmt-check
 
   rust-clippy:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: ci-decision
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false')
     name: Rust clippy
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -137,7 +166,8 @@ jobs:
         run: make rust-lint
 
   rust-test:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: ci-decision
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false')
     name: Rust test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
@@ -167,7 +197,8 @@ jobs:
         run: make rust-test
 
   rust-test-redis:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: ci-decision
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false')
     name: Rust test (Redis-backed paths)
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -207,7 +238,8 @@ jobs:
         run: cargo test -p contextforge_mcp_runtime --test runtime
 
   build-wheels:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: ci-decision
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false')
     name: Build wheels (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
@@ -256,7 +288,8 @@ jobs:
           path: crates/**/target/wheels/*.whl
 
   security-audit:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: ci-decision
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false')
     name: Dependency policy
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -273,7 +306,8 @@ jobs:
         run: make rust-deny
 
   supply-chain-vet:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: ci-decision
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false')
     name: Supply-chain vet
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -293,7 +327,8 @@ jobs:
         run: make rust-vet
 
   license-check:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: ci-decision
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false')
     name: License check (workspace)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -310,7 +345,8 @@ jobs:
         run: make rust-licenses
 
   benchmark-build-check:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: ci-decision
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false')
     name: Benchmarks (build check only)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -336,7 +372,8 @@ jobs:
         run: make rust-bench-check
 
   coverage:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: ci-decision
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false')
     name: Coverage
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -376,7 +413,8 @@ jobs:
           path: coverage/cobertura.xml
 
   documentation:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: ci-decision
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false')
     name: Documentation
     runs-on: ubuntu-latest
     timeout-minutes: 30
