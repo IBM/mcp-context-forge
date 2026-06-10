@@ -104,4 +104,19 @@ describe("UsersTable", () => {
     expect(screen.getByText("invalid-date")).toBeInTheDocument();
     expect(screen.getByText("not-a-date")).toBeInTheDocument();
   });
+
+  it("catches exception during date formatting", () => {
+    const originalDate = global.Date;
+    const mockDate = vi.fn(() => {
+      throw new Error("Date error");
+    }) as any;
+    mockDate.now = originalDate.now;
+    global.Date = mockDate;
+
+    const user: User = { ...baseUser, created_at: "error-date" };
+    renderWithIntl(<UsersTable users={[user]} />);
+    expect(screen.getByText("error-date")).toBeInTheDocument();
+
+    global.Date = originalDate;
+  });
 });

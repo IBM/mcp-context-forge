@@ -301,5 +301,72 @@ describe("ServerActionsMenu", () => {
       expect(screen.queryByRole("menuitem", { name: /activate/i })).not.toBeInTheDocument();
       expect(screen.queryByRole("menuitem", { name: /deactivate/i })).not.toBeInTheDocument();
     });
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { ServerActionsMenu } from "./ServerActionsMenu";
+import type { MCPServer } from "../../types/server";
+
+describe("ServerActionsMenu", () => {
+  const mockServer: MCPServer = {
+    id: "test-server-1",
+    name: "Test Server",
+    command: "test-command",
+    args: [],
+    env: {},
+    tags: [],
+    status: "connected",
+    auth: { type: "none" },
+  };
+
+  const mockOnEdit = vi.fn();
+  const mockOnDelete = vi.fn();
+  const mockOnTest = vi.fn();
+
+  it("should render the actions menu trigger", () => {
+    render(
+      <ServerActionsMenu
+        server={mockServer}
+        onEdit={mockOnEdit}
+        onDelete={mockOnDelete}
+        onTest={mockOnTest}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: `Actions for ${mockServer.name}` }),
+    ).toBeInTheDocument();
+  });
+
+  it("should open menu and call actions correctly", async () => {
+    const user = userEvent.setup();
+    render(
+      <ServerActionsMenu
+        server={mockServer}
+        onEdit={mockOnEdit}
+        onDelete={mockOnDelete}
+        onTest={mockOnTest}
+      />,
+    );
+
+    // Open the menu
+    const trigger = screen.getByRole("button", { name: `Actions for ${mockServer.name}` });
+    await user.click(trigger);
+
+    // Click Edit
+    const editItem = await screen.findByText("Edit");
+    await user.click(editItem);
+    expect(mockOnEdit).toHaveBeenCalledWith("test-server-1");
+
+    // Click Test Connection
+    await user.click(trigger); // reopen menu
+    const testItem = await screen.findByText("Test Connection");
+    await user.click(testItem);
+    expect(mockOnTest).toHaveBeenCalledWith("test-server-1");
+
+    // Click Delete
+    await user.click(trigger); // reopen menu
+    const deleteItem = await screen.findByText("Delete");
+    await user.click(deleteItem);
+    expect(mockOnDelete).toHaveBeenCalledWith("test-server-1");
   });
 });
+

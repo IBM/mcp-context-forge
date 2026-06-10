@@ -52,7 +52,7 @@ describe("Gateways Utils", () => {
     it("returns relative path if window or origin is not available", () => {
       // Mock window.location to simulate missing origin
       const originalLocation = window.location;
-      // @ts-ignore
+      // @ts-expect-error - testing missing window.location
       delete window.location;
       
       expect(getVirtualServerEndpoint("test-id")).toBe("/servers/test-id/mcp");
@@ -81,12 +81,14 @@ describe("Gateways Utils", () => {
     
     it("does not throw if clipboard is undefined", () => {
       const originalClipboard = navigator.clipboard;
-      // @ts-ignore
+      // @ts-expect-error - testing missing clipboard
       delete navigator.clipboard;
       
       expect(() => copyToClipboard("test")).not.toThrow();
       
       // @ts-ignore
+
+      // @ts-expect-error - restoring clipboard
       navigator.clipboard = originalClipboard;
     });
   });
@@ -174,3 +176,4 @@ describe("Gateways Utils", () => {
     });
   });
 });
+

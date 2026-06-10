@@ -469,4 +469,43 @@ describe("Users", () => {
     });
     consoleErrorSpy.mockRestore();
   });
+
+  it("does not load more when load is already in progress", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get).mockResolvedValueOnce({
+      users: createMockUsers(0, 10),
+      nextCursor: "cursor-1",
+    });
+
+    renderWithRouter(<Users />);
+
+    await waitFor(() => {
+      expect(screen.getByText("user0@example.com")).toBeInTheDocument();
+    });
+
+    const loadMoreButton = screen.getByRole("button", { name: /load more users/i });
+
+    // Mock load more with a delayed response
+    let resolveLoadMore: any;
+    const delayedPromise = new Promise((resolve) => {
+      resolveLoadMore = resolve;
+    });
+    vi.mocked(api.get).mockReturnValueOnce(delayedPromise as any);
+
+    // First click
+    await user.click(loadMoreButton);
+    // Second click (should be ignored because isLoadingMore is true)
+    await user.click(loadMoreButton);
+
+    // Resolve the promise
+    resolveLoadMore({ users: createMockUsers(10, 5), nextCursor: null });
+
+    // Wait for resolution
+    await waitFor(() => {
+      expect(screen.getByText("user14@example.com")).toBeInTheDocument();
+    });
+
+    // Check that api.get was called exactly twice (once for initial load, once for first load more)
+    expect(api.get).toHaveBeenCalledTimes(2);
+  });
 });

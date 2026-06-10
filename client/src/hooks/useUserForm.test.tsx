@@ -464,6 +464,33 @@ describe("useUserForm", () => {
       expect(onSuccess).toHaveBeenCalled();
     });
 
+    it("should call onOptimisticCreate callback before API request", async () => {
+      mockExecute.mockResolvedValue({ email: "test@example.com" });
+      const { result } = renderHook(() => useUserForm(), { wrapper });
+      const onOptimisticCreate = vi.fn();
+
+      act(() => {
+        result.current.setEmail("test@example.com");
+        result.current.setPassword("SecurePass123!");
+        result.current.setConfirmPassword("SecurePass123!");
+      });
+
+      const mockEvent = {
+        preventDefault: vi.fn(),
+      } as unknown as React.FormEvent<HTMLFormElement>;
+
+      await act(async () => {
+        await result.current.handleSubmit(mockEvent, undefined, onOptimisticCreate);
+      });
+
+      expect(onOptimisticCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          email: "test@example.com",
+          password: "SecurePass123!",
+        }),
+      );
+    });
+
     it("should reset form after successful submission", async () => {
       mockExecute.mockResolvedValue({ email: "test@example.com" });
       const { result } = renderHook(() => useUserForm(), { wrapper });
