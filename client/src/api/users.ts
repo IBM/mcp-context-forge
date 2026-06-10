@@ -5,7 +5,6 @@
  */
 
 import { api } from "./client";
-import type { UsersResponse } from "../types/user";
 
 export interface DeleteUserResponse {
   success: boolean;
@@ -56,3 +55,5 @@ export const usersApi = {
     );
   },
 };
+
+export const deleteUser = usersApi.delete;

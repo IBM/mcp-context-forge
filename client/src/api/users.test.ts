@@ -3,6 +3,8 @@ import { usersApi, deleteUser } from "./users";
 import { api } from "./client";
 import { ApiError } from "./client";
 
+// usersApi.list tests live in src/hooks/useUsersList.test.ts
+
 vi.mock("./client", () => ({
   api: {
     delete: vi.fn(),
@@ -86,85 +88,5 @@ describe("usersApi.delete", () => {
 describe("deleteUser (backward compatibility)", () => {
   it("should be an alias for usersApi.delete", () => {
     expect(deleteUser).toBe(usersApi.delete);
-  });
-});
-
-describe("usersApi.list", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it("should fetch users with default parameters", async () => {
-    const mockResponse = { users: [], nextCursor: undefined };
-    vi.mocked(api.get).mockResolvedValue(mockResponse);
-
-    const result = await usersApi.list();
-
-    expect(api.get).toHaveBeenCalledWith(
-      "/auth/email/admin/users?include_pagination=true",
-      undefined,
-      undefined,
-    );
-    expect(result).toEqual(mockResponse);
-  });
-
-  it("should fetch users with cursor", async () => {
-    const mockResponse = { users: [], nextCursor: "next-cursor" };
-    vi.mocked(api.get).mockResolvedValue(mockResponse);
-
-    await usersApi.list({ cursor: "test-cursor" });
-
-    expect(api.get).toHaveBeenCalledWith(
-      "/auth/email/admin/users?cursor=test-cursor&include_pagination=true",
-      undefined,
-      undefined,
-    );
-  });
-
-  it("should fetch users with limit", async () => {
-    const mockResponse = { users: [], nextCursor: undefined };
-    vi.mocked(api.get).mockResolvedValue(mockResponse);
-
-    await usersApi.list({ limit: 50 });
-
-    expect(api.get).toHaveBeenCalledWith(
-      "/auth/email/admin/users?limit=50&include_pagination=true",
-      undefined,
-      undefined,
-    );
-  });
-
-  it("should clamp limit to valid range", async () => {
-    const mockResponse = { users: [], nextCursor: undefined };
-    vi.mocked(api.get).mockResolvedValue(mockResponse);
-
-    await usersApi.list({ limit: 200 });
-    expect(api.get).toHaveBeenCalledWith(
-      "/auth/email/admin/users?limit=100&include_pagination=true",
-      undefined,
-      undefined,
-    );
-
-    vi.clearAllMocks();
-    await usersApi.list({ limit: 0 });
-    expect(api.get).toHaveBeenCalledWith(
-      "/auth/email/admin/users?limit=1&include_pagination=true",
-      undefined,
-      undefined,
-    );
-  });
-
-  it("should pass abort signal", async () => {
-    const mockResponse = { users: [], nextCursor: undefined };
-    vi.mocked(api.get).mockResolvedValue(mockResponse);
-    const signal = new AbortController().signal;
-
-    await usersApi.list({ signal });
-
-    expect(api.get).toHaveBeenCalledWith(
-      "/auth/email/admin/users?include_pagination=true",
-      undefined,
-      signal,
-    );
   });
 });

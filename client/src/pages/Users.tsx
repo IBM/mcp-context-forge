@@ -1,16 +1,16 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Plus } from "lucide-react";
 import { useIntl } from "react-intl";
 import { Button } from "@/components/ui/button";
 import { UserForm } from "@/components/users/UserForm";
 import { UsersTable } from "@/components/users/UsersTable";
 import { DeleteUserDialog } from "@/components/users/DeleteUserDialog";
-import { useQuery } from "@/hooks/useQuery";
+import { useUsersList } from "@/hooks/useUsersList";
 import { useToast } from "@/hooks/useToast";
 import { ToastContainer } from "@/components/ui/toast";
 import { usersApi } from "@/api/users";
 import { ApiError } from "@/api/client";
-import type { User, UsersResponse, CreateUserRequest } from "@/types/user";
+import type { User, CreateUserRequest } from "@/types/user";
 
 const DEFAULT_PAGE_SIZE = 10;
 
@@ -32,32 +32,17 @@ export function Users() {
   const [isDeleting, setIsDeleting] = useState(false);
   const { toasts, success, error: showError, dismissToast } = useToast();
 
-  const queryPath = useMemo(() => {
-    const params = new URLSearchParams();
-    params.set("limit", DEFAULT_PAGE_SIZE.toString());
-    params.set("include_pagination", "true");
-    return `/auth/email/admin/users?${params.toString()}`;
-  }, []);
-
-  const { data: response, error: queryError, isLoading } = useQuery<UsersResponse>(queryPath);
-
-  const loadMorePath = useMemo(() => {
-    if (!nextCursor) return "";
-    const params = new URLSearchParams();
-    params.set("cursor", nextCursor);
-    params.set("limit", limit.toString());
-    params.set("include_pagination", "true");
-    return `/auth/email/admin/users?${params.toString()}`;
-  }, [nextCursor, limit]);
+  const {
+    data: response,
+    error: queryError,
+    isLoading,
+  } = useUsersList({ limit: DEFAULT_PAGE_SIZE });
 
   const {
     execute: executeLoadMore,
     isLoading: isLoadingMore,
     error: loadMoreError,
-  } = useQuery<UsersResponse>(loadMorePath || "/auth/email/admin/users", {
-    enabled: false,
-    immediate: false,
-  });
+  } = useUsersList({ cursor: nextCursor ?? undefined, limit, enabled: false, immediate: false });
 
   useEffect(() => {
     if (response) {
