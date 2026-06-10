@@ -2587,7 +2587,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, Iterable[ReadRes
         >>> list(sig.parameters.keys())
         ['resource_uri']
         >>> sig.return_annotation
-        typing.Union[str, bytes]
+        typing.Union[str, bytes, typing.Iterable[mcp.server.lowlevel.helper_types.ReadResourceContents]]
     """
     server_id, request_headers, user_context = await _get_request_context_or_default()
 
