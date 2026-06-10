@@ -180,7 +180,7 @@ from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.log_aggregator import get_log_aggregator
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.mcp_apps import apply_tool_meta, build_extension_capabilities, filter_model_visible_tools, mcp_app_session_service, mcp_apps_enabled
+from mcpgateway.services.mcp_apps import apply_tool_meta, build_extension_capabilities, filter_model_visible_tools, mcp_app_session_service, mcp_apps_enabled, serialize_resource_content_for_mcp
 from mcpgateway.services.metrics import setup_metrics
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError
@@ -8536,22 +8536,7 @@ async def handle_internal_mcp_resources_read(request: Request):
             meta_data=meta_data,
             request_headers=dict(request.headers),
         )
-        # First-Party
-        from mcpgateway.common.models import ResourceContent  # pylint: disable=import-outside-toplevel
-
-        if isinstance(result, ResourceContent):
-            normalized_content = {"uri": result.uri}
-            if result.mime_type:
-                normalized_content["mimeType"] = result.mime_type
-            if result.text is not None:
-                normalized_content["text"] = result.text
-            elif result.blob is not None:
-                normalized_content["blob"] = base64.b64encode(result.blob).decode("ascii")
-            payload = {"contents": [normalized_content]}
-        elif hasattr(result, "model_dump"):
-            payload = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}
-        else:
-            payload = {"contents": [result]}
+        payload = {"contents": [serialize_resource_content_for_mcp(result, fallback_uri=uri)]}
 
         if db.is_active and db.in_transaction() is not None:
             db.commit()
@@ -11264,10 +11249,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     meta_data=meta_data,
                     request_headers=dict(request.headers),
                 )
-                if hasattr(result, "model_dump"):
-                    result = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}
-                else:
-                    result = {"contents": [result]}
+                result = {"contents": [serialize_resource_content_for_mcp(result, fallback_uri=uri)]}
             except (ValueError, ResourceNotFoundError) as e:
                 # Resource not found in the gateway
                 logger.error("Resource not found: %s", uri)

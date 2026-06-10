@@ -7,6 +7,7 @@ surface so future extensions can reuse the same storage and dispatch pattern.
 
 # Standard
 from datetime import datetime, timedelta, timezone
+import base64
 import re
 from typing import Any, Dict, Iterable, List, Optional
 import uuid
@@ -20,7 +21,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import MCPAppSession as DbMCPAppSession
 
 MCP_UI_EXTENSION = "io.modelcontextprotocol/ui"
-MCP_UI_DEFAULT_VERSION = "2025-06-02"
+MCP_UI_DEFAULT_VERSION = "2026-01-26"
 
 _ALLOWED_CSP_DIRECTIVES = frozenset(
     {
@@ -30,6 +31,10 @@ _ALLOWED_CSP_DIRECTIVES = frozenset(
         "frame-src",
         "img-src",
         "media-src",
+        "baseUriDomains",
+        "connectDomains",
+        "frameDomains",
+        "resourceDomains",
         "script-src",
         "style-src",
     }
@@ -44,6 +49,7 @@ _ALLOWED_SANDBOX_TOKENS = frozenset(
     }
 )
 _PERMISSION_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
+_APP_PERMISSION_KEYS = frozenset({"camera", "microphone", "geolocation", "clipboardWrite"})
 _BLOCKED_SOURCE_PREFIXES = ("javascript:", "file:", "data:")
 
 
@@ -156,6 +162,11 @@ def _validate_sandbox(sandbox: Any) -> None:
 
 def _validate_permissions(permissions: Any) -> None:
     """Validate browser permission policy tokens for MCP Apps UI resources."""
+    if isinstance(permissions, dict):
+        for permission, value in permissions.items():
+            if permission not in _APP_PERMISSION_KEYS or not isinstance(value, dict):
+                raise MCPAppsValidationError(f"Unsupported MCP Apps permission: {permission}")
+        return
     for permission in _as_string_list(permissions, field_name="permissions"):
         if not _PERMISSION_RE.match(permission):
             raise MCPAppsValidationError(f"Unsupported MCP Apps permission: {permission}")
@@ -173,11 +184,11 @@ def validate_extension_metadata(value: Optional[Dict[str, Any]]) -> None:
     resource_uri = ui.get("resourceUri") or ui.get("resource_uri")
     if resource_uri is not None and (not isinstance(resource_uri, str) or not resource_uri.startswith("ui://")):
         raise MCPAppsValidationError("MCP Apps resourceUri must use the ui:// scheme")
-    audience = ui.get("audience")
+    audience = ui.get("visibility", ui.get("audience"))
     if audience is not None:
-        for item in _as_string_list(audience, field_name="audience"):
+        for item in _as_string_list(audience, field_name="visibility"):
             if item not in {"model", "app"}:
-                raise MCPAppsValidationError("MCP Apps audience entries must be 'model' or 'app'")
+                raise MCPAppsValidationError("MCP Apps visibility entries must be 'model' or 'app'")
     _validate_csp(ui.get("csp"))
     _validate_sandbox(ui.get("sandbox"))
     _validate_permissions(ui.get("permissions"))
@@ -206,10 +217,10 @@ def validate_ui_resource(resource_uri: str, mime_type: Optional[str], extension_
 def tool_audience(extension_metadata: Optional[Dict[str, Any]]) -> List[str]:
     """Return normalized tool audience for MCP Apps filtering."""
     ui = mcp_ui_metadata(extension_metadata)
-    audience = ui.get("audience")
+    audience = ui.get("visibility", ui.get("audience"))
     if audience is None:
         return ["model"]
-    return _as_string_list(audience, field_name="audience")
+    return _as_string_list(audience, field_name="visibility")
 
 
 def is_model_visible_tool(tool: Any) -> bool:
@@ -240,6 +251,9 @@ def apply_tool_meta(payload: Dict[str, Any], extension_metadata: Optional[Dict[s
     meta = payload.setdefault("_meta", {})
     ui_meta = meta.setdefault("ui", {})
     ui_meta["resourceUri"] = resource_uri
+    audience = ui.get("visibility", ui.get("audience"))
+    if audience is not None:
+        ui_meta["visibility"] = _as_string_list(audience, field_name="visibility")
 
 
 def apply_resource_meta(payload: Dict[str, Any], extension_metadata: Optional[Dict[str, Any]]) -> None:
@@ -250,7 +264,77 @@ def apply_resource_meta(payload: Dict[str, Any], extension_metadata: Optional[Di
     if not ui:
         return
     meta = payload.setdefault("_meta", {})
-    meta["ui"] = {k: v for k, v in ui.items() if k in {"csp", "sandbox", "permissions"}}
+    meta["ui"] = {k: v for k, v in ui.items() if k in {"csp", "domain", "permissions", "prefersBorder", "sandbox"}}
+
+
+def serialize_resource_content_for_mcp(content: Any, *, fallback_uri: Optional[str] = None) -> Dict[str, Any]:
+    """Serialize internal resource content into an MCP ``resources/read`` content item."""
+    # First-Party
+    from mcpgateway.common.models import ResourceContent, ResourceContents  # pylint: disable=import-outside-toplevel
+
+    if isinstance(content, ResourceContent):
+        payload: Dict[str, Any] = {"uri": content.uri or fallback_uri}
+        if content.mime_type:
+            payload["mimeType"] = content.mime_type
+        if content.text is not None:
+            payload["text"] = content.text
+        elif content.blob is not None:
+            payload["blob"] = base64.b64encode(content.blob).decode("ascii")
+        if content.meta:
+            payload["_meta"] = content.meta
+        return {key: value for key, value in payload.items() if value is not None}
+
+    if isinstance(content, ResourceContents):
+        return content.model_dump(by_alias=True, exclude_none=True)
+
+    if isinstance(content, dict):
+        payload = dict(content)
+        if fallback_uri and "uri" not in payload:
+            payload["uri"] = fallback_uri
+        if "mime_type" in payload and "mimeType" not in payload:
+            payload["mimeType"] = payload.pop("mime_type")
+        if "meta" in payload and "_meta" not in payload:
+            payload["_meta"] = payload.pop("meta")
+        return {key: value for key, value in payload.items() if value is not None}
+
+    uri = fallback_uri or getattr(content, "uri", None)
+    mime_type_value = getattr(content, "mime_type", None) or getattr(content, "mimeType", None)
+    mime_type = mime_type_value if isinstance(mime_type_value, str) else None
+    meta_value = getattr(content, "meta", None)
+    meta = meta_value if isinstance(meta_value, dict) else None
+    text_value = getattr(content, "text", None)
+    blob_value = getattr(content, "blob", None)
+    has_text_payload = isinstance(text_value, str)
+    has_blob_payload = isinstance(blob_value, (bytes, str))
+    if has_text_payload or has_blob_payload or isinstance(content, (str, bytes)):
+        payload = {"uri": uri}
+        if mime_type:
+            payload["mimeType"] = mime_type
+        if has_text_payload:
+            payload["text"] = text_value
+        elif has_blob_payload:
+            payload["blob"] = base64.b64encode(blob_value).decode("ascii") if isinstance(blob_value, bytes) else blob_value
+        elif isinstance(content, str):
+            payload["text"] = content
+        elif isinstance(content, bytes):
+            payload["blob"] = base64.b64encode(content).decode("ascii")
+        if meta:
+            payload["_meta"] = meta
+        return {key: value for key, value in payload.items() if value is not None}
+
+    if hasattr(content, "model_dump"):
+        payload = content.model_dump(by_alias=True, exclude_none=True)
+        if fallback_uri and "uri" not in payload:
+            payload["uri"] = fallback_uri
+        return payload
+
+    payload = {"uri": uri}
+    if mime_type:
+        payload["mimeType"] = mime_type
+    payload["text"] = str(content)
+    if meta:
+        payload["_meta"] = meta
+    return {key: value for key, value in payload.items() if value is not None}
 
 
 class MCPAppSessionService:
