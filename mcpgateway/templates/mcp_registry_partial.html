@@ -736,4 +736,14 @@ if (!window._catalogRegistrationListenerAttached) {
     }, delayMs);
   });
 }
+
+// Register functions on window.Admin so eventDelegation.js can resolve them
+window.Admin = window.Admin || {};
+window.Admin.refreshCatalog = refreshCatalog;
+window.Admin.filterByCategory = filterByCategory;
+window.Admin.filterByAuthType = filterByAuthType;
+window.Admin.filterByProvider = filterByProvider;
+window.Admin.registerServerWithApiKey = registerServerWithApiKey;
+window.Admin.showApiKeyModal = showApiKeyModal;
+window.Admin.closeApiKeyModal = closeApiKeyModal;
 </script>
