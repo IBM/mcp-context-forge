@@ -1,1 +1,11 @@
 {"id":"c8593954-d5f8-4631-b3e2-d83a374bb249","ts":"2026-06-10T15:51:49.449Z","path":"/Users/vishu/Repository/mcp-context-forge/.secrets.baseline","version":"1.0.0","taskID":"ff6fe5ff-0bf3-4b0a-a540-39cc66169d05"}
+
+{"id":"1adc1854-c5ed-4596-8073-3f2f069429bc","ts":"2026-06-09T14:20:47.585Z","path":"/Users/vishu/Repository/mcp-context-forge/.secrets.baseline","version":"1.0.0","taskID":"30cd68bd-58ce-4e82-a7d6-7c1e6f9a7be7"}
+
+{"id":"8c587e34-a603-4ea7-81a4-8bdedca5c79b","ts":"2026-06-09T14:09:39.951Z","path":"/Users/vishu/Repository/mcp-context-forge/.secrets.baseline","version":"1.0.0","taskID":"30cd68bd-58ce-4e82-a7d6-7c1e6f9a7be7"}
+
+{"id":"417e7537-d0ae-428f-8a47-7b750019924d","ts":"2026-06-02T14:34:55.910Z","path":"/Users/vishu/Repository/mcp-context-forge/mcpgateway/services/extension_registry.py","version":"1.0.0","taskID":"8b989bcb-f8cb-44f0-ada4-d887c667f518"}
+{"id":"ec13886c-986d-4717-baf4-be161486fda0","ts":"2026-06-02T14:35:43.698Z","path":"/Users/vishu/Repository/mcp-context-forge/mcpgateway/main.py","version":"1.0.0","taskID":"8b989bcb-f8cb-44f0-ada4-d887c667f518"}
+{"id":"351682df-98bb-4b20-9749-2682b1278207","ts":"2026-06-02T14:36:23.652Z","path":"/Users/vishu/Repository/mcp-context-forge/tests/unit/mcpgateway/test_mcp_apps_security.py","version":"1.0.0","taskID":"8b989bcb-f8cb-44f0-ada4-d887c667f518"}
+{"id":"8ba2066e-b6f1-45fe-830d-e8a06ac1d546","ts":"2026-06-02T14:36:49.609Z","path":"/Users/vishu/Repository/mcp-context-forge/tests/unit/mcpgateway/test_extension_registry.py","version":"1.0.0","taskID":"8b989bcb-f8cb-44f0-ada4-d887c667f518"}
+{"id":"7b3d5d4b-e049-42d9-80e1-a145cb887ed2","ts":"2026-06-04T13:57:59.485Z","path":"/Users/vishu/Repository/mcp-context-forge/.env","version":"1.0.0","taskID":"8b989bcb-f8cb-44f0-ada4-d887c667f518"}
