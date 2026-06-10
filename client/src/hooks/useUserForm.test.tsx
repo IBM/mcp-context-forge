@@ -486,7 +486,7 @@ describe("useUserForm", () => {
       expect(onOptimisticCreate).toHaveBeenCalledWith(
         expect.objectContaining({
           email: "test@example.com",
-          password: "SecurePass123!",
+          password: "SecurePass123!", // pragma: allowlist secret
         }),
       );
     });
