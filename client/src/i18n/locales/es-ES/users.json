@@ -52,5 +52,18 @@
   "users.table.status": "Estado",
   "users.table.user": "Usuario",
   "users.title": "Usuarios",
-  "users.unnamed": "Usuario sin nombre"
+  "users.unnamed": "Usuario sin nombre",
+  "users.table.actions.label": "Acciones para {name}",
+  "users.table.actions.edit": "Editar",
+  "users.table.actions.delete": "Eliminar",
+  "users.delete.dialog.title": "Eliminar Usuario",
+  "users.delete.dialog.description": "¿Está seguro de que desea eliminar a {name} ({email})? Esta acción no se puede deshacer.",
+  "users.delete.dialog.cancel": "Cancelar",
+  "users.delete.dialog.confirm": "Eliminar Usuario",
+  "users.delete.dialog.deleting": "Eliminando...",
+  "users.delete.success": "Usuario {email} eliminado correctamente",
+  "users.delete.error.self": "No puede eliminar su propia cuenta",
+  "users.delete.error.lastAdmin": "No se puede eliminar al último administrador",
+  "users.delete.error.notFound": "Usuario no encontrado",
+  "users.delete.error.generic": "Error al eliminar usuario: {error}"
 }

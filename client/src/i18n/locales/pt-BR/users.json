@@ -52,5 +52,18 @@
   "users.table.status": "Status",
   "users.table.user": "Usuário",
   "users.title": "Usuários",
-  "users.unnamed": "Usuário sem nome"
+  "users.unnamed": "Usuário sem nome",
+  "users.table.actions.label": "Ações para {name}",
+  "users.table.actions.edit": "Editar",
+  "users.table.actions.delete": "Excluir",
+  "users.delete.dialog.title": "Excluir Usuário",
+  "users.delete.dialog.description": "Tem certeza que deseja excluir {name} ({email})? Esta ação não pode ser desfeita.",
+  "users.delete.dialog.cancel": "Cancelar",
+  "users.delete.dialog.confirm": "Excluir Usuário",
+  "users.delete.dialog.deleting": "Excluindo...",
+  "users.delete.success": "Usuário {email} excluído com sucesso",
+  "users.delete.error.self": "Você não pode excluir sua própria conta",
+  "users.delete.error.lastAdmin": "Não é possível excluir o último administrador",
+  "users.delete.error.notFound": "Usuário não encontrado",
+  "users.delete.error.generic": "Falha ao excluir usuário: {error}"
 }

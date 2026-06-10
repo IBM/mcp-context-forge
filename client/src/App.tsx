@@ -1,5 +1,6 @@
 import { AuthProvider } from "./auth/AuthContext";
 import { ThemeProvider } from "./hooks/useTheme";
+import { Toaster } from "@/components/ui/sonner";
 import { RouterProvider, Route, Redirect, AuthGuard, useRouter } from "./router";
 import { AppShell } from "./components/layout/AppShell";
 import { Login } from "./pages/Login";
@@ -88,6 +89,7 @@ export function App() {
       <ThemeProvider>
         <AuthProvider>
           <Routes />
+          <Toaster />
         </AuthProvider>
       </ThemeProvider>
     </RouterProvider>

@@ -52,5 +52,18 @@
   "users.table.status": "Status",
   "users.table.user": "User",
   "users.title": "Users",
-  "users.unnamed": "Unnamed user"
+  "users.unnamed": "Unnamed user",
+  "users.table.actions.label": "Actions for {name}",
+  "users.table.actions.edit": "Edit",
+  "users.table.actions.delete": "Delete",
+  "users.delete.dialog.title": "Delete User",
+  "users.delete.dialog.description": "Are you sure you want to delete {name} ({email})? This action cannot be undone.",
+  "users.delete.dialog.cancel": "Cancel",
+  "users.delete.dialog.confirm": "Delete User",
+  "users.delete.dialog.deleting": "Deleting...",
+  "users.delete.success": "User {email} deleted successfully",
+  "users.delete.error.self": "You cannot delete your own account",
+  "users.delete.error.lastAdmin": "Cannot delete the last remaining admin user",
+  "users.delete.error.notFound": "User not found",
+  "users.delete.error.generic": "Failed to delete user: {error}"
 }
