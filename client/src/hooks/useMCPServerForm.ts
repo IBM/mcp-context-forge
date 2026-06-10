@@ -686,6 +686,7 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
         try {
           await serversApi.toggleEnabled(responseGatewayId, true);
         } catch (activateError) {
+          // TODO: raise a toast notification for this error when the toast component is implemented
           console.error("Failed to activate gateway after OAuth:", sanitizeError(activateError));
           // Don't fail the OAuth flow if activation fails - user can manually activate later
         }
