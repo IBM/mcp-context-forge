@@ -41,18 +41,18 @@ def upgrade() -> None:
 
     This migration fixes bug #5146 by removing global unique constraints that
     prevent different teams from registering entities with the same names.
-    Uses table recreation for SQLite compatibility.
+    Uses direct constraint drop for PostgreSQL and batch mode for SQLite.
     """
     bind = op.get_bind()
     inspector = sa.inspect(bind)
     existing_tables = inspector.get_table_names()
+    dialect = bind.dialect.name
 
     # Skip if tables don't exist (fresh DB uses db.py models directly)
     if "gateways" not in existing_tables:
         return
 
-    # Tables and their global unique constraints to remove
-    # Format: {table_name: [constraint_columns]}
+    # Tables and their columns with global unique constraints to remove
     tables_to_fix = {
         "gateways": ["slug", "url"],
         "servers": ["name"],
@@ -61,90 +61,44 @@ def upgrade() -> None:
         "resources": ["uri"],
     }
 
-    for table_name, constraint_columns in tables_to_fix.items():
+    for table_name, columns_to_fix in tables_to_fix.items():
         if table_name not in existing_tables:
             continue
 
         try:
             print(f"Processing {table_name} to remove global unique constraints...")
 
-            # Get table metadata
-            metadata = sa.MetaData()
-            table = sa.Table(table_name, metadata, autoload_with=bind)
+            # Get existing unique constraints
+            unique_constraints = inspector.get_unique_constraints(table_name)
 
-            # Check if table has the problematic global unique constraints
-            # Convert to list to avoid "Set changed size during iteration" error
-            constraints_list = list(table.constraints)
-            has_global_constraints = False
-            for uc in constraints_list:
-                if isinstance(uc, sa.UniqueConstraint):
-                    # Check if it's a single-column constraint we need to remove
-                    if len(uc.columns) == 1:
-                        col_name = list(uc.columns)[0].name
-                        if col_name in constraint_columns:
-                            has_global_constraints = True
-                            break
+            # Find single-column constraints to drop
+            constraints_to_drop = []
+            for uc in unique_constraints:
+                column_names = uc.get("column_names", [])
+                constraint_name = uc.get("name")
+                # Check if it's a single-column constraint on one of our target columns
+                if len(column_names) == 1 and column_names[0] in columns_to_fix and constraint_name:
+                    constraints_to_drop.append(constraint_name)
 
-            if not has_global_constraints:
+            if not constraints_to_drop:
                 print(f"  ✓ {table_name}: No global unique constraints found, skipping")
                 continue
 
-            # Create temporary table name
-            tmp_table = f"{table_name}_tmp_multitenancy_fix"
-
-            # Drop temp table if it exists
-            if inspector.has_table(tmp_table):
-                op.drop_table(tmp_table)
-
-            # Create new table structure without the global unique constraints
-            new_metadata = sa.MetaData()
-            new_table = sa.Table(tmp_table, new_metadata)
-
-            # Copy all columns
-            for column in table.columns:
-                new_column = column.copy()
-                new_table.append_column(new_column)
-
-            # Note: We skip foreign key constraints here because they may reference
-            # tables we've already renamed. SQLite will preserve the FKs from the
-            # original schema when we copy the data.
-
-            # Copy only the composite unique constraints (not single-column global ones)
-            for constraint in constraints_list:
-                if isinstance(constraint, sa.UniqueConstraint):
-                    # Only keep multi-column (composite) constraints
-                    if len(constraint.columns) > 1:
-                        new_table.append_constraint(constraint.copy())
-                    else:
-                        # Check if it's a single-column constraint we should remove
-                        col_name = list(constraint.columns)[0].name
-                        if col_name not in constraint_columns:
-                            # Keep other single-column constraints
-                            new_table.append_constraint(constraint.copy())
-
-            # Create the temporary table without foreign keys initially
-            new_table.create(bind, checkfirst=False)
-            print(f"  → Created temporary table {tmp_table}")
-
-            # Copy data
-            column_names = [c.name for c in table.columns]
-            insert_stmt = new_table.insert().from_select(column_names, sa.select(*[table.c[name] for name in column_names]))
-            bind.execute(insert_stmt)
-            print(f"  → Copied data from {table_name}")
-
-            # Drop original table and rename temp table
-            op.drop_table(table_name)
-            op.rename_table(tmp_table, table_name)
-            print(f"  ✓ {table_name}: Removed global unique constraints on {', '.join(constraint_columns)}")
+            # Drop constraints based on dialect
+            if dialect == "sqlite":
+                # SQLite: Use batch mode to recreate table without the constraints
+                with op.batch_alter_table(table_name, schema=None) as batch_op:
+                    for constraint_name in constraints_to_drop:
+                        batch_op.drop_constraint(constraint_name, type_="unique")
+                print(f"  ✓ {table_name}: Removed {len(constraints_to_drop)} constraint(s) via batch mode")
+            else:
+                # PostgreSQL: Direct constraint drop
+                for constraint_name in constraints_to_drop:
+                    op.drop_constraint(constraint_name, table_name, type_="unique")
+                print(f"  ✓ {table_name}: Removed {len(constraints_to_drop)} constraint(s)")
 
         except Exception as e:
             print(f"  ✗ Warning: Could not update unique constraints on {table_name}: {e}")
-            # Clean up temp table if it exists
-            if inspector.has_table(f"{table_name}_tmp_multitenancy_fix"):
-                try:
-                    op.drop_table(f"{table_name}_tmp_multitenancy_fix")
-                except Exception:
-                    pass
 
 
 def downgrade() -> None:
@@ -158,12 +112,13 @@ def downgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
     existing_tables = inspector.get_table_names()
+    dialect = bind.dialect.name
 
     # Skip if tables don't exist
     if "gateways" not in existing_tables:
         return
 
-    # Tables and their global unique constraints to restore
+    # Tables and their columns needing global unique constraints
     tables_to_restore = {
         "gateways": ["slug", "url"],
         "servers": ["name"],
@@ -172,85 +127,46 @@ def downgrade() -> None:
         "resources": ["uri"],
     }
 
-    for table_name, constraint_columns in tables_to_restore.items():
+    for table_name, columns_to_restore in tables_to_restore.items():
         if table_name not in existing_tables:
             continue
 
         try:
             print(f"Processing {table_name} to restore global unique constraints...")
 
-            # Get table metadata
-            metadata = sa.MetaData()
-            table = sa.Table(table_name, metadata, autoload_with=bind)
+            # Get existing unique constraints
+            unique_constraints = inspector.get_unique_constraints(table_name)
+            existing_constraint_columns = set()
+            for uc in unique_constraints:
+                column_names = uc.get("column_names", [])
+                if len(column_names) == 1:
+                    existing_constraint_columns.add(column_names[0])
 
-            # Check if table already has the global unique constraints
-            # Convert to list to avoid "Set changed size during iteration" error
-            constraints_list = list(table.constraints)
-            has_global_constraints = True
-            for col in constraint_columns:
-                found = False
-                for uc in constraints_list:
-                    if isinstance(uc, sa.UniqueConstraint):
-                        if len(uc.columns) == 1 and list(uc.columns)[0].name == col:
-                            found = True
-                            break
-                if not found:
-                    has_global_constraints = False
-                    break
+            # Determine which constraints need to be created
+            constraints_to_create = []
+            for col_name in columns_to_restore:
+                if col_name not in existing_constraint_columns:
+                    constraints_to_create.append(col_name)
 
-            if has_global_constraints:
+            if not constraints_to_create:
                 print(f"  ✓ {table_name}: Global unique constraints already exist, skipping")
                 continue
 
-            # Create temporary table name
-            tmp_table = f"{table_name}_tmp_restore_global"
-
-            # Drop temp table if it exists
-            if inspector.has_table(tmp_table):
-                op.drop_table(tmp_table)
-
-            # Create new table structure with global unique constraints
-            new_metadata = sa.MetaData()
-            new_table = sa.Table(tmp_table, new_metadata)
-
-            # Copy all columns
-            for column in table.columns:
-                new_column = column.copy()
-                new_table.append_column(new_column)
-
-            # Note: We skip foreign key constraints here because they may reference
-            # tables we've already renamed. SQLite will preserve the FKs from the
-            # original schema when we copy the data.
-
-            # Copy existing unique constraints
-            for constraint in constraints_list:
-                if isinstance(constraint, sa.UniqueConstraint):
-                    new_table.append_constraint(constraint.copy())
-
-            # Add global unique constraints
-            for col in constraint_columns:
-                new_table.append_constraint(sa.UniqueConstraint(col))
-
-            # Create the temporary table without foreign keys initially
-            new_table.create(bind, checkfirst=False)
-            print(f"  → Created temporary table {tmp_table}")
-
-            # Copy data
-            column_names = [c.name for c in table.columns]
-            insert_stmt = new_table.insert().from_select(column_names, sa.select(*[table.c[name] for name in column_names]))
-            bind.execute(insert_stmt)
-            print(f"  → Copied data from {table_name}")
-
-            # Drop original table and rename temp table
-            op.drop_table(table_name)
-            op.rename_table(tmp_table, table_name)
-            print(f"  ✓ {table_name}: Restored global unique constraints on {', '.join(constraint_columns)}")
+            # Create constraints based on dialect
+            if dialect == "sqlite":
+                # SQLite: Use batch mode to recreate table with the constraints
+                with op.batch_alter_table(table_name, schema=None) as batch_op:
+                    for col_name in constraints_to_create:
+                        # Use table_column naming pattern for constraint
+                        constraint_name = f"uq_{table_name}_{col_name}"
+                        batch_op.create_unique_constraint(constraint_name, [col_name])
+                print(f"  ✓ {table_name}: Created {len(constraints_to_create)} constraint(s) via batch mode")
+            else:
+                # PostgreSQL: Direct constraint creation
+                for col_name in constraints_to_create:
+                    constraint_name = f"uq_{table_name}_{col_name}"
+                    op.create_unique_constraint(constraint_name, table_name, [col_name])
+                print(f"  ✓ {table_name}: Created {len(constraints_to_create)} constraint(s)")
 
         except Exception as e:
             print(f"  ✗ Warning: Could not restore unique constraints on {table_name}: {e}")
-            # Clean up temp table if it exists
-            if inspector.has_table(f"{table_name}_tmp_restore_global"):
-                try:
-                    op.drop_table(f"{table_name}_tmp_restore_global")
-                except Exception:
-                    pass
