@@ -454,3 +454,93 @@ class TestValidateOauthTokenClaims:
 
         # Should not crash
         assert result.is_jwt is True
+
+    # -- Azure AD / Entra ID specific cases --
+
+    def test_audience_match_client_id_as_aud(self):
+        """Azure AD v1 tokens use client_id as audience with {client_id}/.default."""
+        token = _make_jwt({"aud": "8443cbba-a854-4d4b-801a-87bb20e312ce"})
+        oauth_config = {
+            "client_id": "8443cbba-a854-4d4b-801a-87bb20e312ce",
+            "resource": "https://mcp-server.example.com",
+        }
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is True
+
+    def test_audience_match_api_prefix_client_id(self):
+        """Azure AD app ID URI convention: api://{client_id}."""
+        token = _make_jwt({"aud": "api://8443cbba-a854-4d4b-801a-87bb20e312ce"})
+        oauth_config = {
+            "client_id": "8443cbba-a854-4d4b-801a-87bb20e312ce",
+            "resource": "https://mcp-server.example.com",
+        }
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is True
+
+    def test_audience_match_resource_id_from_default_scope(self):
+        """Audience derived from {resource_id}/.default scope pattern (Agent365)."""
+        token = _make_jwt({"aud": "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1"})
+        oauth_config = {
+            "client_id": "8443cbba-a854-4d4b-801a-87bb20e312ce",
+            "scopes": ["ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/.default", "openid", "offline_access"],
+        }
+        result = validate_oauth_token_claims(token, oauth_config, "https://agent365.svc.cloud.microsoft/mcp", "m365-mail")
+
+        assert result.audience_match is True
+        assert not any("audience" in w.lower() for w in result.warnings)
+
+    def test_audience_match_api_prefix_resource_id_from_default_scope(self):
+        """Audience api://{resource_id} derived from {resource_id}/.default scope."""
+        token = _make_jwt({"aud": "api://ea9ffc3e-8a23-4a7d-836d-234d7c7565c1"})
+        oauth_config = {
+            "client_id": "8443cbba-a854-4d4b-801a-87bb20e312ce",
+            "scopes": ["ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/.default"],
+        }
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is True
+
+    def test_audience_mismatch_different_resource_id(self):
+        """Token audience doesn't match any known resource — still blocked."""
+        token = _make_jwt({"aud": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"})
+        oauth_config = {
+            "client_id": "8443cbba-a854-4d4b-801a-87bb20e312ce",
+            "scopes": ["ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/.default"],
+        }
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is False
+
+    def test_issuer_entra_v1_v2_duality(self):
+        """Azure AD v1 issuer (sts.windows.net) matches v2 expected issuer for same tenant."""
+        tenant = "7dd3b0c4-aa40-4ba6-b77d-c2f711e1bc2a"
+        token = _make_jwt({"iss": f"https://sts.windows.net/{tenant}/"})
+        oauth_config = {
+            "token_url": f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
+        }
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.issuer_match is True
+
+    def test_scopes_oidc_meta_scopes_excluded(self):
+        """OIDC meta-scopes (openid, offline_access, etc.) are excluded from validation."""
+        token = _make_jwt({"scp": "Mail.Read Mail.Send"})
+        oauth_config = {
+            "scopes": ["ea9ffc3e/.default", "openid", "offline_access", "profile", "email"],
+        }
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        # The /.default scope is also skipped; meta-scopes are excluded
+        assert result.scopes_sufficient is True
+
+    def test_scopes_default_scope_excluded(self):
+        """Azure AD /.default is a request-time directive, not a real scope."""
+        token = _make_jwt({"scp": "Mail.Read"})
+        oauth_config = {
+            "scopes": ["8443cbba-a854-4d4b-801a-87bb20e312ce/.default"],
+        }
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.scopes_sufficient is True
