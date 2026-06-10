@@ -43,7 +43,8 @@ export default defineConfig({
             id.includes("/use-callback-ref") ||
             id.includes("/use-sidecar") ||
             id.includes("react-intl") ||
-            id.includes("@formatjs")
+            id.includes("@formatjs") ||
+            id.includes("/sonner/")
           ) return "vendor-react";
           if (id.includes("@radix-ui") || id.includes("radix-ui")) return "vendor-radix";
           if (id.includes("lucide-react")) return "vendor-lucide";
