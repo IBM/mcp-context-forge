@@ -157,6 +157,34 @@ describe("UserForm", () => {
     });
   });
 
+  describe("error states", () => {
+    it("should render confirm password error when present", () => {
+      vi.mocked(useUserFormModule.useUserForm).mockReturnValue({
+        ...defaultFormState,
+        errors: { confirmPassword: "Passwords do not match" },
+      });
+
+      render(<UserForm isOpen={true} onToggle={vi.fn()} />, { wrapper });
+
+      const errorMsg = screen.getByText("Passwords do not match");
+      expect(errorMsg).toBeInTheDocument();
+      expect(errorMsg).toHaveAttribute("id", "confirm-password-error");
+    });
+
+    it("should render full name error when present", () => {
+      vi.mocked(useUserFormModule.useUserForm).mockReturnValue({
+        ...defaultFormState,
+        errors: { fullName: "Full name is required" },
+      });
+
+      render(<UserForm isOpen={true} onToggle={vi.fn()} />, { wrapper });
+
+      const errorMsg = screen.getByText("Full name is required");
+      expect(errorMsg).toBeInTheDocument();
+      expect(errorMsg).toHaveAttribute("id", "full-name-error");
+    });
+  });
+
   describe("advanced settings", () => {
     it("should not show advanced settings by default", () => {
       render(<UserForm isOpen={true} onToggle={vi.fn()} />, { wrapper });

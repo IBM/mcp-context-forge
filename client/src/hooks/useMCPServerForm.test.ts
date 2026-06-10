@@ -1002,6 +1002,44 @@ describe("useMCPServerForm", () => {
       expect(result.current.customHeaders[1].key).toBe("X-Tenant");
     });
 
+    it("populates single custom header from API response (fallback to authHeaderKey)", async () => {
+      server.use(
+        http.get("/gateways/gw-fallback-header", () =>
+          HttpResponse.json({
+            name: "My Server",
+            url: "http://localhost:3000",
+            authType: "authheaders",
+            authHeaderKey: "X-Fallback-Key",
+            authHeaderValue: "*****",
+          }),
+        ),
+      );
+
+      const { result } = renderHook(() => useMCPServerForm("gw-fallback-header"));
+
+      await waitFor(() => expect(result.current.customHeaders).toHaveLength(1));
+      expect(result.current.customHeaders[0].key).toBe("X-Fallback-Key");
+      expect(result.current.customHeaders[0].value).toBe("*****");
+    });
+
+    it("populates passthroughHeaders array from API response", async () => {
+      server.use(
+        http.get("/gateways/gw-passthrough", () =>
+          HttpResponse.json({
+            name: "My Server",
+            url: "http://localhost:3000",
+            passthroughHeaders: ["Authorization", "X-Custom-Req"],
+          }),
+        ),
+      );
+
+      const { result } = renderHook(() => useMCPServerForm("gw-passthrough"));
+
+      await waitFor(() =>
+        expect(result.current.passthroughHeaders).toBe("Authorization, X-Custom-Req"),
+      );
+    });
+
     it("populates oauth store_tokens and auto_refresh as true from API", async () => {
       server.use(
         http.get("/gateways/gw-6", () =>
@@ -1365,6 +1403,63 @@ describe("useMCPServerForm", () => {
         vi.useRealTimers();
         triggerOAuthMock.mockRestore();
       });
+
+      it("handles OAuth success without gatewayName", async () => {
+        vi.useFakeTimers();
+        server.use(
+          http.post("/gateways", () => HttpResponse.json({ id: "gateway-success-no-name" })),
+        );
+
+        const triggerOAuthMock = vi
+          .spyOn(serversApi, "triggerOAuthAuthorization")
+          .mockResolvedValueOnce({
+            type: "oauth_callback",
+            status: "success",
+          });
+
+        const { result } = renderHook(() => useMCPServerForm());
+        const mockEvent = { preventDefault: vi.fn() } as any;
+
+        act(() => {
+          result.current.setName("No Name Test");
+          result.current.setUrl("http://localhost:3000");
+          result.current.setAuthType("oauth");
+        });
+
+        await act(async () => {
+          await result.current.handleSubmit(mockEvent);
+        });
+
+        expect(result.current.oauthNotification?.message).toBe("OAuth authorization successful.");
+        vi.useRealTimers();
+        triggerOAuthMock.mockRestore();
+      });
+
+      it("handles OAuth failure with non-Error object", async () => {
+        server.use(
+          http.post("/gateways", () => HttpResponse.json({ id: "gateway-fail-non-error" })),
+        );
+
+        const triggerOAuthMock = vi
+          .spyOn(serversApi, "triggerOAuthAuthorization")
+          .mockRejectedValueOnce("Non-Error OAuth failure");
+
+        const { result } = renderHook(() => useMCPServerForm());
+        const mockEvent = { preventDefault: vi.fn() } as any;
+
+        act(() => {
+          result.current.setName("Fail Test");
+          result.current.setUrl("http://localhost:3000");
+          result.current.setAuthType("oauth");
+        });
+
+        await act(async () => {
+          await result.current.handleSubmit(mockEvent);
+        });
+
+        expect(result.current.oauthNotification?.message).toBe("OAuth authorization failed.");
+        triggerOAuthMock.mockRestore();
+      });
     });
   });
 
@@ -1711,6 +1806,83 @@ describe("useMCPServerForm", () => {
       await waitFor(() => {
         expect(result.current.errors.submit).toBe("Gateway not found");
         expect(result.current.errors.submit).toBeDefined();
+      });
+    });
+
+    it("sets error.submit when isEditMode is true and update fails", async () => {
+      server.use(
+        http.get("/gateways/edit-fail-id", () =>
+          HttpResponse.json({
+            id: "edit-fail-id",
+            name: "Server",
+            url: "http://localhost:3000",
+          }),
+        ),
+        http.put("/gateways/edit-fail-id", () =>
+          HttpResponse.json({ message: "Update forbidden" }, { status: 403 }),
+        ),
+      );
+
+      const { result } = renderHook(() => useMCPServerForm("edit-fail-id"));
+      const mockEvent = {
+        preventDefault: vi.fn(),
+      } as unknown as React.FormEvent<HTMLFormElement>;
+
+      await waitFor(() => {
+        expect(result.current.name).toBe("Server");
+      });
+
+      await act(async () => {
+        await result.current.handleSubmit(mockEvent);
+      });
+
+      await waitFor(() => {
+        expect(result.current.errors.submit).toBe("Update forbidden");
+      });
+    });
+
+    it("handles missing/empty validation detail fields and formatting fallbacks", async () => {
+      server.use(
+        http.post("/gateways", () =>
+          HttpResponse.json(
+            {
+              detail: [{ loc: [] }, { msg: "custom error no loc" }],
+            },
+            { status: 422 },
+          ),
+        ),
+      );
+
+      const { result } = renderHook(() => useMCPServerForm());
+      const mockEvent = {
+        preventDefault: vi.fn(),
+      } as unknown as React.FormEvent<HTMLFormElement>;
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+      });
+
+      await act(async () => {
+        await result.current.handleSubmit(mockEvent);
+      });
+
+      await waitFor(() => {
+        expect(result.current.errors.submit).toBe("Invalid value; custom error no loc");
+      });
+    });
+
+    it("exposes fetchError when server data loading fails", async () => {
+      server.use(
+        http.get("/gateways/fail-fetch-id", () =>
+          HttpResponse.json({ message: "Gateway not found" }, { status: 404 }),
+        ),
+      );
+
+      const { result } = renderHook(() => useMCPServerForm("fail-fetch-id"));
+
+      await waitFor(() => {
+        expect(result.current.fetchError).toBe("HTTP 404");
       });
     });
   });

@@ -213,6 +213,32 @@ describe("Servers", () => {
     vi.mocked(api.get).mockResolvedValueOnce({
       gateways: createMockServers(0, 25),
       nextCursor: "cursor-1",
+  it("does not load more when load is already in progress", async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(api.get).mockResolvedValueOnce({
+      gateways: createMockServers(0, 25),
+      nextCursor: "cursor-1",
+    });
+
+    renderWithRouter(<Servers />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Test Server 0")).toBeInTheDocument();
+    });
+
+    const loadMoreButton = screen.getByRole("button", { name: /load more/i });
+
+    // Mock a pending request so loadingMore stays true
+    vi.mocked(api.get).mockReturnValueOnce(new Promise(() => {}) as any);
+
+    await user.click(loadMoreButton); // Sets loadingMore to true
+    await user.click(loadMoreButton); // Should hit the early return
+
+    // Initial fetch + first load more
+    expect(api.get).toHaveBeenCalledTimes(2);
+  });
+
   it("displays server count message correctly", async () => {
     vi.mocked(api.get).mockResolvedValueOnce({
       gateways: createMockServers(0, 3),
@@ -668,6 +694,38 @@ describe("Servers", () => {
     });
     consoleErrorSpy.mockRestore();
   });
+
+  it("ConfirmDialog handles confirm and cancel callbacks", async () => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    const onConfirm = vi.fn();
+
+    const { ConfirmDialog } = await import("@/components/servers/ConfirmDialog");
+
+    render(
+      <I18nProvider>
+        <ConfirmDialog
+          open={true}
+          onOpenChange={onOpenChange}
+          title="Confirm Test"
+          description="Are you sure?"
+          onConfirm={onConfirm}
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByText("Confirm Test")).toBeInTheDocument();
+    expect(screen.getByText("Are you sure?")).toBeInTheDocument();
+
+    const cancelButton = screen.getByRole("button", { name: "Cancel" });
+    await user.click(cancelButton);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+
+    const confirmButton = screen.getByRole("button", { name: "Confirm" });
+    await user.click(confirmButton);
+    expect(onConfirm).toHaveBeenCalled();
+  });
 });
+
 
 
