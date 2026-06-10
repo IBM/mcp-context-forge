@@ -975,12 +975,19 @@ describe("Gateways", () => {
       id: "gateway-1",
       name: "Test Server",
       description: "Test server",
+  it("uses the original server details when hydrated server ID does not match", async () => {
+    const user = userEvent.setup();
+    const mockServer: VirtualServer = {
+      id: "gateway-original",
+      name: "Original Server",
+      description: "Original description",
       icon: "",
       createdAt: "2026-04-16T13:23:12Z",
       updatedAt: "2026-04-16T13:23:12Z",
       enabled: true,
       associatedTools: [],
       associatedToolIds: ["tool1"],
+      associatedToolIds: [],
       associatedResources: [],
       associatedPrompts: [],
       associatedA2aAgents: [],
@@ -1009,6 +1016,17 @@ describe("Gateways", () => {
       if (path === "/servers/gateway-1") {
         return {
           data: mockServer,
+    const mismatchedServer: VirtualServer = {
+      ...mockServer,
+      id: "gateway-mismatched",
+      name: "Mismatched Server",
+      description: "Mismatched description",
+    };
+
+    mockUseQuery.mockImplementation((path) => {
+      if (path === "/servers/gateway-original") {
+        return {
+          data: mismatchedServer,
           error: null,
           isLoading: false,
           execute: vi.fn(),
@@ -1044,6 +1062,7 @@ describe("Gateways", () => {
           execute: vi.fn(),
           refetch: vi.fn(),
         };
+        } as any;
       }
 
       return {
@@ -1053,6 +1072,7 @@ describe("Gateways", () => {
         execute: vi.fn(),
         refetch: vi.fn(),
       };
+      } as any;
     });
 
     renderWithProviders(<Gateways />);
@@ -1064,5 +1084,12 @@ describe("Gateways", () => {
     expect(screen.queryByText("Failed to fetch tools")).not.toBeInTheDocument();
     expect(screen.queryByText("Failed to fetch resources")).not.toBeInTheDocument();
     expect(screen.queryByText("Failed to fetch prompts")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Actions for Original Server" }));
+    const viewDetails = await screen.findByRole("menuitem", { name: "View details" });
+    await user.click(viewDetails);
+
+    expect(screen.getByText("Original description")).toBeInTheDocument();
+    expect(screen.queryByText("Mismatched description")).not.toBeInTheDocument();
   });
 });
+
