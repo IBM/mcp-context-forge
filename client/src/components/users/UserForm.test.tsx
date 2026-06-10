@@ -161,7 +161,7 @@ describe("UserForm", () => {
     it("should render confirm password error when present", () => {
       vi.mocked(useUserFormModule.useUserForm).mockReturnValue({
         ...defaultFormState,
-        errors: { confirmPassword: "Passwords do not match" },
+        errors: { confirmPassword: "Passwords do not match" }, // pragma: allowlist secret
       });
 
       render(<UserForm isOpen={true} onToggle={vi.fn()} />, { wrapper });
