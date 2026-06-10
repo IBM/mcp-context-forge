@@ -2111,16 +2111,17 @@ class EmailAuthService:
             self.db.query(PendingUserApproval).filter(PendingUserApproval.approved_by == email).update({PendingUserApproval.approved_by: None}, synchronize_session=False)
             self.db.query(SSOAuthSession).filter(SSOAuthSession.user_email == email).update({SSOAuthSession.user_email: None}, synchronize_session=False)
 
+            # Remove user from all team memberships BEFORE deleting teams
+            # This prevents FK constraint issues when teams are deleted
+            team_members_stmt = delete(EmailTeamMember).where(EmailTeamMember.user_email == email)
+            self.db.execute(team_members_stmt)
+
             # Remove rows where this user is the primary subject.
             self.db.query(EmailTeamJoinRequest).filter(EmailTeamJoinRequest.user_email == email).delete(synchronize_session=False)
 
             # Delete related auth events
             auth_events_stmt = delete(EmailAuthEvent).where(EmailAuthEvent.user_email == email)
             self.db.execute(auth_events_stmt)
-
-            # Remove user from all team memberships
-            team_members_stmt = delete(EmailTeamMember).where(EmailTeamMember.user_email == email)
-            self.db.execute(team_members_stmt)
 
             # Delete the user
             self.db.delete(user)
@@ -2131,6 +2132,10 @@ class EmailAuthService:
             logger.info("User %s deleted permanently", SecurityValidator.sanitize_log_message(email))
             return True
 
+        except IntegrityError as e:
+            self.db.rollback()
+            logger.error(f"FK constraint violation deleting user {SecurityValidator.sanitize_log_message(email)}: {e}")
+            raise ValueError("Cannot delete user due to existing references") from e
         except Exception as e:
             self.db.rollback()
             logger.error("Error deleting user %s: %s", SecurityValidator.sanitize_log_message(email), e)
