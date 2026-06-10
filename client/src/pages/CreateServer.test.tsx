@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, fireEvent, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/mocks/server";
@@ -7,6 +8,39 @@ import { renderWithProviders } from "@/test/test-utils";
 import { createVirtualServer } from "@/api/virtualServers";
 import { ApiError } from "@/api/client";
 import { CreateServer } from "./CreateServer";
+
+let mockForm = false;
+let capturedProps: any = null;
+let mockSourceSelection = false;
+let capturedSourceSelectionProps: any = null;
+
+vi.mock("@/components/gateways/CreateServerForm", async (importOriginal) => {
+  const actual = (await importOriginal()) as any;
+  return {
+    ...actual,
+    CreateServerForm: (props: any) => {
+      if (mockForm) {
+        capturedProps = props;
+        return <div data-testid="mock-create-server-form" />;
+      }
+      return actual.CreateServerForm(props);
+    },
+  };
+});
+
+vi.mock("@/components/gateways/SourceSelection", async (importOriginal) => {
+  const actual = (await importOriginal()) as any;
+  return {
+    ...actual,
+    SourceSelection: (props: any) => {
+      if (mockSourceSelection) {
+        capturedSourceSelectionProps = props;
+        return <div data-testid="mock-source-selection" />;
+      }
+      return actual.SourceSelection(props);
+    },
+  };
+});
 
 const mockNavigate = vi.fn();
 
@@ -275,4 +309,32 @@ describe("CreateServer", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Unable to create server. Please try again.");
   });
+
+  it("should set step back to details if handleSkipForNow is called and serverDetails is null", async () => {
+    mockForm = true;
+    mockSourceSelection = true;
+    try {
+      renderWithProviders(<CreateServer />);
+
+      // Step 1: Trigger success on the form with null details
+      act(() => {
+        capturedProps.onSuccess(null);
+      });
+
+      // Now step should be sources, and SourceSelection should render
+      expect(screen.getByTestId("mock-source-selection")).toBeInTheDocument();
+
+      // Step 2: Trigger onSkip from SourceSelection
+      await act(async () => {
+        capturedSourceSelectionProps.createServerActions.onSkip();
+      });
+
+      // Step should set back to details, rendering CreateServerForm again
+      expect(screen.getByTestId("mock-create-server-form")).toBeInTheDocument();
+    } finally {
+      mockForm = false;
+      mockSourceSelection = false;
+    }
+  });
 });
+
