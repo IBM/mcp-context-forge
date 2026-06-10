@@ -97,9 +97,7 @@ export function Users() {
 
     try {
       await usersApi.delete(userToDelete.email);
-      success(
-        intl.formatMessage({ id: "users.delete.success" }, { email: userToDelete.email }),
-      );
+      success(intl.formatMessage({ id: "users.delete.success" }, { email: userToDelete.email }));
       setDeleteDialogOpen(false);
       setUserToDelete(null);
     } catch (err) {

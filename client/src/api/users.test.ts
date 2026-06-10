@@ -44,11 +44,7 @@ describe("usersApi.delete", () => {
 
   it("should handle last admin error", async () => {
     vi.mocked(api.delete).mockRejectedValue(
-      new ApiError(
-        400,
-        { detail: "Cannot delete the last remaining admin user" },
-        "HTTP 400",
-      ),
+      new ApiError(400, { detail: "Cannot delete the last remaining admin user" }, "HTTP 400"),
     );
 
     await expect(usersApi.delete("admin@example.com")).rejects.toThrow(ApiError);
