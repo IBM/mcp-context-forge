@@ -37,18 +37,6 @@ export function ToolForm({ isOpen, onToggle, onSuccess }: ToolFormProps) {
     schemaMode,
     openApiSpecUrl,
     showSpecUrlInput,
-    oauthClientId,
-    oauthClientSecret,
-    oauthTokenUrl,
-    oauthGrantType,
-    oauthIssuerUrl,
-    oauthRedirectUri,
-    oauthAuthorizationUrl,
-    oauthScopes,
-    oauthStoreTokens,
-    oauthAutoRefresh,
-    oauthUsername,
-    oauthPassword,
     errors,
     isValid,
     isSubmitting,
@@ -71,18 +59,6 @@ export function ToolForm({ isOpen, onToggle, onSuccess }: ToolFormProps) {
     setSchemaMode,
     setOpenApiSpecUrl,
     generateSchema,
-    setOAuthClientId,
-    setOAuthClientSecret,
-    setOAuthTokenUrl,
-    setOAuthGrantType,
-    setOAuthIssuerUrl,
-    setOAuthRedirectUri,
-    setOAuthAuthorizationUrl,
-    setOAuthScopes,
-    setOAuthStoreTokens,
-    setOAuthAutoRefresh,
-    setOAuthUsername,
-    setOAuthPassword,
     handleSubmit,
   } = useToolForm();
 
@@ -375,30 +351,6 @@ export function ToolForm({ isOpen, onToggle, onSuccess }: ToolFormProps) {
                     onBearerTokenChange={setBearerToken}
                     customHeaders={customHeaders}
                     onCustomHeadersChange={setCustomHeaders}
-                    oauthClientId={oauthClientId}
-                    oauthClientSecret={oauthClientSecret}
-                    oauthTokenUrl={oauthTokenUrl}
-                    oauthGrantType={oauthGrantType}
-                    oauthIssuerUrl={oauthIssuerUrl}
-                    oauthRedirectUri={oauthRedirectUri}
-                    oauthAuthorizationUrl={oauthAuthorizationUrl}
-                    oauthScopes={oauthScopes}
-                    oauthStoreTokens={oauthStoreTokens}
-                    oauthAutoRefresh={oauthAutoRefresh}
-                    oauthUsername={oauthUsername}
-                    oauthPassword={oauthPassword}
-                    onOAuthClientIdChange={setOAuthClientId}
-                    onOAuthClientSecretChange={setOAuthClientSecret}
-                    onOAuthTokenUrlChange={setOAuthTokenUrl}
-                    onOAuthGrantTypeChange={setOAuthGrantType}
-                    onOAuthIssuerUrlChange={setOAuthIssuerUrl}
-                    onOAuthRedirectUriChange={setOAuthRedirectUri}
-                    onOAuthAuthorizationUrlChange={setOAuthAuthorizationUrl}
-                    onOAuthScopesChange={setOAuthScopes}
-                    onOAuthStoreTokensChange={setOAuthStoreTokens}
-                    onOAuthAutoRefreshChange={setOAuthAutoRefresh}
-                    onOAuthUsernameChange={setOAuthUsername}
-                    onOAuthPasswordChange={setOAuthPassword}
                     responseFilter={responseFilter}
                     onResponseFilterChange={setResponseFilter}
                     tags={tags}
