@@ -6,7 +6,7 @@ import type { Visibility } from "@/types/server";
 import { sanitizeString, sanitizeUrl, sanitizePassword, sanitizeToken } from "@/lib/sanitize";
 
 export type RequestType = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-export type AuthType = "none" | "basic" | "bearer" | "custom" | "oauth";
+export type AuthType = "none" | "basic" | "bearer" | "custom";
 export type SchemaMode = "none" | "generated" | "manual";
 
 export interface CustomHeader {
@@ -104,20 +104,6 @@ export interface ApiToolPayload {
     auth_password?: string; // pragma: allowlist secret
     auth_token?: string;
     auth_headers?: Array<{ key: string; value: string }>;
-    oauth_config?: {
-      grant_type?: string;
-      client_id?: string;
-      client_secret?: string; // pragma: allowlist secret
-      token_url?: string;
-      issuer?: string;
-      scopes?: string[];
-      store_tokens?: boolean;
-      auto_refresh?: boolean;
-      username?: string;
-      password?: string; // pragma: allowlist secret
-      authorization_url?: string;
-      redirect_uri?: string;
-    };
   };
   team_id?: string;
 }
@@ -159,18 +145,6 @@ export interface UseToolFormReturn {
   errors: FormErrors;
   isValid: boolean;
   isSubmitting: boolean;
-  oauthClientId: string;
-  oauthClientSecret: string;
-  oauthTokenUrl: string;
-  oauthGrantType: string;
-  oauthIssuerUrl: string;
-  oauthRedirectUri: string;
-  oauthAuthorizationUrl: string;
-  oauthScopes: string;
-  oauthStoreTokens: boolean;
-  oauthAutoRefresh: boolean;
-  oauthUsername: string;
-  oauthPassword: string; // pragma: allowlist secret
 
   // Setters
   setName: (value: string) => void;
@@ -192,18 +166,6 @@ export interface UseToolFormReturn {
   setSchemaMode: (mode: SchemaMode) => void;
   setOpenApiSpecUrl: (value: string) => void;
   generateSchema: () => Promise<void>;
-  setOAuthClientId: (value: string) => void;
-  setOAuthClientSecret: (value: string) => void;
-  setOAuthTokenUrl: (value: string) => void;
-  setOAuthGrantType: (value: string) => void;
-  setOAuthIssuerUrl: (value: string) => void;
-  setOAuthRedirectUri: (value: string) => void;
-  setOAuthAuthorizationUrl: (value: string) => void;
-  setOAuthScopes: (value: string) => void;
-  setOAuthStoreTokens: (checked: boolean) => void;
-  setOAuthAutoRefresh: (checked: boolean) => void;
-  setOAuthUsername: (value: string) => void;
-  setOAuthPassword: (value: string) => void;
 
   // Actions
   resetForm: () => void;
@@ -232,18 +194,6 @@ const initialState = {
   tags: "",
   inputSchema: "",
   outputSchema: "",
-  oauthClientId: "",
-  oauthClientSecret: "", // pragma: allowlist secret
-  oauthTokenUrl: "",
-  oauthGrantType: "client_credentials",
-  oauthIssuerUrl: "",
-  oauthRedirectUri: "",
-  oauthAuthorizationUrl: "",
-  oauthScopes: "",
-  oauthStoreTokens: true,
-  oauthAutoRefresh: true,
-  oauthUsername: "",
-  oauthPassword: "", // pragma: allowlist secret
 };
 
 export function useToolForm(): UseToolFormReturn {
@@ -267,20 +217,6 @@ export function useToolForm(): UseToolFormReturn {
   const [schemaMode, setSchemaMode] = useState<SchemaMode>("none");
   const [openApiSpecUrl, setOpenApiSpecUrl] = useState("");
   const [showSpecUrlInput, setShowSpecUrlInput] = useState(false);
-  const [oauthClientId, setOAuthClientId] = useState(initialState.oauthClientId);
-  const [oauthClientSecret, setOAuthClientSecret] = useState(initialState.oauthClientSecret);
-  const [oauthTokenUrl, setOAuthTokenUrl] = useState(initialState.oauthTokenUrl);
-  const [oauthGrantType, setOAuthGrantType] = useState(initialState.oauthGrantType);
-  const [oauthIssuerUrl, setOAuthIssuerUrl] = useState(initialState.oauthIssuerUrl);
-  const [oauthRedirectUri, setOAuthRedirectUri] = useState(initialState.oauthRedirectUri);
-  const [oauthAuthorizationUrl, setOAuthAuthorizationUrl] = useState(
-    initialState.oauthAuthorizationUrl,
-  );
-  const [oauthScopes, setOAuthScopes] = useState(initialState.oauthScopes);
-  const [oauthStoreTokens, setOAuthStoreTokens] = useState(initialState.oauthStoreTokens);
-  const [oauthAutoRefresh, setOAuthAutoRefresh] = useState(initialState.oauthAutoRefresh);
-  const [oauthUsername, setOAuthUsername] = useState(initialState.oauthUsername);
-  const [oauthPassword, setOAuthPassword] = useState(initialState.oauthPassword);
   const [errors, setErrors] = useState<FormErrors>({});
 
   // Use useQuery for POST request to create tool
@@ -391,7 +327,6 @@ export function useToolForm(): UseToolFormReturn {
       basic: "basic",
       bearer: "bearer",
       custom: "authheaders",
-      oauth: "oauth", // pragma: allowlist secret
     };
 
     const parseSchemaJson = (raw: string): Record<string, unknown> | undefined => {
@@ -436,43 +371,6 @@ export function useToolForm(): UseToolFormReturn {
             value: sanitizeString(h.value, 1000),
           }));
         }
-      } else if (authType === "oauth") {
-        const scopesArray = oauthScopes ? oauthScopes.split(/\s+/).filter(Boolean) : undefined;
-        const base = {
-          issuer: oauthIssuerUrl || undefined,
-          scopes: scopesArray,
-          store_tokens: oauthStoreTokens,
-          auto_refresh: oauthAutoRefresh,
-        };
-        if (oauthGrantType === "client_credentials") {
-          tool.oauth_config = {
-            ...base,
-            grant_type: "client_credentials",
-            client_id: oauthClientId || undefined,
-            client_secret: oauthClientSecret || undefined, // pragma: allowlist secret
-            token_url: oauthTokenUrl || undefined,
-          };
-        } else if (oauthGrantType === "authorization_code") {
-          tool.oauth_config = {
-            ...base,
-            grant_type: "authorization_code",
-            client_id: oauthClientId || undefined,
-            client_secret: oauthClientSecret || undefined, // pragma: allowlist secret
-            token_url: oauthTokenUrl || undefined,
-            authorization_url: oauthAuthorizationUrl || undefined,
-            redirect_uri: oauthRedirectUri || undefined,
-          };
-        } else if (oauthGrantType === "password") {
-          tool.oauth_config = {
-            ...base,
-            grant_type: "password",
-            client_id: oauthClientId || undefined,
-            client_secret: oauthClientSecret || undefined, // pragma: allowlist secret
-            token_url: oauthTokenUrl || undefined,
-            username: oauthUsername || undefined,
-            password: oauthPassword || undefined, // pragma: allowlist secret
-          };
-        }
       }
     }
 
@@ -496,18 +394,6 @@ export function useToolForm(): UseToolFormReturn {
     customHeaders,
     visibility,
     teamId,
-    oauthClientId,
-    oauthClientSecret,
-    oauthTokenUrl,
-    oauthGrantType,
-    oauthIssuerUrl,
-    oauthRedirectUri,
-    oauthAuthorizationUrl,
-    oauthScopes,
-    oauthStoreTokens,
-    oauthAutoRefresh,
-    oauthUsername,
-    oauthPassword,
   ]);
 
   const validateForm = useCallback((): boolean => {
@@ -591,18 +477,6 @@ export function useToolForm(): UseToolFormReturn {
     setSchemaMode("none");
     setOpenApiSpecUrl("");
     setShowSpecUrlInput(false);
-    setOAuthClientId(initialState.oauthClientId);
-    setOAuthClientSecret(initialState.oauthClientSecret);
-    setOAuthTokenUrl(initialState.oauthTokenUrl);
-    setOAuthGrantType(initialState.oauthGrantType);
-    setOAuthIssuerUrl(initialState.oauthIssuerUrl);
-    setOAuthRedirectUri(initialState.oauthRedirectUri);
-    setOAuthAuthorizationUrl(initialState.oauthAuthorizationUrl);
-    setOAuthScopes(initialState.oauthScopes);
-    setOAuthStoreTokens(initialState.oauthStoreTokens);
-    setOAuthAutoRefresh(initialState.oauthAutoRefresh);
-    setOAuthUsername(initialState.oauthUsername);
-    setOAuthPassword(initialState.oauthPassword);
     setErrors({});
   }, []);
 
@@ -726,18 +600,6 @@ export function useToolForm(): UseToolFormReturn {
     errors,
     isValid,
     isSubmitting,
-    oauthClientId,
-    oauthClientSecret,
-    oauthTokenUrl,
-    oauthGrantType,
-    oauthIssuerUrl,
-    oauthRedirectUri,
-    oauthAuthorizationUrl,
-    oauthScopes,
-    oauthStoreTokens,
-    oauthAutoRefresh,
-    oauthUsername,
-    oauthPassword,
 
     // Setters
     setName,
@@ -759,18 +621,6 @@ export function useToolForm(): UseToolFormReturn {
     setSchemaMode,
     setOpenApiSpecUrl,
     generateSchema,
-    setOAuthClientId,
-    setOAuthClientSecret,
-    setOAuthTokenUrl,
-    setOAuthGrantType,
-    setOAuthIssuerUrl,
-    setOAuthRedirectUri,
-    setOAuthAuthorizationUrl,
-    setOAuthScopes,
-    setOAuthStoreTokens,
-    setOAuthAutoRefresh,
-    setOAuthUsername,
-    setOAuthPassword,
 
     // Actions
     resetForm,
