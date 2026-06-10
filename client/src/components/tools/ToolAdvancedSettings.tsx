@@ -11,13 +11,12 @@ import {
 import { BasicAuth } from "@/components/mcp-servers/BasicAuth";
 import { ToolBearerTokenAuth } from "@/components/tools/ToolBearerTokenAuth";
 import { CustomHeadersAuth, type CustomHeader } from "@/components/mcp-servers/CustomHeadersAuth";
-import { OAuth2Auth } from "@/components/mcp-servers/OAuth2Auth";
 import { useAuthContext } from "@/auth/AuthContext";
 import type { Visibility } from "@/types/server";
 
 export type { CustomHeader };
 
-type AuthType = "none" | "basic" | "bearer" | "custom" | "oauth";
+type AuthType = "none" | "basic" | "bearer" | "custom";
 
 interface ToolAdvancedSettingsProps {
   visibility: Visibility;
@@ -34,37 +33,12 @@ interface ToolAdvancedSettingsProps {
   onBearerTokenChange: (value: string) => void;
   customHeaders: CustomHeader[];
   onCustomHeadersChange: (headers: CustomHeader[]) => void;
-  oauthClientId: string;
-  oauthClientSecret: string;
-  oauthTokenUrl: string;
-  oauthGrantType: string;
-  oauthIssuerUrl: string;
-  oauthRedirectUri: string;
-  oauthAuthorizationUrl: string;
-  oauthScopes: string;
-  oauthStoreTokens: boolean;
-  oauthAutoRefresh: boolean;
-  oauthUsername: string;
-  oauthPassword: string; // pragma: allowlist secret
-  onOAuthClientIdChange: (value: string) => void;
-  onOAuthClientSecretChange: (value: string) => void;
-  onOAuthTokenUrlChange: (value: string) => void;
-  onOAuthGrantTypeChange: (value: string) => void;
-  onOAuthIssuerUrlChange: (value: string) => void;
-  onOAuthRedirectUriChange: (value: string) => void;
-  onOAuthAuthorizationUrlChange: (value: string) => void;
-  onOAuthScopesChange: (value: string) => void;
-  onOAuthStoreTokensChange: (checked: boolean) => void;
-  onOAuthAutoRefreshChange: (checked: boolean) => void;
-  onOAuthUsernameChange: (value: string) => void;
-  onOAuthPasswordChange: (value: string) => void;
   responseFilter: string;
   onResponseFilterChange: (value: string) => void;
   tags: string;
   onTagsChange: (value: string) => void;
   description: string;
   onDescriptionChange: (value: string) => void;
-  oauthErrors?: { username?: string; password?: string };
 }
 
 export function ToolAdvancedSettings({
@@ -82,37 +56,12 @@ export function ToolAdvancedSettings({
   onBearerTokenChange,
   customHeaders,
   onCustomHeadersChange,
-  oauthClientId,
-  oauthClientSecret,
-  oauthTokenUrl,
-  oauthGrantType,
-  oauthIssuerUrl,
-  oauthRedirectUri,
-  oauthAuthorizationUrl,
-  oauthScopes,
-  oauthStoreTokens,
-  oauthAutoRefresh,
-  oauthUsername,
-  oauthPassword,
-  onOAuthClientIdChange,
-  onOAuthClientSecretChange,
-  onOAuthTokenUrlChange,
-  onOAuthGrantTypeChange,
-  onOAuthIssuerUrlChange,
-  onOAuthRedirectUriChange,
-  onOAuthAuthorizationUrlChange,
-  onOAuthScopesChange,
-  onOAuthStoreTokensChange,
-  onOAuthAutoRefreshChange,
-  onOAuthUsernameChange,
-  onOAuthPasswordChange,
   responseFilter,
   onResponseFilterChange,
   tags,
   onTagsChange,
   description,
   onDescriptionChange,
-  oauthErrors,
 }: ToolAdvancedSettingsProps) {
   const { selectedTeamId } = useAuthContext();
 
@@ -143,36 +92,6 @@ export function ToolAdvancedSettings({
       case "custom":
         return (
           <CustomHeadersAuth headers={customHeaders} onHeadersChange={onCustomHeadersChange} />
-        );
-      case "oauth":
-        return (
-          <OAuth2Auth
-            clientId={oauthClientId}
-            clientSecret={oauthClientSecret}
-            tokenUrl={oauthTokenUrl}
-            grantType={oauthGrantType}
-            issuerUrl={oauthIssuerUrl}
-            redirectUri={oauthRedirectUri}
-            authorizationUrl={oauthAuthorizationUrl}
-            scopes={oauthScopes}
-            storeTokens={oauthStoreTokens}
-            autoRefresh={oauthAutoRefresh}
-            username={oauthUsername}
-            password={oauthPassword}
-            onClientIdChange={onOAuthClientIdChange}
-            onClientSecretChange={onOAuthClientSecretChange}
-            onTokenUrlChange={onOAuthTokenUrlChange}
-            onGrantTypeChange={onOAuthGrantTypeChange}
-            onIssuerUrlChange={onOAuthIssuerUrlChange}
-            onRedirectUriChange={onOAuthRedirectUriChange}
-            onAuthorizationUrlChange={onOAuthAuthorizationUrlChange}
-            onScopesChange={onOAuthScopesChange}
-            onStoreTokensChange={onOAuthStoreTokensChange}
-            onAutoRefreshChange={onOAuthAutoRefreshChange}
-            onUsernameChange={onOAuthUsernameChange}
-            onPasswordChange={onOAuthPasswordChange}
-            errors={oauthErrors}
-          />
         );
       default:
         return null;
@@ -224,7 +143,7 @@ export function ToolAdvancedSettings({
           aria-labelledby="auth-type-label"
           className="flex w-full flex-nowrap gap-1 rounded-md bg-neutral-100 p-1 dark:bg-neutral-800"
         >
-          {(["none", "basic", "bearer", "custom", "oauth"] as AuthType[]).map((type) => {
+          {(["none", "basic", "bearer", "custom"] as AuthType[]).map((type) => {
             const label =
               type === "none"
                 ? "None"
@@ -232,9 +151,7 @@ export function ToolAdvancedSettings({
                   ? "Basic"
                   : type === "bearer"
                     ? "Bearer token"
-                    : type === "custom"
-                      ? "Custom headers"
-                      : "OAuth 2.0";
+                    : "Custom headers";
             const isLongerLabel = type === "custom";
             return (
               <div key={type} className={isLongerLabel ? "flex-[1.3] min-w-0" : "flex-1 min-w-0"}>
