@@ -2077,18 +2077,18 @@ class EmailAuthService:
 
                         if len(all_members) == 1 and all_members[0].user_email == email:
                             # This is a single-user personal team - cascade delete it
-                            logger.info(f"Deleting personal team '{SecurityValidator.sanitize_log_message(team.name)}' (single member: {SecurityValidator.sanitize_log_message(email)})")
-                            # Delete history records first: team_id FK has no ON DELETE CASCADE,
-                            # so history must be removed before the team is deleted.
-                            self.db.execute(delete(EmailTeamMemberHistory).where(EmailTeamMemberHistory.team_id == team.id))
-                            # Delete team members via raw SQL.
-                            self.db.execute(delete(EmailTeamMember).where(EmailTeamMember.team_id == team.id))
-                            # Expire the members collection so the ORM cascade re-queries the DB
-                            # (finding nothing) instead of re-deleting already-gone objects,
-                            # which would raise StaleDataError at commit time.
-                            self.db.expire(team, ["members"])
-                            # Delete the team
-                            self.db.delete(team)
+                            logger.info("Deleting personal team '%s' (single member: %s)", SecurityValidator.sanitize_log_message(team.name), SecurityValidator.sanitize_log_message(email))
+                            with self.db.begin_nested():
+                                # Delete history records first: team_id FK has no ON DELETE CASCADE,
+                                # so history must be removed before the team is deleted.
+                                self.db.execute(delete(EmailTeamMemberHistory).where(EmailTeamMemberHistory.team_id == team.id))
+                                # Delete team members via raw SQL.
+                                self.db.execute(delete(EmailTeamMember).where(EmailTeamMember.team_id == team.id))
+                                # Expire the members collection so the ORM cascade re-queries the DB
+                                # (finding nothing) instead of re-deleting already-gone objects,
+                                # which would raise StaleDataError at commit time.
+                                self.db.expire(team, ["members"])
+                                self.db.delete(team)
                         else:
                             # Multi-member team with no other owners - cannot delete user
                             raise ValueError(f"Cannot delete user {email}: owns team '{team.name}' with {len(all_members)} members but no other owners to transfer ownership to")
@@ -2117,16 +2117,17 @@ class EmailAuthService:
             self.db.query(PendingUserApproval).filter(PendingUserApproval.approved_by == email).update({PendingUserApproval.approved_by: None}, synchronize_session=False)
             self.db.query(SSOAuthSession).filter(SSOAuthSession.user_email == email).update({SSOAuthSession.user_email: None}, synchronize_session=False)
 
+            # Remove user from all team memberships BEFORE deleting teams
+            # This prevents FK constraint issues when teams are deleted
+            team_members_stmt = delete(EmailTeamMember).where(EmailTeamMember.user_email == email)
+            self.db.execute(team_members_stmt)
+
             # Remove rows where this user is the primary subject.
             self.db.query(EmailTeamJoinRequest).filter(EmailTeamJoinRequest.user_email == email).delete(synchronize_session=False)
 
             # Delete related auth events
             auth_events_stmt = delete(EmailAuthEvent).where(EmailAuthEvent.user_email == email)
             self.db.execute(auth_events_stmt)
-
-            # Remove user from all team memberships
-            team_members_stmt = delete(EmailTeamMember).where(EmailTeamMember.user_email == email)
-            self.db.execute(team_members_stmt)
 
             # Delete the user
             self.db.delete(user)
@@ -2137,6 +2138,10 @@ class EmailAuthService:
             logger.info("User %s deleted permanently", SecurityValidator.sanitize_log_message(email))
             return True
 
+        except IntegrityError as e:
+            self.db.rollback()
+            logger.error(f"FK constraint violation deleting user {SecurityValidator.sanitize_log_message(email)}: {e}")
+            raise ValueError("Cannot delete user due to existing references") from e
         except Exception as e:
             self.db.rollback()
             logger.error("Error deleting user %s: %s", SecurityValidator.sanitize_log_message(email), e)
