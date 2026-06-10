@@ -60,6 +60,13 @@ streamable_http_auth = tr.streamable_http_auth
 SessionManagerWrapper = tr.SessionManagerWrapper
 
 
+def _read_content(result):
+    """Return the first SDK read-resource helper content item."""
+    assert isinstance(result, list)
+    assert len(result) == 1
+    return result[0].content
+
+
 def test_truthy_is_error_recognizes_snake_and_camel_case_flags():
     """``_truthy_is_error`` must support gateway and MCP SDK result shapes."""
     assert tr._truthy_is_error(SimpleNamespace(is_error=True)) is True
@@ -1759,6 +1766,8 @@ async def test_read_resource_success(monkeypatch):
     mock_result = MagicMock()
     mock_result.text = "resource content here"
     mock_result.blob = None  # Explicitly set to None so text is returned
+    mock_result.mime_type = "text/html;profile=mcp-app"
+    mock_result.meta = {"ui": {"prefersBorder": True}}
 
     @asynccontextmanager
     async def fake_get_db():
@@ -1770,7 +1779,9 @@ async def test_read_resource_success(monkeypatch):
     test_uri = AnyUrl("file:///test.txt")
     result = await read_resource(test_uri)
 
-    assert result == "resource content here"
+    assert _read_content(result) == "resource content here"
+    assert result[0].mime_type == "text/html;profile=mcp-app"
+    assert result[0].meta == {"ui": {"prefersBorder": True}}
 
 
 @pytest.mark.asyncio
@@ -4269,7 +4280,7 @@ async def test_read_resource_admin_bypass(monkeypatch):
     try:
         test_uri = AnyUrl("file:///admin.txt")
         result = await read_resource(test_uri)
-        assert result == "admin resource content"
+        assert _read_content(result) == "admin resource content"
         assert captured_kwargs["user"] == "admin@test.com"
         assert captured_kwargs["token_teams"] is None
     finally:
@@ -4299,7 +4310,7 @@ async def test_read_resource_returns_blob(monkeypatch):
 
     test_uri = AnyUrl("file:///binary.bin")
     result = await read_resource(test_uri)
-    assert result == b"binary content here"
+    assert _read_content(result) == b"binary content here"
 
 
 # ---------------------------------------------------------------------------
@@ -5509,7 +5520,7 @@ async def test_read_resource_non_admin_no_teams(monkeypatch):
     try:
         test_uri = AnyUrl("file:///public.txt")
         result = await read_resource(test_uri)
-        assert result == "public content"
+        assert _read_content(result) == "public content"
         assert captured_kwargs["token_teams"] == []  # public-only
     finally:
         user_context_var.reset(user_token)
@@ -5677,7 +5688,7 @@ async def test_read_resource_with_meta_from_request_context(monkeypatch):
     try:
         test_uri = AnyUrl("file:///test.txt")
         result = await read_resource(test_uri)
-        assert result == "resource content"
+        assert _read_content(result) == "resource content"
         assert captured_kwargs["meta_data"] == {"progressToken": "tok456"}
     finally:
         user_context_var.reset(user_token)
@@ -11331,7 +11342,7 @@ class TestDirectProxyMode:
                 with patch("mcpgateway.transports.streamablehttp_transport._proxy_read_resource_to_gateway", return_value=[mock_content]):
                     result = await tr.read_resource("file:///test.txt")
 
-        assert result == "Proxied content"
+        assert _read_content(result) == "Proxied content"
 
     @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_mode_success_blob(self):
@@ -11362,7 +11373,7 @@ class TestDirectProxyMode:
                 with patch("mcpgateway.transports.streamablehttp_transport._proxy_read_resource_to_gateway", return_value=[mock_content]):
                     result = await tr.read_resource("file:///binary.dat")
 
-        assert result == b"Binary data"
+        assert _read_content(result) == b"Binary data"
 
     @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_access_denied_returns_empty(self):
@@ -11566,7 +11577,7 @@ class TestDirectProxyMode:
                     with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_request_ctx):
                         result = await tr.read_resource("file:///meta.txt")
 
-        assert result == "Proxied content with meta"
+        assert _read_content(result) == "Proxied content with meta"
         mock_proxy.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -11592,7 +11603,7 @@ class TestDirectProxyMode:
                 mock_rs.read_resource = AsyncMock(return_value=MagicMock(blob=None, text="cached"))
                 result = await tr.read_resource("file:///test.txt")
 
-        assert result == "cached"
+        assert _read_content(result) == "cached"
 
     @pytest.mark.asyncio
     async def test_read_resource_gateway_not_found(self):
@@ -11613,7 +11624,7 @@ class TestDirectProxyMode:
                 mock_rs.read_resource = AsyncMock(return_value=MagicMock(blob=None, text="from-cache"))
                 result = await tr.read_resource("file:///test.txt")
 
-        assert result == "from-cache"
+        assert _read_content(result) == "from-cache"
 
 
 # ---------------------------------------------------------------------------
@@ -13625,7 +13636,7 @@ async def test_read_resource_oauth_enforcement_with_authenticated_context(monkey
         result = await read_resource("file:///test")
 
     mock_check.assert_called_once_with("test-server", {"email": "user@test.com", "teams": ["t1"], "is_authenticated": True, "is_admin": False})
-    assert result == "hello"
+    assert _read_content(result) == "hello"
 
     user_context_var.reset(ctx_token)
     server_id_var.reset(sid_token)

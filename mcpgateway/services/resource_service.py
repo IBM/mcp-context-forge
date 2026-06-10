@@ -21,6 +21,7 @@ Examples:
 """
 
 # Standard
+import asyncio
 import binascii
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -1990,6 +1991,8 @@ class ResourceService(BaseService):
                             """
                             if authentication is None:
                                 authentication = {}
+                            resource_text: Optional[str] = None
+                            resource_received = False
                             try:
                                 # #4205: Registry path is taken when the caller has a downstream
                                 # Mcp-Session-Id; upstream state is then bound 1:1 to that
@@ -2013,7 +2016,8 @@ class ResourceService(BaseService):
                                         httpx_client_factory=_get_httpx_client_factory,
                                     ) as upstream:
                                         resource_response = await _read_resource_with_meta(upstream.session, uri, meta_data)
-                                        return getattr(getattr(resource_response, "contents")[0], "text")
+                                        resource_text = getattr(getattr(resource_response, "contents")[0], "text")
+                                        resource_received = True
                                 else:
                                     # Fallback: per-call session when no downstream session id is in scope.
                                     async with sse_client(url=server_url, headers=authentication, timeout=settings.health_check_timeout, httpx_client_factory=_get_httpx_client_factory) as (
@@ -2023,12 +2027,17 @@ class ResourceService(BaseService):
                                         async with ClientSession(read_stream, write_stream) as session:
                                             _ = await session.initialize()
                                             resource_response = await _read_resource_with_meta(session, uri, meta_data)
-                                            return getattr(getattr(resource_response, "contents")[0], "text")
+                                            resource_text = getattr(getattr(resource_response, "contents")[0], "text")
+                                            resource_received = True
                             except Exception as e:
                                 # Sanitize error message to prevent URL secrets from leaking in logs
                                 sanitized_error = sanitize_exception_message(str(e), auth_query_params_decrypted)
+                                if resource_received:
+                                    logger.debug("Ignoring SSE teardown error after resource content was received: %s", sanitized_error)
+                                    return resource_text
                                 logger.debug("Exception while connecting to sse gateway: %s", sanitized_error)
                                 return None
+                            return resource_text
 
                         async def connect_to_streamablehttp_server(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
                             """
@@ -2070,6 +2079,8 @@ class ResourceService(BaseService):
                             """
                             if authentication is None:
                                 authentication = {}
+                            resource_text: Optional[str] = None
+                            resource_received = False
                             try:
                                 # #4205: see SSE path above; same 1:1 binding rationale.
                                 downstream_session_id = _downstream_session_id_from_request()
@@ -2091,7 +2102,8 @@ class ResourceService(BaseService):
                                         httpx_client_factory=_get_httpx_client_factory,
                                     ) as upstream:
                                         resource_response = await _read_resource_with_meta(upstream.session, uri, meta_data)
-                                        return getattr(getattr(resource_response, "contents")[0], "text")
+                                        resource_text = getattr(getattr(resource_response, "contents")[0], "text")
+                                        resource_received = True
                                 else:
                                     # Fallback: per-call session when no downstream session id is in scope.
                                     async with streamablehttp_client(url=server_url, headers=authentication, timeout=settings.health_check_timeout, httpx_client_factory=_get_httpx_client_factory) as (
@@ -2102,24 +2114,35 @@ class ResourceService(BaseService):
                                         async with ClientSession(read_stream, write_stream) as session:
                                             _ = await session.initialize()
                                             resource_response = await _read_resource_with_meta(session, uri, meta_data)
-                                            return getattr(getattr(resource_response, "contents")[0], "text")
+                                            resource_text = getattr(getattr(resource_response, "contents")[0], "text")
+                                            resource_received = True
                             except Exception as e:
                                 # Sanitize error message to prevent URL secrets from leaking in logs
                                 sanitized_error = sanitize_exception_message(str(e), auth_query_params_decrypted)
+                                if resource_received:
+                                    logger.debug("Ignoring StreamableHTTP teardown error after resource content was received: %s", sanitized_error)
+                                    return resource_text
                                 logger.debug("Exception while connecting to streamablehttp gateway: %s", sanitized_error)
                                 return None
+                            return resource_text
 
                         if span:
                             set_span_attribute(span, "success", True)
                             set_span_attribute(span, "duration.ms", (time.monotonic() - start_time) * 1000)
 
-                        resource_text = ""
-                        if (gateway_transport).lower() == "sse":
-                            # Note: meta_data not passed - MCP SDK 1.25.0 read_resource() doesn't support it
-                            resource_text = await connect_to_sse_session(server_url=gateway_url, authentication=headers, uri=uri)
-                        else:
-                            # Note: meta_data not passed - MCP SDK 1.25.0 read_resource() doesn't support it
-                            resource_text = await connect_to_streamablehttp_server(server_url=gateway_url, authentication=headers, uri=uri)
+                        resource_text = None
+                        max_attempts = 2
+                        for attempt in range(1, max_attempts + 1):
+                            if (gateway_transport).lower() == "sse":
+                                # Note: meta_data not passed - MCP SDK 1.25.0 read_resource() doesn't support it
+                                resource_text = await connect_to_sse_session(server_url=gateway_url, authentication=headers, uri=uri)
+                            else:
+                                # Note: meta_data not passed - MCP SDK 1.25.0 read_resource() doesn't support it
+                                resource_text = await connect_to_streamablehttp_server(server_url=gateway_url, authentication=headers, uri=uri)
+                            if resource_text is not None or attempt == max_attempts:
+                                break
+                            logger.debug("Retrying resource invocation after empty upstream response for %s (attempt %d/%d)", uri, attempt + 1, max_attempts)
+                            await asyncio.sleep(0.05)
                         if span and resource_text is not None and is_output_capture_enabled("resource.read"):
                             set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload({"content": resource_text}))
                         success = True  # Mark as successful before returning

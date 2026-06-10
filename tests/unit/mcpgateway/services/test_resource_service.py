@@ -6803,6 +6803,113 @@ class TestInvokeResourceCoverageEdges:
         assert out == "ok"
 
     @pytest.mark.asyncio
+    async def test_invoke_resource_sse_returns_content_when_session_teardown_raises(self):
+        """A late SSE reader teardown error must not discard an already received resource."""
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+        db.close = MagicMock()
+
+        resource = MagicMock(id="res-1", name="R", gateway_id="gw-1")
+        gateway = MagicMock(
+            id="gw-1", name="GW", url="http://gw.test", transport="sse", ca_certificate=None, ca_certificate_sig=None, auth_type=None, auth_value={}, oauth_config=None, auth_query_params=None
+        )
+
+        cs_session = AsyncMock()
+        cs_session.initialize = AsyncMock(return_value=None)
+        cs_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="<html>ok</html>", blob=None)])
+
+        with (
+            patch(
+                "mcpgateway.services.resource_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=False,
+                    platform_admin_email="admin@test.com",
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    health_check_timeout=1,
+                ),
+            ),
+            patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
+            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+        ):
+            mock_trace.get = MagicMock(return_value=None)
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
+            mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
+            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
+            MockCS.return_value.__aexit__ = AsyncMock(side_effect=RuntimeError("unhandled errors in a TaskGroup"))
+
+            out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
+        assert out == "<html>ok</html>"
+
+    @pytest.mark.asyncio
+    async def test_invoke_resource_sse_retries_once_when_first_read_returns_no_content(self):
+        """Transient upstream SSE read failures should get one retry before returning empty content."""
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+        db.close = MagicMock()
+
+        resource = MagicMock(id="res-1", name="R", gateway_id="gw-1")
+        gateway = MagicMock(
+            id="gw-1", name="GW", url="http://gw.test", transport="sse", ca_certificate=None, ca_certificate_sig=None, auth_type=None, auth_value={}, oauth_config=None, auth_query_params=None
+        )
+
+        first_session = AsyncMock()
+        first_session.initialize = AsyncMock(return_value=None)
+        first_session.read_resource = AsyncMock(side_effect=RuntimeError("upstream SSE closed"))
+
+        second_session = AsyncMock()
+        second_session.initialize = AsyncMock(return_value=None)
+        second_session.read_resource = AsyncMock(return_value=MagicMock(contents=[MagicMock(text="<html>retry-ok</html>", blob=None)]))
+
+        first_context = MagicMock()
+        first_context.__aenter__ = AsyncMock(return_value=first_session)
+        first_context.__aexit__ = AsyncMock(return_value=False)
+
+        second_context = MagicMock()
+        second_context.__aenter__ = AsyncMock(return_value=second_session)
+        second_context.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch(
+                "mcpgateway.services.resource_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=False,
+                    platform_admin_email="admin@test.com",
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    health_check_timeout=1,
+                ),
+            ),
+            patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
+            patch("mcpgateway.services.resource_service.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
+            patch("mcpgateway.services.resource_service.ClientSession", side_effect=[first_context, second_context]),
+        ):
+            mock_trace.get = MagicMock(return_value=None)
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
+            mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
+
+        assert out == "<html>retry-ok</html>"
+        mock_sleep.assert_awaited_once_with(0.05)
+
+    @pytest.mark.asyncio
     async def test_invoke_resource_streamablehttp_uses_registry_when_available(self):
         """Cover StreamableHTTP registry path (#4205)."""
         # First-Party

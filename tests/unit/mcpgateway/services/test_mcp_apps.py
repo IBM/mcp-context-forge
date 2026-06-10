@@ -19,6 +19,7 @@ from mcpgateway.services.mcp_apps import (
     MCP_UI_EXTENSION,
     MCPAppsValidationError,
     merge_mcp_protocol_meta,
+    serialize_resource_content_for_mcp,
     validate_extension_metadata,
     validate_ui_resource,
 )
@@ -61,8 +62,8 @@ def test_validate_ui_resource_requires_text_html_when_enabled(monkeypatch) -> No
 def test_model_visible_filter_hides_app_only_tools(monkeypatch) -> None:
     """App-only helper tools should not appear in model-facing tool lists."""
     monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
-    model_tool = SimpleNamespace(name="model_tool", extension_metadata={MCP_UI_EXTENSION: {"audience": ["model"]}})
-    app_tool = SimpleNamespace(name="app_tool", extension_metadata={MCP_UI_EXTENSION: {"audience": ["app"]}})
+    model_tool = SimpleNamespace(name="model_tool", extension_metadata={MCP_UI_EXTENSION: {"visibility": ["model"]}})
+    app_tool = SimpleNamespace(name="app_tool", extension_metadata={MCP_UI_EXTENSION: {"visibility": ["app"]}})
 
     assert filter_model_visible_tools([model_tool, app_tool]) == [model_tool]
     assert is_app_visible_tool(app_tool) is True
@@ -81,12 +82,12 @@ def test_apply_resource_meta_projects_ui_policy(monkeypatch) -> None:
 
 def test_merge_mcp_protocol_meta_projects_ui_to_extension_metadata() -> None:
     """Upstream MCP _meta.ui should be stored as ContextForge extension metadata."""
-    payload = {"_meta": {"ui": {"resourceUri": "ui://widgets/example", "audience": ["model"]}}}
+    payload = {"_meta": {"ui": {"resourceUri": "ui://widgets/example", "visibility": ["model"]}}}
 
     merge_mcp_protocol_meta(payload)
 
     assert payload["extensionMetadata"][MCP_UI_EXTENSION]["resourceUri"] == "ui://widgets/example"
-    assert payload["extensionMetadata"][MCP_UI_EXTENSION]["audience"] == ["model"]
+    assert payload["extensionMetadata"][MCP_UI_EXTENSION]["visibility"] == ["model"]
 
 
 def test_merge_mcp_protocol_meta_ignores_missing_ui_and_merges_existing_metadata() -> None:
@@ -97,12 +98,12 @@ def test_merge_mcp_protocol_meta_ignores_missing_ui_and_merges_existing_metadata
 
     payload = {
         "_meta": {"ui": {"resourceUri": "ui://widgets/example"}},
-        "extensionMetadata": {MCP_UI_EXTENSION: {"audience": ["model"]}},
+        "extensionMetadata": {MCP_UI_EXTENSION: {"visibility": ["model"]}},
     }
     merge_mcp_protocol_meta(payload)
 
     assert payload["extensionMetadata"][MCP_UI_EXTENSION] == {
-        "audience": ["model"],
+        "visibility": ["model"],
         "resourceUri": "ui://widgets/example",
     }
 
@@ -112,7 +113,7 @@ def test_merge_mcp_protocol_meta_ignores_missing_ui_and_merges_existing_metadata
     [
         ("bad", "extensionMetadata must be an object"),
         ({MCP_UI_EXTENSION: {"resourceUri": "http://example.com"}}, "resourceUri must use the ui:// scheme"),
-        ({MCP_UI_EXTENSION: {"audience": ["operator"]}}, "audience entries"),
+        ({MCP_UI_EXTENSION: {"visibility": ["operator"]}}, "visibility entries"),
         ({MCP_UI_EXTENSION: {"csp": "default-src 'self'"}}, "csp must be an object"),
         ({MCP_UI_EXTENSION: {"csp": {"object-src": ["'none'"]}}}, "Unsupported MCP Apps CSP directive"),
         ({MCP_UI_EXTENSION: {"sandbox": 123}}, "sandbox must be a string or list of strings"),
@@ -130,16 +131,28 @@ def test_validate_extension_metadata_accepts_absent_ui_block() -> None:
     validate_extension_metadata({"io.example/custom": {"ok": True}})
 
 
-def test_validate_extension_metadata_accepts_string_audience_and_csp_source() -> None:
+def test_validate_extension_metadata_accepts_string_visibility_and_csp_source() -> None:
     """String-or-list metadata fields should normalize as valid string lists."""
     validate_extension_metadata(
         {
             MCP_UI_EXTENSION: {
                 "resourceUri": "ui://widgets/example",
-                "audience": "app",
+                "visibility": "app",
                 "csp": {"default-src": "'self'"},
                 "sandbox": "allow-scripts",
                 "permissions": "clipboard-read",
+            }
+        }
+    )
+
+
+def test_validate_extension_metadata_accepts_current_app_csp_and_permissions() -> None:
+    """Current MCP Apps CSP and permissions metadata should be accepted."""
+    validate_extension_metadata(
+        {
+            MCP_UI_EXTENSION: {
+                "csp": {"connectDomains": ["https://api.example.com"], "resourceDomains": ["https://cdn.example.com"]},
+                "permissions": {"clipboardWrite": {}},
             }
         }
     )
@@ -155,6 +168,21 @@ def test_apply_resource_meta_noops_without_enabled_extension_or_ui(monkeypatch) 
     monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
     apply_resource_meta(payload, {"io.example/custom": {"sandbox": ["allow-scripts"]}})
     assert payload == {}
+
+
+def test_serialize_resource_content_for_mcp_preserves_mime_and_meta() -> None:
+    """Legacy resource content should serialize to MCP resources/read content."""
+    # First-Party
+    from mcpgateway.common.models import ResourceContent
+
+    content = ResourceContent(type="resource", id="r1", uri="ui://widgets/example", mimeType="text/html;profile=mcp-app", text="<html></html>", _meta={"ui": {"prefersBorder": True}})
+
+    assert serialize_resource_content_for_mcp(content) == {
+        "uri": "ui://widgets/example",
+        "mimeType": "text/html;profile=mcp-app",
+        "text": "<html></html>",
+        "_meta": {"ui": {"prefersBorder": True}},
+    }
 
 
 def test_create_app_session_persists_ttl_bound_record(monkeypatch) -> None:
