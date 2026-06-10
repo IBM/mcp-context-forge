@@ -4739,6 +4739,13 @@ class Gateway(Base):
     # Overrides global settings when set: {enabled, mode, headers_prefix, sign_claims, allowed_attributes}
     identity_propagation: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True, comment="Per-gateway identity propagation config overrides")
 
+    # Tool filtering: include/exclude patterns (fnmatch glob syntax)
+    # - tools_include: only tools matching at least one pattern are imported (whitelist)
+    # - tools_exclude: tools matching any pattern are excluded (blacklist)
+    # - If both are set, include is applied first, then exclude
+    tools_include: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=None, comment="Glob patterns to include tools (whitelist)")
+    tools_exclude: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=None, comment="Glob patterns to exclude tools (blacklist)")
+
     # Relationship with OAuth tokens
     oauth_tokens: Mapped[List["OAuthToken"]] = relationship("OAuthToken", back_populates="gateway", cascade="all, delete-orphan")
 

@@ -512,6 +512,12 @@ class ExportService:
                 "passthrough_headers": gateway.passthrough_headers or [],
             }
 
+            # Tool filtering patterns
+            if gateway.tools_include:
+                gateway_data["tools_include"] = gateway.tools_include
+            if gateway.tools_exclude:
+                gateway_data["tools_exclude"] = gateway.tools_exclude
+
             # Handle authentication data securely - use batch-fetched values
             if gateway.auth_type and gateway.auth_value:
                 if gateway.auth_value == settings.masked_auth_value:
@@ -937,6 +943,12 @@ class ExportService:
                 "tags": db_gateway.tags or [],
                 "passthrough_headers": db_gateway.passthrough_headers or [],
             }
+
+            # Tool filtering patterns
+            if db_gateway.tools_include:
+                gateway_data["tools_include"] = db_gateway.tools_include
+            if db_gateway.tools_exclude:
+                gateway_data["tools_exclude"] = db_gateway.tools_exclude
 
             # Include auth data directly from DB (already have raw values)
             if db_gateway.auth_type:

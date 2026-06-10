@@ -2939,6 +2939,10 @@ class GatewayCreate(BaseModelWithConfigDict):
     # Per-gateway identity propagation configuration
     identity_propagation: Optional[Dict[str, Any]] = Field(None, description="Per-gateway identity propagation config: {enabled, mode, headers_prefix, sign_claims, allowed_attributes}")
 
+    # Tool filtering: fnmatch glob patterns to include/exclude tools during refresh
+    tools_include: Optional[List[str]] = Field(None, description="Glob patterns to whitelist tools (only matching tools are imported)")
+    tools_exclude: Optional[List[str]] = Field(None, description="Glob patterns to blacklist tools (matching tools are excluded)")
+
     @field_validator("gateway_mode", mode="before")
     @classmethod
     def default_gateway_mode(cls, v: Optional[str]) -> str:
@@ -3322,6 +3326,10 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
     # Gateway mode configuration
     gateway_mode: Optional[str] = Field(None, description="Gateway mode: 'cache' (database caching, default) or 'direct_proxy' (pass-through mode with no caching)", pattern="^(cache|direct_proxy)$")
+
+    # Tool filtering: fnmatch glob patterns to include/exclude tools during refresh
+    tools_include: Optional[List[str]] = Field(None, description="Glob patterns to whitelist tools (only matching tools are imported)")
+    tools_exclude: Optional[List[str]] = Field(None, description="Glob patterns to blacklist tools (matching tools are excluded)")
 
     # CA certificate configuration for custom TLS trust
     ca_certificate: Optional[str] = Field(None, description="Custom CA certificate for TLS verification")
@@ -3717,6 +3725,10 @@ class GatewayRead(BaseModelWithConfigDict):
 
     # Per-gateway identity propagation configuration
     identity_propagation: Optional[Dict[str, Any]] = Field(None, description="Per-gateway identity propagation config")
+
+    # Tool filtering: fnmatch glob patterns to include/exclude tools during refresh
+    tools_include: Optional[List[str]] = Field(None, description="Glob patterns to whitelist tools (only matching tools are imported)")
+    tools_exclude: Optional[List[str]] = Field(None, description="Glob patterns to blacklist tools (matching tools are excluded)")
 
     _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
