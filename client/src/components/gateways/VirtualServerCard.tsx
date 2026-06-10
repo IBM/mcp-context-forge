@@ -16,14 +16,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import type { VirtualServer } from "@/types/server";
-import {
-  Box,
-  EllipsisVertical,
-  MessageSquareCode,
-  Plus,
-  Upload,
-  Wrench
-} from "lucide-react";
+import { Box, EllipsisVertical, MessageSquareCode, Plus, Upload, Wrench } from "lucide-react";
 import { useIntl } from "react-intl";
 
 export function VirtualServerCard({

@@ -207,7 +207,7 @@ test.describe("Gateways page", () => {
     // Check that Edit server and Delete menu items exist
     const editServer = page.getByRole("menuitem", { name: "Edit server" });
     await expect(editServer).toBeVisible();
-    
+
     const deleteItem = page.getByRole("menuitem", { name: "Delete" });
     await expect(deleteItem).toBeVisible();
   });
