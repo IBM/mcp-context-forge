@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { Plus } from "lucide-react";
 import { useIntl } from "react-intl";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { UserForm } from "@/components/users/UserForm";
 import { UsersTable } from "@/components/users/UsersTable";
 import { DeleteUserDialog } from "@/components/users/DeleteUserDialog";
 import { useUsersList } from "@/hooks/useUsersList";
-import { useToast } from "@/hooks/useToast";
-import { ToastContainer } from "@/components/ui/toast";
 import { usersApi } from "@/api/users";
 import { ApiError } from "@/api/client";
 import type { User, CreateUserRequest } from "@/types/user";
@@ -30,8 +29,6 @@ export function Users() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
-  const { toasts, success, error: showError, dismissToast } = useToast();
-
   const {
     data: response,
     error: queryError,
@@ -89,7 +86,9 @@ export function Users() {
 
     try {
       await usersApi.delete(userToDelete.email);
-      success(intl.formatMessage({ id: "users.delete.success" }, { email: userToDelete.email }));
+      toast.success(
+        intl.formatMessage({ id: "users.delete.success" }, { email: userToDelete.email }),
+      );
       setDeleteDialogOpen(false);
       setUserToDelete(null);
     } catch (err) {
@@ -114,11 +113,11 @@ export function Users() {
         }
       }
 
-      showError(errorMessage);
+      toast.error(errorMessage);
     } finally {
       setIsDeleting(false);
     }
-  }, [userToDelete, allUsers, intl, success, showError]);
+  }, [userToDelete, allUsers, intl]);
 
   const handleDeleteCancel = useCallback(() => {
     setDeleteDialogOpen(false);
@@ -267,7 +266,6 @@ export function Users() {
           isDeleting={isDeleting}
         />
       )}
-      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </main>
   );
 }
