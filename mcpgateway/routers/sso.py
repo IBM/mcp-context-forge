@@ -153,6 +153,27 @@ def _normalize_origin(scheme: str, host: str, port: int | None) -> str:
     return f"{scheme}://{host}:{port}"
 
 
+def _is_safe_local_path(path: str) -> bool:
+    """Validate that a path is a safe local redirect target (no open redirect).
+
+    Args:
+        path: The path to validate.
+
+    Returns:
+        True if the path is a safe relative path starting with ``/``.
+    """
+    if not path or not isinstance(path, str):
+        return False
+    if not path.startswith("/"):
+        return False
+    if path.startswith("//") or "@" in path or "\\" in path:
+        return False
+    parsed = urlparse(path)
+    if parsed.scheme or parsed.netloc:
+        return False
+    return True
+
+
 def _validate_redirect_uri(redirect_uri: str, request: Request | None = None) -> bool:
     """Validate redirect_uri to prevent open redirect attacks.
 
@@ -400,6 +421,9 @@ async def handle_sso_callback(
     if not access_token:
         return RedirectResponse(url=f"{root_path}/admin/login?error=user_creation_failed", status_code=302)
 
+    # Read post-login destination cookie (explicit destination takes priority)
+    post_login_next = request.cookies.get("post_login_next") if request else None
+
     # Determine redirect URL based on user's admin status and team membership
     # Decode token to get user info (no verification needed - we just created it)
     try:
@@ -412,34 +436,49 @@ async def handle_sso_callback(
         is_admin = False
         user_email = user_info.get("email")
 
-    # Determine redirect URL
-    redirect_url = f"{root_path}/admin"
+    # Explicit post-login destination wins when present and safe
+    if post_login_next and _is_safe_local_path(post_login_next):
+        redirect_url = f"{root_path}{post_login_next}"
+    else:
+        # Determine redirect URL
+        redirect_url = f"{root_path}/admin"
 
-    # For non-admin users, try to redirect to their first team's admin view
-    if not is_admin and user_email:
-        try:
-            team_service = TeamManagementService(db)
-            user_teams = await team_service.get_user_teams(user_email, include_personal=False)
+        # For non-admin users, try to redirect to their first team's admin view
+        if not is_admin and user_email:
+            try:
+                team_service = TeamManagementService(db)
+                user_teams = await team_service.get_user_teams(user_email, include_personal=False)
 
-            if user_teams:
-                # Redirect to first team's admin view
-                # Use first team in list (arbitrary selection - user can switch teams in UI)
-                first_team_id = user_teams[0].id
-                redirect_url = f"{root_path}/admin?team_id={first_team_id}"
-                logger.info(f"Redirecting non-admin SSO user {sanitize_for_log(user_email)} to team-scoped admin: {first_team_id}")
-            else:
-                # User has no teams - redirect to admin gateways view
-                # Redirecting to root (/) would create a loop when Admin UI is enabled,
-                # as root redirects back to /admin/. The gateways section is accessible
-                # to platform_viewer users (who have gateways.read permission).
-                redirect_url = f"{root_path}/admin/#gateways"
-                logger.info(f"Redirecting non-admin SSO user {sanitize_for_log(user_email)} with no teams to admin gateways view")
-        except Exception as e:
-            logger.warning(f"Failed to retrieve teams for SSO user {sanitize_for_log(user_email)}: {e}. Redirecting to /admin")
-            # Fall back to /admin - middleware will handle permission check
+                if user_teams:
+                    # Redirect to first team's admin view
+                    # Use first team in list (arbitrary selection - user can switch teams in UI)
+                    first_team_id = user_teams[0].id
+                    redirect_url = f"{root_path}/admin?team_id={first_team_id}"
+                    logger.info(f"Redirecting non-admin SSO user {sanitize_for_log(user_email)} to team-scoped admin: {first_team_id}")
+                else:
+                    # User has no teams - redirect to admin gateways view
+                    # Redirecting to root (/) would create a loop when Admin UI is enabled,
+                    # as root redirects back to /admin/. The gateways section is accessible
+                    # to platform_viewer users (who have gateways.read permission).
+                    redirect_url = f"{root_path}/admin/#gateways"
+                    logger.info(f"Redirecting non-admin SSO user {sanitize_for_log(user_email)} with no teams to admin gateways view")
+            except Exception as e:
+                logger.warning(f"Failed to retrieve teams for SSO user {sanitize_for_log(user_email)}: {e}. Redirecting to /admin")
+                # Fall back to /admin - middleware will handle permission check
 
     # Create redirect response
     redirect_response = RedirectResponse(url=redirect_url, status_code=302)
+
+    # Clear the post_login_next cookie regardless
+    if post_login_next:
+        use_secure = (settings.environment == "production") or settings.secure_cookies
+        redirect_response.delete_cookie(
+            "post_login_next",
+            path=settings.app_root_path or "/",
+            secure=use_secure,
+            httponly=True,
+            samesite=settings.cookie_samesite,
+        )
 
     # Set secure HTTP-only cookie using the same method as email auth
     # First-Party

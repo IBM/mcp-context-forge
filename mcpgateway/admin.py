@@ -1522,6 +1522,28 @@ ADMIN_CSRF_HEADER_NAME = "x-csrf-token"
 ADMIN_CSRF_FORM_FIELD = "csrf_token"
 
 
+def _is_safe_local_path(path: str) -> bool:
+    """Validate that a path is a safe local redirect target (no open redirect).
+
+    Args:
+        path: The path to validate.
+
+    Returns:
+        True if the path is a safe relative path starting with ``/``.
+    """
+    if not path or not isinstance(path, str):
+        return False
+    if not path.startswith("/"):
+        return False
+    # Block protocol-relative URLs (//evil.com), authority injection (@), backslash tricks
+    if path.startswith("//") or "@" in path or "\\" in path:
+        return False
+    parsed = urllib.parse.urlparse(path)
+    if parsed.scheme or parsed.netloc:
+        return False
+    return True
+
+
 def _admin_cookie_path(request: Request) -> str:
     """Build admin cookie path honoring ASGI root_path.
 
@@ -3052,6 +3074,8 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             visibility=visibility,
             oauth_enabled=oauth_enabled,
             oauth_config=oauth_config,
+            server_type="meta" if form.get("meta_server_enabled") else str(form.get("server_type", "standard")),
+            hide_underlying_tools=form.get("hide_underlying_tools") == "true" or form.get("hide_underlying_tools") == "on",
         )
     except KeyError as e:
         # Convert KeyError to ValidationError-like response
@@ -3216,6 +3240,8 @@ async def admin_edit_server(
             owner_email=user_email,
             oauth_enabled=oauth_enabled,
             oauth_config=oauth_config,
+            server_type="meta" if form.get("meta_server_enabled") else str(form.get("server_type", "standard")),
+            hide_underlying_tools=form.get("hide_underlying_tools") == "true" or form.get("hide_underlying_tools") == "on",
         )
 
         await server_service.update_server(
@@ -4311,6 +4337,21 @@ async def admin_login_page(request: Request) -> Response:
     if clear_invalid_cookies:
         response.delete_cookie("jwt_token", path="/")
         response.delete_cookie("access_token", path="/")
+
+    # Preserve ?next= parameter as a short-lived cookie so SSO callback can redirect
+    # back to the original URL (e.g. /oauth/authorize/{gateway_id}) after login.
+    next_url = request.query_params.get("next", "")
+    if next_url and _is_safe_local_path(next_url):
+        use_secure = (settings.environment == "production") or settings.secure_cookies
+        response.set_cookie(
+            key="post_login_next",
+            value=next_url,
+            max_age=300,  # 5 minutes — enough for SSO round-trip
+            httponly=True,
+            secure=use_secure,
+            samesite=settings.cookie_samesite,
+            path=settings.app_root_path or "/",
+        )
 
     return response
 

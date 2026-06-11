@@ -2786,8 +2786,68 @@
                   class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
+              <!-- Meta-Server Configuration Section (placed before MCP server and tool selection) -->
+              <div class="mt-4 border-t border-gray-200 dark:border-gray-700 pt-4">
+                <div class="flex items-center mb-4">
+                  <input
+                    type="checkbox"
+                    name="meta_server_enabled"
+                    id="server-meta-enabled"
+                    class="form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    onchange="document.getElementById('server-meta-config-section').classList.toggle('hidden', !this.checked); document.getElementById('create-server-gateways-and-tools').classList.toggle('hidden', this.checked); document.getElementById('create-meta-info-banner').classList.toggle('hidden', !this.checked)"
+                  />
+                  <label
+                    for="server-meta-enabled"
+                    class="ml-2 text-sm font-medium text-gray-700 dark:text-gray-400"
+                    >Enable as Meta-Server (Tool Router)</label
+                  >
+                </div>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                  When enabled, this server exposes meta-tools (search, list, describe, execute) instead of individual underlying tools.
+                </p>
+
+                <!-- Meta-Server Configuration Fields (hidden by default) -->
+                <div id="server-meta-config-section" class="hidden space-y-4 pl-6 border-l-2 border-indigo-200 dark:border-indigo-800">
+                  <div class="flex items-center">
+                    <input
+                      type="checkbox"
+                      name="hide_underlying_tools"
+                      id="server-hide-underlying-tools"
+                      class="form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                      checked
+                    />
+                    <label
+                      for="server-hide-underlying-tools"
+                      class="ml-2 text-sm font-medium text-gray-700 dark:text-gray-400"
+                      >Hide underlying tools from tool listing</label
+                    >
+                    <p class="ml-2 text-xs text-gray-500 dark:text-gray-400">
+                      Clients will only see the meta-tools, not the individual backend tools.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Info banner shown when meta-server is enabled -->
+              <div id="create-meta-info-banner" class="hidden mt-4 p-4 bg-indigo-50 dark:bg-indigo-900/30 border border-indigo-200 dark:border-indigo-700 rounded-lg">
+                <div class="flex items-start gap-3">
+                  <svg class="h-5 w-5 text-indigo-600 dark:text-indigo-400 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+                  </svg>
+                  <div>
+                    <p class="text-sm font-semibold text-indigo-800 dark:text-indigo-300">Meta-Server mode enabled</p>
+                    <p class="text-xs text-indigo-700 dark:text-indigo-400 mt-1">
+                      MCP server, tool, resource, and prompt selection is not needed. A meta-server dynamically exposes all items
+                      the user has access to based on their team membership and visibility rules.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div id="create-server-gateways-and-tools">
               <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div
+                  id="create-server-gateways-section"
                   class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-300 dark:border-gray-700"
                 >
                   <label
@@ -2857,8 +2917,9 @@
                     class="mt-2 min-h-[1.25rem] text-sm font-semibold text-yellow-600"
                     aria-live="polite"
                   ></div>
-                </div>
+                </div> <!-- end create-server-gateways-section (MCP Servers card) -->
 
+              <div id="create-server-items-section">
                 <div
                   class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-300 dark:border-gray-700"
                 >
@@ -2938,10 +2999,13 @@
                     class="mt-2 min-h-[1.25rem] text-sm font-semibold text-yellow-600"
                     aria-live="polite"
                   ></div>
-                </div>
-              </div>
+                </div> <!-- end tools card -->
+              </div> <!-- end create-server-items-section -->
+              </div> <!-- end grid (MCP Servers + Tools) -->
               <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
+                <div
+                  class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-300 dark:border-gray-700"
+                >
                 <label
                   class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2"
                   for="associatedResources"
@@ -3008,7 +3072,9 @@
                   aria-live="polite"
                 ></div>
               </div>
-              <div>
+              <div
+                class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-300 dark:border-gray-700"
+              >
                 <label
                   class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2"
                   for="associatedPrompts"
@@ -3075,8 +3141,8 @@
                   aria-live="polite"
                 ></div>
                 </div>
-              </div>
-            </div>
+              </div> <!-- end grid (Resources + Prompts) -->
+            </div> <!-- end create-server-gateways-and-tools -->
             <!-- 🔻 Error Display Span -->
             <span
               id="serverFormError"
@@ -3106,6 +3172,12 @@
                 Enter tags separated by commas. Tags help categorize and filter
                 servers.
               </p>
+            </div>
+            <!-- Team Selection -->
+            <div class="mt-4">
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Team</label>
+              <select id="server-team-id" name="team_id" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"></select>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Team that owns this server.</p>
             </div>
             <!-- Visibility options -->
             <div class="mt-4">
@@ -3257,6 +3329,49 @@
                     Leave blank to use standard discovery from authorization server
                   </p>
                 </div>
+                <div class="mt-4 border-t border-gray-100 dark:border-gray-700 pt-4">
+                  <p class="text-sm font-medium text-gray-700 dark:text-gray-400 mb-2">
+                    MCP OAuth Proxy (DCR Bypass)
+                  </p>
+                  <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                    Pre-register OAuth client credentials to bypass Dynamic Client Registration (RFC 7591).
+                    Required for IdPs like Microsoft Entra ID that do not support DCR.
+                  </p>
+                  <div>
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                      for="server-oauth-client-id"
+                      >Client ID (optional)</label
+                    >
+                    <input
+                      type="text"
+                      name="oauth_client_id"
+                      id="server-oauth-client-id"
+                      placeholder="e.g. 12345678-abcd-efgh-ijkl-123456789abc"
+                      class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                    />
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      OAuth client ID registered with the Identity Provider
+                    </p>
+                  </div>
+                  <div class="mt-3">
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                      for="server-oauth-client-secret"
+                      >Client Secret (optional)</label
+                    >
+                    <input
+                      type="password"
+                      name="oauth_client_secret"
+                      id="server-oauth-client-secret"
+                      placeholder="Enter client secret"
+                      class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                    />
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      OAuth client secret (stored encrypted). Leave blank if using public client (PKCE only).
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -3268,6 +3383,7 @@
               >
                 Add Server
               </button>
+            </div>
             </div>
           </form>
         </div>
@@ -4004,6 +4120,12 @@
                 tools.
               </p>
             </div>
+            <!-- Team Selection -->
+            <div class="mt-4">
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Team</label>
+              <select id="tool-team-id" name="team_id" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"></select>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Team that owns this tool.</p>
+            </div>
             <!-- Visibility options -->
             <div class="mt-4">
               <label
@@ -4500,6 +4622,12 @@
                 </p>
               </div>
             </div>
+            <!-- Team Selection -->
+            <div class="mt-4">
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Team</label>
+              <select id="resource-team-id" name="team_id" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"></select>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Team that owns this resource.</p>
+            </div>
             <!-- Visibility options -->
             <div class="mt-4">
               <label
@@ -4770,6 +4898,12 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 Enter tags separated by commas. Tags help categorize and filter
                 prompts.
               </p>
+            </div>
+            <!-- Team Selection -->
+            <div class="mt-4">
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Team</label>
+              <select id="prompt-team-id" name="team_id" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"></select>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Team that owns this prompt.</p>
             </div>
             <!-- Visibility options -->
             <div class="mt-4">
@@ -5374,6 +5508,12 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   normalized (lowercase, spaces→hyphens).
                 </p>
               </div>
+              <!-- Team Selection -->
+              <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Team</label>
+                <select id="gateway-team-id" name="team_id" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"></select>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Team that owns this gateway.</p>
+              </div>
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
@@ -5870,6 +6010,8 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
                   <div>
                     <label
+                  <div>
+                    <label
                       for="oauth_audience"
                       class="block text-sm font-medium text-gray-700 dark:text-gray-300"
                     >
@@ -5884,6 +6026,25 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     />
                     <p class="mt-1 text-sm text-gray-500">
                       OAuth audience parameter (for Atlassian, Auth0, etc.)
+                    </p>
+                  </div>
+
+                  <div>
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      Token Endpoint Auth Method
+                    </label>
+                    <select
+                      name="oauth_token_endpoint_auth_method"
+                      id="oauth-token-endpoint-auth-method-gw"
+                      class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+                    >
+                      <option value="client_secret_post">client_secret_post (credentials in POST body)</option>
+                      <option value="client_secret_basic">client_secret_basic (HTTP Basic Auth header)</option>
+                    </select>
+                    <p class="mt-1 text-sm text-gray-500">
+                      How client credentials are sent to the token endpoint (RFC 6749 Section 2.3)
                     </p>
                   </div>
                 </div>
@@ -5928,6 +6089,40 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   type="text"
                   name="passthrough_headers"
                   placeholder="Authorization, X-Tenant-Id, X-Trace-Id"
+                  class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                />
+              </div>
+              <div>
+                <label
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Tools Include Filter</label
+                >
+                <small class="text-gray-500 dark:text-gray-400 block mb-2">
+                  Glob patterns for tools to include (comma-separated, e.g.,
+                  "manage-ticket*, manage-task*"). Only matching tools will be
+                  imported. Leave empty to include all.
+                </small>
+                <input
+                  type="text"
+                  name="tools_include"
+                  placeholder="manage-ticket*, manage-task*"
+                  class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                />
+              </div>
+              <div>
+                <label
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Tools Exclude Filter</label
+                >
+                <small class="text-gray-500 dark:text-gray-400 block mb-2">
+                  Glob patterns for tools to exclude (comma-separated, e.g.,
+                  "manage-project*"). Matching tools will be skipped. Leave
+                  empty to exclude none.
+                </small>
+                <input
+                  type="text"
+                  name="tools_exclude"
+                  placeholder="manage-project*"
                   class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
@@ -7475,6 +7670,12 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   </div>
 
                 </div>
+
+              <!-- Team Selection -->
+              <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Team</label>
+                <select id="a2a-team-id" name="team_id" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"></select>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Team that owns this agent.</p>
               </div>
 
               <!-- Visibility -->
@@ -7576,6 +7777,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   Add A2A Agent
                 </button>
               </div>
+            </div>
             </div>
           </form>
         </div>
@@ -8912,6 +9114,13 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       filter tools.
                     </p>
                   </div>
+                  <!-- Team selection -->
+                  <div class="mt-4">
+                    <label for="edit-tool-team-id" class="block text-sm font-medium text-gray-700 dark:text-gray-400">Team</label>
+                    <select id="edit-tool-team-id" name="team_id" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300">
+                    </select>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Team that owns this tool.</p>
+                  </div>
                   <!-- Visibility options -->
                   <div id="edit-tool-visibility" class="mt-4">
                     <label
@@ -9233,6 +9442,13 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         filter resources.
                       </p>
                     </div>
+                    <!-- Team selection -->
+                    <div class="mt-4">
+                      <label for="edit-resource-team-id" class="block text-sm font-medium text-gray-700 dark:text-gray-400">Team</label>
+                      <select id="edit-resource-team-id" name="team_id" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300">
+                      </select>
+                      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Team that owns this resource.</p>
+                    </div>
                     <!-- Visibility options -->
                     <div id="edit-resource-visibility" class="mt-4">
                       <label
@@ -9458,6 +9674,13 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         filter prompts.
                       </p>
                     </div>
+                    <!-- Team selection -->
+                    <div class="mt-4">
+                      <label for="edit-prompt-team-id" class="block text-sm font-medium text-gray-700 dark:text-gray-400">Team</label>
+                      <select id="edit-prompt-team-id" name="team_id" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300">
+                      </select>
+                      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Team that owns this prompt.</p>
+                    </div>
                     <!-- Visibility options -->
                     <div id="edit-prompt-visibility" class="mt-4">
                       <label
@@ -9675,6 +9898,55 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Personal Credential Modal -->
+      <div id="credential-modal" class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center hidden">
+        <div class="bg-white dark:bg-gray-900 w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-lg shadow-lg p-6">
+          <h2 class="text-xl font-bold mb-4 text-gray-800 dark:text-gray-100">
+            🔑 Store Personal Credential
+          </h2>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
+            Store a personal API key, token, or credential for gateway: <strong id="credential-gateway-name"></strong>
+          </p>
+          <input type="hidden" id="credential-gateway-id" />
+          <div class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Credential Type</label>
+              <select id="credential-type" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-indigo-500">
+                <option value="api_key">API Key (sent as Basic auth)</option>
+                <option value="bearer_token">Bearer Token</option>
+                <option value="basic_auth">Basic Auth (username:password)</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Credential Value</label>
+              <input type="password" id="credential-value" placeholder="Enter your API key, token, or username:password"
+                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-indigo-500" />
+              <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">The credential is encrypted at rest and only used when you invoke tools on this gateway.</p>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Label (optional)</label>
+              <input type="text" id="credential-label" placeholder="e.g., My Freshservice API Key"
+                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-indigo-500" />
+            </div>
+          </div>
+          <div id="credential-status" class="mt-3 text-sm hidden"></div>
+          <div class="mt-6 flex justify-end space-x-3">
+            <button type="button" onclick="Admin.revokeCredential()"
+              class="px-4 py-2 text-sm font-medium text-red-600 dark:text-red-400 border border-red-300 dark:border-red-600 rounded-md hover:bg-red-50 dark:hover:bg-red-900/20">
+              Revoke
+            </button>
+            <button type="button" onclick="Admin.closeModal('credential-modal')"
+              class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">
+              Cancel
+            </button>
+            <button type="button" onclick="Admin.submitCredential()"
+              class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 focus:ring-2 focus:ring-indigo-500">
+              Store Credential
+            </button>
           </div>
         </div>
       </div>
@@ -9909,6 +10181,13 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         Separate multiple tags with commas. Tags will be
                         automatically normalized.
                       </p>
+                    </div>
+                    <!-- Team selection -->
+                    <div class="mt-4">
+                      <label for="edit-gateway-team-id" class="block text-sm font-medium text-gray-700 dark:text-gray-400">Team</label>
+                      <select id="edit-gateway-team-id" name="team_id" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300">
+                      </select>
+                      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Team that owns this gateway.</p>
                     </div>
 
                     <!-- Visibility options -->
@@ -10328,6 +10607,25 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                               read:user")
                             </p>
                           </div>
+
+                          <div>
+                            <label
+                              class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                            >
+                              Token Endpoint Auth Method
+                            </label>
+                            <select
+                              name="oauth_token_endpoint_auth_method"
+                              id="oauth-token-endpoint-auth-method-gw-edit"
+                              class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+                            >
+                              <option value="client_secret_post">client_secret_post (credentials in POST body)</option>
+                              <option value="client_secret_basic">client_secret_basic (HTTP Basic Auth header)</option>
+                            </select>
+                            <p class="mt-1 text-sm text-gray-500">
+                              How client credentials are sent to the token endpoint (RFC 6749 Section 2.3)
+                            </p>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -10372,6 +10670,46 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         name="passthrough_headers"
                         id="edit-gateway-passthrough-headers"
                         placeholder="Authorization, X-Tenant-Id, X-Trace-Id"
+                        class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      />
+                    </div>
+                    <div>
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                        >Tools Include Filter</label
+                      >
+                      <small
+                        class="text-gray-500 dark:text-gray-400 block mb-2"
+                      >
+                        Glob patterns for tools to include (comma-separated,
+                        e.g., "manage-ticket*, manage-task*"). Only matching
+                        tools will be imported. Leave empty to include all.
+                      </small>
+                      <input
+                        type="text"
+                        name="tools_include"
+                        id="edit-gateway-tools-include"
+                        placeholder="manage-ticket*, manage-task*"
+                        class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      />
+                    </div>
+                    <div>
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                        >Tools Exclude Filter</label
+                      >
+                      <small
+                        class="text-gray-500 dark:text-gray-400 block mb-2"
+                      >
+                        Glob patterns for tools to exclude (comma-separated,
+                        e.g., "manage-project*"). Matching tools will be
+                        skipped. Leave empty to exclude none.
+                      </small>
+                      <input
+                        type="text"
+                        name="tools_exclude"
+                        id="edit-gateway-tools-exclude"
+                        placeholder="manage-project*"
                         class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       />
                     </div>
@@ -10958,6 +11296,13 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           </div>
 
                         </div>
+
+                      <!-- Team selection -->
+                      <div>
+                        <label for="edit-a2a-team-id" class="block text-sm font-medium text-gray-700 dark:text-gray-400">Team</label>
+                        <select id="edit-a2a-team-id" name="team_id" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300">
+                        </select>
+                        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Team that owns this agent.</p>
                       </div>
 
                       <!-- Visibility -->
@@ -11047,6 +11392,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               </div>
             </div>
           </div>
+       </div>
        </div>
 
 
@@ -11184,6 +11530,13 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         filter servers.
                       </p>
                     </div>
+                    <!-- Team selection -->
+                    <div class="mt-4">
+                      <label for="edit-server-team-id" class="block text-sm font-medium text-gray-700 dark:text-gray-400">Team</label>
+                      <select id="edit-server-team-id" name="team_id" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300">
+                      </select>
+                      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Team that owns this server.</p>
+                    </div>
 
                     <!-- Visibility options -->
                     <div id="edit-server-visibility" class="mt-4">
@@ -11260,8 +11613,69 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                     </p>
                   </div>
                   {% endif %}
+
+                  <!-- Meta-Server Configuration Section (placed before MCP server and tool selection) -->
+                  <div class="mt-4 border-t border-gray-200 dark:border-gray-700 pt-4">
+                    <div class="flex items-center mb-4">
+                      <input
+                        type="checkbox"
+                        name="meta_server_enabled"
+                        id="edit-server-meta-enabled"
+                        class="form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                        onchange="document.getElementById('edit-server-meta-config-section').classList.toggle('hidden', !this.checked); document.getElementById('edit-server-gateways-and-tools').classList.toggle('hidden', this.checked); document.getElementById('edit-meta-info-banner').classList.toggle('hidden', !this.checked)"
+                      />
+                      <label
+                        for="edit-server-meta-enabled"
+                        class="ml-2 text-sm font-medium text-gray-700 dark:text-gray-400"
+                        >Enable as Meta-Server (Tool Router)</label
+                      >
+                    </div>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                      When enabled, this server exposes meta-tools (search, list, describe, execute) instead of individual underlying tools.
+                    </p>
+
+                    <!-- Meta-Server Configuration Fields (hidden by default) -->
+                    <div id="edit-server-meta-config-section" class="hidden space-y-4 pl-6 border-l-2 border-indigo-200 dark:border-indigo-800">
+                      <div class="flex items-center">
+                        <input
+                          type="checkbox"
+                          name="hide_underlying_tools"
+                          id="edit-server-hide-underlying-tools"
+                          class="form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                          checked
+                        />
+                        <label
+                          for="edit-server-hide-underlying-tools"
+                          class="ml-2 text-sm font-medium text-gray-700 dark:text-gray-400"
+                          >Hide underlying tools from tool listing</label
+                        >
+                        <p class="ml-2 text-xs text-gray-500 dark:text-gray-400">
+                          Clients will only see the meta-tools, not the individual backend tools.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Info banner shown when meta-server is enabled -->
+                  <div id="edit-meta-info-banner" class="hidden mt-4 p-4 bg-indigo-50 dark:bg-indigo-900/30 border border-indigo-200 dark:border-indigo-700 rounded-lg">
+                    <div class="flex items-start gap-3">
+                      <svg class="h-5 w-5 text-indigo-600 dark:text-indigo-400 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+                      </svg>
+                      <div>
+                        <p class="text-sm font-semibold text-indigo-800 dark:text-indigo-300">Meta-Server mode enabled</p>
+                        <p class="text-xs text-indigo-700 dark:text-indigo-400 mt-1">
+                          MCP server, tool, resource, and prompt selection is not needed. A meta-server dynamically exposes all items
+                          the user has access to based on their team membership and visibility rules.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div id="edit-server-gateways-and-tools">
                   <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
                     <div
+                      id="edit-server-gateways-section"
                       class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-600"
                     >
                     <label
@@ -11331,8 +11745,10 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                     class="mt-2 min-h-[1.25rem] text-sm font-semibold text-yellow-600"
                     aria-live="polite"
                   ></div>
-                    </div>
-                    <div
+                    </div> <!-- end edit-server-gateways-section -->
+
+                  <div id="edit-server-items-section">
+                  <div
                       class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-600"
                     >
                       <div class="flex items-center justify-between mb-2">
@@ -11413,6 +11829,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       ></div>
                     </div>
                   </div>
+                </div> <!-- end grid (MCP Servers + Tools) -->
                 <div class="mt-6">
                   <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div
@@ -11551,6 +11968,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                     </div>
                   </div>
                 </div>
+                </div> <!-- end edit-server-gateways-and-tools -->
 
                 <!-- OAuth 2.0 Configuration Section (RFC 9728) -->
                 <div class="mt-6 border-t border-gray-200 dark:border-gray-700 pt-4">
@@ -11624,6 +12042,49 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                         Leave blank to use standard discovery from authorization server
                       </p>
+                    </div>
+                    <div class="mt-4 border-t border-gray-100 dark:border-gray-700 pt-4">
+                      <p class="text-sm font-medium text-gray-700 dark:text-gray-400 mb-2">
+                        MCP OAuth Proxy (DCR Bypass)
+                      </p>
+                      <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                        Pre-register OAuth client credentials to bypass Dynamic Client Registration (RFC 7591).
+                        Required for IdPs like Microsoft Entra ID that do not support DCR.
+                      </p>
+                      <div>
+                        <label
+                          class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                          for="edit-server-oauth-client-id"
+                          >Client ID (optional)</label
+                        >
+                        <input
+                          type="text"
+                          name="oauth_client_id"
+                          id="edit-server-oauth-client-id"
+                          placeholder="e.g. 12345678-abcd-efgh-ijkl-123456789abc"
+                          class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                        />
+                        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                          OAuth client ID registered with the Identity Provider
+                        </p>
+                      </div>
+                      <div class="mt-3">
+                        <label
+                          class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                          for="edit-server-oauth-client-secret"
+                          >Client Secret (optional)</label
+                        >
+                        <input
+                          type="password"
+                          name="oauth_client_secret"
+                          id="edit-server-oauth-client-secret"
+                          placeholder="Enter new client secret (leave blank to keep existing)"
+                          class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                        />
+                        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                          OAuth client secret (stored encrypted). Leave blank to keep existing secret.
+                        </p>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -14177,6 +14638,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               hx-target="#create-team-error"
               hx-swap="innerHTML"
               data-team-validation="true"
+              onsubmit="Admin.syncOidcGroupIds('create-oidc-groups-table', 'create-oidc-group-ids')"
             >
               <div id="create-team-error" class="mb-4"></div>
               <div class="space-y-4">
@@ -14287,6 +14749,62 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                     Optional. Leave empty to use global default ({{ max_members_per_team }}).
                     {% endif %}
                   </p>
+                </div>
+
+                <!-- OIDC Group Sync -->
+                <div class="border-t border-gray-200 dark:border-gray-700 pt-4">
+                  <h4 class="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">OIDC Group Sync</h4>
+                  <div class="flex items-center mb-3">
+                    <input
+                      type="checkbox"
+                      name="oidc_sync_enabled"
+                      id="create-oidc-sync"
+                      value="true"
+                      onchange="document.getElementById('create-oidc-fields').style.display = this.checked ? 'block' : 'none'"
+                      class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 dark:border-gray-600 rounded"
+                    />
+                    <label for="create-oidc-sync" class="ml-2 text-sm text-gray-700 dark:text-gray-300">
+                      Sync members from an OIDC group
+                    </label>
+                  </div>
+                  <div id="create-oidc-fields" style="display: none">
+                    <div class="mb-3">
+                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        OIDC Groups
+                      </label>
+                      <input type="hidden" name="oidc_group_ids" id="create-oidc-group-ids" value="[]">
+                      <table class="w-full text-sm" id="create-oidc-groups-table">
+                        <thead>
+                          <tr class="text-left text-xs text-gray-500 dark:text-gray-400">
+                            <th class="pb-1 pr-2 font-medium">Display Name</th>
+                            <th class="pb-1 pr-2 font-medium">Group ID</th>
+                            <th class="pb-1 w-8"></th>
+                          </tr>
+                        </thead>
+                        <tbody></tbody>
+                      </table>
+                      <button type="button" onclick="Admin.addOidcGroupRow('create-oidc-groups-table', 'create-oidc-group-ids')"
+                              class="mt-2 inline-flex items-center px-2 py-1 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 border border-indigo-300 dark:border-indigo-600 rounded hover:bg-indigo-50 dark:hover:bg-indigo-900/20">
+                        + Add Group
+                      </button>
+                      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        Add OIDC groups from your identity provider. Display name is optional — for admin reference only.
+                      </p>
+                    </div>
+                    <div>
+                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Default Role for Synced Members
+                      </label>
+                      <select
+                        name="oidc_sync_role"
+                        class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                      >
+                        <option value="member" selected>Viewer</option>
+                        <option value="developer">Developer</option>
+                        <option value="owner">Owner</option>
+                      </select>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -14477,8 +14995,8 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   required
                   class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white"
                 >
-                  <option value="member">Member</option>
-                  <option value="admin">Admin</option>
+                  <option value="member">Viewer</option>
+                  <option value="developer">Developer</option>
                   <option value="owner">Owner</option>
                 </select>
               </div>
@@ -14571,8 +15089,8 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   required
                   class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white"
                 >
-                  <option value="member">Member</option>
-                  <option value="admin">Admin</option>
+                  <option value="member">Viewer</option>
+                  <option value="developer">Developer</option>
                   <option value="owner">Owner</option>
                 </select>
               </div>
