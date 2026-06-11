@@ -1812,6 +1812,54 @@ async def verify_external_idp_token(token: str, db: Session) -> tuple[Optional[d
     return claims, provider
 
 
+def _is_clientless_token(claims: dict) -> bool:
+    """Detect a client_credentials / service token (no human user behind it).
+
+    Such tokens carry no ``email`` claim and the subject identifies the
+    OAuth client itself (``sub == azp`` or ``sub == client_id``), or the
+    token is explicitly typed as an OAuth2 access token (``typ: "at+jwt"``).
+
+    Args:
+        claims: Signature-verified JWT claims from the external IdP.
+
+    Returns:
+        True if the token represents a service/client principal rather than
+        a human user, False otherwise.
+    """
+    if claims.get("email"):
+        return False
+    sub = claims.get("sub")
+    return bool(sub) and (sub == claims.get("azp") or sub == claims.get("client_id") or claims.get("typ") == "at+jwt")
+
+
+def _synthetic_service_principal_user_info(provider: SSOProvider, claims: dict) -> dict:
+    """Build a normalized user_info for a service principal from a clientless token.
+
+    The synthetic email is non-routable (``.service.local``) and marked verified
+    because it is internally minted -- this does NOT relax the human email-verified
+    gate, which still applies to real email claims.
+
+    Args:
+        provider: The matched, trusted SSOProvider.
+        claims: Signature-verified JWT claims from the external IdP.
+
+    Returns:
+        A normalized user_info dict suitable for ``authenticate_or_create_user``,
+        carrying through any group/role claims so role/team mapping still applies.
+    """
+    client = str(claims.get("azp") or claims.get("client_id") or claims.get("sub"))
+    pid = getattr(provider, "id", "ext")
+    return {
+        "email": f"svc-{client}@{pid}.service.local",
+        "email_verified": True,
+        "full_name": f"service:{client}",
+        "provider": pid,
+        "is_admin": False,
+        # carry through any group/role claims so mapping still applies
+        **{k: v for k, v in claims.items() if k in ("groups", "realm_access", "resource_access", "roles")},
+    }
+
+
 def _get_sso_service(db: Session):
     """Factory wrapper so tests can patch SSOService construction.
 
@@ -1858,7 +1906,10 @@ async def build_external_identity(provider: SSOProvider, verified_claims: dict, 
     from mcpgateway.auth import resolve_session_teams  # pylint: disable=import-outside-toplevel
 
     svc = _get_sso_service(db)
-    user_info = svc._normalize_user_info(provider, verified_claims)  # pylint: disable=protected-access
+    if _is_clientless_token(verified_claims):
+        user_info = _synthetic_service_principal_user_info(provider, verified_claims)
+    else:
+        user_info = svc._normalize_user_info(provider, verified_claims)  # pylint: disable=protected-access
 
     # Provisioning side-effect only (creates/links user, role-sync, enforces
     # trusted_domains + email-verified). Return value is a JWT token -- discard it.

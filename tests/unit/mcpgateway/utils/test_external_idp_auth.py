@@ -415,3 +415,57 @@ async def test_build_external_identity_missing_db_user_returns_none(monkeypatch)
     db = MagicMock()
     payload = await vc.build_external_identity(prov, {"iss": "https://kc/realms/m"}, "raw", db)
     assert payload is None
+
+
+@pytest.mark.asyncio
+async def test_service_principal_synthetic_identity(monkeypatch):
+    """H1: a clientless token (no email) provisions a synthetic service-principal."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    prov = _fake_provider("https://kc/realms/m")
+    prov.id = "keycloak"
+    # client_credentials token: sub == azp, no email/email_verified
+    claims = {"iss": "https://kc/realms/m", "sub": "svc-client-123", "azp": "svc-client-123"}
+
+    seen = {}
+
+    def fake_synth(provider, claims_in):
+        seen["called"] = True
+        return {
+            "email": "svc-svc-client-123@keycloak.service.local",
+            "email_verified": True,
+            "full_name": "service:svc-client-123",
+            "provider": provider.id,
+            "is_admin": False,
+        }
+
+    monkeypatch.setattr(vc, "_synthetic_service_principal_user_info", fake_synth)
+
+    svc = MagicMock()
+
+    async def fake_auth(user_info):
+        # human-path gate is satisfied by the synthetic verified email
+        assert user_info["email"].endswith(".service.local")
+        return "token"
+
+    svc.authenticate_or_create_user = fake_auth
+    du = MagicMock()
+    du.is_admin = False
+
+    async def fake_get_user(email):
+        return du
+
+    svc.auth_service.get_user_by_email = fake_get_user
+    monkeypatch.setattr(vc, "_get_sso_service", lambda db: svc)
+
+    async def fake_resolve(payload, email, user_info, **kw):
+        return []
+
+    monkeypatch.setattr("mcpgateway.auth.resolve_session_teams", fake_resolve)
+
+    db = MagicMock()
+    payload = await vc.build_external_identity(prov, claims, "raw", db)
+    assert seen.get("called") is True
+    assert payload["sub"] == "svc-svc-client-123@keycloak.service.local"
+    assert payload["token_use"] == "session"
