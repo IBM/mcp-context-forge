@@ -1025,6 +1025,11 @@ def test_g5_resolver_excludes_disabled_and_opted_out():
     assert sso_service.resolve_trusted_provider_by_issuer("https://kc/realms/m", db) is None
     filter_call = db.query.return_value.filter.call_args
     assert filter_call is not None, "resolver must call .filter() with is_enabled AND trusted_for_api_auth"
+    predicates = filter_call[0]
+    assert len(predicates) == 2, "resolver must filter on exactly two predicates: is_enabled and trusted_for_api_auth"
+    predicate_strs = [str(p) for p in predicates]
+    assert any("is_enabled" in p for p in predicate_strs), "resolver must exclude is_enabled=false providers"
+    assert any("trusted_for_api_auth" in p for p in predicate_strs), "resolver must exclude trusted_for_api_auth=false providers"
 
 
 def test_g6_multi_provider_picks_matching_issuer():
