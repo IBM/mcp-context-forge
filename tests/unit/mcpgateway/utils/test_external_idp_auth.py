@@ -854,3 +854,252 @@ async def test_D3_emits_provider_counter(monkeypatch):
         lambda: (_ for _ in ()).throw(RuntimeError("obs down")),
     )
     vc._record_external_auth_metric("success", "kc")  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_deny_flag_off(monkeypatch):
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    monkeypatch.setattr(vc.settings, "sso_api_token_auth_enabled", False)
+    # Third-Party
+    import jwt as pyjwt
+
+    tok = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "agent"}, "k", algorithm="HS256")
+    assert await vc._maybe_verify_external(tok, request=None) is None
+
+
+@pytest.mark.asyncio
+async def test_deny_untrusted_issuer(monkeypatch):
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    monkeypatch.setattr(vc, "get_redis_client", _async_none)
+    await vc.invalidate_external_identity_cache()
+    monkeypatch.setattr(vc.settings, "sso_api_token_auth_enabled", True)
+    monkeypatch.setattr(vc.settings, "jwt_issuer", "mcpgateway")
+    monkeypatch.setattr(vc, "_has_trusted_providers", lambda db: True)
+
+    async def fake_external(tok, db):
+        return (None, None)  # resolver found no trusted provider
+
+    build_calls = {"n": 0}
+
+    async def fake_build(provider, claims, token, db):
+        build_calls["n"] += 1
+        return {"sub": "should-not-be-reached", "token_use": "session"}
+
+    monkeypatch.setattr(vc, "verify_external_idp_token", fake_external)
+    monkeypatch.setattr(vc, "build_external_identity", fake_build)
+    # Third-Party
+    import jwt as pyjwt
+
+    tok = pyjwt.encode({"iss": "https://evil/realms/m", "sub": "x"}, "k", algorithm="HS256")
+    assert await vc._maybe_verify_external(tok, request=None) is None
+    assert build_calls["n"] == 0  # claims is None -> must short-circuit before provisioning
+
+
+@pytest.mark.asyncio
+async def test_deny_unprovisioned_user(monkeypatch):
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    monkeypatch.setattr(vc, "get_redis_client", _async_none)
+    await vc.invalidate_external_identity_cache()
+    monkeypatch.setattr(vc.settings, "sso_api_token_auth_enabled", True)
+    monkeypatch.setattr(vc.settings, "jwt_issuer", "mcpgateway")
+    monkeypatch.setattr(vc, "_has_trusted_providers", lambda db: True)
+    prov = _fake_provider("https://kc/realms/m")
+
+    async def fake_external(tok, db):
+        return ({"iss": "https://kc/realms/m", "sub": "ghost"}, prov)
+
+    async def fake_build(provider, claims, token, db):
+        return None  # auto_create disabled, unknown user
+
+    monkeypatch.setattr(vc, "verify_external_idp_token", fake_external)
+    monkeypatch.setattr(vc, "build_external_identity", fake_build)
+    # Third-Party
+    import jwt as pyjwt
+
+    tok = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "ghost"}, "k", algorithm="HS256")
+    assert await vc._maybe_verify_external(tok, request=None) is None
+
+
+@pytest.mark.asyncio
+async def test_deny_id_token_rejected(monkeypatch):
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    prov = _fake_provider("https://kc/realms/m")
+    monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: prov)
+
+    # verify_oauth_access_token rejects nonce/at_hash -> returns None
+    async def fake_oauth(tok, authorization_servers, *, expected_audience=None):
+        return None
+
+    monkeypatch.setattr(vc, "verify_oauth_access_token", fake_oauth)
+    # Third-Party
+    import jwt as pyjwt
+
+    tok = pyjwt.encode({"iss": "https://kc/realms/m", "nonce": "abc"}, "k", algorithm="HS256")
+    db = MagicMock()
+    assert await vc.verify_external_idp_token(tok, db) == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_c1_routing_guard_token_use_is_session(monkeypatch):
+    """C1: synthesized payload MUST be token_use='session' so it routes via the
+    DB-authority path, never normalize_token_teams (claim authority)."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    prov = _fake_provider("https://kc/realms/m")
+    prov.id = "kc"
+    svc = MagicMock()
+    svc._normalize_user_info.return_value = {"email": "u@corp.com", "is_admin": False}
+
+    async def fake_auth(ui):
+        return "tok"
+
+    svc.authenticate_or_create_user = fake_auth
+    du = MagicMock()
+    du.is_admin = False
+
+    async def fake_get_user(e):
+        return du
+
+    svc.auth_service.get_user_by_email = fake_get_user
+    monkeypatch.setattr(vc, "_get_sso_service", lambda db: svc)
+
+    async def fake_resolve(p, e, ui, **kw):
+        return []
+
+    monkeypatch.setattr("mcpgateway.auth.resolve_session_teams", fake_resolve)
+    payload = await vc.build_external_identity(prov, {"iss": "https://kc/realms/m", "email": "u@corp.com"}, "raw", MagicMock())
+    assert payload["token_use"] == "session"
+    assert payload["token_use"] != "external_idp"
+
+
+@pytest.mark.asyncio
+async def test_c2_escalation_guard_claim_admin_db_nonadmin(monkeypatch):
+    """C2: claims map to admin, but DB user is non-admin -> payload.is_admin False."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    prov = _fake_provider("https://kc/realms/m")
+    prov.id = "kc"
+    svc = MagicMock()
+    svc._normalize_user_info.return_value = {"email": "u@corp.com", "is_admin": True}  # claim says admin
+
+    async def fake_auth(ui):
+        return "tok"
+
+    svc.authenticate_or_create_user = fake_auth
+    du = MagicMock()
+    du.is_admin = False  # DB says NOT admin
+
+    async def fake_get_user(e):
+        return du
+
+    svc.auth_service.get_user_by_email = fake_get_user
+    monkeypatch.setattr(vc, "_get_sso_service", lambda db: svc)
+
+    async def fake_resolve(p, e, ui, **kw):
+        return ["t1"]
+
+    monkeypatch.setattr("mcpgateway.auth.resolve_session_teams", fake_resolve)
+    payload = await vc.build_external_identity(prov, {"iss": "https://kc/realms/m", "email": "u@corp.com"}, "raw", MagicMock())
+    assert payload["is_admin"] is False
+    assert payload["teams"] is not None  # not admin bypass
+
+
+def test_g5_resolver_excludes_disabled_and_opted_out():
+    """G5: resolver must exclude is_enabled=false and trusted_for_api_auth=false."""
+    # First-Party
+    from mcpgateway.services import sso_service
+
+    sso_service.invalidate_trusted_provider_cache()  # P1: avoid stale cache from prior tests
+    db = MagicMock()
+    db.query.return_value.filter.return_value.all.return_value = []  # filtered out by query
+    assert sso_service.resolve_trusted_provider_by_issuer("https://kc/realms/m", db) is None
+    filter_call = db.query.return_value.filter.call_args
+    assert filter_call is not None, "resolver must call .filter() with is_enabled AND trusted_for_api_auth"
+
+
+def test_g6_multi_provider_picks_matching_issuer():
+    """G6: with two trusted providers, the one whose issuer matches is returned."""
+    # First-Party
+    from mcpgateway.services import sso_service
+
+    sso_service.invalidate_trusted_provider_cache()  # P1
+    a = _fake_provider("https://idp-a.example.com")
+    a.id = "a"
+    b = _fake_provider("https://idp-b.example.com")
+    b.id = "b"
+    db = MagicMock()
+    db.query.return_value.filter.return_value.all.return_value = [a, b]
+    db.query.return_value.filter.return_value.first.return_value = b
+    got = sso_service.resolve_trusted_provider_by_issuer("https://idp-b.example.com/", db)
+    assert got is b  # not a
+
+
+@pytest.mark.asyncio
+async def test_g7_owned_session_commits(monkeypatch):
+    """G7/M1: when build_external_identity owns the session, provisioning is committed."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    prov = _fake_provider("https://kc/realms/m")
+    prov.id = "kc"
+    svc = MagicMock()
+    svc._normalize_user_info.return_value = {"email": "u@corp.com", "is_admin": False}
+
+    async def fake_auth(ui):
+        return "tok"
+
+    svc.authenticate_or_create_user = fake_auth
+    du = MagicMock()
+    du.is_admin = False
+
+    async def fake_get_user(e):
+        return du
+
+    svc.auth_service.get_user_by_email = fake_get_user
+    monkeypatch.setattr(vc, "_get_sso_service", lambda db: svc)
+
+    async def fake_resolve(p, e, ui, **kw):
+        return []
+
+    monkeypatch.setattr("mcpgateway.auth.resolve_session_teams", fake_resolve)
+    db = MagicMock()
+    db.info = {"external_owned": True}
+    await vc.build_external_identity(prov, {"iss": "https://kc/realms/m", "email": "u@corp.com"}, "raw", db)
+    db.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_g3_human_token_not_clientless(monkeypatch):
+    """G3 (security): a token WITH email is never treated as a service principal,
+    even if it carries azp / typ:at+jwt."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    assert vc._is_clientless_token({"email": "real@corp.com", "azp": "app", "sub": "app"}) is False
+    assert vc._is_clientless_token({"email": "real@corp.com", "typ": "at+jwt"}) is False
+    # genuine service token (no email, sub==azp) IS clientless
+    assert vc._is_clientless_token({"sub": "app", "azp": "app"}) is True
+
+
+@pytest.mark.asyncio
+async def test_g8_malformed_token_falls_through(monkeypatch):
+    """G8: a non-JWT bearer string must not crash; external path returns None."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    monkeypatch.setattr(vc, "get_redis_client", _async_none)
+    await vc.invalidate_external_identity_cache()
+    monkeypatch.setattr(vc.settings, "sso_api_token_auth_enabled", True)
+    monkeypatch.setattr(vc.settings, "jwt_issuer", "mcpgateway")
+    monkeypatch.setattr(vc, "_has_trusted_providers", lambda db: True)
+    assert await vc._maybe_verify_external("not-a-jwt", request=None) is None
