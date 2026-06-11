@@ -911,9 +911,9 @@ describe("useMCPServerForm", () => {
               grant_type: "password",
               scopes: "read write",
               username: "test-user",
-              password: "test-password",
+              password: "test-password", // pragma: allowlist secret
               client_id: "test-client",
-              client_secret: "test-secret",
+              client_secret: "test-secret", // pragma: allowlist secret
               token_url: "http://token",
               issuer: "http://issuer",
               redirect_uri: "http://redirect",
