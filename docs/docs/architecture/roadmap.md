@@ -136,7 +136,7 @@
     - ⏳ [**#2282**](https://github.com/IBM/mcp-context-forge/issues/2282) - [EPIC][WEBSOCKET]: Real-time updates via WebSocket
     - ⏳ [**#2283**](https://github.com/IBM/mcp-context-forge/issues/2283) - [EPIC][MOBILE]: Mobile-first responsive redesign
     - ⏳ [**#2284**](https://github.com/IBM/mcp-context-forge/issues/2284) - [EPIC][UI]: Customizable dashboard builder
-    - ⏳ [**#2285**](https://github.com/IBM/mcp-context-forge/issues/2285) - [EPIC][PLUGIN]: Plugin UI extension framework
+    - ⏳ [**#2285**](https://github.com/IBM/mcp-context-forge/issues/2285) - [EPIC][PLUGIN]: Plugin UI management
     - ⏳ [**#2289**](https://github.com/IBM/mcp-context-forge/issues/2289) - [EPIC][DESKTOP]: ContextForge Desktop (React + Electron)
     - ⏳ [**#2290**](https://github.com/IBM/mcp-context-forge/issues/2290) - [EPIC][PLUGIN]: Plugin marketplace UI
     - ⏳ [**#2291**](https://github.com/IBM/mcp-context-forge/issues/2291) - [EPIC][AI]: AI-assisted operations (natural language interface)
@@ -267,7 +267,7 @@
     - ⏳ [**#2286**](https://github.com/IBM/mcp-context-forge/issues/2286) - [EPIC][UI]: Visual polish and UI consistency
     - ⏳ [**#2300**](https://github.com/IBM/mcp-context-forge/issues/2300) - [EPIC][PERFORMANCE]: UI caching strategy and CDN
     - ⏳ [**#2312**](https://github.com/IBM/mcp-context-forge/issues/2312) - [EPIC][UI]: Notification bell and real-time alerts UI
-    - ⏳ [**#2527**](https://github.com/IBM/mcp-context-forge/issues/2527) - [EPIC][MCP-APPS]: MCP Apps Support for ContextForge. Initial extension substrate documented in [MCP Apps Extension](mcp-apps.md).
+    - ⏳ [**#2527**](https://github.com/IBM/mcp-context-forge/issues/2527) - [EPIC][MCP-APPS]: MCP Apps Support for ContextForge. Initial implementation documented in [MCP Apps](mcp-apps.md).
     - ⏳ [**#2603**](https://github.com/IBM/mcp-context-forge/issues/2603) - [EPIC][SECURITY]: ML-Based Behavioral Fingerprinting for Issue #257
     - ⏳ [**#2823**](https://github.com/IBM/mcp-context-forge/issues/2823) - [EPIC][WEBMCP]: WebMCP Integration — Browser-Native Tool Registration and Gateway Bridge
 
@@ -664,7 +664,6 @@
     - ⏳ [**#2551**](https://github.com/IBM/mcp-context-forge/issues/2551) - [FEATURE][COMPLIANCE]: Hosting Location Metadata for MCP Servers and A2A Agents
 
 ---
->>>>>>> 85243d3ef (docs: document MCP Apps extension substrate)
 
 ## Release 1.0.0-RC3
 

@@ -178,7 +178,7 @@ For detailed guidance on embedding and section customization, see [Admin UI Cust
 | `MCPGATEWAY_BULK_IMPORT_MAX_TOOLS` | Maximum number of tools per bulk import request | `200` | int |
 | `MCPGATEWAY_BULK_IMPORT_RATE_LIMIT` | Rate limit for bulk import endpoint (requests per minute) | `10` | int |
 | `MCPGATEWAY_UI_TOOL_TEST_TIMEOUT` | Tool test timeout in milliseconds for the admin UI | `60000` | int |
-| `MCPGATEWAY_MCP_APPS_ENABLED` | Enable MCP Apps extension capability and AppBridge routes | `false` | bool |
+| `MCPGATEWAY_MCP_APPS_ENABLED` | Enable MCP Apps capability advertising and AppBridge routes | `false` | bool |
 | `MCPGATEWAY_MCP_APPS_SESSION_TTL` | AppBridge session lifetime in seconds | `900` | int, 1-86400 |
 
 !!! note "Per-Request UI Hiding"
@@ -200,7 +200,7 @@ For detailed guidance on embedding and section customization, see [Admin UI Cust
 !!! note "MCP Apps"
     MCP Apps support is disabled by default. When enabled, `ui://` resources must
     be registered as `text/html` with explicit CSP and sandbox metadata. See
-    [MCP Apps Extension](../architecture/mcp-apps.md) for the security model and
+    [MCP Apps](../architecture/mcp-apps.md) for the security model and
     AppBridge flow.
 
 ### A2A (Agent-to-Agent) Features

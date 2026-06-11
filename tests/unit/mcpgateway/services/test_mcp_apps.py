@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Tests for the minimal MCP Apps extension helpers."""
+"""Tests for the minimal MCP Apps helpers."""
 
 # Standard
 from types import SimpleNamespace
@@ -12,7 +12,7 @@ import pytest
 from mcpgateway.common.models import ServerCapabilities
 from mcpgateway.services.mcp_apps import (
     apply_resource_meta,
-    build_extension_capabilities,
+    build_mcp_apps_capabilities,
     filter_model_visible_tools,
     is_app_visible_tool,
     mcp_app_session_service,
@@ -32,15 +32,15 @@ def test_server_capabilities_accept_extensions() -> None:
     assert caps.model_dump(exclude_none=True)["extensions"][MCP_UI_EXTENSION]["version"] == "test"
 
 
-def test_build_extension_capabilities_respects_flag_and_authorization(monkeypatch) -> None:
+def test_build_mcp_apps_capabilities_respects_flag_and_authorization(monkeypatch) -> None:
     """MCP Apps capability is advertised only when enabled and authorized."""
     monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
 
-    assert MCP_UI_EXTENSION in build_extension_capabilities(authorized=True)
-    assert build_extension_capabilities(authorized=False) == {}
+    assert MCP_UI_EXTENSION in build_mcp_apps_capabilities(authorized=True)
+    assert build_mcp_apps_capabilities(authorized=False) == {}
 
     monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", False)
-    assert build_extension_capabilities(authorized=True) == {}
+    assert build_mcp_apps_capabilities(authorized=True) == {}
 
 
 def test_validate_extension_metadata_rejects_unsafe_csp() -> None:
@@ -81,7 +81,7 @@ def test_apply_resource_meta_projects_ui_policy(monkeypatch) -> None:
 
 
 def test_merge_mcp_protocol_meta_projects_ui_to_extension_metadata() -> None:
-    """Upstream MCP _meta.ui should be stored as ContextForge extension metadata."""
+    """Upstream MCP _meta.ui should be stored as ContextForge MCP Apps metadata."""
     payload = {"_meta": {"ui": {"resourceUri": "ui://widgets/example", "visibility": ["model"]}}}
 
     merge_mcp_protocol_meta(payload)
@@ -91,7 +91,7 @@ def test_merge_mcp_protocol_meta_projects_ui_to_extension_metadata() -> None:
 
 
 def test_merge_mcp_protocol_meta_ignores_missing_ui_and_merges_existing_metadata() -> None:
-    """Protocol metadata merge should ignore non-UI metadata and preserve extension data."""
+    """Protocol metadata merge should ignore non-UI metadata and preserve MCP Apps data."""
     payload = {"_meta": {"ui": {}}}
     merge_mcp_protocol_meta(payload)
     assert "extensionMetadata" not in payload
@@ -127,7 +127,7 @@ def test_validate_extension_metadata_rejects_malformed_mcp_apps_values(metadata,
 
 
 def test_validate_extension_metadata_accepts_absent_ui_block() -> None:
-    """Unknown extension metadata can be stored when known MCP Apps policy is absent."""
+    """Unknown metadata can be stored when known MCP Apps policy is absent."""
     validate_extension_metadata({"io.example/custom": {"ok": True}})
 
 

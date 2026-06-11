@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Minimal MCP Apps extension helpers.
+"""Minimal MCP Apps helpers.
 
-This module keeps MCP Apps metadata handling behind a small extension-shaped
-surface so future extensions can reuse the same storage and dispatch pattern.
+This module centralizes MCP Apps metadata handling, capability advertising, and
+AppBridge session management.
 """
 
 # Standard
@@ -54,7 +54,7 @@ _BLOCKED_SOURCE_PREFIXES = ("javascript:", "file:", "data:")
 
 
 class MCPAppsValidationError(ValueError):
-    """Raised when MCP Apps extension metadata is unsafe or malformed."""
+    """Raised when MCP Apps metadata is unsafe or malformed."""
 
 
 def mcp_apps_enabled() -> bool:
@@ -63,7 +63,7 @@ def mcp_apps_enabled() -> bool:
 
 
 def mcp_apps_capability() -> Dict[str, Any]:
-    """Return the MCP Apps extension capability payload."""
+    """Return the MCP Apps capability payload."""
     return {
         "version": MCP_UI_DEFAULT_VERSION,
         "resources": {"schemes": ["ui://"]},
@@ -71,25 +71,25 @@ def mcp_apps_capability() -> Dict[str, Any]:
     }
 
 
-def build_extension_capabilities(*, authorized: bool) -> Dict[str, Any]:
-    """Build initialize-time extension capabilities for the current caller."""
+def build_mcp_apps_capabilities(*, authorized: bool) -> Dict[str, Any]:
+    """Build initialize-time MCP Apps capabilities for the current caller."""
     if not authorized or not mcp_apps_enabled():
         return {}
     return {MCP_UI_EXTENSION: mcp_apps_capability()}
 
 
 def extension_metadata_value(value: Any) -> Dict[str, Any]:
-    """Normalize nullable extension metadata to a dictionary."""
+    """Normalize nullable MCP Apps metadata to a dictionary."""
     return value if isinstance(value, dict) else {}
 
 
 def optional_extension_metadata(value: Any) -> Optional[Dict[str, Any]]:
-    """Return extension metadata when present, otherwise treat it as absent."""
+    """Return MCP Apps metadata when present, otherwise treat it as absent."""
     return value if isinstance(value, dict) else None
 
 
 def mcp_ui_metadata(value: Any) -> Dict[str, Any]:
-    """Return the MCP UI extension metadata block."""
+    """Return the MCP UI metadata block."""
     metadata = extension_metadata_value(value)
     ui = metadata.get(MCP_UI_EXTENSION)
     return ui if isinstance(ui, dict) else {}
@@ -173,7 +173,7 @@ def _validate_permissions(permissions: Any) -> None:
 
 
 def validate_extension_metadata(value: Optional[Dict[str, Any]]) -> None:
-    """Validate generic extension metadata and known MCP Apps metadata."""
+    """Validate stored MCP Apps metadata."""
     if value is None:
         return
     if not isinstance(value, dict):
@@ -205,7 +205,7 @@ def validate_ui_resource(resource_uri: str, mime_type: Optional[str], extension_
         raise MCPAppsValidationError("ui:// resources must use text/html MIME type")
     ui = mcp_ui_metadata(extension_metadata)
     if not ui:
-        raise MCPAppsValidationError("ui:// resources require MCP Apps extension metadata")
+        raise MCPAppsValidationError("ui:// resources require MCP Apps metadata")
     csp = ui.get("csp")
     if not isinstance(csp, dict) or not csp:
         raise MCPAppsValidationError("ui:// resources require a non-empty MCP Apps CSP policy")
@@ -241,7 +241,7 @@ def filter_model_visible_tools(tools: Iterable[Any]) -> List[Any]:
 
 
 def apply_tool_meta(payload: Dict[str, Any], extension_metadata: Optional[Dict[str, Any]]) -> None:
-    """Project MCP Apps extension metadata into MCP tool descriptor _meta."""
+    """Project MCP Apps metadata into MCP tool descriptor _meta."""
     if not mcp_apps_enabled():
         return
     ui = mcp_ui_metadata(extension_metadata)

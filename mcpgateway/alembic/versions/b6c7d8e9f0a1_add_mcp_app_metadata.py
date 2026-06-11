@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Add MCP App extension metadata.
+"""Add MCP App metadata.
 
 Revision ID: b6c7d8e9f0a1
 Revises: 0a089912b5f0
@@ -28,7 +28,7 @@ def _column_names(bind, table_name: str) -> set[str]:
 
 
 def upgrade() -> None:
-    """Add generic extension metadata and AppBridge sessions."""
+    """Add MCP Apps metadata and AppBridge sessions."""
     bind = op.get_bind()
     tables = _table_names(bind)
 
@@ -57,7 +57,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Remove MCP App extension metadata."""
+    """Remove MCP App metadata."""
     bind = op.get_bind()
     tables = _table_names(bind)
 
