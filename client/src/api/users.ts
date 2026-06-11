@@ -50,10 +50,7 @@ export const usersApi = {
    */
   update: (email: string, data: UpdateUserRequest): Promise<User> => {
     const validEmail = validateUserEmail(email);
-    return api.patch<User>(
-      `/auth/email/admin/users/${encodeURIComponent(validEmail)}`,
-      data,
-    );
+    return api.patch<User>(`/auth/email/admin/users/${encodeURIComponent(validEmail)}`, data);
   },
 
   /**

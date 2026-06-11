@@ -406,4 +406,140 @@ describe("UserForm", () => {
       expect(advancedButton).toHaveAttribute("aria-expanded", "true");
     });
   });
+
+  describe("Edit Mode", () => {
+    const mockUser = {
+      email: "test@example.com",
+      full_name: "Test User",
+      is_admin: false,
+      is_active: true,
+      auth_provider: "email" as const,
+      created_at: "2026-01-01T00:00:00Z",
+      email_verified: true,
+      password_change_required: false,
+      failed_login_attempts: 0,
+      is_locked: false,
+    };
+
+    const editModeFormState = {
+      ...defaultFormState,
+      email: mockUser.email,
+      fullName: mockUser.full_name,
+      isAdmin: mockUser.is_admin,
+      isActive: mockUser.is_active,
+      passwordChangeRequired: mockUser.password_change_required,
+      isEditMode: true,
+    };
+
+    it("should display email as read-only in edit mode", () => {
+      vi.mocked(useUserFormModule.useUserForm).mockReturnValue(editModeFormState);
+
+      render(<UserForm isOpen={true} onToggle={vi.fn()} user={mockUser} />, { wrapper });
+
+      expect(screen.getByText("test@example.com")).toBeInTheDocument();
+      expect(screen.queryByRole("textbox", { name: /email/i })).not.toBeInTheDocument();
+    });
+
+    it("should display edit mode title and description", () => {
+      vi.mocked(useUserFormModule.useUserForm).mockReturnValue(editModeFormState);
+
+      render(<UserForm isOpen={true} onToggle={vi.fn()} user={mockUser} />, { wrapper });
+
+      expect(screen.getByText("Edit User")).toBeInTheDocument();
+      expect(screen.getByText(/Update account details for test@example.com/)).toBeInTheDocument();
+    });
+
+    it("should make password optional in edit mode", () => {
+      vi.mocked(useUserFormModule.useUserForm).mockReturnValue(editModeFormState);
+
+      render(<UserForm isOpen={true} onToggle={vi.fn()} user={mockUser} />, { wrapper });
+
+      const passwordLabel = screen.getByText(/^Password/).closest("label");
+      expect(passwordLabel).not.toHaveTextContent("(required)");
+    });
+
+    it("should show password hint in edit mode", () => {
+      vi.mocked(useUserFormModule.useUserForm).mockReturnValue(editModeFormState);
+
+      render(<UserForm isOpen={true} onToggle={vi.fn()} user={mockUser} />, { wrapper });
+
+      expect(screen.getByText("Leave blank to keep the current password")).toBeInTheDocument();
+    });
+
+    it("should hide confirm password when password is blank", () => {
+      vi.mocked(useUserFormModule.useUserForm).mockReturnValue({
+        ...editModeFormState,
+        password: "", // pragma: allowlist secret
+      });
+
+      render(<UserForm isOpen={true} onToggle={vi.fn()} user={mockUser} />, { wrapper });
+
+      expect(screen.queryByLabelText(/Confirm Password/)).not.toBeInTheDocument();
+    });
+
+    it("should show confirm password when password is entered", () => {
+      vi.mocked(useUserFormModule.useUserForm).mockReturnValue({
+        ...editModeFormState,
+        password: "newpassword123", // pragma: allowlist secret
+      });
+
+      render(<UserForm isOpen={true} onToggle={vi.fn()} user={mockUser} />, { wrapper });
+
+      expect(screen.getByLabelText(/Confirm Password/)).toBeInTheDocument();
+    });
+
+    it("should show Save Changes button in edit mode", () => {
+      vi.mocked(useUserFormModule.useUserForm).mockReturnValue(editModeFormState);
+
+      render(<UserForm isOpen={true} onToggle={vi.fn()} user={mockUser} />, { wrapper });
+
+      expect(screen.getByText("Save Changes")).toBeInTheDocument();
+      expect(screen.queryByText("Create User")).not.toBeInTheDocument();
+    });
+
+    it("should show Saving... when submitting in edit mode", () => {
+      vi.mocked(useUserFormModule.useUserForm).mockReturnValue({
+        ...editModeFormState,
+        isSubmitting: true,
+      });
+
+      render(<UserForm isOpen={true} onToggle={vi.fn()} user={mockUser} />, { wrapper });
+
+      expect(screen.getByText("Saving...")).toBeInTheDocument();
+    });
+
+    it("should call handleSubmit with correct callbacks in edit mode", async () => {
+      const handleSubmit = vi.fn(async (event, onSuccess) => {
+        event.preventDefault();
+        onSuccess?.(mockUser);
+      });
+      vi.mocked(useUserFormModule.useUserForm).mockReturnValue({
+        ...editModeFormState,
+        handleSubmit,
+      });
+
+      const onSuccess = vi.fn();
+      render(<UserForm isOpen={true} onToggle={vi.fn()} user={mockUser} onSuccess={onSuccess} />, {
+        wrapper,
+      });
+
+      const submitButton = screen.getByText("Save Changes");
+      fireEvent.click(submitButton);
+
+      await waitFor(() => {
+        expect(handleSubmit).toHaveBeenCalled();
+        expect(onSuccess).toHaveBeenCalledWith(mockUser);
+      });
+    });
+
+    it("should show advanced settings open by default in edit mode", () => {
+      vi.mocked(useUserFormModule.useUserForm).mockReturnValue(editModeFormState);
+
+      render(<UserForm isOpen={true} onToggle={vi.fn()} user={mockUser} />, { wrapper });
+
+      // Advanced settings should be visible without clicking the button
+      expect(screen.getByLabelText(/Administrator/)).toBeInTheDocument();
+      expect(screen.getByLabelText(/Active/)).toBeInTheDocument();
+    });
+  });
 });

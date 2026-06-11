@@ -5,7 +5,6 @@ import { useQuery } from "@/hooks/useQuery";
 import { sanitizeString, sanitizePassword } from "@/lib/sanitize";
 import { VALIDATION } from "@/lib/constants";
 import { parseApiError } from "@/lib/errorUtils";
-import { usersApi } from "@/api/users";
 import type { User, CreateUserRequest, UpdateUserRequest } from "@/types/user";
 
 // Fields shared by both create and edit schemas
@@ -162,7 +161,6 @@ export function useUserForm(options?: UseUserFormOptions): UseUserFormReturn {
     initialUser?.password_change_required ?? initialState.passwordChangeRequired,
   );
   const [errors, setErrors] = useState<FormErrors>({});
-  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Create localized schemas
   const userFormSchema = useMemo(() => createUserFormSchema(intl), [intl]);
@@ -173,6 +171,15 @@ export function useUserForm(options?: UseUserFormOptions): UseUserFormReturn {
     "/auth/email/admin/users",
     {
       method: "POST",
+      enabled: false, // Don't execute immediately
+    },
+  );
+
+  // Use useQuery for PATCH request to update user (edit mode only)
+  const { execute: updateUser, isLoading: isUpdating } = useQuery<User, UpdateUserRequest>(
+    initialUser ? `/auth/email/admin/users/${encodeURIComponent(initialUser.email)}` : "",
+    {
+      method: "PATCH",
       enabled: false, // Don't execute immediately
     },
   );
@@ -200,14 +207,25 @@ export function useUserForm(options?: UseUserFormOptions): UseUserFormReturn {
     };
   }, [email, password, fullName, isAdmin, isActive, passwordChangeRequired, isEditMode]);
 
-  // Single source for schema parsing — used by validateForm and isValid
-  const parseCurrentSchema = useCallback((): z.ZodError | null => {
+  // Cache validation result to avoid redundant parsing
+  const validationResult = useMemo((): z.ZodError | null => {
     const data = isEditMode
       ? { fullName, isAdmin, isActive, passwordChangeRequired, password, confirmPassword }
       : { email, password, confirmPassword, fullName, isAdmin, isActive, passwordChangeRequired };
     const result = isEditMode ? editFormSchema.safeParse(data) : userFormSchema.safeParse(data);
     return result.success ? null : result.error;
-  }, [email, password, confirmPassword, fullName, isAdmin, isActive, passwordChangeRequired, userFormSchema, editFormSchema, isEditMode]);
+  }, [
+    email,
+    password,
+    confirmPassword,
+    fullName,
+    isAdmin,
+    isActive,
+    passwordChangeRequired,
+    userFormSchema,
+    editFormSchema,
+    isEditMode,
+  ]);
 
   const validateField = useCallback(
     (field: keyof FormErrors, value: string | boolean) => {
@@ -235,23 +253,33 @@ export function useUserForm(options?: UseUserFormOptions): UseUserFormReturn {
         }
       }
     },
-    [email, password, confirmPassword, fullName, isAdmin, isActive, passwordChangeRequired, userFormSchema, editFormSchema, isEditMode],
+    [
+      email,
+      password,
+      confirmPassword,
+      fullName,
+      isAdmin,
+      isActive,
+      passwordChangeRequired,
+      userFormSchema,
+      editFormSchema,
+      isEditMode,
+    ],
   );
 
   const validateForm = useCallback((): boolean => {
-    const zodError = parseCurrentSchema();
-    if (!zodError) {
+    if (!validationResult) {
       setErrors({});
       return true;
     }
     const newErrors: FormErrors = {};
-    zodError.issues.forEach((issue) => {
+    validationResult.issues.forEach((issue) => {
       const path = issue.path[0] as keyof FormErrors;
       newErrors[path] = issue.message;
     });
     setErrors(newErrors);
     return false;
-  }, [parseCurrentSchema]);
+  }, [validationResult]);
 
   const resetForm = useCallback(() => {
     setEmail(initialState.email);
@@ -277,26 +305,27 @@ export function useUserForm(options?: UseUserFormOptions): UseUserFormReturn {
       if (validateForm()) {
         const formData = getFormData();
 
-        const reportError = (error: unknown, messageId: string, data: CreateUserRequest | UpdateUserRequest) => {
+        const reportError = (
+          error: unknown,
+          messageId: string,
+          data: CreateUserRequest | UpdateUserRequest,
+        ) => {
           onError?.(data);
           setErrors({ submit: parseApiError(error, intl.formatMessage({ id: messageId })) });
         };
 
         if (isEditMode && initialUser) {
-          setIsSubmitting(true);
           const updateData = formData as UpdateUserRequest;
           try {
             if (onOptimisticUpdate) {
               onOptimisticUpdate(initialUser.email, updateData);
             }
-            const updated = await usersApi.update(initialUser.email, updateData);
+            const updated = await updateUser(updateData);
             if (onSuccess) {
               onSuccess(updated);
             }
           } catch (error) {
             reportError(error, "users.form.error.updateFailed", updateData);
-          } finally {
-            setIsSubmitting(false);
           }
         } else {
           const createData = formData as CreateUserRequest;
@@ -315,10 +344,10 @@ export function useUserForm(options?: UseUserFormOptions): UseUserFormReturn {
         }
       }
     },
-    [validateForm, getFormData, createUser, resetForm, intl, isEditMode, initialUser],
+    [validateForm, getFormData, createUser, updateUser, resetForm, intl, isEditMode, initialUser],
   );
 
-  const isValid = useMemo(() => parseCurrentSchema() === null, [parseCurrentSchema]);
+  const isValid = useMemo(() => validationResult === null, [validationResult]);
 
   return {
     // State
@@ -331,7 +360,7 @@ export function useUserForm(options?: UseUserFormOptions): UseUserFormReturn {
     passwordChangeRequired,
     errors,
     isValid,
-    isSubmitting: isEditMode ? isSubmitting : isCreating,
+    isSubmitting: isEditMode ? isUpdating : isCreating,
     isEditMode,
 
     // Setters

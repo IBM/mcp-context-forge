@@ -65,8 +65,15 @@ interface CheckboxFieldProps {
 function CheckboxField({ id, checked, onCheckedChange, label }: CheckboxFieldProps) {
   return (
     <div className="flex items-center space-x-2">
-      <Checkbox id={id} checked={checked} onCheckedChange={(value) => onCheckedChange(value === true)} />
-      <label htmlFor={id} className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+      <Checkbox
+        id={id}
+        checked={checked}
+        onCheckedChange={(value) => onCheckedChange(value === true)}
+      />
+      <label
+        htmlFor={id}
+        className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+      >
         {label}
       </label>
     </div>
@@ -142,11 +149,8 @@ export function UserForm({
             </div>
 
             <p className="text-sm leading-6 text-neutral-600 dark:text-neutral-400">
-              {isEditMode
-                ? intl.formatMessage(
-                    { id: "users.edit.dialog.description" },
-                    { email: user!.email },
-                  )
+              {isEditMode && user
+                ? intl.formatMessage({ id: "users.edit.dialog.description" }, { email: user.email })
                 : intl.formatMessage({ id: "users.form.description" })}
             </p>
           </div>
@@ -159,7 +163,7 @@ export function UserForm({
                     {intl.formatMessage({ id: "users.form.email" })}
                   </p>
                   <p className="rounded-md border border-neutral-200 bg-neutral-50 px-4 py-2 text-sm text-neutral-600 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400">
-                    {user!.email}
+                    {user?.email}
                   </p>
                 </>
               ) : (
@@ -215,9 +219,7 @@ export function UserForm({
               })}
               error={errors.password}
               hint={
-                isEditMode
-                  ? intl.formatMessage({ id: "users.form.password.optional" })
-                  : undefined
+                isEditMode ? intl.formatMessage({ id: "users.form.password.optional" }) : undefined
               }
             />
 
@@ -308,9 +310,7 @@ export function UserForm({
                 >
                   {isSubmitting
                     ? intl.formatMessage({
-                        id: isEditMode
-                          ? "users.form.button.saving"
-                          : "users.form.button.creating",
+                        id: isEditMode ? "users.form.button.saving" : "users.form.button.creating",
                       })
                     : intl.formatMessage({
                         id: isEditMode ? "users.form.button.save" : "users.form.button.create",

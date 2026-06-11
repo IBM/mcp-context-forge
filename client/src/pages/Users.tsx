@@ -141,6 +141,7 @@ export function Users() {
     <main className="p-6">
       {isFormOpen ? (
         <UserForm
+          key={userToEdit?.email ?? "create"}
           isOpen={isFormOpen}
           onToggle={handleFormClose}
           user={userToEdit ?? undefined}
