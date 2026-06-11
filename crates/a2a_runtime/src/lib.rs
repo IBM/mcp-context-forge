@@ -3,6 +3,8 @@
 // Authors: Mihai Criveti
 
 //! Experimental Rust A2A runtime sidecar for ContextForge.
+//!
+//! Deprecated as of 2026-06-11; sunsets on 2026-07-07. Use the default Python A2A invocation path.
 
 pub mod auth;
 pub mod cache;
@@ -30,7 +32,7 @@ use std::{
     time::Duration,
 };
 use thiserror::Error;
-use tracing::info;
+use tracing::{info, warn};
 
 #[derive(Debug, Error)]
 pub enum RuntimeError {
@@ -54,6 +56,9 @@ fn build_http_client(config: &RuntimeConfig) -> Result<Client, reqwest::Error> {
 }
 
 pub async fn run(config: RuntimeConfig) -> Result<(), RuntimeError> {
+    warn!(
+        "The Rust A2A runtime sidecar is deprecated as of 2026-06-11 and will sunset on 2026-07-07. Use the default Python A2A invocation path. See https://ibm.github.io/mcp-context-forge/deprecations/."
+    );
     if config
         .auth_secret
         .as_deref()

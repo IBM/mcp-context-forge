@@ -82,6 +82,28 @@ class TestGetRustA2ARuntimeClient:
 
 class TestRustA2ARuntimeClient:
     @pytest.mark.asyncio
+    async def test_invoke_logs_deprecation_warning_once(self, sample_prepared, caplog, monkeypatch):
+        """Rust A2A runtime invocation logs the deprecation warning once per process."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"status_code": 200, "json": {"ok": True}, "text": ""}
+        mock_response.text = '{"status_code": 200}'
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+
+        monkeypatch.setattr("mcpgateway.services.rust_a2a_runtime._RUST_A2A_RUNTIME_DEPRECATION_LOGGED", False)
+        caplog.set_level("WARNING", logger="mcpgateway.services.rust_a2a_runtime")
+
+        client = RustA2ARuntimeClient()
+        with patch.object(client, "_get_runtime_client", return_value=mock_client):
+            await client.invoke(sample_prepared, timeout_seconds=10.0)
+            await client.invoke(sample_prepared, timeout_seconds=10.0)
+
+        messages = [record.getMessage() for record in caplog.records if record.name == "mcpgateway.services.rust_a2a_runtime"]
+        assert sum("The Rust A2A runtime sidecar is deprecated" in message for message in messages) == 1
+
+    @pytest.mark.asyncio
     async def test_invoke_success(self, sample_prepared):
         """Successful invoke returns parsed JSON dict."""
         mock_response = MagicMock()

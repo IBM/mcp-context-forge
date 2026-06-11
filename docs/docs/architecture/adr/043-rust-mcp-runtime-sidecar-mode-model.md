@@ -5,6 +5,11 @@
 - *Deciders:* Platform Team
 - *Supersedes:* ADR-038 (experimental Rust transport backend)
 
+!!! warning "Deprecated as of 2026-06-11; sunsets on 2026-07-07"
+    The Rust MCP runtime sidecar described in this ADR is deprecated. Keep this
+    ADR as historical context; prefer the default Python MCP transport for new
+    deployments. See [Deprecations](../../deprecations.md).
+
 ## Context
 
 ContextForge's original Rust transport spike began as a narrow experiment around

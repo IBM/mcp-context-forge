@@ -268,50 +268,50 @@ class Settings(BaseSettings):
     protocol_version: str = "2025-11-25"
     experimental_rust_mcp_runtime_enabled: bool = Field(
         default=False,
-        description="Proxy POST /mcp traffic through the experimental Rust MCP runtime sidecar.",
+        description="Deprecated. Proxy POST /mcp traffic through the experimental Rust MCP runtime sidecar.",
     )
     experimental_rust_mcp_runtime_url: str = Field(
         default="http://127.0.0.1:8787",
-        description="Base URL for the experimental Rust MCP runtime sidecar.",
+        description="Deprecated. Base URL for the experimental Rust MCP runtime sidecar.",
     )
     experimental_rust_mcp_runtime_uds: Optional[str] = Field(
         default=None,
-        description="Optional Unix domain socket path for the experimental Rust MCP runtime sidecar.",
+        description="Deprecated. Optional Unix domain socket path for the experimental Rust MCP runtime sidecar.",
     )
     experimental_rust_mcp_runtime_timeout_seconds: int = Field(
         default=30,
         ge=1,
         le=300,
-        description="Timeout in seconds for Python-to-Rust MCP runtime proxy requests.",
+        description="Deprecated. Timeout in seconds for Python-to-Rust MCP runtime proxy requests.",
     )
     experimental_rust_mcp_session_core_enabled: bool = Field(
         default=False,
-        description="Enable the experimental Rust-owned MCP session metadata core while keeping Python as the fallback transport backend.",
+        description="Deprecated. Enable the experimental Rust-owned MCP session metadata core while keeping Python as the fallback transport backend.",
     )
     experimental_rust_mcp_event_store_enabled: bool = Field(
         default=False,
-        description="Enable the experimental Rust-owned resumable MCP event-store backend for Streamable HTTP sessions.",
+        description="Deprecated. Enable the experimental Rust-owned resumable MCP event-store backend for Streamable HTTP sessions.",
     )
     experimental_rust_mcp_resume_core_enabled: bool = Field(
         default=False,
-        description="Enable the experimental Rust-owned public MCP replay/resume path for GET /mcp with Last-Event-ID while keeping Python fallback available.",
+        description="Deprecated. Enable the experimental Rust-owned public MCP replay/resume path for GET /mcp with Last-Event-ID while keeping Python fallback available.",
     )
     experimental_rust_mcp_live_stream_core_enabled: bool = Field(
         default=False,
-        description="Enable the experimental Rust-owned public MCP live GET /mcp SSE path while keeping Python as the fallback upstream stream source.",
+        description="Deprecated. Enable the experimental Rust-owned public MCP live GET /mcp SSE path while keeping Python as the fallback upstream stream source.",
     )
     experimental_rust_mcp_affinity_core_enabled: bool = Field(
         default=False,
-        description="Enable the experimental Rust-owned MCP session-affinity forwarding path while keeping Python worker forwarding as the fallback.",
+        description="Deprecated. Enable the experimental Rust-owned MCP session-affinity forwarding path while keeping Python worker forwarding as the fallback.",
     )
     experimental_rust_mcp_session_auth_reuse_enabled: bool = Field(
         default=False,
-        description="Enable the experimental Rust-owned MCP session-bound auth-context reuse path for direct public /mcp ingress.",
+        description="Deprecated. Enable the experimental Rust-owned MCP session-bound auth-context reuse path for direct public /mcp ingress.",
     )
     mcp_rust_ingress: Literal["internal", "public"] = Field(
         default="internal",
         description=(
-            "Selects which Rust MCP ingress shape MCPIngressMount uses when boot mode is "
+            "Deprecated. Selects which Rust MCP ingress shape MCPIngressMount uses when boot mode is "
             "edge or full and no shadow override is in effect. 'internal' (default) uses "
             "the trusted Python→Rust forwarder (RustMCPRuntimeProxy) over the internal "
             "listener at MCP_RUST_LISTEN_HTTP/UDS; 'public' uses an nginx-style reverse "
@@ -323,34 +323,36 @@ class Settings(BaseSettings):
     mcp_rust_public_proxy_upstream: str = Field(
         default="http://127.0.0.1:8787",
         description=(
-            "Upstream URL the 'public' MCP ingress shape forwards to. Defaults to the " "loopback address that matches docker-entrypoint.sh's " "MCP_RUST_PUBLIC_LISTEN_HTTP=0.0.0.0:8787 default."
+            "Deprecated. Upstream URL the 'public' MCP ingress shape forwards to. Defaults to the "
+            "loopback address that matches docker-entrypoint.sh's "
+            "MCP_RUST_PUBLIC_LISTEN_HTTP=0.0.0.0:8787 default."
         ),
     )
     experimental_rust_a2a_runtime_enabled: bool = Field(
         default=False,
-        description="Enable the experimental Rust A2A runtime sidecar for registered A2A agent invocations.",
+        description="Deprecated. Enable the experimental Rust A2A runtime sidecar for registered A2A agent invocations.",
     )
     experimental_rust_a2a_runtime_delegate_enabled: bool = Field(
         default=False,
-        description="Delegate registered A2A agent invocations to the experimental Rust A2A runtime sidecar.",
+        description="Deprecated. Delegate registered A2A agent invocations to the experimental Rust A2A runtime sidecar.",
     )
     experimental_rust_a2a_runtime_managed: bool = Field(
         default=True,
-        description="Whether the gateway should launch and supervise the experimental Rust A2A runtime sidecar locally.",
+        description="Deprecated. Whether the gateway should launch and supervise the experimental Rust A2A runtime sidecar locally.",
     )
     experimental_rust_a2a_runtime_url: str = Field(
         default="http://127.0.0.1:8788",
-        description="Base URL for the experimental Rust A2A runtime sidecar.",
+        description="Deprecated. Base URL for the experimental Rust A2A runtime sidecar.",
     )
     experimental_rust_a2a_runtime_uds: Optional[str] = Field(
         default=None,
-        description="Optional Unix domain socket path for the experimental Rust A2A runtime sidecar.",
+        description="Deprecated. Optional Unix domain socket path for the experimental Rust A2A runtime sidecar.",
     )
     experimental_rust_a2a_runtime_timeout_seconds: int = Field(
         default=30,
         ge=1,
         le=300,
-        description="Timeout in seconds for Python-to-Rust A2A runtime proxy requests.",
+        description="Deprecated. Timeout in seconds for Python-to-Rust A2A runtime proxy requests.",
     )
 
     # Authentication
@@ -515,7 +517,7 @@ class Settings(BaseSettings):
         default=False,
         description="Enable experimental Rust native extension for request logging sensitive-data masking",
     )
-    validation_middleware_enabled: bool = Field(default=False, description="Enable validation middleware for all requests")
+    validation_middleware_enabled: bool = Field(default=False, description="Deprecated. Enable validation middleware for all requests")
     client_disconnect_middleware_enabled: bool = Field(default=True, description="Enable client disconnect middleware to cancel handlers on connection close")
     validation_strict: bool = Field(default=True, description="Strict validation mode - reject on violations")
     sanitize_output: bool = Field(default=True, description="Sanitize output to remove control characters")
