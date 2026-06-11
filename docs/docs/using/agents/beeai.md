@@ -191,7 +191,7 @@ import { MCPTool } from "beeai-framework/tools/mcp";
 
 const client = new Client(
   { name: "contextforge-beeai-client", version: "1.0.0" },
-  { capabilities: {} },
+  { capabilities: {} }
 );
 
 await client.connect(
@@ -203,7 +203,7 @@ await client.connect(
       MCP_AUTH: process.env.MCP_AUTH!,
       MCP_WRAPPER_LOG_LEVEL: "OFF",
     },
-  }),
+  })
 );
 
 try {
@@ -241,41 +241,51 @@ const headers = { Authorization: process.env.MCP_AUTH! };
 async function runWithTransport(transport: Parameters<Client["connect"]>[0]) {
   const client = new Client(
     { name: "contextforge-beeai-client", version: "1.0.0" },
-    { capabilities: {} },
+    { capabilities: {} }
   );
 
   await client.connect(transport);
   try {
     const tools = await MCPTool.fromClient(client);
     const agent = new ReActAgent({
-      llm: new OllamaChatModel(process.env.BEEAI_CHAT_MODEL ?? "granite4:micro"),
+      llm: new OllamaChatModel(
+        process.env.BEEAI_CHAT_MODEL ?? "granite4:micro"
+      ),
       memory: new UnconstrainedMemory(),
       tools,
     });
-    await agent.run({ prompt: "Use an appropriate ContextForge tool for this request." });
+    await agent.run({
+      prompt: "Use an appropriate ContextForge tool for this request.",
+    });
   } finally {
     await client.close();
   }
 }
 
 await runWithTransport(
-  new StreamableHTTPClientTransport(new URL(process.env.MCP_GATEWAY_MCP_URL ?? "http://localhost:4444/mcp"), {
-    requestInit: { headers },
-  }),
+  new StreamableHTTPClientTransport(
+    new URL(process.env.MCP_GATEWAY_MCP_URL ?? "http://localhost:4444/mcp"),
+    {
+      requestInit: { headers },
+    }
+  )
 );
 
 // Legacy SSE endpoint variant.
 await runWithTransport(
-  new SSEClientTransport(new URL(process.env.MCP_GATEWAY_SSE_URL ?? "http://localhost:4444/sse"), {
-    requestInit: { headers },
-    eventSourceInit: {
-      fetch: (url, init) =>
-        fetch(url, {
-          ...init,
-          headers: { ...headers, ...(init?.headers ?? {}) },
-        }),
-    },
-  }),
+  new SSEClientTransport(
+    new URL(process.env.MCP_GATEWAY_SSE_URL ?? "http://localhost:4444/sse"),
+    {
+      requestInit: { headers },
+      eventSourceInit: {
+        fetch: (url, init) =>
+          fetch(url, {
+            ...init,
+            headers: { ...headers, ...(init?.headers ?? {}) },
+          }),
+      },
+    }
+  )
 );
 ```
 
