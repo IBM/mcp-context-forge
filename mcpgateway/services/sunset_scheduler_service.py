@@ -49,7 +49,7 @@ class SunsetSchedulerService:
         """Initialize the sunset scheduler service."""
         self._task: Optional[asyncio.Task] = None
         self._running = False
-        self._interval_minutes = getattr(settings, "SUNSET_SCHEDULER_INTERVAL_MINUTES", 60)
+        self._interval_minutes = settings.sunset_scheduler_interval_minutes
         self._processing = False  # Flag to prevent concurrent runs within same instance
         logger.info(f"SunsetSchedulerService initialized with interval: {self._interval_minutes} minutes")
 

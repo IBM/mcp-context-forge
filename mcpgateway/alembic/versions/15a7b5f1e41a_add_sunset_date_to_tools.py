@@ -1,7 +1,7 @@
 """add_sunset_date_to_tools
 
 Revision ID: 15a7b5f1e41a
-Revises: e28566875fa4
+Revises: 0a089912b5f0
 Create Date: 2026-05-26 11:50:39.306163
 
 """

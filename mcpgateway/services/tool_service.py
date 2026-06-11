@@ -1427,8 +1427,12 @@ class ToolService(BaseService):
                 # Calculate days until sunset
                 time_until_sunset = sunset_date - now
                 tool_dict["days_until_sunset"] = max(0, time_until_sunset.days)
+        elif deprecated:
+            # Deprecated without sunset date (backwards compatibility)
+            tool_dict["lifecycle_state"] = "deprecated"
+            tool_dict["is_executable"] = True
         else:
-            # Active tool (not deprecated or no sunset date)
+            # Active tool (not deprecated)
             tool_dict["lifecycle_state"] = "active"
             tool_dict["is_executable"] = True
 
@@ -2064,7 +2068,7 @@ class ToolService(BaseService):
                 tags=tool.tags or [],
                 # Lifecycle management fields
                 deprecated=getattr(tool, "deprecated", False),
-                sunset_date=getattr(tool, "sunsetDate", None),
+                sunset_date=tool.sunset_date,
                 # Metadata fields
                 created_by=created_by,
                 created_from_ip=created_from_ip,
@@ -6468,10 +6472,16 @@ class ToolService(BaseService):
             # Update deprecated status if provided
             if tool_update.deprecated is not None:
                 tool.deprecated = tool_update.deprecated
+                # If deprecated is being set to False, explicitly clear sunset_date
+                if tool_update.deprecated is False:
+                    tool.sunset_date = None
 
-            # Update sunset_date if provided
+            # Update sunset_date if provided (and deprecated is not being set to False)
             if tool_update.sunset_date is not None:
                 tool.sunset_date = tool_update.sunset_date
+            # Explicitly clear sunset_date if the validator set it to None (when deprecated=False)
+            elif tool_update.deprecated is False:
+                tool.sunset_date = None
 
             # Update modification metadata
             if modified_by is not None:

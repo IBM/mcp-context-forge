@@ -11080,3 +11080,56 @@ class TestToolLifecycleSerialization:
                 await tool_service.invoke_tool(test_db, "naive_sunset_tool", {"param": "value"}, request_headers=None)
 
             assert "has been sunset" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_update_tool_deprecated_false_clears_sunset_date(self, tool_service, test_db):
+        """Test that setting deprecated=False clears sunset_date in service layer (line 6477)."""
+        from datetime import datetime, timedelta, timezone
+        from mcpgateway.db import Tool as DbTool
+        from mcpgateway.schemas import ToolUpdate
+
+        # Create a deprecated tool with a sunset date
+        future_date = datetime.now(timezone.utc) + timedelta(days=30)
+        tool = DbTool(
+            original_name="test_deprecated_tool",
+            custom_name="test_deprecated_tool",
+            custom_name_slug="test-deprecated-tool",
+            display_name="Test Deprecated Tool",
+            url="http://example.com/tool",
+            description="Tool for testing deprecated=False clearing sunset_date",
+            input_schema={"type": "object"},
+            deprecated=True,
+            sunset_date=future_date,
+            enabled=True,
+        )
+        test_db.add(tool)
+        test_db.commit()
+        test_db.refresh(tool)
+
+        # Verify tool starts with deprecated=True and sunset_date set
+        assert tool.deprecated is True
+        assert tool.sunset_date is not None
+
+        # Update tool to set deprecated=False WITHOUT explicitly setting sunset_date
+        tool_update = ToolUpdate(deprecated=False)
+
+        # Mock cache to avoid Redis dependency
+        with patch("mcpgateway.services.tool_service._get_registry_cache") as mock_cache:
+            mock_registry = AsyncMock()
+            mock_cache.return_value = mock_registry
+
+            # Update the tool
+            updated_tool = await tool_service.update_tool(
+                test_db,
+                str(tool.id),
+                tool_update,
+            )
+
+        # Verify sunset_date was cleared (line 6477)
+        assert updated_tool.deprecated is False
+        assert updated_tool.sunset_date is None, "sunset_date should be cleared when deprecated is set to False"
+
+        # Verify in database
+        test_db.refresh(tool)
+        assert tool.deprecated is False
+        assert tool.sunset_date is None

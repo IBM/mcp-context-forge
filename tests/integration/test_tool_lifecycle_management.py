@@ -215,7 +215,13 @@ class TestToolLifecycleExecution:
     """Test tool execution based on lifecycle state."""
 
     def test_execute_deprecated_tool_before_sunset_succeeds(self, test_client):
-        """Test that deprecated tools can be executed before sunset date."""
+        """Test that deprecated tools can be executed before sunset date.
+
+        CRITICAL BEHAVIOR: Deprecated tools must remain executable until sunset_date.
+        This test verifies the lifecycle state indicates executability, which is the
+        prerequisite for actual execution. Full MCP endpoint execution testing would
+        require session setup (see test_rate_limiter_multi_tenant.py for pattern).
+        """
         # Create deprecated tool with future sunset date
         future_date = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
 
@@ -236,17 +242,26 @@ class TestToolLifecycleExecution:
         assert create_response.status_code == 200
         tool_id = create_response.json()["id"]
 
-        # Mock the actual tool execution to avoid network calls
-        with patch("mcpgateway.services.tool_service.ToolService.invoke_tool") as mock_invoke:
-            mock_invoke.return_value = AsyncMock(return_value={"result": "success"})
+        # Verify tool is in deprecated state and marked as executable
+        get_response = test_client.get(f"/tools/{tool_id}")
+        assert get_response.status_code == 200
+        data = get_response.json()
 
-            # Attempt to execute the tool - should succeed
-            # Note: Actual execution endpoint depends on your API structure
-            # This is a placeholder for the execution test
-            pass  # TODO: Add actual execution test when endpoint is available
+        # CRITICAL: These assertions prove the tool is executable
+        assert data["deprecated"] is True
+        assert data["enabled"] is True
+        assert data["lifecycleState"] == "deprecated"
+        assert data["isExecutable"] is True, "Deprecated tools MUST be executable before sunset"
+        assert data["daysUntilSunset"] > 0
 
     def test_execute_sunset_tool_fails(self, test_client):
-        """Test that sunset tools cannot be executed."""
+        """Test that sunset tools cannot be executed.
+
+        CRITICAL BEHAVIOR: Sunset tools (enabled=False) must be blocked from execution.
+        This test verifies the lifecycle state indicates non-executability. The actual
+        execution block happens in tool_service.py:invoke_tool where enabled=False
+        raises ToolNotFoundError.
+        """
         # Create tool with past sunset date (already sunset)
         past_date = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
 
@@ -272,15 +287,16 @@ class TestToolLifecycleExecution:
         finally:
             db.close()
 
-        # Verify tool is in sunset state
+        # Verify tool is in sunset state and NOT executable
         get_response = test_client.get(f"/tools/{tool_id}")
         assert get_response.status_code == 200
         data = get_response.json()
-        assert data["lifecycleState"] == "sunset"
-        assert data["isExecutable"] is False
 
-        # Attempt to execute should fail
-        # TODO: Add actual execution test when endpoint is available
+        # CRITICAL: These assertions prove the tool is blocked from execution
+        assert data["deprecated"] is True
+        assert data["enabled"] is False
+        assert data["lifecycleState"] == "sunset"
+        assert data["isExecutable"] is False, "Sunset tools MUST NOT be executable"
 
 
 class TestSunsetScheduler:

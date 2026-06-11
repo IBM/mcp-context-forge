@@ -124,19 +124,23 @@ class TestToolCreateSunsetValidation:
         assert tool.sunset_date.tzinfo is not None
         assert tool.sunset_date.tzinfo == timezone.utc
 
-    def test_create_active_tool_with_sunset_date_succeeds(self):
-        """Test creating active tool with sunset_date succeeds (for pre-planning)."""
+    def test_create_active_tool_clears_sunset_date(self):
+        """Test creating active tool (deprecated=False) automatically clears sunset_date.
+
+        Active tools cannot have sunset dates. The validator automatically clears
+        any sunset_date provided when deprecated=False.
+        """
         future_date = datetime.now(timezone.utc) + timedelta(days=30)
         tool_data = {
             "name": "test_tool",
             "description": "Test tool",
             "inputSchema": {"type": "object", "properties": {}},
             "deprecated": False,
-            "sunsetDate": future_date,
+            "sunsetDate": future_date,  # This will be ignored and cleared
         }
         tool = ToolCreate(**tool_data)
         assert tool.deprecated is False
-        assert tool.sunset_date == future_date
+        assert tool.sunset_date is None  # Automatically cleared by validator
 
 
 class TestToolUpdateSunsetValidation:
@@ -190,16 +194,21 @@ class TestToolUpdateSunsetValidation:
         assert tool.deprecated is False
         assert tool.sunset_date is None
 
-    def test_update_to_active_with_sunset_date_succeeds(self):
-        """Test updating to active while keeping sunset_date succeeds (for pre-planning)."""
+    def test_update_to_active_clears_sunset_date_automatically(self):
+        """Test updating to active (deprecated=False) automatically clears sunset_date.
+
+        When a tool is unmarked as deprecated, any sunset_date is automatically cleared
+        because active tools cannot have sunset dates. The deprecation lifecycle is:
+        active → deprecated (with sunset_date) → sunset (disabled).
+        """
         future_date = datetime.now(timezone.utc) + timedelta(days=30)
         update_data = {
             "deprecated": False,
-            "sunsetDate": future_date,
+            "sunsetDate": future_date,  # This will be ignored and cleared
         }
         tool = ToolUpdate(**update_data)
         assert tool.deprecated is False
-        assert tool.sunset_date == future_date
+        assert tool.sunset_date is None  # Automatically cleared by validator
 
     def test_update_only_sunset_date_without_deprecated_succeeds(self):
         """Test updating only sunset_date without changing deprecated status succeeds."""
@@ -293,16 +302,20 @@ class TestToolLifecycleEdgeCases:
         assert len(errors) == 1
         assert "sunsetDate is required when setting deprecated=True" in str(errors[0]["msg"])
 
-    def test_create_with_both_deprecated_false_and_sunset_date_succeeds(self):
-        """Test creating tool with deprecated=False but with sunset_date succeeds."""
+    def test_create_with_deprecated_false_clears_sunset_date(self):
+        """Test creating tool with deprecated=False automatically clears sunset_date.
+
+        Active tools (deprecated=False) cannot have sunset dates. The validator
+        automatically clears any sunset_date provided when deprecated=False.
+        """
         future_date = datetime.now(timezone.utc) + timedelta(days=30)
         tool_data = {
             "name": "test_tool",
             "description": "Test tool",
             "inputSchema": {"type": "object", "properties": {}},
             "deprecated": False,
-            "sunsetDate": future_date,
+            "sunsetDate": future_date,  # This will be ignored and cleared
         }
         tool = ToolCreate(**tool_data)
         assert tool.deprecated is False
-        assert tool.sunset_date == future_date
+        assert tool.sunset_date is None  # Automatically cleared by validator

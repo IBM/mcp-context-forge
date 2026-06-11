@@ -57,6 +57,52 @@ class TestSunsetSchedulerServiceLifecycle:
         assert scheduler._running is False
 
     @pytest.mark.asyncio
+    async def test_concurrent_execution_protection(self):
+        """Test that scheduler skips run if already processing (lines 86-88)."""
+        scheduler = SunsetSchedulerService()
+
+        # Set very short interval to make test fast
+        scheduler._interval_minutes = 0.001  # 0.06 seconds
+
+        # Directly call _run_scheduler while _processing is True to trigger lines 86-88
+        scheduler._running = True
+        scheduler._processing = True  # Simulate ongoing processing
+
+        with patch("mcpgateway.services.sunset_scheduler_service.logger") as mock_logger:
+            with patch.object(scheduler, '_process_sunset_tools', new=AsyncMock()) as mock_process:
+                # Create a task that will run one iteration of the scheduler loop
+                task = asyncio.create_task(scheduler._run_scheduler())
+
+                # Give the task time to:
+                # 1. Check the _processing flag (line 85)
+                # 2. Log warning (line 86)
+                # 3. Sleep (line 87)
+                # 4. Continue (line 88)
+                await asyncio.sleep(0.15)
+
+                # Stop the scheduler to exit the loop
+                scheduler._running = False
+
+                # Wait for task to complete
+                try:
+                    await asyncio.wait_for(task, timeout=1.0)
+                except asyncio.TimeoutError:
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+
+                # Verify warning was logged about skipping run (line 86)
+                warning_calls = [str(call) for call in mock_logger.warning.call_args_list]
+                assert any("already processing" in call.lower() for call in warning_calls), \
+                    f"Expected concurrent execution warning, got: {warning_calls}"
+
+                # Verify _process_sunset_tools was NOT called because _processing was True
+                # This confirms the continue statement (line 88) worked
+                mock_process.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_stop_cancels_task(self):
         """Test that stop() properly cancels the background task."""
         scheduler = SunsetSchedulerService()
@@ -563,7 +609,7 @@ class TestSunsetSchedulerSingleton:
     def test_scheduler_initialization_with_custom_interval(self):
         """Test scheduler initialization with custom interval from settings."""
         with patch("mcpgateway.services.sunset_scheduler_service.settings") as mock_settings:
-            mock_settings.SUNSET_SCHEDULER_INTERVAL_MINUTES = 120
+            mock_settings.sunset_scheduler_interval_minutes = 120
 
             scheduler = SunsetSchedulerService()
 
@@ -572,8 +618,7 @@ class TestSunsetSchedulerSingleton:
     def test_scheduler_initialization_default_interval(self):
         """Test scheduler initialization with default interval."""
         with patch("mcpgateway.services.sunset_scheduler_service.settings") as mock_settings:
-            # Remove the attribute to test default
-            delattr(mock_settings, "SUNSET_SCHEDULER_INTERVAL_MINUTES")
+            mock_settings.sunset_scheduler_interval_minutes = 60
 
             scheduler = SunsetSchedulerService()
 

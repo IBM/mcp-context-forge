@@ -1328,6 +1328,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     aggregation_backfill_task: Optional[asyncio.Task] = None
     siem_export_service: Optional[Any] = None
     dataplane_publisher_service: Optional[Any] = None
+    sunset_scheduler_service: Optional[Any] = None
 
     # Initialize logging service FIRST to ensure all logging goes to dual output
     await logging_service.initialize()
@@ -1861,11 +1862,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             services_to_shutdown.insert(3, dataplane_publisher_service)
 
         # Add sunset scheduler service (shutdown after metrics services)
-        # First-Party
-        from mcpgateway.services.sunset_scheduler_service import get_sunset_scheduler_service  # pylint: disable=import-outside-toplevel
-
-        sunset_scheduler_service = get_sunset_scheduler_service()
-        services_to_shutdown.insert(4, sunset_scheduler_service)
+        if sunset_scheduler_service is not None:
+            services_to_shutdown.insert(4, sunset_scheduler_service)
 
         await shutdown_services(services_to_shutdown)
 
