@@ -55,6 +55,9 @@ Examples:
 import asyncio
 from base64 import b64decode
 import binascii
+import hashlib
+import json
+import time
 from time import monotonic
 from typing import Any, Optional, Union
 from urllib.parse import urlsplit, urlunsplit
@@ -75,6 +78,7 @@ from mcpgateway.services.sso_service import resolve_trusted_provider_by_issuer
 from mcpgateway.utils.jwt_config_helper import validate_jwt_algo_and_keys
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.paths import resolve_root_path
+from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.utils.time_restrictions import validate_time_restrictions
 
 basic_security = HTTPBasic(auto_error=False)
@@ -455,6 +459,135 @@ async def verify_credentials(token: str) -> dict:
     return payload
 
 
+# P2/P5/A: cross-request, cross-worker cache of synthesized external identities,
+# keyed by SHA-256 of the raw token. Revocation is NOT weakened: require_auth still
+# runs _enforce_revocation_and_active_user on every request, outside this cache.
+_EXTERNAL_IDENTITY_TTL = 60  # seconds -- also clamped to the token's own exp
+_EXTERNAL_IDENTITY_MAX = 10_000  # in-memory fallback cap only
+_EXTERNAL_IDENTITY_REDIS_PREFIX = "mcpgw:extauth:identity:"
+_external_identity_cache: "dict[str, tuple[dict, float]]" = {}  # fallback: token_hash -> (payload, expires_at)
+
+
+def _token_hash(token: str) -> str:
+    """Return a SHA-256 hex digest of the token for use as a cache key (raw token never cached).
+
+    Args:
+        token: The raw bearer token string.
+
+    Returns:
+        Hex-encoded SHA-256 digest of the token.
+    """
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _effective_ttl(token_exp: Optional[int]) -> int:
+    """Clamp the cache TTL to the token's own expiry so a cached identity never outlives the token.
+
+    Args:
+        token_exp: The token's `exp` claim (Unix timestamp), or None.
+
+    Returns:
+        The number of seconds the cache entry should remain valid (>= 0).
+    """
+    ttl = getattr(settings, "external_identity_cache_ttl", _EXTERNAL_IDENTITY_TTL)
+    if token_exp:
+        ttl = min(ttl, max(0, int(token_exp) - int(time.time())))
+    return int(ttl)
+
+
+async def invalidate_external_identity_cache() -> None:
+    """Clear the in-memory fallback identity cache (test hook / admin reset).
+
+    Redis entries expire by their own TTL; this clears only the local map.
+    """
+    _external_identity_cache.clear()
+
+
+async def _external_identity_cache_get(token_hash: str) -> Optional[dict]:
+    """Fetch a cached external identity payload by token hash, from Redis or the in-memory fallback.
+
+    Args:
+        token_hash: SHA-256 hex digest of the raw bearer token.
+
+    Returns:
+        The cached identity payload dict, or None if not present/expired.
+    """
+    redis = await get_redis_client()
+    if redis is not None:
+        raw = await redis.get(_EXTERNAL_IDENTITY_REDIS_PREFIX + token_hash)
+        if raw is None:
+            return None
+        try:
+            return json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+    entry = _external_identity_cache.get(token_hash)
+    if entry is None:
+        return None
+    payload, expires_at = entry
+    if monotonic() >= expires_at:
+        _external_identity_cache.pop(token_hash, None)
+        return None
+    return payload
+
+
+async def _external_identity_cache_put(token_hash: str, payload: dict, token_exp: Optional[int]) -> None:
+    """Store an external identity payload in the (Redis-shared or in-memory) cache.
+
+    Args:
+        token_hash: SHA-256 hex digest of the raw bearer token.
+        payload: The synthesized identity payload to cache (the raw token is stripped before storage).
+        token_exp: The token's `exp` claim (Unix timestamp), used to clamp the TTL.
+    """
+    ttl = _effective_ttl(token_exp)
+    if ttl <= 0:
+        return
+    safe_payload = {k: v for k, v in payload.items() if k != "token"}
+
+    redis = await get_redis_client()
+    if redis is not None:
+        await redis.set(_EXTERNAL_IDENTITY_REDIS_PREFIX + token_hash, json.dumps(safe_payload), ex=ttl)
+        return
+    if len(_external_identity_cache) >= _EXTERNAL_IDENTITY_MAX:
+        _external_identity_cache.clear()
+    _external_identity_cache[token_hash] = (safe_payload, monotonic() + ttl)
+
+
+def _has_trusted_providers(db: Optional[Session]) -> bool:
+    """P3: cheap check whether ANY provider is opted into API auth.
+
+    Uses the Task 4 resolver's cached issuer->provider-id map so that, once warm,
+    this is a dict-truthiness check with zero DB queries. On a cold cache it performs
+    one resolver lookup (which populates the cache as a side effect).
+
+    Args:
+        db: A SQLAlchemy session to use if the resolver cache needs (re)loading, or None.
+
+    Returns:
+        True if at least one enabled provider has trusted_for_api_auth=True.
+    """
+    # First-Party
+    from mcpgateway.services import sso_service  # pylint: disable=import-outside-toplevel
+
+    if sso_service._trusted_provider_cache_loaded_at != 0.0:  # pylint: disable=protected-access
+        # cache already warm (within TTL) -- pure dict check, no DB
+        if (monotonic() - sso_service._trusted_provider_cache_loaded_at) <= sso_service._TRUSTED_PROVIDER_CACHE_TTL:  # pylint: disable=protected-access
+            return bool(sso_service._trusted_provider_cache)  # pylint: disable=protected-access
+
+    own_session = db is None
+    if own_session:
+        # First-Party
+        from mcpgateway.db import SessionLocal  # pylint: disable=import-outside-toplevel
+
+        db = SessionLocal()
+    try:
+        sso_service.resolve_trusted_provider_by_issuer("\x00warm", db)
+        return bool(sso_service._trusted_provider_cache)  # pylint: disable=protected-access
+    finally:
+        if own_session:
+            db.close()
+
+
 async def _maybe_verify_external(token: str, request: Optional[Request]) -> Optional[dict]:
     """Attempt external-IdP (trusted OIDC issuer) verification for a bearer token.
 
@@ -469,6 +602,22 @@ async def _maybe_verify_external(token: str, request: Optional[Request]) -> Opti
     """
     if not settings.sso_api_token_auth_enabled:
         return None
+
+    # P4: fetch the request-scoped DB session once, up front, so it can be reused
+    # by both _has_trusted_providers (cold-cache path) and the verification below.
+    db = getattr(getattr(request, "state", None), "db", None)
+
+    # P3: short-circuit before even decoding the token if no provider has opted in.
+    if not _has_trusted_providers(db):
+        return None
+
+    # P2/A: serve from the short-TTL identity cache if this exact token was seen recently.
+    th = _token_hash(token)
+    cached = await _external_identity_cache_get(th)
+    if cached is not None:
+        cached["token"] = token  # re-attach raw token (never cached)
+        return cached
+
     try:
         unverified = jwt.decode(token, options={"verify_signature": False})
     except jwt.PyJWTError:
@@ -480,7 +629,6 @@ async def _maybe_verify_external(token: str, request: Optional[Request]) -> Opti
     # First-Party
     from mcpgateway.db import SessionLocal  # pylint: disable=import-outside-toplevel
 
-    db = getattr(getattr(request, "state", None), "db", None)
     own_session = db is None
     if own_session:
         db = SessionLocal()
@@ -489,7 +637,10 @@ async def _maybe_verify_external(token: str, request: Optional[Request]) -> Opti
         claims, provider = await verify_external_idp_token(token, db)
         if claims is None:
             return None  # untrusted issuer / invalid sig -> fall through -> internal path 401s
-        return await build_external_identity(provider, claims, token, db)
+        payload = await build_external_identity(provider, claims, token, db)
+        if payload is not None:
+            await _external_identity_cache_put(th, payload, claims.get("exp"))
+        return payload
     finally:
         if own_session:
             db.close()

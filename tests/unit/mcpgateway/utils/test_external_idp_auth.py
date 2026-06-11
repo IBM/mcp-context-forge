@@ -97,6 +97,10 @@ def _fake_provider(issuer, enabled=True, trusted=True):
     return p
 
 
+async def _async_none():
+    return None
+
+
 def _mock_db(providers):
     """db where the .filter().all() map-load returns `providers` and the
     .filter().first() PK lookup returns the first provider (id match)."""
@@ -485,6 +489,7 @@ async def test_dispatch_internal_token_skips_external(monkeypatch):
     monkeypatch.setattr(vc, "verify_external_idp_token", fake_external)
     monkeypatch.setattr(vc.settings, "sso_api_token_auth_enabled", True)
     monkeypatch.setattr(vc.settings, "jwt_issuer", "mcpgateway")
+    monkeypatch.setattr(vc, "_has_trusted_providers", lambda db: True)
 
     # Third-Party
     import jwt as pyjwt
@@ -508,6 +513,8 @@ async def test_dispatch_external_token_routes_to_external(monkeypatch):
 
     monkeypatch.setattr(vc.settings, "sso_api_token_auth_enabled", True)
     monkeypatch.setattr(vc.settings, "jwt_issuer", "mcpgateway")
+    monkeypatch.setattr(vc, "_has_trusted_providers", lambda db: True)
+    monkeypatch.setattr(vc, "get_redis_client", _async_none)
 
     prov = _fake_provider("https://kc/realms/m")
 
@@ -527,3 +534,111 @@ async def test_dispatch_external_token_routes_to_external(monkeypatch):
 
     result = await vc.verify_credentials_cached(tok, request=None)
     assert result["token_use"] == "external_idp"
+
+
+@pytest.mark.asyncio
+async def test_p2_identity_cache_skips_reprovision(monkeypatch):
+    """P2/P5: a second request with the same token within TTL reuses the cached
+    identity — no second verify/provision."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    monkeypatch.setattr(vc, "get_redis_client", _async_none)  # in-memory fallback
+    await vc.invalidate_external_identity_cache()
+    monkeypatch.setattr(vc.settings, "sso_api_token_auth_enabled", True)
+    monkeypatch.setattr(vc.settings, "jwt_issuer", "mcpgateway")
+    calls = {"verify": 0}
+    prov = _fake_provider("https://kc/realms/m")
+
+    async def fake_external(tok, db):
+        calls["verify"] += 1
+        return ({"iss": "https://kc/realms/m", "sub": "agent", "exp": 9999999999}, prov)
+
+    async def fake_build(provider, claims, token, db):
+        return {"sub": "agent@corp.com", "token_use": "session", "exp": 9999999999}
+
+    monkeypatch.setattr(vc, "verify_external_idp_token", fake_external)
+    monkeypatch.setattr(vc, "build_external_identity", fake_build)
+    # ensure provider map non-empty so the short-circuit (P3) does not skip
+    monkeypatch.setattr(vc, "_has_trusted_providers", lambda db: True)
+    # Third-Party
+    import jwt as pyjwt
+
+    tok = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "agent", "exp": 9999999999}, "k", algorithm="HS256")
+    p1 = await vc._maybe_verify_external(tok, request=None)
+    p2 = await vc._maybe_verify_external(tok, request=None)
+    assert p1["sub"] == "agent@corp.com" and p2["sub"] == "agent@corp.com"
+    assert calls["verify"] == 1  # second call served from identity cache
+
+
+@pytest.mark.asyncio
+async def test_p3_short_circuit_when_no_trusted_providers(monkeypatch):
+    """P3: when no provider is opted in, skip even the unsigned decode."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    monkeypatch.setattr(vc, "get_redis_client", _async_none)
+    await vc.invalidate_external_identity_cache()
+    monkeypatch.setattr(vc.settings, "sso_api_token_auth_enabled", True)
+    monkeypatch.setattr(vc, "_has_trusted_providers", lambda db: False)
+    called = {"decode": False}
+    real_decode = vc.jwt.decode
+
+    def spy(*a, **k):
+        called["decode"] = True
+        return real_decode(*a, **k)
+
+    monkeypatch.setattr(vc.jwt, "decode", spy)
+    assert await vc._maybe_verify_external("anything", request=None) is None
+    assert called["decode"] is False  # short-circuited before decoding
+
+
+@pytest.mark.asyncio
+async def test_p2_cache_respects_token_expiry(monkeypatch):
+    """P2: cache entry must not outlive the token's own exp (in-memory fallback path)."""
+    # Standard
+    import time as _t
+
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    await vc.invalidate_external_identity_cache()
+    # Force the in-memory fallback (no Redis) for this test.
+    monkeypatch.setattr(vc, "get_redis_client", _async_none)
+    payload = {"sub": "agent@corp.com", "token_use": "session"}
+    # exp already in the past -> put is a no-op -> get returns None
+    await vc._external_identity_cache_put("tok-hash", payload, token_exp=int(_t.time()) - 1)
+    assert await vc._external_identity_cache_get("tok-hash") is None
+
+
+@pytest.mark.asyncio
+async def test_p2_cache_shared_via_redis(monkeypatch):
+    """A: when cache_type=redis, the identity is written-through to Redis (shared
+    across workers) and the raw token is NOT stored in Redis."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    store = {}
+
+    class FakeRedis:
+        async def get(self, k):
+            return store.get(k)
+
+        async def set(self, k, v, ex=None):
+            store[k] = v
+
+        async def delete(self, *ks):
+            for k in ks:
+                store.pop(k, None)
+
+    async def fake_client():
+        return FakeRedis()
+
+    monkeypatch.setattr(vc, "get_redis_client", fake_client)
+    await vc.invalidate_external_identity_cache()
+    payload = {"sub": "agent@corp.com", "token_use": "session", "token": "RAW-SECRET", "exp": 9999999999}
+    await vc._external_identity_cache_put("th1", payload, token_exp=9999999999)
+    # raw token must not be persisted in Redis
+    assert "RAW-SECRET" not in next(iter(store.values()))
+    got = await vc._external_identity_cache_get("th1")
+    assert got["sub"] == "agent@corp.com"
