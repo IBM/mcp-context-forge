@@ -10,7 +10,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::VecDeque;
 use std::env;
 use std::net::SocketAddr;
@@ -182,22 +182,24 @@ async fn jsonrpc_handler(
 ) -> impl IntoResponse {
     let response = match req.method.as_str() {
         "SendMessage" | "message/send" | "SendStreamingMessage" | "message/stream" => {
-            match handle_send_message(&state, &req.params) {
+            match handle_send_message(&state, &req.method, &req.params) {
                 Ok(result) => rpc_result(&req, result),
                 Err(err) => rpc_error(&req, -32602, &err),
             }
         }
         "GetTask" | "tasks/get" => match task_id_from_params(&req.params) {
             Ok(id) => match get_task(&state, &id) {
-                Some(task) => rpc_result(&req, task_to_value(&task)),
+                Some(task) => rpc_result(&req, task_to_value(&task, uses_v1_method(&req.method))),
                 None => rpc_error(&req, -32001, "task not found"),
             },
             Err(err) => rpc_error(&req, -32602, &err),
         },
-        "ListTasks" | "tasks/list" => rpc_result(&req, list_tasks(&state)),
+        "ListTasks" | "tasks/list" => {
+            rpc_result(&req, list_tasks(&state, uses_v1_method(&req.method)))
+        }
         "CancelTask" | "tasks/cancel" => match task_id_from_params(&req.params) {
             Ok(id) => match cancel_task(&state, &id) {
-                Some(task) => rpc_result(&req, task_to_value(&task)),
+                Some(task) => rpc_result(&req, task_to_value(&task, uses_v1_method(&req.method))),
                 None => rpc_error(&req, -32001, "task not found"),
             },
             Err(err) => rpc_error(&req, -32602, &err),
@@ -234,7 +236,7 @@ async fn run_handler(State(state): State<AppState>, Json(body): Json<Value>) -> 
     }))
 }
 
-fn handle_send_message(state: &AppState, params: &Value) -> Result<Value, String> {
+fn handle_send_message(state: &AppState, method: &str, params: &Value) -> Result<Value, String> {
     let text = extract_text(params).ok_or_else(|| "message text not found".to_string())?;
     let output = echo_text(&state.config, &text);
     let task = StoredTask {
@@ -247,7 +249,7 @@ fn handle_send_message(state: &AppState, params: &Value) -> Result<Value, String
         updated_at: Utc::now(),
     };
     store_task(state, task.clone());
-    Ok(task_to_value(&task))
+    Ok(task_to_value(&task, uses_v1_method(method)))
 }
 
 fn store_task(state: &AppState, task: StoredTask) {
@@ -285,7 +287,7 @@ fn cancel_task(state: &AppState, id: &str) -> Option<StoredTask> {
     Some(task.clone())
 }
 
-fn list_tasks(state: &AppState) -> Value {
+fn list_tasks(state: &AppState, use_v1: bool) -> Value {
     let store = state
         .tasks
         .read()
@@ -294,29 +296,137 @@ fn list_tasks(state: &AppState) -> Value {
         .order
         .iter()
         .filter_map(|id| store.tasks.get(id))
-        .map(task_to_value)
+        .map(|task| task_to_value(task, use_v1))
         .collect();
     json!({ "tasks": tasks })
 }
 
-fn task_to_value(task: &StoredTask) -> Value {
-    json!({
+fn task_to_value(task: &StoredTask, use_v1: bool) -> Value {
+    let mut value = json!({
         "id": task.id,
         "contextId": task.context_id,
         "status": {
-            "state": task.state,
+            "state": render_state(&task.state, use_v1),
+            "message": build_message(
+                &format!("{}-response", task.id),
+                "agent",
+                &task.output_text,
+                use_v1
+            ),
             "timestamp": task.updated_at.to_rfc3339()
         },
-        "history": [{
-            "role": "user",
-            "parts": [{"kind": "text", "text": task.input_text}]
-        }],
-        "artifacts": [{
-            "artifactId": format!("artifact-{}", task.id),
+        "artifacts": [build_artifact(&format!("{}-artifact", task.id), &task.output_text, use_v1)],
+        "createdAt": task.created_at.to_rfc3339(),
+        "updatedAt": task.updated_at.to_rfc3339()
+    });
+    if !use_v1 {
+        value["kind"] = json!("task");
+    }
+    value
+}
+
+fn uses_v1_method(method: &str) -> bool {
+    matches!(
+        method,
+        "SendMessage"
+            | "SendStreamingMessage"
+            | "GetTask"
+            | "ListTasks"
+            | "CancelTask"
+            | "SubscribeToTask"
+            | "GetExtendedAgentCard"
+    )
+}
+
+fn build_message(message_id: &str, role: &str, text: &str, use_v1: bool) -> Value {
+    if use_v1 {
+        json!({
+            "messageId": message_id,
+            "role": render_role(role, true),
+            "parts": [{"text": text}]
+        })
+    } else {
+        json!({
+            "kind": "message",
+            "messageId": message_id,
+            "role": render_role(role, false),
+            "parts": [{"kind": "text", "text": text}]
+        })
+    }
+}
+
+fn build_artifact(artifact_id: &str, text: &str, use_v1: bool) -> Value {
+    if use_v1 {
+        json!({
+            "artifactId": artifact_id,
             "name": "echo",
-            "parts": [{"kind": "text", "text": task.output_text}]
-        }]
-    })
+            "description": "Echo response",
+            "parts": [{"text": text}]
+        })
+    } else {
+        json!({
+            "kind": "artifact",
+            "artifactId": artifact_id,
+            "name": "echo",
+            "description": "Echo response",
+            "parts": [{"kind": "text", "text": text}]
+        })
+    }
+}
+
+fn render_state(state: &str, use_v1: bool) -> &'static str {
+    let normalized = state.trim().to_ascii_lowercase().replace('-', "_");
+    let normalized = normalized
+        .strip_prefix("task_state_")
+        .unwrap_or(&normalized);
+    if !use_v1 {
+        return match normalized {
+            "submitted" => "submitted",
+            "working" => "working",
+            "input_required" => "input_required",
+            "canceled" | "cancelled" => "canceled",
+            "failed" => "failed",
+            "auth_required" => "auth_required",
+            "rejected" => "rejected",
+            _ => "completed",
+        };
+    }
+    match normalized {
+        "submitted" => "TASK_STATE_SUBMITTED",
+        "working" => "TASK_STATE_WORKING",
+        "input_required" => "TASK_STATE_INPUT_REQUIRED",
+        "canceled" | "cancelled" => "TASK_STATE_CANCELED",
+        "failed" => "TASK_STATE_FAILED",
+        "auth_required" => "TASK_STATE_AUTH_REQUIRED",
+        "rejected" => "TASK_STATE_REJECTED",
+        _ => "TASK_STATE_COMPLETED",
+    }
+}
+
+fn render_role(role: &str, use_v1: bool) -> &'static str {
+    match role.trim().to_ascii_lowercase().as_str() {
+        "system" | "role_system" => {
+            if use_v1 {
+                "ROLE_SYSTEM"
+            } else {
+                "system"
+            }
+        }
+        "agent" | "role_agent" => {
+            if use_v1 {
+                "ROLE_AGENT"
+            } else {
+                "agent"
+            }
+        }
+        _ => {
+            if use_v1 {
+                "ROLE_USER"
+            } else {
+                "user"
+            }
+        }
+    }
 }
 
 fn task_id_from_params(params: &Value) -> Result<String, String> {
@@ -455,23 +565,77 @@ mod tests {
     #[test]
     fn stores_and_lists_completed_task() {
         let state = state();
-        let result =
-            handle_send_message(&state, &json!({"message": {"parts": [{"text": "hello"}]}}))
-                .unwrap();
+        let result = handle_send_message(
+            &state,
+            "SendMessage",
+            &json!({"message": {"parts": [{"text": "hello"}]}}),
+        )
+        .unwrap();
         let id = result["id"].as_str().unwrap();
         assert_eq!(get_task(&state, id).unwrap().output_text, "Echo: hello");
-        assert_eq!(list_tasks(&state)["tasks"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            list_tasks(&state, true)["tasks"].as_array().unwrap().len(),
+            1
+        );
     }
 
     #[test]
     fn cancel_marks_task_canceled() {
         let state = state();
-        let result =
-            handle_send_message(&state, &json!({"message": {"parts": [{"text": "hello"}]}}))
-                .unwrap();
+        let result = handle_send_message(
+            &state,
+            "SendMessage",
+            &json!({"message": {"parts": [{"text": "hello"}]}}),
+        )
+        .unwrap();
         let id = result["id"].as_str().unwrap();
         let task = cancel_task(&state, id).unwrap();
         assert_eq!(task.state, "canceled");
+    }
+
+    #[test]
+    fn send_message_uses_v1_task_shape() {
+        let state = state();
+        let result = handle_send_message(
+            &state,
+            "SendMessage",
+            &json!({"message": {"parts": [{"text": "hello"}]}}),
+        )
+        .unwrap();
+
+        assert!(result.get("kind").is_none());
+        assert_eq!(result["status"]["state"], "TASK_STATE_COMPLETED");
+        assert_eq!(result["status"]["message"]["role"], "ROLE_AGENT");
+        assert_eq!(
+            result["status"]["message"]["parts"][0]["text"],
+            "Echo: hello"
+        );
+        assert!(
+            result["status"]["message"]["parts"][0]
+                .get("kind")
+                .is_none()
+        );
+        assert_eq!(result["artifacts"][0]["parts"][0]["text"], "Echo: hello");
+        assert!(result["artifacts"][0]["parts"][0].get("kind").is_none());
+    }
+
+    #[test]
+    fn legacy_message_send_uses_legacy_task_shape() {
+        let state = state();
+        let result = handle_send_message(
+            &state,
+            "message/send",
+            &json!({"message": {"parts": [{"text": "hello"}]}}),
+        )
+        .unwrap();
+
+        assert_eq!(result["kind"], "task");
+        assert_eq!(result["status"]["state"], "completed");
+        assert_eq!(result["status"]["message"]["kind"], "message");
+        assert_eq!(result["status"]["message"]["role"], "agent");
+        assert_eq!(result["status"]["message"]["parts"][0]["kind"], "text");
+        assert_eq!(result["artifacts"][0]["kind"], "artifact");
+        assert_eq!(result["artifacts"][0]["parts"][0]["kind"], "text");
     }
 
     #[test]
