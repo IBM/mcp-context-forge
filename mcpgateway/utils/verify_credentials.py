@@ -65,10 +65,12 @@ from fastapi import Cookie, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBasic, HTTPBasicCredentials, HTTPBearer
 from fastapi.security.utils import get_authorization_scheme_param
 import jwt
+from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.sso_service import resolve_trusted_provider_by_issuer
 from mcpgateway.utils.jwt_config_helper import validate_jwt_algo_and_keys
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.paths import resolve_root_path
@@ -1770,3 +1772,40 @@ async def verify_oauth_access_token(
     except jwt.PyJWTError as exc:
         logger.warning("OAuth access token verification failed (issuer=%s): %s", sanitize_for_log(normalized_issuer), exc)
         return None
+
+
+async def verify_external_idp_token(token: str, db: Session) -> "tuple[Optional[dict[str, Any]], Optional[Any]]":
+    """Validate an external IdP access token against a trusted SSO provider.
+
+    Resolves the provider by the token's unverified ``iss``, then delegates to
+    :func:`verify_oauth_access_token` for signature/issuer/audience/expiry checks
+    (JWKS discovery, SSRF defense and ID-token rejection are inherited).
+
+    Args:
+        token: Raw Bearer token.
+        db: Request-scoped SQLAlchemy session for provider lookup.
+
+    Returns:
+        ``(verified_claims, provider)`` on success, ``(None, None)`` on any failure.
+    """
+    try:
+        unverified = jwt.decode(token, options={"verify_signature": False})
+    except jwt.DecodeError:
+        return None, None
+
+    issuer = unverified.get("iss")
+    if not issuer:
+        return None, None
+
+    provider = resolve_trusted_provider_by_issuer(issuer, db)
+    if provider is None or not provider.issuer:
+        return None, None
+
+    claims = await verify_oauth_access_token(
+        token,
+        authorization_servers=[provider.issuer],
+        expected_audience=provider.api_audience or None,
+    )
+    if claims is None:
+        return None, None
+    return claims, provider

@@ -4,6 +4,9 @@
 # Standard
 from unittest.mock import MagicMock
 
+# Third-Party
+import pytest
+
 # First-Party
 from mcpgateway.config import Settings
 
@@ -180,3 +183,44 @@ def test_resolver_cache_invalidation_forces_rescan():
     sso_service.invalidate_trusted_provider_cache()
     sso_service.resolve_trusted_provider_by_issuer("https://kc.example.com/realms/m", db)
     assert _scan_count(db) == 1  # re-scanned after invalidation
+
+
+@pytest.mark.asyncio
+async def test_verify_external_idp_token_unknown_issuer(monkeypatch):
+    # Third-Party
+    import jwt as pyjwt
+
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    # token with an issuer that resolves to no provider
+    token = pyjwt.encode({"iss": "https://evil.example.com", "sub": "x"}, "k", algorithm="HS256")
+    monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: None)
+    db = MagicMock()
+    result = await vc.verify_external_idp_token(token, db)
+    assert result == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_verify_external_idp_token_valid(monkeypatch):
+    # Third-Party
+    import jwt as pyjwt
+
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    token = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "agent"}, "k", algorithm="HS256")
+    prov = _fake_provider("https://kc/realms/m")
+    prov.api_audience = "api://my-app"
+    monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: prov)
+
+    async def fake_verify(tok, authorization_servers, *, expected_audience=None):
+        assert authorization_servers == ["https://kc/realms/m"]
+        assert expected_audience == "api://my-app"
+        return {"iss": "https://kc/realms/m", "sub": "agent"}
+
+    monkeypatch.setattr(vc, "verify_oauth_access_token", fake_verify)
+    db = MagicMock()
+    claims, returned_prov = await vc.verify_external_idp_token(token, db)
+    assert claims["sub"] == "agent"
+    assert returned_prov is prov
