@@ -5120,7 +5120,12 @@ async def invoke_a2a_agent(
         # Extract inbound request metadata for plugin context
         # Strip sensitive/credential headers before passing to plugins.
         content_type = request.headers.get("content-type")
-        request_headers = _filter_sensitive_headers({k.lower(): v for k, v in request.headers.items()})
+        # Phase 1 (Issue #3621): When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true, pass all headers
+        # Filtering happens in a2a_service after checking whitelist
+        if settings.enable_sensitive_header_passthrough:
+            request_headers = {k.lower(): v for k, v in request.headers.items()}
+        else:
+            request_headers = _filter_sensitive_headers({k.lower(): v for k, v in request.headers.items()})
 
         return await a2a_service.invoke_agent(
             db,
@@ -5212,7 +5217,12 @@ async def invoke_a2a_agent_by_id(
         # Extract inbound request metadata for plugin context
         # Strip sensitive/credential headers before passing to plugins.
         content_type = request.headers.get("content-type")
-        request_headers = _filter_sensitive_headers({k.lower(): v for k, v in request.headers.items()})
+        # Phase 1 (Issue #3621): When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true, pass all headers
+        # Filtering happens in a2a_service after checking whitelist
+        if settings.enable_sensitive_header_passthrough:
+            request_headers = {k.lower(): v for k, v in request.headers.items()}
+        else:
+            request_headers = _filter_sensitive_headers({k.lower(): v for k, v in request.headers.items()})
 
         return await a2a_service.invoke_agent(
             db,

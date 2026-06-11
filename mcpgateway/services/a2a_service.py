@@ -2091,6 +2091,14 @@ class A2AAgentService(BaseService):
         if request_headers and agent_passthrough_headers:
             whitelist_lower = {h.lower() for h in agent_passthrough_headers}
             request_headers = {k: v for k, v in request_headers.items() if k in whitelist_lower}
+
+            # Phase 1 (Issue #3621): When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=false (default),
+            # filter out sensitive headers even if whitelisted (backward compatible)
+            if not settings.enable_sensitive_header_passthrough:
+                # Import filter function
+                from mcpgateway.main import _filter_sensitive_headers  # pylint: disable=import-outside-toplevel
+                request_headers = _filter_sensitive_headers(request_headers)
+
             # SECURITY AUDIT: Log forwarded headers for compliance and forensics
             if request_headers:
                 logger.info(
