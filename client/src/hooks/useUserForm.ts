@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, type FormEvent } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect, type FormEvent } from "react";
 import { z } from "zod";
 import { useIntl } from "react-intl";
 import { useQuery } from "@/hooks/useQuery";
@@ -6,6 +6,8 @@ import { sanitizeString, sanitizePassword } from "@/lib/sanitize";
 import { VALIDATION } from "@/lib/constants";
 import { parseApiError } from "@/lib/errorUtils";
 import type { User, CreateUserRequest, UpdateUserRequest } from "@/types/user";
+
+const VALIDATION_DEBOUNCE_MS = 300;
 
 // Fields shared by both create and edit schemas
 const sharedUserFields = {
@@ -227,7 +229,16 @@ export function useUserForm(options?: UseUserFormOptions): UseUserFormReturn {
     isEditMode,
   ]);
 
-  const validateField = useCallback(
+  const validationTimeouts = useRef<Map<keyof FormErrors, NodeJS.Timeout>>(new Map());
+
+  useEffect(() => {
+    return () => {
+      validationTimeouts.current.forEach((timeout) => clearTimeout(timeout));
+      validationTimeouts.current.clear();
+    };
+  }, []);
+
+  const validateFieldImmediate = useCallback(
     (field: keyof FormErrors, value: string | boolean) => {
       const currentData = isEditMode
         ? { fullName, isAdmin, isActive, passwordChangeRequired, password, confirmPassword }
@@ -265,6 +276,23 @@ export function useUserForm(options?: UseUserFormOptions): UseUserFormReturn {
       editFormSchema,
       isEditMode,
     ],
+  );
+
+  const validateField = useCallback(
+    (field: keyof FormErrors, value: string | boolean) => {
+      const existingTimeout = validationTimeouts.current.get(field);
+      if (existingTimeout) {
+        clearTimeout(existingTimeout);
+      }
+
+      const timeout = setTimeout(() => {
+        validateFieldImmediate(field, value);
+        validationTimeouts.current.delete(field);
+      }, VALIDATION_DEBOUNCE_MS);
+
+      validationTimeouts.current.set(field, timeout);
+    },
+    [validateFieldImmediate],
   );
 
   const validateForm = useCallback((): boolean => {
