@@ -99,14 +99,11 @@ export function VirtualServerCard({
                 >
                   {intl.formatMessage({ id: "gateways.card.viewDetails" })}
                 </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onEdit?.(server);
-                  }}
-                >
-                  {intl.formatMessage({ id: "gateways.card.editServer" })}
-                </DropdownMenuItem>
+ {onEdit && (
+    <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onEdit(server); }}>
+      {intl.formatMessage({ id: "gateways.card.editServer" })}
+    </DropdownMenuItem>
+  )}
                 <DropdownMenuItem
                   onClick={(e) => {
                     e.stopPropagation();
