@@ -898,6 +898,21 @@ class TestRejectJoinRequestErrors:
             assert exc.value.status_code == status.HTTP_404_NOT_FOUND
 
     @pytest.mark.asyncio
+    async def test_value_error_not_found(self, user_ctx, db, mock_team):
+        with (
+            mock_permission_check(is_admin=user_ctx.get("is_admin", False)),
+            _svc(
+                get_team_by_id=AsyncMock(return_value=mock_team),
+                get_user_role_in_team=AsyncMock(return_value="owner"),
+                reject_join_request=AsyncMock(side_effect=ValueError("Join request not found or already processed")),
+            ),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await teams.reject_join_request(mock_team.id, "rid", current_user=user_ctx, db=db)
+            assert exc.value.status_code == status.HTTP_404_NOT_FOUND
+            assert "not found" in exc.value.detail
+
+    @pytest.mark.asyncio
     async def test_exception(self, user_ctx, db):
         with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), _svc(get_team_by_id=AsyncMock(side_effect=RuntimeError("crash"))):
             with pytest.raises(HTTPException) as exc:

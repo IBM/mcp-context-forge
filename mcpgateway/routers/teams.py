@@ -1136,7 +1136,7 @@ async def approve_join_request(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only team owners can approve join requests")
 
         # Approve join request
-        member = await team_service.approve_join_request(request_id, approved_by=current_user["email"])
+        member = await team_service.approve_join_request(team_id, request_id, approved_by=current_user["email"])
         if not member:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Join request not found")
 
@@ -1201,13 +1201,15 @@ async def reject_join_request(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only team owners can reject join requests")
 
         # Reject join request
-        success = await team_service.reject_join_request(request_id, rejected_by=current_user["email"])
+        success = await team_service.reject_join_request(team_id, request_id, rejected_by=current_user["email"])
         if not success:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Join request not found")
 
         db.commit()
         db.close()
         return SuccessResponse(message="Join request rejected successfully")
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except HTTPException:
         raise
     except Exception as e:

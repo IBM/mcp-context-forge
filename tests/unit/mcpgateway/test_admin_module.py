@@ -188,12 +188,12 @@ class _StubTeamService:
     async def list_join_requests(self, team_id: str):
         return self.join_requests
 
-    async def approve_join_request(self, request_id: str, approved_by: str):
-        self.approve_args = (request_id, approved_by)
+    async def approve_join_request(self, team_id: str, request_id: str, approved_by: str):
+        self.approve_args = (team_id, request_id, approved_by)
         return self.approve_member
 
-    async def reject_join_request(self, request_id: str, rejected_by: str):
-        self.reject_args = (request_id, rejected_by)
+    async def reject_join_request(self, team_id: str, request_id: str, rejected_by: str):
+        self.reject_args = (team_id, request_id, rejected_by)
         return self.reject_ok
 
     def count_team_owners(self, team_id: str) -> int:

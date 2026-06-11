@@ -4839,7 +4839,7 @@ async def _admin_logout(request: Request) -> Response:
                 # Match if referer host matches request host and path contains /admin or /oauth/callback
                 if referer_parsed.netloc == request_host and ("/admin" in referer_parsed.path or "/oauth/callback" in referer_parsed.path):
                     is_same_origin_referer = True
-            except Exception: # nosec B110
+            except Exception:  # nosec B110
                 pass  # Invalid referer URL, treat as not same-origin
 
         is_browser_request = "text/html" in accept_header or is_htmx or is_same_origin_referer
@@ -7256,7 +7256,7 @@ async def admin_approve_join_request(
             return HTMLResponse(content='<div class="text-red-500">Only team owners can approve join requests</div>', status_code=403)
 
         # Approve join request
-        member = await team_service.approve_join_request(request_id, approved_by=user_email)
+        member = await team_service.approve_join_request(team_id, request_id, approved_by=user_email)
         if not member:
             return HTMLResponse(content='<div class="text-red-500">Join request not found</div>', status_code=404)
 
@@ -7308,7 +7308,7 @@ async def admin_reject_join_request(
             return HTMLResponse(content='<div class="text-red-500">Only team owners can reject join requests</div>', status_code=403)
 
         # Reject join request
-        success = await team_service.reject_join_request(request_id, rejected_by=user_email)
+        success = await team_service.reject_join_request(team_id, request_id, rejected_by=user_email)
         if not success:
             return HTMLResponse(content='<div class="text-red-500">Join request not found</div>', status_code=404)
 
@@ -16929,12 +16929,7 @@ async def get_resources_section(
         LOGGER.debug(f"User {user_email} requesting resources section with team_id={team_id}, token_teams={token_teams}")
 
         # Get all resources with token_teams for proper scoping
-        resources_result = await local_resource_service.list_resources(
-            db,
-            include_inactive=True,
-            user_email=user_email,
-            token_teams=token_teams
-        )
+        resources_result = await local_resource_service.list_resources(db, include_inactive=True, user_email=user_email, token_teams=token_teams)
         if isinstance(resources_result, tuple):
             resources_list = resources_result[0]
         else:
@@ -16995,12 +16990,7 @@ async def get_prompts_section(
         LOGGER.debug(f"User {user_email} requesting prompts section with team_id={team_id}, token_teams={token_teams}")
 
         # Get all prompts with token_teams for proper scoping
-        prompts_result = await local_prompt_service.list_prompts(
-            db,
-            include_inactive=True,
-            user_email=user_email,
-            token_teams=token_teams
-        )
+        prompts_result = await local_prompt_service.list_prompts(db, include_inactive=True, user_email=user_email, token_teams=token_teams)
         if isinstance(prompts_result, tuple):
             prompts_list = prompts_result[0]
         else:

@@ -1207,7 +1207,7 @@ class TestTeamsRouter:
             result = await approve_join_request(team_id, request_id, current_user=mock_user_context, db=mock_db)
 
             assert result.id == mock_team_member.id
-            mock_service.approve_join_request.assert_called_once_with(request_id, approved_by=mock_user_context["email"])
+            mock_service.approve_join_request.assert_called_once_with(team_id, request_id, approved_by=mock_user_context["email"])
 
     @pytest.mark.asyncio
     async def test_reject_join_request_success(self, mock_user_context, mock_db, mock_public_team):
@@ -1227,6 +1227,7 @@ class TestTeamsRouter:
             result = await reject_join_request(team_id, request_id, current_user=mock_user_context, db=mock_db)
 
             assert result.message == "Join request rejected successfully"
+            mock_service.reject_join_request.assert_called_once_with(team_id, request_id, rejected_by=mock_user_context["email"])
 
     @pytest.mark.asyncio
     async def test_reject_join_request_not_owner(self, mock_user_context, mock_db, mock_public_team):
