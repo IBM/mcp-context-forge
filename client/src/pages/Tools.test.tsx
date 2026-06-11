@@ -30,6 +30,7 @@ function createMockTool(id: number, gatewaySlug: string, enabled = true, reachab
     tags: [],
     integrationType: "mcp",
     requestType: "http",
+    url: `https://example.com/tool-${id}`,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -531,5 +532,423 @@ describe("Tools", () => {
     expect(screen.getByText("Tool 23")).toBeInTheDocument();
     expect(screen.queryByText("Tool 24")).not.toBeInTheDocument();
     expect(screen.getByText("+12")).toBeInTheDocument();
+  });
+
+  describe("Dropdown Menu and Details Panel", () => {
+    it("opens dropdown menu when clicking more options button", async () => {
+      const user = userEvent.setup();
+      const mockTools: Tool[] = [createMockTool(1, "test-gateway")];
+
+      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+
+      renderWithRouter(<Tools />);
+
+      await waitFor(() => {
+        expect(screen.getByText("test-gateway")).toBeInTheDocument();
+      });
+
+      const moreOptionsButton = screen.getByLabelText("More options for test-gateway");
+      await user.click(moreOptionsButton);
+
+      // Dropdown menu should be visible
+      await waitFor(() => {
+        expect(screen.getByText("View Details")).toBeInTheDocument();
+      });
+    });
+
+    it("opens details panel when clicking View Details menu item", async () => {
+      const user = userEvent.setup();
+      const mockTools: Tool[] = [
+        createMockTool(1, "test-gateway"),
+        createMockTool(2, "test-gateway"),
+      ];
+
+      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+
+      renderWithRouter(<Tools />);
+
+      await waitFor(() => {
+        expect(screen.getByText("test-gateway")).toBeInTheDocument();
+      });
+
+      // Open dropdown menu
+      const moreOptionsButton = screen.getByLabelText("More options for test-gateway");
+      await user.click(moreOptionsButton);
+
+      // Click View Details
+      const viewDetailsItem = await screen.findByText("View Details");
+      await user.click(viewDetailsItem);
+
+      // Details panel should be visible
+      await waitFor(() => {
+        expect(screen.getByRole("region", { name: /Tools for test-gateway/i })).toBeInTheDocument();
+      });
+
+      // Panel shows the gateway name — it also appears in the card, so multiple matches expected
+      expect(screen.getAllByText("test-gateway").length).toBeGreaterThan(0);
+    });
+
+    it("closes details panel when clicking close button", async () => {
+      const user = userEvent.setup();
+      const mockTools: Tool[] = [createMockTool(1, "test-gateway")];
+
+      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+
+      renderWithRouter(<Tools />);
+
+      await waitFor(() => {
+        expect(screen.getByText("test-gateway")).toBeInTheDocument();
+      });
+
+      // Open details panel
+      const moreOptionsButton = screen.getByLabelText("More options for test-gateway");
+      await user.click(moreOptionsButton);
+      const viewDetailsItem = await screen.findByText("View Details");
+      await user.click(viewDetailsItem);
+
+      // Wait for panel to open
+      await waitFor(() => {
+        expect(screen.getByRole("region", { name: /Tools for test-gateway/i })).toBeInTheDocument();
+      });
+
+      // Close the panel
+      const closeButton = screen.getByLabelText("Close tool details");
+      await user.click(closeButton);
+
+      // Panel should be hidden
+      await waitFor(() => {
+        expect(
+          screen.queryByRole("region", { name: /Tools for test-gateway/i }),
+        ).not.toBeInTheDocument();
+      });
+    });
+
+    it("closes details panel when pressing Escape key", async () => {
+      const user = userEvent.setup();
+      const mockTools: Tool[] = [createMockTool(1, "test-gateway")];
+
+      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+
+      renderWithRouter(<Tools />);
+
+      await waitFor(() => {
+        expect(screen.getByText("test-gateway")).toBeInTheDocument();
+      });
+
+      // Open details panel
+      const moreOptionsButton = screen.getByLabelText("More options for test-gateway");
+      await user.click(moreOptionsButton);
+      const viewDetailsItem = await screen.findByText("View Details");
+      await user.click(viewDetailsItem);
+
+      // Wait for panel to open
+      await waitFor(() => {
+        expect(screen.getByRole("region", { name: /Tools for test-gateway/i })).toBeInTheDocument();
+      });
+
+      // Press Escape
+      await user.keyboard("{Escape}");
+
+      // Panel should be hidden
+      await waitFor(() => {
+        expect(
+          screen.queryByRole("region", { name: /Tools for test-gateway/i }),
+        ).not.toBeInTheDocument();
+      });
+    });
+
+    it("displays all tools from selected group in details panel", async () => {
+      const user = userEvent.setup();
+      const mockTools: Tool[] = [
+        createMockTool(1, "multi-tool-gateway"),
+        createMockTool(2, "multi-tool-gateway"),
+        createMockTool(3, "multi-tool-gateway"),
+      ];
+
+      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+
+      renderWithRouter(<Tools />);
+
+      await waitFor(() => {
+        expect(screen.getByText("multi-tool-gateway")).toBeInTheDocument();
+      });
+
+      // Open details panel
+      const moreOptionsButton = screen.getByLabelText("More options for multi-tool-gateway");
+      await user.click(moreOptionsButton);
+      const viewDetailsItem = await screen.findByText("View Details");
+      await user.click(viewDetailsItem);
+
+      // Wait for panel to open
+      await waitFor(() => {
+        expect(
+          screen.getByRole("region", { name: /Tools for multi-tool-gateway/i }),
+        ).toBeInTheDocument();
+      });
+
+      // All tools should be visible in the table (checking for original names)
+      expect(screen.getByText("tool_1")).toBeInTheDocument();
+      expect(screen.getByText("tool_2")).toBeInTheDocument();
+      expect(screen.getByText("tool_3")).toBeInTheDocument();
+    });
+
+    it("shows correct integration type in details panel", async () => {
+      const user = userEvent.setup();
+      const mockTools: Tool[] = [
+        {
+          ...createMockTool(1, "mcp-gateway"),
+          integrationType: "MCP",
+        },
+      ];
+
+      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+
+      renderWithRouter(<Tools />);
+
+      await waitFor(() => {
+        expect(screen.getByText("mcp-gateway")).toBeInTheDocument();
+      });
+
+      // Open details panel
+      const moreOptionsButton = screen.getByLabelText("More options for mcp-gateway");
+      await user.click(moreOptionsButton);
+      const viewDetailsItem = await screen.findByText("View Details");
+      await user.click(viewDetailsItem);
+
+      // "MCP Server" appears in both the panel subtitle and Component details Type row
+      await waitFor(() => {
+        expect(screen.getAllByText("MCP Server").length).toBeGreaterThan(0);
+      });
+    });
+
+    it("handles opening details panel for different tool groups", async () => {
+      const user = userEvent.setup();
+      const mockTools: Tool[] = [createMockTool(1, "gateway-a"), createMockTool(2, "gateway-b")];
+
+      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+
+      renderWithRouter(<Tools />);
+
+      await waitFor(() => {
+        expect(screen.getByText("gateway-a")).toBeInTheDocument();
+      });
+
+      // Open details for gateway-a
+      const moreOptionsButtonA = screen.getByLabelText("More options for gateway-a");
+      await user.click(moreOptionsButtonA);
+      let viewDetailsItem = await screen.findByText("View Details");
+      await user.click(viewDetailsItem);
+
+      await waitFor(() => {
+        expect(screen.getByRole("region", { name: /Tools for gateway-a/i })).toBeInTheDocument();
+      });
+
+      // Close panel
+      const closeButton = screen.getByLabelText("Close tool details");
+      await user.click(closeButton);
+
+      await waitFor(() => {
+        expect(
+          screen.queryByRole("region", { name: /Tools for gateway-a/i }),
+        ).not.toBeInTheDocument();
+      });
+
+      // Open details for gateway-b
+      const moreOptionsButtonB = screen.getByLabelText("More options for gateway-b");
+      await user.click(moreOptionsButtonB);
+      viewDetailsItem = await screen.findByText("View Details");
+      await user.click(viewDetailsItem);
+
+      await waitFor(() => {
+        expect(screen.getByRole("region", { name: /Tools for gateway-b/i })).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe("Tool Interface Extended Fields", () => {
+    it("handles tools with displayName field", async () => {
+      const mockTools: Tool[] = [
+        {
+          ...createMockTool(1, "test-gateway"),
+          displayName: "Custom Display Name",
+        },
+      ];
+
+      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+
+      renderWithRouter(<Tools />);
+
+      await waitFor(() => {
+        expect(screen.getByText("test-gateway")).toBeInTheDocument();
+      });
+
+      // displayName is used in the details panel table, not in the card view
+      expect(screen.getByText("Tool 1")).toBeInTheDocument();
+    });
+
+    it("handles tools with url field", async () => {
+      const user = userEvent.setup();
+      const mockTools: Tool[] = [
+        {
+          ...createMockTool(1, "test-gateway"),
+          // URL must be ≤24 chars (truncateMiddle default) to avoid truncation in the assertion
+          url: "https://api.example.com",
+        },
+      ];
+
+      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+
+      renderWithRouter(<Tools />);
+
+      await waitFor(() => {
+        expect(screen.getByText("test-gateway")).toBeInTheDocument();
+      });
+
+      // Open details panel to see URL
+      const moreOptionsButton = screen.getByLabelText("More options for test-gateway");
+      await user.click(moreOptionsButton);
+      const viewDetailsItem = await screen.findByText("View Details");
+      await user.click(viewDetailsItem);
+
+      await waitFor(() => {
+        expect(screen.getByText("https://api.example.com")).toBeInTheDocument();
+      });
+    });
+
+    it("handles tools with visibility field", async () => {
+      const user = userEvent.setup();
+      const mockTools: Tool[] = [
+        {
+          ...createMockTool(1, "test-gateway"),
+          visibility: "team",
+        },
+      ];
+
+      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+
+      renderWithRouter(<Tools />);
+
+      await waitFor(() => {
+        expect(screen.getByText("test-gateway")).toBeInTheDocument();
+      });
+
+      // Open details panel to see visibility
+      const moreOptionsButton = screen.getByLabelText("More options for test-gateway");
+      await user.click(moreOptionsButton);
+      const viewDetailsItem = await screen.findByText("View Details");
+      await user.click(viewDetailsItem);
+
+      await waitFor(() => {
+        expect(screen.getByText("Team")).toBeInTheDocument();
+      });
+    });
+
+    it("handles tools with version field", async () => {
+      const user = userEvent.setup();
+      const mockTools: Tool[] = [
+        {
+          ...createMockTool(1, "test-gateway"),
+          version: 2,
+        },
+      ];
+
+      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+
+      renderWithRouter(<Tools />);
+
+      await waitFor(() => {
+        expect(screen.getByText("test-gateway")).toBeInTheDocument();
+      });
+
+      // Open details panel to see version
+      const moreOptionsButton = screen.getByLabelText("More options for test-gateway");
+      await user.click(moreOptionsButton);
+      const viewDetailsItem = await screen.findByText("View Details");
+      await user.click(viewDetailsItem);
+
+      await waitFor(() => {
+        // Version is displayed in the details panel
+        const versionElements = screen.getAllByText("2");
+        expect(versionElements.length).toBeGreaterThan(0);
+      });
+    });
+
+    it("handles tools with audit fields", async () => {
+      const mockTools: Tool[] = [
+        {
+          ...createMockTool(1, "test-gateway"),
+          createdBy: "user@example.com",
+          createdVia: "api",
+          createdFromIp: "192.168.1.1",
+          modifiedBy: "admin@example.com",
+          modifiedVia: "ui",
+        },
+      ];
+
+      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+
+      renderWithRouter(<Tools />);
+
+      await waitFor(() => {
+        expect(screen.getByText("test-gateway")).toBeInTheDocument();
+      });
+
+      // Audit fields are stored but not necessarily displayed in the UI
+      // This test ensures they don't break the component
+      expect(screen.getByText("Tool 1")).toBeInTheDocument();
+    });
+
+    it("handles tools with team and owner fields", async () => {
+      const mockTools: Tool[] = [
+        {
+          ...createMockTool(1, "test-gateway"),
+          team: "Engineering",
+          teamId: "team-123",
+          ownerEmail: "owner@example.com",
+        },
+      ];
+
+      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+
+      renderWithRouter(<Tools />);
+
+      await waitFor(() => {
+        expect(screen.getByText("test-gateway")).toBeInTheDocument();
+      });
+
+      // Team and owner fields are stored but not necessarily displayed in the card view
+      expect(screen.getByText("Tool 1")).toBeInTheDocument();
+    });
+
+    it("handles tools with inputSchema and outputSchema", async () => {
+      const mockTools: Tool[] = [
+        {
+          ...createMockTool(1, "test-gateway"),
+          inputSchema: {
+            type: "object",
+            properties: {
+              query: { type: "string" },
+            },
+          },
+          outputSchema: {
+            type: "object",
+            properties: {
+              result: { type: "string" },
+            },
+          },
+        },
+      ];
+
+      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+
+      renderWithRouter(<Tools />);
+
+      await waitFor(() => {
+        expect(screen.getByText("test-gateway")).toBeInTheDocument();
+      });
+
+      // Schemas are stored but not displayed in the card view
+      expect(screen.getByText("Tool 1")).toBeInTheDocument();
+    });
   });
 });
