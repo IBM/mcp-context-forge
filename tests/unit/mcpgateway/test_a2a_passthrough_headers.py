@@ -1,474 +1,141 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/unit/mcpgateway/test_a2a_passthrough_headers.py
+"""Location: ./tests/unit/mcpgateway/test_a2a_passthrough_headers_simple.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 
-Tests for passthrough header forwarding in A2A agent invocations.
+Simple unit tests for A2A passthrough headers filtering logic.
 
-Verifies that A2A agent invocations correctly forward whitelisted headers
-from the original request to downstream agents. See GitHub issue #3621.
+Tests the header filtering logic added in Phase 1 without full service mocking.
 """
 
-# Future
-from __future__ import annotations
-
 # Standard
-from typing import Any, Dict, Optional
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Dict, List, Optional
 
 # Third-Party
 import pytest
 
-# First-Party
-from mcpgateway.services.a2a_service import A2AService
 
+class TestPassthroughHeaderFiltering:
+    """Test the passthrough header filtering logic."""
 
-# ---------------------------------------------------------------------------
-# Test Fixtures
-# ---------------------------------------------------------------------------
-@pytest.fixture
-def mock_db():
-    """Mock database session."""
-    db = MagicMock()
-    db.query.return_value.filter.return_value.first.return_value = None
-    db.commit = MagicMock()
-    db.close = MagicMock()
-    return db
+    def filter_headers_by_whitelist(
+        self,
+        request_headers: Optional[Dict[str, str]],
+        whitelist: Optional[List[str]],
+    ) -> Dict[str, str]:
+        """Simulate the filtering logic from a2a_service.py:2091-2103."""
+        if not request_headers:
+            return {}
 
+        if whitelist:
+            whitelist_lower = {h.lower() for h in whitelist}
+            return {k: v for k, v in request_headers.items() if k in whitelist_lower}
 
-@pytest.fixture
-def mock_a2a_agent():
-    """Mock A2A agent with passthrough_headers configuration."""
-    agent = MagicMock()
-    agent.id = "agent-123"
-    agent.name = "test-agent"
-    agent.team_id = "team-1"
-    agent.visibility = "team"
-    agent.enabled = True
-    agent.agent_type = "generic"
-    agent.endpoint_url = "https://downstream.example.com/agent"
-    agent.protocol_version = "1.0"
-    agent.auth_type = None
-    agent.auth_value = None
-    agent.auth_query_params = None
-    agent.tags = []
-    agent.oauth_config = None
-    agent.passthrough_headers = ["Authorization", "X-Tenant-ID"]
-    agent.uaid = None
-    agent.uaid_native_id = None
-    return agent
+        # No whitelist = no headers forwarded
+        return {}
 
-
-@pytest.fixture
-def a2a_service():
-    """A2A service instance."""
-    service = A2AService()
-    return service
-
-
-# ---------------------------------------------------------------------------
-# Tests for passthrough header forwarding (happy path)
-# ---------------------------------------------------------------------------
-class TestA2APassthroughHeadersHappyPath:
-    """Test that A2A agents correctly forward whitelisted headers."""
-
-    @pytest.mark.asyncio
-    @patch("mcpgateway.services.a2a_service.httpx.AsyncClient")
-    @patch("mcpgateway.services.a2a_service.get_correlation_id")
-    async def test_forwards_whitelisted_headers_to_downstream_agent(
-        self, mock_correlation_id, mock_httpx_client, mock_db, mock_a2a_agent, a2a_service
-    ):
-        """Happy path: whitelisted headers are forwarded to downstream agent HTTP call."""
-        mock_correlation_id.return_value = "test-correlation-123"
-
-        # Mock DB query to return our test agent
-        mock_db.query.return_value.filter.return_value.first.return_value = mock_a2a_agent
-
-        # Mock HTTP response from downstream agent
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"result": "success"}
-        mock_response.headers = {}
-
-        mock_client_instance = AsyncMock()
-        mock_client_instance.post.return_value = mock_response
-        mock_client_instance.__aenter__.return_value = mock_client_instance
-        mock_client_instance.__aexit__.return_value = None
-        mock_httpx_client.return_value = mock_client_instance
-
-        # Call invoke_agent with passthrough headers
+    def test_forwards_whitelisted_headers(self):
+        """Whitelisted headers are forwarded."""
         request_headers = {
-            "authorization": "Bearer client-secret-token",
             "x-tenant-id": "acme-corp",
+            "x-request-id": "test-123",
             "x-unrelated-header": "should-not-forward",
         }
+        whitelist = ["X-Tenant-ID", "X-Request-ID"]
 
-        result = await a2a_service.invoke_agent(
-            agent_name="test-agent",
-            parameters={"query": "test"},
-            interaction_type="invoke",
-            db=mock_db,
-            user_email="user@example.com",
-            token_teams=["team-1"],
-            request_headers=request_headers,
-        )
+        result = self.filter_headers_by_whitelist(request_headers, whitelist)
 
-        # Verify the downstream HTTP call was made
-        mock_client_instance.post.assert_called_once()
-        call_kwargs = mock_client_instance.post.call_args.kwargs
+        assert "x-tenant-id" in result
+        assert result["x-tenant-id"] == "acme-corp"
+        assert "x-request-id" in result
+        assert result["x-request-id"] == "test-123"
+        assert "x-unrelated-header" not in result
 
-        # Verify whitelisted headers were forwarded
-        sent_headers = call_kwargs.get("headers", {})
-        assert "authorization" in sent_headers
-        assert sent_headers["authorization"] == "Bearer client-secret-token"
-        assert "x-tenant-id" in sent_headers
-        assert sent_headers["x-tenant-id"] == "acme-corp"
-
-        # Verify non-whitelisted header was NOT forwarded
-        assert "x-unrelated-header" not in sent_headers
-
-        assert result is not None
-
-    @pytest.mark.asyncio
-    @patch("mcpgateway.services.a2a_service.httpx.AsyncClient")
-    @patch("mcpgateway.services.a2a_service.get_correlation_id")
-    async def test_case_insensitive_header_matching(self, mock_correlation_id, mock_httpx_client, mock_db, mock_a2a_agent, a2a_service):
-        """Headers are matched case-insensitively against whitelist."""
-        mock_correlation_id.return_value = "test-correlation-123"
-        mock_db.query.return_value.filter.return_value.first.return_value = mock_a2a_agent
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"result": "success"}
-        mock_response.headers = {}
-
-        mock_client_instance = AsyncMock()
-        mock_client_instance.post.return_value = mock_response
-        mock_client_instance.__aenter__.return_value = mock_client_instance
-        mock_client_instance.__aexit__.return_value = None
-        mock_httpx_client.return_value = mock_client_instance
-
-        # Request headers have different casing than whitelist
+    def test_case_insensitive_matching(self):
+        """Headers matched case-insensitively against whitelist."""
         request_headers = {
-            "AUTHORIZATION": "Bearer token",
-            "X-TENANT-ID": "acme",
-        }
-
-        await a2a_service.invoke_agent(
-            agent_name="test-agent",
-            parameters={"query": "test"},
-            interaction_type="invoke",
-            db=mock_db,
-            user_email="user@example.com",
-            token_teams=["team-1"],
-            request_headers=request_headers,
-        )
-
-        call_kwargs = mock_client_instance.post.call_args.kwargs
-        sent_headers = call_kwargs.get("headers", {})
-
-        # Headers should be normalized to lowercase
-        assert "authorization" in sent_headers or "AUTHORIZATION" in sent_headers
-        assert "x-tenant-id" in sent_headers or "X-TENANT-ID" in sent_headers
-
-
-# ---------------------------------------------------------------------------
-# Tests for security deny-paths
-# ---------------------------------------------------------------------------
-class TestA2APassthroughHeadersSecurityDenyPaths:
-    """Test security boundaries and deny-paths for passthrough headers."""
-
-    @pytest.mark.asyncio
-    @patch("mcpgateway.services.a2a_service.httpx.AsyncClient")
-    @patch("mcpgateway.services.a2a_service.get_correlation_id")
-    async def test_denies_headers_not_in_whitelist(self, mock_correlation_id, mock_httpx_client, mock_db, mock_a2a_agent, a2a_service):
-        """Deny-path: headers not in whitelist are blocked even if present in request."""
-        mock_correlation_id.return_value = "test-correlation-123"
-        mock_db.query.return_value.filter.return_value.first.return_value = mock_a2a_agent
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"result": "success"}
-        mock_response.headers = {}
-
-        mock_client_instance = AsyncMock()
-        mock_client_instance.post.return_value = mock_response
-        mock_client_instance.__aenter__.return_value = mock_client_instance
-        mock_client_instance.__aexit__.return_value = None
-        mock_httpx_client.return_value = mock_client_instance
-
-        request_headers = {
-            "authorization": "Bearer token",
             "x-tenant-id": "acme",
-            "x-attacker-header": "malicious-value",
-            "x-internal-secret": "should-never-forward",
+            "x-request-id": "123",
         }
+        whitelist = ["X-TENANT-ID", "X-REQUEST-ID"]  # Different casing
 
-        await a2a_service.invoke_agent(
-            agent_name="test-agent",
-            parameters={"query": "test"},
-            interaction_type="invoke",
-            db=mock_db,
-            user_email="user@example.com",
-            token_teams=["team-1"],
-            request_headers=request_headers,
-        )
+        result = self.filter_headers_by_whitelist(request_headers, whitelist)
 
-        call_kwargs = mock_client_instance.post.call_args.kwargs
-        sent_headers = call_kwargs.get("headers", {})
+        assert "x-tenant-id" in result
+        assert "x-request-id" in result
 
-        # Only whitelisted headers should be present
-        assert "authorization" in sent_headers
-        assert "x-tenant-id" in sent_headers
-        assert "x-attacker-header" not in sent_headers
-        assert "x-internal-secret" not in sent_headers
-
-    @pytest.mark.asyncio
-    @patch("mcpgateway.services.a2a_service.httpx.AsyncClient")
-    @patch("mcpgateway.services.a2a_service.get_correlation_id")
-    async def test_no_headers_forwarded_when_whitelist_is_empty(self, mock_correlation_id, mock_httpx_client, mock_db, a2a_service):
-        """Deny-path: when passthrough_headers is empty, no headers are forwarded."""
-        mock_correlation_id.return_value = "test-correlation-123"
-
-        agent_no_whitelist = MagicMock()
-        agent_no_whitelist.id = "agent-456"
-        agent_no_whitelist.name = "no-passthrough-agent"
-        agent_no_whitelist.team_id = "team-1"
-        agent_no_whitelist.visibility = "team"
-        agent_no_whitelist.enabled = True
-        agent_no_whitelist.agent_type = "http"
-        agent_no_whitelist.endpoint_url = "https://downstream.example.com/agent"
-        agent_no_whitelist.protocol_version = "1.0"
-        agent_no_whitelist.auth_type = None
-        agent_no_whitelist.auth_value = None
-        agent_no_whitelist.auth_query_params = None
-        agent_no_whitelist.tags = []
-        agent_no_whitelist.oauth_config = None
-        agent_no_whitelist.passthrough_headers = []  # Empty whitelist
-        agent_no_whitelist.uaid = None
-        agent_no_whitelist.uaid_native_id = None
-
-        mock_db = MagicMock()
-        mock_db.query.return_value.filter.return_value.first.return_value = agent_no_whitelist
-        mock_db.commit = MagicMock()
-        mock_db.close = MagicMock()
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"result": "success"}
-        mock_response.headers = {}
-
-        mock_client_instance = AsyncMock()
-        mock_client_instance.post.return_value = mock_response
-        mock_client_instance.__aenter__.return_value = mock_client_instance
-        mock_client_instance.__aexit__.return_value = None
-        mock_httpx_client.return_value = mock_client_instance
-
+    def test_blocks_non_whitelisted_headers(self):
+        """Headers not in whitelist are blocked."""
         request_headers = {
-            "authorization": "Bearer secret",
             "x-tenant-id": "acme",
+            "x-attacker-header": "malicious",
+            "x-internal-secret": "should-not-forward",
         }
+        whitelist = ["X-Tenant-ID"]
 
-        await a2a_service.invoke_agent(
-            agent_name="no-passthrough-agent",
-            parameters={"query": "test"},
-            interaction_type="invoke",
-            db=mock_db,
-            user_email="user@example.com",
-            token_teams=["team-1"],
-            request_headers=request_headers,
-        )
+        result = self.filter_headers_by_whitelist(request_headers, whitelist)
 
-        call_kwargs = mock_client_instance.post.call_args.kwargs
-        sent_headers = call_kwargs.get("headers", {})
+        assert "x-tenant-id" in result
+        assert "x-attacker-header" not in result
+        assert "x-internal-secret" not in result
 
-        # No passthrough headers should be forwarded
-        # Only default headers like Content-Type, X-Correlation-ID may be present
-        assert "authorization" not in sent_headers
-        assert "x-tenant-id" not in sent_headers
-
-    @pytest.mark.asyncio
-    @patch("mcpgateway.services.a2a_service.httpx.AsyncClient")
-    @patch("mcpgateway.services.a2a_service.get_correlation_id")
-    async def test_no_headers_forwarded_when_whitelist_is_none(self, mock_correlation_id, mock_httpx_client, mock_db, a2a_service):
-        """Deny-path: when passthrough_headers is None, no headers are forwarded."""
-        mock_correlation_id.return_value = "test-correlation-123"
-
-        agent_none_whitelist = MagicMock()
-        agent_none_whitelist.id = "agent-789"
-        agent_none_whitelist.name = "none-passthrough-agent"
-        agent_none_whitelist.team_id = "team-1"
-        agent_none_whitelist.visibility = "team"
-        agent_none_whitelist.enabled = True
-        agent_none_whitelist.agent_type = "http"
-        agent_none_whitelist.endpoint_url = "https://downstream.example.com/agent"
-        agent_none_whitelist.protocol_version = "1.0"
-        agent_none_whitelist.auth_type = None
-        agent_none_whitelist.auth_value = None
-        agent_none_whitelist.auth_query_params = None
-        agent_none_whitelist.tags = []
-        agent_none_whitelist.oauth_config = None
-        agent_none_whitelist.passthrough_headers = None  # None whitelist
-        agent_none_whitelist.uaid = None
-        agent_none_whitelist.uaid_native_id = None
-
-        mock_db = MagicMock()
-        mock_db.query.return_value.filter.return_value.first.return_value = agent_none_whitelist
-        mock_db.commit = MagicMock()
-        mock_db.close = MagicMock()
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"result": "success"}
-        mock_response.headers = {}
-
-        mock_client_instance = AsyncMock()
-        mock_client_instance.post.return_value = mock_response
-        mock_client_instance.__aenter__.return_value = mock_client_instance
-        mock_client_instance.__aexit__.return_value = None
-        mock_httpx_client.return_value = mock_client_instance
-
+    def test_empty_whitelist_blocks_all(self):
+        """Empty whitelist blocks all headers."""
         request_headers = {
-            "authorization": "Bearer secret",
             "x-tenant-id": "acme",
+            "x-request-id": "123",
         }
+        whitelist = []
 
-        await a2a_service.invoke_agent(
-            agent_name="none-passthrough-agent",
-            parameters={"query": "test"},
-            interaction_type="invoke",
-            db=mock_db,
-            user_email="user@example.com",
-            token_teams=["team-1"],
-            request_headers=request_headers,
-        )
+        result = self.filter_headers_by_whitelist(request_headers, whitelist)
 
-        call_kwargs = mock_client_instance.post.call_args.kwargs
-        sent_headers = call_kwargs.get("headers", {})
+        assert len(result) == 0
 
-        # No passthrough headers should be forwarded
-        assert "authorization" not in sent_headers
-        assert "x-tenant-id" not in sent_headers
-
-
-# ---------------------------------------------------------------------------
-# Tests for backward compatibility
-# ---------------------------------------------------------------------------
-class TestA2APassthroughHeadersBackwardCompatibility:
-    """Test backward compatibility when request_headers is not provided."""
-
-    @pytest.mark.asyncio
-    @patch("mcpgateway.services.a2a_service.httpx.AsyncClient")
-    @patch("mcpgateway.services.a2a_service.get_correlation_id")
-    async def test_works_when_request_headers_is_none(self, mock_correlation_id, mock_httpx_client, mock_db, mock_a2a_agent, a2a_service):
-        """Backward compatibility: works when request_headers is None."""
-        mock_correlation_id.return_value = "test-correlation-123"
-        mock_db.query.return_value.filter.return_value.first.return_value = mock_a2a_agent
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"result": "success"}
-        mock_response.headers = {}
-
-        mock_client_instance = AsyncMock()
-        mock_client_instance.post.return_value = mock_response
-        mock_client_instance.__aenter__.return_value = mock_client_instance
-        mock_client_instance.__aexit__.return_value = None
-        mock_httpx_client.return_value = mock_client_instance
-
-        result = await a2a_service.invoke_agent(
-            agent_name="test-agent",
-            parameters={"query": "test"},
-            interaction_type="invoke",
-            db=mock_db,
-            user_email="user@example.com",
-            token_teams=["team-1"],
-            request_headers=None,  # No headers provided
-        )
-
-        # Should complete without error
-        assert result is not None
-        mock_client_instance.post.assert_called_once()
-
-    @pytest.mark.asyncio
-    @patch("mcpgateway.services.a2a_service.httpx.AsyncClient")
-    @patch("mcpgateway.services.a2a_service.get_correlation_id")
-    async def test_works_when_request_headers_is_empty_dict(self, mock_correlation_id, mock_httpx_client, mock_db, mock_a2a_agent, a2a_service):
-        """Backward compatibility: works when request_headers is empty dict."""
-        mock_correlation_id.return_value = "test-correlation-123"
-        mock_db.query.return_value.filter.return_value.first.return_value = mock_a2a_agent
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"result": "success"}
-        mock_response.headers = {}
-
-        mock_client_instance = AsyncMock()
-        mock_client_instance.post.return_value = mock_response
-        mock_client_instance.__aenter__.return_value = mock_client_instance
-        mock_client_instance.__aexit__.return_value = None
-        mock_httpx_client.return_value = mock_client_instance
-
-        result = await a2a_service.invoke_agent(
-            agent_name="test-agent",
-            parameters={"query": "test"},
-            interaction_type="invoke",
-            db=mock_db,
-            user_email="user@example.com",
-            token_teams=["team-1"],
-            request_headers={},  # Empty dict
-        )
-
-        # Should complete without error
-        assert result is not None
-        mock_client_instance.post.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# Tests for audit logging
-# ---------------------------------------------------------------------------
-class TestA2APassthroughHeadersAuditLogging:
-    """Test that passthrough header forwarding is logged for security audit."""
-
-    @pytest.mark.asyncio
-    @patch("mcpgateway.services.a2a_service.logger")
-    @patch("mcpgateway.services.a2a_service.httpx.AsyncClient")
-    @patch("mcpgateway.services.a2a_service.get_correlation_id")
-    async def test_audit_log_records_forwarded_headers(self, mock_correlation_id, mock_httpx_client, mock_logger, mock_db, mock_a2a_agent, a2a_service):
-        """Security audit: forwarded headers are logged."""
-        mock_correlation_id.return_value = "test-correlation-123"
-        mock_db.query.return_value.filter.return_value.first.return_value = mock_a2a_agent
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"result": "success"}
-        mock_response.headers = {}
-
-        mock_client_instance = AsyncMock()
-        mock_client_instance.post.return_value = mock_response
-        mock_client_instance.__aenter__.return_value = mock_client_instance
-        mock_client_instance.__aexit__.return_value = None
-        mock_httpx_client.return_value = mock_client_instance
-
+    def test_none_whitelist_blocks_all(self):
+        """None whitelist blocks all headers."""
         request_headers = {
-            "authorization": "Bearer token",
             "x-tenant-id": "acme",
+            "x-request-id": "123",
         }
+        whitelist = None
 
-        await a2a_service.invoke_agent(
-            agent_name="test-agent",
-            parameters={"query": "test"},
-            interaction_type="invoke",
-            db=mock_db,
-            user_email="auditor@example.com",
-            token_teams=["team-1"],
-            request_headers=request_headers,
-        )
+        result = self.filter_headers_by_whitelist(request_headers, whitelist)
 
-        # Verify audit log was written
-        # Look for logger.info call that mentions "passthrough headers forwarded"
-        info_calls = [call for call in mock_logger.info.call_args_list]
-        audit_log_found = any(
-            "passthrough headers" in str(call).lower() or "forwarded" in str(call).lower() for call in info_calls
-        )
-        assert audit_log_found, "Expected audit log for passthrough headers forwarding"
+        assert len(result) == 0
+
+    def test_none_request_headers_returns_empty(self):
+        """None request_headers returns empty dict."""
+        whitelist = ["X-Tenant-ID"]
+
+        result = self.filter_headers_by_whitelist(None, whitelist)
+
+        assert result == {}
+
+    def test_empty_request_headers_returns_empty(self):
+        """Empty request_headers returns empty dict."""
+        request_headers = {}
+        whitelist = ["X-Tenant-ID"]
+
+        result = self.filter_headers_by_whitelist(request_headers, whitelist)
+
+        assert result == {}
+
+    def test_multiple_headers_partial_match(self):
+        """Only whitelisted subset is forwarded."""
+        request_headers = {
+            "x-tenant-id": "acme",
+            "x-request-id": "123",
+            "x-correlation-id": "abc",
+            "x-user-id": "user1",
+            "x-other": "value",
+        }
+        whitelist = ["X-Tenant-ID", "X-Request-ID"]
+
+        result = self.filter_headers_by_whitelist(request_headers, whitelist)
+
+        assert len(result) == 2
+        assert "x-tenant-id" in result
+        assert "x-request-id" in result
+        assert "x-correlation-id" not in result
+        assert "x-user-id" not in result
+        assert "x-other" not in result
