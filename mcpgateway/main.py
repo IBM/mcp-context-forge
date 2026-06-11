@@ -99,7 +99,9 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingError, SamplingHandler
 from mcpgateway.middleware.client_disconnect import ClientDisconnectMiddleware
 from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
+from mcpgateway.middleware.conditional_request_middleware import ConditionalRequestMiddleware
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
+from mcpgateway.middleware.etag_response_middleware import ETagResponseMiddleware
 from mcpgateway.middleware.forwarded_host import ForwardedHostMiddleware
 from mcpgateway.middleware.header_size_middleware import HeaderSizeMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware, run_pre_request_hooks
@@ -3099,6 +3101,18 @@ if settings.rate_limiting_enabled:
         f"HIGH={settings.rate_limit_high_rpm}, "
         f"MEDIUM={settings.rate_limit_medium_rpm}, "
         f"LOW={settings.rate_limit_low_rpm}]"
+    )
+
+# Add conditional request middleware (RFC 6585 Phase 2: 428 Precondition Required)
+if settings.conditional_requests_enabled:
+    app.add_middleware(ConditionalRequestMiddleware)
+    # Add ETag response middleware to automatically include ETags in GET responses
+    app.add_middleware(ETagResponseMiddleware)
+    logger.info(
+        f"🔒 RFC 6585 Conditional Request Validation enabled: "
+        f"methods={settings.conditional_requests_required_methods}, "
+        f"exempt_paths={len(settings.conditional_requests_exempt_paths)} paths, "
+        f"ETag headers on GET responses"
     )
 
 # Add validation middleware if explicitly enabled
