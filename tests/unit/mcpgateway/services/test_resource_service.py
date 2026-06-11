@@ -1071,6 +1071,23 @@ class TestResourceManagement:
         assert mock_resource.extension_metadata == metadata
 
     @pytest.mark.asyncio
+    async def test_update_resource_rejects_ui_uri_without_policy_metadata(self, resource_service, mock_db, mock_resource, monkeypatch):
+        """Updating a resource into ui:// must enforce the same policy metadata as creation."""
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        mock_resource.uri = "https://example.com/widget"
+        mock_resource.mime_type = "text/html"
+        mock_resource.extension_metadata = None
+        update_data = ResourceUpdate(uri="ui://widgets/example")
+
+        with (
+            patch("mcpgateway.services.resource_service.get_for_update", side_effect=[mock_resource, None]),
+            pytest.raises(ResourceError, match="MCP Apps metadata"),
+        ):
+            await resource_service.update_resource(mock_db, mock_resource.id, update_data)
+
+        mock_db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_update_resource_team_id_rejects_nonexistent_team(self, resource_service, mock_db, mock_resource):
         """Reassigning a resource to a non-existent team must raise ResourceError."""
         mock_resource.team_id = "old-team"

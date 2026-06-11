@@ -214,9 +214,18 @@ def validate_ui_resource(resource_uri: str, mime_type: Optional[str], extension_
         raise MCPAppsValidationError("ui:// resources require a non-empty MCP Apps sandbox policy")
 
 
-def tool_audience(extension_metadata: Optional[Dict[str, Any]]) -> List[str]:
+def _protocol_ui_metadata(value: Any) -> Dict[str, Any]:
+    """Return MCP protocol ``_meta.ui`` metadata when present."""
+    metadata = extension_metadata_value(value)
+    ui = metadata.get("ui")
+    return ui if isinstance(ui, dict) else {}
+
+
+def tool_audience(extension_metadata: Optional[Dict[str, Any]], protocol_meta: Any = None) -> List[str]:
     """Return normalized tool audience for MCP Apps filtering."""
     ui = mcp_ui_metadata(extension_metadata)
+    if not ui:
+        ui = _protocol_ui_metadata(protocol_meta)
     audience = ui.get("visibility", ui.get("audience"))
     if audience is None:
         return ["model"]
@@ -225,12 +234,16 @@ def tool_audience(extension_metadata: Optional[Dict[str, Any]]) -> List[str]:
 
 def is_model_visible_tool(tool: Any) -> bool:
     """Return whether a tool should appear in model-facing tools/list."""
-    return "model" in tool_audience(getattr(tool, "extension_metadata", None) if not isinstance(tool, dict) else tool.get("extensionMetadata") or tool.get("extension_metadata"))
+    extension_metadata = getattr(tool, "extension_metadata", None) if not isinstance(tool, dict) else tool.get("extensionMetadata") or tool.get("extension_metadata")
+    protocol_meta = getattr(tool, "meta", None) if not isinstance(tool, dict) else tool.get("_meta") or tool.get("meta")
+    return "model" in tool_audience(extension_metadata, protocol_meta)
 
 
 def is_app_visible_tool(tool: Any) -> bool:
     """Return whether a tool can be invoked through AppBridge."""
-    return "app" in tool_audience(getattr(tool, "extension_metadata", None) if not isinstance(tool, dict) else tool.get("extensionMetadata") or tool.get("extension_metadata"))
+    extension_metadata = getattr(tool, "extension_metadata", None) if not isinstance(tool, dict) else tool.get("extensionMetadata") or tool.get("extension_metadata")
+    protocol_meta = getattr(tool, "meta", None) if not isinstance(tool, dict) else tool.get("_meta") or tool.get("meta")
+    return "app" in tool_audience(extension_metadata, protocol_meta)
 
 
 def filter_model_visible_tools(tools: Iterable[Any]) -> List[Any]:
