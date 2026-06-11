@@ -8,8 +8,7 @@ MCP server implementation guidance for AI coding assistants.
 mcp-servers/
 ├── go/                            # Go MCP servers
 │   ├── benchmark-server/          # Performance benchmarking
-│   ├── fast-time-server/          # Time/date operations
-│   └── slow-time-server/          # Configurable-latency testing server
+│   └── fast-time-server/          # Time/date operations
 ├── python/                        # Python MCP servers
 │   ├── data_analysis_server/      # Data analysis tools
 │   ├── graphviz_server/           # Diagram generation
@@ -21,7 +20,8 @@ mcp-servers/
 │   └── url_to_markdown_server/    # URL to markdown conversion
 ├── rust/                          # Rust MCP servers
 │   ├── fast-test-server/          # Fast testing server
-│   └── filesystem-server/         # Filesystem operations
+│   ├── filesystem-server/         # Filesystem operations
+│   └── slow-time-server/          # Configurable-latency testing server
 ├── templates/                     # Cookiecutter scaffolding templates
 │   ├── go/                        # Go server template
 │   └── python/                    # Python server template

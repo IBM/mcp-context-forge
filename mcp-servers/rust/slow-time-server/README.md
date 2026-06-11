@@ -3,8 +3,7 @@
 Configurable-latency MCP test server for timeout, resilience, circuit-breaker,
 session-pool, and load-testing scenarios.
 
-This is the Rust counterpart for the Go `mcp-servers/go/slow-time-server`.
-It is intentionally a test utility, not a production MCP server.
+This is intentionally a test utility, not a production MCP server.
 
 ## Tools
 

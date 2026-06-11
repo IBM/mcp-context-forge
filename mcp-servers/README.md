@@ -40,7 +40,6 @@
 |--------|-------------|
 | `benchmark-server` | Performance benchmarking |
 | `fast-time-server` | Time and date operations |
-| `slow-time-server` | Configurable-latency testing server |
 
 ### Rust
 

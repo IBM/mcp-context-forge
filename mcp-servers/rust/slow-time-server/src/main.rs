@@ -9,6 +9,7 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, FixedOffset, TimeZone, Utc};
+use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::env;
@@ -91,6 +92,12 @@ struct RestTimeQuery {
     delay: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct EchoQuery {
+    #[serde(default)]
+    message: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct HealthResponse<'a> {
     status: &'a str,
@@ -135,6 +142,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/time", get(rest_time_handler))
         .route("/api/v1/config", get(config_handler))
         .route("/api/v1/stats", get(stats_handler))
+        .route("/api/v1/test/echo", get(echo_handler))
         .route("/mcp", post(mcp_handler))
         .route("/", post(mcp_handler))
         .layer(CorsLayer::permissive())
@@ -181,6 +189,14 @@ async fn stats_handler(State(state): State<AppState>) -> Json<Value> {
         "requests": state.stats.requests.load(Ordering::Relaxed),
         "failures": state.stats.failures.load(Ordering::Relaxed),
         "uptime_seconds": state.started.elapsed().as_secs()
+    }))
+}
+
+async fn echo_handler(Query(query): Query<EchoQuery>) -> Json<Value> {
+    Json(json!({
+        "echo": query.message.unwrap_or_else(|| "Hello from slow-time-server!".to_string()),
+        "timestamp": Utc::now().to_rfc3339(),
+        "server": APP_NAME,
     }))
 }
 
@@ -236,7 +252,11 @@ async fn tool_call_response(state: &AppState, req: &RpcRequest, params: ToolCall
     match params.name.as_str() {
         "get_slow_time" => match serde_json::from_value::<TimeArgs>(params.arguments) {
             Ok(args) => {
-                sleep_capped(delay_from_time_args(&args, state.config.default_latency)).await;
+                let delay = match delay_from_time_args(&args, state.config.default_latency) {
+                    Ok(value) => value,
+                    Err(err) => return rpc_error(req, -32602, &err),
+                };
+                sleep_capped(delay).await;
                 text_result(
                     req,
                     current_time(args.timezone.as_deref().unwrap_or("UTC")),
@@ -247,7 +267,11 @@ async fn tool_call_response(state: &AppState, req: &RpcRequest, params: ToolCall
         },
         "convert_slow_time" => match serde_json::from_value::<ConvertArgs>(params.arguments) {
             Ok(args) => {
-                sleep_capped(delay_from_convert_args(&args, state.config.default_latency)).await;
+                let delay = match delay_from_convert_args(&args, state.config.default_latency) {
+                    Ok(value) => value,
+                    Err(err) => return rpc_error(req, -32602, &err),
+                };
+                sleep_capped(delay).await;
                 text_result(
                     req,
                     convert_time(&args.time, &args.source_timezone, &args.target_timezone),
@@ -340,8 +364,7 @@ fn rpc_error(req: &RpcRequest, code: i32, message: &str) -> Value {
 }
 
 fn current_time(timezone: &str) -> Result<String, String> {
-    let offset = parse_timezone(timezone)?;
-    Ok(Utc::now().with_timezone(&offset).to_rfc3339())
+    format_utc_in_timezone(Utc::now(), timezone)
 }
 
 fn convert_time(
@@ -349,32 +372,32 @@ fn convert_time(
     source_timezone: &str,
     target_timezone: &str,
 ) -> Result<String, String> {
-    let source = parse_timezone(source_timezone)?;
-    let target = parse_timezone(target_timezone)?;
-    let parsed = parse_time_in_offset(time, source)?;
-    Ok(parsed.with_timezone(&target).to_rfc3339())
+    let parsed = parse_time_to_utc(time, source_timezone)?;
+    format_utc_in_timezone(parsed, target_timezone)
 }
 
-fn parse_timezone(tz: &str) -> Result<FixedOffset, String> {
-    if tz.eq_ignore_ascii_case("UTC") || tz.eq_ignore_ascii_case("GMT") {
-        return Ok(FixedOffset::east_opt(0).expect("zero offset is valid"));
+fn format_utc_in_timezone(time: DateTime<Utc>, timezone: &str) -> Result<String, String> {
+    if let Ok(offset) = parse_offset_timezone(timezone) {
+        return Ok(time.with_timezone(&offset).to_rfc3339());
     }
-    if tz.starts_with('+') || tz.starts_with('-') {
-        return parse_offset(tz);
+    let tz = parse_named_timezone(timezone)?;
+    Ok(time.with_timezone(&tz).to_rfc3339())
+}
+
+fn parse_named_timezone(timezone: &str) -> Result<Tz, String> {
+    if timezone.eq_ignore_ascii_case("UTC") || timezone.eq_ignore_ascii_case("GMT") {
+        return Ok(Tz::UTC);
     }
-    let seconds = match tz {
-        "America/New_York" | "US/Eastern" => -5 * 3600,
-        "America/Chicago" | "US/Central" => -6 * 3600,
-        "America/Los_Angeles" | "US/Pacific" => -8 * 3600,
-        "Europe/London" | "Europe/Dublin" | "GB" => 0,
-        "Europe/Paris" | "Europe/Berlin" | "Europe/Rome" | "Europe/Madrid" => 3600,
-        "Asia/Tokyo" | "Japan" => 9 * 3600,
-        "Asia/Shanghai" | "Asia/Singapore" => 8 * 3600,
-        "Asia/Kolkata" | "Asia/Calcutta" => 19_800,
-        "Australia/Sydney" | "Australia/Melbourne" => 10 * 3600,
-        _ => return Err(format!("unknown timezone: {tz}")),
-    };
-    FixedOffset::east_opt(seconds).ok_or_else(|| format!("invalid timezone offset: {tz}"))
+    timezone
+        .parse::<Tz>()
+        .map_err(|_| format!("unknown timezone: {timezone}"))
+}
+
+fn parse_offset_timezone(timezone: &str) -> Result<FixedOffset, String> {
+    if timezone.starts_with('+') || timezone.starts_with('-') {
+        return parse_offset(timezone);
+    }
+    Err(format!("not a fixed offset: {timezone}"))
 }
 
 fn parse_offset(value: &str) -> Result<FixedOffset, String> {
@@ -396,38 +419,67 @@ fn parse_offset(value: &str) -> Result<FixedOffset, String> {
         .ok_or_else(|| format!("offset out of range: {value}"))
 }
 
-fn parse_time_in_offset(time: &str, offset: FixedOffset) -> Result<DateTime<FixedOffset>, String> {
+fn parse_time_to_utc(time: &str, source_timezone: &str) -> Result<DateTime<Utc>, String> {
     if let Ok(parsed) = DateTime::parse_from_rfc3339(time) {
-        return Ok(parsed.with_timezone(&offset));
+        return Ok(parsed.with_timezone(&Utc));
     }
-    for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"] {
-        if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(time, fmt)
-            && let Some(dt) = offset.from_local_datetime(&naive).single()
-        {
-            return Ok(dt);
+    if let Ok(offset) = parse_offset_timezone(source_timezone) {
+        return parse_time_in_timezone(time, |naive| offset.from_local_datetime(naive));
+    }
+    let tz = parse_named_timezone(source_timezone)?;
+    parse_time_in_timezone(time, |naive| tz.from_local_datetime(naive))
+}
+
+fn parse_time_in_timezone<T>(
+    time: &str,
+    from_local_datetime: impl Fn(&chrono::NaiveDateTime) -> chrono::LocalResult<DateTime<T>>,
+) -> Result<DateTime<Utc>, String>
+where
+    T: TimeZone,
+{
+    for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"] {
+        if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(time, fmt) {
+            if let Some(dt) = from_local_datetime(&naive).single() {
+                return Ok(dt.with_timezone(&Utc));
+            }
         }
-        if let Ok(date) = chrono::NaiveDate::parse_from_str(time, fmt)
-            && let Some(naive) = date.and_hms_opt(0, 0, 0)
-            && let Some(dt) = offset.from_local_datetime(&naive).single()
-        {
-            return Ok(dt);
+    }
+    if let Ok(date) = chrono::NaiveDate::parse_from_str(time, "%Y-%m-%d") {
+        if let Some(naive) = date.and_hms_opt(0, 0, 0) {
+            if let Some(dt) = from_local_datetime(&naive).single() {
+                return Ok(dt.with_timezone(&Utc));
+            }
         }
     }
     Err(format!("unrecognized time format: {time}"))
 }
 
-fn delay_from_time_args(args: &TimeArgs, default_latency: Duration) -> Duration {
-    args.delay_ms
-        .map(Duration::from_millis)
-        .or_else(|| args.delay_seconds.map(Duration::from_secs_f64))
-        .unwrap_or(default_latency)
+fn delay_from_time_args(args: &TimeArgs, default_latency: Duration) -> Result<Duration, String> {
+    delay_from_parts(args.delay_ms, args.delay_seconds, default_latency)
 }
 
-fn delay_from_convert_args(args: &ConvertArgs, default_latency: Duration) -> Duration {
-    args.delay_ms
-        .map(Duration::from_millis)
-        .or_else(|| args.delay_seconds.map(Duration::from_secs_f64))
-        .unwrap_or(default_latency)
+fn delay_from_convert_args(
+    args: &ConvertArgs,
+    default_latency: Duration,
+) -> Result<Duration, String> {
+    delay_from_parts(args.delay_ms, args.delay_seconds, default_latency)
+}
+
+fn delay_from_parts(
+    delay_ms: Option<u64>,
+    delay_seconds: Option<f64>,
+    default_latency: Duration,
+) -> Result<Duration, String> {
+    if let Some(value) = delay_ms {
+        return Ok(Duration::from_millis(value).min(MAX_DELAY));
+    }
+    if let Some(value) = delay_seconds {
+        if !value.is_finite() || value < 0.0 {
+            return Err("delay_seconds must be a finite non-negative number".to_string());
+        }
+        return Ok(Duration::from_secs_f64(value).min(MAX_DELAY));
+    }
+    Ok(default_latency)
 }
 
 async fn sleep_capped(delay: Duration) {
@@ -517,14 +569,37 @@ mod tests {
 
     #[test]
     fn timezone_parser_supports_half_hour_offsets() {
-        let offset = parse_timezone("Asia/Kolkata").unwrap();
-        assert_eq!(offset.local_minus_utc(), 19_800);
+        let converted = convert_time("2025-01-01T00:00:00Z", "UTC", "Asia/Kolkata").unwrap();
+        assert!(converted.ends_with("+05:30"));
     }
 
     #[test]
     fn convert_time_uses_target_timezone() {
         let converted = convert_time("2025-01-01T12:00:00Z", "UTC", "Asia/Kolkata").unwrap();
         assert!(converted.starts_with("2025-01-01T17:30:00+05:30"));
+    }
+
+    #[test]
+    fn named_timezone_parser_supports_existing_jmeter_data() {
+        for timezone in [
+            "America/Denver",
+            "Pacific/Auckland",
+            "Africa/Cairo",
+            "America/Toronto",
+            "America/Sao_Paulo",
+        ] {
+            assert!(current_time(timezone).is_ok(), "{timezone}");
+        }
+    }
+
+    #[test]
+    fn delay_seconds_rejects_invalid_values() {
+        let args = TimeArgs {
+            timezone: None,
+            delay_seconds: Some(-1.0),
+            delay_ms: None,
+        };
+        assert!(delay_from_time_args(&args, Duration::from_secs(1)).is_err());
     }
 
     #[test]
@@ -571,6 +646,12 @@ mod tests {
             delay: None,
         };
         assert_eq!(query.tz.as_deref(), Some("UTC"));
+    }
+
+    #[test]
+    fn echo_query_can_omit_message() {
+        let query: EchoQuery = serde_json::from_value(json!({})).unwrap();
+        assert!(query.message.is_none());
     }
 
     #[test]
