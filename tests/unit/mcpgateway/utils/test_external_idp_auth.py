@@ -368,3 +368,50 @@ async def test_build_external_identity_unknown_user_returns_none(monkeypatch):
     db = MagicMock()
     payload = await vc.build_external_identity(prov, {"sub": "ghost"}, "raw", db)
     assert payload is None
+
+
+@pytest.mark.asyncio
+async def test_build_external_identity_empty_email_returns_none(monkeypatch):
+    """If user_info has no usable email after normalization, fail closed."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    prov = _fake_provider("https://kc/realms/m")
+    prov.id = "keycloak"
+    svc = MagicMock()
+    svc._normalize_user_info.return_value = {"email": "   ", "is_admin": False}
+
+    async def fake_auth(user_info):
+        return "token-string"
+
+    svc.authenticate_or_create_user = fake_auth
+    monkeypatch.setattr(vc, "_get_sso_service", lambda db: svc)
+    db = MagicMock()
+    payload = await vc.build_external_identity(prov, {"iss": "https://kc/realms/m"}, "raw", db)
+    assert payload is None
+
+
+@pytest.mark.asyncio
+async def test_build_external_identity_missing_db_user_returns_none(monkeypatch):
+    """Provisioning succeeded but the user can't be found afterward -- fail closed."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    prov = _fake_provider("https://kc/realms/m")
+    prov.id = "keycloak"
+    svc = MagicMock()
+    svc._normalize_user_info.return_value = {"email": "agent@corp.com", "is_admin": False}
+
+    async def fake_auth(user_info):
+        return "token-string"
+
+    svc.authenticate_or_create_user = fake_auth
+
+    async def fake_get_user(email):
+        return None
+
+    svc.auth_service.get_user_by_email = fake_get_user
+    monkeypatch.setattr(vc, "_get_sso_service", lambda db: svc)
+    db = MagicMock()
+    payload = await vc.build_external_identity(prov, {"iss": "https://kc/realms/m"}, "raw", db)
+    assert payload is None

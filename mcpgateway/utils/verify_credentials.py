@@ -1891,8 +1891,7 @@ async def build_external_identity(provider: SSOProvider, verified_claims: dict, 
     payload["is_admin"] = is_admin
 
     # Persist provisioning if we own the session (set by a future dispatcher).
-    own_session = getattr(getattr(db, "info", {}), "get", lambda *_: None)("external_owned")
-    if own_session:
+    if db.info.get("external_owned"):
         db.commit()
 
     return payload
