@@ -59,6 +59,16 @@ from mcpgateway.services.logging_service import LoggingService
 _MIGRATION_LOCK_PATH = os.path.join(tempfile.gettempdir(), "mcpgateway_migration.lock")
 _MIGRATION_LOCK_TIMEOUT = 300  # seconds to wait for lock (5 minutes for slow migrations)
 
+# Deprecated revision aliases: old_revision_id -> new_revision_id
+# When migration files are renamed with new revision IDs, existing databases
+# still reference the old IDs in their alembic_version table. This mapping
+# allows transparent rewriting before Alembic attempts to resolve the chain.
+# See: https://github.com/IBM/mcp-context-forge/issues/5186
+_DEPRECATED_REVISION_ALIASES: dict[str, str] = {
+    "b1c2d3e4f5a6": "592625561893",  # add_tool_plugin_bindings_table
+    "c2d3e4f5a6b7": "1a02944e2671",  # add_manage_plugins_to_team_admin
+}
+
 
 class _SchemaNotAtHeadError(RuntimeError):
     """Raised when skip-migration mode detects schema is behind Alembic head."""
@@ -125,6 +135,45 @@ def make_alembic_cfg(database_url: str, *, configure_logger: bool = False) -> Co
     escaped_url = database_url.replace("%", "%%")
     cfg.set_main_option("sqlalchemy.url", escaped_url)
     return cfg
+
+
+def _rewrite_deprecated_revisions(conn: Connection) -> None:
+    """Rewrite a deprecated revision ID in alembic_version to its current equivalent.
+
+    This handles cases where migration files were renamed with new revision IDs,
+    leaving existing databases with a stale reference that Alembic cannot resolve.
+    The alembic_version table holds exactly one row (the current position).
+
+    The function is idempotent — if the table does not exist, is empty, or the
+    current revision is not deprecated, it is a no-op.
+
+    Args:
+        conn: Active SQLAlchemy connection (must be inside a transaction).
+    """
+    import sqlalchemy as sa
+
+    inspector = sa.inspect(conn)
+    if "alembic_version" not in inspector.get_table_names():
+        return
+
+    row = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
+    if row is None:
+        return
+
+    version_num = row[0]
+    new_revision = _DEPRECATED_REVISION_ALIASES.get(version_num)
+    if new_revision is None:
+        return
+
+    conn.execute(
+        text("UPDATE alembic_version SET version_num = :new WHERE version_num = :old"),
+        {"new": new_revision, "old": version_num},
+    )
+    logger.warning(
+        "Rewrote deprecated alembic revision %s -> %s (migration file was renamed)",
+        version_num,
+        new_revision,
+    )
 
 
 def alembic_at_head(conn: Connection, cfg: Config) -> bool:
@@ -835,6 +884,8 @@ async def main() -> None:
         try:
             with engine.connect() as conn:
                 conn.commit()  # defensive flush — connection should be fresh but ensures clean state
+                _rewrite_deprecated_revisions(conn)
+                conn.commit()
                 if not alembic_at_head(conn, cfg):
                     logger.error(
                         "MCPGATEWAY_SKIP_MIGRATIONS=true but schema is not at head. "
@@ -878,6 +929,12 @@ async def main() -> None:
 
             with advisory_lock(conn):
                 logger.info("Acquired migration lock, checking database schema...")
+
+                # Rewrite any deprecated revision IDs left by earlier releases that
+                # renamed migration files.  Must run before command.upgrade() so
+                # Alembic can resolve the migration chain.
+                _rewrite_deprecated_revisions(conn)
+                conn.commit()
 
                 # Pass the LOCKED connection to Alembic config
                 cfg.attributes["connection"] = conn
