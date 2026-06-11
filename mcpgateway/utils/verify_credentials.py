@@ -68,6 +68,7 @@ from fastapi import Cookie, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBasic, HTTPBasicCredentials, HTTPBearer
 from fastapi.security.utils import get_authorization_scheme_param
 import jwt
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -520,18 +521,24 @@ async def _external_identity_cache_get(token_hash: str) -> Optional[dict]:
             logger.warning("External identity cache Redis GET failed, treating as cache miss: %s", exc)
             return None
         if raw is None:
+            logger.debug("external-idp identity cache miss")
             return None
         try:
-            return json.loads(raw)
+            cached_payload = json.loads(raw)
         except (TypeError, ValueError):
             return None
+        logger.debug("external-idp identity cache hit")
+        return cached_payload
     entry = _external_identity_cache.get(token_hash)
     if entry is None:
+        logger.debug("external-idp identity cache miss")
         return None
     payload, expires_at = entry
     if monotonic() >= expires_at:
         _external_identity_cache.pop(token_hash, None)
+        logger.debug("external-idp identity cache miss")
         return None
+    logger.debug("external-idp identity cache hit")
     return dict(payload)
 
 
@@ -595,6 +602,31 @@ def _has_trusted_providers(db: Optional[Session]) -> bool:
             db.close()
 
 
+def _record_external_auth_metric(outcome: str, provider_id, reason: str = "") -> None:
+    """Record a best-effort per-provider external-IdP auth counter (D3).
+
+    Args:
+        outcome: "success" or "denied".
+        provider_id: The SSO provider identifier (or None).
+        reason: A short, stable deny-reason string (e.g. "issuer_not_trusted"); empty for success.
+
+    Never raises -- a metrics-backend failure must not affect authentication.
+    """
+    try:
+        # First-Party
+        from mcpgateway.services.observability_service import ObservabilityService  # pylint: disable=import-outside-toplevel
+
+        ObservabilityService().record_metric(
+            name=f"auth.external_idp.{outcome}",
+            value=1,
+            metric_type="counter",
+            unit="count",
+            attributes={"provider": str(provider_id), "reason": reason},
+        )
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.debug("external-idp auth metric skipped: %s", exc)
+
+
 async def _maybe_verify_external(token: str, request: Optional[Request]) -> Optional[dict]:
     """Attempt external-IdP (trusted OIDC issuer) verification for a bearer token.
 
@@ -648,6 +680,9 @@ async def _maybe_verify_external(token: str, request: Optional[Request]) -> Opti
         if payload is not None:
             await _external_identity_cache_put(th, payload, claims.get("exp"))
         return payload
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning("external-idp auth error, falling through to internal (401): %s", exc)
+        return None
     finally:
         if own_session:
             db.close()
@@ -2002,10 +2037,14 @@ async def verify_external_idp_token(token: str, db: Session) -> tuple[Optional[d
 
     issuer = unverified.get("iss")
     if not isinstance(issuer, str) or not issuer:
+        logger.warning("external-idp auth denied: missing or invalid issuer claim")
+        _record_external_auth_metric("denied", None, reason="missing_issuer")
         return None, None
 
     provider = resolve_trusted_provider_by_issuer(issuer, db)
     if provider is None or not provider.issuer:
+        logger.warning("external-idp auth denied: issuer not trusted (iss=%s)", sanitize_for_log(issuer))
+        _record_external_auth_metric("denied", getattr(provider, "id", None), reason="issuer_not_trusted")
         return None, None
 
     claims = await verify_oauth_access_token(
@@ -2014,6 +2053,8 @@ async def verify_external_idp_token(token: str, db: Session) -> tuple[Optional[d
         expected_audience=provider.api_audience or None,
     )
     if claims is None:
+        logger.warning("external-idp auth denied: token validation failed (iss=%s)", sanitize_for_log(issuer))
+        _record_external_auth_metric("denied", getattr(provider, "id", None), reason="validation_failed")
         return None, None
     return claims, provider
 
@@ -2112,23 +2153,40 @@ async def build_external_identity(provider: SSOProvider, verified_claims: dict, 
     from mcpgateway.auth import resolve_session_teams  # pylint: disable=import-outside-toplevel
 
     svc = _get_sso_service(db)
-    if _is_clientless_token(verified_claims):
+    is_synthetic = _is_clientless_token(verified_claims)
+    if is_synthetic:
         user_info = _synthetic_service_principal_user_info(provider, verified_claims)
     else:
         user_info = svc._normalize_user_info(provider, verified_claims)  # pylint: disable=protected-access
 
+    provider_id = getattr(provider, "id", None)
+
     # Provisioning side-effect only (creates/links user, role-sync, enforces
     # trusted_domains + email-verified). Return value is a JWT token -- discard it.
-    provisioned = await svc.authenticate_or_create_user(user_info)
+    try:
+        provisioned = await svc.authenticate_or_create_user(user_info)
+    except IntegrityError:
+        # E2: lost a concurrent provisioning race -- the winner already created
+        # the user, so roll back our half-applied insert and re-look-up by email.
+        db.rollback()
+        provisioned = True
+        logger.info("external-idp: provisioning race resolved via re-lookup")
+
     if not provisioned:
+        logger.warning("external-idp auth denied: user not provisionable (iss=%s, provider=%s)", sanitize_for_log(verified_claims.get("iss")), sanitize_for_log(provider_id))
+        _record_external_auth_metric("denied", provider_id, reason="not_provisionable")
         return None
 
     email = str(user_info.get("email") or "").strip().lower()
     if not email:
+        logger.warning("external-idp auth denied: empty email claim (iss=%s, provider=%s)", sanitize_for_log(verified_claims.get("iss")), sanitize_for_log(provider_id))
+        _record_external_auth_metric("denied", provider_id, reason="empty_email")
         return None
 
     db_user = await svc.auth_service.get_user_by_email(email)
     if db_user is None:
+        logger.warning("external-idp auth denied: user not found after provisioning (iss=%s, provider=%s)", sanitize_for_log(verified_claims.get("iss")), sanitize_for_log(provider_id))
+        _record_external_auth_metric("denied", provider_id, reason="user_not_found")
         return None
 
     is_admin = bool(db_user.is_admin)  # DB authority, not the mapped claim
@@ -2141,7 +2199,7 @@ async def build_external_identity(provider: SSOProvider, verified_claims: dict, 
         "token_use": "session",  # nosec B105 - JWT claim type, not a password
         "source": "external_idp",  # audit/telemetry only -- never drives authz
         "iss": verified_claims.get("iss"),
-        "auth_provider": getattr(provider, "id", None),
+        "auth_provider": provider_id,
     }
     teams = await resolve_session_teams(payload, email, db_user)
     payload["teams"] = teams
@@ -2149,6 +2207,30 @@ async def build_external_identity(provider: SSOProvider, verified_claims: dict, 
 
     # Persist provisioning if we own the session (set by a future dispatcher).
     if db.info.get("external_owned"):
-        db.commit()
+        try:
+            db.commit()
+        except Exception as exc:  # pylint: disable=broad-except
+            db.rollback()
+            logger.error("external-idp: provisioning commit failed: %s", exc)
+            return None
+
+    if is_synthetic:
+        # NOTE: simplification -- we log "provisioned" unconditionally on the
+        # synthetic service-principal path rather than only on first creation,
+        # since authenticate_or_create_user's return value does not distinguish
+        # "created" from "already existed".
+        logger.info("external-idp: provisioned service principal %s", sanitize_for_log(email))
+
+    # First-Party
+    from mcpgateway.auth_context import get_user_email  # pylint: disable=import-outside-toplevel
+
+    logger.info(
+        "external-idp auth ok: provider=%s principal=%s is_admin=%s teams=%d",
+        sanitize_for_log(provider_id),
+        sanitize_for_log(get_user_email({"email": email})),
+        is_admin,
+        (0 if teams is None else len(teams)),
+    )
+    _record_external_auth_metric("success", provider_id)
 
     return payload

@@ -689,3 +689,168 @@ async def test_external_identity_cache_inmemory_get_returns_copy(monkeypatch):
 
     second = await vc._external_identity_cache_get("th-copy")
     assert "token" not in second
+
+
+@pytest.mark.asyncio
+async def test_L1_deny_reason_logged_for_untrusted_issuer(monkeypatch, caplog):
+    """L1: an untrusted issuer logs a distinct reason (not silent)."""
+    # Standard
+    import logging
+
+    # Third-Party
+    import jwt as pyjwt
+
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: None)
+    tok = pyjwt.encode({"iss": "https://evil.example.com", "sub": "x"}, "k", algorithm="HS256")
+    with caplog.at_level(logging.WARNING):
+        result = await vc.verify_external_idp_token(tok, MagicMock())
+    assert result == (None, None)
+    assert any("issuer" in r.getMessage().lower() for r in caplog.records), "must log a reason"
+
+
+@pytest.mark.asyncio
+async def test_L2_token_and_payload_never_logged(monkeypatch, caplog):
+    """L2: neither the raw token nor the synthesized payload appears in logs."""
+    # Standard
+    import logging
+
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    prov = _fake_provider("https://kc/realms/m")
+    prov.id = "kc"
+    claims = {"iss": "https://kc/realms/m", "sub": "agent", "email": "agent@corp.com"}
+    svc = MagicMock()
+    svc._normalize_user_info.return_value = {"email": "agent@corp.com", "is_admin": False}
+
+    async def fake_auth(ui):
+        return "jwt"
+
+    svc.authenticate_or_create_user = fake_auth
+    du = MagicMock()
+    du.is_admin = False
+
+    async def fake_get_user(e):
+        return du
+
+    svc.auth_service.get_user_by_email = fake_get_user
+    monkeypatch.setattr(vc, "_get_sso_service", lambda db: svc)
+
+    async def fake_resolve(p, e, ui, **k):
+        return []
+
+    monkeypatch.setattr("mcpgateway.auth.resolve_session_teams", fake_resolve)
+    with caplog.at_level(logging.DEBUG):
+        await vc.build_external_identity(prov, claims, "SUPER-SECRET-TOKEN", MagicMock())
+    blob = "\n".join(r.getMessage() for r in caplog.records)
+    assert "SUPER-SECRET-TOKEN" not in blob
+
+
+@pytest.mark.asyncio
+async def test_E1_redis_failure_fails_open(monkeypatch):
+    """E1: a Redis error in the cache helpers is swallowed -> treated as miss, no raise."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    class BoomRedis:
+        async def get(self, k):
+            raise RuntimeError("redis down")
+
+        async def set(self, k, v, ex=None):
+            raise RuntimeError("redis down")
+
+    async def boom():
+        return BoomRedis()
+
+    monkeypatch.setattr(vc, "get_redis_client", boom)
+    assert await vc._external_identity_cache_get("h") is None
+    await vc._external_identity_cache_put("h", {"sub": "x"}, token_exp=9999999999)  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_E2_provision_race_recovers(monkeypatch):
+    """E2: IntegrityError on concurrent provisioning -> rollback + re-lookup returns the user."""
+    # Third-Party
+    from sqlalchemy.exc import IntegrityError
+
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    prov = _fake_provider("https://kc/realms/m")
+    prov.id = "kc"
+    claims = {"iss": "https://kc/realms/m", "sub": "svc-1", "azp": "svc-1"}
+    monkeypatch.setattr(vc, "_synthetic_service_principal_user_info", lambda p, c: {"email": "svc-svc-1@kc.service.local", "email_verified": True})
+    svc = MagicMock()
+
+    async def racing_auth(ui):
+        raise IntegrityError("dup", {}, Exception())  # lost the race
+
+    svc.authenticate_or_create_user = racing_auth
+    existing = MagicMock()
+    existing.is_admin = False
+
+    async def fake_get_user(e):
+        return existing  # winner already created it
+
+    svc.auth_service.get_user_by_email = fake_get_user
+    monkeypatch.setattr(vc, "_get_sso_service", lambda db: svc)
+
+    async def fake_resolve(p, e, ui, **k):
+        return []
+
+    monkeypatch.setattr("mcpgateway.auth.resolve_session_teams", fake_resolve)
+    db = MagicMock()
+    payload = await vc.build_external_identity(prov, claims, "raw", db)
+    assert payload is not None and payload["sub"] == "svc-svc-1@kc.service.local"
+    db.rollback.assert_called()  # rolled back the failed insert before re-lookup
+
+
+@pytest.mark.asyncio
+async def test_E3_unexpected_error_fails_closed(monkeypatch):
+    """E3: an unexpected error in the external path returns None (-> 401), never raises (-> 500)."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    monkeypatch.setattr(vc.settings, "sso_api_token_auth_enabled", True)
+    monkeypatch.setattr(vc.settings, "jwt_issuer", "mcpgateway")
+    monkeypatch.setattr(vc, "_has_trusted_providers", lambda db: True)
+
+    async def boom(tok, db):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(vc, "verify_external_idp_token", boom)
+    # Third-Party
+    import jwt as pyjwt
+
+    tok = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "a"}, "k", algorithm="HS256")
+    assert await vc._maybe_verify_external(tok, request=None) is None  # fail closed
+
+
+@pytest.mark.asyncio
+async def test_D3_emits_provider_counter(monkeypatch):
+    """D3: a deny path records a per-provider 'denied' counter; failure is swallowed."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    calls = []
+
+    class FakeObs:
+        def record_metric(self, **kw):
+            calls.append(kw)
+            return 1
+
+    monkeypatch.setattr("mcpgateway.services.observability_service.ObservabilityService", lambda: FakeObs())
+    vc._record_external_auth_metric("denied", "kc", reason="issuer_not_trusted")
+    assert calls and calls[0]["name"] == "auth.external_idp.denied"
+    assert calls[0]["metric_type"] == "counter"
+    assert calls[0]["attributes"] == {"provider": "kc", "reason": "issuer_not_trusted"}
+
+    # fail-open: a raising observability layer must not propagate
+    monkeypatch.setattr(
+        "mcpgateway.services.observability_service.ObservabilityService",
+        lambda: (_ for _ in ()).throw(RuntimeError("obs down")),
+    )
+    vc._record_external_auth_metric("success", "kc")  # must not raise
