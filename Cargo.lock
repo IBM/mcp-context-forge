@@ -3,6 +3,22 @@
 version = 4
 
 [[package]]
+name = "a2a-echo-agent"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "actson"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

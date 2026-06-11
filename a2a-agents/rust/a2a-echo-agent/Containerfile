@@ -2,10 +2,10 @@
 FROM docker.io/library/rust:1.86-slim AS builder
 
 WORKDIR /app
-COPY Cargo.toml Cargo.lock* ./
-RUN mkdir src && echo "fn main() {}" > src/main.rs && cargo build --release
-COPY src ./src
-RUN touch src/main.rs && cargo build --release
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+COPY a2a-agents/rust/a2a-echo-agent ./a2a-agents/rust/a2a-echo-agent
+RUN cargo build --release -p a2a-echo-agent
 
 FROM docker.io/library/debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \

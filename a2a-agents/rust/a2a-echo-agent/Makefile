@@ -25,14 +25,14 @@ build:
 release:
 	@cargo build --release
 
-run: build
-	@RUST_LOG=info target/debug/$(BIN_NAME)
+run:
+	@RUST_LOG=info cargo run -p $(BIN_NAME)
 
 clean:
 	@cargo clean
 
 container-build:
-	@$(CONTAINER_RT) build -f Containerfile -t $(IMAGE) .
+	@cd ../../.. && $(CONTAINER_RT) build -f a2a-agents/rust/a2a-echo-agent/Containerfile -t $(IMAGE) .
 
 container-run: container-build
 	@$(CONTAINER_RT) run --rm -p 9100:9100 -e A2A_ECHO_ADDR=0.0.0.0:9100 $(IMAGE)

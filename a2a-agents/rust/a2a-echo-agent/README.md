@@ -3,7 +3,8 @@
 Lightweight Rust A2A echo agent used for ContextForge compose, Langfuse,
 load-test, and end-to-end A2A pipeline validation.
 
-This is the Rust counterpart for `a2a-agents/go/a2a-echo-agent`.
+This is the active A2A echo agent implementation used by compose and container
+validation.
 
 ## Endpoints
 
