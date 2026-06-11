@@ -41,7 +41,7 @@ describe("Gateways Utils", () => {
     });
 
     it("truncates middle if longer than maxLength", () => {
-      const longStr = "123456789012345678901234567890";
+      const longStr = "123456789012345678901234567890"; // pragma: allowlist secret
       const result = truncateMiddle(longStr, 24);
       expect(result.length).toBeLessThan(longStr.length);
       expect(result).toContain("...");

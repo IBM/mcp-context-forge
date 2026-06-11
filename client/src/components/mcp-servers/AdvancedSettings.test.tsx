@@ -42,7 +42,7 @@ describe("AdvancedSettings", () => {
     onOAuthUsernameChange: vi.fn(),
     onOAuthPasswordChange: vi.fn(),
     queryParamName: "",
-    queryParamApiKey: "",
+    queryParamApiKey: "", // pragma: allowlist secret
     onQueryParamNameChange: vi.fn(),
     onQueryParamApiKeyChange: vi.fn(),
     oneTimeAuth: false,
