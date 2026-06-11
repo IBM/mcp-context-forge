@@ -2516,6 +2516,10 @@ def resolve_trusted_provider_by_issuer(issuer: str, db: "Session") -> "Optional[
     seconds (finding P1) and invalidated via :func:`invalidate_trusted_provider_cache`.
     Matching normalizes trailing slashes to mirror ``verify_oauth_access_token``.
 
+    Note: this cache is per-process; in multi-worker deployments, invalidation only
+    affects the worker that handled the CRUD request -- other workers converge within
+    the TTL.
+
     Args:
         issuer: The ``iss`` claim from an inbound (unverified) token.
         db: Request-scoped SQLAlchemy session.
@@ -2529,7 +2533,10 @@ def resolve_trusted_provider_by_issuer(issuer: str, db: "Session") -> "Optional[
     normalized = issuer.rstrip("/")
 
     now = monotonic()
-    if not _trusted_provider_cache or (now - _trusted_provider_cache_loaded_at) > _TRUSTED_PROVIDER_CACHE_TTL:
+    # Use _trusted_provider_cache_loaded_at (not the map itself) to detect "never loaded",
+    # so an empty map (zero trusted providers - the common case) is still cached and
+    # doesn't trigger a re-scan on every request.
+    if _trusted_provider_cache_loaded_at == 0.0 or (now - _trusted_provider_cache_loaded_at) > _TRUSTED_PROVIDER_CACHE_TTL:
         _trusted_provider_cache = _load_trusted_provider_map(db)
         _trusted_provider_cache_loaded_at = now
 

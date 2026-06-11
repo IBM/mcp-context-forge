@@ -130,6 +130,19 @@ def test_resolve_trusted_provider_unknown_issuer_returns_none():
     assert sso_service.resolve_trusted_provider_by_issuer("https://evil.example.com", db) is None
 
 
+def test_resolver_with_no_providers_does_not_rescan():
+    """Empty trusted-provider map must still be cached (no per-request rescan when none configured)."""
+    # First-Party
+    from mcpgateway.services import sso_service
+
+    sso_service.invalidate_trusted_provider_cache()
+    db = _mock_db([])
+    assert sso_service.resolve_trusted_provider_by_issuer("https://kc.example.com/realms/m", db) is None
+    db.reset_mock()
+    assert sso_service.resolve_trusted_provider_by_issuer("https://kc.example.com/realms/m", db) is None
+    assert _scan_count(db) == 0
+
+
 def test_resolver_caches_scan_and_skips_unknown_issuer_db_hit():
     """P1: the expensive table scan runs once within TTL; an UNKNOWN issuer
     served from the cached map costs ZERO DB queries (DoS-amplification fix)."""
