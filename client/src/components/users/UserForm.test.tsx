@@ -13,6 +13,10 @@ const messages = {
   "users.form.email.placeholder": "user@example.com",
   "users.form.password": "Password",
   "users.form.password.placeholder": "Enter password",
+  "users.form.password.optional.placeholder": "Leave blank to keep current",
+  "users.form.password.optional": "Leave blank to keep the current password",
+  "users.form.password.show": "Show password",
+  "users.form.password.hide": "Hide password",
   "users.form.confirmPassword": "Confirm Password", // pragma: allowlist secret
   "users.form.confirmPassword.placeholder": "Re-enter password",
   "users.form.fullName": "Full Name",
@@ -24,6 +28,10 @@ const messages = {
   "users.form.button.cancel": "Cancel",
   "users.form.button.create": "Create User",
   "users.form.button.creating": "Creating...",
+  "users.form.button.save": "Save Changes",
+  "users.form.button.saving": "Saving...",
+  "users.edit.dialog.title": "Edit User",
+  "users.edit.dialog.description": "Update account details for {email}",
 };
 
 const defaultFormState = {
@@ -37,6 +45,7 @@ const defaultFormState = {
   errors: {},
   isValid: false,
   isSubmitting: false,
+  isEditMode: false,
   setEmail: vi.fn(),
   setPassword: vi.fn(),
   setConfirmPassword: vi.fn(),
