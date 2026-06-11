@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 import jwt
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -54,6 +54,22 @@ class SSOProviderCreateRequest(BaseModel):
     auto_create_users: bool = True
     team_mapping: Dict = {}
     provider_metadata: Dict = {}  # Role mappings, groups_claim config, etc.
+    trusted_for_api_auth: bool = False
+    api_audience: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _require_audience_when_api_trusted(self):
+        """Ensure api_audience is set when trusted_for_api_auth is enabled.
+
+        Returns:
+            SSOProviderCreateRequest: The validated model instance.
+
+        Raises:
+            ValueError: If trusted_for_api_auth is True but api_audience is empty.
+        """
+        if self.trusted_for_api_auth and not (self.api_audience or "").strip():
+            raise ValueError("api_audience is required when trusted_for_api_auth is enabled (prevents confused-deputy token acceptance)")
+        return self
 
 
 class SSOProviderUpdateRequest(BaseModel):
@@ -75,6 +91,22 @@ class SSOProviderUpdateRequest(BaseModel):
     team_mapping: Optional[Dict] = None
     provider_metadata: Optional[Dict] = None  # Role mappings, groups_claim config, etc.
     is_enabled: Optional[bool] = None
+    trusted_for_api_auth: Optional[bool] = None
+    api_audience: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _require_audience_when_api_trusted(self):
+        """Ensure api_audience is provided when enabling trusted_for_api_auth in this update.
+
+        Returns:
+            SSOProviderUpdateRequest: The validated model instance.
+
+        Raises:
+            ValueError: If trusted_for_api_auth is being set to True but api_audience is empty.
+        """
+        if self.trusted_for_api_auth is True and not (self.api_audience or "").strip():
+            raise ValueError("api_audience is required when trusted_for_api_auth is enabled (prevents confused-deputy token acceptance)")
+        return self
 
 
 # Create router
@@ -556,6 +588,8 @@ async def list_all_sso_providers(
             "is_enabled": provider.is_enabled,
             "trusted_domains": provider.trusted_domains,
             "auto_create_users": provider.auto_create_users,
+            "trusted_for_api_auth": provider.trusted_for_api_auth,
+            "api_audience": provider.api_audience,
             "created_at": provider.created_at,
             "updated_at": provider.updated_at,
         }
@@ -606,6 +640,8 @@ async def get_sso_provider(
         "scope": provider.scope,
         "trusted_domains": provider.trusted_domains,
         "auto_create_users": provider.auto_create_users,
+        "trusted_for_api_auth": provider.trusted_for_api_auth,
+        "api_audience": provider.api_audience,
         "team_mapping": provider.team_mapping,
         "is_enabled": provider.is_enabled,
         "created_at": provider.created_at,
