@@ -2483,6 +2483,7 @@ class TestRPCEndpoints:
             plugin_global_context=ANY,
             meta_data=None,
             skip_pre_invoke=False,
+            require_model_visible=True,
         )
 
     def test_rpc_tool_invocation_requires_tools_execute(self, test_client, auth_headers):
