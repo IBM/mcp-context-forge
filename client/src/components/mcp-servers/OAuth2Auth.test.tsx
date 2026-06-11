@@ -9,7 +9,7 @@ describe("OAuth2Auth", () => {
     issuerUrl: "",
     redirectUri: "",
     clientId: "",
-    clientSecret: "",
+    clientSecret: "", // pragma: allowlist secret
     tokenUrl: "",
     authorizationUrl: "",
     scopes: "",
