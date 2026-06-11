@@ -4,11 +4,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use axum::extract::State;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Utc;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -19,6 +21,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 const APP_NAME: &str = "benchmark-server";
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+const AUTH_TOKEN_ENV: &str = "AUTH_TOKEN";
+const BEARER_PREFIX: &str = "Bearer ";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Config {
@@ -32,6 +36,7 @@ struct Config {
     tool_size: usize,
     resource_size: usize,
     prompt_size: usize,
+    auth_token: Option<String>,
 }
 
 #[derive(Clone)]
@@ -155,7 +160,20 @@ async fn version_handler(State(state): State<AppState>) -> Json<Value> {
     }))
 }
 
-async fn mcp_handler(State(state): State<AppState>, Json(req): Json<RpcRequest>) -> Json<Value> {
+async fn mcp_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<RpcRequest>,
+) -> Response {
+    if !is_authorized(&state.config, &headers) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            [("www-authenticate", "Bearer realm=\"MCP Server\"")],
+            "Authorization required",
+        )
+            .into_response();
+    }
+
     Json(match req.method.as_str() {
         "initialize" => rpc_result(
             &req,
@@ -189,6 +207,7 @@ async fn mcp_handler(State(state): State<AppState>, Json(req): Json<RpcRequest>)
         },
         _ => rpc_error(&req, -32601, &format!("method not found: {}", req.method)),
     })
+    .into_response()
 }
 
 fn list_tools(config: &Config) -> Value {
@@ -343,8 +362,35 @@ fn parse_index(value: &str, prefix: &str) -> Option<usize> {
     value.strip_prefix(prefix)?.parse().ok()
 }
 
+fn is_authorized(config: &Config, headers: &HeaderMap) -> bool {
+    let Some(expected_token) = &config.auth_token else {
+        return true;
+    };
+    let Some(header_value) = headers.get("authorization") else {
+        return false;
+    };
+    let Ok(header_text) = header_value.to_str() else {
+        return false;
+    };
+    header_text
+        .strip_prefix(BEARER_PREFIX)
+        .is_some_and(|provided_token| provided_token == expected_token)
+}
+
 impl Config {
     fn from_args<I>(args: I) -> anyhow::Result<Self>
+    where
+        I: IntoIterator<Item = String>,
+    {
+        Self::from_args_with_env(
+            args,
+            env::var(AUTH_TOKEN_ENV)
+                .ok()
+                .filter(|token| !token.is_empty()),
+        )
+    }
+
+    fn from_args_with_env<I>(args: I, env_token: Option<String>) -> anyhow::Result<Self>
     where
         I: IntoIterator<Item = String>,
     {
@@ -359,6 +405,7 @@ impl Config {
             tool_size: 1000,
             resource_size: 1000,
             prompt_size: 1000,
+            auth_token: None,
         };
         for arg in args {
             let Some((key, value)) = parse_flag(&arg) else {
@@ -375,8 +422,12 @@ impl Config {
                 "tool-size" | "payload-size" => config.tool_size = value.parse()?,
                 "resource-size" => config.resource_size = value.parse()?,
                 "prompt-size" => config.prompt_size = value.parse()?,
+                "auth-token" => config.auth_token = Some(value.to_string()),
                 _ => {}
             }
+        }
+        if let Some(env_token) = env_token {
+            config.auth_token = Some(env_token);
         }
         if config.server_count == 0 {
             anyhow::bail!("server-count must be greater than zero");
@@ -405,14 +456,18 @@ mod tests {
 
     #[test]
     fn parses_go_style_flags() {
-        let config = Config::from_args([
-            "-server-count=3".to_string(),
-            "-start-port=9000".to_string(),
-            "-tools=10".to_string(),
-            "-resources=5".to_string(),
-            "-prompts=2".to_string(),
-            "-payload-size=64".to_string(),
-        ])
+        let config = Config::from_args_with_env(
+            [
+                "-server-count=3".to_string(),
+                "-start-port=9000".to_string(),
+                "-tools=10".to_string(),
+                "-resources=5".to_string(),
+                "-prompts=2".to_string(),
+                "-payload-size=64".to_string(),
+                "-auth-token=secret".to_string(),
+            ],
+            None,
+        )
         .unwrap();
         assert_eq!(config.server_count, 3);
         assert_eq!(config.start_port, 9000);
@@ -420,6 +475,37 @@ mod tests {
         assert_eq!(config.resources, 5);
         assert_eq!(config.prompts, 2);
         assert_eq!(config.tool_size, 64);
+        assert_eq!(config.auth_token.as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn auth_token_requires_matching_bearer_header() {
+        let config = Config::from_args_with_env(["-auth-token=secret".to_string()], None).unwrap();
+        let mut headers = HeaderMap::new();
+
+        assert!(!is_authorized(&config, &headers));
+
+        headers.insert("authorization", "Bearer wrong".parse().unwrap());
+        assert!(!is_authorized(&config, &headers));
+
+        headers.insert("authorization", "Bearer secret".parse().unwrap());
+        assert!(is_authorized(&config, &headers));
+    }
+
+    #[test]
+    fn missing_auth_token_allows_requests() {
+        let config = Config::from_args_with_env(std::iter::empty(), None).unwrap();
+        assert!(is_authorized(&config, &HeaderMap::new()));
+    }
+
+    #[test]
+    fn auth_token_env_overrides_flag() {
+        let config = Config::from_args_with_env(
+            ["-auth-token=flag-secret".to_string()],
+            Some("env-secret".to_string()),
+        )
+        .unwrap();
+        assert_eq!(config.auth_token.as_deref(), Some("env-secret"));
     }
 
     #[test]
@@ -435,6 +521,7 @@ mod tests {
             tool_size: 10,
             resource_size: 10,
             prompt_size: 10,
+            auth_token: None,
         };
         assert_eq!(list_tools(&config)["tools"].as_array().unwrap().len(), 2);
         assert_eq!(
@@ -459,7 +546,7 @@ mod tests {
             params: Value::Null,
         };
         let state = AppState {
-            config: Arc::new(Config::from_args(["-tools=1".to_string()]).unwrap()),
+            config: Arc::new(Config::from_args_with_env(["-tools=1".to_string()], None).unwrap()),
             server_index: 0,
             started: Instant::now(),
         };

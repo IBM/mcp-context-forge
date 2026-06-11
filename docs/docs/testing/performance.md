@@ -556,7 +556,7 @@ make testing-up      # Starts fast_test_server + locust + MCP inspector
 
 ## 🎯 Benchmark Server Stack
 
-ContextForge includes a high-performance Go-based benchmark server that can spawn multiple MCP servers in a single process for load testing gateway registration, federation, and tool invocation at scale.
+ContextForge includes a high-performance Rust benchmark server that can spawn multiple MCP servers in a single process for load testing gateway registration, federation, and tool invocation at scale.
 
 ### Quick Start
 
@@ -603,7 +603,7 @@ BENCHMARK_SERVER_COUNT=100 BENCHMARK_START_PORT=9000 make benchmark-up
 
 The benchmark stack consists of:
 
-1. **benchmark_server** - A single Go binary that spawns multiple HTTP servers
+1. **benchmark_server** - A single Rust binary that spawns multiple HTTP servers
 
    - Each server exposes MCP endpoints on a unique port (9000-9099)
    - Default: 50 tools, 20 resources, 10 prompts per server
@@ -656,19 +656,19 @@ make load-test-ui
 
 ```bash
 # Build the benchmark server
-cd mcp-servers/go/benchmark-server
-make build
+cd mcp-servers/rust/benchmark-server
+make release
 
 # Run single server
-./dist/benchmark-server -transport=http -port=9000 -tools=100
+./target/release/benchmark-server -transport=http -port=9000 -tools=100
 
 # Run multi-server mode
-./dist/benchmark-server -transport=http -server-count=10 -start-port=9000
+./target/release/benchmark-server -transport=http -server-count=10 -start-port=9000
 ```
 
 ### Performance Characteristics
 
-The Go benchmark server is optimized for:
+The Rust benchmark server is optimized for:
 
 - **Low memory footprint**: ~5-10 MB per server
 - **Fast startup**: All servers ready in <1 second

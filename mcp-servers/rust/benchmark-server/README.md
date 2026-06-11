@@ -1,8 +1,7 @@
 # Benchmark Server (Rust)
 
 Configurable MCP benchmark server for gateway scale, pagination, and load
-testing. This is the Rust counterpart for
-`mcp-servers/go/benchmark-server`.
+testing.
 
 The server dynamically generates arbitrary numbers of tools, resources, and
 prompts. It can also launch multiple HTTP instances on sequential ports to
@@ -18,7 +17,7 @@ Default endpoint: `http://localhost:8080/mcp`.
 
 ## Options
 
-Options intentionally mirror the Go benchmark server where possible:
+Available options:
 
 | Option | Default | Description |
 | ------ | ------- | ----------- |
@@ -33,6 +32,9 @@ Options intentionally mirror the Go benchmark server where possible:
 | `-resource-size=1000` | `1000` | Resource response payload bytes. |
 | `-prompt-size=1000` | `1000` | Prompt response payload bytes. |
 | `-payload-size=1000` | `1000` | Alias for `-tool-size`. |
+| `-auth-token=TOKEN` | unset | Bearer token required for MCP requests. |
+
+`AUTH_TOKEN` overrides `-auth-token` when set.
 
 ## Examples
 

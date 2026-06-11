@@ -1978,7 +1978,7 @@ resilience-jmeter: jmeter-check            ## Run JMeter baseline test against s
 	@echo "Report: $(JMETER_RESULTS_DIR)/resilience_*/index.html"
 
 # =============================================================================
-# help: 🎯 BENCHMARK STACK (Go benchmark-server)
+# help: 🎯 BENCHMARK STACK (Rust benchmark-server)
 # help: benchmark-up           - Start benchmark stack (MCP servers + auto-registration)
 # help: benchmark-down         - Stop benchmark stack
 # help: benchmark-clean        - Stop and remove all benchmark data (volumes)

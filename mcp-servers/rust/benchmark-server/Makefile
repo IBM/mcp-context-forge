@@ -1,7 +1,7 @@
 .PHONY: help fmt clippy check test build release run run-small run-large clean container-build container-run
 
 BIN_NAME := benchmark-server
-IMAGE ?= mcpgateway/benchmark-server:rust
+IMAGE ?= mcpgateway/benchmark-server:latest
 CONTAINER_RT := $(or $(CONTAINER_RUNTIME),$(shell command -v docker 2>/dev/null || command -v podman 2>/dev/null))
 
 help:
@@ -38,7 +38,7 @@ clean:
 	@cargo clean
 
 container-build:
-	@$(CONTAINER_RT) build -f Containerfile -t $(IMAGE) .
+	@$(CONTAINER_RT) build -f Containerfile -t $(IMAGE) ../../..
 
 container-run: container-build
 	@$(CONTAINER_RT) run --rm -p 8080:8080 $(IMAGE)

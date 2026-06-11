@@ -38,7 +38,6 @@
 
 | Server | Description |
 |--------|-------------|
-| `benchmark-server` | Performance benchmarking |
 | `fast-time-server` | Time and date operations |
 
 ### Rust

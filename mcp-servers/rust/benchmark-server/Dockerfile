@@ -2,10 +2,15 @@
 FROM docker.io/library/rust:1.86-slim AS builder
 
 WORKDIR /app
-COPY Cargo.toml Cargo.lock* ./
-RUN mkdir src && echo "fn main() {}" > src/main.rs && cargo build --release
-COPY src ./src
-RUN touch src/main.rs && cargo build --release
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+COPY mcp-servers/rust/benchmark-server/Cargo.toml ./mcp-servers/rust/benchmark-server/Cargo.toml
+RUN mkdir -p mcp-servers/rust/benchmark-server/src \
+    && echo "fn main() {}" > mcp-servers/rust/benchmark-server/src/main.rs \
+    && cargo build --release -p benchmark-server
+COPY mcp-servers/rust/benchmark-server/src ./mcp-servers/rust/benchmark-server/src
+RUN touch mcp-servers/rust/benchmark-server/src/main.rs \
+    && cargo build --release -p benchmark-server
 
 FROM docker.io/library/debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
