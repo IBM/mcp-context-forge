@@ -8,6 +8,17 @@ import { parseApiError } from "@/lib/errorUtils";
 import { usersApi } from "@/api/users";
 import type { User, CreateUserRequest, UpdateUserRequest } from "@/types/user";
 
+// Fields shared by both create and edit schemas
+const sharedUserFields = {
+  fullName: z
+    .string()
+    .transform((val) => sanitizeString(val, VALIDATION.MAX_NAME_LENGTH))
+    .optional(),
+  isAdmin: z.boolean().default(false),
+  isActive: z.boolean().default(true),
+  passwordChangeRequired: z.boolean().default(false),
+};
+
 // Zod schema factory that accepts intl for localized messages
 const createUserFormObjectSchema = (intl: ReturnType<typeof useIntl>) =>
   z.object({
@@ -27,13 +38,7 @@ const createUserFormObjectSchema = (intl: ReturnType<typeof useIntl>) =>
           ),
       ),
     confirmPassword: z.string(),
-    fullName: z
-      .string()
-      .transform((val) => sanitizeString(val, VALIDATION.MAX_NAME_LENGTH))
-      .optional(),
-    isAdmin: z.boolean().default(false),
-    isActive: z.boolean().default(true),
-    passwordChangeRequired: z.boolean().default(false),
+    ...sharedUserFields,
   });
 
 const createUserFormSchema = (intl: ReturnType<typeof useIntl>) =>
@@ -48,13 +53,7 @@ const createUserFormSchema = (intl: ReturnType<typeof useIntl>) =>
 const editUserFormSchema = (intl: ReturnType<typeof useIntl>) =>
   z
     .object({
-      fullName: z
-        .string()
-        .transform((val) => sanitizeString(val, VALIDATION.MAX_NAME_LENGTH))
-        .optional(),
-      isAdmin: z.boolean().default(false),
-      isActive: z.boolean().default(true),
-      passwordChangeRequired: z.boolean().default(false),
+      ...sharedUserFields,
       password: z
         .union([
           z
@@ -166,7 +165,6 @@ export function useUserForm(options?: UseUserFormOptions): UseUserFormReturn {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Create localized schemas
-  const userFormObjectSchema = useMemo(() => createUserFormObjectSchema(intl), [intl]);
   const userFormSchema = useMemo(() => createUserFormSchema(intl), [intl]);
   const editFormSchema = useMemo(() => editUserFormSchema(intl), [intl]);
 
@@ -202,108 +200,58 @@ export function useUserForm(options?: UseUserFormOptions): UseUserFormReturn {
     };
   }, [email, password, fullName, isAdmin, isActive, passwordChangeRequired, isEditMode]);
 
+  // Single source for schema parsing — used by validateForm and isValid
+  const parseCurrentSchema = useCallback((): z.ZodError | null => {
+    const data = isEditMode
+      ? { fullName, isAdmin, isActive, passwordChangeRequired, password, confirmPassword }
+      : { email, password, confirmPassword, fullName, isAdmin, isActive, passwordChangeRequired };
+    const result = isEditMode ? editFormSchema.safeParse(data) : userFormSchema.safeParse(data);
+    return result.success ? null : result.error;
+  }, [email, password, confirmPassword, fullName, isAdmin, isActive, passwordChangeRequired, userFormSchema, editFormSchema, isEditMode]);
+
   const validateField = useCallback(
     (field: keyof FormErrors, value: string | boolean) => {
-      try {
-        if (isEditMode) {
-          const editSchema = editUserFormSchema(intl);
-          const fieldSchema =
-            editSchema.innerType().shape[field as keyof ReturnType<typeof editSchema.innerType>["shape"]];
-          if (fieldSchema) {
-            fieldSchema.parse(value);
-            setErrors((prev) => {
-              const newErrors = { ...prev };
-              delete newErrors[field];
-              return newErrors;
-            });
-          }
+      const currentData = isEditMode
+        ? { fullName, isAdmin, isActive, passwordChangeRequired, password, confirmPassword }
+        : { email, password, confirmPassword, fullName, isAdmin, isActive, passwordChangeRequired };
+      const schema = isEditMode ? editFormSchema : userFormSchema;
+      const result = schema.safeParse({ ...currentData, [field]: value });
+      if (result.success) {
+        setErrors((prev) => {
+          const next = { ...prev };
+          delete next[field];
+          return next;
+        });
+      } else {
+        const fieldIssue = result.error.issues.find((i) => i.path[0] === field);
+        if (fieldIssue) {
+          setErrors((prev) => ({ ...prev, [field]: fieldIssue.message }));
         } else {
-          const fieldSchema =
-            userFormObjectSchema.shape[field as keyof typeof userFormObjectSchema.shape];
-          if (fieldSchema) {
-            fieldSchema.parse(value);
-            setErrors((prev) => {
-              const newErrors = { ...prev };
-              delete newErrors[field];
-              return newErrors;
-            });
-          }
-        }
-
-        // Special handling for confirmPassword
-        if (field === "confirmPassword" && typeof value === "string") {
-          if (value !== password) {
-            setErrors((prev) => ({
-              ...prev,
-              confirmPassword: intl.formatMessage({ id: "users.form.error.passwordsDoNotMatch" }), // pragma: allowlist secret
-            }));
-          } else {
-            setErrors((prev) => {
-              const newErrors = { ...prev };
-              delete newErrors.confirmPassword;
-              return newErrors;
-            });
-          }
-        }
-      } catch (error) {
-        if (error instanceof z.ZodError) {
-          setErrors((prev) => ({
-            ...prev,
-            [field]: error.issues[0]?.message || "Invalid value",
-          }));
+          setErrors((prev) => {
+            const next = { ...prev };
+            delete next[field];
+            return next;
+          });
         }
       }
     },
-    [password, userFormObjectSchema, intl, isEditMode],
+    [email, password, confirmPassword, fullName, isAdmin, isActive, passwordChangeRequired, userFormSchema, editFormSchema, isEditMode],
   );
 
   const validateForm = useCallback((): boolean => {
-    try {
-      if (isEditMode) {
-        editFormSchema.parse({
-          fullName,
-          isAdmin,
-          isActive,
-          passwordChangeRequired,
-          password,
-          confirmPassword,
-        });
-      } else {
-        userFormSchema.parse({
-          email,
-          password,
-          confirmPassword,
-          fullName,
-          isAdmin,
-          isActive,
-          passwordChangeRequired,
-        });
-      }
+    const zodError = parseCurrentSchema();
+    if (!zodError) {
       setErrors({});
       return true;
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        const newErrors: FormErrors = {};
-        error.issues.forEach((issue) => {
-          const path = issue.path[0] as keyof FormErrors;
-          newErrors[path] = issue.message;
-        });
-        setErrors(newErrors);
-      }
-      return false;
     }
-  }, [
-    email,
-    password,
-    confirmPassword,
-    fullName,
-    isAdmin,
-    isActive,
-    passwordChangeRequired,
-    userFormSchema,
-    editFormSchema,
-    isEditMode,
-  ]);
+    const newErrors: FormErrors = {};
+    zodError.issues.forEach((issue) => {
+      const path = issue.path[0] as keyof FormErrors;
+      newErrors[path] = issue.message;
+    });
+    setErrors(newErrors);
+    return false;
+  }, [parseCurrentSchema]);
 
   const resetForm = useCallback(() => {
     setEmail(initialState.email);
@@ -329,6 +277,11 @@ export function useUserForm(options?: UseUserFormOptions): UseUserFormReturn {
       if (validateForm()) {
         const formData = getFormData();
 
+        const reportError = (error: unknown, messageId: string, data: CreateUserRequest | UpdateUserRequest) => {
+          onError?.(data);
+          setErrors({ submit: parseApiError(error, intl.formatMessage({ id: messageId })) });
+        };
+
         if (isEditMode && initialUser) {
           setIsSubmitting(true);
           const updateData = formData as UpdateUserRequest;
@@ -341,12 +294,7 @@ export function useUserForm(options?: UseUserFormOptions): UseUserFormReturn {
               onSuccess(updated);
             }
           } catch (error) {
-            if (onError) {
-              onError(updateData);
-            }
-            const fallbackMessage = intl.formatMessage({ id: "users.form.error.updateFailed" });
-            const errorMessage = parseApiError(error, fallbackMessage);
-            setErrors({ submit: errorMessage });
+            reportError(error, "users.form.error.updateFailed", updateData);
           } finally {
             setIsSubmitting(false);
           }
@@ -362,12 +310,7 @@ export function useUserForm(options?: UseUserFormOptions): UseUserFormReturn {
             }
             resetForm();
           } catch (error) {
-            if (onError) {
-              onError(createData);
-            }
-            const fallbackMessage = intl.formatMessage({ id: "users.form.error.createFailed" });
-            const errorMessage = parseApiError(error, fallbackMessage);
-            setErrors({ submit: errorMessage });
+            reportError(error, "users.form.error.createFailed", createData);
           }
         }
       }
@@ -375,44 +318,7 @@ export function useUserForm(options?: UseUserFormOptions): UseUserFormReturn {
     [validateForm, getFormData, createUser, resetForm, intl, isEditMode, initialUser],
   );
 
-  const isValid = useMemo(() => {
-    try {
-      if (isEditMode) {
-        editFormSchema.parse({
-          fullName,
-          isAdmin,
-          isActive,
-          passwordChangeRequired,
-          password,
-          confirmPassword,
-        });
-      } else {
-        userFormSchema.parse({
-          email,
-          password,
-          confirmPassword,
-          fullName,
-          isAdmin,
-          isActive,
-          passwordChangeRequired,
-        });
-      }
-      return true;
-    } catch {
-      return false;
-    }
-  }, [
-    email,
-    password,
-    confirmPassword,
-    fullName,
-    isAdmin,
-    isActive,
-    passwordChangeRequired,
-    userFormSchema,
-    editFormSchema,
-    isEditMode,
-  ]);
+  const isValid = useMemo(() => parseCurrentSchema() === null, [parseCurrentSchema]);
 
   return {
     // State
