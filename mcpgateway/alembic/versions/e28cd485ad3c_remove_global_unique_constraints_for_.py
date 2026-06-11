@@ -48,10 +48,6 @@ def upgrade() -> None:
     existing_tables = inspector.get_table_names()
     dialect = bind.dialect.name
 
-    # Skip if tables don't exist (fresh DB uses db.py models directly)
-    if "gateways" not in existing_tables:
-        return
-
     # Tables and their columns with global unique constraints to remove
     tables_to_fix = {
         "gateways": ["slug", "url"],
@@ -113,10 +109,6 @@ def downgrade() -> None:
     inspector = sa.inspect(bind)
     existing_tables = inspector.get_table_names()
     dialect = bind.dialect.name
-
-    # Skip if tables don't exist
-    if "gateways" not in existing_tables:
-        return
 
     # Tables and their columns needing global unique constraints
     tables_to_restore = {
