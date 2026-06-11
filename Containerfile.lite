@@ -450,6 +450,12 @@ EXPOSE 4444
 #           subscription-manager (RHEL-09-215010), pam_wheel (RHEL-09-432035),
 #           init file perms 0740 (RHEL-09-232045), home dir perms 0750 (RHEL-09-232050),
 #           rootfiles tmpfile.d (RHEL-09-232045), SSH RekeyLimit
+#
+# NOTE: subscription-manager pulls in UBI9's system python3 (3.9) as a
+# dependency, which overwrites /usr/bin/python3 and clobbers the
+# python3 -> python${PYTHON_VERSION} symlink set up earlier — surfacing at
+# runtime as a misleading "ModuleNotFoundError: No module named 'gunicorn'".
+# We re-create the symlink right after the package install below.
 RUN if [ "$ENABLE_FIPS" = "true" ]; then \
         if ! grep -q "release 9" /etc/redhat-release 2>/dev/null; then \
             echo "ERROR: ENABLE_FIPS=true requires UBI 9 base images (UBI_MINIMAL must be ubi9/ubi-minimal)" >&2; \
@@ -458,6 +464,7 @@ RUN if [ "$ENABLE_FIPS" = "true" ]; then \
         microdnf install -y crypto-policies crypto-policies-scripts rootfiles \
             gnutls-utils nss-tools subscription-manager \
         && microdnf clean all \
+        && ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python3 \
         && (test -f /usr/share/crypto-policies/policies/modules/STIG.pmod \
             || printf '# STIG module stub — not shipped in UBI9 minimal\n' \
                > /usr/share/crypto-policies/policies/modules/STIG.pmod) \
