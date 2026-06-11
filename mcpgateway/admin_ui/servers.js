@@ -862,6 +862,47 @@ export const editServer = async function (serverId) {
       if (oauthTokenEndpointField) oauthTokenEndpointField.value = "";
     }
 
+    // Set Meta-Server configuration fields
+    const metaEnabledCheckbox = safeGetElement("edit-server-meta-enabled");
+    const metaConfigSection = safeGetElement("edit-server-meta-config-section");
+    const hideUnderlyingToolsCheckbox = safeGetElement("edit-server-hide-underlying-tools");
+    const isMeta = server.serverType === "meta" || server.server_type === "meta";
+
+    if (metaEnabledCheckbox) {
+      metaEnabledCheckbox.checked = isMeta;
+    }
+    if (metaConfigSection) {
+      if (isMeta) {
+        metaConfigSection.classList.remove("hidden");
+      } else {
+        metaConfigSection.classList.add("hidden");
+      }
+    }
+    if (hideUnderlyingToolsCheckbox) {
+      const hideTools = server.hideUnderlyingTools !== undefined
+        ? server.hideUnderlyingTools
+        : (server.hide_underlying_tools !== undefined ? server.hide_underlying_tools : true);
+      hideUnderlyingToolsCheckbox.checked = isMeta ? hideTools : true;
+    }
+
+    // Toggle gateways+tools wrapper and info banner based on meta-server mode
+    const editGatewaysAndTools = safeGetElement("edit-server-gateways-and-tools");
+    const editMetaInfoBanner = safeGetElement("edit-meta-info-banner");
+    if (editGatewaysAndTools) {
+      if (isMeta) {
+        editGatewaysAndTools.classList.add("hidden");
+      } else {
+        editGatewaysAndTools.classList.remove("hidden");
+      }
+    }
+    if (editMetaInfoBanner) {
+      if (isMeta) {
+        editMetaInfoBanner.classList.remove("hidden");
+      } else {
+        editMetaInfoBanner.classList.add("hidden");
+      }
+    }
+
     // Store server data for modal population
     window.Admin.currentEditingServer = server;
 

@@ -44,6 +44,7 @@ from sqlalchemy.pool import NullPool, QueuePool
 from sqlalchemy.types import TypeDecorator
 
 # First-Party
+from mcpgateway.utils.pgvector import HAS_PGVECTOR, Vector
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.utils.create_slug import slugify
@@ -3315,6 +3316,9 @@ class Tool(Base):
         viewonly=True,
     )
 
+    # Embeddings relationship
+    embeddings: Mapped[List["ToolEmbedding"]] = relationship("ToolEmbedding", back_populates="tool", cascade="all, delete-orphan")
+
     # Team scoping fields for resource organization
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -3609,6 +3613,129 @@ class Tool(Base):
             raw_metric_class=ToolMetric,
             hourly_metric_class=ToolMetricsHourly,
         )
+
+
+class ToolEmbedding(Base):
+    """ORM model for tool embedding vectors used in semantic search."""
+
+    __tablename__ = "tool_embeddings"
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+        nullable=False,
+    )
+    tool_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("tools.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    if HAS_PGVECTOR:
+        embedding: Mapped[list[float]] = mapped_column(
+            Vector(getattr(settings, "embedding_dim", 1536)),
+            nullable=False,
+        )
+    else:
+        embedding: Mapped[list[float]] = mapped_column(
+            JSON,
+            nullable=False,
+        )
+
+    model_name: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        default="text-embedding-3-small",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    tool: Mapped["Tool"] = relationship(
+        "Tool",
+        back_populates="embeddings",
+        passive_deletes=True,
+    )
+
+    if HAS_PGVECTOR:
+        __table_args__ = (
+            Index(
+                "idx_tool_embeddings_hnsw",
+                "embedding",
+                postgresql_using="hnsw",
+                postgresql_with={"m": getattr(settings, "hnsw_m", 16), "ef_construction": getattr(settings, "hnsw_ef_construction", 64)},
+                postgresql_ops={"embedding": "vector_cosine_ops"},
+            ),
+            Index("idx_tool_embeddings_toolid_model", "tool_id", "model_name"),
+            Index("idx_tool_embeddings_toolid_created", "tool_id", "created_at"),
+        )
+    else:
+        __table_args__ = (
+            Index("idx_tool_embeddings_toolid_model", "tool_id", "model_name"),
+            Index("idx_tool_embeddings_toolid_created", "tool_id", "created_at"),
+        )
+
+    def __repr__(self) -> str:
+        """Return a debug representation of the tool embedding row.
+
+        Returns:
+            str: Human-readable summary including id, tool id, and model name.
+        """
+        return f"<ToolEmbedding(id={self.id}, tool_id={self.tool_id}, model_name={self.model_name})>"
+
+    def similar_to(
+        self,
+        db: "Session",
+        limit: int = 10,
+        threshold: Optional[float] = None,
+    ) -> "List[tuple[ToolEmbedding, float]]":
+        """Find other ToolEmbeddings similar to this one.
+
+        Uses pgvector cosine distance on PostgreSQL, numpy fallback on SQLite.
+
+        Args:
+            db: Active database session.
+            limit: Maximum number of results.
+            threshold: Optional minimum similarity (0-1).
+
+        Returns:
+            List of (ToolEmbedding, similarity_score) tuples, ordered by
+            descending similarity. Does not include self.
+        """
+        dialect_name = db.get_bind().dialect.name
+
+        if dialect_name == "postgresql" and HAS_PGVECTOR:
+            distance_expr = ToolEmbedding.embedding.cosine_distance(self.embedding)
+            query = select(ToolEmbedding, (1 - distance_expr).label("similarity")).filter(ToolEmbedding.id != self.id)
+            if threshold is not None:
+                query = query.filter(distance_expr <= (1 - threshold))
+            query = query.order_by(distance_expr.asc()).limit(limit)
+            rows = db.execute(query).all()
+            return [(te, max(0.0, min(1.0, float(sim)))) for te, sim in rows]
+        else:
+            # SQLite/non-pgvector: compute cosine similarity in Python
+            # First-Party
+            from mcpgateway.services.vector_search_service import _cosine_similarity_numpy
+
+            all_embeddings = db.query(ToolEmbedding).filter(ToolEmbedding.id != self.id).all()
+            scored = []
+            for te in all_embeddings:
+                sim = _cosine_similarity_numpy(self.embedding, te.embedding)
+                if threshold is not None and sim < threshold:
+                    continue
+                scored.append((te, sim))
+            scored.sort(key=lambda x: x[1], reverse=True)
+            return scored[:limit]
 
 
 class Resource(Base):
@@ -4591,6 +4718,16 @@ class Server(Base):
     # When enabled, MCP clients can authenticate using OAuth with browser-based IDP SSO
     oauth_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     oauth_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
+    # Meta-server fields
+    # server_type: 'standard' (default) or 'meta' (exposes meta-tools instead of real tools)
+    server_type: Mapped[str] = mapped_column(String(20), nullable=False, default="standard")
+    # When True, underlying tools are hidden from tool listing endpoints
+    hide_underlying_tools: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # JSON configuration for meta-server behavior (MetaConfig schema)
+    meta_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    # JSON scope rules for filtering which tools are visible (MetaToolScope schema)
+    meta_scope: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
 
     # Relationship for loading team names (only active teams)
     # Uses default lazy loading - team name is only loaded when accessed
