@@ -2091,6 +2091,15 @@ class A2AAgentService(BaseService):
         if request_headers and agent_passthrough_headers:
             whitelist_lower = {h.lower() for h in agent_passthrough_headers}
             request_headers = {k: v for k, v in request_headers.items() if k in whitelist_lower}
+            # SECURITY AUDIT: Log forwarded headers for compliance and forensics
+            if request_headers:
+                logger.info(
+                    "A2A passthrough headers forwarded to agent '%s': %s (user: %s, agent_id: %s)",
+                    agent_name,
+                    list(request_headers.keys()),
+                    user_email or "anonymous",
+                    agent_id,
+                )
         elif request_headers:
             request_headers = {}  # No whitelist = no headers reach plugins
 
@@ -2147,6 +2156,7 @@ class A2AAgentService(BaseService):
                 auth_type=agent_auth_type,
                 auth_value=agent_auth_value,
                 auth_query_params=agent_auth_query_params,
+                base_headers=request_headers,
                 correlation_id=correlation_id,
             )
         except Exception as e:
