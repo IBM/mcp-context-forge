@@ -1,6 +1,8 @@
 name: linting-full
 
 on:
+  merge_group:
+    branches: ["main"]
   push:
     branches: ["main"]
     paths:
@@ -22,10 +24,26 @@ concurrency:
 permissions:
   contents: read
 
+# Keep these pins in lockstep with the *_VERSION variables in the Makefile.
+# Linters are invoked via `uv tool run <tool>==<pin>` so CI and local runs
+# use identical versions regardless of the dev dependency group.
+env:
+  RUFF_VERSION: "0.15.1"
+  PYLINT_VERSION: "3.3.9"
+  PYLINT_PYDANTIC_VERSION: "0.3.5"
+  VULTURE_VERSION: "2.14"
+  INTERROGATE_VERSION: "1.7.0"
+  RADON_VERSION: "6.0.1"
+  YAMLLINT_VERSION: "1.38.0"
+  TOMLCHECK_VERSION: "0.2.3"
+
 jobs:
-  linting-full:
+  # ---------------------------------------------------------------
+  # Go / Helm / CI-infra gates (actionlint, commitlint, helm, gosec, govulncheck)
+  # ---------------------------------------------------------------
+  lint-go-helm-ci:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    name: linting-full
+    name: lint-go-helm-ci
     runs-on: ubuntu-slim
     timeout-minutes: 30
 
@@ -91,3 +109,306 @@ jobs:
           make --no-print-directory linting-full \
             COMMITLINT_FROM="${{ steps.commit_range.outputs.from }}" \
             COMMITLINT_TO="${{ steps.commit_range.outputs.to }}"
+
+  # ---------------------------------------------------------------
+  # Python linters — mirrors lint.yml python-lint job
+  # ---------------------------------------------------------------
+  lint-python:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [mcpgateway, plugins]
+        tool:
+          - id: ruff
+            runner: ubuntu-slim
+            cmd: "uv tool run ruff==$RUFF_VERSION check $TARGET"
+          - id: vulture
+            runner: ubuntu-slim
+            cmd: 'uv tool run vulture==$VULTURE_VERSION $TARGET --min-confidence 80 --exclude "*_pb2.py,*_pb2_grpc.py"'
+          - id: pylint
+            runner: ubuntu-latest
+            cmd: >-
+              uv tool run --with-editable . --with pylint-pydantic==$PYLINT_PYDANTIC_VERSION
+              pylint==$PYLINT_VERSION $TARGET
+              --rcfile=.pylintrc.$TARGET --fail-on E --fail-under=10 --jobs=0
+          - id: interrogate
+            runner: ubuntu-slim
+            cmd: "uv tool run interrogate==$INTERROGATE_VERSION -vv $TARGET --fail-under 100"
+          - id: radon
+            runner: ubuntu-slim
+            cmd: "uv tool run radon==$RADON_VERSION cc $TARGET --min C --show-complexity && uv tool run radon==$RADON_VERSION mi $TARGET --min B"
+
+    name: "python: ${{ matrix.tool.id }} (${{ matrix.target }})"
+    runs-on: ${{ matrix.tool.runner }}
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+
+      - name: Run linter
+        env:
+          TARGET: ${{ matrix.target }}
+        run: ${{ matrix.tool.cmd }}
+
+  # ---------------------------------------------------------------
+  # Repo-wide syntax/format checkers — mirrors lint.yml syntax-check job
+  # ---------------------------------------------------------------
+  syntax-check:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: yamllint
+            setup: "true"
+            cmd: uv tool run yamllint==$YAMLLINT_VERSION -c .yamllint .
+
+          - id: jsonlint
+            setup: |
+              sudo apt-get update -qq
+              sudo apt-get install -y jq
+            cmd: |
+              find . -type f -name '*.json' -not -path './node_modules/*' -print0 |
+                xargs -0 -I{} jq empty "{}"
+
+          - id: tomllint
+            setup: "true"
+            cmd: |
+              find . -type f -name '*.toml' \
+                -not -path './mcp-servers/templates/*' \
+                -print0 |
+                xargs -0 -I{} uv tool run tomlcheck==$TOMLCHECK_VERSION "{}"
+
+    name: "syntax: ${{ matrix.id }}"
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+
+      - name: Install tool
+        run: ${{ matrix.setup }}
+
+      - name: Run check
+        run: ${{ matrix.cmd }}
+
+  # ---------------------------------------------------------------
+  # Rust linters — fmt + clippy + deny (mirrors rust.yml lint jobs)
+  # ---------------------------------------------------------------
+  lint-rust:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: fmt
+            components: rustfmt
+            cmd: make rust-fmt-check
+          - id: clippy
+            components: clippy
+            cmd: make rust-lint
+          - id: deny
+            components: ""
+            cmd: make rust-deny
+
+    name: "rust: ${{ matrix.id }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable
+          rustup default stable
+          if [[ -n "${{ matrix.components }}" ]]; then
+            rustup component add ${{ matrix.components }}
+          fi
+
+      - name: Cache Cargo
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-lint-${{ matrix.id }}-${{ hashFiles('**/Cargo.lock', 'Cargo.toml') }}
+
+      - name: Run ${{ matrix.id }}
+        run: ${{ matrix.cmd }}
+
+  # ---------------------------------------------------------------
+  # Frontend linters — mirrors lint-web.yml lint-web job
+  # ---------------------------------------------------------------
+  lint-web:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: htmlhint
+            cmd: |
+              npm install --no-save --legacy-peer-deps htmlhint
+              npx htmlhint "mcpgateway/templates/*.html"
+
+          - id: stylelint
+            cmd: |
+              npm install --no-save --legacy-peer-deps stylelint stylelint-config-standard @stylistic/stylelint-config stylelint-order
+              npx stylelint "mcpgateway/static/*.css"
+
+          - id: eslint
+            cmd: |
+              npm install --no-save eslint neostandard eslint-config-prettier eslint-plugin-prettier prettier
+              npx eslint "mcpgateway/static/*.js"
+
+          - id: retire
+            cmd: |
+              npm install --no-save --legacy-peer-deps retire
+              npx retire --path mcpgateway/static
+
+          - id: npm-audit
+            cmd: |
+              if [ ! -f package.json ]; then
+                npm init -y >/dev/null
+              fi
+              npm audit --audit-level=high || true
+
+          - id: jshint
+            cmd: |
+              npm install --no-save --legacy-peer-deps jshint
+              if [ -f .jshintrc ]; then
+                npx jshint --config .jshintrc "mcpgateway/static/*.js"
+              else
+                npx jshint --esversion=11 "mcpgateway/static/*.js"
+              fi
+
+          - id: jscpd
+            cmd: |
+              npm install --no-save --legacy-peer-deps jscpd
+              npx jscpd "mcpgateway/static/" "mcpgateway/templates/"
+
+    name: "web: ${{ matrix.id }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Install Node.js 20
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ca-certificates curl gnupg
+          sudo mkdir -p /etc/apt/keyrings
+          curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+            | sudo gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
+            | sudo tee /etc/apt/sources.list.d/nodesource.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y nodejs
+          node --version
+          npm --version
+
+      - name: Upgrade npm
+        run: sudo npm install -g npm@^11.10.0
+
+      - name: Configure npm registry
+        run: npm config set registry https://registry.npmjs.org/
+
+      - name: Run ${{ matrix.id }}
+        run: ${{ matrix.cmd }}
+
+  # ---------------------------------------------------------------
+  # Python-based JS security scanner — mirrors lint-web.yml nodejsscan job
+  # ---------------------------------------------------------------
+  nodejsscan:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: "web: nodejsscan"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install nodejsscan
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install nodejsscan
+
+      - name: Run nodejsscan
+        run: nodejsscan --directory ./mcpgateway/static
+
+  # ---------------------------------------------------------------
+  # Fan-in gate — single required status check for merge queue
+  # ---------------------------------------------------------------
+  lint-complete:
+    name: Linting Complete
+    needs: [lint-go-helm-ci, lint-python, syntax-check, lint-rust, lint-web, nodejsscan]
+    runs-on: ubuntu-slim
+    if: always()
+    steps:
+      - name: Check all linting gates passed
+        run: |
+          results=(
+            "${{ needs.lint-go-helm-ci.result }}"
+            "${{ needs.lint-python.result }}"
+            "${{ needs.syntax-check.result }}"
+            "${{ needs.lint-rust.result }}"
+            "${{ needs.lint-web.result }}"
+            "${{ needs.nodejsscan.result }}"
+          )
+          failed=0
+          for r in "${results[@]}"; do
+            if [[ "$r" != "success" && "$r" != "skipped" ]]; then
+              echo "❌ A linting job failed or was cancelled (result: $r)"
+              failed=1
+            fi
+          done
+          if [[ "$failed" == "0" ]]; then
+            echo "✅ All linting gates passed"
+          else
+            exit 1
+          fi
