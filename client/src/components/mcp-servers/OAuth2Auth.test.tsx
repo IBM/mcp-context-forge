@@ -16,7 +16,7 @@ describe("OAuth2Auth", () => {
     storeTokens: true,
     autoRefresh: true,
     username: "",
-    password: "",
+    password: "", // pragma: allowlist secret
     onGrantTypeChange: vi.fn(),
     onIssuerUrlChange: vi.fn(),
     onRedirectUriChange: vi.fn(),
@@ -77,7 +77,7 @@ describe("OAuth2Auth", () => {
       <OAuth2Auth
         {...defaultProps}
         grantType="password"
-        errors={{ username: "Username is required", password: "Password is required" }}
+        errors={{ username: "Username is required", password: "Password is required" }} // pragma: allowlist secret
       />,
     );
 

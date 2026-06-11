@@ -31,15 +31,15 @@ const makeProps = (overrides: Partial<AdvancedSettingsProps> = {}): AdvancedSett
   authType: "none",
   onAuthTypeChange: vi.fn(),
   basicAuthUsername: "",
-  basicAuthPassword: "",
+  basicAuthPassword: "", // pragma: allowlist secret
   onBasicAuthUsernameChange: vi.fn(),
   onBasicAuthPasswordChange: vi.fn(),
-  bearerToken: "",
+  bearerToken: "", // pragma: allowlist secret
   onBearerTokenChange: vi.fn(),
   customHeaders: [],
   onCustomHeadersChange: vi.fn(),
   oauthClientId: "",
-  oauthClientSecret: "",
+  oauthClientSecret: "", // pragma: allowlist secret
   oauthTokenUrl: "",
   oauthGrantType: "client_credentials",
   oauthIssuerUrl: "",
@@ -49,7 +49,7 @@ const makeProps = (overrides: Partial<AdvancedSettingsProps> = {}): AdvancedSett
   oauthStoreTokens: false,
   oauthAutoRefresh: false,
   oauthUsername: "",
-  oauthPassword: "",
+  oauthPassword: "", // pragma: allowlist secret
   onOAuthClientIdChange: vi.fn(),
   onOAuthClientSecretChange: vi.fn(),
   onOAuthTokenUrlChange: vi.fn(),
@@ -63,7 +63,7 @@ const makeProps = (overrides: Partial<AdvancedSettingsProps> = {}): AdvancedSett
   onOAuthUsernameChange: vi.fn(),
   onOAuthPasswordChange: vi.fn(),
   queryParamName: "",
-  queryParamApiKey: "",
+  queryParamApiKey: "", // pragma: allowlist secret
   onQueryParamNameChange: vi.fn(),
   onQueryParamApiKeyChange: vi.fn(),
   oneTimeAuth: false,
