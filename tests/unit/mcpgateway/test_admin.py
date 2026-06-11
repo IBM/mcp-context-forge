@@ -6771,6 +6771,7 @@ class TestOAuthFunctionality:
             assert gateway_update.oauth_config["client_id"] == "client-id"
             assert gateway_update.oauth_config["client_secret"] == "enc-secret"
             assert gateway_update.oauth_config["scopes"] == ["a", "b", "c"]
+
     @patch.object(GatewayService, "update_gateway")
     async def test_admin_edit_gateway_oauth_with_audience_parameter(self, mock_update_gateway, mock_request, mock_db):
         """Test editing gateway with OAuth audience parameter (for Atlassian, Auth0, etc.)."""
@@ -6807,7 +6808,6 @@ class TestOAuthFunctionality:
             assert gateway_update.oauth_config["audience"] == "api.atlassian.com"
             assert gateway_update.oauth_config["client_id"] == "client-id"
             assert gateway_update.oauth_config["scopes"] == ["read:jira-work", "write:jira-work"]
-
 
     @patch.object(GatewayService, "update_gateway")
     async def test_admin_edit_gateway_oauth_assembled_minimal_fields_covers_false_branches(self, mock_update_gateway, mock_request, mock_db, monkeypatch):
@@ -17495,6 +17495,7 @@ async def test_admin_add_a2a_agent_oauth_assembled_from_form_fields(monkeypatch,
     assert agent_data.oauth_config["client_secret"] == "enc"
     assert agent_data.oauth_config["scopes"] == ["a", "b", "c"]
 
+
 @pytest.mark.asyncio
 async def test_admin_add_a2a_agent_oauth_with_audience(monkeypatch, mock_db):
     """Test adding A2A agent with OAuth audience parameter (for Atlassian, Auth0, etc.)."""
@@ -17769,6 +17770,7 @@ async def test_admin_edit_a2a_agent_oauth_config_invalid_json(monkeypatch, mock_
     assert response.status_code == 200
     agent_update = service.update_agent.call_args.kwargs["agent_data"]
     assert agent_update.oauth_config is None
+
 
 @pytest.mark.asyncio
 async def test_admin_edit_a2a_agent_oauth_with_audience(monkeypatch, mock_db):
