@@ -8,3 +8,4 @@ nav:
   - continue.md
   - openwebui.md
   - mcp-cli.md
+  - llm-chat.md
