@@ -28,7 +28,7 @@ describe("AdvancedSettings", () => {
     oauthStoreTokens: true,
     oauthAutoRefresh: true,
     oauthUsername: "",
-    oauthPassword: "",
+    oauthPassword: "", // pragma: allowlist secret
     onOAuthClientIdChange: vi.fn(),
     onOAuthClientSecretChange: vi.fn(),
     onOAuthTokenUrlChange: vi.fn(),
