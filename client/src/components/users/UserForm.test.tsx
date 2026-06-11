@@ -246,7 +246,7 @@ describe("UserForm", () => {
 
       const emailInput = screen.getByLabelText(/Email/);
       expect(emailInput).toHaveAttribute("aria-invalid", "true");
-      expect(emailInput).toHaveAttribute("aria-describedby", "email-error");
+      expect(emailInput).toHaveAttribute("aria-describedby", "user-email-error");
     });
 
     it("should display password error with proper ARIA attributes", () => {
