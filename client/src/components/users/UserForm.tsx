@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useUserForm } from "@/hooks/useUserForm";
-import { FormField } from "./FormField";
 import { PasswordInput } from "./PasswordInput";
 import type { CreateUserRequest, UpdateUserRequest, User as UserType } from "@/types/user";
 
@@ -16,6 +15,44 @@ interface UserFormProps {
   onSuccess?: (result?: UserType) => void;
   onOptimisticCreate?: (userData: CreateUserRequest | UpdateUserRequest) => void;
   onError?: (userData: CreateUserRequest | UpdateUserRequest) => void;
+}
+
+interface FormFieldProps {
+  id: string;
+  label: string;
+  required?: boolean;
+  error?: string;
+  children: React.ReactNode;
+}
+
+function FormField({ id, label, required = false, error, children }: FormFieldProps) {
+  return (
+    <div className="space-y-1">
+      <label
+        htmlFor={id}
+        className="inline-flex items-center gap-0.5 text-sm font-medium text-neutral-900 dark:text-neutral-100"
+      >
+        {label}
+        {required && (
+          <>
+            <span className="text-red-500">*</span>
+            <span className="sr-only">(required)</span>
+          </>
+        )}
+      </label>
+      {children}
+      {error && (
+        <p
+          id={`${id}-error`}
+          className="text-sm text-red-600 dark:text-red-400"
+          role="alert"
+          aria-live="polite"
+        >
+          {error}
+        </p>
+      )}
+    </div>
+  );
 }
 
 interface CheckboxFieldProps {
