@@ -2008,6 +2008,16 @@ class TestAdminToolRoutes:
         )
         assert _build_auth_obj_from_form(form) is None
 
+    def test_build_auth_obj_from_form_oauth_raises_422(self, mock_request, mock_db):
+        """_build_auth_obj_from_form raises 422 when auth_type is oauth."""
+        from fastapi import HTTPException
+
+        form = FakeForm({"auth_type": "oauth"})
+        with pytest.raises(HTTPException) as exc_info:
+            _build_auth_obj_from_form(form)
+        assert exc_info.value.status_code == 422
+        assert "oauth" in exc_info.value.detail.lower()
+
     @patch.object(ToolService, "set_tool_state")
     async def test_admin_set_tool_state_various_activate_values(self, mock_toggle_status, mock_request, mock_db):
         """Test setting tool state with various activate values."""

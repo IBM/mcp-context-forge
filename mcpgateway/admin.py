@@ -11651,6 +11651,8 @@ def _build_auth_obj_from_form(form: Any) -> Optional[dict[str, Any]]:
             auth_headers = []
 
     auth_type = form.get("auth_type", "")
+    if auth_type and auth_type.lower() == "oauth":
+        raise HTTPException(status_code=422, detail="auth_type 'oauth' is not supported on tools; configure OAuth on the gateway instead")
     auth_obj: Optional[dict[str, Any]] = None
     if auth_type:
         if auth_type == "basic":
