@@ -151,8 +151,10 @@ class TestAppBridgeEndpoints:
         request = FakeRequest({})
 
         with patch.object(main_mod.session_registry, "handle_initialize_logic", new=AsyncMock(return_value={})):
+            monkeypatch.setattr(main_mod.server_service, "get_server", AsyncMock(return_value=SimpleNamespace(id="server-1")))
             result = await main_mod._execute_rpc_initialize(
                 request,
+                mock_db,
                 user={"email": "user@example.com"},
                 params={},
                 server_id="server-1",
@@ -160,6 +162,53 @@ class TestAppBridgeEndpoints:
             )
 
         assert MCP_UI_EXTENSION in result["capabilities"]["extensions"]
+
+    @pytest.mark.asyncio
+    async def test_execute_rpc_initialize_omits_extensions_for_unauthorized_server(self, monkeypatch, mock_db):
+        """Initialize should not advertise MCP Apps for target servers the caller cannot see."""
+        # First-Party
+        from mcpgateway import main as main_mod
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        monkeypatch.setattr(main_mod.server_service, "get_server", AsyncMock(side_effect=main_mod.ServerNotFoundError("not found")))
+        request = FakeRequest({})
+
+        with patch.object(main_mod.session_registry, "handle_initialize_logic", new=AsyncMock(return_value={"capabilities": {}})):
+            result = await main_mod._execute_rpc_initialize(
+                request,
+                mock_db,
+                user={"email": "user@example.com"},
+                params={},
+                server_id="server-1",
+                mcp_session_id="mcp-session-1",
+            )
+
+        assert "extensions" not in result["capabilities"]
+
+    @pytest.mark.asyncio
+    async def test_execute_rpc_tools_call_requires_model_visible_tool(self, monkeypatch, mock_db):
+        """Normal model-facing tools/call should pass the model-visible execution gate."""
+        # First-Party
+        from mcpgateway import main as main_mod
+
+        request = FakeRequest({})
+        request.state.plugin_context_table = None
+        request.state.plugin_global_context = None
+        monkeypatch.setattr(main_mod.settings, "mcpgateway_tool_cancellation_enabled", False)
+        invoke_mock = AsyncMock(return_value={"content": []})
+        monkeypatch.setattr(main_mod.tool_service, "invoke_tool", invoke_mock)
+
+        await main_mod._execute_rpc_tools_call(
+            request,
+            mock_db,
+            {"email": "user@example.com"},
+            req_id="call-1",
+            params={"name": "helper", "arguments": {}},
+            lowered_request_headers={},
+            server_id="server-1",
+        )
+
+        assert invoke_mock.await_args.kwargs["require_model_visible"] is True
 
     @pytest.mark.asyncio
     async def test_handle_rpc_mcp_prefix_methods_return_method_not_found(self, monkeypatch, mock_db):
@@ -681,3 +730,49 @@ class TestAppOnlyToolSecurity:
 
         with pytest.raises(ToolNotFoundError):
             await service.invoke_tool(mock_db, "helper", {}, user_email="user@example.com", server_id="server-1", require_app_visible=True)
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_require_model_visible_rejects_app_only_tool(self, monkeypatch, mock_db):
+        """Service-layer model gate denies app-only helper tools outside AppBridge."""
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        service = ToolService()
+        app_only_tool = SimpleNamespace(
+            id="tool-1",
+            name="helper",
+            original_name="helper",
+            url=None,
+            description="",
+            original_description="",
+            integration_type="MCP",
+            request_type="SSE",
+            headers={},
+            input_schema={"type": "object"},
+            output_schema=None,
+            annotations={},
+            extension_metadata={MCP_UI_EXTENSION: {"audience": ["app"]}},
+            auth_type=None,
+            jsonpath_filter=None,
+            custom_name=None,
+            custom_name_slug=None,
+            display_name=None,
+            gateway_id=None,
+            grpc_service_id=None,
+            enabled=True,
+            deprecated=False,
+            reachable=True,
+            tags=[],
+            team_id=None,
+            owner_email="user@example.com",
+            visibility="public",
+            query_mapping=None,
+            header_mapping=None,
+            gateway=None,
+        )
+        cache = SimpleNamespace(enabled=False, set=AsyncMock(), set_negative=AsyncMock())
+
+        monkeypatch.setattr("mcpgateway.services.tool_service._get_tool_lookup_cache", lambda: cache)
+        monkeypatch.setattr(service, "_load_invocable_tools", lambda db, name, server_id=None: [app_only_tool])
+        monkeypatch.setattr(service, "_check_tool_access", AsyncMock(return_value=True))
+
+        with pytest.raises(ToolNotFoundError):
+            await service.invoke_tool(mock_db, "helper", {}, user_email="user@example.com", server_id="server-1", require_model_visible=True)

@@ -1459,7 +1459,7 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
 
                 # List tools with _meta forwarded
                 result = await session.list_tools(params=_build_paginated_params(meta))
-                return result.tools
+                return filter_model_visible_tools(result.tools)
 
     except Exception as e:
         logger.exception("Error proxying tools/list to gateway %s: %s", gateway.id, e)
@@ -1887,6 +1887,7 @@ async def call_tool(
                 token_teams=token_teams,
                 server_id=server_id,
                 meta_data=meta_data,
+                require_model_visible=True,
             )
             if not result or not result.content:
                 logger.warning("No content returned by tool: %s", name)

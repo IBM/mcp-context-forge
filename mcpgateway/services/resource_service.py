@@ -3360,9 +3360,14 @@ class ResourceService(BaseService):
             if resource_update.tags is not None:
                 resource.tags = resource_update.tags
 
+            resource_update_extension_metadata = optional_extension_metadata(resource_update.extension_metadata)
+            final_extension_metadata = (
+                resource_update_extension_metadata if resource_update.extension_metadata is not None else optional_extension_metadata(getattr(resource, "extension_metadata", None))
+            )
+            if resource_update.extension_metadata is not None or str(resource.uri).startswith("ui://"):
+                validate_ui_resource(resource.uri, resource.mime_type, final_extension_metadata)
             if resource_update.extension_metadata is not None:
-                validate_ui_resource(resource_update.uri or resource.uri, resource.mime_type, resource_update.extension_metadata)
-                resource.extension_metadata = resource_update.extension_metadata
+                resource.extension_metadata = resource_update_extension_metadata
 
             # Update team assignment if provided, validating ownership
             if resource_update.team_id is not None:

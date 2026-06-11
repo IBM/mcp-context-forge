@@ -919,7 +919,7 @@ def _serialize_legacy_tool_payloads(tools: List[Any]) -> List[Dict[str, Any]]:
         List of legacy tool payload dictionaries.
     """
     payloads: List[Dict[str, Any]] = []
-    for tool in tools:
+    for tool in filter_model_visible_tools(tools):
         if hasattr(tool, "model_dump"):
             payload = tool.model_dump(by_alias=True, exclude_none=True)
         elif isinstance(tool, dict):
@@ -8016,13 +8016,18 @@ async def handle_internal_mcp_initialize(request: Request):
         else:
             server_id = params.get("server_id")
 
-        result = await _execute_rpc_initialize(
-            request,
-            user,
-            params=params,
-            server_id=server_id,
-            mcp_session_id=request.headers.get("mcp-session-id") or request.headers.get("x-mcp-session-id"),
-        )
+        db = SessionLocal()
+        try:
+            result = await _execute_rpc_initialize(
+                request,
+                db,
+                user,
+                params=params,
+                server_id=server_id,
+                mcp_session_id=request.headers.get("mcp-session-id") or request.headers.get("x-mcp-session-id"),
+            )
+        finally:
+            db.close()
         return ORJSONResponse(content={"jsonrpc": "2.0", "result": result, "id": req_id})
     except JSONRPCError as exc:
         error = exc.to_dict()
@@ -10250,8 +10255,27 @@ async def _maybe_forward_affinitized_rpc_request(
     return None
 
 
+async def _mcp_apps_initialize_authorized(request: Request, db: Session, user, server_id: Optional[str]) -> bool:
+    """Return whether initialize may advertise MCP Apps for this target."""
+    if not get_user_email(user):
+        return False
+    if not server_id:
+        return True
+
+    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
+    if not (is_admin and token_teams is None) and token_teams is None:
+        token_teams = []
+
+    try:
+        await server_service.get_server(db, server_id, user_email=user_email, token_teams=token_teams)
+    except ServerNotFoundError:
+        return False
+    return True
+
+
 async def _execute_rpc_initialize(
     request: Request,
+    db: Session,
     user,
     *,
     params: Dict[str, Any],
@@ -10262,6 +10286,7 @@ async def _execute_rpc_initialize(
 
     Args:
         request: Incoming RPC request.
+        db: Active database session.
         user: Authenticated user payload.
         params: Initialize params payload.
         server_id: Optional virtual server identifier.
@@ -10288,7 +10313,7 @@ async def _execute_rpc_initialize(
     if hasattr(result, "model_dump"):
         result = result.model_dump(by_alias=True, exclude_none=True)
 
-    extensions = build_mcp_apps_capabilities(authorized=bool(get_user_email(user)))
+    extensions = build_mcp_apps_capabilities(authorized=await _mcp_apps_initialize_authorized(request, db, user, server_id))
     if extensions:
         result.setdefault("capabilities", {})["extensions"] = extensions
 
@@ -10405,6 +10430,7 @@ async def _execute_rpc_tools_call(
                     plugin_global_context=plugin_global_context,
                     meta_data=meta_data,
                     skip_pre_invoke=skip_pre_invoke,
+                    require_model_visible=True,
                 )
             except (ToolNotFoundError, ValueError):
                 logger.error("Tool not found: %s", name)
@@ -10778,6 +10804,7 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
             server_id=server_id,
             plugin_global_context=plugin_global_context,
             plugin_context_table=plugin_context_table,
+            require_model_visible=True,
         )
 
         if db.is_active and db.in_transaction() is not None:
@@ -11145,6 +11172,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         if method == "initialize":
             result = await _execute_rpc_initialize(
                 request,
+                db,
                 user,
                 params=params,
                 server_id=server_id,
@@ -11595,6 +11623,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     plugin_context_table=plugin_context_table,
                     plugin_global_context=plugin_global_context,
                     meta_data=meta_data,
+                    require_model_visible=True,
                 )
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)

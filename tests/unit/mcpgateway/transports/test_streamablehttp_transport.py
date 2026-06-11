@@ -10757,6 +10757,40 @@ class TestProxyFunctions:
         mock_session.list_tools.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_proxy_list_tools_filters_protocol_app_only_tools(self, monkeypatch):
+        """Direct-proxy tools/list should hide upstream app-only MCP Apps helpers."""
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        mock_gateway = MagicMock()
+        mock_gateway.id = "gw-123"
+        mock_gateway.url = "http://remote-gateway.example.com/mcp"
+        mock_gateway.passthrough_headers = None
+
+        model_tool = MagicMock()
+        model_tool.name = "open_widget"
+        model_tool.meta = {"ui": {"audience": ["model"]}}
+        app_tool = MagicMock()
+        app_tool.name = "widget_helper"
+        app_tool.meta = {"ui": {"audience": ["app"]}}
+        mock_result = MagicMock()
+        mock_result.tools = [model_tool, app_tool]
+
+        mock_session = AsyncMock()
+        mock_session.list_tools = AsyncMock(return_value=mock_result)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        @asynccontextmanager
+        async def mock_client(*args, **kwargs):
+            yield (None, None, lambda: "session-id")
+
+        with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
+            with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=mock_session):
+                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                    result = await tr._proxy_list_tools_to_gateway(mock_gateway, {}, {}, None)
+
+        assert [tool.name for tool in result] == ["open_widget"]
+
+    @pytest.mark.asyncio
     async def test_proxy_list_tools_with_meta(self):
         """Test proxy list_tools forwards _meta to remote gateway."""
         mock_gateway = MagicMock()
