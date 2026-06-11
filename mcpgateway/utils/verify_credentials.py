@@ -514,7 +514,11 @@ async def _external_identity_cache_get(token_hash: str) -> Optional[dict]:
     """
     redis = await get_redis_client()
     if redis is not None:
-        raw = await redis.get(_EXTERNAL_IDENTITY_REDIS_PREFIX + token_hash)
+        try:
+            raw = await redis.get(_EXTERNAL_IDENTITY_REDIS_PREFIX + token_hash)
+        except Exception as exc:  # noqa: BLE001 - best-effort cache, never fail auth on Redis errors
+            logger.warning("External identity cache Redis GET failed, treating as cache miss: %s", exc)
+            return None
         if raw is None:
             return None
         try:
@@ -528,7 +532,7 @@ async def _external_identity_cache_get(token_hash: str) -> Optional[dict]:
     if monotonic() >= expires_at:
         _external_identity_cache.pop(token_hash, None)
         return None
-    return payload
+    return dict(payload)
 
 
 async def _external_identity_cache_put(token_hash: str, payload: dict, token_exp: Optional[int]) -> None:
@@ -546,7 +550,10 @@ async def _external_identity_cache_put(token_hash: str, payload: dict, token_exp
 
     redis = await get_redis_client()
     if redis is not None:
-        await redis.set(_EXTERNAL_IDENTITY_REDIS_PREFIX + token_hash, json.dumps(safe_payload), ex=ttl)
+        try:
+            await redis.set(_EXTERNAL_IDENTITY_REDIS_PREFIX + token_hash, json.dumps(safe_payload), ex=ttl)
+        except Exception as exc:  # noqa: BLE001 - best-effort cache write, never fail auth on Redis errors
+            logger.warning("External identity cache Redis SET failed, skipping cache write: %s", exc)
         return
     if len(_external_identity_cache) >= _EXTERNAL_IDENTITY_MAX:
         _external_identity_cache.clear()

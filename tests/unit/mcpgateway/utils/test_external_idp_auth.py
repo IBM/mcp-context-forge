@@ -642,3 +642,50 @@ async def test_p2_cache_shared_via_redis(monkeypatch):
     assert "RAW-SECRET" not in next(iter(store.values()))
     got = await vc._external_identity_cache_get("th1")
     assert got["sub"] == "agent@corp.com"
+
+
+@pytest.mark.asyncio
+async def test_external_identity_cache_redis_errors_fail_open(monkeypatch):
+    """Redis outages must not crash auth: get/put degrade to cache-miss / no-op."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    class BrokenRedis:
+        async def get(self, k):
+            raise ConnectionError("redis down")
+
+        async def set(self, k, v, ex=None):
+            raise TimeoutError("redis timeout")
+
+    async def fake_client():
+        return BrokenRedis()
+
+    monkeypatch.setattr(vc, "get_redis_client", fake_client)
+    await vc.invalidate_external_identity_cache()
+
+    payload = {"sub": "agent@corp.com", "token_use": "session", "exp": 9999999999}
+    # put must not raise despite Redis SET failure
+    await vc._external_identity_cache_put("th-broken", payload, token_exp=9999999999)
+    # get must not raise despite Redis GET failure, and must report a cache miss
+    assert await vc._external_identity_cache_get("th-broken") is None
+
+
+@pytest.mark.asyncio
+async def test_external_identity_cache_inmemory_get_returns_copy(monkeypatch):
+    """In-memory cache hits must return a copy so callers mutating the result
+    (e.g. `_maybe_verify_external` setting `cached["token"] = token`) cannot
+    persist the raw token into the shared cache entry."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    monkeypatch.setattr(vc, "get_redis_client", _async_none)
+    await vc.invalidate_external_identity_cache()
+
+    payload = {"sub": "agent@corp.com", "token_use": "session", "exp": 9999999999}
+    await vc._external_identity_cache_put("th-copy", payload, token_exp=9999999999)
+
+    first = await vc._external_identity_cache_get("th-copy")
+    first["token"] = "RAW-SECRET"
+
+    second = await vc._external_identity_cache_get("th-copy")
+    assert "token" not in second
