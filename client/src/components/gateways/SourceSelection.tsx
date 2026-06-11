@@ -161,14 +161,12 @@ export function SourceSelection({
     setHasRequestedMCPServers(true);
   };
 
-  const toggleMCPServerSelection = (serverId: string, checked: boolean) => {
-    setSelectedMCPServerIds((current) => {
-      const next = new Set(current);
-      if (checked) next.add(serverId);
-      else next.delete(serverId);
-      onSelectSources?.(Array.from(next));
-      return next;
-    });
+ const toggleMCPServerSelection = (serverId: string, checked: boolean) => {
+    const next = new Set(selectedMCPServerIds);
+    if (checked) next.add(serverId);
+    else next.delete(serverId);
+    setSelectedMCPServerIds(next);
+    onSelectSources?.(Array.from(next));
   };
 
   return (
