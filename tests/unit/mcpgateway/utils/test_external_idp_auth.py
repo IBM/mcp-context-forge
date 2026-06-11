@@ -469,3 +469,61 @@ async def test_service_principal_synthetic_identity(monkeypatch):
     assert seen.get("called") is True
     assert payload["sub"] == "svc-svc-client-123@keycloak.service.local"
     assert payload["token_use"] == "session"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_internal_token_skips_external(monkeypatch):
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    called = {"external": False}
+
+    async def fake_external(tok, db):
+        called["external"] = True
+        return (None, None)
+
+    monkeypatch.setattr(vc, "verify_external_idp_token", fake_external)
+    monkeypatch.setattr(vc.settings, "sso_api_token_auth_enabled", True)
+    monkeypatch.setattr(vc.settings, "jwt_issuer", "mcpgateway")
+
+    # Third-Party
+    import jwt as pyjwt
+
+    tok = pyjwt.encode({"iss": "mcpgateway", "sub": "internal"}, "k", algorithm="HS256")
+
+    async def fake_verify_jwt_token_cached(token, request=None):
+        return {"sub": "internal", "iss": "mcpgateway"}
+
+    monkeypatch.setattr(vc, "verify_jwt_token_cached", fake_verify_jwt_token_cached)
+
+    result = await vc.verify_credentials_cached(tok, request=None)
+    assert called["external"] is False
+    assert result["sub"] == "internal"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_external_token_routes_to_external(monkeypatch):
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    monkeypatch.setattr(vc.settings, "sso_api_token_auth_enabled", True)
+    monkeypatch.setattr(vc.settings, "jwt_issuer", "mcpgateway")
+
+    prov = _fake_provider("https://kc/realms/m")
+
+    async def fake_external(tok, db):
+        return ({"iss": "https://kc/realms/m", "sub": "agent"}, prov)
+
+    async def fake_build(provider, claims, token, db):
+        return {"sub": "agent@corp.com", "token_use": "external_idp"}
+
+    monkeypatch.setattr(vc, "verify_external_idp_token", fake_external)
+    monkeypatch.setattr(vc, "build_external_identity", fake_build)
+
+    # Third-Party
+    import jwt as pyjwt
+
+    tok = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "agent"}, "k", algorithm="HS256")
+
+    result = await vc.verify_credentials_cached(tok, request=None)
+    assert result["token_use"] == "external_idp"

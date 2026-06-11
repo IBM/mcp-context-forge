@@ -455,11 +455,53 @@ async def verify_credentials(token: str) -> dict:
     return payload
 
 
+async def _maybe_verify_external(token: str, request: Optional[Request]) -> Optional[dict]:
+    """Attempt external-IdP (trusted OIDC issuer) verification for a bearer token.
+
+    Args:
+        token: The raw bearer token string.
+        request: Optional FastAPI/Starlette request, used for a request-scoped DB session.
+
+    Returns:
+        A session-semantics identity payload (see build_external_identity) if the
+        token's issuer matches a trusted external provider and verification succeeds,
+        or None to fall through to internal JWT verification.
+    """
+    if not settings.sso_api_token_auth_enabled:
+        return None
+    try:
+        unverified = jwt.decode(token, options={"verify_signature": False})
+    except jwt.PyJWTError:
+        return None
+    iss = unverified.get("iss")
+    if not isinstance(iss, str) or not iss or iss.rstrip("/") == (settings.jwt_issuer or "").rstrip("/"):
+        return None  # internal issuer (or no/invalid iss) -> internal path, zero JWKS cost
+
+    # First-Party
+    from mcpgateway.db import SessionLocal  # pylint: disable=import-outside-toplevel
+
+    db = getattr(getattr(request, "state", None), "db", None)
+    own_session = db is None
+    if own_session:
+        db = SessionLocal()
+        db.info["external_owned"] = True  # M1: signals build_external_identity to commit provisioning
+    try:
+        claims, provider = await verify_external_idp_token(token, db)
+        if claims is None:
+            return None  # untrusted issuer / invalid sig -> fall through -> internal path 401s
+        return await build_external_identity(provider, claims, token, db)
+    finally:
+        if own_session:
+            db.close()
+
+
 async def verify_credentials_cached(token: str, request: Optional[Request] = None) -> dict:
     """Verify credentials using a JWT token with request-level caching.
 
     A wrapper around verify_jwt_token_cached that adds the original token
-    to the decoded payload for reference.
+    to the decoded payload for reference. Trusted external-IdP bearer tokens
+    (per-provider opt-in, see Task 1/H2) are dispatched to session-semantics
+    identity resolution before falling back to internal JWT verification.
 
     Args:
         token: The JWT token string to verify.
@@ -469,6 +511,12 @@ async def verify_credentials_cached(token: str, request: Optional[Request] = Non
         dict: The validated token payload with the original token added
             under the 'token' key. Returns a copy to avoid mutating cached payload.
     """
+    external_payload = await _maybe_verify_external(token, request)
+    if external_payload is not None:
+        if request is not None and hasattr(request, "state"):
+            request.state._jwt_verified_payload = (token, external_payload)
+        return external_payload
+
     payload = await verify_jwt_token_cached(token, request)
     # Return a copy with token added to avoid mutating the cached payload
     return {**payload, "token": token}
