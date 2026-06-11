@@ -4,6 +4,13 @@ import { useQuery } from "@/hooks/useQuery";
 import type { Tool, ToolGroup } from "@/types/tool";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { ToolDetailsPanel } from "@/components/tools/ToolDetailsPanel";
 import { ToolForm } from "@/components/tools/ToolForm";
 
 function buildGroups(tools: Tool[]): ToolGroup[] {
@@ -20,10 +27,20 @@ function buildGroups(tools: Tool[]): ToolGroup[] {
   return Array.from(map.values());
 }
 
-function ToolGroupCard({ group }: { group: ToolGroup }) {
+function ToolGroupCard({
+  group,
+  onViewGroup,
+}: {
+  group: ToolGroup;
+  onViewGroup: (group: ToolGroup) => void;
+}) {
   const MAX_VISIBLE_TOOLS = 8;
   const visibleTools = group.tools.slice(0, MAX_VISIBLE_TOOLS);
   const remainingCount = group.tools.length - MAX_VISIBLE_TOOLS;
+
+  const handleView = () => {
+    onViewGroup(group);
+  };
 
   return (
     <Card size="sm">
@@ -45,15 +62,22 @@ function ToolGroupCard({ group }: { group: ToolGroup }) {
             />
           </div>
 
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            aria-label={`More options for ${group.gatewaySlug}`}
-            className="h-7 w-7 p-0"
-          >
-            <MoreHorizontal className="h-4 w-4" />
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-label={`More options for ${group.gatewaySlug}`}
+                className="h-7 w-7 p-0"
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={handleView}>View Details</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </CardHeader>
 
@@ -116,14 +140,26 @@ function AddToolsCard({ onAddTool }: { onAddTool: () => void }) {
 }
 
 export function Tools() {
-  const { data: toolsData, error, isLoading, refetch } = useQuery<Tool[]>("/tools?limit=0");
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [selectedGroup, setSelectedGroup] = useState<ToolGroup | null>(null);
+  const [isDetailsPanelOpen, setIsDetailsPanelOpen] = useState(false);
+
+  const { data: toolsData, error, isLoading, refetch } = useQuery<Tool[]>("/tools?limit=0");
 
   const groups = useMemo(() => buildGroups(toolsData ?? []), [toolsData]);
 
   const handleFormSuccess = () => {
     setIsFormOpen(false);
     refetch();
+  };
+
+  const handleViewGroup = (group: ToolGroup) => {
+    setSelectedGroup(group);
+    setIsDetailsPanelOpen(true);
+  };
+
+  const handleCloseDetails = () => {
+    setIsDetailsPanelOpen(false);
   };
 
   return (
@@ -165,9 +201,22 @@ export function Tools() {
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-3">
               <AddToolsCard onAddTool={() => setIsFormOpen(true)} />
               {groups.map((group) => (
-                <ToolGroupCard key={group.gatewaySlug} group={group} />
+                <ToolGroupCard
+                  key={group.gatewaySlug}
+                  group={group}
+                  onViewGroup={handleViewGroup}
+                />
               ))}
             </div>
+          )}
+
+          {selectedGroup && (
+            <ToolDetailsPanel
+              tools={selectedGroup.tools}
+              gatewaySlug={selectedGroup.gatewaySlug}
+              open={isDetailsPanelOpen}
+              onClose={handleCloseDetails}
+            />
           )}
         </>
       )}
