@@ -69,6 +69,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.db import SSOProvider
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.sso_service import resolve_trusted_provider_by_issuer
 from mcpgateway.utils.jwt_config_helper import validate_jwt_algo_and_keys
@@ -1774,7 +1775,7 @@ async def verify_oauth_access_token(
         return None
 
 
-async def verify_external_idp_token(token: str, db: Session) -> "tuple[Optional[dict[str, Any]], Optional[Any]]":
+async def verify_external_idp_token(token: str, db: Session) -> tuple[Optional[dict[str, Any]], Optional[SSOProvider]]:
     """Validate an external IdP access token against a trusted SSO provider.
 
     Resolves the provider by the token's unverified ``iss``, then delegates to
@@ -1790,11 +1791,11 @@ async def verify_external_idp_token(token: str, db: Session) -> "tuple[Optional[
     """
     try:
         unverified = jwt.decode(token, options={"verify_signature": False})
-    except jwt.DecodeError:
+    except jwt.PyJWTError:
         return None, None
 
     issuer = unverified.get("iss")
-    if not issuer:
+    if not isinstance(issuer, str) or not issuer:
         return None, None
 
     provider = resolve_trusted_provider_by_issuer(issuer, db)

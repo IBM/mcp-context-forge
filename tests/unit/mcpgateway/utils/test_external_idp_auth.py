@@ -224,3 +224,77 @@ async def test_verify_external_idp_token_valid(monkeypatch):
     claims, returned_prov = await vc.verify_external_idp_token(token, db)
     assert claims["sub"] == "agent"
     assert returned_prov is prov
+
+
+@pytest.mark.asyncio
+async def test_verify_external_idp_token_no_issuer_claim(monkeypatch):
+    # Third-Party
+    import jwt as pyjwt
+
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    token = pyjwt.encode({"sub": "x"}, "k", algorithm="HS256")
+    db = MagicMock()
+    assert await vc.verify_external_idp_token(token, db) == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_verify_external_idp_token_non_string_issuer(monkeypatch):
+    # Standard
+    # iss as a list is valid JWT JSON but must not crash the resolver.
+    # PyJWT's encode() rejects non-string "iss" claims, so build the token
+    # manually (header.payload.signature with arbitrary base64url segments)
+    # to simulate an attacker-controlled unverified token.
+    import base64
+    import json
+
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    def b64url(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+    header = b64url(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
+    payload = b64url(json.dumps({"iss": ["https://evil.example.com"], "sub": "x"}).encode())
+    token = f"{header}.{payload}.fakesig"
+
+    db = MagicMock()
+    assert await vc.verify_external_idp_token(token, db) == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_verify_external_idp_token_provider_missing_issuer(monkeypatch):
+    # Third-Party
+    import jwt as pyjwt
+
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    token = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "x"}, "k", algorithm="HS256")
+    prov = _fake_provider("https://kc/realms/m")
+    prov.issuer = None
+    monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: prov)
+    db = MagicMock()
+    assert await vc.verify_external_idp_token(token, db) == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_verify_external_idp_token_verification_fails(monkeypatch):
+    # Third-Party
+    import jwt as pyjwt
+
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    token = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "x"}, "k", algorithm="HS256")
+    prov = _fake_provider("https://kc/realms/m")
+    prov.api_audience = "api://my-app"
+    monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: prov)
+
+    async def fake_verify(tok, authorization_servers, *, expected_audience=None):
+        return None
+
+    monkeypatch.setattr(vc, "verify_oauth_access_token", fake_verify)
+    db = MagicMock()
+    assert await vc.verify_external_idp_token(token, db) == (None, None)
