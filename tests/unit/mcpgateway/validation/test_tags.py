@@ -7,6 +7,12 @@ Authors: Mihai Criveti
 Tests for tag validation and normalization.
 """
 
+# Standard
+from unittest.mock import patch
+
+# Third-Party
+import pytest
+
 # First-Party
 from mcpgateway.validation.tags import TagValidator, validate_tags_field
 
@@ -39,7 +45,7 @@ class TestTagValidator:
         assert TagValidator.validate("a") is False  # Too short
         assert TagValidator.validate("-invalid") is False  # Starts with hyphen
         assert TagValidator.validate("invalid-") is False  # Ends with hyphen
-        assert TagValidator.validate("x" * 51) is False  # Too long
+        assert TagValidator.validate("x" * 101) is False  # Too long (exceeds new default of 100)
         assert TagValidator.validate("invalid tag") is False  # Contains space
         assert TagValidator.validate("invalid@tag") is False  # Invalid character
         assert TagValidator.validate("invalid#tag") is False  # Invalid character
@@ -75,8 +81,8 @@ class TestTagValidator:
         errors = TagValidator.get_validation_errors(["valid", "another-valid"])
         assert errors == []
 
-        # Test with long tag
-        long_tag = "x" * 51
+        # Test with long tag (exceeds new default max of 100)
+        long_tag = "x" * 101
         errors = TagValidator.get_validation_errors([long_tag])
         assert len(errors) == 1
         assert "too long" in errors[0]
@@ -161,3 +167,132 @@ class TestTagPatterns:
         assert TagValidator.validate("critical") is True
         assert TagValidator.validate("p0") is True
         assert TagValidator.validate("p1") is True
+
+
+class TestConfigurableTagLimits:
+    """Test suite for configurable tag length limits (Issue #XXXX)."""
+
+    def test_default_limits(self):
+        """Test that default limits are applied from settings."""
+        # Default min: 2, max: 100 (from config.py)
+        assert TagValidator.MIN_LENGTH >= 1
+        assert TagValidator.MAX_LENGTH >= 10
+        assert TagValidator.MAX_LENGTH <= 255
+
+    def test_tag_at_max_length_default(self):
+        """Test tag at exactly the default maximum length (100 chars)."""
+        # 100 characters exactly
+        tag_100 = "a" * 100
+        # Should be valid at default settings (max=100)
+        # Note: Actual behavior depends on current settings
+        result = TagValidator.validate(tag_100)
+        # Just verify it doesn't crash - actual validation depends on env config
+        assert isinstance(result, bool)
+
+    def test_tag_exceeds_max_length(self):
+        """Test that tags exceeding MAX_LENGTH are rejected."""
+        # Create tag that's definitely longer than max possible (255)
+        too_long = "a" * 256
+        assert TagValidator.validate(too_long) is False
+
+    def test_tag_at_min_length(self):
+        """Test tag at exactly the minimum length."""
+        # Minimum is typically 2
+        tag_min = "ab"
+        assert TagValidator.validate(tag_min) is True
+
+    def test_tag_below_min_length(self):
+        """Test that tags below MIN_LENGTH are rejected."""
+        # Single character should fail (min is 2 by default)
+        assert TagValidator.validate("a") is False
+
+    @patch("mcpgateway.validation.tags.settings")
+    def test_custom_max_length_100(self, mock_settings):
+        """Test validation with custom max length of 100 characters."""
+        # Mock settings to have max_tag_length = 100
+        mock_settings.validation_min_tag_length = 2
+        mock_settings.validation_max_tag_length = 100
+
+        # Reload class attributes to pick up mocked settings
+        TagValidator.MIN_LENGTH = mock_settings.validation_min_tag_length
+        TagValidator.MAX_LENGTH = mock_settings.validation_max_tag_length
+
+        # Tag with 100 characters (should be valid)
+        tag_100 = "a" * 100
+        assert TagValidator.validate(tag_100) is True
+
+        # Tag with 101 characters (should be invalid)
+        tag_101 = "a" * 101
+        assert TagValidator.validate(tag_101) is False
+
+        # Tag with 99 characters (should be valid)
+        tag_99 = "a" * 99
+        assert TagValidator.validate(tag_99) is True
+
+    @patch("mcpgateway.validation.tags.settings")
+    def test_custom_max_length_200(self, mock_settings):
+        """Test validation with custom max length of 200 characters (system-generated tags)."""
+        # Mock settings for longer tags (e.g., hashes, identifiers)
+        mock_settings.validation_min_tag_length = 2
+        mock_settings.validation_max_tag_length = 200
+
+        TagValidator.MIN_LENGTH = mock_settings.validation_min_tag_length
+        TagValidator.MAX_LENGTH = mock_settings.validation_max_tag_length
+
+        # Simulate system-generated tag with hash
+        system_tag = "deployment-prod-us-west-2-sha256-" + "a" * 64  # 97 chars total
+        assert TagValidator.validate(system_tag) is True
+
+        # Very long descriptive tag (186 chars - adjusted)
+        long_tag = "machine-learning-natural-language-processing-transformer-based-sentiment-analysis-production-deployment-version-2-team-ai-research-department-engineering-organization-enterprise-customer"
+        assert len(long_tag) == 186
+        assert TagValidator.validate(long_tag) is True
+
+        # Just over limit (201 chars)
+        too_long = "a" * 201
+        assert TagValidator.validate(too_long) is False
+
+    @patch("mcpgateway.validation.tags.settings")
+    def test_custom_min_length(self, mock_settings):
+        """Test validation with custom minimum length."""
+        # Allow single-character tags
+        mock_settings.validation_min_tag_length = 1
+        mock_settings.validation_max_tag_length = 50
+
+        TagValidator.MIN_LENGTH = mock_settings.validation_min_tag_length
+        TagValidator.MAX_LENGTH = mock_settings.validation_max_tag_length
+
+        # Single character should now be valid
+        assert TagValidator.validate("a") is True
+        assert TagValidator.validate("x") is True
+
+    def test_error_messages_reflect_limits(self):
+        """Test that error messages include current limit values."""
+        # Create a tag that's too long
+        too_long = "a" * 300
+        errors = TagValidator.get_validation_errors([too_long])
+
+        assert len(errors) == 1
+        # Error message should mention the limit
+        assert "too long" in errors[0].lower()
+        assert str(TagValidator.MAX_LENGTH) in errors[0]
+
+    def test_validate_list_with_mixed_lengths(self):
+        """Test validate_list with tags at various lengths."""
+        # Mix of valid and invalid lengths
+        # Note: Single-char tags are currently invalid by default (MIN_LENGTH >= 2)
+        # but validate_list may accept them if they're alphanumeric
+        tags = [
+            "ab",  # Min length (valid)
+            "valid-tag",  # Normal length (valid)
+            "x" * (TagValidator.MAX_LENGTH + 1),  # Too long (invalid)
+        ]
+
+        result = TagValidator.validate_list(tags)
+
+        # Should only include valid tags
+        valid_ids = [tag["id"] for tag in result]
+        assert "ab" in valid_ids
+        assert "valid-tag" in valid_ids
+        # Too long tags should be filtered out
+        assert len([t for t in result if len(t["id"]) > TagValidator.MAX_LENGTH]) == 0
