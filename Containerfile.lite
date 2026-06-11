@@ -108,6 +108,7 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock /build/
 COPY crates/ /build/crates/
 COPY mcp-servers/rust/slow-time-server/ /build/mcp-servers/rust/slow-time-server/
+COPY a2a-agents/rust/a2a-echo-agent/ /build/a2a-agents/rust/a2a-echo-agent/
 
 # Build local native extensions from maturin crates under crates/
 # hadolint ignore=DL3013
