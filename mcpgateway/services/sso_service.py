@@ -570,7 +570,7 @@ class SSOService:
             team_id_value = mapping_value.get("team_id") or mapping_value.get("id")
             team_id = str(team_id_value).strip() if team_id_value is not None else ""
             role_value = str(mapping_value.get("role", "member")).strip().lower()
-            role = role_value if role_value in {"owner", "member"} else "member"
+            role = role_value if role_value in {"owner", "developer", "member"} else "member"
             return (team_id if team_id else None), role
 
         return None, "member"
@@ -714,6 +714,135 @@ class SSOService:
                     source_group,
                     exc,
                     exc_info=True,
+                )
+
+    async def _apply_per_team_oidc_sync(self, user_email: str, user_info: Dict[str, Any]) -> None:
+        """Sync user into teams that have per-team OIDC group IDs matching user's group claims.
+
+        This complements the provider-level ``_apply_team_mapping`` by looking at
+        ``EmailTeam.oidc_group_ids`` (a JSON list) on each team with
+        ``oidc_sync_enabled=True``.  If any of the user's SSO group claims match
+        a team's configured OIDC group IDs, the user is added as a member with
+        the team's ``oidc_sync_role``.  Stale SSO memberships are revoked when
+        the user no longer belongs to any of the team's configured groups.
+
+        Args:
+            user_email: Authenticated user email.
+            user_info: Identity claims payload containing optional group claims.
+        """
+        groups_raw = user_info.get("groups", [])
+        if isinstance(groups_raw, str):
+            groups = [groups_raw]
+        elif isinstance(groups_raw, list):
+            groups = [str(g).strip() for g in groups_raw if str(g).strip()]
+        else:
+            groups = []
+
+        if not groups:
+            return
+
+        normalized_groups = {g.lower() for g in groups}
+
+        # First-Party
+        from mcpgateway.db import EmailTeam, EmailTeamMember  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.team_management_service import (  # pylint: disable=import-outside-toplevel
+            MemberAlreadyExistsError,
+            TeamManagementError,
+            TeamManagementService,
+        )
+
+        team_service = TeamManagementService(self.db)
+
+        # Find all teams with per-team OIDC sync enabled
+        oidc_teams = self.db.execute(
+            select(EmailTeam).where(
+                EmailTeam.oidc_sync_enabled.is_(True),
+                EmailTeam.oidc_group_ids.isnot(None),
+                EmailTeam.is_active.is_(True),
+            )
+        ).scalars().all()
+
+        if not oidc_teams:
+            return
+
+        # Get current SSO-granted memberships with grant_source="oidc_team"
+        current_memberships = self.db.execute(
+            select(EmailTeamMember).where(
+                EmailTeamMember.user_email == user_email,
+                EmailTeamMember.grant_source == "oidc_team",
+                EmailTeamMember.is_active.is_(True),
+            )
+        ).scalars().all()
+        current_team_ids = {m.team_id for m in current_memberships}
+
+        # Determine desired team IDs based on group matching
+        desired_team_ids: dict[str, str] = {}  # team_id -> role
+        for team in oidc_teams:
+            group_ids = team.oidc_group_ids or []
+            if not isinstance(group_ids, list):
+                continue
+            # Support both formats: list of dicts {"name": ..., "id": "..."} and legacy list of strings
+            raw_ids = []
+            for entry in group_ids:
+                if isinstance(entry, dict):
+                    raw_ids.append(entry.get("id", ""))
+                else:
+                    raw_ids.append(str(entry))
+            team_groups_normalized = {gid.strip().lower() for gid in raw_ids if gid.strip()}
+            if team_groups_normalized & normalized_groups:
+                desired_team_ids[team.id] = team.oidc_sync_role or "member"
+
+        # Revoke stale memberships
+        for membership in current_memberships:
+            if membership.team_id not in desired_team_ids:
+                try:
+                    await team_service.remove_member_from_team(
+                        team_id=membership.team_id,
+                        user_email=user_email,
+                    )
+                    logger.info(
+                        "Revoked per-team OIDC membership for %s from team %s",
+                        SecurityValidator.sanitize_log_message(user_email),
+                        membership.team_id,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to revoke per-team OIDC membership for %s from team %s: %s",
+                        SecurityValidator.sanitize_log_message(user_email),
+                        membership.team_id,
+                        exc,
+                    )
+
+        # Grant new memberships
+        for team_id, role in desired_team_ids.items():
+            if team_id in current_team_ids:
+                continue
+            try:
+                await team_service.add_member_to_team(
+                    team_id=team_id,
+                    user_email=user_email,
+                    role=role,
+                    invited_by=user_email,
+                    grant_source="oidc_team",
+                )
+                logger.info(
+                    "Granted per-team OIDC membership for %s to team %s (role=%s)",
+                    SecurityValidator.sanitize_log_message(user_email),
+                    team_id,
+                    role,
+                )
+            except MemberAlreadyExistsError:
+                logger.debug(
+                    "Per-team OIDC sync: user %s already member of team %s",
+                    SecurityValidator.sanitize_log_message(user_email),
+                    team_id,
+                )
+            except TeamManagementError as exc:
+                logger.warning(
+                    "Per-team OIDC sync failed for user %s, team %s: %s",
+                    SecurityValidator.sanitize_log_message(user_email),
+                    team_id,
+                    exc,
                 )
 
     async def create_provider(self, provider_data: Dict[str, Any]) -> SSOProvider:
@@ -2115,6 +2244,7 @@ class SSOService:
                     current_is_admin = True
                     self.db.commit()
             await self._apply_team_mapping(email, user_info, provider)
+            await self._apply_per_team_oidc_sync(email, user_info)
 
             user_email = getattr(user, "email", None)
             if isinstance(user_email, str) and user_email.strip():
@@ -2167,6 +2297,7 @@ class SSOService:
                 if role_assignments:
                     await self._sync_user_roles(email, role_assignments, provider_ctx)
             await self._apply_team_mapping(email, user_info, provider)
+            await self._apply_per_team_oidc_sync(email, user_info)
 
             # If user was created from approved request, mark request as used
             if settings.sso_require_admin_approval:

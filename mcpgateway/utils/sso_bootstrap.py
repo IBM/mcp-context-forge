@@ -225,7 +225,7 @@ def get_predefined_sso_providers() -> List[Dict]:
                 "scope": "openid profile email User.Read",
                 "trusted_domains": settings.sso_trusted_domains,
                 "auto_create_users": settings.sso_auto_create_users,
-                "team_mapping": {},
+                "team_mapping": settings.sso_entra_team_mapping,
                 "provider_metadata": {
                     "groups_claim": settings.sso_entra_groups_claim,
                     "role_mappings": settings.sso_entra_role_mappings,
@@ -421,9 +421,12 @@ async def bootstrap_sso_providers() -> None:
                 if existing_provider.scope and existing_provider.scope != "openid profile email" and provider_config.get("scope") == "openid profile email":
                     provider_config["scope"] = existing_provider.scope
 
-                # Preserve DB team_mapping if env provides empty mapping
-                if existing_provider.team_mapping and not provider_config.get("team_mapping"):
-                    provider_config["team_mapping"] = existing_provider.team_mapping
+                # Smart merge for team_mapping: same strategy as provider_metadata.
+                # Env provides base mapping, DB values override (Admin API changes survive restarts).
+                if "team_mapping" in provider_config:
+                    env_mapping = provider_config["team_mapping"] or {}
+                    db_mapping = existing_provider.team_mapping or {}
+                    provider_config["team_mapping"] = {**env_mapping, **db_mapping}
 
                 updated = await sso_service.update_provider(existing_provider.id, provider_config)
                 if updated:
