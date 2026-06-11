@@ -2478,3 +2478,63 @@ class SSOService:
                         rollback_error,
                     )
                     break
+
+
+# Module-level cache: normalized-issuer -> SSOProvider id, with a short TTL.
+# Avoids a sso_providers SELECT on every external-token request (and on every
+# invalid-issuer / bad-signature spray). Invalidated on provider CRUD.
+_TRUSTED_PROVIDER_CACHE_TTL = 60  # seconds
+_trusted_provider_cache: "dict[str, str]" = {}  # issuer(normalized) -> provider.id
+_trusted_provider_cache_loaded_at: float = 0.0
+
+
+def invalidate_trusted_provider_cache() -> None:
+    """Clear the issuer->provider cache. Call after any provider create/update/delete."""
+    global _trusted_provider_cache_loaded_at
+    _trusted_provider_cache.clear()
+    _trusted_provider_cache_loaded_at = 0.0
+
+
+def _load_trusted_provider_map(db: "Session") -> "dict[str, str]":
+    """(Re)load the normalized-issuer -> provider-id map from the DB.
+
+    Args:
+        db: Request-scoped SQLAlchemy session.
+
+    Returns:
+        Mapping of normalized issuer URL to provider id for enabled,
+        API-trusted providers.
+    """
+    rows = db.query(SSOProvider).filter(SSOProvider.is_enabled.is_(True), SSOProvider.trusted_for_api_auth.is_(True)).all()
+    return {p.issuer.rstrip("/"): p.id for p in rows if p.issuer}
+
+
+def resolve_trusted_provider_by_issuer(issuer: str, db: "Session") -> "Optional[SSOProvider]":
+    """Return the enabled, API-trusted SSOProvider whose issuer matches ``issuer``.
+
+    The issuer->provider-id map is cached in-memory for ``_TRUSTED_PROVIDER_CACHE_TTL``
+    seconds (finding P1) and invalidated via :func:`invalidate_trusted_provider_cache`.
+    Matching normalizes trailing slashes to mirror ``verify_oauth_access_token``.
+
+    Args:
+        issuer: The ``iss`` claim from an inbound (unverified) token.
+        db: Request-scoped SQLAlchemy session.
+
+    Returns:
+        The matching SSOProvider, or None.
+    """
+    global _trusted_provider_cache, _trusted_provider_cache_loaded_at
+    if not issuer:
+        return None
+    normalized = issuer.rstrip("/")
+
+    now = monotonic()
+    if not _trusted_provider_cache or (now - _trusted_provider_cache_loaded_at) > _TRUSTED_PROVIDER_CACHE_TTL:
+        _trusted_provider_cache = _load_trusted_provider_map(db)
+        _trusted_provider_cache_loaded_at = now
+
+    provider_id = _trusted_provider_cache.get(normalized)
+    if provider_id is None:
+        return None
+    # Resolve the live ORM object by id (cheap PK lookup; ensures fresh row for validation).
+    return db.query(SSOProvider).filter(SSOProvider.id == provider_id).first()

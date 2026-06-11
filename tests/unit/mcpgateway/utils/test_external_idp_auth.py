@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 """Tests for external OIDC bearer token API auth (issue #3567)."""
 
+# Standard
+from unittest.mock import MagicMock
+
 # First-Party
 from mcpgateway.config import Settings
 
@@ -81,3 +84,86 @@ def test_api_trust_with_audience_succeeds():
         api_audience="api://my-api",
     )
     assert req.api_audience == "api://my-api"
+
+
+def _fake_provider(issuer, enabled=True, trusted=True):
+    p = MagicMock()
+    p.issuer = issuer
+    p.is_enabled = enabled
+    p.trusted_for_api_auth = trusted
+    return p
+
+
+def _mock_db(providers):
+    """db where the .filter().all() map-load returns `providers` and the
+    .filter().first() PK lookup returns the first provider (id match)."""
+    db = MagicMock()
+    db.query.return_value.filter.return_value.all.return_value = providers
+    db.query.return_value.filter.return_value.first.return_value = providers[0] if providers else None
+    return db
+
+
+def _scan_count(db):
+    """How many times the expensive .filter().all() table scan ran."""
+    return db.query.return_value.filter.return_value.all.call_count
+
+
+def test_resolve_trusted_provider_matches_issuer():
+    # First-Party
+    from mcpgateway.services import sso_service
+
+    sso_service.invalidate_trusted_provider_cache()
+    prov = _fake_provider("https://kc.example.com/realms/m")
+    prov.id = "kc"
+    db = _mock_db([prov])
+    # trailing slash on the token's iss must still match
+    result = sso_service.resolve_trusted_provider_by_issuer("https://kc.example.com/realms/m/", db)
+    assert result is prov
+
+
+def test_resolve_trusted_provider_unknown_issuer_returns_none():
+    # First-Party
+    from mcpgateway.services import sso_service
+
+    sso_service.invalidate_trusted_provider_cache()
+    db = _mock_db([])
+    assert sso_service.resolve_trusted_provider_by_issuer("https://evil.example.com", db) is None
+
+
+def test_resolver_caches_scan_and_skips_unknown_issuer_db_hit():
+    """P1: the expensive table scan runs once within TTL; an UNKNOWN issuer
+    served from the cached map costs ZERO DB queries (DoS-amplification fix)."""
+    # First-Party
+    from mcpgateway.services import sso_service
+
+    sso_service.invalidate_trusted_provider_cache()
+    prov = _fake_provider("https://kc.example.com/realms/m")
+    prov.id = "kc"
+    db = _mock_db([prov])
+    sso_service.resolve_trusted_provider_by_issuer("https://kc.example.com/realms/m", db)
+    db.reset_mock()
+    # repeat known-issuer lookup -> no re-scan (cache hit), only the cheap PK fetch
+    sso_service.resolve_trusted_provider_by_issuer("https://kc.example.com/realms/m", db)
+    assert _scan_count(db) == 0
+    # unknown issuer within TTL -> not in cached map -> returns None with NO db query at all
+    db.reset_mock()
+    assert sso_service.resolve_trusted_provider_by_issuer("https://evil.example.com", db) is None
+    assert db.query.call_count == 0
+
+
+def test_resolver_cache_invalidation_forces_rescan():
+    """P1: invalidation forces a fresh table scan (e.g. after provider edit)."""
+    # First-Party
+    from mcpgateway.services import sso_service
+
+    sso_service.invalidate_trusted_provider_cache()
+    prov = _fake_provider("https://kc.example.com/realms/m")
+    prov.id = "kc"
+    db = _mock_db([prov])
+    sso_service.resolve_trusted_provider_by_issuer("https://kc.example.com/realms/m", db)
+    db.reset_mock()
+    db.query.return_value.filter.return_value.all.return_value = [prov]
+    db.query.return_value.filter.return_value.first.return_value = prov
+    sso_service.invalidate_trusted_provider_cache()
+    sso_service.resolve_trusted_provider_by_issuer("https://kc.example.com/realms/m", db)
+    assert _scan_count(db) == 1  # re-scanned after invalidation

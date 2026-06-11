@@ -25,7 +25,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.sso_service import SSOService
+from mcpgateway.services.sso_service import invalidate_trusted_provider_cache, SSOService
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.paths import resolve_root_path
@@ -551,6 +551,7 @@ async def create_sso_provider(
     }
     db.commit()
     db.close()
+    invalidate_trusted_provider_cache()
     return result
 
 
@@ -701,6 +702,7 @@ async def update_sso_provider(
     }
     db.commit()
     db.close()
+    invalidate_trusted_provider_cache()
     return result
 
 
@@ -731,6 +733,7 @@ async def delete_sso_provider(
 
     db.commit()
     db.close()
+    invalidate_trusted_provider_cache()
     return {"message": f"SSO provider '{provider_id}' deleted successfully"}
 
 
