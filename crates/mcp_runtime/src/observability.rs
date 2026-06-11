@@ -1465,6 +1465,7 @@ mod tests {
             teams: Some(vec!["team-a".to_string()]),
             team_name: Some("Team A".to_string()),
             auth_method: Some("jwt".to_string()),
+            exp: None,
             permission_is_admin: Some(true),
             is_admin: true,
             is_authenticated: true,

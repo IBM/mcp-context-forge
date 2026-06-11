@@ -4766,6 +4766,7 @@ def get_streamable_http_auth_context() -> dict[str, Any]:
         "is_authenticated",
         "is_admin",
         "auth_method",
+        "exp",
         "token_use",
         "permission_is_admin",
         "scoped_permissions",
@@ -5199,6 +5200,7 @@ class _StreamableHttpAuthHandler:
                 "is_authenticated": True,
                 "is_admin": effective_is_admin,
                 "auth_method": "jwt",
+                "exp": user_payload.get("exp"),
                 "permission_is_admin": effective_is_admin,
                 "token_use": token_use,  # propagated for downstream RBAC (check_any_team)
             }
@@ -5507,6 +5509,7 @@ class _StreamableHttpAuthHandler:
                 "is_authenticated": True,
                 "is_admin": is_admin,
                 "permission_is_admin": is_admin,
+                "exp": claims.get("exp"),
                 "token_use": "session",  # nosec B105 - JWT claim type marker, not a password
                 "auth_method": "oauth_access_token",
             }

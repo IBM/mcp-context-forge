@@ -396,6 +396,7 @@ def test_get_streamable_http_auth_context_copies_supported_keys_and_lists():
         "email": "user@example.com",
         "teams": ["team-a"],
         "auth_method": "jwt",
+        "exp": 1_800_000_000,
         "is_authenticated": True,
         "is_admin": False,
         "token_use": "session",
@@ -414,6 +415,7 @@ def test_get_streamable_http_auth_context_copies_supported_keys_and_lists():
         "email": "user@example.com",
         "teams": ["team-a"],
         "auth_method": "jwt",
+        "exp": 1_800_000_000,
         "is_authenticated": True,
         "is_admin": False,
         "token_use": "session",
@@ -13320,6 +13322,39 @@ async def test_streamable_http_auth_allows_authenticated_oauth_server(monkeypatc
 
     user_ctx = tr.user_context_var.get()
     assert user_ctx.get("is_authenticated") is True
+
+
+@pytest.mark.asyncio
+async def test_oauth_access_token_context_preserves_exp(monkeypatch):
+    """Verified OAuth claims should preserve exp for Rust session auth reuse."""
+    token_exp = 1_800_000_000
+    mock_server = MagicMock()
+    mock_server.oauth_enabled = True
+    mock_server.oauth_config = {
+        "authorization_servers": ["https://issuer.example.com"],
+        "resource": "https://gateway.example.com/servers/oauth-server/mcp",
+    }
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_server
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", _make_fake_get_db(mock_db))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", AsyncMock(return_value={"email": "user@example.com", "exp": token_exp}))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._persist_learned_server_audience", MagicMock())
+
+    mock_user = MagicMock()
+    mock_user.is_active = True
+    mock_user.is_admin = False
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", MagicMock(return_value=mock_user))
+    monkeypatch.setattr("mcpgateway.auth._resolve_teams_from_db", AsyncMock(return_value=["team-a"]))
+
+    handler = tr._StreamableHttpAuthHandler(scope=_make_scope("/servers/oauth-server/mcp"), receive=AsyncMock(), send=AsyncMock())
+
+    result = await handler._try_oauth_access_token(
+        "oauth-token",
+        {"iss": "https://issuer.example.com"},
+    )
+
+    assert result is tr.OAuthAuthResult.SUCCESS
+    assert tr.user_context_var.get()["exp"] == token_exp
 
 
 @pytest.mark.asyncio
