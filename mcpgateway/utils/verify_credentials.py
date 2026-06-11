@@ -681,7 +681,7 @@ async def _maybe_verify_external(token: str, request: Optional[Request]) -> Opti
             await _external_identity_cache_put(th, payload, claims.get("exp"))
         return payload
     except Exception as exc:  # pylint: disable=broad-except
-        logger.warning("external-idp auth error, falling through to internal (401): %s", exc)
+        logger.warning("external-idp auth error, falling through to internal (401): %s", sanitize_for_log(str(exc)))
         return None
     finally:
         if own_session:
@@ -2168,6 +2168,11 @@ async def build_external_identity(provider: SSOProvider, verified_claims: dict, 
     except IntegrityError:
         # E2: lost a concurrent provisioning race -- the winner already created
         # the user, so roll back our half-applied insert and re-look-up by email.
+        # Rollback is required (not just for owned sessions): SQLAlchemy leaves the
+        # session in a failed-transaction state after IntegrityError, and the
+        # re-lookup below would fail without it. Safe even for a request-scoped
+        # session: external-IdP auth dispatch runs during request authentication,
+        # before route handlers stage any writes on that session.
         db.rollback()
         provisioned = True
         logger.info("external-idp: provisioning race resolved via re-lookup")
@@ -2211,7 +2216,7 @@ async def build_external_identity(provider: SSOProvider, verified_claims: dict, 
             db.commit()
         except Exception as exc:  # pylint: disable=broad-except
             db.rollback()
-            logger.error("external-idp: provisioning commit failed: %s", exc)
+            logger.error("external-idp: provisioning commit failed: %s", sanitize_for_log(str(exc)))
             return None
 
     if is_synthetic:
