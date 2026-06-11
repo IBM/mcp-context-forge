@@ -1,10 +1,10 @@
-# MCP Apps Extension Substrate
+# MCP Apps
 
-The MCP Apps extension substrate lets ContextForge advertise and enforce
-MCP UI extension metadata while keeping the feature disabled by default for a
-controlled rollout. It introduces a narrow AppBridge path that browser-hosted
-MCP Apps can use to call app-visible tools without exposing normal model-facing
-tool surfaces or gateway-internal routing headers.
+MCP Apps support lets ContextForge advertise MCP UI capabilities and enforce UI
+metadata while keeping the feature disabled by default for a controlled rollout.
+It introduces a narrow AppBridge path that browser-hosted MCP Apps can use to
+call app-visible tools without exposing normal model-facing tool surfaces or
+gateway-internal routing headers.
 
 This page documents the implementation introduced for issue #5009. The broader
 MCP Apps epic remains tracked in the roadmap.
@@ -23,9 +23,9 @@ MCP Apps UI resource registration or AppBridge requests.
 
 When enabled, the gateway can:
 
-- advertise the `io.modelcontextprotocol/ui` extension capability during MCP
+- advertise the `io.modelcontextprotocol/ui` capability during MCP
   initialization for authenticated callers;
-- store extension metadata on tools and resources through the shared
+- store UI metadata on tools and resources through the shared
   `extensionMetadata` field;
 - project known MCP Apps metadata into MCP protocol `_meta.ui` fields;
 - filter app-only tools out of model-facing tool listings;
@@ -36,7 +36,7 @@ When enabled, the gateway can:
 The current AppBridge RPC surface supports `tools/call`. Other MCP methods are
 rejected with JSON-RPC `Method not found`.
 
-## Extension Capability
+## MCP Capability
 
 For authenticated MCP initialization requests, the gateway advertises:
 
@@ -63,8 +63,8 @@ authorized.
 
 ## Metadata Model
 
-ContextForge stores extension data in the `extensionMetadata` object on tools
-and resources. MCP Apps metadata is keyed by the extension identifier:
+ContextForge stores MCP Apps data in the `extensionMetadata` object on tools
+and resources. MCP Apps metadata is keyed by the MCP UI capability identifier:
 
 ```json
 {
@@ -335,7 +335,6 @@ Recommended rollout steps:
 - `mcpgateway/main.py` - AppBridge session and RPC endpoints.
 - `mcpgateway/services/tool_service.py` - app-visible tool invocation guard.
 - `mcpgateway/services/resource_service.py` - `ui://` resource validation.
-- `mcpgateway/services/extension_registry.py` - extension metadata projection
-  helpers.
-- `mcpgateway/alembic/versions/b6c7d8e9f0a1_add_mcp_app_extension_metadata.py`
-  - database migration for extension metadata and AppBridge sessions.
+- `mcpgateway/services/mcp_method_registry.py` - MCP method routing helper.
+- `mcpgateway/alembic/versions/b6c7d8e9f0a1_add_mcp_app_metadata.py`
+  - database migration for MCP Apps metadata and AppBridge sessions.

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Security regression tests for MCP Apps extension."""
+"""Security regression tests for MCP Apps."""
 
 # Standard
 from datetime import datetime, timedelta, timezone
@@ -72,7 +72,7 @@ class TestUIResourceSecurity:
         """ui:// resources must carry explicit rendering policy."""
         monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
 
-        with pytest.raises(MCPAppsValidationError, match="extension metadata"):
+        with pytest.raises(MCPAppsValidationError, match="MCP Apps metadata"):
             validate_ui_resource("ui://widgets/example", "text/html", None)
 
         with pytest.raises(MCPAppsValidationError, match="CSP policy"):
@@ -162,8 +162,8 @@ class TestAppBridgeEndpoints:
         assert MCP_UI_EXTENSION in result["capabilities"]["extensions"]
 
     @pytest.mark.asyncio
-    async def test_handle_rpc_extension_prefix_methods_return_method_not_found(self, monkeypatch, mock_db):
-        """Extension-prefixed methods should route through extension method validation."""
+    async def test_handle_rpc_mcp_prefix_methods_return_method_not_found(self, monkeypatch, mock_db):
+        """MCP-prefixed methods should route through MCP method validation."""
         # First-Party
         from mcpgateway import main as main_mod
 
@@ -174,7 +174,7 @@ class TestAppBridgeEndpoints:
         assert response["id"] == "ext-1"
 
         request = FakeRequest({"jsonrpc": "2.0", "id": "ext-2", "method": "extensions/known", "params": {}})
-        with patch("mcpgateway.services.extension_registry.extension_registry.is_known_method", return_value=True):
+        with patch("mcpgateway.services.mcp_method_registry.mcp_method_registry.is_known_method", return_value=True):
             response = await main_mod._handle_rpc_authenticated(request, db=mock_db, user={"email": "user@example.com"})
 
         assert response["error"]["code"] == -32601

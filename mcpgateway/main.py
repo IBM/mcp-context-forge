@@ -179,7 +179,7 @@ from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.log_aggregator import get_log_aggregator
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.mcp_apps import apply_tool_meta, build_extension_capabilities, filter_model_visible_tools, mcp_app_session_service, mcp_apps_enabled, serialize_resource_content_for_mcp
+from mcpgateway.services.mcp_apps import apply_tool_meta, build_mcp_apps_capabilities, filter_model_visible_tools, mcp_app_session_service, mcp_apps_enabled, serialize_resource_content_for_mcp
 from mcpgateway.services.metrics import setup_metrics
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError
@@ -9917,7 +9917,7 @@ async def _execute_rpc_initialize(
     if hasattr(result, "model_dump"):
         result = result.model_dump(by_alias=True, exclude_none=True)
 
-    extensions = build_extension_capabilities(authorized=bool(get_user_email(user)))
+    extensions = build_mcp_apps_capabilities(authorized=bool(get_user_email(user)))
     if extensions:
         result.setdefault("capabilities", {})["extensions"] = extensions
 
@@ -11169,13 +11169,13 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             # Catch-all for other logging/* methods (currently unsupported)
             result = {}
         elif method.startswith("extensions/") or method.startswith("io.modelcontextprotocol/"):
-            # Check if this is a known extension method
+            # Check if this is a known MCP Apps method.
             # First-Party
-            from mcpgateway.services.extension_registry import extension_registry
+            from mcpgateway.services.mcp_method_registry import mcp_method_registry
 
-            if not extension_registry.is_known_method(method):
+            if not mcp_method_registry.is_known_method(method):
                 raise JSONRPCError(-32601, f"Method not found: {method}", {})
-            # Known extension method but not yet implemented
+            # Known MCP Apps method but not yet implemented here.
             raise JSONRPCError(-32601, f"Method not found: {method}", {})
         else:
             # Backward compatibility: Try to invoke as a tool directly
