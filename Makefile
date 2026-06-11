@@ -3847,8 +3847,8 @@ LINT_CHECKOV_TARGET ?= .
 LINT_KUBE_LINTER_TARGET ?= charts/mcp-stack
 LINT_GO_MODULE_SEARCH_DIRS ?= mcp-servers a2a-agents
 
-# Passing gates only (used by CI workflow linting-full)
-LINTING_FULL_TARGETS := linting-workflow-actionlint linting-workflow-reviewdog linting-workflow-commitlint linting-helm-lint linting-helm-chart-testing linting-helm-unittest linting-go-gosec linting-go-govulncheck
+# Passing gates only (used by CI workflow linting-full).
+LINTING_FULL_TARGETS := linting-workflow-actionlint linting-workflow-commitlint linting-helm-lint linting-helm-chart-testing linting-helm-unittest linting-go-gosec linting-go-govulncheck
 
 # Tools requiring auth/login (e.g. safety, OSSF scorecard) are intentionally excluded.
 
