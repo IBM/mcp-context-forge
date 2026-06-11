@@ -1810,3 +1810,89 @@ async def verify_external_idp_token(token: str, db: Session) -> tuple[Optional[d
     if claims is None:
         return None, None
     return claims, provider
+
+
+def _get_sso_service(db: Session):
+    """Factory wrapper so tests can patch SSOService construction.
+
+    Args:
+        db: Request-scoped SQLAlchemy session.
+
+    Returns:
+        A new :class:`~mcpgateway.services.sso_service.SSOService` instance.
+    """
+    # First-Party
+    from mcpgateway.services.sso_service import SSOService  # pylint: disable=import-outside-toplevel
+
+    return SSOService(db)
+
+
+async def build_external_identity(provider: SSOProvider, verified_claims: dict, token: str, db: Session) -> Optional[dict[str, Any]]:
+    """Map verified external-IdP claims to a ContextForge identity payload.
+
+    Reuses browser-SSO normalization + provisioning so role/group -> team mapping
+    is identical. Team scoping uses SESSION semantics (DB authority) because an
+    external access token carries no internal ``teams`` claim.
+
+    SECURITY:
+        * ``token_use="session"`` so downstream dispatchers route via
+          ``resolve_session_teams`` (DB authority), NOT ``normalize_token_teams``
+          (claim authority).
+        * ``is_admin`` is read from the persisted ``EmailUser``, never the mapped
+          claim.
+        * ``authenticate_or_create_user`` returns a JWT token, not an identity --
+          used only for its provisioning side-effect; identity comes from
+          ``get_user_by_email``.
+
+    Args:
+        provider: The matched, trusted SSOProvider (from resolve_trusted_provider_by_issuer).
+        verified_claims: Signature-verified claims from verify_external_idp_token.
+        token: The raw external bearer token (carried through for downstream use).
+        db: Request-scoped SQLAlchemy session.
+
+    Returns:
+        The enriched session-semantics identity payload, or None when the user
+        cannot be provisioned/resolved.
+    """
+    # First-Party
+    from mcpgateway.auth import resolve_session_teams  # pylint: disable=import-outside-toplevel
+
+    svc = _get_sso_service(db)
+    user_info = svc._normalize_user_info(provider, verified_claims)  # pylint: disable=protected-access
+
+    # Provisioning side-effect only (creates/links user, role-sync, enforces
+    # trusted_domains + email-verified). Return value is a JWT token -- discard it.
+    provisioned = await svc.authenticate_or_create_user(user_info)
+    if not provisioned:
+        return None
+
+    email = str(user_info.get("email") or "").strip().lower()
+    if not email:
+        return None
+
+    db_user = await svc.auth_service.get_user_by_email(email)
+    if db_user is None:
+        return None
+
+    is_admin = bool(db_user.is_admin)  # DB authority, not the mapped claim
+
+    # token_use="session" payload routed via resolve_session_teams(payload, email, db_user).
+    payload: dict = {
+        "sub": email,
+        "email": email,
+        "token": token,
+        "token_use": "session",  # nosec B105 - JWT claim type, not a password
+        "source": "external_idp",  # audit/telemetry only -- never drives authz
+        "iss": verified_claims.get("iss"),
+        "auth_provider": getattr(provider, "id", None),
+    }
+    teams = await resolve_session_teams(payload, email, db_user)
+    payload["teams"] = teams
+    payload["is_admin"] = is_admin
+
+    # Persist provisioning if we own the session (set by a future dispatcher).
+    own_session = getattr(getattr(db, "info", {}), "get", lambda *_: None)("external_owned")
+    if own_session:
+        db.commit()
+
+    return payload

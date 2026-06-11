@@ -298,3 +298,73 @@ async def test_verify_external_idp_token_verification_fails(monkeypatch):
     monkeypatch.setattr(vc, "verify_oauth_access_token", fake_verify)
     db = MagicMock()
     assert await vc.verify_external_idp_token(token, db) == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_build_external_identity_uses_session_token_use_and_db_admin(monkeypatch):
+    """C1 + C2: token_use must be 'session'; is_admin from DB user, not claim."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    prov = _fake_provider("https://kc/realms/m")
+    prov.id = "keycloak"
+    claims = {"iss": "https://kc/realms/m", "sub": "agent", "email": "agent@corp.com"}
+
+    svc = MagicMock()
+    # Claim maps to admin-looking groups...
+    svc._normalize_user_info.return_value = {"email": "agent@corp.com", "is_admin": True}
+
+    async def fake_auth(user_info):
+        return "an-internal-jwt-token-string"  # C3: returns a TOKEN, not an email
+
+    svc.authenticate_or_create_user = fake_auth
+    # ...but the DB user is NOT admin -> payload.is_admin must be False (C2)
+    db_user = MagicMock()
+    db_user.is_admin = False
+
+    async def fake_get_user(email):
+        return db_user
+
+    svc.auth_service.get_user_by_email = fake_get_user
+    monkeypatch.setattr(vc, "_get_sso_service", lambda db: svc)
+
+    captured = {}
+
+    async def fake_resolve(payload, email, user_info, **kw):
+        captured["args"] = (payload, email, user_info)
+        return ["team-a"]  # non-admin DB teams
+
+    monkeypatch.setattr("mcpgateway.auth.resolve_session_teams", fake_resolve)
+
+    db = MagicMock()
+    payload = await vc.build_external_identity(prov, claims, "rawtoken", db)
+    assert payload["sub"] == "agent@corp.com"
+    assert payload["email"] == "agent@corp.com"
+    assert payload["token_use"] == "session"  # C1
+    assert payload["source"] == "external_idp"  # audit only
+    assert payload["is_admin"] is False  # C2: DB authority, not claim
+    assert payload["teams"] == ["team-a"]
+    assert payload["auth_provider"] == "keycloak"
+    # C2: resolve_session_teams called with the DB user object, signature (payload, email, user_info)
+    assert captured["args"][1] == "agent@corp.com"
+    assert captured["args"][2] is db_user
+
+
+@pytest.mark.asyncio
+async def test_build_external_identity_unknown_user_returns_none(monkeypatch):
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    prov = _fake_provider("https://kc/realms/m")
+    prov.id = "keycloak"
+    svc = MagicMock()
+    svc._normalize_user_info.return_value = {"email": "ghost@corp.com", "is_admin": False}
+
+    async def fake_auth(user_info):
+        return None  # provisioning rejected (auto_create off / unverified / untrusted domain)
+
+    svc.authenticate_or_create_user = fake_auth
+    monkeypatch.setattr(vc, "_get_sso_service", lambda db: svc)
+    db = MagicMock()
+    payload = await vc.build_external_identity(prov, {"sub": "ghost"}, "raw", db)
+    assert payload is None
