@@ -6935,7 +6935,7 @@ async def list_gateways(
 async def register_gateway(
     gateway: GatewayCreate,
     request: Request,
-    response: Response,
+    response: Response = None,  # type: ignore[assignment]
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[GatewayRead, JSONResponse]:
@@ -7002,7 +7002,7 @@ async def register_gateway(
         result_status = getattr(result, "status", None)
         if result_status is None and isinstance(result, dict):
             result_status = result.get("status")
-        if result_status == "pending":
+        if result_status == "pending" and response is not None:
             response.status_code = status.HTTP_202_ACCEPTED
         return result
     except Exception as ex:
@@ -7061,7 +7061,7 @@ async def update_gateway(
     gateway_id: str,
     gateway: GatewayUpdate,
     request: Request,
-    response: Response,
+    response: Response = None,  # type: ignore[assignment]
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[GatewayRead, JSONResponse]:
@@ -7098,7 +7098,7 @@ async def update_gateway(
         result_status = getattr(result, "status", None)
         if result_status is None and isinstance(result, dict):
             result_status = result.get("status")
-        if result_status == "pending":
+        if result_status == "pending" and response is not None:
             response.status_code = status.HTTP_202_ACCEPTED
         db.commit()
         db.close()
@@ -7130,7 +7130,7 @@ async def update_gateway(
 async def delete_gateway(
     gateway_id: str,
     request: Request,
-    response: Response,
+    response: Response = None,  # type: ignore[assignment]
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[Dict[str, str], GatewayRead]:
@@ -7171,7 +7171,8 @@ async def delete_gateway(
         if result_status is None and isinstance(result, dict):
             result_status = result.get("status")
         if result_status == "deleting":
-            response.status_code = status.HTTP_202_ACCEPTED
+            if response is not None:
+                response.status_code = status.HTTP_202_ACCEPTED
             return result
         return {"status": "success", "message": f"Gateway {gateway_id} deleted"}
     except PermissionError as e:

@@ -50,7 +50,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.security import HTTPAuthorizationCredentials
 import httpx
 import orjson
-from pydantic import SecretStr, ValidationError
+from pydantic import BaseModel, SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
 from sqlalchemy import and_, bindparam, case, cast, desc, false, func, or_, select, String, text
 from sqlalchemy.exc import DataError, IntegrityError, InvalidRequestError, OperationalError, SQLAlchemyError
@@ -985,13 +985,42 @@ async def _parse_gateway_data_from_request(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=415, detail=f"Unsupported content type: {content_type}. Use application/json or multipart/form-data")
 
 
-def _build_admin_redirect(root_path: str, fragment: str, *, error: Optional[str] = None, include_inactive: bool = False, team_id: Optional[str] = None) -> str:
+def _gateway_result_status(result: Any) -> Optional[str]:
+    """Return lifecycle status from a gateway service result when present."""
+    if isinstance(result, dict):
+        status_value = result.get("status")
+        return status_value if isinstance(status_value, str) else None
+    if isinstance(result, BaseModel):
+        status_value = getattr(result, "status", None)
+        return status_value if isinstance(status_value, str) else None
+    return None
+
+
+def _gateway_result_payload(result: Any) -> Optional[dict[str, Any]]:
+    """Serialize concrete gateway results while tolerating mocked return values."""
+    if isinstance(result, dict):
+        return result
+    if isinstance(result, BaseModel):
+        return result.model_dump(mode="json", by_alias=True)
+    return None
+
+
+def _build_admin_redirect(
+    root_path: str,
+    fragment: str,
+    *,
+    error: Optional[str] = None,
+    message: Optional[str] = None,
+    include_inactive: bool = False,
+    team_id: Optional[str] = None,
+) -> str:
     """Build an admin redirect URL preserving query parameters.
 
     Args:
         root_path: The root path prefix for the application.
         fragment: The URL fragment/hash (e.g. "tools", "catalog").
         error: Optional error message to include as a query parameter.
+        message: Optional success/info message to include as a query parameter.
         include_inactive: Whether the include_inactive flag was set.
         team_id: Optional team ID to preserve in the redirect.
 
@@ -1001,6 +1030,8 @@ def _build_admin_redirect(root_path: str, fragment: str, *, error: Optional[str]
     params: dict[str, str] = {}
     if error:
         params["error"] = error
+    if message:
+        params["message"] = message
     if include_inactive:
         params["include_inactive"] = "true"
     if team_id:
@@ -12492,7 +12523,7 @@ async def admin_add_gateway(
         )
 
         # Provide specific guidance for OAuth Authorization Code flow
-        is_pending = getattr(result, "status", None) == "pending"
+        is_pending = _gateway_result_status(result) == "pending"
         message = "Gateway registration accepted and pending initialization." if is_pending else "Gateway registered successfully!"
         if oauth_config and isinstance(oauth_config, dict) and oauth_config.get("grant_type") == "authorization_code":
             message = (
@@ -12506,10 +12537,11 @@ async def admin_add_gateway(
                 "Tools will not work until OAuth authorization is completed."
             )
         skipped_tools = result.skipped_tools if isinstance(getattr(result, "skipped_tools", None), list) else []
-        return ORJSONResponse(
-            content={"message": message, "success": True, "skipped_tools": skipped_tools, "gateway": result.model_dump(mode="json", by_alias=True)},
-            status_code=202 if is_pending else 200,
-        )
+        content: dict[str, Any] = {"message": message, "success": True, "skipped_tools": skipped_tools}
+        gateway_payload = _gateway_result_payload(result)
+        if gateway_payload is not None:
+            content["gateway"] = gateway_payload
+        return ORJSONResponse(content=content, status_code=202 if is_pending else 200)
 
     except GatewayConnectionError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
@@ -12634,15 +12666,15 @@ async def admin_update_gateway_rest(
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
         )
-        is_pending = getattr(result, "status", None) == "pending"
-        return ORJSONResponse(
-            content={
-                "message": "Gateway update accepted and pending initialization." if is_pending else "Gateway updated successfully!",
-                "success": True,
-                "gateway": result.model_dump(mode="json", by_alias=True),
-            },
-            status_code=202 if is_pending else 200,
-        )
+        is_pending = _gateway_result_status(result) == "pending"
+        content: dict[str, Any] = {
+            "message": "Gateway update accepted and pending initialization." if is_pending else "Gateway updated successfully!",
+            "success": True,
+        }
+        gateway_payload = _gateway_result_payload(result)
+        if gateway_payload is not None:
+            content["gateway"] = gateway_payload
+        return ORJSONResponse(content=content, status_code=202 if is_pending else 200)
     except PermissionError as e:
         LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
         return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
@@ -12913,15 +12945,15 @@ async def admin_edit_gateway(
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
         )
-        is_pending = getattr(result, "status", None) == "pending"
-        return ORJSONResponse(
-            content={
-                "message": "Gateway update accepted and pending initialization." if is_pending else "Gateway updated successfully!",
-                "success": True,
-                "gateway": result.model_dump(mode="json", by_alias=True),
-            },
-            status_code=202 if is_pending else 200,
-        )
+        is_pending = _gateway_result_status(result) == "pending"
+        content: dict[str, Any] = {
+            "message": "Gateway update accepted and pending initialization." if is_pending else "Gateway updated successfully!",
+            "success": True,
+        }
+        gateway_payload = _gateway_result_payload(result)
+        if gateway_payload is not None:
+            content["gateway"] = gateway_payload
+        return ORJSONResponse(content=content, status_code=202 if is_pending else 200)
     except PermissionError as e:
         LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
         return ORJSONResponse(

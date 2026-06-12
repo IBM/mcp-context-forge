@@ -216,14 +216,9 @@ def _introspect_in_container(container: str, db_url: str) -> Dict[str, Any]:
 
 
 @pytest.fixture(scope="module")
-def _sqlite_schema(tmp_path_factory, container_runtime):
+def _sqlite_schema(container_runtime):
     """Boot TARGET_IMAGE with SQLite, run migrations, return raw schema dict."""
-    tmp = tmp_path_factory.mktemp("sqlite_schema")
-    tmp.chmod(0o777)
-    db_file = tmp / "mcp-schema-test.db"
-    db_file.touch()
-    db_file.chmod(0o666)
-
+    db_url = "sqlite:////tmp/mcp-schema-test.db"
     container: Optional[str] = None
     try:
         result = _run(
@@ -236,7 +231,7 @@ def _sqlite_schema(tmp_path_factory, container_runtime):
                 "-p",
                 "0:4444",
                 "-e",
-                f"DATABASE_URL=sqlite:////app/data/{db_file.name}",
+                f"DATABASE_URL={db_url}",
                 "-e",
                 "AUTH_REQUIRED=false",
                 "-e",
@@ -250,9 +245,9 @@ def _sqlite_schema(tmp_path_factory, container_runtime):
                 "-e",
                 "MCPGATEWAY_ADMIN_API_ENABLED=true",
                 "-e",
+                "GUNICORN_WORKERS=1",
+                "-e",
                 "LOG_LEVEL=INFO",
-                "-v",
-                f"{tmp}:/app/data",
                 TARGET_IMAGE,
             ]
         )
@@ -264,7 +259,6 @@ def _sqlite_schema(tmp_path_factory, container_runtime):
 
         _wait_health(f"http://127.0.0.1:{host_port}/health")
 
-        db_url = f"sqlite:////app/data/{db_file.name}"
         schema = _introspect_in_container(container, db_url)
         logger.info(f"SQLite schema introspected: {len(schema)} tables")
         return schema
@@ -337,6 +331,8 @@ def _postgres_schema(tmp_path_factory, container_runtime):
                 "MCPGATEWAY_UI_ENABLED=false",
                 "-e",
                 "MCPGATEWAY_ADMIN_API_ENABLED=true",
+                "-e",
+                "GUNICORN_WORKERS=1",
                 "-e",
                 "LOG_LEVEL=INFO",
                 TARGET_IMAGE,
