@@ -354,7 +354,7 @@ class SecurityValidator:
     MAX_TEMPLATE_LENGTH = settings.validation_max_template_length  # Default: 65536
     MAX_CONTENT_LENGTH = settings.validation_max_content_length  # Default: 1048576 (1MB)
     MAX_JSON_DEPTH = settings.validation_max_json_depth  # Default: 30
-    MAX_URL_LENGTH = settings.validation_max_url_length  # Default: 767 (matches DB String(767) limit)
+    MAX_URL_LENGTH = settings.validation_max_url_length  # Default: 2048
 
     @classmethod
     def sanitize_display_text(cls, value: str, field_name: str) -> str:
@@ -1072,11 +1072,11 @@ class SecurityValidator:
 
             Length validation:
 
-            >>> long_url = 'https://example.com/' + 'a' * 800
+            >>> long_url = 'https://example.com/' + 'a' * 2100
             >>> SecurityValidator.validate_url(long_url)
             Traceback (most recent call last):
                 ...
-            ValueError: URL exceeds maximum length of 767
+            ValueError: URL exceeds maximum length of 2048
 
             Scheme validation:
 

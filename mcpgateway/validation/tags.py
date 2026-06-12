@@ -27,7 +27,7 @@ class TagValidator:
 
     Ensures tags follow consistent formatting rules:
     - Minimum length: Configurable via VALIDATION_MIN_TAG_LENGTH (default: 2 characters)
-    - Maximum length: Configurable via VALIDATION_MAX_TAG_LENGTH (default: 50 characters)
+    - Maximum length: Configurable via VALIDATION_MAX_TAG_LENGTH (default: 100 characters)
     - Allowed characters: lowercase letters, numbers, hyphens, colons, dots
     - Must start and end with alphanumeric characters
     - Automatic normalization to lowercase, trimmed
@@ -46,7 +46,7 @@ class TagValidator:
 
     Attributes:
         MIN_LENGTH (int): Minimum allowed tag length (configurable, default: 2).
-        MAX_LENGTH (int): Maximum allowed tag length (configurable, default: 50).
+        MAX_LENGTH (int): Maximum allowed tag length (configurable, default: 100).
         ALLOWED_PATTERN (str): Regular expression pattern for valid tags.
     """
 

@@ -3253,20 +3253,20 @@ Disallow: /
         ge=1,
         le=100,
     )
-    validation_max_url_length: int = 767  # Match database String(767) limit to prevent validation/storage mismatch
+    validation_max_url_length: int = 2048
     validation_max_rpc_param_size: int = 262144  # 256KB
 
     validation_max_method_length: int = 128
 
-    # Tag validation limits (configurable via env) - Issue #XXXX
+    # Tag validation limits (configurable via env) - Issue #5175
     validation_min_tag_length: int = Field(
-        default=int(os.getenv("VALIDATION_MIN_TAG_LENGTH", "2")),
+        default=2,
         description=("Minimum length for individual tags. Tags shorter than this will be rejected. " "Override with VALIDATION_MIN_TAG_LENGTH environment variable. Minimum: 1, Maximum: 10"),
         ge=1,
         le=10,
     )
     validation_max_tag_length: int = Field(
-        default=int(os.getenv("VALIDATION_MAX_TAG_LENGTH", "100")),
+        default=100,
         description=(
             "Maximum length for individual tags. Tags longer than this will be rejected. "
             "Default: 100 characters. Supports system-generated tags, hashes, and namespaced identifiers. "

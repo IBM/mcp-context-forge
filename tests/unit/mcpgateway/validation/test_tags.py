@@ -7,9 +7,6 @@ Authors: Mihai Criveti
 Tests for tag validation and normalization.
 """
 
-# Standard
-from unittest.mock import patch
-
 # Third-Party
 import pytest
 
@@ -170,7 +167,16 @@ class TestTagPatterns:
 
 
 class TestConfigurableTagLimits:
-    """Test suite for configurable tag length limits (Issue #XXXX)."""
+    """Test suite for configurable tag length limits (Issue #5175)."""
+
+    @pytest.fixture(autouse=True)
+    def _restore_limits(self):
+        """Restore TagValidator class attributes after each test to prevent pollution."""
+        original_min = TagValidator.MIN_LENGTH
+        original_max = TagValidator.MAX_LENGTH
+        yield
+        TagValidator.MIN_LENGTH = original_min
+        TagValidator.MAX_LENGTH = original_max
 
     def test_default_limits(self):
         """Test that default limits are applied from settings."""
@@ -206,16 +212,11 @@ class TestConfigurableTagLimits:
         # Single character should fail (min is 2 by default)
         assert TagValidator.validate("a") is False
 
-    @patch("mcpgateway.validation.tags.settings")
-    def test_custom_max_length_100(self, mock_settings):
+    def test_custom_max_length_100(self):
         """Test validation with custom max length of 100 characters."""
-        # Mock settings to have max_tag_length = 100
-        mock_settings.validation_min_tag_length = 2
-        mock_settings.validation_max_tag_length = 100
-
-        # Reload class attributes to pick up mocked settings
-        TagValidator.MIN_LENGTH = mock_settings.validation_min_tag_length
-        TagValidator.MAX_LENGTH = mock_settings.validation_max_tag_length
+        # Set class attributes directly (fixture will restore them)
+        TagValidator.MIN_LENGTH = 2
+        TagValidator.MAX_LENGTH = 100
 
         # Tag with 100 characters (should be valid)
         tag_100 = "a" * 100
@@ -229,15 +230,11 @@ class TestConfigurableTagLimits:
         tag_99 = "a" * 99
         assert TagValidator.validate(tag_99) is True
 
-    @patch("mcpgateway.validation.tags.settings")
-    def test_custom_max_length_200(self, mock_settings):
+    def test_custom_max_length_200(self):
         """Test validation with custom max length of 200 characters (system-generated tags)."""
-        # Mock settings for longer tags (e.g., hashes, identifiers)
-        mock_settings.validation_min_tag_length = 2
-        mock_settings.validation_max_tag_length = 200
-
-        TagValidator.MIN_LENGTH = mock_settings.validation_min_tag_length
-        TagValidator.MAX_LENGTH = mock_settings.validation_max_tag_length
+        # Set class attributes directly (fixture will restore them)
+        TagValidator.MIN_LENGTH = 2
+        TagValidator.MAX_LENGTH = 200
 
         # Simulate system-generated tag with hash
         system_tag = "deployment-prod-us-west-2-sha256-" + "a" * 64  # 97 chars total
@@ -252,15 +249,11 @@ class TestConfigurableTagLimits:
         too_long = "a" * 201
         assert TagValidator.validate(too_long) is False
 
-    @patch("mcpgateway.validation.tags.settings")
-    def test_custom_min_length(self, mock_settings):
+    def test_custom_min_length(self):
         """Test validation with custom minimum length."""
-        # Allow single-character tags
-        mock_settings.validation_min_tag_length = 1
-        mock_settings.validation_max_tag_length = 50
-
-        TagValidator.MIN_LENGTH = mock_settings.validation_min_tag_length
-        TagValidator.MAX_LENGTH = mock_settings.validation_max_tag_length
+        # Set class attributes directly (fixture will restore them)
+        TagValidator.MIN_LENGTH = 1
+        TagValidator.MAX_LENGTH = 50
 
         # Single character should now be valid
         assert TagValidator.validate("a") is True
