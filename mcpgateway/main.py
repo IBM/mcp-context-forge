@@ -1638,8 +1638,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             total_connections = workers * total_pool
             logger.warning(
                 "⚠️  DATABASE POOL: Running with %d gunicorn workers. "
-                + "Total max DB connections = workers(%d) * (pool_size + max_overflow) = %d * %d = %d. "
-                + "Ensure PostgreSQL max_connections >= %d. ",
+                "Total max DB connections = workers(%d) * (pool_size + max_overflow) = %d * %d = %d. "
+                "Ensure PostgreSQL max_connections >= %d. ",
                 workers,
                 workers,
                 workers,

@@ -119,14 +119,15 @@ def post_fork(server, worker):
     server.log.info("Worker spawned (pid: %s)", worker.pid)
 
     # Dispose SQLAlchemy engine to ensure clean pool separation per worker
-    # Calling dispose() follows SQLAlchemy's
-    # official multi-process guidance and ensures each worker gets a fresh pool.
+    # Using dispose(close=False) to prevent interference with parent process connections
+    # per SQLAlchemy's official fork recipe (1.4.33+). This de-references the parent's
+    # connection pool without actively closing inherited sockets.
     try:
         from mcpgateway.db import engine
-        engine.dispose()
-        server.log.info("SQLAlchemy engine disposed for worker %s", worker.pid)
+        engine.dispose(close=False)
+        server.log.info("SQLAlchemy engine pool reset for worker %s", worker.pid)
     except Exception as e:
-        server.log.warning("Failed to dispose SQLAlchemy engine: %s", e)
+        server.log.warning("Failed to reset SQLAlchemy engine pool: %s", e)
 
     # Reset Redis client state so each worker creates its own connection
     # This is necessary because --preload causes the client to be initialized
