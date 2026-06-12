@@ -29,6 +29,7 @@ from mcpgateway.services.sso_service import invalidate_trusted_provider_cache, S
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.paths import resolve_root_path
+from mcpgateway.utils.verify_credentials import invalidate_external_identity_cache
 
 # Initialize logging
 logging_service = LoggingService()
@@ -552,6 +553,7 @@ async def create_sso_provider(
     db.commit()
     db.close()
     invalidate_trusted_provider_cache()
+    await invalidate_external_identity_cache()
     return result
 
 
@@ -703,6 +705,7 @@ async def update_sso_provider(
     db.commit()
     db.close()
     invalidate_trusted_provider_cache()
+    await invalidate_external_identity_cache()
     return result
 
 
@@ -734,6 +737,7 @@ async def delete_sso_provider(
     db.commit()
     db.close()
     invalidate_trusted_provider_cache()
+    await invalidate_external_identity_cache()
     return {"message": f"SSO provider '{provider_id}' deleted successfully"}
 
 
