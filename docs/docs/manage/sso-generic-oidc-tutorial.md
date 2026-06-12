@@ -755,6 +755,12 @@ For production, fix the certificate issue at the provider level.
 4. **Monitor failed login attempts**
 5. **Review access logs** regularly
 
+## M2M API Access
+
+Generic OIDC providers can also be opted into ContextForge's machine-to-machine bearer-token auth — see [SSO: Machine-to-machine API auth with external IdP tokens](sso.md#machine-to-machine-api-auth-with-external-idp-tokens) for the full design and the [Keycloak M2M recipe](sso-keycloak-tutorial.md#machine-to-machine-service-account-api-access) for a worked example (the same steps apply to any OIDC-compliant provider: confidential client with service accounts/`client_credentials` enabled, an audience mapper so `aud` matches `api_audience`, then `SSO_API_TOKEN_AUTH_ENABLED=true` plus `trusted_for_api_auth`/`api_audience` on the provider).
+
+The existing `SSO_GENERIC_GROUPS_CLAIM`, `SSO_GENERIC_ADMIN_GROUPS`, and `SSO_GENERIC_ROLE_MAPPINGS` settings continue to govern role/team mapping for service-account tokens, exactly as they do for browser SSO logins.
+
 ## Next Steps
 
 After Generic OIDC SSO is working:
