@@ -21,6 +21,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    """Add trusted_for_api_auth and api_audience columns to sso_providers."""
     inspector = sa.inspect(op.get_bind())
     if "sso_providers" not in inspector.get_table_names():
         return
@@ -32,6 +33,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Drop trusted_for_api_auth and api_audience columns from sso_providers."""
     inspector = sa.inspect(op.get_bind())
     if "sso_providers" not in inspector.get_table_names():
         return

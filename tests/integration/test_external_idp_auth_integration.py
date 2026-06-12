@@ -320,7 +320,7 @@ async def test_g4_require_auth_external_then_deactivated(seeded_db, monkeypatch)
     monkeypatch.setattr(vc, "_maybe_verify_external", fake_maybe)
 
     req = Request(scope={"type": "http", "headers": []})
-    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="ext-token")
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="ext-token")  # pragma: allowlist secret
     result = await vc.require_auth(request=req, credentials=creds, jwt_token=None)
     assert result["sub"] == "member@corp.com"
 
