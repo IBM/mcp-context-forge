@@ -1542,6 +1542,7 @@ class TestRBACProxyIdentityPropagationCoverage:
                 return False
 
         request = MagicMock()
+        request.cookies = {}  # Ensure no cookies present
         request.headers = {"X-Proxy-User": "proxy@example.com", "user-agent": "pytest"}
         request.state = MagicMock()
         request.state.plugin_context_table = None

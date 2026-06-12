@@ -943,8 +943,9 @@ async def test_no_proxy_no_trust_auth_required_api_401(no_cookie_request):
     mock_settings.mcp_client_auth_enabled = False
     mock_settings.trust_proxy_auth = False
     mock_settings.auth_required = True
+    mock_settings.app_root_path = ""
 
-    with patch("mcpgateway.middleware.rbac.settings", mock_settings):
+    with patch("mcpgateway.middleware.rbac.settings", mock_settings), patch("mcpgateway.middleware.rbac.is_proxy_auth_trust_active", return_value=False):
         with pytest.raises(HTTPException) as exc:
             await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
     assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
