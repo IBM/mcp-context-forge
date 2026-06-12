@@ -2086,30 +2086,43 @@ class A2AAgentService(BaseService):
         agent_oauth_config = getattr(agent, "oauth_config", None)
         agent_passthrough_headers = getattr(agent, "passthrough_headers", None)
 
-        # Filter request_headers to only whitelisted passthrough headers
-        # before they reach plugin hooks (prevents credential leak to plugins).
+        # Import filter function (used for both plugin and downstream filtering)
+        # First-Party
+        from mcpgateway.main import _filter_sensitive_headers  # pylint: disable=import-outside-toplevel
+
+        # SECURITY: Split header flows for plugin hooks vs downstream agent
+        # Plugin hooks ALWAYS receive sanitized headers (prevents credential leaks)
+        # Downstream headers respect the ENABLE_SENSITIVE_HEADER_PASSTHROUGH flag
         if request_headers and agent_passthrough_headers:
             whitelist_lower = {h.lower() for h in agent_passthrough_headers}
-            request_headers = {k: v for k, v in request_headers.items() if k in whitelist_lower}
+            whitelisted_headers = {k: v for k, v in request_headers.items() if k in whitelist_lower}
 
+            # Plugin hooks ALWAYS get sanitized headers (no sensitive headers ever)
+            plugin_headers = _filter_sensitive_headers(whitelisted_headers)
+
+            # Downstream headers respect the feature flag
             # Phase 1 (Issue #3621): When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=false (default),
             # filter out sensitive headers even if whitelisted (backward compatible)
             if not settings.enable_sensitive_header_passthrough:
-                # Import filter function
-                from mcpgateway.main import _filter_sensitive_headers  # pylint: disable=import-outside-toplevel
-                request_headers = _filter_sensitive_headers(request_headers)
+                downstream_headers = plugin_headers  # Same as plugins when flag OFF
+            else:
+                downstream_headers = whitelisted_headers  # Include sensitive when flag ON
 
-            # SECURITY AUDIT: Log forwarded headers for compliance and forensics
-            if request_headers:
+            # SECURITY AUDIT: Log headers forwarded to downstream agent for compliance
+            if downstream_headers:
                 logger.info(
-                    "A2A passthrough headers forwarded to agent '%s': %s (user: %s, agent_id: %s)",
+                    "A2A passthrough headers forwarded to downstream agent '%s': %s (user: %s, agent_id: %s)",
                     agent_name,
-                    list(request_headers.keys()),
+                    list(downstream_headers.keys()),
                     user_email or "anonymous",
                     agent_id,
                 )
         elif request_headers:
-            request_headers = {}  # No whitelist = no headers reach plugins
+            plugin_headers = {}  # No whitelist = no headers reach plugins
+            downstream_headers = {}
+        else:
+            plugin_headers = {}
+            downstream_headers = {}
 
         # ═══════════════════════════════════════════════════════════════════════════
         # SECURITY: Validate UAID endpoint domain before invocation
@@ -2164,7 +2177,7 @@ class A2AAgentService(BaseService):
                 auth_type=agent_auth_type,
                 auth_value=agent_auth_value,
                 auth_query_params=agent_auth_query_params,
-                base_headers=request_headers,
+                base_headers=downstream_headers,
                 correlation_id=correlation_id,
             )
         except Exception as e:
@@ -2229,7 +2242,7 @@ class A2AAgentService(BaseService):
                     payload=AgentPreInvokePayload(
                         agent_id=agent_id,
                         messages=[{"role": "user", "content": parameters}] if parameters else [],
-                        headers=HttpHeaderPayload(root=request_headers or {}),
+                        headers=HttpHeaderPayload(root=plugin_headers),
                         parameters=parameters if isinstance(parameters, dict) else {},
                     ),
                     global_context=global_context,
