@@ -69,9 +69,9 @@ class TestFilterSensitiveHeaders:
     def test_api_key_variants_filtered(self):
         """Various API key header formats should be filtered."""
         headers = {
-            "x-api-key": "secret123",
-            "api-key": "secret456",
-            "apikey": "secret789",
+            "x-api-key": "secret123",  # pragma: allowlist secret
+            "api-key": "secret456",  # pragma: allowlist secret
+            "apikey": "secret789",  # pragma: allowlist secret
             "content-type": "application/json",
         }
         result = filter_sensitive_headers(headers)
@@ -83,9 +83,9 @@ class TestFilterSensitiveHeaders:
     def test_api_key_case_insensitive(self):
         """API key header filtering should be case-insensitive."""
         headers = {
-            "X-Api-Key": "secret123",
-            "API-KEY": "secret456",
-            "ApiKey": "secret789",
+            "X-Api-Key": "secret123",  # pragma: allowlist secret
+            "API-KEY": "secret456",  # pragma: allowlist secret
+            "ApiKey": "secret789",  # pragma: allowlist secret
             "content-type": "application/json",
         }
         result = filter_sensitive_headers(headers)
@@ -134,7 +134,7 @@ class TestFilterSensitiveHeaders:
         """X-Auth-Key and similar patterns should be filtered."""
         headers = {
             "x-auth-key": "key123",
-            "x-api-key": "key456",
+            "x-api-key": "key456",  # pragma: allowlist secret
             "x-access-key": "key789",
             "x-client-key": "key012",
             "x-security-key": "key345",
@@ -146,9 +146,9 @@ class TestFilterSensitiveHeaders:
     def test_x_auth_secret_patterns_filtered(self):
         """X-Auth-Secret and similar patterns should be filtered."""
         headers = {
-            "x-auth-secret": "secret123",
-            "x-api-secret": "secret456",
-            "x-access-secret": "secret789",
+            "x-auth-secret": "secret123",  # pragma: allowlist secret
+            "x-api-secret": "secret456",  # pragma: allowlist secret
+            "x-access-secret": "secret789",  # pragma: allowlist secret
             "content-type": "application/json",
         }
         result = filter_sensitive_headers(headers)
@@ -158,8 +158,8 @@ class TestFilterSensitiveHeaders:
         """Underscore variants of sensitive headers should be filtered."""
         headers = {
             "x-auth_token": "token123",
-            "x-api_key": "key456",
-            "x-access_secret": "secret789",
+            "x-api_key": "key456",  # pragma: allowlist secret
+            "x-access_secret": "secret789",  # pragma: allowlist secret
             "content-type": "application/json",
         }
         result = filter_sensitive_headers(headers)
@@ -169,8 +169,8 @@ class TestFilterSensitiveHeaders:
         """Hyphen variants of sensitive headers should be filtered."""
         headers = {
             "x-auth-token": "token123",
-            "x-api-key": "key456",
-            "x-access-secret": "secret789",
+            "x-api-key": "key456",  # pragma: allowlist secret
+            "x-access-secret": "secret789",  # pragma: allowlist secret
             "content-type": "application/json",
         }
         result = filter_sensitive_headers(headers)
@@ -240,7 +240,7 @@ class TestFilterSensitiveHeaders:
         # Simulated headers from an incoming request with various credentials
         request_headers = {
             "authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-            "x-api-key": "sk-prod-abc123xyz789",
+            "x-api-key": "sk-prod-abc123xyz789",  # pragma: allowlist secret
             "cookie": "session_id=sensitive_session_token",
             "content-type": "application/json",
             "accept": "application/json",

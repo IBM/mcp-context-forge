@@ -102,7 +102,7 @@ class TestSensitiveHeaderPassthroughFeatureFlag:
     def test_x_api_key_blocked_when_flag_off(self):
         """X-API-Key blocked when flag OFF."""
         request_headers = {
-            "x-api-key": "secret-key-789",
+            "x-api-key": "secret-key-789",  # pragma: allowlist secret
             "x-tenant-id": "acme-corp",
         }
         whitelist = ["X-API-Key", "X-Tenant-ID"]
@@ -154,7 +154,7 @@ class TestSensitiveHeaderPassthroughFeatureFlag:
     def test_x_api_key_forwarded_when_flag_on(self):
         """X-API-Key forwarded when flag ON and whitelisted."""
         request_headers = {
-            "x-api-key": "secret-key-789",
+            "x-api-key": "secret-key-789",  # pragma: allowlist secret
             "x-tenant-id": "acme-corp",
         }
         whitelist = ["X-API-Key", "X-Tenant-ID"]
@@ -171,7 +171,7 @@ class TestSensitiveHeaderPassthroughFeatureFlag:
         """Multiple sensitive headers forwarded when flag ON."""
         request_headers = {
             "authorization": "Bearer token",
-            "x-api-key": "api-key-123",
+            "x-api-key": "api-key-123",  # pragma: allowlist secret
             "cookie": "session=xyz",
             "x-tenant-id": "acme",
         }
@@ -408,7 +408,7 @@ class TestRouterHeaderFiltering:
         # Simulate incoming request headers
         request_headers = {
             "authorization": "Bearer token123",
-            "x-api-key": "secret-key",
+            "x-api-key": "secret-key",  # pragma: allowlist secret
             "x-tenant-id": "acme-corp",
             "x-request-id": "req-123",
         }
@@ -436,7 +436,7 @@ class TestRouterHeaderFiltering:
         # Simulate incoming request headers
         request_headers = {
             "authorization": "Bearer token123",
-            "x-api-key": "secret-key",
+            "x-api-key": "secret-key",  # pragma: allowlist secret
             "x-tenant-id": "acme-corp",
         }
 
@@ -674,10 +674,10 @@ class TestConfigCoverage:
         # Test the field default by explicitly passing False
         config = Settings(
             basic_auth_user="test",
-            basic_auth_password="test-password-long",
+            basic_auth_password="test-password-long",  # pragma: allowlist secret
             database_url="sqlite:///test.db",
-            jwt_secret_key="test-secret-key-long-enough-32c",
-            auth_encryption_secret="test-encryption-secret-32chars",
+            jwt_secret_key="test-secret-key-long-enough-32c",  # pragma: allowlist secret
+            auth_encryption_secret="test-encryption-secret-32chars",  # pragma: allowlist secret
             enable_sensitive_header_passthrough=False
         )
 
@@ -688,10 +688,10 @@ class TestConfigCoverage:
         """Test enable_sensitive_header_passthrough can be set to true."""
         config = Settings(
             basic_auth_user="test",
-            basic_auth_password="test-password-long",
+            basic_auth_password="test-password-long",  # pragma: allowlist secret
             database_url="sqlite:///test.db",
-            jwt_secret_key="test-secret-key-long-enough-32c",
-            auth_encryption_secret="test-encryption-secret-32chars",
+            jwt_secret_key="test-secret-key-long-enough-32c",  # pragma: allowlist secret
+            auth_encryption_secret="test-encryption-secret-32chars",  # pragma: allowlist secret
             enable_sensitive_header_passthrough=True
         )
 

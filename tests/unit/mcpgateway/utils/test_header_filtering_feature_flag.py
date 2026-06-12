@@ -284,7 +284,7 @@ class TestHeaderFilteringWithFeatureFlag:
 
         request_headers = {
             "authorization": "Bearer token123",
-            "x-api-key": "secret456",
+            "x-api-key": "secret456",  # pragma: allowlist secret
             "cookie": "session=abc",
             "content-type": "application/json",
         }
