@@ -639,7 +639,7 @@ async def _maybe_verify_external(token: str, request: Optional[Request]) -> Opti
         token's issuer matches a trusted external provider and verification succeeds,
         or None to fall through to internal JWT verification.
     """
-    if not settings.sso_api_token_auth_enabled:
+    if not getattr(settings, "sso_api_token_auth_enabled", False):
         return None
 
     # P4: fetch the request-scoped DB session once, up front, so it can be reused

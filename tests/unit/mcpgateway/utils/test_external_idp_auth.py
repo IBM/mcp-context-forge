@@ -1108,3 +1108,253 @@ async def test_g8_malformed_token_falls_through(monkeypatch):
     monkeypatch.setattr(vc.settings, "jwt_issuer", "mcpgateway")
     monkeypatch.setattr(vc, "_has_trusted_providers", lambda db: True)
     assert await vc._maybe_verify_external("not-a-jwt", request=None) is None
+
+
+@pytest.mark.asyncio
+async def test_external_identity_cache_redis_miss_returns_none(monkeypatch):
+    """Redis GET returning None (no entry) is a clean cache miss."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    class EmptyRedis:
+        async def get(self, k):
+            return None
+
+        async def set(self, k, v, ex=None):
+            pass
+
+    async def fake_client():
+        return EmptyRedis()
+
+    monkeypatch.setattr(vc, "get_redis_client", fake_client)
+    await vc.invalidate_external_identity_cache()
+
+    assert await vc._external_identity_cache_get("missing-key") is None
+
+
+@pytest.mark.asyncio
+async def test_external_identity_cache_redis_bad_json_returns_none(monkeypatch):
+    """A corrupted Redis payload (invalid JSON) is treated as a cache miss, not a crash."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    class CorruptRedis:
+        async def get(self, k):
+            return "{not-json"
+
+        async def set(self, k, v, ex=None):
+            pass
+
+    async def fake_client():
+        return CorruptRedis()
+
+    monkeypatch.setattr(vc, "get_redis_client", fake_client)
+    await vc.invalidate_external_identity_cache()
+
+    assert await vc._external_identity_cache_get("corrupt-key") is None
+
+
+@pytest.mark.asyncio
+async def test_external_identity_cache_inmemory_expired_entry_evicted(monkeypatch):
+    """An in-memory cache entry past its monotonic expiry is evicted and reported as a miss."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    monkeypatch.setattr(vc, "get_redis_client", _async_none)
+    await vc.invalidate_external_identity_cache()
+
+    # Insert an already-expired entry directly (bypass _external_identity_cache_put's TTL guard).
+    vc._external_identity_cache["th-expired"] = ({"sub": "agent@corp.com"}, vc.monotonic() - 1)
+
+    assert await vc._external_identity_cache_get("th-expired") is None
+    # Eviction on read: the stale entry must be removed from the map.
+    assert "th-expired" not in vc._external_identity_cache
+
+
+@pytest.mark.asyncio
+async def test_external_identity_cache_inmemory_evicts_when_full(monkeypatch):
+    """When the in-memory fallback cache reaches its size cap, it is cleared before inserting."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    monkeypatch.setattr(vc, "get_redis_client", _async_none)
+    await vc.invalidate_external_identity_cache()
+    monkeypatch.setattr(vc, "_EXTERNAL_IDENTITY_MAX", 1)
+
+    payload_a = {"sub": "a@corp.com", "token_use": "session", "exp": 9999999999}
+    payload_b = {"sub": "b@corp.com", "token_use": "session", "exp": 9999999999}
+
+    await vc._external_identity_cache_put("th-a", payload_a, token_exp=9999999999)
+    assert "th-a" in vc._external_identity_cache
+
+    # Cache is now "full" (size 1 >= max 1); inserting another entry clears it first.
+    await vc._external_identity_cache_put("th-b", payload_b, token_exp=9999999999)
+    assert "th-a" not in vc._external_identity_cache
+    assert "th-b" in vc._external_identity_cache
+
+
+def test_has_trusted_providers_cold_cache_with_trusted_provider(monkeypatch):
+    """Cold cache path: _has_trusted_providers loads the resolver cache via the
+    provided DB session and returns True when a trusted provider exists."""
+    # First-Party
+    from mcpgateway.services import sso_service
+    from mcpgateway.utils import verify_credentials as vc
+
+    # Ensure resolver cache starts cold.
+    sso_service.invalidate_trusted_provider_cache()
+
+    provider = _fake_provider(issuer="https://idp.example.com")
+    db = _mock_db([provider])
+
+    assert vc._has_trusted_providers(db) is True
+    sso_service.invalidate_trusted_provider_cache()
+
+
+def test_has_trusted_providers_cold_cache_no_trusted_provider(monkeypatch):
+    """Cold cache path: returns False when no provider is trusted_for_api_auth."""
+    # First-Party
+    from mcpgateway.services import sso_service
+    from mcpgateway.utils import verify_credentials as vc
+
+    sso_service.invalidate_trusted_provider_cache()
+
+    db = MagicMock()
+    db.query.return_value.filter.return_value.all.return_value = []
+
+    assert vc._has_trusted_providers(db) is False
+    sso_service.invalidate_trusted_provider_cache()
+
+
+def test_has_trusted_providers_creates_own_session_when_db_none(monkeypatch):
+    """When no DB session is supplied, _has_trusted_providers opens and closes
+    its own session (own_session path)."""
+    # First-Party
+    from mcpgateway.services import sso_service
+    from mcpgateway.utils import verify_credentials as vc
+
+    sso_service.invalidate_trusted_provider_cache()
+
+    fake_db = MagicMock()
+    fake_db.query.return_value.filter.return_value.all.return_value = []
+
+    monkeypatch.setattr(vc, "SessionLocal", lambda: fake_db, raising=False)
+
+    # First-Party
+    import mcpgateway.db as db_module
+
+    monkeypatch.setattr(db_module, "SessionLocal", lambda: fake_db)
+
+    assert vc._has_trusted_providers(None) is False
+    fake_db.close.assert_called_once()
+    sso_service.invalidate_trusted_provider_cache()
+
+
+def test_has_trusted_providers_warm_cache_skips_db(monkeypatch):
+    """Once the resolver cache is warm, _has_trusted_providers is a pure
+    dict-truthiness check and performs no DB lookup."""
+    # First-Party
+    from mcpgateway.services import sso_service
+    from mcpgateway.utils import verify_credentials as vc
+
+    sso_service.invalidate_trusted_provider_cache()
+    sso_service._trusted_provider_cache = {"https://idp.example.com": "provider-1"}
+    sso_service._trusted_provider_cache_loaded_at = vc.monotonic()
+
+    db = MagicMock()
+    assert vc._has_trusted_providers(db) is True
+    db.query.assert_not_called()
+    sso_service.invalidate_trusted_provider_cache()
+
+
+@pytest.mark.asyncio
+async def test_verify_external_idp_token_malformed_jwt_returns_none(monkeypatch):
+    """A non-decodable token (PyJWTError on the unverified decode) is denied, not crashed."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    assert await vc.verify_external_idp_token("not-a-jwt-at-all", MagicMock()) == (None, None)
+
+
+def test_synthetic_service_principal_user_info_shape():
+    """_synthetic_service_principal_user_info builds a non-routable, pre-verified
+    service identity and carries through group/role claims for mapping."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    provider = _fake_provider("https://idp.example.com")
+    provider.id = "kc"
+    claims = {"sub": "svc-app", "azp": "svc-app", "groups": ["g1"], "extra": "ignored"}
+
+    info = vc._synthetic_service_principal_user_info(provider, claims)
+
+    assert info["email"] == "svc-svc-app@kc.service.local"
+    assert info["email_verified"] is True
+    assert info["full_name"] == "service:svc-app"
+    assert info["provider"] == "kc"
+    assert info["is_admin"] is False
+    assert info["groups"] == ["g1"]
+    assert "extra" not in info
+
+
+def test_synthetic_service_principal_user_info_falls_back_to_sub():
+    """Without azp/client_id, the synthetic identity is derived from ``sub``."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    provider = _fake_provider("https://idp.example.com")
+    provider.id = "kc"
+    claims = {"sub": "svc-app", "typ": "at+jwt"}
+
+    info = vc._synthetic_service_principal_user_info(provider, claims)
+    assert info["email"] == "svc-svc-app@kc.service.local"
+
+
+def test_get_sso_service_returns_sso_service_instance():
+    """_get_sso_service is a thin factory wrapping SSOService(db)."""
+    # First-Party
+    from mcpgateway.services.sso_service import SSOService
+    from mcpgateway.utils import verify_credentials as vc
+
+    db = MagicMock()
+    svc = vc._get_sso_service(db)
+    assert isinstance(svc, SSOService)
+
+
+@pytest.mark.asyncio
+async def test_build_external_identity_owned_session_commit_failure(monkeypatch):
+    """G7/M1: if the owned-session commit fails, build_external_identity rolls back,
+    logs the error, and returns None rather than raising."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    prov = _fake_provider("https://kc/realms/m")
+    prov.id = "kc"
+    svc = MagicMock()
+    svc._normalize_user_info.return_value = {"email": "u@corp.com", "is_admin": False}
+
+    async def fake_auth(ui):
+        return "tok"
+
+    svc.authenticate_or_create_user = fake_auth
+    du = MagicMock()
+    du.is_admin = False
+
+    async def fake_get_user(e):
+        return du
+
+    svc.auth_service.get_user_by_email = fake_get_user
+    monkeypatch.setattr(vc, "_get_sso_service", lambda db: svc)
+
+    async def fake_resolve(p, e, ui, **kw):
+        return []
+
+    monkeypatch.setattr("mcpgateway.auth.resolve_session_teams", fake_resolve)
+
+    db = MagicMock()
+    db.info = {"external_owned": True}
+    db.commit.side_effect = RuntimeError("commit failed")
+
+    result = await vc.build_external_identity(prov, {"iss": "https://kc/realms/m", "email": "u@corp.com"}, "raw", db)
+
+    assert result is None
+    db.rollback.assert_called_once()
