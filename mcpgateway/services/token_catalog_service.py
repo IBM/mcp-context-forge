@@ -994,7 +994,7 @@ class TokenCatalogService:
             if cached is not None:
                 return cached
         except Exception as cache_error:
-            logger.debug(f"Auth cache revocation check failed, falling back to DB: {cache_error}")
+            logger.debug("Auth cache revocation check failed, falling back to DB: %s", cache_error)
 
         revocation = self.db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti)).scalar_one_or_none()
 
@@ -1004,7 +1004,7 @@ class TokenCatalogService:
                 from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
                 await auth_cache.set_not_revoked(jti)
-            except Exception: # noqa: BLE001 # nosec B110
+            except Exception:  # noqa: BLE001 # nosec B110
                 pass
 
         return revocation is not None
@@ -1230,7 +1230,7 @@ class TokenCatalogService:
             # cached is True: still need DB for full ORM object (revoked_by, reason, revoked_at)
             # cached is None: cache miss — fall through to DB
         except Exception as cache_error:
-            logger.debug(f"Auth cache revocation check failed, falling back to DB: {cache_error}")
+            logger.debug("Auth cache revocation check failed, falling back to DB: %s", cache_error)
 
         result = self.db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti))
         revocation = result.scalar_one_or_none()
@@ -1241,7 +1241,7 @@ class TokenCatalogService:
                 from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
                 await auth_cache.set_not_revoked(jti)
-            except Exception: # noqa: BLE001 # nosec B110
+            except Exception:  # noqa: BLE001 # nosec B110
                 pass
 
         return revocation

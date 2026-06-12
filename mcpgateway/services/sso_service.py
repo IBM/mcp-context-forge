@@ -2053,7 +2053,7 @@ class SSOService:
                 # Belt-and-suspenders: if role sync assigned platform_admin but is_admin is still False
                 # (e.g. user existed before the generic OIDC fix was deployed), promote now.
                 if not current_is_admin and any(ra.get("role_name") == "platform_admin" for ra in role_assignments):
-                    logger.info(f"Promoting is_admin for {SecurityValidator.sanitize_log_message(email)} — platform_admin role assigned via role_mappings")
+                    logger.info("Promoting is_admin for %s — platform_admin role assigned via role_mappings", SecurityValidator.sanitize_log_message(email))
                     user.is_admin = True
                     user.admin_origin = "sso"
                     current_is_admin = True

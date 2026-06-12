@@ -1121,7 +1121,7 @@ class A2AAgentService(BaseService):
             if isinstance(email_value, str):
                 user_email = email_value
             else:
-                logger.warning(f"list_agents_for_user: user_info['email'] is non-string type {type(email_value).__name__}, using empty string")
+                logger.warning("list_agents_for_user: user_info['email'] is non-string type %s, using empty string", type(email_value).__name__)
                 user_email = ""
 
         # Build query following existing patterns from list_prompts()

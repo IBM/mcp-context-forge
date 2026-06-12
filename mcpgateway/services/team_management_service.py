@@ -419,15 +419,19 @@ class TeamManagementService:
             team_id: ID of the team whose member caches should be invalidated.
         """
         try:
-            memberships = self.db.query(EmailTeamMember).filter(
-                EmailTeamMember.team_id == team_id,
-                EmailTeamMember.is_active.is_(True),
-            ).all()
+            memberships = (
+                self.db.query(EmailTeamMember)
+                .filter(
+                    EmailTeamMember.team_id == team_id,
+                    EmailTeamMember.is_active.is_(True),
+                )
+                .all()
+            )
             for membership in memberships:
                 self._fire_and_forget(auth_cache.invalidate_user_teams(membership.user_email))
             self._fire_and_forget(admin_stats_cache.invalidate_teams())
         except Exception as cache_error:
-            logger.warning(f"Failed to invalidate caches after team update for {SecurityValidator.sanitize_log_message(team_id)}: {cache_error}")
+            logger.warning("Failed to invalidate caches after team update for %s: %s", SecurityValidator.sanitize_log_message(team_id), cache_error)
 
     def _check_user_team_limit(self, user_email: str) -> None:
         """Raise if the user has reached the maximum team membership limit.
