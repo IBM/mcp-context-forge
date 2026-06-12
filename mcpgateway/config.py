@@ -2740,9 +2740,7 @@ class Settings(BaseSettings):
     # Experimental dataplane config
     # ===================================
 
-    dataplane_publisher: bool = Field(default=False,
-        description="Send data from CF to Rust experimental dataplane"
-    )
+    dataplane_publisher: bool = Field(default=False, description="Send data from CF to Rust experimental dataplane")
 
     # Well-Known URI Configuration
     # ===================================
@@ -3259,6 +3257,25 @@ Disallow: /
     validation_max_rpc_param_size: int = 262144  # 256KB
 
     validation_max_method_length: int = 128
+
+    # Tag validation limits (configurable via env) - Issue #5175
+    validation_min_tag_length: int = Field(
+        default=2,
+        description=("Minimum length for individual tags. Tags shorter than this will be rejected. " "Override with VALIDATION_MIN_TAG_LENGTH environment variable. Minimum: 1, Maximum: 10"),
+        ge=1,
+        le=10,
+    )
+    validation_max_tag_length: int = Field(
+        default=100,
+        description=(
+            "Maximum length for individual tags. Tags longer than this will be rejected. "
+            "Default: 100 characters. Supports system-generated tags, hashes, and namespaced identifiers. "
+            "Override with VALIDATION_MAX_TAG_LENGTH environment variable. "
+            "Minimum: 10, Maximum: 255 (database constraint)"
+        ),
+        ge=10,
+        le=255,
+    )
 
     # Allowed MIME types
     validation_allowed_mime_types: List[str] = [

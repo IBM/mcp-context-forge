@@ -13,6 +13,9 @@ all ContextForge entities (tools, resources, prompts, servers, gateways).
 import re
 from typing import Dict, List, Optional, Pattern
 
+# First-Party
+from mcpgateway.config import settings
+
 # Pattern: start with alphanumeric, middle can have hyphen/colon/dot, end with alphanumeric
 _TAG_ALLOWED_PATTERN = r"^[a-z0-9]([a-z0-9\-\:\.]*[a-z0-9])?$"
 # Precompiled regex pattern for tag validation (compiled once at module load)
@@ -23,8 +26,8 @@ class TagValidator:
     """Validator and normalizer for entity tags.
 
     Ensures tags follow consistent formatting rules:
-    - Minimum length: 2 characters
-    - Maximum length: 50 characters
+    - Minimum length: Configurable via VALIDATION_MIN_TAG_LENGTH (default: 2 characters)
+    - Maximum length: Configurable via VALIDATION_MAX_TAG_LENGTH (default: 100 characters)
     - Allowed characters: lowercase letters, numbers, hyphens, colons, dots
     - Must start and end with alphanumeric characters
     - Automatic normalization to lowercase, trimmed
@@ -42,13 +45,15 @@ class TagValidator:
         [{'id': 'finance', 'label': 'Finance'}]
 
     Attributes:
-        MIN_LENGTH (int): Minimum allowed tag length (2).
-        MAX_LENGTH (int): Maximum allowed tag length (50).
+        MIN_LENGTH (int): Minimum allowed tag length (configurable, default: 2).
+        MAX_LENGTH (int): Maximum allowed tag length (configurable, default: 100).
         ALLOWED_PATTERN (str): Regular expression pattern for valid tags.
     """
 
-    MIN_LENGTH = 2
-    MAX_LENGTH = 50
+    # Read from settings instead of hardcoding
+    # These are class attributes that read from config at module load time
+    MIN_LENGTH = settings.validation_min_tag_length
+    MAX_LENGTH = settings.validation_max_tag_length
     # Single character tags are allowed if they are alphanumeric
     ALLOWED_PATTERN = _TAG_ALLOWED_PATTERN
 
