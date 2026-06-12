@@ -11,13 +11,8 @@ repository.workspace = true
 name = "request_logging_masking_native_extension"
 crate-type = ["cdylib", "rlib"]
 
-[[bin]]
-name = "request_logging_masking_native_extension_stub_gen"
-path = "src/bin/stub_gen.rs"
-
 [dependencies]
 pyo3.workspace = true
-pyo3-stub-gen.workspace = true
 serde_json.workspace = true
 
 [lints]

@@ -1,18 +1,6 @@
 # Workspace-level cargo-deny config: applies to all crates in the workspace.
 # See https://embarkstudios.github.io/cargo-deny/
 
-[advisories]
-ignore = [
-    # pyo3-stub-gen currently depends on rustpython-parser 0.4, which still pulls
-    # the unmaintained rust-unic crates used only for Python stub generation.
-    "RUSTSEC-2025-0075",
-    "RUSTSEC-2025-0080",
-    "RUSTSEC-2025-0081",
-    "RUSTSEC-2025-0090",
-    "RUSTSEC-2025-0098",
-    "RUSTSEC-2025-0100",
-]
-
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"

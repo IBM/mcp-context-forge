@@ -947,13 +947,6 @@ user-id = 1139
 user-login = "Manishearth"
 user-name = "Manish Goregaokar"
 
-[[publisher.unicode-width]]
-version = "0.2.2"
-when = "2025-10-06"
-user-id = 1139
-user-login = "Manishearth"
-user-name = "Manish Goregaokar"
-
 [[publisher.unicode-xid]]
 version = "0.2.6"
 when = "2024-09-19"
