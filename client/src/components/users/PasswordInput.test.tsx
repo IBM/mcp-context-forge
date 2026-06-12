@@ -94,7 +94,6 @@ describe("PasswordInput", () => {
     expect(input).toHaveAttribute("aria-invalid", "true");
     expect(input).toHaveAttribute("aria-describedby", "test-password-error");
     expect(error).toHaveTextContent("Password is required");
-    expect(error).toHaveAttribute("aria-live", "polite");
   });
 
   it("should display hint when no error", () => {
@@ -164,7 +163,6 @@ describe("PasswordInput", () => {
     expect(toggleButton).toHaveAttribute("type", "button");
     expect(toggleButton).toHaveAttribute("aria-label", "Show password");
     expect(toggleButton).toHaveAttribute("aria-pressed", "false");
-    expect(toggleButton).toHaveAttribute("aria-live", "polite");
   });
 
   it("should toggle button icon between Eye and EyeOff", async () => {

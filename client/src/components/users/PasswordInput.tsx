@@ -40,7 +40,7 @@ export function PasswordInput({
         {label}
         {required && (
           <>
-            <span className="text-red-500">*</span>
+            <span className="text-red-500" aria-hidden="true">*</span>
             <span className="sr-only">(required)</span>
           </>
         )}
@@ -65,7 +65,6 @@ export function PasswordInput({
             id: showPassword ? "users.form.password.hide" : "users.form.password.show",
           })}
           aria-pressed={showPassword}
-          aria-live="polite"
         >
           {showPassword ? (
             <EyeOff className="h-4 w-4" aria-hidden="true" />
@@ -79,7 +78,6 @@ export function PasswordInput({
           id={errorId}
           className="text-sm text-red-600 dark:text-red-400"
           role="alert"
-          aria-live="polite"
         >
           {error}
         </p>

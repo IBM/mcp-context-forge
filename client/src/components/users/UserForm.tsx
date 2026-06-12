@@ -35,7 +35,7 @@ function FormField({ id, label, required = false, error, children }: FormFieldPr
         {label}
         {required && (
           <>
-            <span className="text-red-500">*</span>
+            <span className="text-red-500" aria-hidden="true">*</span>
             <span className="sr-only">(required)</span>
           </>
         )}
@@ -46,7 +46,6 @@ function FormField({ id, label, required = false, error, children }: FormFieldPr
           id={`${id}-error`}
           className="text-sm text-red-600 dark:text-red-400"
           role="alert"
-          aria-live="polite"
         >
           {error}
         </p>

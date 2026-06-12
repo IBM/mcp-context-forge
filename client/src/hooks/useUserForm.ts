@@ -7,6 +7,28 @@ import { VALIDATION } from "@/lib/constants";
 import { parseApiError } from "@/lib/errorUtils";
 import type { User, CreateUserRequest, UpdateUserRequest } from "@/types/user";
 
+/**
+ * Creates an optimistic user object from create request data.
+ * Used for optimistic UI updates before server confirmation.
+ *
+ * @param userData - The user creation request data
+ * @returns An optimistic User object with default values
+ */
+export function createOptimisticUser(userData: CreateUserRequest): User {
+  return {
+    email: userData.email,
+    full_name: userData.full_name,
+    is_admin: userData.is_admin ?? false,
+    is_active: userData.is_active ?? true,
+    auth_provider: "email",
+    created_at: new Date().toISOString(),
+    email_verified: false,
+    password_change_required: userData.password_change_required ?? false,
+    failed_login_attempts: 0,
+    is_locked: false,
+  };
+}
+
 const VALIDATION_DEBOUNCE_MS = 300;
 
 // Fields shared by both create and edit schemas

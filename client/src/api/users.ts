@@ -43,17 +43,6 @@ function validateUserEmail(email: string): string {
 
 export const usersApi = {
   /**
-   * Update a user by email.
-   *
-   * @throws {ApiError} 403 - Insufficient permissions
-   * @throws {ApiError} 404 - User not found
-   */
-  update: (email: string, data: UpdateUserRequest): Promise<User> => {
-    const validEmail = validateUserEmail(email);
-    return api.patch<User>(`/auth/email/admin/users/${encodeURIComponent(validEmail)}`, data);
-  },
-
-  /**
    * Delete a user by email.
    *
    * @throws {ApiError} 400 - Cannot delete self or last admin

@@ -9,6 +9,7 @@ import { DeleteUserDialog } from "@/components/users/DeleteUserDialog";
 import { useUsersList } from "@/hooks/useUsersList";
 import { usersApi } from "@/api/users";
 import { ApiError } from "@/api/client";
+import { createOptimisticUser } from "@/hooks/useUserForm";
 import type { User, CreateUserRequest, UpdateUserRequest } from "@/types/user";
 
 const DEFAULT_PAGE_SIZE = 10;
@@ -147,18 +148,7 @@ export function Users() {
           user={userToEdit ?? undefined}
           onOptimisticCreate={(userData: CreateUserRequest | UpdateUserRequest) => {
             if ("email" in userData) {
-              const optimisticUser: User = {
-                email: userData.email,
-                full_name: userData.full_name,
-                is_admin: userData.is_admin ?? false,
-                is_active: userData.is_active ?? true,
-                auth_provider: "email",
-                created_at: new Date().toISOString(),
-                email_verified: false,
-                password_change_required: userData.password_change_required ?? false,
-                failed_login_attempts: 0,
-                is_locked: false,
-              };
+              const optimisticUser = createOptimisticUser(userData);
               setAllUsers((prev) => [optimisticUser, ...prev]);
             }
           }}

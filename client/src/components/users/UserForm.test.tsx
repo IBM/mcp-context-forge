@@ -242,7 +242,6 @@ describe("UserForm", () => {
       const errorMessage = screen.getByText("Invalid email address");
       expect(errorMessage).toBeInTheDocument();
       expect(errorMessage).toHaveAttribute("role", "alert");
-      expect(errorMessage).toHaveAttribute("aria-live", "polite");
 
       const emailInput = screen.getByLabelText(/Email/);
       expect(emailInput).toHaveAttribute("aria-invalid", "true");
@@ -260,7 +259,6 @@ describe("UserForm", () => {
       const errorMessage = screen.getByText("Password too short");
       expect(errorMessage).toBeInTheDocument();
       expect(errorMessage).toHaveAttribute("role", "alert");
-      expect(errorMessage).toHaveAttribute("aria-live", "polite");
     });
 
     it("should display submit error with assertive aria-live", () => {
