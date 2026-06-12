@@ -312,3 +312,79 @@ def test_regular_user_sees_join_button_for_public_teams(test_client_with_teams):
 
     # Verify regular user does NOT see private team (no access)
     assert "Private Integration Test Team" not in html_content, "Regular user should NOT see private teams they are not members of"
+
+
+@pytest.mark.integration
+def test_admin_team_edit_form_renders_oidc_group_fields(test_client_with_teams):
+    """Regression: the team edit form must expose OIDC group sync fields.
+
+    The upstream "Unified UI" team-management refactor overwrote the Forterro
+    OIDC admin handling, dropping the group-sync section from the edit modal.
+    This test guards against that regression by asserting the edit form renders
+    the OIDC controls pre-populated with the team's existing groups.
+    """
+    client, session_factory, public_team, private_team, app = test_client_with_teams
+
+    # Configure the private team with OIDC group sync
+    db = session_factory()
+    team = db.query(EmailTeam).filter(EmailTeam.id == private_team.id).first()
+    team.oidc_sync_enabled = True
+    team.oidc_sync_role = "developer"
+    team.oidc_group_ids = [{"name": "IT Department", "id": "5993f5bb-566d-4f0e-9a01-abcdef012345"}]
+    db.add(team)
+    db.commit()
+    db.close()
+
+    response = client.get(f"/admin/teams/{private_team.id}/edit")
+
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+    html_content = response.text
+
+    # OIDC section and controls must be present
+    assert "OIDC Group Sync" in html_content, "Edit form must render the OIDC Group Sync section"
+    assert 'name="oidc_sync_enabled"' in html_content, "Edit form must render the oidc_sync_enabled checkbox"
+    assert 'name="oidc_group_ids"' in html_content, "Edit form must render the oidc_group_ids hidden input"
+    assert 'name="oidc_sync_role"' in html_content, "Edit form must render the oidc_sync_role select"
+    assert f"edit-oidc-groups-table-{private_team.id}" in html_content, "Edit form must render the OIDC groups table"
+
+    # Existing group values must be pre-populated
+    assert "IT Department" in html_content, "Existing OIDC group display name should be pre-filled"
+    assert "5993f5bb-566d-4f0e-9a01-abcdef012345" in html_content, "Existing OIDC group ID should be pre-filled"
+
+    # The configured sync role (developer) must be selected
+    assert 'value="developer" selected' in html_content, "Configured OIDC sync role should be selected"
+
+
+@pytest.mark.integration
+def test_admin_team_update_persists_oidc_groups(test_client_with_teams):
+    """Regression: POST /admin/teams/{id}/update must persist OIDC group sync fields.
+
+    Guards against the route dropping oidc_sync_enabled / oidc_group_ids /
+    oidc_sync_role from the form payload (the Forterro feature lost in the
+    upstream Unified UI refactor).
+    """
+    client, session_factory, public_team, private_team, app = test_client_with_teams
+
+    group_payload = '[{"name": "Platform Team", "id": "11112222-3333-4444-5555-666677778888"}]'
+    response = client.post(
+        f"/admin/teams/{private_team.id}/update",
+        data={
+            "name": "Private Integration Test Team",
+            "description": "Updated with OIDC sync",
+            "visibility": "private",
+            "oidc_sync_enabled": "true",
+            "oidc_group_ids": group_payload,
+            "oidc_sync_role": "owner",
+        },
+        headers={"HX-Request": "true"},
+    )
+
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+
+    # Verify persistence in the database
+    db = session_factory()
+    team = db.query(EmailTeam).filter(EmailTeam.id == private_team.id).first()
+    assert team.oidc_sync_enabled is True, "oidc_sync_enabled should persist"
+    assert team.oidc_sync_role == "owner", "oidc_sync_role should persist"
+    assert team.oidc_group_ids == [{"name": "Platform Team", "id": "11112222-3333-4444-5555-666677778888"}], "oidc_group_ids should persist"
+    db.close()

@@ -5874,6 +5874,21 @@ async def admin_create_team(
         visibility = form.get("visibility", "private")
         max_members = _parse_form_max_members(form.get("max_members"))
 
+        # OIDC sync fields
+        oidc_sync_enabled = form.get("oidc_sync_enabled") == "true"
+        oidc_group_ids_json = str(form.get("oidc_group_ids", "")).strip()
+        oidc_group_ids = None
+        if oidc_group_ids_json:
+            try:
+                parsed = orjson.loads(oidc_group_ids_json)
+                if isinstance(parsed, list):
+                    oidc_group_ids = [entry for entry in parsed if isinstance(entry, dict) and entry.get("id", "").strip()] or None
+            except (orjson.JSONDecodeError, ValueError):
+                oidc_group_ids = None
+        oidc_sync_role = form.get("oidc_sync_role", "member")
+        if oidc_sync_role not in ("owner", "developer", "member"):
+            oidc_sync_role = "member"
+
         if not name:
             response = HTMLResponse(
                 content='<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">Team name is required</div>',
@@ -5894,7 +5909,15 @@ async def admin_create_team(
 
         is_admin = isinstance(user, dict) and user.get("is_admin")
         await team_service.create_team(
-            name=team_data.name, description=team_data.description, created_by=user_email, visibility=team_data.visibility, max_members=team_data.max_members, skip_limits=bool(is_admin)
+            name=team_data.name,
+            description=team_data.description,
+            created_by=user_email,
+            visibility=team_data.visibility,
+            max_members=team_data.max_members,
+            skip_limits=bool(is_admin),
+            oidc_sync_enabled=oidc_sync_enabled,
+            oidc_group_ids=oidc_group_ids,
+            oidc_sync_role=oidc_sync_role,
         )
 
         response = HTMLResponse(content="", status_code=201)
@@ -6297,11 +6320,31 @@ async def admin_get_team_edit(
         else:
             max_members_value = team.max_members
             max_members_hint = f"Max {max_members_limit}."
+
+        # Pre-build OIDC group rows HTML for the edit form
+        _oidc_rows_html = ""
+        _existing_oidc_groups = getattr(team, "oidc_group_ids", None) or []
+        for _entry in _existing_oidc_groups:
+            if isinstance(_entry, dict):
+                _g_name = html.escape(_entry.get("name", ""))
+                _g_id = html.escape(_entry.get("id", ""))
+            else:
+                _g_name = ""
+                _g_id = html.escape(str(_entry))
+            _oidc_rows_html += (
+                "<tr>"
+                f'<td class="pr-2 py-1"><input type="text" data-field="name" value="{_g_name}" placeholder="e.g. IT Department" class="w-full px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-white" onchange="Admin.syncOidcGroupIds(\'edit-oidc-groups-table-{team_id}\', \'edit-oidc-group-ids-{team_id}\')"></td>'
+                f'<td class="pr-2 py-1"><input type="text" data-field="id" value="{_g_id}" placeholder="5993f5bb-566d-..." class="w-full px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm font-mono dark:bg-gray-700 dark:text-white" onchange="Admin.syncOidcGroupIds(\'edit-oidc-groups-table-{team_id}\', \'edit-oidc-group-ids-{team_id}\')"></td>'
+                f'<td class="py-1"><button type="button" onclick="this.closest(\'tr\').remove(); Admin.syncOidcGroupIds(\'edit-oidc-groups-table-{team_id}\', \'edit-oidc-group-ids-{team_id}\')" class="text-red-500 hover:text-red-700 text-lg" title="Remove">&times;</button></td>'
+                "</tr>"
+            )
+        _oidc_group_ids_json = html.escape(orjson.dumps(_existing_oidc_groups).decode())
+
         edit_form = rf"""
         <div class="space-y-4">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Edit Team</h3>
             <div id="edit-team-error"></div>
-            <form method="post" action="{root_path}/admin/teams/{team_id}/update" hx-post="{root_path}/admin/teams/{team_id}/update" hx-target="#edit-team-error" hx-swap="innerHTML" class="space-y-4" data-team-validation="true">
+            <form method="post" action="{root_path}/admin/teams/{team_id}/update" hx-post="{root_path}/admin/teams/{team_id}/update" hx-target="#edit-team-error" hx-swap="innerHTML" class="space-y-4" data-team-validation="true" onsubmit="Admin.syncOidcGroupIds('edit-oidc-groups-table-{team_id}', 'edit-oidc-group-ids-{team_id}')">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Name</label>
                     <input type="text" name="name" value="{safe_team_name}" required
@@ -6338,6 +6381,48 @@ async def admin_get_team_edit(
                     <input type="number" name="max_members" min="1" {max_attr} value="{max_members_value}" {max_members_disabled}
                            class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
                     <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{max_members_hint}</p>
+                </div>
+                <div class="border-t border-gray-200 dark:border-gray-700 pt-4 mt-4">
+                    <h4 class="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">OIDC Group Sync</h4>
+                    <div class="flex items-center mb-3">
+                        <input type="checkbox" name="oidc_sync_enabled" id="edit-oidc-sync-{team_id}" value="true"
+                               {"checked" if getattr(team, "oidc_sync_enabled", False) else ""}
+                               onchange="document.getElementById('edit-oidc-fields-{team_id}').style.display = this.checked ? 'block' : 'none'"
+                               class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 dark:border-gray-600 rounded">
+                        <label for="edit-oidc-sync-{team_id}" class="ml-2 text-sm text-gray-700 dark:text-gray-300">
+                            Sync members from an OIDC group
+                        </label>
+                    </div>
+                    <div id="edit-oidc-fields-{team_id}" style="display: {"block" if getattr(team, "oidc_sync_enabled", False) else "none"}">
+                        <div class="mb-3">
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">OIDC Groups</label>
+                            <input type="hidden" name="oidc_group_ids" id="edit-oidc-group-ids-{team_id}" value='{_oidc_group_ids_json}'>
+                            <table class="w-full text-sm" id="edit-oidc-groups-table-{team_id}">
+                                <thead>
+                                    <tr class="text-left text-xs text-gray-500 dark:text-gray-400">
+                                        <th class="pb-1 pr-2 font-medium">Display Name</th>
+                                        <th class="pb-1 pr-2 font-medium">Group ID</th>
+                                        <th class="pb-1 w-8"></th>
+                                    </tr>
+                                </thead>
+                                <tbody>{_oidc_rows_html}</tbody>
+                            </table>
+                            <button type="button" onclick="Admin.addOidcGroupRow('edit-oidc-groups-table-{team_id}', 'edit-oidc-group-ids-{team_id}')"
+                                    class="mt-2 inline-flex items-center px-2 py-1 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 border border-indigo-300 dark:border-indigo-600 rounded hover:bg-indigo-50 dark:hover:bg-indigo-900/20">
+                                + Add Group
+                            </button>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Add OIDC groups from your identity provider. Display name is optional — for admin reference only.</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Default Role for Synced Members</label>
+                            <select name="oidc_sync_role"
+                                    class="mt-1 px-1.5 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+                                <option value="member" {"selected" if getattr(team, "oidc_sync_role", "member") == "member" else ""}>Viewer</option>
+                                <option value="developer" {"selected" if getattr(team, "oidc_sync_role", "member") == "developer" else ""}>Developer</option>
+                                <option value="owner" {"selected" if getattr(team, "oidc_sync_role", "member") == "owner" else ""}>Owner</option>
+                            </select>
+                        </div>
+                    </div>
                 </div>
                 <div class="flex justify-end space-x-3">
                     <button type="button" onclick="Admin.hideTeamEditModal()"
@@ -6397,6 +6482,22 @@ async def admin_update_team(
         description = desc_val.strip() if isinstance(desc_val, str) and desc_val.strip() != "" else None
         visibility = vis_val if isinstance(vis_val, str) else "private"
         max_members = _parse_form_max_members(form.get("max_members"))
+
+        # OIDC sync fields
+        oidc_sync_enabled = form.get("oidc_sync_enabled") == "true"
+        oidc_group_ids_json = form.get("oidc_group_ids")
+        oidc_group_ids_json = oidc_group_ids_json.strip() if isinstance(oidc_group_ids_json, str) else ""
+        oidc_group_ids = None
+        if oidc_group_ids_json:
+            try:
+                parsed = orjson.loads(oidc_group_ids_json)
+                if isinstance(parsed, list):
+                    oidc_group_ids = [entry for entry in parsed if isinstance(entry, dict) and entry.get("id", "").strip()] or None
+            except (orjson.JSONDecodeError, ValueError):
+                oidc_group_ids = None
+        oidc_sync_role = form.get("oidc_sync_role", "member")
+        if oidc_sync_role not in ("owner", "developer", "member"):
+            oidc_sync_role = "member"
 
         if not name:
             is_htmx = request.headers.get("HX-Request") == "true"
@@ -6460,7 +6561,16 @@ async def admin_update_team(
         else:
             max_members_kwarg = UNSET
         updated = await team_service.update_team(
-            team_id=team_id, name=name, description=description, visibility=visibility, max_members=max_members_kwarg, updated_by=user_email, skip_limits=bool(is_admin)
+            team_id=team_id,
+            name=name,
+            description=description,
+            visibility=visibility,
+            max_members=max_members_kwarg,
+            updated_by=user_email,
+            skip_limits=bool(is_admin),
+            oidc_sync_enabled=oidc_sync_enabled,
+            oidc_group_ids=oidc_group_ids,
+            oidc_sync_role=oidc_sync_role,
         )
 
         if not updated:
