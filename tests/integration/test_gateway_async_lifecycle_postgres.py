@@ -3,6 +3,7 @@
 
 # Standard
 import os
+import sys
 from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
@@ -14,9 +15,6 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 # First-Party
-from mcpgateway.config import settings
-from mcpgateway.db import Base
-from mcpgateway.main import app, get_db
 from mcpgateway.schemas import ToolCreate
 from tests.helpers.auth import make_auth_headers, make_legacy_test_jwt
 from tests.utils.rbac_mocks import MockPermissionService, create_mock_email_user, create_mock_user_context
@@ -24,23 +22,6 @@ from tests.utils.rbac_mocks import MockPermissionService, create_mock_email_user
 pytestmark = [pytest.mark.integration, pytest.mark.postgresql]
 
 TEST_JWT_SECRET = "integration-test-jwt-secret-key-with-minimum-32-bytes"  # pragma: allowlist secret
-
-if hasattr(settings.jwt_secret_key, "get_secret_value") and callable(getattr(settings.jwt_secret_key, "get_secret_value", None)):
-    settings.jwt_secret_key = SecretStr(TEST_JWT_SECRET)
-else:
-    settings.jwt_secret_key = TEST_JWT_SECRET
-
-TEST_AUTH_HEADER = make_auth_headers(
-    make_legacy_test_jwt(
-        "admin@example.com",
-        is_admin=True,
-        teams=None,
-        expires_in_minutes=60,
-        secret=TEST_JWT_SECRET,
-        algorithm=settings.jwt_algorithm,
-        include_email_claim=True,
-    )
-)
 
 
 def _response_value(payload: dict, snake_name: str):
@@ -62,8 +43,9 @@ def _make_tool(name: str, description: str) -> ToolCreate:
 def _is_external_postgres_enabled() -> bool:
     db_env = os.getenv("DB", "").lower()
     database_url = os.getenv("DATABASE_URL", "").lower()
+    postgres_url = os.getenv("MCPGATEWAY_TEST_POSTGRES_URL", "").lower()
     external_db_opt_in = os.getenv("MCPGATEWAY_TEST_ALLOW_EXTERNAL_DB", "").strip().lower() in {"1", "true", "yes", "on"}
-    return external_db_opt_in and (db_env == "postgres" or "postgresql" in database_url)
+    return external_db_opt_in and (db_env == "postgres" or "postgresql" in database_url or "postgresql" in postgres_url)
 
 
 SKIP_IF_NOT_EXTERNAL_POSTGRES = pytest.mark.skipif(
@@ -73,10 +55,27 @@ SKIP_IF_NOT_EXTERNAL_POSTGRES = pytest.mark.skipif(
 
 
 @pytest_asyncio.fixture
-async def lifecycle_client(main_app_with_admin_api):
+async def lifecycle_client():
     # First-Party
+    from mcpgateway.config import get_settings, settings
     import mcpgateway.db as db_mod
+
+    database_url = os.getenv("MCPGATEWAY_TEST_POSTGRES_URL") or os.getenv("DATABASE_URL")
+    if not database_url or "postgresql" not in database_url:
+        pytest.skip("Postgres lifecycle test requires MCPGATEWAY_TEST_POSTGRES_URL or DATABASE_URL with postgresql://")
+
+    os.environ["DB"] = "postgres"
+    os.environ["DATABASE_URL"] = database_url
+    os.environ["TEST_DATABASE_URL"] = database_url
+    os.environ["MCPGATEWAY_ADMIN_API_ENABLED"] = "true"
+    os.environ["MCPGATEWAY_UI_ENABLED"] = "true"
+    get_settings.cache_clear()
+    sys.modules.pop("mcpgateway.main", None)
+    sys.modules.pop("mcpgateway.admin", None)
+
     import mcpgateway.main as main_mod
+    from mcpgateway.admin import admin_router, set_logging_service, validate_section_permissions
+    from mcpgateway.db import Base
     import mcpgateway.services.gateway_service as gateway_service_mod
     from mcpgateway.auth import get_current_user
     from mcpgateway.db import EmailUser
@@ -85,10 +84,15 @@ async def lifecycle_client(main_app_with_admin_api):
     from mcpgateway.utils.create_jwt_token import get_jwt_token
     from mcpgateway.utils.verify_credentials import require_admin_auth, require_auth
 
-    database_url = os.getenv("DATABASE_URL")
     engine = create_engine(database_url)
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, expire_on_commit=False, bind=engine)
     Base.metadata.create_all(bind=engine)
+
+    admin_routes = [r for r in main_mod.app.routes if getattr(r, "path", "").startswith("/admin/") and not getattr(r, "path", "").startswith("/admin/well-known")]
+    if not admin_routes:
+        set_logging_service(main_mod.logging_service)
+        main_mod.app.include_router(admin_router)
+        validate_section_permissions(admin_router)
 
     seed_db = SessionLocal()
     try:
@@ -112,6 +116,7 @@ async def lifecycle_client(main_app_with_admin_api):
     original_gateway_session_local = gateway_service_mod.SessionLocal
     original_db_session_local = db_mod.SessionLocal
     original_db_url = settings.database_url
+    original_jwt_secret = settings.jwt_secret_key
     original_auth_required = settings.auth_required
     original_require_jti = settings.require_jti
     original_require_user_in_db = settings.require_user_in_db
@@ -124,6 +129,7 @@ async def lifecycle_client(main_app_with_admin_api):
     user_context["db"] = user_context_db
 
     settings.database_url = database_url
+    settings.jwt_secret_key = SecretStr(TEST_JWT_SECRET)
     settings.auth_required = True
     settings.require_jti = False
     settings.require_user_in_db = False
@@ -134,6 +140,18 @@ async def lifecycle_client(main_app_with_admin_api):
     gateway_service_mod.SessionLocal = SessionLocal
     db_mod.SessionLocal = SessionLocal
     main_mod.gateway_service._event_service.publish_event = AsyncMock(return_value=None)
+
+    test_auth_header = make_auth_headers(
+        make_legacy_test_jwt(
+            "admin@example.com",
+            is_admin=True,
+            teams=None,
+            expires_in_minutes=60,
+            secret=TEST_JWT_SECRET,
+            algorithm=settings.jwt_algorithm,
+            include_email_claim=True,
+        )
+    )
 
     class AllowAllPermissionService:
         def __init__(self, _db):
@@ -174,21 +192,22 @@ async def lifecycle_client(main_app_with_admin_api):
     def mock_permission_service(*_args, **_kwargs):
         return MockPermissionService(always_grant=True)
 
-    app.dependency_overrides[get_db] = override_get_db
-    app.dependency_overrides[require_auth] = lambda: "integration-admin"
-    app.dependency_overrides[get_current_user] = lambda: mock_email_user
-    app.dependency_overrides[get_current_user_with_permissions] = mock_user_with_permissions
-    app.dependency_overrides[require_admin_auth] = mock_require_admin
-    app.dependency_overrides[get_jwt_token] = mock_get_jwt
-    app.dependency_overrides[get_permission_service] = mock_permission_service
+    main_mod.app.dependency_overrides[main_mod.get_db] = override_get_db
+    main_mod.app.dependency_overrides[db_mod.get_db] = override_get_db
+    main_mod.app.dependency_overrides[require_auth] = lambda: "integration-admin"
+    main_mod.app.dependency_overrides[get_current_user] = lambda: mock_email_user
+    main_mod.app.dependency_overrides[get_current_user_with_permissions] = mock_user_with_permissions
+    main_mod.app.dependency_overrides[require_admin_auth] = mock_require_admin
+    main_mod.app.dependency_overrides[get_jwt_token] = mock_get_jwt
+    main_mod.app.dependency_overrides[get_permission_service] = mock_permission_service
     security_logger.log_authentication_attempt = MagicMock(return_value=None)
     security_logger.log_security_event = MagicMock(return_value=None)
 
-    transport = ASGITransport(app=app)
+    transport = ASGITransport(app=main_mod.app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        yield client, main_mod.gateway_service
+        yield client, main_mod.gateway_service, test_auth_header
 
-    app.dependency_overrides.clear()
+    main_mod.app.dependency_overrides.clear()
     user_context_db.close()
     main_mod.SessionLocal = original_main_session_local
     main_mod.validate_token_user = original_validate_token_user
@@ -196,6 +215,7 @@ async def lifecycle_client(main_app_with_admin_api):
     db_mod.SessionLocal = original_db_session_local
     rbac_mod.PermissionService = original_rbac_permission_service
     settings.database_url = original_db_url
+    settings.jwt_secret_key = original_jwt_secret
     settings.auth_required = original_auth_required
     settings.require_jti = original_require_jti
     settings.require_user_in_db = original_require_user_in_db
@@ -207,7 +227,7 @@ async def lifecycle_client(main_app_with_admin_api):
 @pytest.mark.asyncio
 @SKIP_IF_NOT_EXTERNAL_POSTGRES
 async def test_postgres_gateway_async_lifecycle_fixture_gate(lifecycle_client):
-    client, live_gateway_service = lifecycle_client
+    client, live_gateway_service, _test_auth_header = lifecycle_client
 
     assert client is not None
     assert live_gateway_service is not None
@@ -218,12 +238,12 @@ async def test_postgres_gateway_async_lifecycle_fixture_gate(lifecycle_client):
 @pytest.mark.asyncio
 @SKIP_IF_NOT_EXTERNAL_POSTGRES
 async def test_postgres_async_gateway_lifecycle_happy_path(lifecycle_client):
-    client, live_gateway_service = lifecycle_client
+    client, live_gateway_service, test_auth_header = lifecycle_client
 
     create_response = await client.post(
         "/gateways",
         json={"name": "pg-counter-three", "url": "http://example.com/mcp", "transport": "SSE"},
-        headers=TEST_AUTH_HEADER,
+        headers=test_auth_header,
     )
     assert create_response.status_code == 202
     created = create_response.json()
@@ -233,7 +253,7 @@ async def test_postgres_async_gateway_lifecycle_happy_path(lifecycle_client):
     assert _response_value(created, "next_retry_at") is None
     assert _response_value(created, "last_error") is None
 
-    pending_response = await client.get("/admin/gateways/pg-counter-three", headers=TEST_AUTH_HEADER)
+    pending_response = await client.get("/admin/gateways/pg-counter-three", headers=test_auth_header)
     assert pending_response.status_code == 200
     assert pending_response.json()["status"] == "pending"
 
@@ -248,7 +268,7 @@ async def test_postgres_async_gateway_lifecycle_happy_path(lifecycle_client):
     )
     await live_gateway_service._run_gateway_lifecycle_pass()
 
-    active_response = await client.get("/admin/gateways/pg-counter-three", headers=TEST_AUTH_HEADER)
+    active_response = await client.get("/admin/gateways/pg-counter-three", headers=test_auth_header)
     assert active_response.status_code == 200
     active_gateway = active_response.json()
     assert active_gateway["status"] == "active"
@@ -257,7 +277,7 @@ async def test_postgres_async_gateway_lifecycle_happy_path(lifecycle_client):
     assert _response_value(active_gateway, "last_error") is None
     assert active_gateway["reachable"] is True
 
-    tools_response = await client.get("/tools", headers=TEST_AUTH_HEADER)
+    tools_response = await client.get("/tools", headers=test_auth_header)
     assert tools_response.status_code == 200
     initial_tool_names = {tool["name"] for tool in tools_response.json()}
     assert "pg-counter-three-echo-tool" in initial_tool_names
@@ -265,7 +285,7 @@ async def test_postgres_async_gateway_lifecycle_happy_path(lifecycle_client):
     update_response = await client.put(
         f"/gateways/{gateway_id}",
         json={"description": "updated postgres gateway description"},
-        headers=TEST_AUTH_HEADER,
+        headers=test_auth_header,
     )
     assert update_response.status_code == 202
     updated_pending = update_response.json()
@@ -282,22 +302,22 @@ async def test_postgres_async_gateway_lifecycle_happy_path(lifecycle_client):
     )
     await live_gateway_service._run_gateway_lifecycle_pass()
 
-    updated_active_response = await client.get(f"/gateways/{gateway_id}", headers=TEST_AUTH_HEADER)
+    updated_active_response = await client.get(f"/gateways/{gateway_id}", headers=test_auth_header)
     assert updated_active_response.status_code == 200
     assert updated_active_response.json()["status"] == "active"
 
-    updated_tools_response = await client.get("/tools", headers=TEST_AUTH_HEADER)
+    updated_tools_response = await client.get("/tools", headers=test_auth_header)
     assert updated_tools_response.status_code == 200
     updated_tool_names = {tool["name"] for tool in updated_tools_response.json()}
     assert "pg-counter-three-updated-tool" in updated_tool_names
     assert "pg-counter-three-echo-tool" not in updated_tool_names
 
-    delete_response = await client.delete(f"/gateways/{gateway_id}", headers=TEST_AUTH_HEADER)
+    delete_response = await client.delete(f"/gateways/{gateway_id}", headers=test_auth_header)
     assert delete_response.status_code == 202
     deleting_gateway = delete_response.json()
     assert deleting_gateway["status"] == "deleting"
 
     await live_gateway_service._run_gateway_lifecycle_pass()
 
-    deleted_response = await client.get("/admin/gateways/pg-counter-three", headers=TEST_AUTH_HEADER)
+    deleted_response = await client.get("/admin/gateways/pg-counter-three", headers=test_auth_header)
     assert deleted_response.status_code == 404

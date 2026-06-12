@@ -18,9 +18,7 @@ Tests:
 - test_metrics_disabled: Ensures disabling metrics hides the endpoint
 """
 
-import os
-import time
-import re
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
@@ -87,10 +85,10 @@ def test_metrics_contains_gateway_lifecycle_status_counts(client, monkeypatch):
     class DummyQuery:
         def all(self):
             return [
-                ("pending", "gw-1"),
-                ("pending", "gw-2"),
-                ("active", "gw-3"),
-                ("deleting", "gw-4"),
+                ("pending", "gw-1", 0, None),
+                ("pending", "gw-2", 0, None),
+                ("active", "gw-3", 0, None),
+                ("deleting", "gw-4", 0, None),
             ]
 
     class DummySession:
@@ -104,7 +102,7 @@ def test_metrics_contains_gateway_lifecycle_status_counts(client, monkeypatch):
         def __exit__(self, exc_type, exc, tb):
             return False
 
-    monkeypatch.setattr("mcpgateway.db.fresh_db_session", lambda: DummyContext())
+    monkeypatch.setattr("mcpgateway.db.fresh_db_session", DummyContext)
 
     response = client.get("/metrics/prometheus")
     text = response.text
@@ -119,7 +117,7 @@ def test_metrics_gateway_lifecycle_status_zero_fills_missing_states(client, monk
 
     class DummyQuery:
         def all(self):
-            return [("active", "gw-1")]
+            return [("active", "gw-1", 0, None)]
 
     class DummySession:
         def query(self, *_args, **_kwargs):
@@ -132,7 +130,7 @@ def test_metrics_gateway_lifecycle_status_zero_fills_missing_states(client, monk
         def __exit__(self, exc_type, exc, tb):
             return False
 
-    monkeypatch.setattr("mcpgateway.db.fresh_db_session", lambda: DummyContext())
+    monkeypatch.setattr("mcpgateway.db.fresh_db_session", DummyContext)
 
     response = client.get("/metrics/prometheus")
     text = response.text
@@ -140,6 +138,39 @@ def test_metrics_gateway_lifecycle_status_zero_fills_missing_states(client, monk
     assert 'gateway_lifecycle_status{status="pending"} 0.0' in text
     assert 'gateway_lifecycle_status{status="active"} 1.0' in text
     assert 'gateway_lifecycle_status{status="deleting"} 0.0' in text
+
+
+def test_metrics_gateway_lifecycle_pending_alert_inputs(client, monkeypatch):
+    """Pending retry gauges expose stuck-pending and failure-rate alert inputs."""
+    now = datetime.now(timezone.utc)
+
+    class DummyQuery:
+        def all(self):
+            return [
+                ("pending", "gw-1", 2, None),
+                ("pending", "gw-2", 3, now - timedelta(seconds=1)),
+                ("pending", "gw-3", 5, now + timedelta(minutes=5)),
+                ("active", "gw-4", 7, None),
+            ]
+
+    class DummySession:
+        def query(self, *_args, **_kwargs):
+            return DummyQuery()
+
+    class DummyContext:
+        def __enter__(self):
+            return DummySession()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("mcpgateway.db.fresh_db_session", DummyContext)
+
+    response = client.get("/metrics/prometheus")
+    text = response.text
+
+    assert "gateway_lifecycle_pending_due 2.0" in text
+    assert "gateway_lifecycle_pending_registration_attempts 10.0" in text
 
 
 def test_gateway_lifecycle_status_gauge_recovers_after_duplicate_registration(monkeypatch):
@@ -156,7 +187,7 @@ def test_metrics_counters_increment(client):
     """✅ Counters increment after a request."""
     # Initial scrape
     resp1 = client.get("/metrics/prometheus")
-    before_lines = len(resp1.text.splitlines())
+    len(resp1.text.splitlines())
 
     # Trigger another request
     client.get("/health")

@@ -355,6 +355,10 @@ Retry metadata is returned while a gateway is `pending`:
 - `nextRetryAt` / `next_retry_at` - Next scheduled retry time, or `null` before first failure
 - `lastError` / `last_error` - Most recent sanitized failure detail, or `null` before first failure
 
+Gateway name is the natural deduplication key for async lifecycle retries. With async lifecycle enabled, retrying `POST /gateways` with the same name while the existing gateway is `pending` returns the current pending record with `202 Accepted`; retrying while the existing gateway is `active` returns `409 Conflict`. Retrying an update while the gateway is already `pending` returns the current pending record with `202 Accepted`. A client-side transport timeout or lost response does not prove server-side failure: poll `GET /gateways/{id|name|slug}` before retrying or deleting.
+
+Pending gateway retries continue with exponential backoff until initialization succeeds or the client sends DELETE. DELETE changes `pending` or `active` gateways to `deleting`; the worker then stops pending retries, performs cleanup, and removes the row. Once deleted, polling returns `404 Not Found`.
+
 **Pending retry response example (`200 OK`):**
 
 ```json

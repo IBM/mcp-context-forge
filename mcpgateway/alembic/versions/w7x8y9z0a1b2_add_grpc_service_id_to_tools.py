@@ -29,33 +29,31 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Add grpc_service_id foreign key to tools table."""
     # Check if tools table exists
-    inspector = sa.inspect(op.get_bind())
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
     if "tools" not in inspector.get_table_names():
         return
 
     # Check if column already exists
     columns = [col["name"] for col in inspector.get_columns("tools")]
-    if "grpc_service_id" in columns:
+    foreign_keys = inspector.get_foreign_keys("tools")
+    has_grpc_service_fk = any(fk.get("referred_table") == "grpc_services" and fk.get("constrained_columns") == ["grpc_service_id"] for fk in foreign_keys)
+
+    if "grpc_service_id" in columns and has_grpc_service_fk:
         return
 
-    # Add grpc_service_id column with foreign key to grpc_services
-    op.add_column(
-        "tools",
-        sa.Column("grpc_service_id", sa.String(36), nullable=True),
-    )
-
-    # Add foreign key constraint
-    # Note: SQLite doesn't support adding FK constraints to existing tables,
-    # so we only add it for other databases
-    if op.get_bind().dialect.name != "sqlite":
-        op.create_foreign_key(
-            "fk_tools_grpc_service_id",
-            "tools",
-            "grpc_services",
-            ["grpc_service_id"],
-            ["id"],
-            ondelete="CASCADE",
-        )
+    # Batch mode recreates SQLite tables so the FK is present in cross-DB schema checks.
+    with op.batch_alter_table("tools", schema=None) as batch_op:
+        if "grpc_service_id" not in columns:
+            batch_op.add_column(sa.Column("grpc_service_id", sa.String(36), nullable=True))
+        if not has_grpc_service_fk:
+            batch_op.create_foreign_key(
+                "fk_tools_grpc_service_id",
+                "grpc_services",
+                ["grpc_service_id"],
+                ["id"],
+                ondelete="CASCADE",
+            )
 
 
 def downgrade() -> None:
@@ -68,9 +66,8 @@ def downgrade() -> None:
     if "grpc_service_id" not in columns:
         return
 
-    # Drop foreign key constraint (non-SQLite only)
-    if op.get_bind().dialect.name != "sqlite":
-        op.drop_constraint("fk_tools_grpc_service_id", "tools", type_="foreignkey")
-
-    # Drop column
-    op.drop_column("tools", "grpc_service_id")
+    with op.batch_alter_table("tools", schema=None) as batch_op:
+        foreign_keys = inspector.get_foreign_keys("tools")
+        if any(fk.get("referred_table") == "grpc_services" and fk.get("constrained_columns") == ["grpc_service_id"] for fk in foreign_keys):
+            batch_op.drop_constraint("fk_tools_grpc_service_id", type_="foreignkey")
+        batch_op.drop_column("grpc_service_id")
