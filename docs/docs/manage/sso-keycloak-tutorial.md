@@ -1131,7 +1131,7 @@ SSO_API_TOKEN_AUTH_ENABLED=true
 Then opt this provider in via the provider API, setting `api_audience` to match the audience mapper from step 2:
 
 ```bash
-curl -X PUT https://gateway.yourcompany.com/auth/sso/providers/keycloak \
+curl -X PUT https://gateway.yourcompany.com/auth/sso/admin/providers/keycloak \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

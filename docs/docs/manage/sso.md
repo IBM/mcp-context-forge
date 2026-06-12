@@ -774,10 +774,10 @@ In addition to browser-based SSO login, ContextForge can accept access tokens is
 This is opt-in at two levels:
 
 1. **Global switch**: `SSO_API_TOKEN_AUTH_ENABLED=true` (default `false`). When disabled, external tokens are never inspected and unrecognized bearer tokens fail normal internal JWT validation as before.
-2. **Per-provider opt-in**: each `SSOProvider` must set `trusted_for_api_auth=true` via the provider CRUD API (`PUT /auth/sso/providers/{id}` or `POST /auth/sso/providers`, see `mcpgateway/routers/sso.py`).
+2. **Per-provider opt-in**: each `SSOProvider` must set `trusted_for_api_auth=true` via the provider admin API (`PUT /auth/sso/admin/providers/{id}` or `POST /auth/sso/admin/providers`, see `mcpgateway/routers/sso.py`).
 
 ```bash
-curl -X PUT https://gateway.example.com/auth/sso/providers/keycloak \
+curl -X PUT https://gateway.example.com/auth/sso/admin/providers/keycloak \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

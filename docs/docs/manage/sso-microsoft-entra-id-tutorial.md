@@ -1109,7 +1109,7 @@ ContextForge can also accept Entra ID access tokens directly as `Bearer` credent
 3. **Set `api_audience`** for the Entra provider to that exact App ID URI value, then opt the provider in:
 
    ```bash
-   curl -X PUT https://gateway.yourcompany.com/auth/sso/providers/entra \
+   curl -X PUT https://gateway.yourcompany.com/auth/sso/admin/providers/entra \
      -H "Authorization: Bearer $ADMIN_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{
