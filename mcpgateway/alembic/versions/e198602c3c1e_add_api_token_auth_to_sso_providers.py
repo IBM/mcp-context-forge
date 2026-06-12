@@ -7,11 +7,12 @@ Create Date: 2026-06-11
 
 """
 
+# Standard
 from typing import Sequence, Union
 
-import sqlalchemy as sa
-
+# Third-Party
 from alembic import op
+import sqlalchemy as sa
 
 revision: str = "e198602c3c1e"
 down_revision: Union[str, Sequence[str], None] = "0a089912b5f0"
