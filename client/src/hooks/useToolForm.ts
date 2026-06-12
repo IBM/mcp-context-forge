@@ -103,6 +103,8 @@ export interface ApiToolPayload {
     auth_username?: string;
     auth_password?: string; // pragma: allowlist secret
     auth_token?: string;
+    auth_header_key?: string;
+    auth_header_value?: string;
     auth_headers?: Array<{ key: string; value: string }>;
   };
   team_id?: string;
@@ -181,7 +183,7 @@ const initialState = {
   name: "",
   url: "",
   description: "",
-  requestType: "GET" as RequestType,
+  requestType: "POST" as RequestType,
   advancedOpen: false,
   visibility: "public" as Visibility,
   teamId: "",
@@ -196,7 +198,9 @@ const initialState = {
   outputSchema: "",
 };
 
-export function useToolForm(): UseToolFormReturn {
+export function useToolForm({
+  maxCustomHeaders,
+}: { maxCustomHeaders?: number } = {}): UseToolFormReturn {
   const [name, setName] = useState(initialState.name);
   const [url, setUrl] = useState(initialState.url);
   const [description, setDescription] = useState(initialState.description);
@@ -269,10 +273,15 @@ export function useToolForm(): UseToolFormReturn {
         const validHeaders = customHeaders.filter((h) => h.key.trim());
         if (validHeaders.length > 0) {
           payload.auth_type = "authheaders";
-          payload.auth_headers = validHeaders.map((h) => ({
-            key: sanitizeString(h.key, 200),
-            value: sanitizeString(h.value, 1000),
-          }));
+          if (maxCustomHeaders === 1) {
+            payload.auth_header_key = sanitizeString(validHeaders[0].key, 200);
+            payload.auth_header_value = sanitizeString(validHeaders[0].value, 1000);
+          } else {
+            payload.auth_headers = validHeaders.map((h) => ({
+              key: sanitizeString(h.key, 200),
+              value: sanitizeString(h.value, 1000),
+            }));
+          }
         }
       }
 
@@ -366,10 +375,15 @@ export function useToolForm(): UseToolFormReturn {
       } else if (authType === "custom") {
         const validHeaders = customHeaders.filter((h) => h.key.trim());
         if (validHeaders.length > 0) {
-          tool.auth_headers = validHeaders.map((h) => ({
-            key: sanitizeString(h.key, 200),
-            value: sanitizeString(h.value, 1000),
-          }));
+          if (maxCustomHeaders === 1) {
+            tool.auth_header_key = sanitizeString(validHeaders[0].key, 200);
+            tool.auth_header_value = sanitizeString(validHeaders[0].value, 1000);
+          } else {
+            tool.auth_headers = validHeaders.map((h) => ({
+              key: sanitizeString(h.key, 200),
+              value: sanitizeString(h.value, 1000),
+            }));
+          }
         }
       }
     }

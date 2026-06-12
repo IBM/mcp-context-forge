@@ -60,7 +60,7 @@ export function ToolForm({ isOpen, onToggle, onSuccess }: ToolFormProps) {
     setOpenApiSpecUrl,
     generateSchema,
     handleSubmit,
-  } = useToolForm();
+  } = useToolForm({ maxCustomHeaders: 1 });
 
   const handleCopy = (text: string, setCopied: (v: boolean) => void) => {
     void navigator.clipboard.writeText(text).then(() => {

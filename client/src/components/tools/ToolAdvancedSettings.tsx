@@ -91,7 +91,11 @@ export function ToolAdvancedSettings({
         return <ToolBearerTokenAuth token={bearerToken} onTokenChange={onBearerTokenChange} />;
       case "custom":
         return (
-          <CustomHeadersAuth headers={customHeaders} onHeadersChange={onCustomHeadersChange} />
+          <CustomHeadersAuth
+            headers={customHeaders}
+            onHeadersChange={onCustomHeadersChange}
+            maxHeaders={1}
+          />
         );
       default:
         return null;
