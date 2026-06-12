@@ -3303,6 +3303,12 @@ Disallow: /
     rate_limit_lockout_threshold: int = Field(default=5, description="Violations before account lockout")
     rate_limit_lockout_duration_minutes: int = Field(default=15, description="Lockout duration in minutes")
 
+    # RFC 6585 5: 431 Request Header Fields Too Large
+    header_size_validation_enabled: bool = Field(default=True, description="Enable RFC 6585 header size validation (431 responses)")
+    max_header_total_size_bytes: int = Field(default=16384, description="Maximum total size of all headers (16KB default)")
+    max_header_field_size_bytes: int = Field(default=8192, description="Maximum size of individual header field (8KB default)")
+    max_header_count: int = Field(default=100, description="Maximum number of header fields")
+
     # Header passthrough feature (disabled by default for security)
     enable_header_passthrough: bool = Field(default=False, description="Enable HTTP header passthrough feature (WARNING: Security implications - only enable if needed)")
     enable_overwrite_base_headers: bool = Field(default=False, description="Enable overwriting of base headers")
