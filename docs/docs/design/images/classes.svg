@@ -10430,7 +10430,7 @@
 <text text-anchor="start" x="167377.5" y="-4306.3" font-family="Arial" font-size="14.00">role_service</text>
 <polyline fill="none" stroke="#ffaabb" points="166596.5,-4298.5 168231.5,-4298.5 "/>
 <text text-anchor="start" x="166604.5" y="-4283.3" font-family="Arial" font-size="14.00">add_member_to_team(team_id: str, user_email: str, role: str, invited_by: Optional[str]): EmailTeamMember</text>
-<text text-anchor="start" x="166604.5" y="-4268.3" font-family="Arial" font-size="14.00">approve_join_request(team_id: str, request_id: str, approved_by: str): Optional[EmailTeamMember]</text>
+<text text-anchor="start" x="166604.5" y="-4268.3" font-family="Arial" font-size="14.00">approve_join_request(request_id: str, approved_by: str): Optional[EmailTeamMember]</text>
 <text text-anchor="start" x="166604.5" y="-4253.3" font-family="Arial" font-size="14.00">cancel_join_request(request_id: str, user_email: str): bool</text>
 <text text-anchor="start" x="166604.5" y="-4238.3" font-family="Arial" font-size="14.00">count_team_owners(team_id: str): int</text>
 <text text-anchor="start" x="166604.5" y="-4223.3" font-family="Arial" font-size="14.00">create_join_request(team_id: str, user_email: str, message: Optional[str]): &#39;EmailTeamJoinRequest&#39;</text>
@@ -10453,7 +10453,7 @@
 <text text-anchor="start" x="166604.5" y="-3968.3" font-family="Arial" font-size="14.00">invalidate_team_member_count_cache(team_id: str): None</text>
 <text text-anchor="start" x="166604.5" y="-3953.3" font-family="Arial" font-size="14.00">list_join_requests(team_id: str): List[&#39;EmailTeamJoinRequest&#39;]</text>
 <text text-anchor="start" x="166604.5" y="-3938.3" font-family="Arial" font-size="14.00">list_teams(limit: int, offset: int, cursor: Optional[str], page: Optional[int], per_page: int, include_inactive: bool, visibility_filter: Optional[str], base_url: Optional[str], include_personal: bool, search_query: Optional[str]): Union[Tuple[List[EmailTeam], Optional[str]], Dict[str, Any]]</text>
-<text text-anchor="start" x="166604.5" y="-3923.3" font-family="Arial" font-size="14.00">reject_join_request(team_id: str, request_id: str, rejected_by: str): bool</text>
+<text text-anchor="start" x="166604.5" y="-3923.3" font-family="Arial" font-size="14.00">reject_join_request(request_id: str, rejected_by: str): bool</text>
 <text text-anchor="start" x="166604.5" y="-3908.3" font-family="Arial" font-size="14.00">remove_member_from_team(team_id: str, user_email: str, removed_by: Optional[str]): bool</text>
 <text text-anchor="start" x="166604.5" y="-3893.3" font-family="Arial" font-size="14.00">update_member_role(team_id: str, user_email: str, new_role: str, updated_by: Optional[str]): bool</text>
 <text text-anchor="start" x="166604.5" y="-3878.3" font-family="Arial" font-size="14.00">update_team(team_id: str, name: Optional[str], description: Optional[str], visibility: Optional[str], max_members: Optional[int], updated_by: Optional[str]): bool</text>

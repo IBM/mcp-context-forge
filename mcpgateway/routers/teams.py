@@ -1137,8 +1137,6 @@ async def approve_join_request(
 
         # Approve join request
         member = await team_service.approve_join_request(team_id, request_id, approved_by=current_user["email"])
-        if not member:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Join request not found")
 
         db.commit()
         db.close()
@@ -1152,8 +1150,9 @@ async def approve_join_request(
             is_active=member.is_active,
         )
     except (ValueError, TeamMemberLimitExceededError) as e:
-        # Handle validation errors with 400 Bad Request
         error_msg = str(e)
+        if error_msg == "Join request not found or already processed":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=error_msg)
         if "maximum team limit" in error_msg:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Cannot approve: {error_msg.lower()}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
@@ -1201,15 +1200,16 @@ async def reject_join_request(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only team owners can reject join requests")
 
         # Reject join request
-        success = await team_service.reject_join_request(team_id, request_id, rejected_by=current_user["email"])
-        if not success:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Join request not found")
+        await team_service.reject_join_request(team_id, request_id, rejected_by=current_user["email"])
 
         db.commit()
         db.close()
         return SuccessResponse(message="Join request rejected successfully")
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        error_msg = str(e)
+        if error_msg == "Join request not found or already processed":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=error_msg)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
     except HTTPException:
         raise
     except Exception as e:

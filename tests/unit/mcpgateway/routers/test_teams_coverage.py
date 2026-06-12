@@ -804,18 +804,19 @@ class TestApproveJoinRequestErrors:
             assert exc.value.status_code == status.HTTP_403_FORBIDDEN
 
     @pytest.mark.asyncio
-    async def test_member_none(self, user_ctx, db, mock_team):
+    async def test_value_error_not_found(self, user_ctx, db, mock_team):
         with (
             mock_permission_check(is_admin=user_ctx.get("is_admin", False)),
             _svc(
                 get_team_by_id=AsyncMock(return_value=mock_team),
                 get_user_role_in_team=AsyncMock(return_value="owner"),
-                approve_join_request=AsyncMock(return_value=None),
+                approve_join_request=AsyncMock(side_effect=ValueError("Join request not found or already processed")),
             ),
         ):
             with pytest.raises(HTTPException) as exc:
                 await teams.approve_join_request(mock_team.id, "rid", current_user=user_ctx, db=db)
             assert exc.value.status_code == status.HTTP_404_NOT_FOUND
+            assert "not found" in exc.value.detail
 
     @pytest.mark.asyncio
     async def test_value_error_max_team_limit(self, user_ctx, db, mock_team):
@@ -881,20 +882,6 @@ class TestRejectJoinRequestErrors:
         with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), _svc(get_team_by_id=AsyncMock(return_value=None)):
             with pytest.raises(HTTPException) as exc:
                 await teams.reject_join_request("tid", "rid", current_user=user_ctx, db=db)
-            assert exc.value.status_code == status.HTTP_404_NOT_FOUND
-
-    @pytest.mark.asyncio
-    async def test_request_not_found(self, user_ctx, db, mock_team):
-        with (
-            mock_permission_check(is_admin=user_ctx.get("is_admin", False)),
-            _svc(
-                get_team_by_id=AsyncMock(return_value=mock_team),
-                get_user_role_in_team=AsyncMock(return_value="owner"),
-                reject_join_request=AsyncMock(return_value=False),
-            ),
-        ):
-            with pytest.raises(HTTPException) as exc:
-                await teams.reject_join_request(mock_team.id, "rid", current_user=user_ctx, db=db)
             assert exc.value.status_code == status.HTTP_404_NOT_FOUND
 
     @pytest.mark.asyncio
