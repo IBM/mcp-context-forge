@@ -65,6 +65,7 @@ from starlette.types import Receive, Scope, Send
 # First-Party
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
+from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Server as DbServer
@@ -2636,18 +2637,22 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                     meta = None
                     try:
                         request_ctx = mcp_app.request_context
-                        meta = request_ctx.meta
+                        if request_ctx and request_ctx.meta is not None:
+                            meta = request_ctx.meta.model_dump()
+                        # CWE-532: log only _meta keys, never values (may contain sensitive data)
                         logger.info(
-                            "Using direct_proxy mode for resources/read %s, server %s, gateway %s (from %s header), forwarding _meta: %s",
+                            "Using direct_proxy mode for resources/read %s, server %s, gateway %s (from %s header), forwarding _meta keys: %s",
                             resource_uri,
                             server_id,
                             gateway.id,
                             GATEWAY_ID_HEADER,
-                            meta,
+                            sorted(meta.keys()) if meta else None,
                         )
                     except (LookupError, AttributeError) as e:
                         logger.debug("No request context available for _meta extraction: %s", e)
 
+                    # CWE-400: validate _meta limits before network I/O (bypassed in direct-proxy branch)
+                    _validate_meta_data(meta)
                     contents = await _proxy_read_resource_to_gateway(gateway, str(resource_uri), user_context, meta)
                     if contents:
                         # Return first content (text or blob)

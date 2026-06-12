@@ -1737,7 +1737,7 @@ class TestResourceServiceIdentityPropagationCoverage:
             patch.object(service, "invoke_resource", AsyncMock(return_value="hello")),
             patch("mcpgateway.services.resource_service.check_gateway_access", AsyncMock(return_value=True)),
             patch.object(service, "_check_resource_access", AsyncMock(return_value=True)),
-            patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={"Authorization": "Bearer gateway"}),
+            patch("mcpgateway.services.resource_service.resolve_gateway_auth_headers", AsyncMock(return_value={"Authorization": "Bearer gateway"})),
             patch("mcpgateway.services.resource_service.build_identity_headers", return_value={"X-Identity": "1"}) as mock_build_headers,
             patch("mcpgateway.services.resource_service.streamablehttp_client", return_value=_AsyncCM()),
             patch("mcpgateway.services.resource_service.ClientSession", _ClientSessionCM),
@@ -1818,7 +1818,6 @@ class TestToolServiceIdentityPropagationCoverage:
             patch("mcpgateway.services.tool_service.fresh_db_session", return_value=_FreshDBSession(db)),
             patch("mcpgateway.services.tool_service.check_gateway_access", AsyncMock(return_value=True)),
             patch("mcpgateway.services.tool_service.resolve_gateway_auth_headers", AsyncMock(return_value={})),
-            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
             patch("mcpgateway.services.tool_service.build_identity_headers", return_value={"X-Identity": "1"}) as mock_build_headers,
             patch("mcpgateway.services.tool_service.build_identity_meta", return_value={"identity": True}) as mock_build_meta,
             patch("mcpgateway.services.tool_service.create_span", return_value=mock_span),
@@ -2024,7 +2023,7 @@ class TestStreamableHttpTransportIdentityPropagationCoverage:
 
         try:
             with (
-                patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}),
+                patch("mcpgateway.transports.streamablehttp_transport.resolve_gateway_auth_headers", AsyncMock(return_value={})),
                 patch("mcpgateway.transports.streamablehttp_transport.build_identity_headers", return_value={"X-Identity": "1"}) as mock_build_headers,
                 patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", return_value=_AsyncCM()),
                 patch("mcpgateway.transports.streamablehttp_transport.ClientSession", _ClientSessionCM),
@@ -2066,7 +2065,7 @@ class TestStreamableHttpTransportIdentityPropagationCoverage:
 
         try:
             with (
-                patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}),
+                patch("mcpgateway.transports.streamablehttp_transport.resolve_gateway_auth_headers", AsyncMock(return_value={})),
                 patch("mcpgateway.transports.streamablehttp_transport.build_identity_headers", return_value={"X-Identity": "1"}) as mock_build_headers,
                 patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", return_value=_AsyncCM()),
                 patch("mcpgateway.transports.streamablehttp_transport.ClientSession", _ClientSessionCM),
@@ -2109,7 +2108,7 @@ class TestStreamableHttpTransportIdentityPropagationCoverage:
 
         try:
             with (
-                patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}),
+                patch("mcpgateway.transports.streamablehttp_transport.resolve_gateway_auth_headers", AsyncMock(return_value={})),
                 patch("mcpgateway.transports.streamablehttp_transport.build_identity_headers", return_value={"X-Identity": "1"}) as mock_build_headers,
                 patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", return_value=_AsyncCM()),
                 patch("mcpgateway.transports.streamablehttp_transport.ClientSession", _ClientSessionCM),
