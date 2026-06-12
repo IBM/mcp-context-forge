@@ -99,29 +99,40 @@ export function VirtualServerCard({
                 >
                   {intl.formatMessage({ id: "gateways.card.viewDetails" })}
                 </DropdownMenuItem>
- {onEdit && (
-    <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onEdit(server); }}>
-      {intl.formatMessage({ id: "gateways.card.editServer" })}
-    </DropdownMenuItem>
-  )}
-                <DropdownMenuItem
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onToggleStatus?.(server);
-                  }}
-                >
-                  {server.enabled ? "Deactivate" : "Activate"}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDelete?.(server);
-                  }}
-                  className="text-destructive focus:text-destructive"
-                >
-                  {intl.formatMessage({ id: "common.button.delete" })}
-                </DropdownMenuItem>
+                {onEdit && (
+                  <DropdownMenuItem
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onEdit(server);
+                    }}
+                  >
+                    {intl.formatMessage({ id: "gateways.card.editServer" })}
+                  </DropdownMenuItem>
+                )}
+                {onToggleStatus && (
+                  <DropdownMenuItem
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleStatus(server);
+                    }}
+                  >
+                    {server.enabled ? "Deactivate" : "Activate"}
+                  </DropdownMenuItem>
+                )}
+                {onDelete && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete(server);
+                      }}
+                      className="text-destructive focus:text-destructive"
+                    >
+                      {intl.formatMessage({ id: "common.button.delete" })}
+                    </DropdownMenuItem>
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>

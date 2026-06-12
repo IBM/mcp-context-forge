@@ -61,7 +61,8 @@ describe("Gateways", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("renders the virtual server layout when servers exist", () => {
+  it("renders the virtual server layout when servers exist", async () => {
+    const user = userEvent.setup();
     const mockServer: VirtualServer = {
       id: "gateway-1",
       name: "GH repo tasks",
@@ -120,6 +121,12 @@ describe("Gateways", () => {
     expect(screen.getByText("6")).toBeInTheDocument();
     expect(screen.getByText("team")).toBeInTheDocument();
     expect(screen.queryByText("MCP server")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Actions for GH repo tasks" }));
+
+    expect(await screen.findByRole("menuitem", { name: "View details" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Deactivate" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Delete" })).not.toBeInTheDocument();
   });
 
   it("renders empty virtual servers as full-width add-components rows", () => {

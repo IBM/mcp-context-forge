@@ -161,7 +161,7 @@ export function SourceSelection({
     setHasRequestedMCPServers(true);
   };
 
- const toggleMCPServerSelection = (serverId: string, checked: boolean) => {
+  const toggleMCPServerSelection = (serverId: string, checked: boolean) => {
     const next = new Set(selectedMCPServerIds);
     if (checked) next.add(serverId);
     else next.delete(serverId);
