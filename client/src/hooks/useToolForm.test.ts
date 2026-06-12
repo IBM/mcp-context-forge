@@ -13,7 +13,7 @@ describe("useToolForm", () => {
       expect(result.current.name).toBe("");
       expect(result.current.url).toBe("");
       expect(result.current.description).toBe("");
-      expect(result.current.requestType).toBe("GET");
+      expect(result.current.requestType).toBe("POST");
       expect(result.current.advancedOpen).toBe(false);
       expect(result.current.visibility).toBe("public");
       expect(result.current.teamId).toBe("");
@@ -164,7 +164,7 @@ describe("useToolForm", () => {
   });
 
   describe("generateSchema – custom header sanitization", () => {
-    it("strips control characters from custom header key and value", async () => {
+    it("strips control characters from custom header key and value (multi-header path)", async () => {
       let capturedBody: Record<string, unknown> | undefined;
       server.use(
         http.post("*/v1/tools/generate-schemas-from-openapi", async ({ request }) => {
@@ -197,10 +197,43 @@ describe("useToolForm", () => {
       expect(headers[0].key).toBe("X-Api-KeyInjected: evil");
       expect(headers[0].value).toBe("valuewithnull");
     });
+
+    it("strips control characters from custom header key and value (single-header path)", async () => {
+      let capturedBody: Record<string, unknown> | undefined;
+      server.use(
+        http.post("*/v1/tools/generate-schemas-from-openapi", async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({
+            success: true,
+            input_schema: null,
+            output_schema: null,
+            message: "ok",
+          });
+        }),
+      );
+
+      const { result } = renderHook(() => useToolForm({ maxCustomHeaders: 1 }));
+
+      act(() => {
+        result.current.setUrl("https://api.example.com/endpoint");
+        result.current.setAuthType("custom");
+        result.current.setCustomHeaders([
+          { id: "1", key: "X-Api-Key\r\nInjected: evil", value: "value\x00with\x1fnull" },
+        ]);
+      });
+
+      await act(async () => {
+        await result.current.generateSchema();
+      });
+
+      await waitFor(() => expect(capturedBody).toBeDefined());
+      expect(capturedBody?.auth_header_key).toBe("X-Api-KeyInjected: evil");
+      expect(capturedBody?.auth_header_value).toBe("valuewithnull");
+    });
   });
 
   describe("getFormData – custom headers", () => {
-    it("sends all non-empty custom headers as auth_headers array", () => {
+    it("sends all non-empty custom headers as auth_headers array when maxCustomHeaders is unset", () => {
       const { result } = renderHook(() => useToolForm());
 
       act(() => {
@@ -242,7 +275,7 @@ describe("useToolForm", () => {
       expect(payload.tool.auth_headers![0].key).toBe("X-Valid");
     });
 
-    it("sanitizes custom header keys and values in getFormData", () => {
+    it("sanitizes custom header keys and values in getFormData (multi-header path)", () => {
       const { result } = renderHook(() => useToolForm());
 
       act(() => {
@@ -259,6 +292,43 @@ describe("useToolForm", () => {
 
       expect(headers[0].key).toBe("X-Api-KeyInjected: evil");
       expect(headers[0].value).toBe("valuewithnull");
+    });
+
+    it("sends auth_header_key and auth_header_value when maxCustomHeaders is 1", () => {
+      const { result } = renderHook(() => useToolForm({ maxCustomHeaders: 1 }));
+
+      act(() => {
+        result.current.setName("my-tool");
+        result.current.setUrl("https://api.example.com/endpoint");
+        result.current.setAuthType("custom");
+        result.current.setCustomHeaders([{ id: "1", key: "X-Api-Key", value: "secret" }]);
+      });
+
+      const payload = result.current.getFormData();
+
+      expect(payload.tool.auth_type).toBe("authheaders");
+      expect(payload.tool.auth_header_key).toBe("X-Api-Key");
+      expect(payload.tool.auth_header_value).toBe("secret");
+      expect(payload.tool.auth_headers).toBeUndefined();
+    });
+
+    it("sanitizes custom header key and value in getFormData (single-header path)", () => {
+      const { result } = renderHook(() => useToolForm({ maxCustomHeaders: 1 }));
+
+      act(() => {
+        result.current.setName("my-tool");
+        result.current.setUrl("https://api.example.com/endpoint");
+        result.current.setAuthType("custom");
+        result.current.setCustomHeaders([
+          { id: "1", key: "X-Api-Key\r\nInjected: evil", value: "value\x00with\x1fnull" },
+        ]);
+      });
+
+      const payload = result.current.getFormData();
+
+      expect(payload.tool.auth_header_key).toBe("X-Api-KeyInjected: evil");
+      expect(payload.tool.auth_header_value).toBe("valuewithnull");
+      expect(payload.tool.auth_headers).toBeUndefined();
     });
   });
 
