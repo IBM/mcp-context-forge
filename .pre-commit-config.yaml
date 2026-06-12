@@ -18,7 +18,26 @@
 # report issues (linters). Modified files will need to be staged again.
 # -----------------------------------------------------------------------------
 
-exclude: '(^|/)(\.pre-commit-.*\.yaml|normalize_special_characters\.py|test_input_validation\.py|ai_artifacts_normalizer\.py)$|(^|/)mcp-servers/templates/|(^|/)plugin_templates/|(^|/)tests/load/|.*\.(jinja|j2)$'  # ignore these files, all templates, load tests, and jinja files
+exclude: |
+  (?x)(
+    # Specific files (auto-generated or intentionally exempt)
+    (^|/)(
+      \.pre-commit-.*\.yaml          # transient pre-commit state/baselines
+      |normalize_special_characters\.py
+      |test_input_validation\.py
+      |ai_artifacts_normalizer\.py
+    )$
+    # Template trees (not real source)
+    |(^|/)mcp-servers/templates/
+    |(^|/)plugin_templates/
+    # Load tests (separate lifecycle)
+    |(^|/)tests/load/
+    # Jinja templates
+    |.*\.(jinja|j2)$
+    # Symlinks that may be treated as plain text on Windows checkouts
+    |^\.pylintrc\.mcpgateway$
+    |^CLAUDE\.md$
+  )
 fail_fast: true
 
 default_language_version:
