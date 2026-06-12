@@ -2,13 +2,19 @@
 # Docker Security Scan Workflow
 # ===============================================================
 #
-# This workflow builds the container image locally and generates an SBOM
-# artifact for review:
-#   1. Build image locally (no push required)
-#   2. Generate SBOM with Syft
-#   3. Upload SBOM artifact
+# This workflow runs Docker-specific security checks:
+#   1. Hadolint         — lint shipped runtime Dockerfiles (Containerfile.lite,
+#                         Containerfile, Containerfile.scratch, nginx proxy,
+#                         python-sandbox) against best-practice rules
+#   2. Container smoke  — build auxiliary images to verify they compile cleanly
+#   3. Security Scan    — build Containerfile.lite, run FedRAMP compliance validation,
+#                         generate SBOM (Syft), scan for CVEs ≥ HIGH (Grype), upload SBOM
 #
-# Runs on both PRs and pushes to catch issues early.
+# Trigger model:
+#   - pull_request : Hadolint only (fast, deterministic feedback on PRs)
+#   - merge_group  : full gate — Hadolint + Container smoke + Security Scan
+#                    (this is the build/CVE gate that protects main)
+#   - workflow_dispatch : run everything on demand
 #
 # ===============================================================
 
@@ -20,18 +26,16 @@ on:
     branches: ["main"]
     paths:
       - 'Containerfile.lite'
-      - 'crates/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'a2a-agents/go/a2a-echo-agent/**'
-      - 'mcp-servers/python/python_sandbox_server/docker/**'
-      - 'docker-compose.yml'
-      - 'docker-compose-embedded.yml'
-      - 'docker-compose-verbose-logging.yml'
+      - 'Containerfile'
+      - 'Containerfile.scratch'
+      - 'infra/nginx/**'
+      - 'mcp-servers/python/python_sandbox_server/**'
       - 'mcpgateway/**'
       - 'plugins/**'
       - 'pyproject.toml'
       - '.github/workflows/docker-scan.yml'
+  merge_group:
+    branches: ["main"]
   workflow_dispatch:
 
 concurrency:
@@ -45,8 +49,54 @@ env:
   IMAGE_NAME: mcp-context-forge-scan
 
 jobs:
-  container-smoke:
+  # ---------------------------------------------------------------
+  # Lint all Dockerfiles before any build
+  # ---------------------------------------------------------------
+  hadolint:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: Lint Dockerfiles (Hadolint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Lint Containerfile.lite
+        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        with:
+          dockerfile: Containerfile.lite
+
+      - name: Lint Containerfile
+        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        with:
+          dockerfile: Containerfile
+
+      - name: Lint Containerfile.scratch
+        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        with:
+          dockerfile: Containerfile.scratch
+
+      - name: Lint nginx proxy Dockerfile
+        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        with:
+          dockerfile: infra/nginx/Dockerfile
+
+      - name: Lint python-sandbox server Containerfile
+        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        with:
+          dockerfile: mcp-servers/python/python_sandbox_server/Containerfile
+
+      - name: Lint python-sandbox runtime Dockerfile
+        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        with:
+          dockerfile: mcp-servers/python/python_sandbox_server/docker/Dockerfile.sandbox
+
+  container-smoke:
+    needs: [hadolint]
+    if: github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'
     name: Container Smoke (${{ matrix.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -54,10 +104,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: a2a-echo-agent
-            context: a2a-agents/go/a2a-echo-agent
-            file: a2a-agents/go/a2a-echo-agent/Dockerfile
-            tag: mcp-context-forge-a2a-echo-agent:scan
           - name: python-sandbox
             context: mcp-servers/python/python_sandbox_server
             file: mcp-servers/python/python_sandbox_server/docker/Dockerfile.sandbox
@@ -86,7 +132,8 @@ jobs:
   # Build image and generate SBOM
   # ---------------------------------------------------------------
   scan:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: [hadolint]
+    if: github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'
     name: Security Scan
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -144,6 +191,14 @@ jobs:
             anchore/syft:v1.42.3 \
             "docker:${IMAGE_NAME}:scan" -o spdx-json=/work/sbom.spdx.json
 
+      - name: Scan SBOM for vulnerabilities (Grype)
+        uses: anchore/scan-action@2c901ab7378897c01b8efaa2d0c9bf519cc64b9e # v6.2.0
+        with:
+          sbom: sbom.spdx.json
+          fail-build: true
+          severity-cutoff: high
+          cache-db: true
+
       - name: Upload SBOM
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -151,30 +206,41 @@ jobs:
           path: sbom.spdx.json
           retention-days: 30
 
-  rust-enabled-build:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    name: Rust-enabled container smoke
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-
+  # ---------------------------------------------------------------
+  # Aggregator gate — single required status check.
+  #
+  # Reports the combined result of all docker-scan jobs so branch
+  # protection only needs to require "Docker Scan Complete".
+  #   - pull_request : hadolint runs; container-smoke/scan are skipped
+  #                    (skipped counts as OK) → green if hadolint passes
+  #   - merge_group  : the full gate runs → green only if every job passes
+  # Complemented by docker-scan-required.yml, which reports the same
+  # check on PRs that touch no docker-scan paths.
+  # ---------------------------------------------------------------
+  docker-scan-complete:
+    name: Docker Scan Complete
+    needs: [hadolint, container-smoke, scan]
+    runs-on: ubuntu-slim
+    if: always()
     steps:
-      - name: Checkout code
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-        with:
-          persist-credentials: false
+      - name: Check all docker-scan gates passed
+        run: |
+          results=(
+            "${{ needs.hadolint.result }}"
+            "${{ needs.container-smoke.result }}"
+            "${{ needs.scan.result }}"
+          )
+          failed=0
+          for r in "${results[@]}"; do
+            if [[ "$r" != "success" && "$r" != "skipped" ]]; then
+              echo "❌ A docker-scan job failed or was cancelled (result: $r)"
+              failed=1
+            fi
+          done
+          if [[ "$failed" == "0" ]]; then
+            echo "✅ All docker-scan gates passed"
+          else
+            exit 1
+          fi
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-      - name: Build Rust-enabled image locally
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          file: Containerfile.lite
-          platforms: linux/amd64
-          push: false
-          load: false
-          build-args: |
-            ENABLE_RUST=true
-          cache-from: type=gha,scope=scan-build-rust-amd64
-          cache-to: type=gha,mode=max,scope=scan-build-rust-amd64

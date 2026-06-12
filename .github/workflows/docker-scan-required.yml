@@ -1,0 +1,43 @@
+# ===============================================================
+# Docker Scan Required — Skip Reporter
+# ===============================================================
+#
+# This workflow is the complement of docker-scan.yml.
+# It runs ONLY when docker-scan-related files did NOT change, and
+# immediately reports success for the "Docker Scan Complete"
+# required status check so that PRs are not blocked waiting.
+#
+# Together with the docker-scan-complete job in docker-scan.yml,
+# the "Docker Scan Complete" check always reports a result:
+#   - Files changed   → docker-scan.yml reports the real result
+#   - Files unchanged → this workflow reports success (skipped)
+#
+# ===============================================================
+
+name: Docker Scan Skip Reporter
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    branches: ["main"]
+    paths-ignore:
+      - 'Containerfile.lite'
+      - 'Containerfile'
+      - 'Containerfile.scratch'
+      - 'infra/nginx/**'
+      - 'mcp-servers/python/python_sandbox_server/**'
+      - 'mcpgateway/**'
+      - 'plugins/**'
+      - 'pyproject.toml'
+      - '.github/workflows/docker-scan.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  docker-scan-complete:
+    name: Docker Scan Complete
+    runs-on: ubuntu-slim
+    steps:
+      - name: No docker-scan-related files changed
+        run: echo "Docker scan skipped — no relevant files changed in this PR"
