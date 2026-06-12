@@ -523,6 +523,21 @@ async def test_admin_logout_paths():
 
 
 @pytest.mark.asyncio
+async def test_admin_logout_invalid_referer_fails_closed(monkeypatch):
+    parse_referer = MagicMock(side_effect=ValueError("bad referer"))
+    monkeypatch.setattr("urllib.parse.urlparse", parse_referer)
+
+    request = _make_request(root_path="/root")
+    request.method = "GET"
+    request.headers = {"accept": "application/json", "referer": "http://bad.example/admin", "host": "localhost:4444"}
+
+    response = await admin._admin_logout(request)
+    assert response.status_code == 200
+    assert response.body == b"Logged out"
+    parse_referer.assert_called_once_with("http://bad.example/admin")
+
+
+@pytest.mark.asyncio
 async def test_admin_logout_keycloak_redirect(monkeypatch):
     request = _make_request(root_path="/root")
     request.method = "POST"
