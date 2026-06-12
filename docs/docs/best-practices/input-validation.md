@@ -19,7 +19,7 @@ ContextForge provides comprehensive input validation and output sanitization to 
 EXPERIMENTAL_VALIDATE_IO=true
 
 # Deprecated global validation middleware (default: false)
-VALIDATION_MIDDLEWARE_ENABLED=false
+VALIDATION_MIDDLEWARE_ENABLED=true
 
 # Strict mode - reject on violations (default: true)
 VALIDATION_STRICT=true

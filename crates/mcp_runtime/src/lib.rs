@@ -19,7 +19,10 @@ use axum::{
     body::{Body, Bytes},
     extract::{ConnectInfo, DefaultBodyLimit, FromRequestParts, Path as AxumPath, State},
     http::request::Parts,
-    http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header::CONTENT_TYPE},
+    http::{
+        HeaderMap, HeaderName, HeaderValue, StatusCode,
+        header::{CONTENT_TYPE, LINK},
+    },
     middleware,
     response::{
         IntoResponse, Response,
@@ -1385,10 +1388,7 @@ async fn append_deprecation_headers(mut response: Response) -> Response {
         HeaderName::from_static("sunset"),
         HeaderValue::from_static(SUNSET_HEADER_DATE),
     );
-    headers.insert(
-        HeaderName::from_static("link"),
-        HeaderValue::from_static(DEPRECATION_LINK_VALUE),
-    );
+    headers.insert(LINK, HeaderValue::from_static(DEPRECATION_LINK_VALUE));
     response
 }
 

@@ -233,22 +233,22 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         if ".." in path or "//" in path:
             raise HTTPException(status_code=400, detail="invalid_path: Path traversal detected")
 
-        try:
+        try:  # noqa: PLW0717 - keep validation checks in the path-resolution block.
             resolved_path = Path(path).resolve()
+
+            # Check path depth
+            if len(resolved_path.parts) > settings.max_path_depth:
+                raise HTTPException(status_code=400, detail="invalid_path: Path too deep")
+
+            # Check against allowed roots
+            if self.allowed_roots:
+                allowed = any(str(resolved_path).startswith(str(root)) for root in self.allowed_roots)
+                if not allowed:
+                    raise HTTPException(status_code=400, detail="invalid_path: Path outside allowed roots")
+
+            return str(resolved_path)
         except (OSError, ValueError):
             raise HTTPException(status_code=400, detail="invalid_path: Invalid path")
-
-        # Check path depth
-        if len(resolved_path.parts) > settings.max_path_depth:
-            raise HTTPException(status_code=400, detail="invalid_path: Path too deep")
-
-        # Check against allowed roots
-        if self.allowed_roots:
-            allowed = any(str(resolved_path).startswith(str(root)) for root in self.allowed_roots)
-            if not allowed:
-                raise HTTPException(status_code=400, detail="invalid_path: Path outside allowed roots")
-
-        return str(resolved_path)
 
     async def _sanitize_response(self, response: Response) -> Response:
         """Sanitize response content by removing control characters.
@@ -262,16 +262,14 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         if not hasattr(response, "body"):
             return response
 
-        try:
+        try:  # noqa: PLW0717 - keep sanitization failures non-fatal.
             body = response.body
-        except Exception as e:
-            logger.warning("Failed to sanitize response: %s", e)
-            return response
-
-        try:
             if isinstance(body, bytes):
                 body = body.decode("utf-8", errors="replace")
+
+            # Remove control characters except newlines and tabs
             sanitized = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", "", body)
+
             response.body = sanitized.encode("utf-8")
             response.headers["content-length"] = str(len(response.body))
         except Exception as e:
