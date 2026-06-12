@@ -32,7 +32,7 @@ clean:
 	@cargo clean
 
 container-build:
-	@cd ../../.. && $(CONTAINER_RT) build -f a2a-agents/rust/a2a-echo-agent/Containerfile -t $(IMAGE) .
+	@cd ../../.. && $(CONTAINER_RT) build -f a2a-agents/rust/a2a-echo-agent/Dockerfile -t $(IMAGE) .
 
 container-run: container-build
 	@$(CONTAINER_RT) run --rm -p 9100:9100 -e A2A_ECHO_ADDR=0.0.0.0:9100 $(IMAGE)

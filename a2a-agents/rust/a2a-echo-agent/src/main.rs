@@ -3,7 +3,8 @@
 // Copyright 2026
 // SPDX-License-Identifier: Apache-2.0
 
-use axum::extract::State;
+use axum::body::Bytes;
+use axum::extract::{DefaultBodyLimit, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -14,7 +15,7 @@ use serde_json::{Value, json};
 use std::collections::VecDeque;
 use std::env;
 use std::net::SocketAddr;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use tower_http::cors::CorsLayer;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -24,6 +25,7 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const DEFAULT_ADDR: &str = "0.0.0.0:9100";
 const DEFAULT_NAME: &str = "a2a-echo-agent";
 const DEFAULT_PROTOCOL_VERSION: &str = "1.0.0";
+const MAX_REQUEST_BODY_BYTES: usize = 1_048_576;
 const MAX_STORED_TASKS: usize = 10_000;
 
 #[derive(Clone)]
@@ -125,6 +127,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/.well-known/agent.json", get(agent_card_handler))
         .route("/extendedAgentCard", get(extended_agent_card_handler))
         .layer(CorsLayer::permissive())
+        .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
         .with_state(state);
 
     let addr: SocketAddr = addr.parse()?;
@@ -176,37 +179,45 @@ async fn extended_agent_card_handler(State(state): State<AppState>) -> Json<Valu
     ))
 }
 
-async fn jsonrpc_handler(
-    State(state): State<AppState>,
-    Json(req): Json<JsonRpcRequest>,
-) -> impl IntoResponse {
-    let response = match req.method.as_str() {
+async fn jsonrpc_handler(State(state): State<AppState>, body: Bytes) -> impl IntoResponse {
+    (StatusCode::OK, Json(handle_jsonrpc_body(&state, &body)))
+}
+
+fn handle_jsonrpc_body(state: &AppState, body: &[u8]) -> JsonRpcResponse {
+    match serde_json::from_slice::<JsonRpcRequest>(body) {
+        Ok(req) => dispatch_jsonrpc_request(state, &req),
+        Err(_) => rpc_error_with_id(Value::Null, -32700, "parse error"),
+    }
+}
+
+fn dispatch_jsonrpc_request(state: &AppState, req: &JsonRpcRequest) -> JsonRpcResponse {
+    match req.method.as_str() {
         "SendMessage" | "message/send" | "SendStreamingMessage" | "message/stream" => {
-            match handle_send_message(&state, &req.method, &req.params) {
-                Ok(result) => rpc_result(&req, result),
-                Err(err) => rpc_error(&req, -32602, &err),
+            match handle_send_message(state, &req.method, &req.params) {
+                Ok(result) => rpc_result(req, result),
+                Err(err) => rpc_error(req, -32602, &err),
             }
         }
         "GetTask" | "tasks/get" => match task_id_from_params(&req.params) {
-            Ok(id) => match get_task(&state, &id) {
-                Some(task) => rpc_result(&req, task_to_value(&task, uses_v1_method(&req.method))),
-                None => rpc_error(&req, -32001, "task not found"),
+            Ok(id) => match get_task(state, &id) {
+                Some(task) => rpc_result(req, task_to_value(&task, uses_v1_method(&req.method))),
+                None => rpc_error(req, -32001, "task not found"),
             },
-            Err(err) => rpc_error(&req, -32602, &err),
+            Err(err) => rpc_error(req, -32602, &err),
         },
         "ListTasks" | "tasks/list" => {
-            rpc_result(&req, list_tasks(&state, uses_v1_method(&req.method)))
+            rpc_result(req, list_tasks(state, uses_v1_method(&req.method)))
         }
         "CancelTask" | "tasks/cancel" => match task_id_from_params(&req.params) {
-            Ok(id) => match cancel_task(&state, &id) {
-                Some(task) => rpc_result(&req, task_to_value(&task, uses_v1_method(&req.method))),
-                None => rpc_error(&req, -32001, "task not found"),
+            Ok(id) => match cancel_task(state, &id) {
+                Some(task) => rpc_result(req, task_to_value(&task, uses_v1_method(&req.method))),
+                None => rpc_error(req, -32001, "task not found"),
             },
-            Err(err) => rpc_error(&req, -32602, &err),
+            Err(err) => rpc_error(req, -32602, &err),
         },
         "GetExtendedAgentCard" | "agent/getExtendedCard" | "agent/getAuthenticatedExtendedCard" => {
             rpc_result(
-                &req,
+                req,
                 extended_agent_card(
                     &state.config,
                     state
@@ -218,12 +229,11 @@ async fn jsonrpc_handler(
             )
         }
         _ => rpc_error(
-            &req,
+            req,
             -32601,
             &format!("method not supported: {}", req.method),
         ),
-    };
-    (StatusCode::OK, Json(response))
+    }
 }
 
 async fn run_handler(State(state): State<AppState>, Json(body): Json<Value>) -> Json<Value> {
@@ -253,10 +263,7 @@ fn handle_send_message(state: &AppState, method: &str, params: &Value) -> Result
 }
 
 fn store_task(state: &AppState, task: StoredTask) {
-    let mut store = state
-        .tasks
-        .write()
-        .expect("task store lock should not be poisoned");
+    let mut store = write_task_store(state);
     store.order.push_back(task.id.clone());
     store.tasks.insert(task.id.clone(), task);
     while store.order.len() > MAX_STORED_TASKS {
@@ -267,20 +274,11 @@ fn store_task(state: &AppState, task: StoredTask) {
 }
 
 fn get_task(state: &AppState, id: &str) -> Option<StoredTask> {
-    state
-        .tasks
-        .read()
-        .expect("task store lock should not be poisoned")
-        .tasks
-        .get(id)
-        .cloned()
+    read_task_store(state).tasks.get(id).cloned()
 }
 
 fn cancel_task(state: &AppState, id: &str) -> Option<StoredTask> {
-    let mut store = state
-        .tasks
-        .write()
-        .expect("task store lock should not be poisoned");
+    let mut store = write_task_store(state);
     let task = store.tasks.get_mut(id)?;
     task.state = "canceled".to_string();
     task.updated_at = Utc::now();
@@ -288,10 +286,7 @@ fn cancel_task(state: &AppState, id: &str) -> Option<StoredTask> {
 }
 
 fn list_tasks(state: &AppState, use_v1: bool) -> Value {
-    let store = state
-        .tasks
-        .read()
-        .expect("task store lock should not be poisoned");
+    let store = read_task_store(state);
     let tasks: Vec<Value> = store
         .order
         .iter()
@@ -299,6 +294,14 @@ fn list_tasks(state: &AppState, use_v1: bool) -> Value {
         .map(|task| task_to_value(task, use_v1))
         .collect();
     json!({ "tasks": tasks })
+}
+
+fn read_task_store(state: &AppState) -> RwLockReadGuard<'_, TaskStore> {
+    state.tasks.read().unwrap_or_else(|err| err.into_inner())
+}
+
+fn write_task_store(state: &AppState) -> RwLockWriteGuard<'_, TaskStore> {
+    state.tasks.write().unwrap_or_else(|err| err.into_inner())
 }
 
 fn task_to_value(task: &StoredTask, use_v1: bool) -> Value {
@@ -531,6 +534,18 @@ fn rpc_error(req: &JsonRpcRequest, code: i32, message: &str) -> JsonRpcResponse 
     }
 }
 
+fn rpc_error_with_id(id: Value, code: i32, message: &str) -> JsonRpcResponse {
+    JsonRpcResponse {
+        jsonrpc: jsonrpc_version(),
+        id,
+        result: None,
+        error: Some(JsonRpcError {
+            code,
+            message: message.to_string(),
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -591,6 +606,97 @@ mod tests {
         let id = result["id"].as_str().unwrap();
         let task = cancel_task(&state, id).unwrap();
         assert_eq!(task.state, "canceled");
+    }
+
+    #[test]
+    fn unknown_method_returns_method_not_found() {
+        let state = state();
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: json!(1),
+            method: "Nope".to_string(),
+            params: Value::Null,
+        };
+        let response = dispatch_jsonrpc_request(&state, &req);
+        assert_eq!(response.error.unwrap().code, -32601);
+    }
+
+    #[test]
+    fn missing_task_returns_jsonrpc_error() {
+        let state = state();
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: json!("req-1"),
+            method: "GetTask".to_string(),
+            params: json!({"id": "missing"}),
+        };
+        let response = dispatch_jsonrpc_request(&state, &req);
+        let error = response.error.unwrap();
+        assert_eq!(error.code, -32001);
+        assert_eq!(error.message, "task not found");
+    }
+
+    #[test]
+    fn cancel_missing_task_returns_jsonrpc_error() {
+        let state = state();
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: json!("req-1"),
+            method: "CancelTask".to_string(),
+            params: json!({"id": "missing"}),
+        };
+        let response = dispatch_jsonrpc_request(&state, &req);
+        let error = response.error.unwrap();
+        assert_eq!(error.code, -32001);
+        assert_eq!(error.message, "task not found");
+    }
+
+    #[test]
+    fn missing_task_id_returns_invalid_params() {
+        assert_eq!(
+            task_id_from_params(&json!({"other": "missing"})).unwrap_err(),
+            "task id is required"
+        );
+    }
+
+    #[test]
+    fn store_task_evicts_oldest_entries() {
+        let state = state();
+        for index in 0..=MAX_STORED_TASKS {
+            store_task(
+                &state,
+                StoredTask {
+                    id: format!("task-{index}"),
+                    context_id: format!("context-{index}"),
+                    input_text: "input".to_string(),
+                    output_text: "output".to_string(),
+                    state: "completed".to_string(),
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                },
+            );
+        }
+        assert!(get_task(&state, "task-0").is_none());
+        assert!(get_task(&state, "task-1").is_some());
+        assert_eq!(
+            list_tasks(&state, true)["tasks"].as_array().unwrap().len(),
+            MAX_STORED_TASKS
+        );
+    }
+
+    #[test]
+    fn extract_text_returns_none_for_empty_or_garbage_input() {
+        assert!(extract_text(&json!({})).is_none());
+        assert!(extract_text(&json!({"message": {"parts": [{"kind": "text"}]}})).is_none());
+    }
+
+    #[test]
+    fn malformed_json_returns_parse_error_envelope() {
+        let state = state();
+        let response = handle_jsonrpc_body(&state, br#"{"jsonrpc":"2.0","method":"SendMessage""#);
+        let error = response.error.unwrap();
+        assert_eq!(error.code, -32700);
+        assert_eq!(response.id, Value::Null);
     }
 
     #[test]
