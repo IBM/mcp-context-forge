@@ -477,7 +477,7 @@ fn delay_from_parts(
         if !value.is_finite() || value < 0.0 {
             return Err("delay_seconds must be a finite non-negative number".to_string());
         }
-        return Ok(Duration::from_secs_f64(value).min(MAX_DELAY));
+        return Ok(Duration::from_secs_f64(value.min(MAX_DELAY.as_secs_f64())));
     }
     Ok(default_latency)
 }
@@ -600,6 +600,19 @@ mod tests {
             delay_ms: None,
         };
         assert!(delay_from_time_args(&args, Duration::from_secs(1)).is_err());
+    }
+
+    #[test]
+    fn delay_seconds_caps_before_duration_conversion() {
+        let args = TimeArgs {
+            timezone: None,
+            delay_seconds: Some(f64::MAX),
+            delay_ms: None,
+        };
+        assert_eq!(
+            delay_from_time_args(&args, Duration::from_secs(1)).unwrap(),
+            MAX_DELAY
+        );
     }
 
     #[test]
