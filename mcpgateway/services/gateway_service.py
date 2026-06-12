@@ -736,6 +736,49 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             logger.warning("OAuth endpoint discovery failed for issuer %s: %s", issuer, _e)
         return raw_oauth_config
 
+    _VALID_SUBJECT_TOKEN_SOURCES = ("inbound_user_jwt", "user_oauth_token")
+    _DEFAULT_REQUESTED_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:access_token"  # nosec B105 - RFC 8693 URI
+
+    @staticmethod
+    def _validate_token_exchange_config(oauth_config: dict) -> dict:
+        """Validate and default RFC 8693 token-exchange config. No-op for other grants.
+
+        Args:
+            oauth_config: Raw gateway oauth_config dict.
+
+        Returns:
+            The config with token-exchange defaults applied.
+
+        Raises:
+            ValueError: If grant_type is token-exchange but config is invalid.
+        """
+        if not oauth_config or oauth_config.get("grant_type") != "token-exchange":
+            return oauth_config
+
+        if not oauth_config.get("target_audience"):
+            raise ValueError("target_audience is required for token-exchange grant type")
+        token_url = oauth_config.get("token_url")
+        if not token_url:
+            raise ValueError("token_url is required for token-exchange grant type")
+        # SSRF guard (B4): the user's inbound CF JWT is sent to token_url as the
+        # subject_token, so token_url must pass the same egress validation the
+        # auto-discover path applies to `issuer`. Raises ValueError on internal /
+        # disallowed hosts.
+        try:
+            SecurityValidator.validate_url(token_url, "OAuth token URL")
+        except ValueError as e:
+            # L7: a rejected token_url is a security-relevant config attempt; record it
+            # (sanitized) so the security audit sees attempted SSRF-shaped configs.
+            logger.warning("Rejected token-exchange token_url for SSRF/validation: %s", SecurityValidator.sanitize_log_message(str(e)))
+            raise
+
+        source = oauth_config.setdefault("subject_token_source", "inbound_user_jwt")
+        if source not in GatewayService._VALID_SUBJECT_TOKEN_SOURCES:
+            raise ValueError(f"subject_token_source must be one of {GatewayService._VALID_SUBJECT_TOKEN_SOURCES}, got '{source}'")
+
+        oauth_config.setdefault("requested_token_type", GatewayService._DEFAULT_REQUESTED_TOKEN_TYPE)
+        return oauth_config
+
     @staticmethod
     def normalize_url(url: str) -> str:
         """
@@ -1086,7 +1129,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 new_oauth = oauth_config or {}
 
                 # Compare key OAuth fields
-                oauth_keys = ["grant_type", "client_id", "authorization_url", "token_url", "scope"]
+                oauth_keys = ["grant_type", "client_id", "authorization_url", "token_url", "scope", "target_audience", "subject_token_source"]
                 if all(existing_oauth.get(k) == new_oauth.get(k) for k in oauth_keys):
                     return existing  # Duplicate OAuth config found
 
@@ -1201,6 +1244,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         raw_oauth_config = getattr(gateway, "oauth_config", None)
         raw_oauth_config = await self._auto_discover_oauth_endpoints(raw_oauth_config)
+        raw_oauth_config = self._validate_token_exchange_config(raw_oauth_config)
         oauth_config = await protect_oauth_config_for_storage(raw_oauth_config)
         ca_certificate = getattr(gateway, "ca_certificate", None)
         init_client_cert = getattr(gateway, "client_cert", None)
@@ -2558,6 +2602,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 if gateway_update.oauth_config is not None:
                     raw_oauth_update = dict(gateway_update.oauth_config)
                     raw_oauth_update = await self._auto_discover_oauth_endpoints(raw_oauth_update)
+                    raw_oauth_update = self._validate_token_exchange_config(raw_oauth_update)
                     gateway.oauth_config = await protect_oauth_config_for_storage(raw_oauth_update, existing_oauth_config=gateway.oauth_config)
 
                 # Handle auth_value updates (both existing and new auth values)
