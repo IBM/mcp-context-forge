@@ -184,9 +184,7 @@ test.describe("Gateways page", () => {
     await expect(card.getByTestId("last-updated")).toBeVisible();
   });
 
-  test("opens server actions dropdown menu and shows disabled placeholder items", async ({
-    page,
-  }) => {
+  test("opens server actions dropdown menu and hides unavailable actions", async ({ page }) => {
     await page.route("**/servers?*", async (route) => {
       await route.fulfill({
         status: 200,
@@ -204,12 +202,9 @@ test.describe("Gateways page", () => {
     await expect(viewDetails).toBeVisible();
     await expect(viewDetails).not.toHaveAttribute("data-disabled", "");
 
-    // Check that Edit server and Delete menu items exist
-    const editServer = page.getByRole("menuitem", { name: "Edit server" });
-    await expect(editServer).toBeVisible();
-
-    const deleteItem = page.getByRole("menuitem", { name: "Delete" });
-    await expect(deleteItem).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Edit server" })).toHaveCount(0);
+    await expect(page.getByRole("menuitem", { name: "Deactivate" })).toHaveCount(0);
+    await expect(page.getByRole("menuitem", { name: "Delete" })).toHaveCount(0);
   });
 
   test("opens virtual server details panel from row actions", async ({ page }) => {
