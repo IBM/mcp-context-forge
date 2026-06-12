@@ -559,7 +559,7 @@ class TestLoggingIntegration:
         """Test that initialization logs parameters."""
         service = Argon2PasswordService(time_cost=4, memory_cost=32768, parallelism=2)
 
-        mock_logger.info.assert_called_once_with("Initialized Argon2PasswordService with time_cost=4, memory_cost=32768, parallelism=2")
+        mock_logger.info.assert_called_once_with("Initialized Argon2PasswordService with time_cost=%s, memory_cost=%s, parallelism=%s", 4, 32768, 2)
 
     @patch("mcpgateway.services.argon2_service.logger")
     def test_hash_password_success_logging(self, mock_logger):
@@ -585,7 +585,8 @@ class TestLoggingIntegration:
         with pytest.raises(HashingError):
             service.hash_password("test")
 
-        mock_logger.error.assert_called_with("Failed to hash password: Mock error")
+        assert mock_logger.error.call_args[0][0] == "Failed to hash password: %s"
+        assert str(mock_logger.error.call_args[0][1]) == "Mock error"
 
     @patch("mcpgateway.services.argon2_service.logger")
     def test_verify_password_success_logging(self, mock_logger):
@@ -639,7 +640,8 @@ class TestLoggingIntegration:
         result = service.verify_password("test", "invalid")
 
         assert result is False
-        mock_logger.warning.assert_called_with("Invalid hash format during verification: Bad hash")
+        assert mock_logger.warning.call_args[0][0] == "Invalid hash format during verification: %s"
+        assert str(mock_logger.warning.call_args[0][1]) == "Bad hash"
 
     @patch("mcpgateway.services.argon2_service.logger")
     def test_verify_password_unexpected_error_logging(self, mock_logger):
@@ -657,7 +659,8 @@ class TestLoggingIntegration:
         result = service.verify_password("test", "$argon2id$fake")
 
         assert result is False
-        mock_logger.error.assert_called_with("Unexpected error during password verification: Unexpected")
+        assert mock_logger.error.call_args[0][0] == "Unexpected error during password verification: %s"
+        assert str(mock_logger.error.call_args[0][1]) == "Unexpected"
 
     @patch("mcpgateway.services.argon2_service.logger")
     def test_needs_rehash_invalid_hash_logging(self, mock_logger):
@@ -675,7 +678,8 @@ class TestLoggingIntegration:
         result = service.needs_rehash("invalid")
 
         assert result is True
-        mock_logger.warning.assert_called_with("Invalid hash format when checking rehash need: Bad hash")
+        assert mock_logger.warning.call_args[0][0] == "Invalid hash format when checking rehash need: %s"
+        assert str(mock_logger.warning.call_args[0][1]) == "Bad hash"
 
     @patch("mcpgateway.services.argon2_service.logger")
     def test_needs_rehash_unexpected_error_logging(self, mock_logger):
@@ -693,7 +697,8 @@ class TestLoggingIntegration:
         result = service.needs_rehash("$argon2id$fake")
 
         assert result is True
-        mock_logger.error.assert_called_with("Unexpected error checking rehash need: Unexpected")
+        assert mock_logger.error.call_args[0][0] == "Unexpected error checking rehash need: %s"
+        assert str(mock_logger.error.call_args[0][1]) == "Unexpected"
 
     @patch("mcpgateway.services.argon2_service.logger")
     def test_get_hash_info_parse_error_logging(self, mock_logger):

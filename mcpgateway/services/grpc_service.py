@@ -306,7 +306,7 @@ class GrpcService:
             try:
                 await self._perform_reflection(db, db_service)
             except Exception as e:
-                logger.warning(f"Initial reflection failed for {db_service.name}: {e}")
+                logger.warning("Initial reflection failed for %s: %s", db_service.name, e)
 
         return GrpcServiceRead.model_validate(db_service)
 
@@ -390,7 +390,7 @@ class GrpcService:
                 s.team = team_map.get(s.team_id) if s.team_id else None
                 result.append(GrpcServiceRead.model_validate(s))
             except (ValidationError, ValueError, KeyError, TypeError) as e:
-                logger.exception(f"Failed to convert gRPC service {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
+                logger.exception("Failed to convert gRPC service %s (%s): %s", getattr(s, "id", "unknown"), getattr(s, "name", "unknown"), e)
 
         # Return appropriate format based on pagination type
         if page is not None:
@@ -610,7 +610,7 @@ class GrpcService:
             await self._perform_reflection(db, service)
             logger.info("Reflection completed for %s: %s services, %s methods", service.name, service.service_count, service.method_count)
         except Exception as e:
-            logger.error(f"Reflection failed for {service.name}: {e}")
+            logger.error("Reflection failed for %s: %s", service.name, e)
             service.reachable = False
             db.commit()
             raise GrpcServiceError(f"Reflection failed: {str(e)}")
@@ -771,7 +771,7 @@ class GrpcService:
                                         service_count += 1
 
                 except Exception as detail_error:
-                    logger.warning(f"Failed to get details for {service_name}: {detail_error}")
+                    logger.warning("Failed to get details for %s: %s", service_name, detail_error)
                     # Add basic info even if detailed discovery fails
                     discovered_services[service_name] = {
                         "name": service_name,
@@ -797,7 +797,7 @@ class GrpcService:
             db.commit()
 
         except Exception as e:
-            logger.error(f"Reflection error for {service.target}: {e}")
+            logger.error("Reflection error for %s: %s", service.target, e)
             service.reachable = False
             db.commit()
             raise

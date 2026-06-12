@@ -126,7 +126,7 @@ class PermissionService:
             if token_teams is not None and len(token_teams) == 0:
                 # Public-only tokens: admin bypass is suppressed entirely
                 if allow_admin_bypass and await self._is_user_admin(user_email):
-                    logger.warning(f"[RBAC] Admin bypass suppressed for public-only token: " f"user={SecurityValidator.sanitize_log_message(user_email)}, permission={permission}")
+                    logger.warning("[RBAC] Admin bypass suppressed for public-only token: user=%s, permission=%s", SecurityValidator.sanitize_log_message(user_email), permission)
                 # Continue to permission check without admin bypass
             elif allow_admin_bypass and await self._is_user_admin(user_email):
                 # Check if user is admin (bypass all permission checks if allowed)
@@ -155,13 +155,17 @@ class PermissionService:
                 )
 
             logger.debug(
-                f"Permission check: user={SecurityValidator.sanitize_log_message(user_email)}, permission={permission}, team={SecurityValidator.sanitize_log_message(team_id)}, granted={granted}"
+                "Permission check: user=%s, permission=%s, team=%s, granted=%s",
+                SecurityValidator.sanitize_log_message(user_email),
+                permission,
+                SecurityValidator.sanitize_log_message(team_id),
+                granted,
             )
 
             return granted
 
         except Exception as e:
-            logger.error(f"Error checking permission for {SecurityValidator.sanitize_log_message(user_email)}: {e}")
+            logger.error("Error checking permission for %s: %s", SecurityValidator.sanitize_log_message(user_email), e)
             # Default to deny on error
             return False
 
@@ -216,7 +220,7 @@ class PermissionService:
             return False
 
         except Exception as e:
-            logger.error(f"Error checking admin permission for {SecurityValidator.sanitize_log_message(user_email)}: {e}")
+            logger.error("Error checking admin permission for %s: %s", SecurityValidator.sanitize_log_message(user_email), e)
             return False
 
     async def get_user_permissions(self, user_email: str, team_id: Optional[str] = None, include_all_teams: bool = False, token_teams: Optional[List[str]] = None) -> Set[str]:
@@ -263,19 +267,19 @@ class PermissionService:
             cache_key = f"{user_email}:{team_id or 'global'}{tt_suffix}"
         if self._is_cache_valid(cache_key):
             cached_perms = self._permission_cache[cache_key]
-            logger.debug(f"[RBAC] Cache hit for {SecurityValidator.sanitize_log_message(user_email)} (team_id={SecurityValidator.sanitize_log_message(team_id)}): {cached_perms}")
+            logger.debug("[RBAC] Cache hit for %s (team_id=%s): %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(team_id), cached_perms)
             return cached_perms
 
         permissions = set()
 
         # Get all active roles for the user (with eager-loaded role relationship)
         user_roles = await self._get_user_roles(user_email, team_id, include_all_teams=include_all_teams, token_teams=token_teams)
-        logger.debug(f"[RBAC] Found {len(user_roles)} roles for {SecurityValidator.sanitize_log_message(user_email)} (team_id={SecurityValidator.sanitize_log_message(team_id)})")
+        logger.debug("[RBAC] Found %s roles for %s (team_id=%s)", len(user_roles), SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(team_id))
 
         # Collect permissions from all roles
         for user_role in user_roles:
             role_permissions = user_role.role.get_effective_permissions()
-            logger.debug(f"[RBAC] Role '{user_role.role.name}' (scope={user_role.scope}, scope_id={user_role.scope_id}) has permissions: {role_permissions}")
+            logger.debug("[RBAC] Role '%s' (scope=%s, scope_id=%s) has permissions: %s", user_role.role.name, user_role.scope, user_role.scope_id, role_permissions)
             permissions.update(role_permissions)
 
         # Cache both permissions and roles
@@ -483,7 +487,7 @@ class PermissionService:
             self._roles_cache.pop(key, None)
             self._cache_timestamps.pop(key, None)
 
-        logger.debug(f"Cleared permission cache for user: {SecurityValidator.sanitize_log_message(user_email)}")
+        logger.debug("Cleared permission cache for user: %s", SecurityValidator.sanitize_log_message(user_email))
 
     def clear_cache(self) -> None:
         """Clear all cached permissions.
@@ -541,9 +545,10 @@ class PermissionService:
             # return global and personal roles (needed for join endpoint and other operations).
             if token_teams is not None and (len(token_teams) == 0 or team_id not in token_teams):
                 logger.debug(
-                    f"[RBAC] Team {SecurityValidator.sanitize_log_message(team_id)} not in token scope "
-                    f"{SecurityValidator.sanitize_log_message(token_teams)} for {SecurityValidator.sanitize_log_message(user_email)}: "
-                    f"excluding team-scoped roles but keeping global/personal roles"
+                    "[RBAC] Team %s not in token scope %s for %s: excluding team-scoped roles but keeping global/personal roles",
+                    SecurityValidator.sanitize_log_message(team_id),
+                    SecurityValidator.sanitize_log_message(token_teams),
+                    SecurityValidator.sanitize_log_message(user_email),
                 )
             else:
                 # Team is in scope: include team-scoped roles for this team
@@ -572,7 +577,7 @@ class PermissionService:
                 if len(token_teams) == 0:
                     # Public-only token: exclude ALL team-scoped roles
                     # Only global and personal roles remain
-                    logger.debug(f"[RBAC] Public-only token for {SecurityValidator.sanitize_log_message(user_email)}: excluding all team-scoped roles")
+                    logger.debug("[RBAC] Public-only token for %s: excluding all team-scoped roles", SecurityValidator.sanitize_log_message(user_email))
                     # Do NOT append base_condition - this excludes all team roles
                 else:
                     # Narrowed token: include only specified teams

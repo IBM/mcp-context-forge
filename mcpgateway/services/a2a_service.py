@@ -770,9 +770,9 @@ class A2AAgentService(BaseService):
                             "uaid_proto": getattr(agent_data, "uaid_protocol", None) or "a2a",
                             "uaid_native_id": native_id_source,  # Store the routing address (may differ from endpoint_url)
                         }
-                        logger.info(f"Generated UAID for agent {agent_data.name}: {uaid!r}")
+                        logger.info("Generated UAID for agent %s: %r", agent_data.name, uaid)
                     except Exception as uaid_error:
-                        logger.warning(f"Failed to generate UAID for agent {agent_data.name}: {uaid_error}. Falling back to UUID only.")
+                        logger.warning("Failed to generate UAID for agent %s: %s. Falling back to UUID only.", agent_data.name, uaid_error)
                         uaid_metadata = {}
 
                 # Create new agent (id will be auto-generated as UUID)
@@ -829,7 +829,7 @@ class A2AAgentService(BaseService):
 
                     metrics_cache.invalidate("a2a")
                 except Exception as cache_error:
-                    logger.warning(f"Cache invalidation failed after agent commit: {cache_error}")
+                    logger.warning("Cache invalidation failed after agent commit: %s", cache_error)
 
                 try:
                     # Standard
@@ -867,13 +867,13 @@ class A2AAgentService(BaseService):
                     new_agent.tool = tool_db
                     db.commit()
                     db.refresh(new_agent)
-                    logger.info(f"Registered new A2A agent: {new_agent.name} (ID: {new_agent.id}) with tool ID: {tool_db.id}")
+                    logger.info("Registered new A2A agent: %s (ID: %s) with tool ID: %s", new_agent.name, new_agent.id, tool_db.id)
                 except Exception as tool_error:
                     # Log the error but don't fail agent registration
                     # Agent was already committed above, so it persists even if tool creation fails
-                    logger.warning(f"Failed to create tool for A2A agent {new_agent.name}: {tool_error}")
+                    logger.warning("Failed to create tool for A2A agent %s: %s", new_agent.name, tool_error)
                     structured_logger.warning(
-                        f"A2A agent '{new_agent.name}' created without tool association",
+                        f"A2A agent '{new_agent.name}' created without tool association",  # noqa: G004
                         user_id=created_by,
                         resource_type="a2a_agent",
                         resource_id=str(new_agent.id),
@@ -881,11 +881,11 @@ class A2AAgentService(BaseService):
                     )
                     # Refresh the agent to ensure it's in a clean state after any rollback
                     db.refresh(new_agent)
-                    logger.info(f"Registered new A2A agent: {new_agent.name} (ID: {new_agent.id}) without tool")
+                    logger.info("Registered new A2A agent: %s (ID: %s) without tool", new_agent.name, new_agent.id)
 
                 # Log A2A agent registration for lifecycle tracking
                 structured_logger.info(
-                    f"A2A agent '{new_agent.name}' registered successfully",
+                    f"A2A agent '{new_agent.name}' registered successfully",  # noqa: G004
                     user_id=created_by,
                     user_email=owner_email,
                     team_id=team_id,
@@ -913,7 +913,7 @@ class A2AAgentService(BaseService):
             except IntegrityError as ie:
                 set_span_error(span, ie)
                 db.rollback()
-                logger.error(f"IntegrityErrors in group: {ie}")
+                logger.error("IntegrityErrors in group: %s", ie)
                 raise ie
             except ValueError as ve:
                 set_span_error(span, ve)
@@ -1060,7 +1060,7 @@ class A2AAgentService(BaseService):
                 s.team = team_map.get(s.team_id) if s.team_id else None
                 result.append(self.convert_agent_to_read(s, include_metrics=False, db=db, team_map=team_map))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                logger.exception(f"Failed to convert A2A agent {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
+                logger.exception("Failed to convert A2A agent %s (%s): %s", getattr(s, "id", "unknown"), getattr(s, "name", "unknown"), e)
                 # Continue with remaining agents instead of failing completely
 
         # Return appropriate format based on pagination type
@@ -1121,7 +1121,7 @@ class A2AAgentService(BaseService):
             if isinstance(email_value, str):
                 user_email = email_value
             else:
-                logger.warning(f"list_agents_for_user: user_info['email'] is non-string type {type(email_value).__name__}, using empty string")
+                logger.warning("list_agents_for_user: user_info['email'] is non-string type %s, using empty string", type(email_value).__name__)
                 user_email = ""
 
         # Build query following existing patterns from list_prompts()
@@ -1183,7 +1183,7 @@ class A2AAgentService(BaseService):
             try:
                 result.append(self.convert_agent_to_read(agent, include_metrics=False, db=db, team_map=team_map))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                logger.exception(f"Failed to convert A2A agent {getattr(agent, 'id', 'unknown')} ({getattr(agent, 'name', 'unknown')}): {e}")
+                logger.exception("Failed to convert A2A agent %s (%s): %s", getattr(agent, "id", "unknown"), getattr(agent, "name", "unknown"), e)
                 # Continue with remaining agents instead of failing completely
 
         return result
@@ -1546,7 +1546,7 @@ class A2AAgentService(BaseService):
             # Clear auth_query_params when switching away from query_param auth
             if original_auth_type == "query_param" and agent_data.auth_type is not None and agent_data.auth_type != "query_param":
                 agent.auth_query_params = None
-                logger.debug(f"Cleared auth_query_params for agent {agent.id} (switched from query_param to {agent_data.auth_type})")
+                logger.debug("Cleared auth_query_params for agent %s (switched from query_param to %s)", agent.id, agent_data.auth_type)
 
             # Handle switching to query_param auth or updating existing query_param credentials
             is_switching_to_queryparam = agent_data.auth_type == "query_param" and original_auth_type != "query_param"
@@ -1666,9 +1666,9 @@ class A2AAgentService(BaseService):
                     agent.uaid_proto = getattr(agent_data, "uaid_protocol", None) or "a2a"
                     agent.uaid_native_id = native_id_source  # Store the routing address
 
-                    logger.info(f"Generated UAID for existing agent {agent.name} (ID: {agent.id}): {uaid!r}")
+                    logger.info("Generated UAID for existing agent %s (ID: %s): %r", agent.name, agent.id, uaid)
                 except Exception as uaid_error:
-                    logger.warning(f"Failed to generate UAID for agent {agent.name}: {uaid_error}. Continuing without UAID.")
+                    logger.warning("Failed to generate UAID for agent %s: %s. Continuing without UAID.", agent.name, uaid_error)
 
             # Update metadata
             if modified_by:
@@ -1721,9 +1721,9 @@ class A2AAgentService(BaseService):
                     modified_user_agent=modified_user_agent,
                 )
             except Exception as tool_err:
-                logger.warning(f"Failed to sync tool for A2A agent {agent.id}: {tool_err}. Agent update succeeded but tool may be out of sync.")
+                logger.warning("Failed to sync tool for A2A agent %s: %s. Agent update succeeded but tool may be out of sync.", agent.id, tool_err)
 
-            logger.info(f"Updated A2A agent: {agent.name} (ID: {agent.id})")
+            logger.info("Updated A2A agent: %s (ID: %s)", agent.name, agent.id)
             return self.convert_agent_to_read(agent, db=db)
         except PermissionError:
             db.rollback()
@@ -1736,7 +1736,7 @@ class A2AAgentService(BaseService):
             raise nf
         except IntegrityError as ie:
             db.rollback()
-            logger.error(f"IntegrityErrors in group: {ie}")
+            logger.error("IntegrityErrors in group: %s", ie)
             raise ie
         except Exception as e:
             db.rollback()
@@ -1808,7 +1808,7 @@ class A2AAgentService(BaseService):
                             await tool_lookup_cache.invalidate(agent.tool.name, gateway_id=str(agent.tool.gateway_id) if agent.tool.gateway_id else None)
 
                 status = "activated" if activate else "deactivated"
-                logger.info(f"A2A agent {status}: {agent.name} (ID: {agent.id})")
+                logger.info("A2A agent %s: %s (ID: %s)", status, agent.name, agent.id)
 
                 structured_logger.log(
                     level="INFO",
@@ -1906,7 +1906,7 @@ class A2AAgentService(BaseService):
                 except Exception as exc:
                     logger.warning("Rust-cache invalidation scheduling failed for agent %s: %s", agent_name, exc)
 
-                logger.info(f"Deleted A2A agent: {agent_name} (ID: {agent_id})")
+                logger.info("Deleted A2A agent: %s (ID: %s)", agent_name, agent_id)
 
                 structured_logger.log(
                     level="INFO",
@@ -2016,7 +2016,7 @@ class A2AAgentService(BaseService):
                 # Not found locally — attempt cross-gateway routing.
                 # Hop-count enforcement above already rejected requests
                 # that came in at the limit, so this path is safe.
-                logger.info(f"UAID agent not found locally, attempting cross-gateway routing: {identifier!r}")
+                logger.info("UAID agent not found locally, attempting cross-gateway routing: %r", identifier)
                 return await self._invoke_remote_agent(
                     uaid=identifier,
                     parameters=parameters,
@@ -2435,14 +2435,14 @@ class A2AAgentService(BaseService):
                 raise
             except RustA2ARuntimeError as e:
                 error_message = sanitize_exception_message(str(e), prepared.sensitive_query_param_names)
-                logger.error(f"Rust A2A runtime failed for agent '{agent_name}': {error_message}")
+                logger.error("Rust A2A runtime failed for agent '%s': %s", agent_name, error_message)
                 if span:
                     set_span_error(span, error_message)
                 raise A2AAgentError(f"Failed to invoke A2A agent: {error_message}") from e
             except Exception as e:
                 # Sanitize error message to prevent URL secrets from leaking in logs
                 error_message = sanitize_exception_message(str(e), prepared.sensitive_query_param_names)
-                logger.error(f"Failed to invoke A2A agent '{agent_name}': {error_message}")
+                logger.error("Failed to invoke A2A agent '%s': %s", agent_name, error_message)
                 if span:
                     set_span_error(span, error_message)
                 raise A2AAgentError(f"Failed to invoke A2A agent: {error_message}")
@@ -2495,7 +2495,7 @@ class A2AAgentService(BaseService):
                         error_message=error_message,
                     )
                 except Exception as metrics_error:
-                    logger.warning(f"Failed to record A2A metrics for '{agent_name}': {metrics_error}")
+                    logger.warning("Failed to record A2A metrics for '%s': %s", agent_name, metrics_error)
 
                 # Update last interaction timestamp (quick separate write)
                 try:
@@ -2506,7 +2506,7 @@ class A2AAgentService(BaseService):
                             db_agent.last_interaction = end_time
                             ts_db.commit()
                 except Exception as ts_error:
-                    logger.warning(f"Failed to update last_interaction for '{agent_name}': {ts_error}")
+                    logger.warning("Failed to update last_interaction for '%s': %s", agent_name, ts_error)
                 if span:
                     set_span_attribute(span, "success", success)
                     set_span_attribute(span, "duration.ms", response_time * 1000)
@@ -2556,7 +2556,7 @@ class A2AAgentService(BaseService):
             endpoint = routing["endpoint"]
             registry = routing.get("registry")
 
-            logger.info(f"Cross-gateway routing: {uaid!r} -> {protocol}://{endpoint}")
+            logger.info("Cross-gateway routing: %r -> %s://%s", uaid, protocol, endpoint)
 
             # ═══════════════════════════════════════════════════════════════════════════
             # SECURITY WARNING: Log cross-gateway authentication model on first call
@@ -2947,10 +2947,10 @@ class A2AAgentService(BaseService):
             # non-2xx path (the 2xx path's inner try already converts
             # these into `A2AAgentError`).  A remote that lies about
             # its Content-Type charset lands here.
-            logger.error(f"Cross-gateway routing response decode failure: {e}")
+            logger.error("Cross-gateway routing response decode failure: %s", e)
             raise A2AAgentError(f"Cross-gateway routing failed: response decode error: {e}")
         except ValueError as e:
-            logger.error(f"Failed to parse UAID or validate endpoint: {e}")
+            logger.error("Failed to parse UAID or validate endpoint: %s", e)
             raise A2AAgentError(f"Invalid UAID or endpoint not allowed: {e}")
         except (httpx.HTTPError, OSError) as e:
             # Narrowed from a bare `except Exception` so we no longer
@@ -2962,7 +2962,7 @@ class A2AAgentService(BaseService):
             # Decode errors are caught by the dedicated handler above.
             # Programmer errors and asyncio.CancelledError deliberately
             # propagate.
-            logger.error(f"Cross-gateway routing transport failure: {e}")
+            logger.error("Cross-gateway routing transport failure: %s", e)
             raise A2AAgentError(f"Cross-gateway routing failed: {e}")
 
     async def aggregate_metrics(self, db: Session) -> A2AAgentAggregateMetrics:

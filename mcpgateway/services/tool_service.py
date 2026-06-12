@@ -561,15 +561,15 @@ def _handle_json_parse_error(response, error, is_error_response: bool = False) -
     """
     msg = "error response" if is_error_response else "response"
     if not response.text:
-        logger.warning(f"Failed to parse JSON {msg}: {error}. Response body was empty.")
+        logger.warning("Failed to parse JSON %s: %s. Response body was empty.", msg, error)
         return {"error": "Empty response body"}
 
     max_length = settings.rest_response_text_max_length
     text = response.text[:max_length] if len(response.text) > max_length else response.text
     if len(response.text) > max_length:
-        logger.warning(f"Failed to parse JSON {msg}: {error}. Response truncated from {len(response.text)} to {max_length} characters.")
+        logger.warning("Failed to parse JSON %s: %s. Response truncated from %s to %s characters.", msg, error, len(response.text), max_length)
     else:
-        logger.warning(f"Failed to parse JSON {msg}: {error}")
+        logger.warning("Failed to parse JSON %s: %s", msg, error)
     return {"response_text": text}
 
 
@@ -709,7 +709,7 @@ def extract_using_jq(data, jq_filter=""):
     # field contains corrupted data). Intentionally simple regex to avoid false
     # positives with valid jq expressions like .foo|.bar
     if re.match(r"^[^.\[\]|]+@[^.\[\]|]+\.[^.\[\]|]+$", jq_filter_str):
-        logger.warning(f"Invalid jq filter (email address): {jq_filter_str}. Treating as empty filter.")
+        logger.warning("Invalid jq filter (email address): %s. Treating as empty filter.", jq_filter_str)
         return data
 
     # Track if input was originally a string (for error handling)
@@ -2109,7 +2109,7 @@ class ToolService(BaseService):
             return self.convert_tool_to_read(db_tool, requesting_user_email=getattr(db_tool, "owner_email", None))
         except IntegrityError as ie:
             db.rollback()
-            logger.error(f"IntegrityError during tool registration: {ie}")
+            logger.error("IntegrityError during tool registration: %s", ie)
 
             # Structured logging: Log database integrity error
             structured_logger.log(
@@ -2127,7 +2127,7 @@ class ToolService(BaseService):
             raise ie
         except ToolNameConflictError as tnce:
             db.rollback()
-            logger.error(f"ToolNameConflictError during tool registration: {tnce}")
+            logger.error("ToolNameConflictError during tool registration: %s", tnce)
 
             # Structured logging: Log name conflict error
             structured_logger.log(
@@ -2382,7 +2382,7 @@ class ToolService(BaseService):
 
         except Exception as e:
             db.rollback()
-            logger.error(f"Failed to process tool chunk: {str(e)}")
+            logger.error("Failed to process tool chunk: %s", str(e))
             stats["failed"] += len(chunk)
             stats["errors"].append(f"Chunk processing failed: {str(e)}")
 
@@ -2555,7 +2555,7 @@ class ToolService(BaseService):
             return {"status": "add", "tool": db_tool}
 
         except Exception as e:
-            logger.warning(f"Failed to process tool {tool.name} in bulk operation: {str(e)}")
+            logger.warning("Failed to process tool %s in bulk operation: %s", tool.name, str(e))
             return {"status": "fail", "error": f"Failed to process tool {tool.name}: {str(e)}"}
 
     def _create_tool_object(
@@ -2806,7 +2806,7 @@ class ToolService(BaseService):
                         )
                     )
                 except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                    logger.exception(f"Failed to convert tool {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
+                    logger.exception("Failed to convert tool %s (%s): %s", getattr(s, "id", "unknown"), getattr(s, "name", "unknown"), e)
                     # Continue with remaining tools instead of failing completely
 
             # Return appropriate format based on pagination type
@@ -2911,7 +2911,7 @@ class ToolService(BaseService):
                 )
 
             cursor = None  # Placeholder for pagination; ignore for now
-            logger.debug(f"Listing server tools for server_id={server_id} with include_inactive={include_inactive}, cursor={cursor}")
+            logger.debug("Listing server tools for server_id=%s with include_inactive=%s, cursor=%s", server_id, include_inactive, cursor)
 
             if not include_inactive:
                 query = query.where(DbTool.enabled)
@@ -2963,7 +2963,7 @@ class ToolService(BaseService):
                         )
                     )
                 except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                    logger.exception(f"Failed to convert tool {getattr(tool, 'id', 'unknown')} ({getattr(tool, 'name', 'unknown')}): {e}")
+                    logger.exception("Failed to convert tool %s (%s): %s", getattr(tool, "id", "unknown"), getattr(tool, "name", "unknown"), e)
                     # Continue with remaining tools instead of failing completely
 
             return result
@@ -3106,9 +3106,9 @@ class ToolService(BaseService):
             try:
                 cursor_data = decode_cursor(cursor)
                 last_id = cursor_data.get("id")
-                logger.debug(f"Decoded cursor: last_id={last_id}")
+                logger.debug("Decoded cursor: last_id=%s", last_id)
             except ValueError as e:
-                logger.warning(f"Invalid cursor, ignoring: {e}")
+                logger.warning("Invalid cursor, ignoring: %s", e)
 
         # Build query following existing patterns from list_tools()
         team_service = TeamManagementService(db)
@@ -3177,7 +3177,7 @@ class ToolService(BaseService):
             try:
                 result.append(self.convert_tool_to_read(tool, include_metrics=False, include_auth=False, requesting_user_email=user_email, requesting_user_is_admin=False))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                logger.exception(f"Failed to convert tool {getattr(tool, 'id', 'unknown')} ({getattr(tool, 'name', 'unknown')}): {e}")
+                logger.exception("Failed to convert tool %s (%s): %s", getattr(tool, "id", "unknown"), getattr(tool, "name", "unknown"), e)
                 # Continue with remaining tools instead of failing completely
 
         next_cursor = None
@@ -3351,7 +3351,7 @@ class ToolService(BaseService):
 
             db.commit()
             await self._notify_tool_deleted(tool_info)
-            logger.info(f"Permanently deleted tool: {tool_info['name']}")
+            logger.info("Permanently deleted tool: %s", tool_info["name"])
 
             # Structured logging: Audit trail for tool deletion
             audit_trail.log_action(
@@ -3521,7 +3521,7 @@ class ToolService(BaseService):
                     # Active
                     await self._notify_tool_activated(tool)
 
-                logger.info(f"Tool: {tool.name} is {'enabled' if activate else 'disabled'}{' and accessible' if reachable else ' but inaccessible'}")
+                logger.info("Tool: %s is %s%s", tool.name, "enabled" if activate else "disabled", " and accessible" if reachable else " but inaccessible")
 
                 # Structured logging: Audit trail for tool state change
                 audit_trail.log_action(
@@ -3629,7 +3629,7 @@ class ToolService(BaseService):
             ToolNotFoundError: If gateway not found or access denied.
             ToolInvocationError: If invocation fails.
         """
-        logger.info(f"Direct proxy tool invocation: {name} via gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
+        logger.info("Direct proxy tool invocation: %s via gateway %s", name, SecurityValidator.sanitize_log_message(gateway_id))
         # Look up gateway
         # Use a fresh session for this lookup
         with fresh_db_session() as db:
@@ -3711,7 +3711,7 @@ class ToolService(BaseService):
                         ):
                             # Call tool with meta if provided
                             if meta_data:
-                                logger.debug(f"Forwarding _meta to remote gateway: {meta_data}")
+                                logger.debug("Forwarding _meta to remote gateway: %s", meta_data)
                                 tool_result = await session.call_tool(name=remote_name, arguments=arguments, meta=meta_data)
                             else:
                                 tool_result = await session.call_tool(name=remote_name, arguments=arguments)
@@ -3727,11 +3727,13 @@ class ToolService(BaseService):
                             pass
 
                         logger.info(
-                            f"[INVOKE TOOL] Using direct_proxy mode for gateway {SecurityValidator.sanitize_log_message(gateway.id)} (from X-Context-Forge-Gateway-Id header). Meta Attached: {meta_data is not None}"
+                            "[INVOKE TOOL] Using direct_proxy mode for gateway %s (from X-Context-Forge-Gateway-Id header). Meta Attached: %s",
+                            SecurityValidator.sanitize_log_message(gateway.id),
+                            meta_data is not None,
                         )
                         return tool_result
         except Exception as e:
-            logger.exception(f"Direct proxy tool invocation failed for {name}: {e}")
+            logger.exception("Direct proxy tool invocation failed for %s: %s", name, e)
             raise ToolInvocationError(f"Direct proxy tool invocation failed: {str(e)}")
 
     async def prepare_rust_mcp_tool_execution(
@@ -3991,7 +3993,7 @@ class ToolService(BaseService):
                         decrypted = decode_auth(encrypted_value)
                         gateway_auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
                     except Exception:  # noqa: S110
-                        logger.debug(f"Failed to decrypt query param '{param_key}' for Rust MCP tool execution plan")
+                        logger.debug("Failed to decrypt query param '%s' for Rust MCP tool execution plan", param_key)
             if gateway_auth_query_params_decrypted and gateway_url:
                 gateway_url = apply_query_param_auth(gateway_url, gateway_auth_query_params_decrypted)
 
@@ -4035,14 +4037,14 @@ class ToolService(BaseService):
                             extra={"gateway_id": gateway_id_str, "user": app_user_email or "<unknown>"},
                         )
                 except Exception as e:
-                    logger.error(f"Failed to obtain stored OAuth token for gateway {gateway_name}: {e}")
+                    logger.error("Failed to obtain stored OAuth token for gateway %s: %s", gateway_name, e)
                     raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
             else:
                 try:
                     access_token = await self.oauth_manager.get_access_token(gateway_oauth_config, ca_certificate=gateway_ca_cert, client_cert=gateway_client_cert, client_key=gateway_client_key)
                     headers = {"Authorization": f"Bearer {access_token}"}
                 except Exception as e:
-                    logger.error(f"Failed to obtain OAuth access token for gateway {gateway_name}: {e}")
+                    logger.error("Failed to obtain OAuth access token for gateway %s: %s", gateway_name, e)
                     raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
         else:
             headers = decode_auth(gateway_auth_value) if gateway_auth_value else {}
@@ -4438,7 +4440,7 @@ class ToolService(BaseService):
             >>> pass  # doctest: +SKIP
         """
         # pylint: disable=comparison-with-callable
-        logger.info(f"Invoking tool: {name} with arguments: {arguments.keys() if arguments else None} and headers: {request_headers.keys() if request_headers else None}, server_id={server_id}")
+        logger.info("Invoking tool: %s with arguments: %s and headers: %s, server_id=%s", name, arguments.keys() if arguments else None, request_headers.keys() if request_headers else None, server_id)
         # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 0: Set request_headers_var ContextVar so downstream_session_id_from_request_context() can access it
         # This is needed for upstream session registry to work correctly
@@ -4467,7 +4469,7 @@ class ToolService(BaseService):
                 # This prevents RBAC bypass where any authenticated user could invoke tools
                 # on any gateway just by knowing the gateway ID
                 if not await check_gateway_access(db, gateway, user_email, token_teams):
-                    logger.warning(f"Access denied to gateway {gateway_id_from_header} in direct_proxy mode for user {SecurityValidator.sanitize_log_message(user_email)}")
+                    logger.warning("Access denied to gateway %s in direct_proxy mode for user %s", gateway_id_from_header, SecurityValidator.sanitize_log_message(user_email))
                     raise ToolNotFoundError(f"Tool not found: {name}")
 
                 is_direct_proxy = True
@@ -4497,11 +4499,11 @@ class ToolService(BaseService):
                     "request_type": "streamablehttp",  # Default to streamablehttp
                     "gateway_id": str(gateway.id),
                 }
-                logger.info(f"Direct proxy mode via X-Context-Forge-Gateway-Id header: passing tool '{name}' directly to remote MCP server at {gateway.url}")
+                logger.info("Direct proxy mode via X-Context-Forge-Gateway-Id header: passing tool '%s' directly to remote MCP server at %s", name, gateway.url)
             elif gateway:
-                logger.debug(f"Gateway {gateway_id_from_header} found but not in direct_proxy mode (mode: {gateway.gateway_mode}), using normal lookup")
+                logger.debug("Gateway %s found but not in direct_proxy mode (mode: %s), using normal lookup", gateway_id_from_header, gateway.gateway_mode)
             else:
-                logger.warning(f"Gateway {gateway_id_from_header} specified in X-Context-Forge-Gateway-Id header not found")
+                logger.warning("Gateway %s specified in X-Context-Forge-Gateway-Id header not found", gateway_id_from_header)
 
         # Normal mode: look up tool in database/cache
         if not is_direct_proxy:
@@ -4603,7 +4605,7 @@ class ToolService(BaseService):
                 if not tool_id_for_check:
                     # Cannot verify server membership without tool ID - deny access
                     # This should not happen with properly cached tools, but fail safe
-                    logger.warning(f"Tool '{name}' has no ID in payload, cannot verify server membership")
+                    logger.warning("Tool '%s' has no ID in payload, cannot verify server membership", name)
                     raise ToolNotFoundError(f"Tool not found: {name}")
 
                 server_match = db.execute(
@@ -4738,7 +4740,7 @@ class ToolService(BaseService):
                         gateway_auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
                     except Exception:  # noqa: S110 - intentionally skip failed decryptions
                         # Silently skip params that fail decryption (may be corrupted or use old key)
-                        logger.debug(f"Failed to decrypt query param '{param_key}' for tool invocation")
+                        logger.debug("Failed to decrypt query param '%s' for tool invocation", param_key)
             # Apply query params to gateway URL
             if gateway_auth_query_params_decrypted and gateway_url:
                 gateway_url = apply_query_param_auth(gateway_url, gateway_auth_query_params_decrypted)
@@ -4872,9 +4874,9 @@ class ToolService(BaseService):
                         "has_headers": bool(request_headers),
                     },
                 )
-                logger.debug(f"✓ Created tool.invoke span: {db_span_id} for tool: {name}")
+                logger.debug("✓ Created tool.invoke span: %s for tool: %s", db_span_id, name)
             except Exception as e:
-                logger.warning(f"Failed to start observability span for tool invocation: {e}")
+                logger.warning("Failed to start observability span for tool invocation: %s", e)
                 db_span_id = None
 
         # Create a trace span for OpenTelemetry export (Jaeger, Zipkin, etc.)
@@ -4918,7 +4920,7 @@ class ToolService(BaseService):
                             )
                             headers["Authorization"] = f"Bearer {access_token}"
                         except Exception as e:
-                            logger.error(f"Failed to obtain OAuth access token for tool {tool_name_computed}: {e}")
+                            logger.error("Failed to obtain OAuth access token for tool %s: %s", tool_name_computed, e)
                             raise ToolInvocationError(f"OAuth authentication failed: {str(e)}")
                     else:
                         credentials = decode_auth(tool_auth_value) if tool_auth_value else {}
@@ -4946,7 +4948,7 @@ class ToolService(BaseService):
 
                             worker_id = str(os.getpid())
                             session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
-                            logger.debug(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Tool: {name} | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity")
+                            logger.debug("[AFFINITY] Worker %s | Session %s... | Tool: %s | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity", worker_id, session_short, name)
 
                     # Inject identity propagation headers for REST tools
                     if global_context and global_context.user_context:
@@ -5054,9 +5056,9 @@ class ToolService(BaseService):
                                     conflicts = set(payload.keys()) & set(query_params.keys())
                                     if conflicts:
                                         logger.warning(
-                                            f"REST tool GET request has conflicting parameters between URL and input arguments. "
-                                            f"URL query params will take precedence for: {', '.join(sorted(conflicts))}. "
-                                            f"Tool: {name}"
+                                            "REST tool GET request has conflicting parameters between URL and input arguments. URL query params will take precedence for: %s. Tool: %s",
+                                            ", ".join(sorted(conflicts)),
+                                            name,
                                         )
 
                                 payload.update(query_params)
@@ -5158,7 +5160,7 @@ class ToolService(BaseService):
                                 result = response.json()
                             except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
                                 result = _handle_json_parse_error(response, e, is_error_response=False)
-                            logger.debug(f"REST API tool response: {result}")
+                            logger.debug("REST API tool response: %s", result)
                             filtered_response = extract_using_jq(result, tool_jsonpath_filter)
                             # Check if extract_using_jq returned an error (list of TextContent objects)
                             if isinstance(filtered_response, list) and len(filtered_response) > 0 and isinstance(filtered_response[0], TextContent):
@@ -5224,7 +5226,7 @@ class ToolService(BaseService):
                                         extra={"gateway_id": gateway_id_str, "user": app_user_email or "<unknown>"},
                                     )
                             except Exception as e:
-                                logger.error(f"Failed to obtain stored OAuth token for gateway {gateway_name}: {e}")
+                                logger.error("Failed to obtain stored OAuth token for gateway %s: %s", gateway_name, e)
                                 raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
                         else:
                             # For Client Credentials flow, get token directly (no DB needed)
@@ -5234,7 +5236,7 @@ class ToolService(BaseService):
                                 )
                                 headers = {"Authorization": f"Bearer {access_token}"}
                             except Exception as e:
-                                logger.error(f"Failed to obtain OAuth access token for gateway {gateway_name}: {e}")
+                                logger.error("Failed to obtain OAuth access token for gateway %s: %s", gateway_name, e)
                                 raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
                     else:
                         headers = decode_auth(gateway_auth_value) if gateway_auth_value else {}
@@ -5255,7 +5257,9 @@ class ToolService(BaseService):
 
                             worker_id = str(os.getpid())
                             session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
-                            logger.debug(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Tool: {name} | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity (MCP transport)")
+                            logger.debug(
+                                "[AFFINITY] Worker %s | Session %s... | Tool: %s | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity (MCP transport)", worker_id, session_short, name
+                            )
 
                     # Inject identity propagation headers and meta for MCP tools
                     if global_context and global_context.user_context:
@@ -5802,10 +5806,10 @@ class ToolService(BaseService):
                         if is_direct_proxy:
                             tool_result = self._coerce_to_tool_result(tool_call_result)
                             success = not tool_result.is_error
-                            logger.debug(f"Direct proxy mode: using tool result as-is: {tool_result}")
+                            logger.debug("Direct proxy mode: using tool result as-is: %s", tool_result)
                         else:
                             dump = tool_call_result.model_dump(by_alias=True, mode="json")
-                            logger.debug(f"Tool call result dump: {dump}")
+                            logger.debug("Tool call result dump: %s", dump)
                             content = dump.get("content", [])
                             # Accept both alias and pythonic names for structured content
                             structured = dump.get("structuredContent") or dump.get("structured_content")
@@ -5816,7 +5820,7 @@ class ToolService(BaseService):
                                 is_err = getattr(tool_call_result, "isError", False)
                             tool_result = ToolResult(content=filtered_response, structured_content=structured, is_error=is_err, meta=getattr(tool_call_result, "meta", None))
                             success = not is_err
-                            logger.debug(f"Final tool_result: {tool_result}")
+                            logger.debug("Final tool_result: %s", tool_result)
 
                 elif tool_integration_type == "A2A" and a2a_agent_endpoint_url:
                     # A2A tool invocation using pre-extracted agent data (extracted in Phase 2 before db.close())
@@ -5858,7 +5862,7 @@ class ToolService(BaseService):
 
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "A2A"}):
                         # Make HTTP request with timeout enforcement
-                        logger.info(f"Calling A2A agent '{a2a_agent_name}' at {prepared.sanitized_endpoint_url}")
+                        logger.info("Calling A2A agent '%s' at %s", a2a_agent_name, prepared.sanitized_endpoint_url)
                         a2a_start_time = time.time()
                         try:
                             # First-Party
@@ -6112,9 +6116,9 @@ class ToolService(BaseService):
                             },
                         )
                         db_span_ended = True
-                        logger.debug(f"✓ Ended tool.invoke span: {db_span_id}")
+                        logger.debug("✓ Ended tool.invoke span: %s", db_span_id)
                     except Exception as e:
-                        logger.warning(f"Failed to end observability span for tool invocation: {e}")
+                        logger.warning("Failed to end observability span for tool invocation: %s", e)
 
                 # Add final span attributes for OpenTelemetry
                 if span:
@@ -6136,7 +6140,7 @@ class ToolService(BaseService):
                             error_message=error_message,
                         )
                     except Exception as metric_error:
-                        logger.warning(f"Failed to record tool metric: {metric_error}")
+                        logger.warning("Failed to record tool metric: %s", metric_error)
 
                 # Record server metrics ONLY when invoked through a specific virtual server
                 # When server_id is provided, it means the tool was called via a virtual server endpoint
@@ -6151,12 +6155,12 @@ class ToolService(BaseService):
                             error_message=error_message,
                         )
                     except Exception as metric_error:
-                        logger.warning(f"Failed to record server metric: {metric_error}")
+                        logger.warning("Failed to record server metric: %s", metric_error)
 
                 # Log structured message with performance tracking (using local variables)
                 if success:
                     structured_logger.info(
-                        f"Tool '{name}' invoked successfully",
+                        f"Tool '{name}' invoked successfully",  # noqa: G004
                         user_id=app_user_email,
                         resource_type="tool",
                         resource_id=tool_id,
@@ -6166,7 +6170,7 @@ class ToolService(BaseService):
                     )
                 else:
                     structured_logger.error(
-                        f"Tool '{name}' invocation failed",
+                        f"Tool '{name}' invocation failed",  # noqa: G004
                         error=Exception(error_message) if error_message else None,
                         user_id=app_user_email,
                         resource_type="tool",
@@ -6418,13 +6422,13 @@ class ToolService(BaseService):
                 tool.version += 1
             else:
                 tool.version = 1
-            logger.info(f"Update tool: {tool.name} (output_schema: {tool.output_schema})")
+            logger.info("Update tool: %s (output_schema: %s)", tool.name, tool.output_schema)
 
             tool.updated_at = datetime.now(timezone.utc)
             db.commit()
             db.refresh(tool)
             await self._notify_tool_updated(tool)
-            logger.info(f"Updated tool: {tool.name}")
+            logger.info("Updated tool: %s", tool.name)
 
             # Structured logging: Audit trail for tool update
             changes = []
@@ -6504,7 +6508,7 @@ class ToolService(BaseService):
             raise
         except IntegrityError as ie:
             db.rollback()
-            logger.error(f"IntegrityError during tool update: {ie}")
+            logger.error("IntegrityError during tool update: %s", ie)
 
             # Structured logging: Log database integrity error
             structured_logger.log(
@@ -6521,7 +6525,7 @@ class ToolService(BaseService):
             raise ie
         except ToolNotFoundError as tnfe:
             db.rollback()
-            logger.error(f"Tool not found during update: {tnfe}")
+            logger.error("Tool not found during update: %s", tnfe)
 
             # Structured logging: Log not found error
             structured_logger.log(
@@ -6537,7 +6541,7 @@ class ToolService(BaseService):
             raise tnfe
         except ToolNameConflictError as tnce:
             db.rollback()
-            logger.error(f"Tool name conflict during update: {tnce}")
+            logger.error("Tool name conflict during update: %s", tnce)
 
             # Structured logging: Log name conflict error
             structured_logger.log(
@@ -6863,7 +6867,7 @@ class ToolService(BaseService):
             return existing_tool
 
         # Create tool entry for the A2A agent
-        logger.debug(f"agent.tags: {agent.tags} for agent: {agent.name} (ID: {agent.id})")
+        logger.debug("agent.tags: %s for agent: %s (ID: %s)", agent.tags, agent.name, agent.id)
 
         # Normalize tags: if agent.tags contains dicts like {'id':..,'label':..},
         # extract the human-friendly label. If tags are already strings, keep them.
@@ -6949,12 +6953,12 @@ class ToolService(BaseService):
         """
         # Use the tool_id from the agent for efficient lookup
         if not agent.tool_id:
-            logger.debug(f"No tool_id found for A2A agent {agent.id}, skipping tool update")
+            logger.debug("No tool_id found for A2A agent %s, skipping tool update", agent.id)
             return None
 
         tool = db.get(DbTool, agent.tool_id)
         if not tool:
-            logger.warning(f"Tool {agent.tool_id} not found for A2A agent {agent.id}, resetting tool_id")
+            logger.warning("Tool %s not found for A2A agent %s, resetting tool_id", agent.tool_id, agent.id)
             agent.tool_id = None
             db.commit()
             return None
@@ -7013,17 +7017,17 @@ class ToolService(BaseService):
         """
         # Use the tool_id from the agent for efficient lookup
         if not agent.tool_id:
-            logger.debug(f"No tool_id found for A2A agent {agent.id}, skipping tool deletion")
+            logger.debug("No tool_id found for A2A agent %s, skipping tool deletion", agent.id)
             return
 
         tool = db.get(DbTool, agent.tool_id)
         if not tool:
-            logger.warning(f"Tool {agent.tool_id} not found for A2A agent {agent.id}")
+            logger.warning("Tool %s not found for A2A agent %s", agent.tool_id, agent.id)
             return
 
         # Delete the tool
         await self.delete_tool(db=db, tool_id=tool.id, user_email=user_email, purge_metrics=purge_metrics)
-        logger.info(f"Deleted tool {tool.id} associated with A2A agent {agent.id}")
+        logger.info("Deleted tool %s associated with A2A agent %s", tool.id, agent.id)
 
     async def _invoke_a2a_tool(self, db: Session, tool: DbTool, arguments: Dict[str, Any]) -> ToolResult:
         """Invoke an A2A agent through its corresponding tool.
@@ -7103,7 +7107,7 @@ class ToolService(BaseService):
             ToolInvocationError: If authentication decryption fails.
             Exception: If the call fails.
         """
-        logger.info(f"Calling A2A agent '{agent.name}' at {agent.endpoint_url} with arguments: {parameters}")
+        logger.info("Calling A2A agent '%s' at %s with arguments: %s", agent.name, agent.endpoint_url, parameters)
 
         prepared = prepare_a2a_invocation(
             agent_type=agent.agent_type,
@@ -7116,7 +7120,7 @@ class ToolService(BaseService):
             auth_query_params=agent.auth_query_params,
             correlation_id=get_correlation_id(),
         )
-        logger.info(f"invoke tool request_data prepared: {prepared.request_data}")
+        logger.info("invoke tool request_data prepared: %s", prepared.request_data)
 
         # First-Party
         from mcpgateway.version import should_delegate_a2a_to_rust  # pylint: disable=import-outside-toplevel

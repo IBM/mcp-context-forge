@@ -72,7 +72,7 @@ except (ModuleNotFoundError, AttributeError) as e:
     # Standard
     import logging
 
-    logging.getLogger(__name__).warning(f"Redis module check failed ({type(e).__name__}: {e}), Redis support disabled")
+    logging.getLogger(__name__).warning("Redis module check failed (%s: %s), Redis support disabled", type(e).__name__, e)
     REDIS_AVAILABLE = False
 
 # Initialize logging
@@ -121,9 +121,9 @@ class EventService:
             try:
                 self._redis_client = await get_redis_client()
                 if self._redis_client:
-                    logger.info(f"EventService ({self.channel_name}) connected to Redis")
+                    logger.info("EventService (%s) connected to Redis", self.channel_name)
             except Exception as e:
-                logger.warning(f"Failed to initialize Redis for EventService ({self.channel_name}): {e}")
+                logger.warning("Failed to initialize Redis for EventService (%s): %s", self.channel_name, e)
                 self._redis_client = None
 
     async def publish_event(self, event: Dict[str, Any]) -> None:
@@ -155,7 +155,7 @@ class EventService:
             try:
                 await self._redis_client.publish(self.channel_name, orjson.dumps(event))
             except Exception as e:
-                logger.error(f"Failed to publish event to Redis channel {self.channel_name}: {e}")
+                logger.error("Failed to publish event to Redis channel %s: %s", self.channel_name, e)
                 # Fallback: push to local queues if Redis fails
                 for queue in self._event_subscribers:
                     await queue.put(event)
@@ -247,10 +247,10 @@ class EventService:
                             yield orjson.loads(message["data"])
                     except asyncio.CancelledError:
                         # Handle client disconnection
-                        logger.debug(f"Client disconnected from Redis subscription: {self.channel_name}")
+                        logger.debug("Client disconnected from Redis subscription: %s", self.channel_name)
                         raise
                     except Exception as e:
-                        logger.error(f"Redis subscription error on {self.channel_name}: {e}")
+                        logger.error("Redis subscription error on %s: %s", self.channel_name, e)
                         raise
                     finally:
                         # Cleanup pubsub only (don't close shared client)
@@ -258,7 +258,7 @@ class EventService:
                             await pubsub.unsubscribe(self.channel_name)
                             await pubsub.aclose()
                         except Exception as e:
-                            logger.warning(f"Error closing Redis subscription: {e}")
+                            logger.warning("Error closing Redis subscription: %s", e)
             except ImportError:
                 fallback_to_local = True
                 logger.error("Redis is configured but redis-py does not support asyncio or is not installed.")
@@ -273,7 +273,7 @@ class EventService:
                     event = await queue.get()
                     yield event
             except asyncio.CancelledError:
-                logger.debug(f"Client disconnected from local event subscription: {self.channel_name}")
+                logger.debug("Client disconnected from local event subscription: %s", self.channel_name)
                 raise
             finally:
                 if queue in self._event_subscribers:
@@ -298,7 +298,7 @@ class EventService:
                 yield f"data: {orjson.dumps(event).decode()}\n\n"
         except asyncio.CancelledError:
             # Handle client disconnection gracefully
-            logger.info(f"Client disconnected from event stream: {self.channel_name}")
+            logger.info("Client disconnected from event stream: %s", self.channel_name)
             raise
 
     async def shutdown(self):

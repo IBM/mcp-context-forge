@@ -329,7 +329,7 @@ class ImportService:
         self.active_imports[import_id] = status
 
         try:
-            logger.info(f"Starting configuration import {import_id} by {imported_by} (dry_run={dry_run})")
+            logger.info("Starting configuration import %s by %s (dry_run=%s)", import_id, imported_by, dry_run)
 
             # Validate import data
             self.validate_import_data(import_data)
@@ -358,7 +358,9 @@ class ImportService:
             status.status = "completed"
             status.completed_at = datetime.now(timezone.utc)
 
-            logger.info(f"Import {import_id} completed: created={status.created_entities}, updated={status.updated_entities}, skipped={status.skipped_entities}, failed={status.failed_entities}")
+            logger.info(
+                "Import %s completed: created=%s, updated=%s, skipped=%s, failed=%s", import_id, status.created_entities, status.updated_entities, status.skipped_entities, status.failed_entities
+            )
 
             return status
 
@@ -366,7 +368,7 @@ class ImportService:
             status.status = "failed"
             status.completed_at = datetime.now(timezone.utc)
             status.errors.append(f"Import failed: {str(e)}")
-            logger.error(f"Import {import_id} failed: {str(e)}")
+            logger.error("Import %s failed: %s", import_id, str(e))
             raise ImportError(f"Import failed: {str(e)}")
 
     def _get_entity_identifier(self, entity_type: str, entity: Dict[str, Any]) -> str:
@@ -479,7 +481,7 @@ class ImportService:
             selected_entities: Optional entity selection filter
             imported_by: Username of the person performing the import
         """
-        logger.debug(f"Processing {len(entity_list)} {entity_type} entities")
+        logger.debug("Processing %s %s entities", len(entity_list), entity_type)
 
         # Filter entities based on selection
         filtered_entities = []
@@ -502,7 +504,7 @@ class ImportService:
             filtered_entities.append(entity_data)
 
         if not filtered_entities:
-            logger.debug(f"No {entity_type} entities to process after filtering")
+            logger.debug("No %s entities to process after filtering", entity_type)
             return
 
         # Use bulk operations for tools, resources, and prompts
@@ -521,7 +523,7 @@ class ImportService:
                 except Exception as e:
                     status.failed_entities += 1
                     status.errors.append(f"Failed to process {entity_type} entity: {str(e)}")
-                    logger.error(f"Failed to process {entity_type} entity: {str(e)}")
+                    logger.error("Failed to process %s entity: %s", entity_type, str(e))
 
     def _has_auth_data(self, entity_data: Dict[str, Any]) -> bool:
         """Check if entity has authentication data that needs re-encryption.
@@ -686,7 +688,7 @@ class ImportService:
             try:
                 await self.tool_service.register_tool(db, create_data)
                 status.created_entities += 1
-                logger.debug(f"Created tool: {tool_name}")
+                logger.debug("Created tool: %s", tool_name)
 
             except ToolNameConflictError:
                 # Handle conflict based on strategy
@@ -704,12 +706,12 @@ class ImportService:
                             update_data = self._convert_to_tool_update(tool_data)
                             await self.tool_service.update_tool(db, existing_tool.id, update_data)
                             status.updated_entities += 1
-                            logger.debug(f"Updated tool: {tool_name}")
+                            logger.debug("Updated tool: %s", tool_name)
                         else:
                             status.warnings.append(f"Could not find existing tool to update: {tool_name}")
                             status.skipped_entities += 1
                     except Exception as update_error:
-                        logger.warning(f"Failed to update tool {tool_name}: {str(update_error)}")
+                        logger.warning("Failed to update tool %s: %s", tool_name, str(update_error))
                         status.warnings.append(f"Could not update tool {tool_name}: {str(update_error)}")
                         status.skipped_entities += 1
                 elif conflict_strategy == ConflictStrategy.RENAME:
@@ -753,7 +755,7 @@ class ImportService:
             try:
                 await self.gateway_service.register_gateway(db, create_data, created_by=imported_by, created_via="import")
                 status.created_entities += 1
-                logger.debug(f"Created gateway: {gateway_name}")
+                logger.debug("Created gateway: %s", gateway_name)
 
             except GatewayNameConflictError:
                 if conflict_strategy == ConflictStrategy.SKIP:
@@ -768,12 +770,12 @@ class ImportService:
                             update_data = self._convert_to_gateway_update(gateway_data)
                             await self.gateway_service.update_gateway(db, existing_gateway.id, update_data)
                             status.updated_entities += 1
-                            logger.debug(f"Updated gateway: {gateway_name}")
+                            logger.debug("Updated gateway: %s", gateway_name)
                         else:
                             status.warnings.append(f"Could not find existing gateway to update: {gateway_name}")
                             status.skipped_entities += 1
                     except Exception as update_error:
-                        logger.warning(f"Failed to update gateway {gateway_name}: {str(update_error)}")
+                        logger.warning("Failed to update gateway %s: %s", gateway_name, str(update_error))
                         status.warnings.append(f"Could not update gateway {gateway_name}: {str(update_error)}")
                         status.skipped_entities += 1
                 elif conflict_strategy == ConflictStrategy.RENAME:
@@ -815,7 +817,7 @@ class ImportService:
             try:
                 await self.server_service.register_server(db, create_data, created_by=imported_by, created_via="import")
                 status.created_entities += 1
-                logger.debug(f"Created server: {server_name}")
+                logger.debug("Created server: %s", server_name)
 
             except ServerNameConflictError:
                 if conflict_strategy == ConflictStrategy.SKIP:
@@ -830,12 +832,12 @@ class ImportService:
                             update_data = await self._convert_to_server_update(db, server_data)
                             await self.server_service.update_server(db, existing_server.id, update_data, imported_by)
                             status.updated_entities += 1
-                            logger.debug(f"Updated server: {server_name}")
+                            logger.debug("Updated server: %s", server_name)
                         else:
                             status.warnings.append(f"Could not find existing server to update: {server_name}")
                             status.skipped_entities += 1
                     except Exception as update_error:
-                        logger.warning(f"Failed to update server {server_name}: {str(update_error)}")
+                        logger.warning("Failed to update server %s: %s", server_name, str(update_error))
                         status.warnings.append(f"Could not update server {server_name}: {str(update_error)}")
                         status.skipped_entities += 1
                 elif conflict_strategy == ConflictStrategy.RENAME:
@@ -876,7 +878,7 @@ class ImportService:
             try:
                 await self.prompt_service.register_prompt(db, create_data)
                 status.created_entities += 1
-                logger.debug(f"Created prompt: {prompt_name}")
+                logger.debug("Created prompt: %s", prompt_name)
 
             except PromptNameConflictError:
                 if conflict_strategy == ConflictStrategy.SKIP:
@@ -886,7 +888,7 @@ class ImportService:
                     update_data = self._convert_to_prompt_update(prompt_data)
                     await self.prompt_service.update_prompt(db, prompt_name, update_data)
                     status.updated_entities += 1
-                    logger.debug(f"Updated prompt: {prompt_name}")
+                    logger.debug("Updated prompt: %s", prompt_name)
                 elif conflict_strategy == ConflictStrategy.RENAME:
                     new_name = f"{prompt_name}_imported_{int(datetime.now().timestamp())}"
                     create_data.name = new_name
@@ -925,7 +927,7 @@ class ImportService:
             try:
                 await self.resource_service.register_resource(db, create_data)
                 status.created_entities += 1
-                logger.debug(f"Created resource: {resource_uri}")
+                logger.debug("Created resource: %s", resource_uri)
 
             except ResourceURIConflictError:
                 if conflict_strategy == ConflictStrategy.SKIP:
@@ -935,7 +937,7 @@ class ImportService:
                     update_data = self._convert_to_resource_update(resource_data)
                     await self.resource_service.update_resource(db, resource_uri, update_data)
                     status.updated_entities += 1
-                    logger.debug(f"Updated resource: {resource_uri}")
+                    logger.debug("Updated resource: %s", resource_uri)
                 elif conflict_strategy == ConflictStrategy.RENAME:
                     new_uri = f"{resource_uri}_imported_{int(datetime.now().timestamp())}"
                     create_data.uri = new_uri
@@ -974,7 +976,7 @@ class ImportService:
                 except Exception as e:
                     status.failed_entities += 1
                     status.errors.append(f"Failed to convert tool {tool_data.get('name', 'unknown')}: {str(e)}")
-                    logger.warning(f"Failed to convert tool data: {str(e)}")
+                    logger.warning("Failed to convert tool data: %s", str(e))
 
             if not tools_to_register:
                 return
@@ -1019,12 +1021,12 @@ class ImportService:
             for error in result.get("errors", []):
                 status.errors.append(error)
 
-            logger.info(f"Bulk processed {len(tools_data)} tools: {result['created']} created, {result['updated']} updated, {result['skipped']} skipped, {result['failed']} failed")
+            logger.info("Bulk processed %s tools: %s created, %s updated, %s skipped, %s failed", len(tools_data), result["created"], result["updated"], result["skipped"], result["failed"])
 
         except Exception as e:
             status.failed_entities += len(tools_data)
             status.errors.append(f"Bulk tool processing failed: {str(e)}")
-            logger.error(f"Failed to bulk process tools: {str(e)}")
+            logger.error("Failed to bulk process tools: %s", str(e))
             # Don't raise - allow import to continue with other entities
 
     async def _process_resources_bulk(self, db: Session, resources_data: List[Dict[str, Any]], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus, imported_by: str) -> None:
@@ -1053,7 +1055,7 @@ class ImportService:
                 except Exception as e:
                     status.failed_entities += 1
                     status.errors.append(f"Failed to convert resource {resource_data.get('uri', 'unknown')}: {str(e)}")
-                    logger.warning(f"Failed to convert resource data: {str(e)}")
+                    logger.warning("Failed to convert resource data: %s", str(e))
 
             if not resources_to_register:
                 return
@@ -1078,12 +1080,12 @@ class ImportService:
             for error in result.get("errors", []):
                 status.errors.append(error)
 
-            logger.info(f"Bulk processed {len(resources_data)} resources: {result['created']} created, {result['updated']} updated, {result['skipped']} skipped, {result['failed']} failed")
+            logger.info("Bulk processed %s resources: %s created, %s updated, %s skipped, %s failed", len(resources_data), result["created"], result["updated"], result["skipped"], result["failed"])
 
         except Exception as e:
             status.failed_entities += len(resources_data)
             status.errors.append(f"Bulk resource processing failed: {str(e)}")
-            logger.error(f"Failed to bulk process resources: {str(e)}")
+            logger.error("Failed to bulk process resources: %s", str(e))
             # Don't raise - allow import to continue with other entities
 
     async def _process_prompts_bulk(self, db: Session, prompts_data: List[Dict[str, Any]], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus, imported_by: str) -> None:
@@ -1112,7 +1114,7 @@ class ImportService:
                 except Exception as e:
                     status.failed_entities += 1
                     status.errors.append(f"Failed to convert prompt {prompt_data.get('name', 'unknown')}: {str(e)}")
-                    logger.warning(f"Failed to convert prompt data: {str(e)}")
+                    logger.warning("Failed to convert prompt data: %s", str(e))
 
             if not prompts_to_register:
                 return
@@ -1137,12 +1139,12 @@ class ImportService:
             for error in result.get("errors", []):
                 status.errors.append(error)
 
-            logger.info(f"Bulk processed {len(prompts_data)} prompts: {result['created']} created, {result['updated']} updated, {result['skipped']} skipped, {result['failed']} failed")
+            logger.info("Bulk processed %s prompts: %s created, %s updated, %s skipped, %s failed", len(prompts_data), result["created"], result["updated"], result["skipped"], result["failed"])
 
         except Exception as e:
             status.failed_entities += len(prompts_data)
             status.errors.append(f"Bulk prompt processing failed: {str(e)}")
-            logger.error(f"Failed to bulk process prompts: {str(e)}")
+            logger.error("Failed to bulk process prompts: %s", str(e))
             # Don't raise - allow import to continue with other entities
 
     async def _process_root(self, root_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus) -> None:
@@ -1167,7 +1169,7 @@ class ImportService:
         try:
             await self.root_service.add_root(root_uri, root_data.get("name"))
             status.created_entities += 1
-            logger.debug(f"Created root: {root_uri}")
+            logger.debug("Created root: %s", root_uri)
 
         except Exception as e:
             if conflict_strategy == ConflictStrategy.SKIP:
@@ -1265,9 +1267,9 @@ class ImportService:
                         decrypted_value = decrypted_dict.get(param_key, "") if isinstance(decrypted_dict, dict) else str(decrypted_dict)
                         auth_kwargs["auth_query_param_key"] = param_key
                         auth_kwargs["auth_query_param_value"] = decrypted_value
-                        logger.debug(f"Importing gateway with query_param auth, key: {param_key}")
+                        logger.debug("Importing gateway with query_param auth, key: %s", param_key)
                 except Exception as e:
-                    logger.warning(f"Failed to decode query param auth for gateway: {str(e)}")
+                    logger.warning("Failed to decode query param auth for gateway: %s", str(e))
             # Decode auth_value to get original credentials
             elif gateway_data.get("auth_value"):
                 try:
@@ -1294,7 +1296,7 @@ class ImportService:
                             headers_list = [{"key": k, "value": v} for k, v in decoded_auth.items()]
                             auth_kwargs["auth_headers"] = headers_list
                 except Exception as e:
-                    logger.warning(f"Failed to decode auth data for gateway: {str(e)}")
+                    logger.warning("Failed to decode auth data for gateway: %s", str(e))
 
         return GatewayCreate(
             name=gateway_data["name"],
@@ -1334,9 +1336,9 @@ class ImportService:
                         decrypted_value = decrypted_dict.get(param_key, "") if isinstance(decrypted_dict, dict) else str(decrypted_dict)
                         auth_kwargs["auth_query_param_key"] = param_key
                         auth_kwargs["auth_query_param_value"] = decrypted_value
-                        logger.debug(f"Importing gateway update with query_param auth, key: {param_key}")
+                        logger.debug("Importing gateway update with query_param auth, key: %s", param_key)
                 except Exception as e:
-                    logger.warning(f"Failed to decode query param auth for gateway update: {str(e)}")
+                    logger.warning("Failed to decode query param auth for gateway update: %s", str(e))
             elif gateway_data.get("auth_value"):
                 try:
                     decoded_auth = decode_auth(gateway_data["auth_value"])
@@ -1358,7 +1360,7 @@ class ImportService:
                             headers_list = [{"key": k, "value": v} for k, v in decoded_auth.items()]
                             auth_kwargs["auth_headers"] = headers_list
                 except Exception as e:
-                    logger.warning(f"Failed to decode auth data for gateway update: {str(e)}")
+                    logger.warning("Failed to decode auth data for gateway update: %s", str(e))
 
         return GatewayUpdate(
             name=gateway_data.get("name"),
@@ -1404,9 +1406,9 @@ class ImportService:
 
                 if found_tool:
                     resolved_tool_ids.append(found_tool.id)
-                    logger.debug(f"Resolved tool reference '{tool_ref}' to ID {found_tool.id}")
+                    logger.debug("Resolved tool reference '%s' to ID %s", tool_ref, found_tool.id)
                 else:
-                    logger.warning(f"Could not resolve tool reference: {tool_ref}")
+                    logger.warning("Could not resolve tool reference: %s", tool_ref)
                     # Don't include unresolvable references
 
         return ServerCreate(name=server_data["name"], description=server_data.get("description"), associated_tools=resolved_tool_ids, tags=server_data.get("tags", []))
@@ -1438,7 +1440,7 @@ class ImportService:
                 if found_tool:
                     resolved_tool_ids.append(found_tool.id)
                 else:
-                    logger.warning(f"Could not resolve tool reference for update: {tool_ref}")
+                    logger.warning("Could not resolve tool reference for update: %s", tool_ref)
 
         return ServerUpdate(name=server_data.get("name"), description=server_data.get("description"), associated_tools=resolved_tool_ids if resolved_tool_ids else None, tags=server_data.get("tags"))
 
@@ -1778,7 +1780,7 @@ class ImportService:
             # Add other entity types as needed...
 
         except Exception as e:
-            logger.warning(f"Could not detect all conflicts: {e}")
+            logger.warning("Could not detect all conflicts: %s", e)
 
         return conflicts
 
@@ -1795,17 +1797,17 @@ class ImportService:
         try:
             user = db.query(EmailUser).filter(EmailUser.email == imported_by).first()
             if not user:
-                logger.warning(f"Could not find importing user: {imported_by}")
+                logger.warning("Could not find importing user: %s", imported_by)
                 return None
 
             personal_team = user.get_personal_team()
             if not personal_team:
-                logger.warning(f"User {imported_by} has no personal team")
+                logger.warning("User %s has no personal team", imported_by)
                 return None
 
             return {"user_email": user.email, "team_id": personal_team.id, "team_name": personal_team.name}
         except Exception as e:
-            logger.error(f"Failed to get user context: {e}")
+            logger.error("Failed to get user context: %s", e)
             return None
 
     def _add_multitenancy_context(self, entity_data: Dict[str, Any], user_context: Dict[str, Any]) -> Dict[str, Any]:
@@ -1837,7 +1839,7 @@ class ImportService:
         if not enhanced_data.get("federation_source"):
             enhanced_data["federation_source"] = f"imported-by-{user_context['user_email']}"
 
-        logger.debug(f"Enhanced entity with multitenancy: team_id={enhanced_data['team_id']}, visibility={enhanced_data['visibility']}")
+        logger.debug("Enhanced entity with multitenancy: team_id=%s, visibility=%s", enhanced_data["team_id"], enhanced_data["visibility"])
         return enhanced_data
 
     async def _assign_imported_items_to_team(self, db: Session, imported_by: str, imported_after: Optional[datetime] = None) -> None:
@@ -1852,15 +1854,15 @@ class ImportService:
             # Find the importing user and their personal team
             user = db.query(EmailUser).filter(EmailUser.email == imported_by).first()
             if not user:
-                logger.warning(f"Could not find importing user {imported_by} - skipping team assignment")
+                logger.warning("Could not find importing user %s - skipping team assignment", imported_by)
                 return
 
             personal_team = user.get_personal_team()
             if not personal_team:
-                logger.warning(f"User {imported_by} has no personal team - skipping team assignment")
+                logger.warning("User %s has no personal team - skipping team assignment", imported_by)
                 return
 
-            logger.info(f"Assigning imported items to {imported_by}'s team: {personal_team.name}")
+            logger.info("Assigning imported items to %s's team: %s", imported_by, personal_team.name)
 
             # Resource types to check
             resource_types = [("servers", Server), ("tools", Tool), ("resources", Resource), ("prompts", Prompt), ("gateways", Gateway), ("a2a_agents", A2AAgent)]
@@ -1898,19 +1900,19 @@ class ImportService:
                             assigned_for_type += 1
 
                     if assigned_for_type:
-                        logger.info(f"Assigned {assigned_for_type} imported {resource_name} to user team")
+                        logger.info("Assigned %s imported %s to user team", assigned_for_type, resource_name)
                         total_assigned += assigned_for_type
 
                 except Exception as e:
-                    logger.error(f"Failed to assign {resource_name} to team: {e}")
+                    logger.error("Failed to assign %s to team: %s", resource_name, e)
                     continue
 
             if total_assigned > 0:
                 db.commit()
-                logger.info(f"Assigned {total_assigned} imported items to {personal_team.name} with team visibility")
+                logger.info("Assigned %s imported items to %s with team visibility", total_assigned, personal_team.name)
             else:
                 logger.debug("No orphaned imported items found")
 
         except Exception as e:
-            logger.error(f"Failed to assign imported items to team: {e}")
+            logger.error("Failed to assign imported items to team: %s", e)
             # Don't fail the import for team assignment issues

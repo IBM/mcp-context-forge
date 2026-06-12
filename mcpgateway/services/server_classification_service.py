@@ -133,7 +133,7 @@ class ServerClassificationService:
         self._running = True
         self._classification_task = asyncio.create_task(self._run_classification_loop())
         self._classification_task.add_done_callback(self._on_classification_task_done)
-        logger.info(f"Server classification service started " f"(instance={self._instance_id}, redis={'enabled' if self._redis else 'disabled'})")
+        logger.info("Server classification service started (instance=%s, redis=%s)", self._instance_id, "enabled" if self._redis else "disabled")
 
     def _on_classification_task_done(self, task: asyncio.Task) -> None:
         """Callback when the classification background task exits unexpectedly."""
@@ -141,7 +141,7 @@ class ServerClassificationService:
             return
         exc = task.exception()
         if exc:
-            logger.error(f"Classification background task died: {exc}", exc_info=exc)
+            logger.error("Classification background task died: %s", exc, exc_info=exc)
         self._running = False
 
     async def stop(self) -> None:
@@ -155,7 +155,7 @@ class ServerClassificationService:
                 logger.info("Classification task cancelled")
             except Exception as e:
                 # Task already died with an error — don't let it crash shutdown
-                logger.warning(f"Classification task had failed: {e}")
+                logger.warning("Classification task had failed: %s", e)
 
     async def _run_classification_loop(self) -> None:
         """Background loop: classify servers periodically with leader election."""
@@ -165,7 +165,7 @@ class ServerClassificationService:
                 is_leader = await self._try_acquire_leader_lock()
 
                 if is_leader:
-                    logger.debug(f"Classification leader acquired (instance={self._instance_id})")
+                    logger.debug("Classification leader acquired (instance=%s)", self._instance_id)
                     # Classification is idempotent (deterministic algorithm on shared pool state),
                     # so concurrent execution by multiple workers produces identical results.
                     # Leader election reduces redundant work; it is not a correctness requirement.
@@ -173,11 +173,11 @@ class ServerClassificationService:
                     try:
                         await asyncio.wait_for(self._perform_classification(), timeout=self._leader_ttl * 0.8)
                     except asyncio.TimeoutError:
-                        logger.warning(f"Classification timed out after {self._leader_ttl * 0.8:.0f}s, skipping this cycle")
+                        logger.warning("Classification timed out after %.0fs, skipping this cycle", self._leader_ttl * 0.8)
                     # Renew lock after classification to keep it alive during sleep
                     await self._try_acquire_leader_lock()
                 else:
-                    logger.debug(f"Not classification leader, skipping (instance={self._instance_id})")
+                    logger.debug("Not classification leader, skipping (instance=%s)", self._instance_id)
 
                 await asyncio.sleep(settings.gateway_auto_refresh_interval)
 
@@ -185,7 +185,7 @@ class ServerClassificationService:
                 logger.info("Classification loop cancelled")
                 break
             except Exception as e:
-                logger.error(f"Classification loop error: {e}", exc_info=True)
+                logger.error("Classification loop error: %s", e, exc_info=True)
                 await asyncio.sleep(self._error_backoff_seconds)  # Back off on error
 
     async def _try_acquire_leader_lock(self) -> bool:
@@ -220,7 +220,7 @@ class ServerClassificationService:
                     raise
             return result == 1
         except Exception as e:
-            logger.warning(f"Failed to acquire leader lock: {e}")
+            logger.warning("Failed to acquire leader lock: %s", e)
             return False  # Fail safe: don't classify on error
 
     async def _perform_classification(self) -> None:
@@ -285,7 +285,7 @@ class ServerClassificationService:
 
             return None  # Not yet classified
         except Exception as e:
-            logger.warning(f"Failed to get classification for {url}: {e}")
+            logger.warning("Failed to get classification for %s: %s", url, e)
             return None  # Fail open
 
     def _poll_state_key(self, url: str, poll_type: str, gateway_id: str = "") -> str:
@@ -341,7 +341,7 @@ class ServerClassificationService:
             return should_poll
 
         except Exception as e:
-            logger.warning(f"Error checking poll status for {url}: {e}")
+            logger.warning("Error checking poll status for %s: %s", url, e)
             return True  # Fail open: poll on error
 
     async def mark_poll_completed(self, url: str, poll_type: Literal["health", "tool_discovery"], gateway_id: str = "") -> None:
@@ -365,4 +365,4 @@ class ServerClassificationService:
             last_poll_key = self._poll_state_key(url, poll_type, gateway_id)
             await self._redis.set(last_poll_key, time.time(), ex=int(interval * 2))  # Expire after 2x interval
         except Exception as e:
-            logger.warning(f"Failed to update poll timestamp for {url}: {e}")
+            logger.warning("Failed to update poll timestamp for %s: %s", url, e)

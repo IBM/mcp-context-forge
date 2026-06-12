@@ -442,7 +442,7 @@ target-version = "py311"
 # Also "D1" for docstring present checks.
 # "PL" enables Pylint rules natively in ruff (replaces pylint for these checks).
 # TODO: Enable "I" for import sorting as a separate PR.
-select = ["E3", "E4", "E7", "E9", "F", "D1", "D417", "PL"]
+select = ["E3", "E4", "E7", "E9", "F", "D1", "D417", "PL", "G004"]
 ignore = [
     # ---- Rules already disabled in .pylintrc (intentionally relaxed) ----
     "PLR0904",  # too-many-public-methods  (pylint R0904)
@@ -482,6 +482,24 @@ preview = true
 "migration_add_annotations.py" = ["D1", "D417"]
 "playwright.config.py" = ["D1", "D417"]
 "run_mutmut.py" = ["D1", "D417"]
+# G004 enforced only in mcpgateway/services/ — other dirs deferred to separate PRs
+"plugins/**/*.py" = ["G004"]
+"mcpgateway/*.py" = ["G004"]
+"mcpgateway/admin_ui/**/*.py" = ["G004"]
+"mcpgateway/alembic/**/*.py" = ["G004"]
+"mcpgateway/cache/**/*.py" = ["G004"]
+"mcpgateway/common/**/*.py" = ["G004"]
+"mcpgateway/handlers/**/*.py" = ["G004"]
+"mcpgateway/instrumentation/**/*.py" = ["G004"]
+"mcpgateway/middleware/**/*.py" = ["G004"]
+"mcpgateway/plugins/**/*.py" = ["G004"]
+"mcpgateway/routers/**/*.py" = ["G004"]
+"mcpgateway/scripts/**/*.py" = ["G004"]
+"mcpgateway/toolops/**/*.py" = ["G004"]
+"mcpgateway/tools/**/*.py" = ["G004"]
+"mcpgateway/transports/**/*.py" = ["G004"]
+"mcpgateway/utils/**/*.py" = ["G004"]
+"mcpgateway/validation/**/*.py" = ["G004"]
 
 [tool.ruff.lint.pylint]
 # Match thresholds from .pylintrc [DESIGN] and [REFACTORING] sections
