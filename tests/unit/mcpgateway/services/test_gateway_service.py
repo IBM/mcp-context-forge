@@ -835,6 +835,9 @@ class TestGatewayService:
         """update_gateway persists ca_certificate, ca_certificate_sig, signing_algorithm, client_cert, and client_key."""
         mock_gateway.team_id = 1
         execute_results = [_make_execute_result(scalar=mock_gateway), _make_execute_result(scalar=None)]
+        # Extra results for the stale-tool bulk-delete statements (ToolMetric,
+        # server_tool_association, DbTool) triggered by mock_gateway's dummy tool.
+        execute_results += [_make_execute_result(rowcount=0) for _ in range(5)]
         test_db.execute = Mock(side_effect=execute_results)
         test_db.commit = Mock()
         test_db.refresh = Mock()
@@ -1516,10 +1519,15 @@ class TestGatewayService:
 
     @pytest.mark.asyncio
     async def test_update_gateway_url_initialization_failure(self, gateway_service, mock_gateway, test_db):
-        """Test updating gateway URL when initialization fails."""
+        """Test updating gateway URL when initialization fails.
+
+        A connection-affecting change (URL) combined with a re-init failure must
+        propagate GatewayConnectionError and roll back, not silently commit (#5188).
+        """
         # Use return_value for all execute calls
         test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         test_db.commit = Mock()
+        test_db.rollback = Mock()
         test_db.refresh = Mock()
         # Mock the query for team name lookup
         test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
@@ -1533,12 +1541,12 @@ class TestGatewayService:
         mock_gateway_read = MagicMock()
         mock_gateway_read.masked.return_value = mock_gateway_read
 
-        # Should not raise exception, just log warning
         with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
-            await gateway_service.update_gateway(test_db, 1, gateway_update)
+            with pytest.raises(GatewayConnectionError):
+                await gateway_service.update_gateway(test_db, 1, gateway_update)
 
-        assert mock_gateway.url == url
-        test_db.commit.assert_called_once()
+        test_db.commit.assert_not_called()
+        test_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_update_gateway_visibility_propagates_when_init_fails(self, gateway_service, mock_gateway, test_db):
