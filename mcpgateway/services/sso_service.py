@@ -1302,6 +1302,24 @@ class SSOService:
             self.db.commit()
             return None
 
+    @staticmethod
+    def _build_basic_auth_header(client_id: str, client_secret: str) -> str:
+        """Build an RFC 6749 Section 2.3.1 Basic Auth header value.
+
+        Client credentials are first URL-encoded per RFC 6749 Appendix B,
+        then combined as ``client_id:client_secret`` and base64-encoded.
+
+        Args:
+            client_id: OAuth client ID
+            client_secret: OAuth client secret
+
+        Returns:
+            ``Basic <base64>`` header value
+        """
+        credentials_str = f"{urllib.parse.quote(client_id, safe='')}:{urllib.parse.quote(client_secret, safe='')}"
+        encoded_credentials = base64.b64encode(credentials_str.encode("utf-8")).decode("utf-8")
+        return f"Basic {encoded_credentials}"
+
     async def _exchange_code_for_tokens(self, provider: SSOProvider, auth_session: SSOAuthSession, code: str) -> Optional[Dict[str, Any]]:
         """Exchange authorization code for access tokens.
 
@@ -1313,20 +1331,37 @@ class SSOService:
         Returns:
             Token response dict or None if failed
         """
-        token_params = {
-            "client_id": provider.client_id,
-            "client_secret": await self._decrypt_secret(provider.client_secret_encrypted),
+        metadata = provider.provider_metadata or {}
+        auth_method = metadata.get("token_endpoint_auth_method", "client_secret_post")
+
+        client_secret = await self._decrypt_secret(provider.client_secret_encrypted)
+
+        token_params: Dict[str, Any] = {
             "code": code,
             "grant_type": "authorization_code",
             "redirect_uri": auth_session.redirect_uri,
             "code_verifier": auth_session.code_verifier,
         }
+        headers = {"Accept": "application/json"}
+
+        if auth_method == "client_secret_basic" and client_secret:
+            headers["Authorization"] = self._build_basic_auth_header(provider.client_id, client_secret)
+            logger.debug("Using HTTP Basic Auth for SSO token endpoint authentication")
+        elif auth_method == "client_secret_basic" and not client_secret:
+            logger.warning("Basic Auth requested but client_secret is missing - falling back to POST body mode")
+            token_params["client_id"] = provider.client_id
+            logger.debug("Using POST body for SSO token endpoint authentication")
+        else:
+            token_params["client_id"] = provider.client_id
+            if client_secret:
+                token_params["client_secret"] = client_secret
+            logger.debug("Using POST body for SSO token endpoint authentication")
 
         # First-Party
         from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
 
         client = await get_http_client()
-        response = await client.post(provider.token_url, data=token_params, headers={"Accept": "application/json"})
+        response = await client.post(provider.token_url, data=token_params, headers=headers)
 
         if response.status_code == 200:
             return response.json()
