@@ -101,6 +101,7 @@ from mcpgateway.middleware.client_disconnect import ClientDisconnectMiddleware
 from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
 from mcpgateway.middleware.forwarded_host import ForwardedHostMiddleware
+from mcpgateway.middleware.header_size_middleware import HeaderSizeMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware, run_pre_request_hooks
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
 from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
@@ -3079,11 +3080,21 @@ else:
 # Add security headers middleware
 app.add_middleware(SecurityHeadersMiddleware)
 
+# Add RFC 6585 § 5 header size validation middleware (before rate limiting for early rejection)
+if settings.header_size_validation_enabled:
+    app.add_middleware(HeaderSizeMiddleware)
+    logger.info(
+        f"📏 RFC 6585 header size validation enabled: "
+        f"max_total={settings.max_header_total_size_bytes}B, "
+        f"max_field={settings.max_header_field_size_bytes}B, "
+        f"max_count={settings.max_header_count}"
+    )
+
 # Add rate limiting middleware (after HttpAuthMiddleware for user-aware limiting)
 if settings.rate_limiting_enabled:
     app.add_middleware(RateLimitMiddleware)
     logger.info(
-        f"🚦 Rate limiting enabled: Redis={settings.rate_limiting_redis_enabled}, "
+        f"🚦 RFC 6585 rate limiting enabled: Redis={settings.rate_limiting_redis_enabled}, "
         f"Tiers[CRITICAL={settings.rate_limit_critical_rpm}, "
         f"HIGH={settings.rate_limit_high_rpm}, "
         f"MEDIUM={settings.rate_limit_medium_rpm}, "
