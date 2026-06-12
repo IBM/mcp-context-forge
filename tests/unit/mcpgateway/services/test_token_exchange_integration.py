@@ -1,8 +1,11 @@
 # tests/unit/mcpgateway/services/test_token_exchange_integration.py
+# Standard
 from unittest.mock import AsyncMock
 
+# Third-Party
 import pytest
 
+# First-Party
 from mcpgateway.services.gateway_service import GatewayService
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 
@@ -90,3 +93,99 @@ class TestGetAccessTokenTokenExchange:
         # unknown grant still raises ValueError
         with pytest.raises(ValueError):
             await mgr.get_access_token({"grant_type": "bogus"})
+
+
+# First-Party
+from mcpgateway.utils.token_exchange_audit import audit_token_exchange
+
+
+class TestTokenExchangeAudit:
+    def test_audit_never_logs_raw_token(self, caplog):
+        # Standard
+        import logging
+
+        with caplog.at_level(logging.INFO):
+            audit_token_exchange(
+                user_email="u@e",
+                gateway_id="gw1",
+                target_audience="https://downstream",
+                success=True,
+                expires_in=3600,
+                upstream="https://upstream",
+                error=None,
+                latency_ms=42,
+            )
+        joined = " ".join(r.getMessage() for r in caplog.records)
+        assert "u@e" in joined
+        assert "https://downstream" in joined
+        assert "token-exchange" in joined.lower()
+        # raw token material must never appear
+        assert "access_token" not in joined or "exch-tok" not in joined
+
+    def test_audit_failure_records_error(self, caplog):
+        # Standard
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            audit_token_exchange(
+                user_email="u@e",
+                gateway_id="gw1",
+                target_audience="aud",
+                success=False,
+                expires_in=None,
+                upstream="https://upstream",
+                error="403 Forbidden",
+                latency_ms=12,
+            )
+        assert any("403 Forbidden" in r.getMessage() for r in caplog.records)
+
+    def test_audit_structured_extra_has_no_token_keys(self, caplog):
+        # G11: inspect the structured payload, not just the rendered line. No subject
+        # or exchanged token material may be present; required forensic fields must be.
+        # Standard
+        import logging
+
+        with caplog.at_level(logging.INFO):
+            audit_token_exchange(
+                user_email="u@e",
+                gateway_id="gw1",
+                target_audience="aud",
+                success=True,
+                expires_in=1800,
+                upstream="https://upstream",
+                error=None,
+                latency_ms=42,
+            )
+        rec = next(r for r in caplog.records if hasattr(r, "token_exchange"))
+        event = rec.token_exchange
+        # forensic fields present
+        assert event["user_email"] == "u@e"
+        assert event["target_audience"] == "aud"
+        assert event["exchanged_token_expires_in"] == 1800
+        assert event["latency_ms"] == 42
+        # no token-bearing keys leaked into the event
+        forbidden = {"access_token", "subject_token", "client_secret"}
+        assert forbidden.isdisjoint(event.keys())
+        assert not any("token" in str(v).lower() and "exchange" not in str(v).lower() for v in event.values() if isinstance(v, str) and len(v) > 40)
+
+    def test_audit_carries_correlation_and_request_id(self, caplog):
+        # L3: forensic correlation to the originating request.
+        # Standard
+        import logging
+
+        with caplog.at_level(logging.INFO):
+            audit_token_exchange(
+                user_email="u@e",
+                gateway_id="gw1",
+                target_audience="aud",
+                success=True,
+                expires_in=1800,
+                upstream="https://upstream",
+                error=None,
+                latency_ms=42,
+                correlation_id="corr-123",
+                request_id="req-456",
+            )
+        event = next(r.token_exchange for r in caplog.records if hasattr(r, "token_exchange"))
+        assert event["correlation_id"] == "corr-123"
+        assert event["request_id"] == "req-456"
