@@ -11,12 +11,19 @@ export interface CustomHeader {
 interface CustomHeadersAuthProps {
   headers: CustomHeader[];
   onHeadersChange: (headers: CustomHeader[]) => void;
+  maxHeaders?: number;
 }
 
-export function CustomHeadersAuth({ headers, onHeadersChange }: CustomHeadersAuthProps) {
+export function CustomHeadersAuth({
+  headers,
+  onHeadersChange,
+  maxHeaders,
+}: CustomHeadersAuthProps) {
   const addHeader = () => {
     onHeadersChange([...headers, { id: crypto.randomUUID(), key: "", value: "" }]);
   };
+
+  const atLimit = maxHeaders !== undefined && headers.length >= maxHeaders;
 
   const removeHeader = (index: number) => {
     onHeadersChange(headers.filter((_, i) => i !== index));
@@ -31,7 +38,9 @@ export function CustomHeadersAuth({ headers, onHeadersChange }: CustomHeadersAut
   return (
     <div className="space-y-4">
       <p className="text-sm text-neutral-600 dark:text-neutral-400">
-        Send one or more custom headers with every request.
+        {maxHeaders === 1
+          ? "Send one custom header with every request."
+          : "Send one or more custom headers with every request."}
       </p>
 
       <div className="space-y-3">
@@ -94,7 +103,8 @@ export function CustomHeadersAuth({ headers, onHeadersChange }: CustomHeadersAut
         variant="default"
         size="sm"
         onClick={addHeader}
-        className="h-7 gap-2 border border-neutral-700 bg-neutral-800 text-white hover:bg-neutral-700 dark:border-neutral-800 dark:bg-neutral-950 dark:hover:bg-neutral-800"
+        disabled={atLimit}
+        className="h-7 gap-2 border border-neutral-700 bg-neutral-800 text-white hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:bg-neutral-950 dark:hover:bg-neutral-800"
       >
         <span className="text-lg leading-none">+</span>
         Add header
