@@ -291,10 +291,12 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 ### Get Gateway Details
 
 ```bash
-# Get specific gateway by ID
+# Get specific gateway by ID, exact name, or exact slug
 export GATEWAY_ID="your-gateway-id"
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/gateways/$GATEWAY_ID | jq '.'
 ```
+
+When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=true`, this same `GET /gateways/{gateway_id}` route is the status polling endpoint for async gateway create, update, and delete. The identifier can be the gateway ID, exact name, or exact slug. If name and slug resolution would be ambiguous across visible gateways, the API returns `409 Conflict`.
 
 ### Register a New Gateway
 
@@ -309,6 +311,61 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
     "transport": "STREAMABLEHTTP"
   }' \
   $BASE_URL/gateways | jq '.'
+```
+
+When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=false` (default), gateway registration remains synchronous.
+
+When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=true`, `POST /gateways` returns `202 Accepted` after the gateway row is persisted with `status="pending"`. `202 Accepted` means the work was accepted, not completed. The background lifecycle worker performs MCP initialization and catalog sync after the response returns.
+
+**Async create response example (`202 Accepted`):**
+
+```json
+{
+  "id": "abc123",
+  "name": "my-mcp-server",
+  "status": "pending",
+  "reachable": false,
+  "registrationAttempts": 0,
+  "nextRetryAt": null,
+  "lastError": null
+}
+```
+
+### Poll Gateway Lifecycle Status
+
+```bash
+# Poll by ID
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/gateways/$GATEWAY_ID | jq '.'
+
+# Poll by exact name
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/gateways/my-mcp-server | jq '.'
+```
+
+Status values:
+
+- `pending` - Create or update accepted, worker still initializing or retrying
+- `active` - Gateway is ready and catalog sync completed
+- `deleting` - Delete accepted, worker cleanup and row removal still in progress
+
+Retry metadata is returned while a gateway is `pending`:
+
+- `registrationAttempts` / `registration_attempts` - Number of failed initialization attempts so far
+- `nextRetryAt` / `next_retry_at` - Next scheduled retry time, or `null` before first failure
+- `lastError` / `last_error` - Most recent sanitized failure detail, or `null` before first failure
+
+**Pending retry response example (`200 OK`):**
+
+```json
+{
+  "id": "abc123",
+  "name": "my-mcp-server",
+  "status": "pending",
+  "registrationAttempts": 3,
+  "nextRetryAt": "2026-05-01T12:05:32Z",
+  "lastError": "Connection refused: http://127.0.0.1:6666/mcp"
+}
 ```
 
 !!! note "Request Types"
@@ -355,6 +412,8 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
   $BASE_URL/gateways/$GATEWAY_ID | jq '.'
 ```
 
+When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=true`, `PUT /gateways/{id}` returns `202 Accepted` with the updated gateway in `status="pending"`. The worker re-initializes the gateway and refreshes the catalog after the response returns. Poll `GET /gateways/{id|name|slug}` until the gateway becomes `active` again.
+
 ### Enable/Disable Gateway
 
 ```bash
@@ -370,6 +429,8 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
   $BASE_URL/gateways/$GATEWAY_ID | jq '.'
 ```
+
+When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=true`, `DELETE /gateways/{id}` returns `202 Accepted` with `status="deleting"`. The worker completes cleanup and hard deletion on a later polling cycle. Continue polling `GET /gateways/{id|name|slug}` until the route returns `404 Not Found`.
 
 ## Tool Management
 

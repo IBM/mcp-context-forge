@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 
-TARGET_IMAGE = os.environ.get("UPGRADE_TARGET_IMAGE", "mcpgateway/mcpgateway:latest")
+TARGET_IMAGE = os.environ.get("UPGRADE_TARGET_IMAGE", "ghcr.io/ibm/mcp-context-forge:latest")
 
 # SQLAlchemy introspection script executed *inside* the running container via
 # `docker exec`.  It emits one JSON object to stdout.

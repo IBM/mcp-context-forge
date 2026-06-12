@@ -39,6 +39,7 @@ Functions:
 """
 
 # Standard
+from collections.abc import Iterator
 import gzip
 import os
 import re
@@ -191,6 +192,49 @@ siem_queue_depth = Gauge(
     "Current SIEM queue depth by destination",
     ["destination"],
 )
+
+gateway_lifecycle_status_gauge = Gauge(
+    "gateway_lifecycle_status",
+    "Current gateway counts by async lifecycle status",
+    ["status"],
+)
+
+
+def _get_gateway_lifecycle_status_gauge():
+    """Return registered lifecycle gauge, recreating it if registry was reset."""
+    collector = _get_registry_collector("gateway_lifecycle_status")
+    if collector is not None:
+        return collector
+    try:
+        return Gauge(
+            "gateway_lifecycle_status",
+            "Current gateway counts by async lifecycle status",
+            ["status"],
+            registry=REGISTRY,
+        )
+    except ValueError:
+        return _get_registry_collector("gateway_lifecycle_status")
+
+
+def update_gateway_lifecycle_status_metrics() -> None:
+    """Refresh gateway lifecycle status counts from the database."""
+    try:
+        # First-Party
+        from mcpgateway.db import Gateway, fresh_db_session  # pylint: disable=import-outside-toplevel
+
+        lifecycle_counts = {"pending": 0, "active": 0, "deleting": 0}
+        lifecycle_gauge = _get_gateway_lifecycle_status_gauge() or gateway_lifecycle_status_gauge
+        with fresh_db_session() as db:
+            rows: Iterator[tuple[str, int]] = db.query(Gateway.status, Gateway.id).all()
+            for status_value, _gateway_id in rows:
+                normalized_status = (status_value or "active").strip().lower()
+                if normalized_status in lifecycle_counts:
+                    lifecycle_counts[normalized_status] += 1
+
+        for status_name, count in lifecycle_counts.items():
+            lifecycle_gauge.labels(status=status_name).set(count)
+    except Exception:  # nosec B110
+        pass
 
 
 def setup_metrics(app):
@@ -365,6 +409,7 @@ def setup_metrics(app):
             Returns:
                 Response: Prometheus metrics in text exposition format.
             """
+            update_gateway_lifecycle_status_metrics()
             registry = REGISTRY
             if "PROMETHEUS_MULTIPROC_DIR" in os.environ:
                 # Third-Party

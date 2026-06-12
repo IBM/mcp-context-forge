@@ -41,6 +41,7 @@ from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.gateway_service import (
     GatewayConnectionError,
     GatewayDuplicateConflictError,
+    GatewayLookupConflictError,
     GatewayError,
     GatewayNameConflictError,
     GatewayNotFoundError,
@@ -301,6 +302,108 @@ class TestGatewayService:
         assert result.url == expected_url
         assert result.description == "A test gateway"
         mock_model.url = expected_url
+
+    @pytest.mark.asyncio
+    async def test_register_gateway_async_enabled_returns_pending(self, gateway_service, test_db, monkeypatch):
+        """Async lifecycle flag should persist a pending gateway without remote init."""
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+        test_db.add = Mock()
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(all=Mock(return_value=[])))))
+
+        registry_cache = SimpleNamespace(invalidate_gateways=AsyncMock())
+        tool_lookup_cache = SimpleNamespace(invalidate_gateway=AsyncMock())
+        monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", True)
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: registry_cache)
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: tool_lookup_cache)
+        monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
+
+        captured_gateway = {}
+
+        def _capture_add(obj):
+            captured_gateway["gateway"] = obj
+
+        test_db.add.side_effect = _capture_add
+        gateway_service._initialize_gateway = AsyncMock()
+
+        mock_model = Mock()
+        mock_model.masked.return_value = mock_model
+        mock_model.status = "pending"
+        mock_model.registration_attempts = 0
+        mock_model.reachable = False
+
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.GatewayRead.model_validate",
+            lambda x: mock_model,
+        )
+
+        gateway_create = GatewayCreate(name="test_gateway", url=url_normalize("example.com"), description="A test gateway")
+
+        result = await gateway_service.register_gateway(test_db, gateway_create, owner_email="owner@example.com")
+
+        gateway_service._initialize_gateway.assert_not_called()
+        test_db.add.assert_called_once()
+        test_db.commit.assert_called_once()
+        test_db.refresh.assert_called_once()
+        registry_cache.invalidate_gateways.assert_awaited_once()
+        tool_lookup_cache.invalidate_gateway.assert_awaited_once()
+        assert captured_gateway["gateway"].status == "pending"
+        assert captured_gateway["gateway"].status_message == "Gateway registration accepted and pending initialization"
+        assert captured_gateway["gateway"].reachable is False
+        assert result.status == "pending"
+
+    @pytest.mark.asyncio
+    async def test_register_gateway_async_retry_returns_existing_pending_gateway(self, gateway_service, test_db, monkeypatch):
+        """Async create retry with same name should return existing pending gateway."""
+        existing_gateway = MagicMock()
+        existing_gateway.id = "gw-pending"
+        existing_gateway.slug = "test-gateway"
+        existing_gateway.name = "test_gateway"
+        existing_gateway.status = "pending"
+        existing_gateway.enabled = True
+        existing_gateway.visibility = "public"
+        existing_gateway.tools = []
+        existing_gateway.resources = []
+        existing_gateway.prompts = []
+        existing_gateway.tags = []
+        existing_gateway.auth_value = None
+
+        monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", True)
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.get_for_update",
+            Mock(return_value=existing_gateway),
+        )
+        test_db.add = Mock()
+
+        mock_model = Mock()
+        mock_model.masked.return_value = mock_model
+        mock_model.status = "pending"
+        monkeypatch.setattr("mcpgateway.services.gateway_service.GatewayRead.model_validate", lambda x: mock_model)
+
+        result = await gateway_service.register_gateway(test_db, GatewayCreate(name="test_gateway", url="http://example.com"))
+
+        assert result.status == "pending"
+        test_db.add.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_register_gateway_async_same_name_active_still_conflicts(self, gateway_service, test_db, monkeypatch):
+        """Async create with same name should still 409 when existing gateway is active."""
+        existing_gateway = MagicMock()
+        existing_gateway.id = "gw-active"
+        existing_gateway.slug = "test-gateway"
+        existing_gateway.status = "active"
+        existing_gateway.enabled = True
+        existing_gateway.visibility = "public"
+
+        monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", True)
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.get_for_update",
+            Mock(return_value=existing_gateway),
+        )
+
+        with pytest.raises(GatewayNameConflictError):
+            await gateway_service.register_gateway(test_db, GatewayCreate(name="test_gateway", url="http://example.com"))
 
     @pytest.mark.asyncio
     async def test_register_gateway_name_conflict(self, gateway_service, mock_gateway, test_db):
@@ -780,6 +883,90 @@ class TestGatewayService:
         assert mock_gateway.client_key == "existing-encrypted-value"
 
     @pytest.mark.asyncio
+    async def test_update_gateway_async_enabled_returns_pending(self, gateway_service, mock_gateway, test_db, monkeypatch):
+        """Async lifecycle flag should persist update state as pending without remote re-init."""
+        mock_gateway.team_id = 1
+        mock_gateway.id = "gw-1"
+        mock_gateway.url = "http://example.com/original"
+        mock_gateway.transport = "SSE"
+        mock_gateway.auth_type = None
+        mock_gateway.auth_value = None
+        mock_gateway.auth_query_params = None
+        mock_gateway.oauth_config = None
+        mock_gateway.ca_certificate = None
+        mock_gateway.ca_certificate_sig = None
+        mock_gateway.signing_algorithm = None
+        mock_gateway.client_cert = None
+        mock_gateway.client_key = None
+        mock_gateway.version = 1
+        mock_gateway.team_id = None
+        mock_gateway.tools = []
+        mock_gateway.resources = []
+        mock_gateway.prompts = []
+
+        execute_results = [_make_execute_result(scalar=mock_gateway), _make_execute_result(scalar=None)]
+        test_db.execute = Mock(side_effect=execute_results)
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+
+        registry_cache = SimpleNamespace(invalidate_gateways=AsyncMock())
+        tool_lookup_cache = SimpleNamespace(invalidate_gateway=AsyncMock())
+        monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", True)
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: registry_cache)
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: tool_lookup_cache)
+        monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
+
+        gateway_service._initialize_gateway = AsyncMock()
+        gateway_service._notify_gateway_updated = AsyncMock()
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+        mock_gateway_read.status = "pending"
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            result = await gateway_service.update_gateway(test_db, "gw-1", GatewayUpdate(description="Updated description"))
+
+        gateway_service._initialize_gateway.assert_not_called()
+        test_db.commit.assert_called_once()
+        test_db.refresh.assert_called_once_with(mock_gateway)
+        registry_cache.invalidate_gateways.assert_awaited_once()
+        tool_lookup_cache.invalidate_gateway.assert_awaited_once_with("gw-1")
+        gateway_service._notify_gateway_updated.assert_awaited_once_with(mock_gateway)
+        assert mock_gateway.description == "Updated description"
+        assert mock_gateway.status == "pending"
+        assert mock_gateway.status_message == "Gateway update accepted and pending initialization"
+        assert mock_gateway.registration_attempts == 0
+        assert mock_gateway.next_retry_at is None
+        assert mock_gateway.last_error is None
+        assert mock_gateway.reachable is False
+        assert result.status == "pending"
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_async_retry_returns_existing_pending_gateway(self, gateway_service, mock_gateway, test_db, monkeypatch):
+        """Async update retry should return existing pending gateway without applying new changes."""
+        mock_gateway.id = "gw-1"
+        mock_gateway.status = "pending"
+        mock_gateway.description = "existing description"
+        mock_gateway.tools = []
+        mock_gateway.resources = []
+        mock_gateway.prompts = []
+
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        test_db.commit = Mock()
+        monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", True)
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+        mock_gateway_read.status = "pending"
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            result = await gateway_service.update_gateway(test_db, "gw-1", GatewayUpdate(description="new description"))
+
+        assert result.status == "pending"
+        assert mock_gateway.description == "existing description"
+        test_db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_register_gateway_exception_rollback(self, gateway_service, test_db):
         """Test rollback on exception during gateway registration."""
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
@@ -1005,6 +1192,98 @@ class TestGatewayService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
         with pytest.raises(GatewayNotFoundError):
             await gateway_service.get_gateway(test_db, 999)
+
+    @pytest.mark.asyncio
+    async def test_get_gateway_by_name_falls_back_after_id_miss(self, gateway_service, mock_gateway, test_db):
+        """Name lookup works when identifier is not an ID."""
+        mock_gateway.masked = Mock(return_value=mock_gateway)
+        mock_gateway.team_id = 1
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=None),
+                _make_execute_result(scalars_list=[mock_gateway]),
+            ]
+        )
+
+        result = await gateway_service.get_gateway(test_db, "test_gateway")
+
+        assert result.name == "test_gateway"
+        assert test_db.execute.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_get_gateway_by_slug_falls_back_after_id_miss(self, gateway_service, mock_gateway, test_db):
+        """Slug lookup works when identifier is not an ID."""
+        mock_gateway.masked = Mock(return_value=mock_gateway)
+        mock_gateway.team_id = 1
+        mock_gateway.slug = "test-gateway"
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=None),
+                _make_execute_result(scalars_list=[mock_gateway]),
+            ]
+        )
+
+        result = await gateway_service.get_gateway(test_db, "test-gateway")
+
+        assert result.name == "test_gateway"
+        assert test_db.execute.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_get_gateway_by_name_raises_on_visible_ambiguity(self, gateway_service, test_db):
+        """Visible duplicate name/slug matches should raise ambiguity conflict."""
+        gateway_one = MagicMock()
+        gateway_one.enabled = True
+        gateway_one.team_id = 1
+        gateway_two = MagicMock()
+        gateway_two.enabled = True
+        gateway_two.team_id = 1
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=None),
+                _make_execute_result(scalars_list=[gateway_one, gateway_two]),
+            ]
+        )
+
+        with pytest.raises(GatewayLookupConflictError, match="ambiguous"):
+            await gateway_service.get_gateway(test_db, "shared-name")
+
+    @pytest.mark.asyncio
+    async def test_get_gateway_by_name_prefers_single_visible_match_over_hidden_duplicate(self, gateway_service, mock_gateway, test_db):
+        """Hidden duplicates must not trigger ambiguity for a caller who sees only one match."""
+        hidden_gateway = MagicMock()
+        hidden_gateway.enabled = True
+        hidden_gateway.team_id = 2
+        mock_gateway.masked = Mock(return_value=mock_gateway)
+        mock_gateway.team_id = 1
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=None),
+                _make_execute_result(scalars_list=[hidden_gateway, mock_gateway]),
+            ]
+        )
+
+        gateway_service._check_gateway_access = AsyncMock(side_effect=[False, True])
+
+        result = await gateway_service.get_gateway(test_db, "shared-name")
+
+        assert result.name == "test_gateway"
+
+    @pytest.mark.asyncio
+    async def test_get_gateway_by_name_returns_not_found_when_only_hidden_matches_exist(self, gateway_service, test_db):
+        """Hidden-only matches must fail closed as 404, not 409."""
+        hidden_gateway = MagicMock()
+        hidden_gateway.enabled = True
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=None),
+                _make_execute_result(scalars_list=[hidden_gateway]),
+            ]
+        )
+
+        gateway_service._check_gateway_access = AsyncMock(return_value=False)
+
+        with pytest.raises(GatewayNotFoundError):
+            await gateway_service.get_gateway(test_db, "shared-name")
 
     @pytest.mark.asyncio
     async def test_get_gateway_inactive(self, gateway_service, mock_gateway, test_db):
@@ -1992,6 +2271,46 @@ class TestGatewayService:
         gateway_service._notify_gateway_deleted.assert_called_once()
         # Verify execute was called multiple times (select + bulk deletes + final delete)
         assert test_db.execute.call_count >= 2
+
+    @pytest.mark.asyncio
+    async def test_delete_gateway_async_enabled_returns_deleting(self, gateway_service, mock_gateway, test_db, monkeypatch):
+        """Async lifecycle flag should mark gateway deleting without hard delete."""
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway, rowcount=1))
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.expire = Mock()
+        mock_gateway.id = "gw-1"
+        mock_gateway.name = "gw-delete"
+        mock_gateway.url = "http://example.com"
+        mock_gateway.team_id = None
+        mock_gateway.tools = []
+        mock_gateway.resources = []
+        mock_gateway.prompts = []
+
+        registry_cache = SimpleNamespace(invalidate_gateways=AsyncMock())
+        tool_lookup_cache = SimpleNamespace(invalidate_gateway=AsyncMock())
+        monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", True)
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: registry_cache)
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: tool_lookup_cache)
+        monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
+        monkeypatch.setattr("mcpgateway.utils.passthrough_headers.invalidate_passthrough_header_caches", Mock())
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+        mock_gateway_read.status = "deleting"
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            result = await gateway_service.delete_gateway(test_db, "gw-1")
+
+        test_db.commit.assert_called_once()
+        test_db.refresh.assert_called_once_with(mock_gateway)
+        test_db.expire.assert_not_called()
+        registry_cache.invalidate_gateways.assert_awaited_once()
+        tool_lookup_cache.invalidate_gateway.assert_awaited_once_with("gw-1")
+        assert mock_gateway.status == "deleting"
+        assert mock_gateway.status_message == "Gateway deletion accepted and pending cleanup"
+        assert mock_gateway.reachable is False
+        assert result.status == "deleting"
 
     @pytest.mark.asyncio
     async def test_delete_gateway_not_found(self, gateway_service, test_db):
@@ -5320,6 +5639,41 @@ class TestGetGateway:
         db.execute.return_value = _make_execute_result(scalar=None)
         with pytest.raises(GatewayNotFoundError):
             await gateway_service.get_gateway(db, "missing")
+
+    @pytest.mark.asyncio
+    async def test_get_gateway_success_by_name(self, gateway_service, mock_gateway):
+        db = MagicMock()
+        db.execute.side_effect = [
+            _make_execute_result(scalar=None),
+            _make_execute_result(scalars_list=[mock_gateway]),
+        ]
+        result = await gateway_service.get_gateway(db, "test_gateway")
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_get_gateway_success_by_slug(self, gateway_service, mock_gateway):
+        mock_gateway.slug = "test-gateway"
+        db = MagicMock()
+        db.execute.side_effect = [
+            _make_execute_result(scalar=None),
+            _make_execute_result(scalars_list=[mock_gateway]),
+        ]
+        result = await gateway_service.get_gateway(db, "test-gateway")
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_get_gateway_by_name_ambiguity_raises_conflict(self, gateway_service):
+        gateway_one = MagicMock()
+        gateway_one.enabled = True
+        gateway_two = MagicMock()
+        gateway_two.enabled = True
+        db = MagicMock()
+        db.execute.side_effect = [
+            _make_execute_result(scalar=None),
+            _make_execute_result(scalars_list=[gateway_one, gateway_two]),
+        ]
+        with pytest.raises(GatewayLookupConflictError):
+            await gateway_service.get_gateway(db, "shared-name")
 
     @pytest.mark.asyncio
     async def test_get_inactive_gateway_with_include(self, gateway_service, mock_gateway):

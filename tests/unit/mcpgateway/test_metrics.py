@@ -80,6 +80,67 @@ def test_metrics_contains_standard_metrics(client):
     assert len(text) > 0, "Metrics response should not be empty"
 
 
+def test_metrics_contains_gateway_lifecycle_status_counts(client, monkeypatch):
+    """Gateway lifecycle gauge exposes pending, active, deleting counts."""
+
+    class DummyQuery:
+        def all(self):
+            return [
+                ("pending", "gw-1"),
+                ("pending", "gw-2"),
+                ("active", "gw-3"),
+                ("deleting", "gw-4"),
+            ]
+
+    class DummySession:
+        def query(self, *_args, **_kwargs):
+            return DummyQuery()
+
+    class DummyContext:
+        def __enter__(self):
+            return DummySession()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("mcpgateway.db.fresh_db_session", lambda: DummyContext())
+
+    response = client.get("/metrics/prometheus")
+    text = response.text
+
+    assert 'gateway_lifecycle_status{status="pending"} 2.0' in text
+    assert 'gateway_lifecycle_status{status="active"} 1.0' in text
+    assert 'gateway_lifecycle_status{status="deleting"} 1.0' in text
+
+
+def test_metrics_gateway_lifecycle_status_zero_fills_missing_states(client, monkeypatch):
+    """Missing lifecycle states are exported as zero for stable dashboards."""
+
+    class DummyQuery:
+        def all(self):
+            return [("active", "gw-1")]
+
+    class DummySession:
+        def query(self, *_args, **_kwargs):
+            return DummyQuery()
+
+    class DummyContext:
+        def __enter__(self):
+            return DummySession()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("mcpgateway.db.fresh_db_session", lambda: DummyContext())
+
+    response = client.get("/metrics/prometheus")
+    text = response.text
+
+    assert 'gateway_lifecycle_status{status="pending"} 0.0' in text
+    assert 'gateway_lifecycle_status{status="active"} 1.0' in text
+    assert 'gateway_lifecycle_status{status="deleting"} 0.0' in text
+
+
 def test_metrics_counters_increment(client):
     """✅ Counters increment after a request."""
     # Initial scrape

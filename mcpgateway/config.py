@@ -2472,6 +2472,10 @@ class Settings(BaseSettings):
     # Gateways can override this with their own refresh_interval_seconds
     gateway_auto_refresh_interval: int = Field(default=300, ge=60, description="Default refresh interval in seconds for gateway tools/resources/prompts sync (minimum 60 seconds)")
 
+    # Async gateway lifecycle processing
+    gateway_async_lifecycle_enabled: bool = Field(default=False, description="Enable asynchronous gateway create/update/delete lifecycle processing with 202 Accepted responses")
+    gateway_async_lifecycle_poll_interval: float = Field(default=5.0, gt=0, description="Polling interval in seconds for asynchronous gateway lifecycle background processing")
+
     # Hot/Cold Server Classification
     # Classify servers by usage (hot = active sessions, cold = inactive) for optimized polling
     # Poll intervals auto-derived: hot = gateway_auto_refresh_interval (1x), cold = 3x
