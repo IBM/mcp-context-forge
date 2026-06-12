@@ -210,6 +210,17 @@ async def test_process_gateway_lifecycle_once_ignores_non_lifecycle_status():
     service._process_deleting_gateway.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_process_gateway_lifecycle_once_returns_false_when_missing():
+    service = GatewayService()
+    db = MagicMock()
+    db.execute.return_value = SimpleNamespace(scalar_one_or_none=lambda: None)
+
+    handled = await service._process_gateway_lifecycle_once(db, "gw-missing")
+
+    assert handled is False
+
+
 def test_get_due_gateway_lifecycle_ids_includes_deleting_and_due_pending(monkeypatch):
     service = GatewayService()
     fake_db = MagicMock()
@@ -264,6 +275,40 @@ async def test_run_gateway_lifecycle_pass_processes_due_gateways(monkeypatch):
             call(db_two, "gw-2"),
         ]
     )
+
+
+@pytest.mark.asyncio
+async def test_run_gateway_lifecycle_pass_returns_early_when_disabled(monkeypatch):
+    service = GatewayService()
+    service._get_due_gateway_lifecycle_ids = Mock()
+    monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", False)
+
+    await service._run_gateway_lifecycle_pass()
+
+    service._get_due_gateway_lifecycle_ids.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_run_gateway_lifecycle_pass_logs_and_continues_on_error(monkeypatch):
+    service = GatewayService()
+    service._get_due_gateway_lifecycle_ids = Mock(return_value=["gw-1"])
+    service._process_gateway_lifecycle_once = AsyncMock(side_effect=RuntimeError("boom"))
+    warning_log = Mock()
+    monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", True)
+    monkeypatch.setattr("mcpgateway.services.gateway_service.logger.warning", warning_log)
+
+    class FakeFreshSession:
+        def __enter__(self):
+            return MagicMock()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", lambda: FakeFreshSession())
+
+    await service._run_gateway_lifecycle_pass()
+
+    warning_log.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -522,6 +567,45 @@ async def test_run_health_checks_runs_lifecycle_pass_when_enabled(monkeypatch):
     service.check_health_of_gateways = AsyncMock()
     service._run_gateway_lifecycle_pass = AsyncMock()
     monkeypatch.setattr(settings, "cache_type", "none")
+    monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", True)
+    monkeypatch.setattr("mcpgateway.services.gateway_service.asyncio.sleep", AsyncMock(side_effect=asyncio.CancelledError()))
+
+    with pytest.raises(asyncio.CancelledError):
+        await service._run_health_checks("admin@example.com")
+
+    service._run_gateway_lifecycle_pass.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_run_health_checks_redis_leader_runs_lifecycle_pass(monkeypatch):
+    service = GatewayService()
+    service._redis_client = SimpleNamespace(get=AsyncMock(side_effect=["instance-1"]))
+    service._leader_key = "leader"
+    service._instance_id = "instance-1"
+    service._health_check_interval = 0
+    service._get_gateways = Mock(return_value=[])
+    service.check_health_of_gateways = AsyncMock()
+    service._run_gateway_lifecycle_pass = AsyncMock()
+    monkeypatch.setattr(settings, "cache_type", "redis")
+    monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", True)
+    monkeypatch.setattr("mcpgateway.services.gateway_service.asyncio.sleep", AsyncMock(side_effect=asyncio.CancelledError()))
+
+    with pytest.raises(asyncio.CancelledError):
+        await service._run_health_checks("admin@example.com")
+
+    service._run_gateway_lifecycle_pass.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_run_health_checks_filelock_runs_lifecycle_pass(monkeypatch):
+    service = GatewayService()
+    service._redis_client = None
+    service._health_check_interval = 0
+    service._get_gateways = Mock(return_value=[])
+    service.check_health_of_gateways = AsyncMock()
+    service._run_gateway_lifecycle_pass = AsyncMock()
+    service._file_lock = SimpleNamespace(acquire=Mock(return_value=None))
+    monkeypatch.setattr(settings, "cache_type", "file")
     monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", True)
     monkeypatch.setattr("mcpgateway.services.gateway_service.asyncio.sleep", AsyncMock(side_effect=asyncio.CancelledError()))
 

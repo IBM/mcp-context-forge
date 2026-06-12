@@ -1130,16 +1130,16 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         normalized_url = self.normalize_url(str(gateway.url))
 
-            decoded_auth_value = None
-            if gateway.auth_value:
-                if isinstance(gateway.auth_value, str):
-                    try:
-                        decoded_auth_value = decode_auth(gateway.auth_value)
-                    except Exception as e:
-                        logger.warning("Failed to decode provided auth_value: %s", e)
-                        decoded_auth_value = None
-                elif isinstance(gateway.auth_value, dict):
-                    decoded_auth_value = gateway.auth_value
+        decoded_auth_value = None
+        if gateway.auth_value:
+            if isinstance(gateway.auth_value, str):
+                try:
+                    decoded_auth_value = decode_auth(gateway.auth_value)
+                except Exception as e:
+                    logger.warning("Failed to decode provided auth_value: %s", e)
+                    decoded_auth_value = None
+            elif isinstance(gateway.auth_value, dict):
+                decoded_auth_value = gateway.auth_value
 
         if not gateway.one_time_auth:
             duplicate_gateway = self._check_gateway_uniqueness(
@@ -3670,7 +3670,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         self._active_gateways.discard(gateway_url)
         await self._notify_gateway_deleted(gateway_info)
 
-            logger.info("Permanently deleted gateway: %s", gateway_name)
+        logger.info("Permanently deleted gateway: %s", gateway_name)
 
         audit_trail.log_action(
             user_id=user_email or "system",

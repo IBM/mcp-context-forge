@@ -43,6 +43,8 @@ from mcpgateway.admin import (  # admin_get_metrics,
     _get_latency_heatmap_python,
     _get_latency_percentiles_postgresql,
     _get_latency_percentiles_python,
+    _gateway_result_payload,
+    _gateway_result_status,
     _get_span_entity_performance,
     _get_timeseries_metrics_postgresql,
     _get_timeseries_metrics_python,
@@ -259,6 +261,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
 from mcpgateway.config import settings, UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.schemas import (
+    GatewayRead,
     GatewayTestRequest,
     GlobalConfigRead,
     GlobalConfigUpdate,
@@ -272,7 +275,7 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.export_service import ExportError, ExportService
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNotFoundError, GatewayService
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayLookupConflictError, GatewayNotFoundError, GatewayService
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService
 from mcpgateway.services.logging_service import LoggingService
@@ -3268,6 +3271,14 @@ class TestAdminGatewayRoutes:
         mock_get_gateway.side_effect = RuntimeError("boom")
         with pytest.raises(RuntimeError):
             await admin_get_gateway("gw-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+    @patch.object(GatewayService, "get_gateway")
+    async def test_admin_get_gateway_conflict_error(self, mock_get_gateway, mock_request, mock_db):
+        mock_get_gateway.side_effect = GatewayLookupConflictError("duplicate slug")
+        with pytest.raises(HTTPException) as excinfo:
+            await admin_get_gateway("gw-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert excinfo.value.status_code == 409
+        assert "ambiguous across multiple visible gateways" in excinfo.value.detail
 
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_valid_auth_types(self, mock_register_gateway, mock_request, mock_db):
@@ -7670,6 +7681,27 @@ class TestErrorHandlingPaths:
             body = json.loads(result.body)
             assert body["success"] is False
             assert "Failed to delete gateway" in body["message"]
+
+    async def test_admin_delete_gateway_rest_pending_response(self, mock_db):
+        from mcpgateway.admin import admin_delete_gateway_rest
+
+        with patch("mcpgateway.admin.gateway_service.delete_gateway", new_callable=AsyncMock) as mock_delete:
+            mock_delete.return_value = GatewayRead(
+                id="gateway-123",
+                name="gw",
+                url="http://example.com",
+                transport="sse",
+                enabled=True,
+                status="deleting",
+            )
+
+            result = await admin_delete_gateway_rest("gateway-123", mock_db, user={"email": "test-user", "db": mock_db})
+
+            assert isinstance(result, JSONResponse)
+            assert result.status_code == 202
+            body = json.loads(result.body)
+            assert body["success"] is True
+            assert body["gateway"]["status"] == "deleting"
 
 
 class TestImportConfigurationEndpoints:
@@ -16590,6 +16622,27 @@ async def test_admin_delete_gateway_error_inactive_checked_redirect(mock_delete,
 
 
 @pytest.mark.asyncio
+@patch.object(GatewayService, "delete_gateway")
+async def test_admin_delete_gateway_pending_redirect_message(mock_delete, mock_db):
+    request = MagicMock(spec=Request)
+    request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "false"}))
+    request.scope = {"root_path": ""}
+    mock_delete.return_value = GatewayRead(
+        id="gateway-1",
+        name="gw",
+        url="http://example.com",
+        transport="sse",
+        enabled=True,
+        status="deleting",
+    )
+
+    response = await admin_delete_gateway("gateway-1", request, mock_db, user={"email": "user@example.com"})
+
+    assert response.status_code == 303
+    assert "message=Gateway%20deletion%20accepted%20and%20pending%20cleanup." in response.headers["location"]
+
+
+@pytest.mark.asyncio
 @patch.object(ResourceService, "delete_resource")
 async def test_admin_delete_resource_success(mock_delete, mock_db):
     request = MagicMock(spec=Request)
@@ -18097,6 +18150,36 @@ class TestUtilityFunctions:
         assert "error=Error%20msg" in result
         assert "include_inactive=true" in result
         assert result.endswith("#catalog")
+
+    def test_build_admin_redirect_with_message(self):
+        result = _build_admin_redirect("", "catalog", message="Saved ok")
+        assert result == "/admin/?message=Saved%20ok#catalog"
+
+    def test_gateway_result_status_for_dict_and_basemodel(self):
+        result_model = GatewayRead(
+            id="gw-1",
+            name="gw",
+            url="http://example.com",
+            transport="sse",
+            enabled=True,
+            status="pending",
+        )
+        assert _gateway_result_status({"status": "deleting"}) == "deleting"
+        assert _gateway_result_status(result_model) == "pending"
+        assert _gateway_result_status({"status": 123}) is None
+
+    def test_gateway_result_payload_for_dict_and_basemodel(self):
+        result_model = GatewayRead(
+            id="gw-1",
+            name="gw",
+            url="http://example.com",
+            transport="sse",
+            enabled=True,
+            status="pending",
+        )
+        assert _gateway_result_payload({"id": "gw-1"}) == {"id": "gw-1"}
+        assert _gateway_result_payload(result_model)["status"] == "pending"
+        assert _gateway_result_payload(MagicMock()) is None
 
     def test_build_admin_redirect_with_invalid_team_id(self):
         result = _build_admin_redirect("", "tools", team_id="invalid-uuid")

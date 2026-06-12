@@ -21,6 +21,7 @@ Tests:
 import os
 import time
 import re
+from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
@@ -139,6 +140,16 @@ def test_metrics_gateway_lifecycle_status_zero_fills_missing_states(client, monk
     assert 'gateway_lifecycle_status{status="pending"} 0.0' in text
     assert 'gateway_lifecycle_status{status="active"} 1.0' in text
     assert 'gateway_lifecycle_status{status="deleting"} 0.0' in text
+
+
+def test_gateway_lifecycle_status_gauge_recovers_after_duplicate_registration(monkeypatch):
+    from mcpgateway.services import metrics as metrics_module
+
+    sentinel = object()
+    monkeypatch.setattr(metrics_module, "_get_registry_collector", MagicMock(side_effect=[None, sentinel]))
+    monkeypatch.setattr(metrics_module, "Gauge", MagicMock(side_effect=ValueError("duplicate")))
+
+    assert metrics_module._get_gateway_lifecycle_status_gauge() is sentinel
 
 
 def test_metrics_counters_increment(client):
