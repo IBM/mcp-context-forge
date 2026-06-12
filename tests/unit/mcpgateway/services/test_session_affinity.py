@@ -1433,8 +1433,8 @@ class _FakeHttpxClient:
     async def __aexit__(self, *_exc):
         return False
 
-    async def post(self, url, *, json=None, headers=None, timeout=None):
-        self.last_post_kwargs = {"url": url, "json": json, "headers": headers, "timeout": timeout}
+    async def post(self, url, *, json=None, content=None, headers=None, timeout=None):
+        self.last_post_kwargs = {"url": url, "json": json, "content": content, "headers": headers, "timeout": timeout}
         if self._raise_exc is not None:
             raise self._raise_exc
         return self._response
@@ -1571,7 +1571,16 @@ async def test_execute_forwarded_request_generic_error_returns_wrapped_error():
 
 @pytest.mark.asyncio
 async def test_execute_forwarded_http_request_publishes_response_via_redis():
-    """Happy path: make the internal HTTP call, hex-encode the response body, publish to Redis."""
+    """Happy path: in-process dispatch to ``/rpc``, hex-encode the response body, publish to Redis.
+
+    Pins the new contract introduced by the WORKER_ID + in-process-dispatch
+    fix (#4557): the executor must POST to ``/rpc`` (not the original
+    ``/mcp`` path) with ``x-forwarded-internally: true`` so the re-entered
+    handler doesn't forward again.
+    """
+    # Third-Party
+    import orjson
+
     # First-Party
     from mcpgateway.services.session_affinity import SessionAffinity
 
@@ -1581,13 +1590,14 @@ async def test_execute_forwarded_http_request_publishes_response_via_redis():
     response.headers = {"content-type": "application/json"}
     client = _FakeHttpxClient(response=response)
 
+    jsonrpc_body = orjson.dumps({"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 1})
     request = {
         "response_channel": "mcpgw:pool_http_response:req-1",
         "method": "POST",
-        "path": "/mcp",
+        "path": "/servers/srv-9/mcp",
         "query_string": "",
-        "headers": {"Authorization": "Bearer x"},
-        "body": b"upstream-body".hex(),
+        "headers": {"authorization": "Bearer original-jwt"},
+        "body": jsonrpc_body.hex(),
         "original_worker": "origin-worker",
         "mcp_session_id": "sess-123456789",
     }
@@ -1596,19 +1606,24 @@ async def test_execute_forwarded_http_request_publishes_response_via_redis():
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,
         patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=client),
         patch("mcpgateway.services.session_affinity.internal_loopback_base_url", return_value="http://localhost:4444"),
-        patch("mcpgateway.services.session_affinity.internal_loopback_verify", return_value=False),
     ):
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
         await affinity._execute_forwarded_http_request(request, fake)  # pylint: disable=protected-access
+
+    # Dispatched to /rpc with the loop-stop header.
+    assert client.last_post_kwargs is not None
+    assert client.last_post_kwargs["url"] == "/rpc"
+    headers = client.last_post_kwargs["headers"]
+    assert headers["x-forwarded-internally"] == "true"
+    assert headers["x-mcp-session-id"] == "sess-123456789"
+    # server_id parsed from the path is injected so the dispatcher routes to the right virtual server.
+    sent_body = orjson.loads(client.last_post_kwargs["content"])
+    assert sent_body["params"]["server_id"] == "srv-9"
 
     # Response published to the requester's channel.
     assert fake.published
     chan, payload = fake.published[0]
     assert chan == "mcpgw:pool_http_response:req-1"
-    # Orjson round-trips the dict — body is hex-encoded.
-    # Third-Party
-    import orjson
-
     decoded = orjson.loads(payload)
     assert decoded["status"] == 200
     assert bytes.fromhex(decoded["body"]) == b"response-body"
@@ -1616,7 +1631,15 @@ async def test_execute_forwarded_http_request_publishes_response_via_redis():
 
 @pytest.mark.asyncio
 async def test_execute_forwarded_http_request_publishes_500_error_on_exception():
-    """If the internal HTTP call raises, a 500 error envelope is still published to Redis."""
+    """If the in-process dispatch raises, a 500 error envelope is still published to Redis.
+
+    The body must carry a real JSON-RPC payload so the dispatch path is
+    actually exercised (an empty body short-circuits to a 202 ack and the
+    raise is never reached).
+    """
+    # Third-Party
+    import orjson
+
     # First-Party
     from mcpgateway.services.session_affinity import SessionAffinity
 
@@ -1624,12 +1647,13 @@ async def test_execute_forwarded_http_request_publishes_500_error_on_exception()
     fake = _FakeRedis()
     client = _FakeHttpxClient(raise_exc=RuntimeError("internal crash"))
 
+    jsonrpc_body = orjson.dumps({"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 1})
     request = {
         "response_channel": "mcpgw:pool_http_response:req-2",
         "method": "POST",
         "path": "/mcp",
         "headers": {},
-        "body": "",
+        "body": jsonrpc_body.hex(),
         "mcp_session_id": "sess-abcdef",
     }
 
@@ -1637,19 +1661,149 @@ async def test_execute_forwarded_http_request_publishes_500_error_on_exception()
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,
         patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=client),
         patch("mcpgateway.services.session_affinity.internal_loopback_base_url", return_value="http://localhost:4444"),
-        patch("mcpgateway.services.session_affinity.internal_loopback_verify", return_value=False),
     ):
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
         await affinity._execute_forwarded_http_request(request, fake)  # pylint: disable=protected-access
 
     # Error response still published so the requester doesn't hang.
-    # Third-Party
-    import orjson
-
     chan, payload = fake.published[0]
     assert chan == "mcpgw:pool_http_response:req-2"
     decoded = orjson.loads(payload)
     assert decoded["status"] == 500
+
+
+@pytest.mark.asyncio
+async def test_execute_forwarded_http_request_acks_non_post_lifecycle_method():
+    """Non-POST methods (DELETE, GET) carry no JSON-RPC body, so the owner acks 200 without dispatching.
+
+    The in-process dispatch is only for JSON-RPC POSTs; lifecycle methods are
+    handled by the originating worker. This test pins that short-circuit.
+    """
+    # Third-Party
+    import orjson
+
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+    fake = _FakeRedis()
+    client = _FakeHttpxClient(response=_FakeHttpResponse(200, text_body="should-not-be-used"))
+
+    request = {
+        "response_channel": "mcpgw:pool_http_response:req-del",
+        "method": "DELETE",
+        "path": "/mcp",
+        "headers": {},
+        "body": "",
+        "mcp_session_id": "sess-delete",
+    }
+
+    with (
+        patch("mcpgateway.services.session_affinity.settings") as mock_settings,
+        patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=client),
+        patch("mcpgateway.services.session_affinity.internal_loopback_base_url", return_value="http://localhost:4444"),
+    ):
+        mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
+        await affinity._execute_forwarded_http_request(request, fake)  # pylint: disable=protected-access
+
+    # The dispatch helper was never invoked.
+    assert client.last_post_kwargs is None
+    # A 200 ack was published for the lifecycle method.
+    chan, payload = fake.published[0]
+    assert chan == "mcpgw:pool_http_response:req-del"
+    decoded = orjson.loads(payload)
+    assert decoded["status"] == 200
+
+
+@pytest.mark.asyncio
+async def test_execute_forwarded_http_request_acks_notification_method_without_dispatch():
+    """``notifications/*`` methods need no upstream round-trip — owner acks 202 without dispatching.
+
+    MCP notification messages are fire-and-forget; the originating worker
+    already accepted the notification. The owner just acknowledges receipt.
+    """
+    # Third-Party
+    import orjson
+
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+    fake = _FakeRedis()
+    client = _FakeHttpxClient(response=_FakeHttpResponse(200, text_body="should-not-be-used"))
+
+    jsonrpc_body = orjson.dumps({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
+    request = {
+        "response_channel": "mcpgw:pool_http_response:req-notif",
+        "method": "POST",
+        "path": "/mcp",
+        "headers": {},
+        "body": jsonrpc_body.hex(),
+        "mcp_session_id": "sess-notif",
+    }
+
+    with (
+        patch("mcpgateway.services.session_affinity.settings") as mock_settings,
+        patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=client),
+        patch("mcpgateway.services.session_affinity.internal_loopback_base_url", return_value="http://localhost:4444"),
+    ):
+        mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
+        await affinity._execute_forwarded_http_request(request, fake)  # pylint: disable=protected-access
+
+    # The dispatch helper was never invoked.
+    assert client.last_post_kwargs is None
+    # A 202 ack was published for the notification.
+    chan, payload = fake.published[0]
+    assert chan == "mcpgw:pool_http_response:req-notif"
+    decoded = orjson.loads(payload)
+    assert decoded["status"] == 202
+
+
+@pytest.mark.asyncio
+async def test_execute_forwarded_http_request_initialises_params_when_missing_for_server_id_injection():
+    """When the JSON-RPC body has no ``params`` key, the executor synthesises one before injecting ``server_id``.
+
+    Pins the defensive branch in the server-id-injection path: a request body
+    that arrives without ``params`` (or with a non-dict params) still routes
+    to the correct virtual server because the executor populates an empty
+    dict and writes the server_id into it.
+    """
+    # Third-Party
+    import orjson
+
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+    fake = _FakeRedis()
+    response = _FakeHttpResponse(200, text_body="ok")
+    response.headers = {"content-type": "application/json"}
+    client = _FakeHttpxClient(response=response)
+
+    # Body has NO "params" key — the executor must initialise it before writing server_id.
+    jsonrpc_body = orjson.dumps({"jsonrpc": "2.0", "method": "tools/list", "id": 1})
+    request = {
+        "response_channel": "mcpgw:pool_http_response:req-no-params",
+        "method": "POST",
+        "path": "/servers/srv-17/mcp",
+        "headers": {},
+        "body": jsonrpc_body.hex(),
+        "mcp_session_id": "sess-no-params",
+    }
+
+    with (
+        patch("mcpgateway.services.session_affinity.settings") as mock_settings,
+        patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=client),
+        patch("mcpgateway.services.session_affinity.internal_loopback_base_url", return_value="http://localhost:4444"),
+    ):
+        mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
+        await affinity._execute_forwarded_http_request(request, fake)  # pylint: disable=protected-access
+
+    # The dispatch ran and the synthesised params carries the parsed server_id.
+    assert client.last_post_kwargs is not None
+    sent_body = orjson.loads(client.last_post_kwargs["content"])
+    assert sent_body["params"] == {"server_id": "srv-17"}
+
 
 
 # ---------------------------------------------------------------------------
@@ -2231,35 +2385,56 @@ async def test_forward_request_to_owner_returns_none_when_reclaim_race_makes_us_
 
 
 @pytest.mark.asyncio
-async def test_execute_forwarded_http_request_appends_query_string():
-    """Query string from forwarded request is appended to the internal URL."""
+async def test_execute_forwarded_http_request_dispatches_in_process_via_asgi_transport():
+    """The forward is dispatched IN-PROCESS via ``httpx.ASGITransport(app=app)``, not over the loopback socket.
+
+    This is the load-bearing change behind the #4557 fix. Before PR #4981 the
+    executor opened a real ``httpx.AsyncClient(verify=...)`` to
+    ``http://127.0.0.1:4444/rpc``, which hit the shared gunicorn socket and
+    let the kernel route it to an arbitrary worker that didn't hold the
+    upstream session. Dispatching in-process via ASGITransport keeps the
+    re-entered ``/rpc`` handler in *this* worker, so the bound
+    ``UpstreamSessionRegistry`` entry actually serves the request.
+    """
+    # Third-Party
+    import httpx
+    import orjson
+
     # First-Party
     from mcpgateway.services.session_affinity import SessionAffinity
 
     affinity = SessionAffinity()
     fake = _FakeRedis()
-    client = _FakeHttpxClient(response=_FakeHttpResponse(200, text_body="ok"))
+    captured_transport: list[Any] = []
 
+    def _capture_async_client(*args: Any, **kwargs: Any) -> _FakeHttpxClient:
+        captured_transport.append(kwargs.get("transport"))
+        return _FakeHttpxClient(response=_FakeHttpResponse(200, text_body="ok"))
+
+    jsonrpc_body = orjson.dumps({"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 1})
     request = {
         "response_channel": "r",
-        "method": "GET",
+        "method": "POST",
         "path": "/mcp",
-        "query_string": "foo=bar&baz=qux",
+        "query_string": "",
         "headers": {},
-        "body": "",
-        "mcp_session_id": "sess-qs",
+        "body": jsonrpc_body.hex(),
+        "mcp_session_id": "sess-asgi",
     }
 
     with (
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,
-        patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=client),
+        patch("mcpgateway.services.session_affinity.httpx.AsyncClient", side_effect=_capture_async_client),
         patch("mcpgateway.services.session_affinity.internal_loopback_base_url", return_value="http://localhost:4444"),
-        patch("mcpgateway.services.session_affinity.internal_loopback_verify", return_value=False),
     ):
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
         await affinity._execute_forwarded_http_request(request, fake)  # pylint: disable=protected-access
 
-    assert client.last_request_kwargs["url"] == "http://localhost:4444/mcp?foo=bar&baz=qux"  # type: ignore[index]
+    # AsyncClient was constructed with an ASGITransport — the in-process dispatch path.
+    assert captured_transport, "httpx.AsyncClient was never called"
+    assert isinstance(captured_transport[0], httpx.ASGITransport), (
+        f"expected ASGITransport for in-process dispatch, got {type(captured_transport[0]).__name__}"
+    )
 
 
 @pytest.mark.asyncio
