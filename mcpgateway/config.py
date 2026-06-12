@@ -423,6 +423,13 @@ class Settings(BaseSettings):
     embed_environment_in_tokens: bool = Field(default=False, description="Embed environment claim in gateway-issued JWTs for environment isolation")
     validate_token_environment: bool = Field(default=False, description="Reject tokens with mismatched environment claim (tokens without env claim are allowed)")
 
+    jwt_user_identity_claim: str = Field(
+        default="sub",
+        description="JWT claim to use for user identity in API bearer token authentication (default: 'sub'). "
+        "Common values: 'sub', 'email', 'preferred_username', 'upn'. Must contain a unique identifier "
+        "that matches the user's email in the database. Does not affect SSO/UI login flow.",
+    )
+
     # CSRF Protection Configuration
     csrf_enabled: bool = Field(default=True, description="Enable CSRF protection for state-changing operations")
     csrf_secret_key: str = Field(default="", description="Secret key for CSRF token generation (falls back to jwt_secret_key if empty)")
@@ -2740,9 +2747,7 @@ class Settings(BaseSettings):
     # Experimental dataplane config
     # ===================================
 
-    dataplane_publisher: bool = Field(default=False,
-        description="Send data from CF to Rust experimental dataplane"
-    )
+    dataplane_publisher: bool = Field(default=False, description="Send data from CF to Rust experimental dataplane")
 
     # Well-Known URI Configuration
     # ===================================

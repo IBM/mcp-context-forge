@@ -24,7 +24,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.auth import TokenValidationError, get_current_user, get_db, get_user_team_roles, validate_token_user
+from mcpgateway.auth import TokenValidationError, extract_identity_from_jwt_payload, get_current_user, get_db, get_user_team_roles, validate_token_user
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser
 from mcpgateway.transports.streamablehttp_transport import (
@@ -6743,3 +6743,135 @@ class TestAuthJwtRoutingReturn:
             result = await handler._auth_jwt(token="unused")
 
         assert result is False
+
+
+class TestExtractIdentityFromJwtPayload:
+    """Tests for ``extract_identity_from_jwt_payload()`` in auth.py.
+
+    Covers default sub claim, configured claim, fallback chain, session-token
+    bypass, empty payload, and warning-log conditions.
+    """
+
+    # ------------------------------------------------------------------
+    # Happy path — default behaviour (sub)
+    # ------------------------------------------------------------------
+
+    def test_default_sub(self):
+        """Default config extracts `sub` from the payload."""
+        payload = {"sub": "user@example.com", "email": "bob@example.com"}
+        assert extract_identity_from_jwt_payload(payload) == "user@example.com"
+
+    def test_sub_fallback_no_sub(self):
+        """Fallback to email when sub is missing and default config asks for sub."""
+        payload = {"email": "bob@example.com"}
+        assert extract_identity_from_jwt_payload(payload) == "bob@example.com"
+
+    def test_sub_fallback_no_sub_no_email(self):
+        """Fallback to username when sub and email are missing."""
+        payload = {"username": "bob"}
+        assert extract_identity_from_jwt_payload(payload) == "bob"
+
+    def test_sub_fallback_empty(self):
+        """Empty payload returns None."""
+        payload: dict = {}
+        assert extract_identity_from_jwt_payload(payload) is None
+
+    # ------------------------------------------------------------------
+    # Happy path — configured claim (JWT_USER_IDENTITY_CLAIM)
+    # ------------------------------------------------------------------
+
+    def test_configured_claim_email(self, monkeypatch):
+        """Configured claim ``email`` is used when present."""
+        monkeypatch.setattr(settings, "jwt_user_identity_claim", "email")
+        payload = {"sub": "opaque-uuid", "email": "alice@example.com"}
+        assert extract_identity_from_jwt_payload(payload) == "alice@example.com"
+
+    def test_configured_claim_preferred_username(self, monkeypatch):
+        """Configured claim ``preferred_username`` is used when present."""
+        monkeypatch.setattr(settings, "jwt_user_identity_claim", "preferred_username")
+        payload = {"sub": "xyz", "preferred_username": "alice", "email": "alice@example.com"}
+        assert extract_identity_from_jwt_payload(payload) == "alice"
+
+    def test_configured_claim_upn(self, monkeypatch):
+        """Configured claim ``upn`` is used when present."""
+        monkeypatch.setattr(settings, "jwt_user_identity_claim", "upn")
+        payload = {"sub": "xyz", "upn": "alice@corp.net"}
+        assert extract_identity_from_jwt_payload(payload) == "alice@corp.net"
+
+    # ------------------------------------------------------------------
+    # Fallback chain — configured claim missing
+    # ------------------------------------------------------------------
+
+    def test_configured_claim_missing_falls_to_sub(self, monkeypatch):
+        """When configured claim is missing, falls back to sub."""
+        monkeypatch.setattr(settings, "jwt_user_identity_claim", "email")
+        payload = {"sub": "fallback@example.com"}
+        assert extract_identity_from_jwt_payload(payload) == "fallback@example.com"
+
+    def test_configured_claim_missing_falls_to_email(self, monkeypatch):
+        """When configured claim and sub missing, falls back to email."""
+        monkeypatch.setattr(settings, "jwt_user_identity_claim", "preferred_username")
+        payload = {"email": "fallback-email@example.com"}
+        assert extract_identity_from_jwt_payload(payload) == "fallback-email@example.com"
+
+    def test_configured_claim_missing_falls_to_username(self, monkeypatch):
+        """When configured claim, sub, and email missing, falls back to username."""
+        monkeypatch.setattr(settings, "jwt_user_identity_claim", "preferred_username")
+        payload = {"username": "fallback-user"}
+        assert extract_identity_from_jwt_payload(payload) == "fallback-user"
+
+    # ------------------------------------------------------------------
+    # Session-token bypass
+    # ------------------------------------------------------------------
+
+    def test_session_token_uses_sub(self):
+        """Session tokens use sub (not configured claim) for UUID resolution."""
+        payload = {"token_use": "session", "sub": "uuid-abc", "email": "alice@example.com"}
+        assert extract_identity_from_jwt_payload(payload) == "uuid-abc"
+
+    def test_session_token_fallback_to_email(self):
+        """Session tokens with no sub fall back to email."""
+        payload = {"token_use": "session", "email": "alice@example.com"}
+        assert extract_identity_from_jwt_payload(payload) == "alice@example.com"
+
+    def test_session_token_ignores_configured_claim(self, monkeypatch):
+        """Session tokens do not use configured claim — always prefer sub/email."""
+        monkeypatch.setattr(settings, "jwt_user_identity_claim", "email")
+        payload = {"token_use": "session", "sub": "uuid-abc", "email": "bob@example.com"}
+        assert extract_identity_from_jwt_payload(payload) == "uuid-abc"
+
+    # ------------------------------------------------------------------
+    # Warning-log conditions
+    # ------------------------------------------------------------------
+
+    def test_warning_when_configured_claim_missing(self, monkeypatch, caplog):
+        """Warning is logged when configured claim is absent and fallback used."""
+        caplog.set_level(logging.WARNING)
+        monkeypatch.setattr(settings, "jwt_user_identity_claim", "preferred_username")
+        payload = {"sub": "fallback@example.com"}
+        extract_identity_from_jwt_payload(payload)
+        assert "preferred_username" in caplog.text
+        assert "fell back to" in caplog.text.lower()
+
+    def test_no_warning_when_configured_claim_present(self, monkeypatch, caplog):
+        """No warning when configured claim is present."""
+        caplog.set_level(logging.WARNING)
+        monkeypatch.setattr(settings, "jwt_user_identity_claim", "email")
+        payload = {"email": "bob@example.com"}
+        extract_identity_from_jwt_payload(payload)
+        assert "falling back" not in caplog.text.lower()
+
+    def test_no_warning_when_configured_claim_is_sub(self, monkeypatch, caplog):
+        """No warning when configured claim is sub (default) — no fallback needed."""
+        caplog.set_level(logging.WARNING)
+        payload = {"sub": "user@example.com"}
+        extract_identity_from_jwt_payload(payload)
+        assert "falling back" not in caplog.text.lower()
+
+    def test_no_warning_for_session_token_missing_claim(self, monkeypatch, caplog):
+        """No warning for session tokens — they bypass configured claim."""
+        caplog.set_level(logging.WARNING)
+        monkeypatch.setattr(settings, "jwt_user_identity_claim", "email")
+        payload = {"token_use": "session", "sub": "uuid-abc"}
+        extract_identity_from_jwt_payload(payload)
+        assert "falling back" not in caplog.text.lower()
