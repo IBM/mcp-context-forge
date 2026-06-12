@@ -1412,7 +1412,7 @@ async def version_endpoint(
     request: Request,
     fmt: Optional[str] = None,
     partial: Optional[bool] = False,
-    _user=Depends(require_admin_auth),
+    current_user_ctx=Depends(require_admin_auth),
 ) -> Response:
     """Serve diagnostics as JSON, full HTML, or partial HTML.
 
@@ -1428,7 +1428,7 @@ async def version_endpoint(
         request (Request): The incoming FastAPI request object.
         fmt (Optional[str]): Query parameter to force format ('html' for HTML output).
         partial (Optional[bool]): Query parameter to request partial HTML fragment.
-        _user: Injected authenticated admin user from require_admin_auth dependency.
+        current_user_ctx: Injected authenticated admin user from require_admin_auth dependency.
 
     Returns:
         Response: JSONResponse with diagnostic data, or HTMLResponse with formatted page.
@@ -1453,7 +1453,7 @@ async def version_endpoint(
         ...     with patch('mcpgateway.version.REDIS_AVAILABLE', False):
         ...         with patch('mcpgateway.version._build_payload') as mock_build:
         ...             mock_build.return_value = {"test": "data"}
-        ...             response = await version_endpoint(mock_request, fmt=None, partial=False, _user=admin_user)
+        ...             response = await version_endpoint(mock_request, fmt=None, partial=False, current_user_ctx=admin_user)
         ...             return response
         >>>
         >>> response = asyncio.run(test_json())
@@ -1467,7 +1467,7 @@ async def version_endpoint(
         ...             with patch('mcpgateway.version._render_html') as mock_render:
         ...                 mock_build.return_value = {"test": "data"}
         ...                 mock_render.return_value = "<html>test</html>"
-        ...                 response = await version_endpoint(mock_request, fmt="html", partial=False, _user=admin_user)
+        ...                 response = await version_endpoint(mock_request, fmt="html", partial=False, current_user_ctx=admin_user)
         ...                 return response
         >>>
         >>> response = asyncio.run(test_html_fmt())
@@ -1495,7 +1495,7 @@ async def version_endpoint(
         ...                 with patch('mcpgateway.version.get_redis_client', mock_get_redis_client):
         ...                     with patch('mcpgateway.version._build_payload') as mock_build:
         ...                         mock_build.return_value = {"redis": {"version": "7.0.5"}}
-        ...                         response = await version_endpoint(mock_request, _user=admin_user)
+        ...                         response = await version_endpoint(mock_request, current_user_ctx=admin_user)
         ...                         # Verify Redis info was retrieved
         ...                         mock_redis.info.assert_called_once()
         ...                         # Verify payload was built with Redis info
@@ -1507,7 +1507,7 @@ async def version_endpoint(
         >>> isinstance(response, JSONResponse)
         True
     """
-    if not _has_version_admin_access(_user):
+    if not _has_version_admin_access(current_user_ctx):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin permissions required")
 
     # Redis health check - use shared client from factory
