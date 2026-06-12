@@ -24,6 +24,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 const APP_NAME: &str = "slow-time-server";
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const DEFAULT_BIND_ADDRESS: &str = "0.0.0.0:8081";
+/// Maximum delay cap for resilience tests, preventing unbounded request sleeps.
 const MAX_DELAY: Duration = Duration::from_secs(600);
 
 #[derive(Clone)]
@@ -401,6 +402,9 @@ fn parse_offset_timezone(timezone: &str) -> Result<FixedOffset, String> {
 }
 
 fn parse_offset(value: &str) -> Result<FixedOffset, String> {
+    if value.len() < 2 {
+        return Err("offset too short".to_string());
+    }
     let (sign, rest) = match value.as_bytes().first() {
         Some(b'+') => (1, &value[1..]),
         Some(b'-') => (-1, &value[1..]),
@@ -527,9 +531,9 @@ fn parse_duration(value: &str) -> Result<Duration, String> {
     let (amount, unit) = value.split_at(split_at);
     let amount: f64 = amount
         .parse()
-        .map_err(|_| format!("invalid duration amount: {value}"))?;
-    if amount < 0.0 {
-        return Err("duration cannot be negative".to_string());
+        .map_err(|err| format!("invalid duration amount '{amount}': {err}"))?;
+    if !amount.is_finite() || amount < 0.0 {
+        return Err("duration must be a finite non-negative number".to_string());
     }
     let seconds = match unit {
         "" | "s" | "sec" | "secs" => amount,
@@ -537,7 +541,9 @@ fn parse_duration(value: &str) -> Result<Duration, String> {
         "m" | "min" | "mins" => amount * 60.0,
         _ => return Err(format!("unsupported duration unit: {unit}")),
     };
-    Ok(Duration::from_secs_f64(seconds).min(MAX_DELAY))
+    Ok(Duration::from_secs_f64(
+        seconds.min(MAX_DELAY.as_secs_f64()),
+    ))
 }
 
 fn should_fail(failure_rate: f64) -> bool {
@@ -558,6 +564,16 @@ mod tests {
     #[test]
     fn duration_parser_caps_excessive_values() {
         assert_eq!(parse_duration("9999s").unwrap(), MAX_DELAY);
+        assert_eq!(
+            parse_duration("999999999999999999999999999999s").unwrap(),
+            MAX_DELAY
+        );
+    }
+
+    #[test]
+    fn offset_parser_rejects_sign_only_values() {
+        assert_eq!(parse_offset("+").unwrap_err(), "offset too short");
+        assert_eq!(parse_offset("-").unwrap_err(), "offset too short");
     }
 
     #[test]

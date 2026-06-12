@@ -1913,6 +1913,8 @@ resilience-up:                             ## Start slow-time-server for resilie
 	@echo "     REST API:       $(RESILIENCE_HOST)/api/v1/time?delay=5"
 	@echo "     MCP HTTP:       $(RESILIENCE_HOST)/mcp"
 	@echo "     Config:         $(RESILIENCE_HOST)/api/v1/config"
+	@echo "     Stats:          $(RESILIENCE_HOST)/api/v1/stats"
+	@echo "     Version:        $(RESILIENCE_HOST)/version"
 	@echo "     Health:         $(RESILIENCE_HOST)/health"
 	@echo ""
 	@echo "   Run: make resilience-locust  or  make resilience-jmeter"
