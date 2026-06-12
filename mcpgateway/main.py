@@ -5020,22 +5020,8 @@ async def delete_a2a_agent(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-_SENSITIVE_REQUEST_HEADER_PATTERNS = (
-    re.compile(r"^authorization$", re.IGNORECASE),
-    re.compile(r"^proxy-authorization$", re.IGNORECASE),
-    re.compile(r"^x-api-key$", re.IGNORECASE),
-    re.compile(r"^api-key$", re.IGNORECASE),
-    re.compile(r"^apikey$", re.IGNORECASE),
-    re.compile(r"^x-(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
-    re.compile(r"^cookie$", re.IGNORECASE),
-    re.compile(r"^set-cookie$", re.IGNORECASE),
-    re.compile(r"^host$", re.IGNORECASE),
-)
-
-
-def _filter_sensitive_headers(headers: Dict[str, str]) -> Dict[str, str]:
-    """Strip sensitive/credential headers from a dict before passing to plugins."""
-    return {k: v for k, v in headers.items() if not any(p.match(k) for p in _SENSITIVE_REQUEST_HEADER_PATTERNS)}
+# Moved to mcpgateway.utils.header_filtering to avoid circular imports
+from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filter_sensitive_headers  # noqa: E402
 
 
 @a2a_router.post("/{agent_name}/invoke", response_model=Dict[str, Any])

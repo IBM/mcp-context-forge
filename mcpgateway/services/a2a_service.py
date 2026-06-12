@@ -2088,7 +2088,7 @@ class A2AAgentService(BaseService):
 
         # Import filter function (used for both plugin and downstream filtering)
         # First-Party
-        from mcpgateway.main import _filter_sensitive_headers  # pylint: disable=import-outside-toplevel
+        from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filter_sensitive_headers
 
         # SECURITY: Split header flows for plugin hooks vs downstream agent
         # Plugin hooks ALWAYS receive sanitized headers (prevents credential leaks)
