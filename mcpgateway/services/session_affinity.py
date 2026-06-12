@@ -226,7 +226,7 @@ class SessionAffinity:
                     # Refresh heartbeat with 30s TTL (much shorter than session TTL)
                     await redis.setex(self._worker_heartbeat_key(), 30, "alive")
             except Exception as e:
-                logger.debug(f"Heartbeat update failed: {e}")
+                logger.debug("Heartbeat update failed: %s", e)
 
             await asyncio.sleep(10)  # Refresh every 10s
 
@@ -280,7 +280,7 @@ class SessionAffinity:
 
         # Validate mcp_session_id to prevent Redis key injection
         if not self.is_valid_mcp_session_id(mcp_session_id):
-            logger.warning(f"Invalid mcp_session_id format, skipping session mapping: {mcp_session_id[:20]}...")
+            logger.warning("Invalid mcp_session_id format, skipping session mapping: %s...", mcp_session_id[:20])
             return
 
         # Use user email for user_identity, or "anonymous" if not provided
@@ -296,7 +296,7 @@ class SessionAffinity:
         else:
             user_hash = hashlib.sha256(user_identity.encode()).hexdigest()
 
-        logger.debug(f"Session affinity pre-registering: {mcp_session_id[:8]}... → {url}, " f"user={SecurityValidator.sanitize_log_message(user_identity)}")
+        logger.debug("Session affinity pre-registering: %s... → %s, user=%s", mcp_session_id[:8], url, SecurityValidator.sanitize_log_message(user_identity))
 
         # Store in Redis for multi-worker support AND register ownership atomically
         # Registering ownership HERE (during mapping) instead of in acquire() prevents
@@ -338,17 +338,17 @@ class SessionAffinity:
                     ex=settings.mcpgateway_session_affinity_ttl,
                 )
                 if was_set:
-                    logger.debug(f"Session ownership claimed (SET NX): {mcp_session_id[:8]}... → worker {WORKER_ID}")
+                    logger.debug("Session ownership claimed (SET NX): %s... → worker %s", mcp_session_id[:8], WORKER_ID)
                 else:
                     # Another worker already claimed ownership
                     existing_owner = await redis.get(owner_key)
                     owner_id = existing_owner.decode() if isinstance(existing_owner, bytes) else existing_owner
-                    logger.debug(f"Session ownership already claimed by {owner_id}: {mcp_session_id[:8]}...")
+                    logger.debug("Session ownership already claimed by %s: %s...", owner_id, mcp_session_id[:8])
 
-                logger.debug(f"Session affinity pre-registered (Redis): {mcp_session_id[:8]}... TTL={settings.mcpgateway_session_affinity_ttl}s")
+                logger.debug("Session affinity pre-registered (Redis): %s... TTL=%ss", mcp_session_id[:8], settings.mcpgateway_session_affinity_ttl)
         except Exception as e:
             # Redis failure is non-fatal - local mapping still works for same-worker requests
-            logger.debug(f"Failed to store session mapping in Redis: {e}")
+            logger.debug("Failed to store session mapping in Redis: %s", e)
 
     async def _cleanup_session_owner(self, mcp_session_id: str) -> None:
         """Clear the session-owner Redis key when a downstream MCP session closes.
@@ -373,10 +373,10 @@ class SessionAffinity:
                     owner_id = owner.decode() if isinstance(owner, bytes) else owner
                     if owner_id == WORKER_ID:
                         await redis.delete(key)
-                        logger.debug(f"Cleaned up session owner owner: {mcp_session_id[:8]}...")
+                        logger.debug("Cleaned up session owner owner: %s...", mcp_session_id[:8])
         except Exception as e:
             # Cleanup failure is non-fatal
-            logger.debug(f"Failed to cleanup session owner owner in Redis: {e}")
+            logger.debug("Failed to cleanup session owner owner in Redis: %s", e)
 
     async def cleanup_session_owner(self, mcp_session_id: str) -> None:
         """Public wrapper for cleaning up Streamable HTTP session ownership.
@@ -702,10 +702,10 @@ class SessionAffinity:
                 """
                 ttl = int(settings.mcpgateway_session_affinity_ttl)
                 outcome = await redis.eval(script, 1, key, WORKER_ID, ttl)
-                logger.debug(f"Owner registration outcome={outcome} for session {mcp_session_id[:8]}...")
+                logger.debug("Owner registration outcome=%s for session %s...", outcome, mcp_session_id[:8])
         except Exception as e:
             # Redis failure is non-fatal - single worker mode still works
-            logger.debug(f"Failed to register session owner in Redis: {e}")
+            logger.debug("Failed to register session owner in Redis: %s", e)
 
     async def _get_session_owner(self, mcp_session_id: str) -> Optional[str]:
         """Return the worker id that owns ``mcp_session_id``, or None if unclaimed.
@@ -737,7 +737,7 @@ class SessionAffinity:
                     decoded = owner.decode() if isinstance(owner, bytes) else owner
                     return decoded
         except Exception as e:
-            logger.debug(f"Failed to get session owner from Redis: {e}")
+            logger.debug("Failed to get session owner from Redis: %s", e)
         return None
 
     async def forward_request_to_owner(
@@ -786,16 +786,16 @@ class SessionAffinity:
             owner = await redis.get(self._session_owner_key(mcp_session_id))
             method = request_data.get("method", "unknown")
             if not owner:
-                logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | No owner → execute locally (new session)")
+                logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | No owner → execute locally (new session)", WORKER_ID, mcp_session_id[:8], method)
                 return None  # No owner registered - execute locally (new session)
 
             owner_id = owner.decode() if isinstance(owner, bytes) else owner
             if owner_id == WORKER_ID:
-                logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | We own it → execute locally")
+                logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | We own it → execute locally", WORKER_ID, mcp_session_id[:8], method)
                 return None  # We own it - execute locally
 
             if not await self._is_worker_alive(owner_id):
-                logger.warning(f"[AFFINITY] Owner {owner_id} is dead for session {mcp_session_id[:8]}...")
+                logger.warning("[AFFINITY] Owner %s is dead for session %s...", owner_id, mcp_session_id[:8])
                 # CAS: reclaim only if still owned by the dead worker
                 cas_script = """
                 local cur = redis.call('GET', KEYS[1])
@@ -815,7 +815,7 @@ class SessionAffinity:
                     ttl,
                 )
                 if reclaimed == 1:
-                    logger.info(f"[AFFINITY] Reclaimed session {mcp_session_id[:8]}... from dead worker {owner_id} → execute locally")
+                    logger.info("[AFFINITY] Reclaimed session %s... from dead worker %s → execute locally", mcp_session_id[:8], owner_id)
                     return None  # We won the reclaim - execute locally
                 # Another worker already reclaimed; re-read the new owner and forward
                 new_owner = await redis.get(self._session_owner_key(mcp_session_id))
@@ -824,9 +824,9 @@ class SessionAffinity:
                 owner_id = new_owner.decode() if isinstance(new_owner, bytes) else new_owner
                 if owner_id == WORKER_ID:
                     return None  # We ended up as owner
-                logger.info(f"[AFFINITY] Session {mcp_session_id[:8]}... reclaimed by {owner_id} → forwarding to new owner")
+                logger.info("[AFFINITY] Session %s... reclaimed by %s → forwarding to new owner", mcp_session_id[:8], owner_id)
 
-            logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | Owner: {owner_id} → forwarding")
+            logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Owner: %s → forwarding", WORKER_ID, mcp_session_id[:8], method, owner_id)
 
             # Forward to owner worker via pub/sub
             response_id = str(uuid.uuid4())
@@ -848,7 +848,7 @@ class SessionAffinity:
                     # Publish request to owner's channel
                     await redis.publish(f"mcpgw:pool_rpc:{owner_id}", orjson.dumps(forward_data))
                     self._forwarded_requests += 1
-                    logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | Published to worker {owner_id}")
+                    logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Published to worker %s", WORKER_ID, mcp_session_id[:8], method, owner_id)
 
                     # Wait for response
                     async with asyncio.timeout(effective_timeout):
@@ -860,11 +860,11 @@ class SessionAffinity:
 
         except asyncio.TimeoutError:
             self._forwarded_request_timeouts += 1
-            logger.warning(f"Timeout forwarding request to owner for session {mcp_session_id[:8]}...")
+            logger.warning("Timeout forwarding request to owner for session %s...", mcp_session_id[:8])
             raise
         except Exception as e:
             self._forwarded_request_failures += 1
-            logger.debug(f"Error forwarding request to owner: {e}")
+            logger.debug("Error forwarding request to owner: %s", e)
             return None  # Execute locally on error
 
     async def start_rpc_listener(self) -> None:
@@ -893,7 +893,7 @@ class SessionAffinity:
             http_channel = f"mcpgw:pool_http:{WORKER_ID}"
             async with redis.pubsub() as pubsub:
                 await pubsub.subscribe(rpc_channel, http_channel)
-                logger.info(f"RPC/HTTP listener started for worker {WORKER_ID} on channels: {rpc_channel}, {http_channel}")
+                logger.info("RPC/HTTP listener started for worker %s on channels: %s, %s", WORKER_ID, rpc_channel, http_channel)
 
                 try:
                     while not self._closed:
@@ -909,20 +909,20 @@ class SessionAffinity:
                                         # Execute forwarded RPC request for SSE transport
                                         response = await self._execute_forwarded_request(request)
                                         await redis.publish(response_channel, orjson.dumps(response))
-                                        logger.debug(f"Processed forwarded RPC request, response sent to {response_channel}")
+                                        logger.debug("Processed forwarded RPC request, response sent to %s", response_channel)
                                     elif forward_type == "http_forward":
                                         # Execute forwarded HTTP request for Streamable HTTP transport
                                         await self._execute_forwarded_http_request(request, redis)
                                     else:
-                                        logger.warning(f"Unknown forward type: {forward_type}")
+                                        logger.warning("Unknown forward type: %s", forward_type)
                         except Exception as e:
-                            logger.warning(f"Error processing forwarded request: {e}")
+                            logger.warning("Error processing forwarded request: %s", e)
                 finally:
                     await pubsub.unsubscribe(rpc_channel, http_channel)
-                    logger.info(f"RPC/HTTP listener stopped for worker {WORKER_ID}")
+                    logger.info("RPC/HTTP listener stopped for worker %s", WORKER_ID)
 
         except Exception as e:
-            logger.warning(f"RPC/HTTP listener failed: {e}")
+            logger.warning("RPC/HTTP listener failed: %s", e)
 
     async def _execute_forwarded_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a forwarded RPC request locally via internal HTTP call.
@@ -947,7 +947,7 @@ class SessionAffinity:
             mcp_session_id = request.get("mcp_session_id", "unknown")
             session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
 
-            logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Received forwarded request, executing locally")
+            logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Received forwarded request, executing locally", WORKER_ID, session_short, method)
 
             # Make internal HTTP/HTTPS call to local /rpc endpoint.
             # This reuses ALL existing method handling logic without duplication.
@@ -986,12 +986,12 @@ class SessionAffinity:
 
                     # If body is a JSON-RPC error ({"error": {...}}), propagate it
                     if "error" in response_data and isinstance(response_data["error"], dict):
-                        logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution completed with error (HTTP {response.status_code})")
+                        logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Forwarded execution completed with error (HTTP %s)", WORKER_ID, session_short, method, response.status_code)
                         return {"error": response_data["error"]}
 
                     # Non-JSON-RPC error body (e.g. {"detail": "..."}): map to JSON-RPC error
                     detail = response_data.get("detail", response.text[:200] or "Unknown error")
-                    logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution failed with HTTP {response.status_code}")
+                    logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Forwarded execution failed with HTTP %s", WORKER_ID, session_short, method, response.status_code)
                     return {
                         "error": {
                             "code": -32603,
@@ -1004,16 +1004,16 @@ class SessionAffinity:
 
                 # Extract result or error from JSON-RPC response
                 if "error" in response_data:
-                    logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution completed with error")
+                    logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Forwarded execution completed with error", WORKER_ID, session_short, method)
                     return {"error": response_data["error"]}
-                logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution completed successfully")
+                logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Forwarded execution completed successfully", WORKER_ID, session_short, method)
                 return {"result": response_data.get("result", {})}
 
         except httpx.TimeoutException:
-            logger.warning(f"Timeout executing forwarded request: {request.get('method')}")
+            logger.warning("Timeout executing forwarded request: %s", request.get("method"))
             return {"error": {"code": -32603, "message": "Internal request timeout"}}
         except Exception as e:
-            logger.warning(f"Error executing forwarded request: {e}")
+            logger.warning("Error executing forwarded request: %s", e)
             return {"error": {"code": -32603, "message": str(e)}}
 
     async def _execute_forwarded_http_request(self, request: Dict[str, Any], redis: Any) -> None:
@@ -1050,7 +1050,7 @@ class SessionAffinity:
             body = bytes.fromhex(body_hex) if body_hex else b""
 
             session_short = mcp_session_id[:8] if mcp_session_id and len(mcp_session_id) >= 8 else "unknown"
-            logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Received forwarded HTTP request: {method} {path}")
+            logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Received forwarded HTTP request: %s %s", WORKER_ID, session_short, method, path)
 
             # Add internal forwarding headers to prevent loops.
             # Relies on the originating transport having already filtered
@@ -1073,7 +1073,7 @@ class SessionAffinity:
                     timeout=settings.mcpgateway_pool_rpc_forward_timeout,
                 )
 
-                logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Executed locally: {response.status_code}")
+                logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Executed locally: %s", WORKER_ID, session_short, response.status_code)
 
                 # Serialize response for Redis transport
                 response_data = {
@@ -1085,10 +1085,10 @@ class SessionAffinity:
                 # Publish response back to requesting worker
                 if redis and response_channel:
                     await redis.publish(response_channel, orjson.dumps(response_data))
-                    logger.debug(f"[HTTP_AFFINITY] Published HTTP response to Redis channel: {response_channel}")
+                    logger.debug("[HTTP_AFFINITY] Published HTTP response to Redis channel: %s", response_channel)
 
         except Exception as e:
-            logger.error(f"Error executing forwarded HTTP request: {e}")
+            logger.error("Error executing forwarded HTTP request: %s", e)
             # Try to send error response if possible
             if redis and response_channel:
                 error_response = {
@@ -1099,7 +1099,7 @@ class SessionAffinity:
                 try:
                     await redis.publish(response_channel, orjson.dumps(error_response))
                 except Exception as publish_error:
-                    logger.debug(f"Failed to publish error response via Redis: {publish_error}")
+                    logger.debug("Failed to publish error response via Redis: %s", publish_error)
 
     async def get_session_owner(self, mcp_session_id: str) -> Optional[str]:
         """Get the worker ID that owns a Streamable HTTP session.
@@ -1152,7 +1152,7 @@ class SessionAffinity:
             return None
 
         session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
-        logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | {method} {path} | Forwarding to worker {owner_worker_id}")
+        logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | %s %s | Forwarding to worker %s", WORKER_ID, session_short, method, path, owner_worker_id)
 
         try:
             # First-Party
@@ -1191,7 +1191,7 @@ class SessionAffinity:
                     # Publish forwarded request to owner worker's HTTP channel
                     owner_channel = f"mcpgw:pool_http:{owner_worker_id}"
                     await redis.publish(owner_channel, orjson.dumps(forward_data))
-                    logger.debug(f"[HTTP_AFFINITY] Published HTTP request to Redis channel: {owner_channel}")
+                    logger.debug("[HTTP_AFFINITY] Published HTTP request to Redis channel: %s", owner_channel)
 
                     # Wait for response with timeout
                     timeout = settings.mcpgateway_pool_rpc_forward_timeout
@@ -1200,7 +1200,7 @@ class SessionAffinity:
                             msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
                             if msg and msg["type"] == "message":
                                 response_data = orjson.loads(msg["data"])
-                                logger.debug(f"[HTTP_AFFINITY] Received HTTP response via Redis: status={response_data.get('status')}")
+                                logger.debug("[HTTP_AFFINITY] Received HTTP response via Redis: status=%s", response_data.get("status"))
 
                                 # Decode hex body back to bytes
                                 body_hex = response_data.get("body", "")
@@ -1214,11 +1214,11 @@ class SessionAffinity:
 
         except asyncio.TimeoutError:
             self._forwarded_request_timeouts += 1
-            logger.warning(f"Timeout forwarding HTTP request to owner {owner_worker_id}")
+            logger.warning("Timeout forwarding HTTP request to owner %s", owner_worker_id)
             return None
         except Exception as e:
             self._forwarded_request_failures += 1
-            logger.warning(f"Error forwarding HTTP request via Redis: {e}")
+            logger.warning("Error forwarding HTTP request via Redis: %s", e)
             return None
 
 

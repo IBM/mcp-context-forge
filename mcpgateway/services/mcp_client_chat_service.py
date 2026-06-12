@@ -772,7 +772,7 @@ class AzureOpenAIProvider:
         """
         self.config = config
         self._llm = None
-        logger.info(f"Initializing Azure OpenAI provider with deployment: {config.azure_deployment}")
+        logger.info("Initializing Azure OpenAI provider with deployment: %s", config.azure_deployment)
 
     def get_llm(self, model_type: str = "chat") -> Union[AzureChatOpenAI, AzureOpenAI]:
         """
@@ -827,7 +827,7 @@ class AzureOpenAIProvider:
                     )
                 logger.info("Azure OpenAI LLM instance created successfully")
             except Exception as e:
-                logger.error(f"Failed to create Azure OpenAI LLM: {e}")
+                logger.error("Failed to create Azure OpenAI LLM: %s", e)
                 raise
 
         return self._llm
@@ -889,7 +889,7 @@ class OllamaProvider:
         """
         self.config = config
         self._llm = None
-        logger.info(f"Initializing Ollama provider with model: {config.model}")
+        logger.info("Initializing Ollama provider with model: %s", config.model)
 
     def get_llm(self, model_type: str = "chat") -> Union[ChatOllama, OllamaLLM]:
         """
@@ -925,7 +925,7 @@ class OllamaProvider:
                     self._llm = OllamaLLM(base_url=self.config.base_url, model=self.config.model, temperature=self.config.temperature, timeout=self.config.timeout, **model_kwargs)
                 logger.info("Ollama LLM instance created successfully")
             except Exception as e:
-                logger.error(f"Failed to create Ollama LLM: {e}")
+                logger.error("Failed to create Ollama LLM: %s", e)
                 raise
 
         return self._llm
@@ -978,7 +978,7 @@ class OpenAIProvider:
         """
         self.config = config
         self._llm = None
-        logger.info(f"Initializing OpenAI provider with model: {config.model}")
+        logger.info("Initializing OpenAI provider with model: %s", config.model)
 
     def get_llm(self, model_type="chat") -> Union[ChatOpenAI, OpenAI]:
         """
@@ -1029,7 +1029,7 @@ class OpenAIProvider:
 
                 logger.info("OpenAI LLM instance created successfully")
             except Exception as e:
-                logger.error(f"Failed to create OpenAI LLM: {e}")
+                logger.error("Failed to create OpenAI LLM: %s", e)
                 raise
 
         return self._llm
@@ -1097,7 +1097,7 @@ class AnthropicProvider:
 
         self.config = config
         self._llm = None
-        logger.info(f"Initializing Anthropic provider with model: {config.model}")
+        logger.info("Initializing Anthropic provider with model: %s", config.model)
 
     def get_llm(self, model_type: str = "chat") -> Union[ChatAnthropic, AnthropicLLM]:
         """
@@ -1145,7 +1145,7 @@ class AnthropicProvider:
                     )
                 logger.info("Anthropic LLM instance created successfully")
             except Exception as e:
-                logger.error(f"Failed to create Anthropic LLM: {e}")
+                logger.error("Failed to create Anthropic LLM: %s", e)
                 raise
 
         return self._llm
@@ -1214,7 +1214,7 @@ class AWSBedrockProvider:
 
         self.config = config
         self._llm = None
-        logger.info(f"Initializing AWS Bedrock provider with model: {config.model_id}")
+        logger.info("Initializing AWS Bedrock provider with model: %s", config.model_id)
 
     def get_llm(self, model_type: str = "chat") -> Union[ChatBedrock, BedrockLLM]:
         """
@@ -1273,7 +1273,7 @@ class AWSBedrockProvider:
                     )
                 logger.info("AWS Bedrock LLM instance created successfully")
             except Exception as e:
-                logger.error(f"Failed to create AWS Bedrock LLM: {e}")
+                logger.error("Failed to create AWS Bedrock LLM: %s", e)
                 raise
 
         return self._llm
@@ -1344,7 +1344,7 @@ class WatsonxProvider:
             raise ImportError("IBM watsonx.ai provider requires langchain-ibm package. Install it with: pip install langchain-ibm")
         self.config = config
         self.llm = None
-        logger.info(f"Initializing IBM watsonx.ai provider with model {config.model_id}")
+        logger.info("Initializing IBM watsonx.ai provider with model %s", config.model_id)
 
     def get_llm(self, model_type="chat") -> Union[WatsonxLLM, ChatWatsonx]:
         """
@@ -1406,7 +1406,7 @@ class WatsonxProvider:
                     )
                 logger.info("IBM watsonx.ai LLM instance created successfully")
             except Exception as e:
-                logger.error(f"Failed to create IBM watsonx.ai LLM: {e}")
+                logger.error("Failed to create IBM watsonx.ai LLM: %s", e)
                 raise
         return self.llm
 
@@ -1468,7 +1468,7 @@ class GatewayProvider:
         self.llm = None
         self._model_name: Optional[str] = None
         self._underlying_provider = None
-        logger.info(f"Initializing Gateway provider with model: {config.model}")
+        logger.info("Initializing Gateway provider with model: %s", config.model)
 
     def get_llm(self, model_type: str = "chat") -> Union[BaseChatModel, Any]:
         """
@@ -1738,7 +1738,7 @@ class GatewayProvider:
             else:
                 raise ValueError(f"Unsupported LLM provider: {provider_type}")
 
-            logger.info(f"Gateway provider created LLM instance for model: {model.model_id} via {provider_type}")
+            logger.info("Gateway provider created LLM instance for model: %s via %s", model.model_id, provider_type)
             return self.llm
 
     def get_model_name(self) -> str:
@@ -1843,7 +1843,7 @@ class LLMProviderFactory:
         if not provider_class:
             raise ValueError(f"Unsupported LLM provider: {llm_config.provider}. Supported providers: {list(provider_map.keys())}")
 
-        logger.info(f"Creating LLM provider: {llm_config.provider}")
+        logger.info("Creating LLM provider: %s", llm_config.provider)
         return provider_class(llm_config.config)
 
 
@@ -1954,10 +1954,10 @@ class ChatHistoryManager:
                     return []
                 return orjson.loads(data)
             except orjson.JSONDecodeError:
-                logger.warning(f"Failed to decode chat history for user {SecurityValidator.sanitize_log_message(user_id)}")
+                logger.warning("Failed to decode chat history for user %s", SecurityValidator.sanitize_log_message(user_id))
                 return []
             except Exception as e:
-                logger.error(f"Error retrieving chat history from Redis for user {SecurityValidator.sanitize_log_message(user_id)}: {e}")
+                logger.error("Error retrieving chat history from Redis for user %s: %s", SecurityValidator.sanitize_log_message(user_id), e)
                 return []
         else:
             return self._memory_store.get(user_id, [])
@@ -1989,7 +1989,7 @@ class ChatHistoryManager:
             try:
                 await self.redis_client.set(self._history_key(user_id), orjson.dumps(trimmed), ex=self.ttl)
             except Exception as e:
-                logger.error(f"Error saving chat history to Redis for user {SecurityValidator.sanitize_log_message(user_id)}: {e}")
+                logger.error("Error saving chat history to Redis for user %s: %s", SecurityValidator.sanitize_log_message(user_id), e)
         else:
             self._memory_store[user_id] = trimmed
 
@@ -2039,7 +2039,7 @@ class ChatHistoryManager:
             try:
                 await self.redis_client.delete(self._history_key(user_id))
             except Exception as e:
-                logger.error(f"Error clearing chat history from Redis for user {SecurityValidator.sanitize_log_message(user_id)}: {e}")
+                logger.error("Error clearing chat history from Redis for user %s: %s", SecurityValidator.sanitize_log_message(user_id), e)
         else:
             self._memory_store.pop(user_id, None)
 
@@ -2164,7 +2164,7 @@ class MCPClient:
         self._client: Optional[MultiServerMCPClient] = None
         self._tools: Optional[List[BaseTool]] = None
         self._connected = False
-        logger.info(f"MCP client initialized with transport: {config.transport}")
+        logger.info("MCP client initialized with transport: %s", config.transport)
 
     async def connect(self) -> None:
         """
@@ -2194,7 +2194,7 @@ class MCPClient:
             return
 
         try:
-            logger.info(f"Connecting to MCP server via {self.config.transport}...")
+            logger.info("Connecting to MCP server via %s...", self.config.transport)
 
             # Build server configuration for MultiServerMCPClient
             server_config = {
@@ -2219,7 +2219,7 @@ class MCPClient:
             logger.info("Successfully connected to MCP server")
 
         except Exception as e:
-            logger.error(f"Failed to connect to MCP server: {e}")
+            logger.error("Failed to connect to MCP server: %s", e)
             self._connected = False
             raise ConnectionError(f"Failed to connect to MCP server: {e}") from e
 
@@ -2261,7 +2261,7 @@ class MCPClient:
             logger.info("Disconnected from MCP server")
 
         except Exception as e:
-            logger.error(f"Error during disconnect: {e}")
+            logger.error("Error during disconnect: %s", e)
             raise
 
     async def get_tools(self, force_reload: bool = False) -> List[BaseTool]:
@@ -2299,17 +2299,17 @@ class MCPClient:
             raise ConnectionError("Not connected to MCP server. Call connect() first.")
 
         if self._tools and not force_reload:
-            logger.debug(f"Returning {len(self._tools)} cached tools")
+            logger.debug("Returning %s cached tools", len(self._tools))
             return self._tools
 
         try:
             logger.info("Loading tools from MCP server...")
             self._tools = await self._client.get_tools()
-            logger.info(f"Successfully loaded {len(self._tools)} tools")
+            logger.info("Successfully loaded %s tools", len(self._tools))
             return self._tools
 
         except Exception as e:
-            logger.error(f"Failed to load tools: {e}")
+            logger.error("Failed to load tools: %s", e)
             raise
 
     @property
@@ -2411,7 +2411,7 @@ class MCPChatService:
         self._initialized = False
         self._tools: List[BaseTool] = []
 
-        logger.info(f"MCPChatService initialized for user: {user_id or 'anonymous'}")
+        logger.info("MCPChatService initialized for user: %s", user_id or "anonymous")
 
     async def initialize(self) -> None:
         """
@@ -2465,10 +2465,10 @@ class MCPChatService:
             self._agent = create_react_agent(llm, self._tools)
 
             self._initialized = True
-            logger.info(f"Chat service initialized successfully with {len(self._tools)} tools")
+            logger.info("Chat service initialized successfully with %s tools", len(self._tools))
 
         except Exception as e:
-            logger.error(f"Failed to initialize chat service: {e}")
+            logger.error("Failed to initialize chat service: %s", e)
             self._initialized = False
             raise
 
@@ -2539,7 +2539,7 @@ class MCPChatService:
                 return response_text
 
             except Exception as e:
-                logger.error(f"Error processing chat message: {e}")
+                logger.error("Error processing chat message: %s", e)
                 raise
 
     async def chat_with_metadata(self, message: str) -> Dict[str, Any]:
@@ -2666,7 +2666,7 @@ class MCPChatService:
             logger.debug("Streaming chat message processed successfully")
 
         except Exception as e:
-            logger.error(f"Error processing streaming chat message: {e}")
+            logger.error("Error processing streaming chat message: %s", e)
             raise
 
     async def chat_events(self, message: str) -> AsyncGenerator[Dict[str, Any], None]:
@@ -2765,12 +2765,12 @@ class MCPChatService:
             nonlocal dropped_overflow_count
             expired = [rid for rid, data in pending_tool_ends.items() if current_ts - data.get("buffered_at", 0) > pending_ttl_seconds]
             for rid in expired:
-                logger.warning(f"Pending on_tool_end for run_id {rid} expired after {pending_ttl_seconds}s (orphan event)")
+                logger.warning("Pending on_tool_end for run_id %s expired after %ss (orphan event)", rid, pending_ttl_seconds)
                 if len(dropped_tool_ends) < dropped_max_size:
                     dropped_tool_ends.add(rid)
                 else:
                     dropped_overflow_count += 1
-                    logger.warning(f"Dropped tool ends tracking full ({dropped_max_size}), cannot track expired run_id {rid} (overflow count: {dropped_overflow_count})")
+                    logger.warning("Dropped tool ends tracking full (%s), cannot track expired run_id %s (overflow count: %s)", dropped_max_size, rid, dropped_overflow_count)
                 del pending_tool_ends[rid]
 
         span_attributes = {
@@ -2836,7 +2836,7 @@ class MCPChatService:
                                 buffered = pending_tool_ends.pop(run_id)
                                 tool_runs[run_id]["end"] = buffered["end_time"]
                                 tool_runs[run_id]["output"] = buffered["output"]
-                                logger.info(f"Reconciled out-of-order on_tool_end for run_id {run_id}")
+                                logger.info("Reconciled out-of-order on_tool_end for run_id %s", run_id)
 
                                 if tool_runs[run_id].get("output") == "":
                                     error = "Tool execution failed: Please check if the tool is accessible"
@@ -2863,14 +2863,14 @@ class MCPChatService:
                                 # Out-of-order: buffer the end event for later reconciliation
                                 if len(pending_tool_ends) < pending_max_size:
                                     pending_tool_ends[run_id] = {"output": extracted_output, "end_time": now_iso, "buffered_at": now_ts}
-                                    logger.debug(f"Buffered out-of-order on_tool_end for run_id {run_id}, awaiting on_tool_start")
+                                    logger.debug("Buffered out-of-order on_tool_end for run_id %s, awaiting on_tool_start", run_id)
                                 else:
-                                    logger.warning(f"Pending tool ends buffer full ({pending_max_size}), dropping on_tool_end for run_id {run_id}")
+                                    logger.warning("Pending tool ends buffer full (%s), dropping on_tool_end for run_id %s", pending_max_size, run_id)
                                     if len(dropped_tool_ends) < dropped_max_size:
                                         dropped_tool_ends.add(run_id)
                                     else:
                                         dropped_overflow_count += 1
-                                        logger.warning(f"Dropped tool ends tracking full ({dropped_max_size}), cannot track run_id {run_id} (overflow count: {dropped_overflow_count})")
+                                        logger.warning("Dropped tool ends tracking full (%s), cannot track run_id %s (overflow count: %s)", dropped_max_size, run_id, dropped_overflow_count)
 
                             # Unregister run from cancellation service when finished (only if feature is enabled)
                             if settings.mcpgateway_tool_cancellation_enabled:
@@ -2886,7 +2886,7 @@ class MCPChatService:
                             # Clear any buffered end for this run to avoid emitting both error and end
                             if run_id in pending_tool_ends:
                                 del pending_tool_ends[run_id]
-                                logger.debug(f"Cleared buffered on_tool_end for run_id {run_id} due to tool error")
+                                logger.debug("Cleared buffered on_tool_end for run_id %s due to tool error", run_id)
 
                             # Clear from dropped set if this run was previously dropped (prevents false orphan)
                             dropped_tool_ends.discard(run_id)
@@ -2909,7 +2909,7 @@ class MCPChatService:
                                     yield {"type": "token", "content": content}
 
                     except Exception as event_error:
-                        logger.warning(f"Error processing event {kind}: {event_error}")
+                        logger.warning("Error processing event %s: %s", kind, event_error)
                         continue
 
                 all_orphan_ids = sorted(set(pending_tool_ends.keys()) | dropped_tool_ends)
@@ -2919,10 +2919,14 @@ class MCPChatService:
                     total_unique = len(all_orphan_ids)
                     total_affected = total_unique + dropped_overflow_count
                     logger.warning(
-                        f"Stream completed with {total_affected} orphan tool end(s): {buffered_count} buffered, {dropped_count} dropped (tracked), {dropped_overflow_count} dropped (untracked overflow)"
+                        "Stream completed with %s orphan tool end(s): %s buffered, %s dropped (tracked), %s dropped (untracked overflow)",
+                        total_affected,
+                        buffered_count,
+                        dropped_count,
+                        dropped_overflow_count,
                     )
                     if all_orphan_ids:
-                        logger.debug(f"Full orphan run_id list: {', '.join(all_orphan_ids)}")
+                        logger.debug("Full orphan run_id list: %s", ", ".join(all_orphan_ids))
                     now_iso = datetime.now(timezone.utc).isoformat()
                     error_parts = []
                     if buffered_count > 0:
@@ -2964,10 +2968,10 @@ class MCPChatService:
                     await self.history_manager.append_message(self.user_id, "assistant", full_response)
 
             except (ConnectionError, TimeoutError) as e:
-                logger.error(f"Error in chat_events: {e}")
+                logger.error("Error in chat_events: %s", e)
                 raise
             except Exception as e:
-                logger.error(f"Error in chat_events: {e}")
+                logger.error("Error in chat_events: %s", e)
                 raise ChatProcessingError(f"Chat processing error: {e}") from e
 
     async def get_conversation_history(self) -> List[Dict[str, str]]:
@@ -3015,7 +3019,7 @@ class MCPChatService:
             return
 
         await self.history_manager.clear_history(self.user_id)
-        logger.info(f"Conversation history cleared for user {self.user_id}")
+        logger.info("Conversation history cleared for user %s", self.user_id)
 
     async def shutdown(self) -> None:
         """
@@ -3063,7 +3067,7 @@ class MCPChatService:
             logger.info("Chat service shutdown complete")
 
         except Exception as e:
-            logger.error(f"Error during shutdown: {e}")
+            logger.error("Error during shutdown: %s", e)
             raise
 
     @property
@@ -3134,9 +3138,9 @@ class MCPChatService:
             self._agent = create_react_agent(llm, tools)
             self._tools = tools
 
-            logger.info(f"Reloaded {len(tools)} tools successfully")
+            logger.info("Reloaded %s tools successfully", len(tools))
             return len(tools)
 
         except Exception as e:
-            logger.error(f"Failed to reload tools: {e}")
+            logger.error("Failed to reload tools: %s", e)
             raise

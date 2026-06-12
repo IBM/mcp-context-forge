@@ -90,7 +90,7 @@ class DcrService:
             cache_age = (datetime.now(timezone.utc) - cached_at).total_seconds()
 
             if cache_age < self.settings.dcr_metadata_cache_ttl:
-                logger.debug(f"Using cached AS metadata for {normalized_issuer}")
+                logger.debug("Using cached AS metadata for %s", normalized_issuer)
                 return cached_entry["metadata"]
 
         # Try RFC 8414 path first
@@ -119,10 +119,10 @@ class DcrService:
                 # Cache the metadata
                 _metadata_cache[normalized_issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
 
-                logger.info(f"Discovered AS metadata for {normalized_issuer} via RFC 8414")
+                logger.info("Discovered AS metadata for %s via RFC 8414", normalized_issuer)
                 return metadata
         except httpx.HTTPError as e:
-            logger.debug(f"RFC 8414 discovery failed for {normalized_issuer}: {e}, trying OIDC fallback")
+            logger.debug("RFC 8414 discovery failed for %s: %s, trying OIDC fallback", normalized_issuer, e)
 
         # Try OIDC discovery fallback
         oidc_url = f"{normalized_issuer}/.well-known/openid-configuration"
@@ -143,7 +143,7 @@ class DcrService:
                 # Cache the metadata
                 _metadata_cache[normalized_issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
 
-                logger.info(f"Discovered AS metadata for {normalized_issuer} via OIDC discovery")
+                logger.info("Discovered AS metadata for %s via OIDC discovery", normalized_issuer)
                 return metadata
 
             raise DcrError(f"AS metadata not found for {normalized_issuer} (status: {response.status_code})")
@@ -198,7 +198,7 @@ class DcrService:
             # Permissive mode: request refresh_token when AS doesn't advertise grant_types_supported
             # This is useful for AS servers that support refresh tokens but don't advertise it
             requested_grant_types.append("refresh_token")
-            logger.debug(f"Requesting refresh_token for {normalized_issuer} (permissive mode, AS omits grant_types_supported)")
+            logger.debug("Requesting refresh_token for %s (permissive mode, AS omits grant_types_supported)", normalized_issuer)
 
         registration_request = {
             "client_name": client_name,
@@ -262,7 +262,7 @@ class DcrService:
         db.commit()
         db.refresh(registered_client)
 
-        logger.info(f"Successfully registered client {registered_client.client_id} with {normalized_issuer} for gateway {gateway_id}")
+        logger.info("Successfully registered client %s with %s for gateway %s", registered_client.client_id, normalized_issuer, gateway_id)
 
         return registered_client
 
@@ -296,7 +296,7 @@ class DcrService:
         )
 
         if existing_client:
-            logger.debug(f"Found existing registered client for gateway {gateway_id} and issuer {normalized_issuer}")
+            logger.debug("Found existing registered client for gateway %s and issuer %s", gateway_id, normalized_issuer)
             return existing_client
 
         # No existing client, check if auto-register is enabled
@@ -306,7 +306,7 @@ class DcrService:
             )
 
         # Auto-register (pass normalized issuer for consistent storage)
-        logger.info(f"No existing client found for gateway {gateway_id}, registering new client with {normalized_issuer}")
+        logger.info("No existing client found for gateway %s, registering new client with %s", gateway_id, normalized_issuer)
         return await self.register_client(gateway_id, gateway_name, normalized_issuer, redirect_uri, scopes, db)
 
     async def update_client_registration(self, client_record: RegisteredOAuthClient, db: Session) -> RegisteredOAuthClient:
@@ -352,7 +352,7 @@ class DcrService:
                 db.commit()
                 db.refresh(client_record)
 
-                logger.info(f"Successfully updated client registration for {client_record.client_id}")
+                logger.info("Successfully updated client registration for %s", client_record.client_id)
                 return client_record
 
             error_data = response.json()
@@ -396,13 +396,13 @@ class DcrService:
             headers = {"Authorization": f"Bearer {registration_access_token}"}
             response = await client.delete(client_record.registration_client_uri, headers=headers, timeout=self._get_timeout())
             if response.status_code in [204, 404]:  # 204 = deleted, 404 = already gone
-                logger.info(f"Successfully deleted client registration for {client_record.client_id}")
+                logger.info("Successfully deleted client registration for %s", client_record.client_id)
                 return True
 
-            logger.warning(f"Unexpected status when deleting client: {response.status_code}")
+            logger.warning("Unexpected status when deleting client: %s", response.status_code)
             return False
         except httpx.HTTPError as e:
-            logger.error(f"Failed to delete client at AS: {e}")
+            logger.error("Failed to delete client at AS: %s", e)
             return False
 
 

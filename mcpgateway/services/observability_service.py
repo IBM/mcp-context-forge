@@ -124,14 +124,14 @@ def parse_traceparent(traceparent: str) -> Optional[Tuple[str, str, str]]:
     match = _TRACEPARENT_RE.match(traceparent.lower())
 
     if not match:
-        logger.warning(f"Invalid traceparent format: {traceparent}")
+        logger.warning("Invalid traceparent format: %s", traceparent)
         return None
 
     version, trace_id, parent_id, flags = match.groups()
 
     # Only support version 00 for now
     if version != "00":
-        logger.warning(f"Unsupported traceparent version: {version}")
+        logger.warning("Unsupported traceparent version: %s", version)
         return None
 
     # Validate trace_id and parent_id are not all zeros
@@ -257,11 +257,11 @@ class ObservabilityService:
             db.commit()
             return True
         except SQLAlchemyError as exc:
-            logger.warning(f"Observability commit failed ({context}): {exc}")
+            logger.warning("Observability commit failed (%s): %s", context, exc)
             try:
                 db.rollback()
             except SQLAlchemyError as rollback_exc:
-                logger.debug(f"Observability rollback failed ({context}): {rollback_exc}")
+                logger.debug("Observability rollback failed (%s): %s", context, rollback_exc)
             return False
 
     # ==============================
@@ -343,14 +343,14 @@ class ObservabilityService:
             )
             obs_db.add(trace)
             self._safe_commit(obs_db, "start_trace")
-            logger.debug(f"Started trace {trace_id}: {name}")
+            logger.debug("Started trace %s: %s", trace_id, name)
             return trace_id
         finally:
             if owned and obs_db is not None:
                 try:
                     obs_db.close()
                 except Exception as close_error:
-                    logger.debug(f"Failed to close observability session: {close_error}")
+                    logger.debug("Failed to close observability session: %s", close_error)
 
     def end_trace(
         self,
@@ -390,7 +390,7 @@ class ObservabilityService:
             obs_db, owned = _get_or_create_observability_session()
             trace = obs_db.query(ObservabilityTrace).filter_by(trace_id=trace_id).first()
             if not trace:
-                logger.warning(f"Trace {trace_id} not found")
+                logger.warning("Trace %s not found", trace_id)
                 return
 
             end_time = utc_now()
@@ -406,13 +406,13 @@ class ObservabilityService:
                 trace.attributes = {**(trace.attributes or {}), **attributes}
 
             self._safe_commit(obs_db, "end_trace")
-            logger.debug(f"Ended trace {trace_id}: {status} ({duration_ms:.2f}ms)")
+            logger.debug("Ended trace %s: %s (%.2fms)", trace_id, status, duration_ms)
         finally:
             if owned and obs_db is not None:
                 try:
                     obs_db.close()
                 except Exception as close_error:
-                    logger.debug(f"Failed to close observability session: {close_error}")
+                    logger.debug("Failed to close observability session: %s", close_error)
 
     def get_trace(self, db: Session, trace_id: str, include_spans: bool = False) -> Optional[ObservabilityTrace]:
         """Get a trace by ID.
@@ -506,7 +506,7 @@ class ObservabilityService:
                 custom_attrs = context.global_context.state.get("custom_span_attributes", {})
                 if custom_attrs:
                     final_attributes.update(custom_attrs)
-                    logger.debug(f"Merged {len(custom_attrs)} custom attributes from plugin context")
+                    logger.debug("Merged %s custom attributes from plugin context", len(custom_attrs))
 
                 # Apply attribute name mapping (renaming) using centralized helper
                 # First-Party
@@ -521,7 +521,7 @@ class ObservabilityService:
                 if remove_attrs:
                     for attr_name in remove_attrs:
                         final_attributes.pop(attr_name, None)
-                    logger.debug(f"Removed {len(remove_attrs)} attributes as specified by plugin")
+                    logger.debug("Removed %s attributes as specified by plugin", len(remove_attrs))
 
             span_id = str(uuid.uuid4())
             span = ObservabilitySpan(
@@ -541,14 +541,14 @@ class ObservabilityService:
             obs_db.add(span)
             if commit:
                 self._safe_commit(obs_db, "start_span")
-            logger.debug(f"Started span {span_id}: {name} (trace={trace_id})")
+            logger.debug("Started span %s: %s (trace=%s)", span_id, name, trace_id)
             return span_id
         finally:
             if session_owned:
                 try:
                     obs_db.close()
                 except Exception as close_error:
-                    logger.debug(f"Failed to close observability session: {close_error}")
+                    logger.debug("Failed to close observability session: %s", close_error)
 
     def end_span(
         self,
@@ -589,7 +589,7 @@ class ObservabilityService:
         try:
             span = obs_db.query(ObservabilitySpan).filter_by(span_id=span_id).first()
             if not span:
-                logger.warning(f"Span {span_id} not found")
+                logger.warning("Span %s not found", span_id)
                 return
 
             end_time = utc_now()
@@ -604,13 +604,13 @@ class ObservabilityService:
 
             if commit:
                 self._safe_commit(obs_db, "end_span")
-            logger.debug(f"Ended span {span_id}: {status} ({duration_ms:.2f}ms)")
+            logger.debug("Ended span %s: %s (%.2fms)", span_id, status, duration_ms)
         finally:
             if session_owned:
                 try:
                     obs_db.close()
                 except Exception as close_error:
-                    logger.debug(f"Failed to close observability session: {close_error}")
+                    logger.debug("Failed to close observability session: %s", close_error)
 
     @contextmanager
     def trace_span(
@@ -700,14 +700,14 @@ class ObservabilityService:
                     # Commit error state
                     self._safe_commit(obs_db, "trace_span_error")
                 except Exception as end_error:
-                    logger.warning(f"Failed to end span on error: {end_error}")
+                    logger.warning("Failed to end span on error: %s", end_error)
             raise
         finally:
             if owned and obs_db is not None:
                 try:
                     obs_db.close()
                 except Exception as close_error:
-                    logger.debug(f"Failed to close observability session: {close_error}")
+                    logger.debug("Failed to close observability session: %s", close_error)
 
     @contextmanager
     def trace_tool_invocation(
@@ -819,14 +819,14 @@ class ObservabilityService:
                     # Commit error state
                     self._safe_commit(obs_db, "trace_tool_invocation_error")
                 except Exception as end_error:
-                    logger.warning(f"Failed to end span on error: {end_error}")
+                    logger.warning("Failed to end span on error: %s", end_error)
             raise
         finally:
             if owned and obs_db is not None:
                 try:
                     obs_db.close()
                 except Exception as close_error:
-                    logger.debug(f"Failed to close observability session: {close_error}")
+                    logger.debug("Failed to close observability session: %s", close_error)
 
     # ==============================
     # Event Management
@@ -895,7 +895,7 @@ class ObservabilityService:
             if self._safe_commit(obs_db, "add_event"):
                 # Only refresh and return ID if commit succeeded
                 obs_db.refresh(event)
-                logger.debug(f"Added event to span {span_id}: {name}")
+                logger.debug("Added event to span %s: %s", span_id, name)
                 return event.id
             # Commit failed - return 0
             return 0
@@ -904,7 +904,7 @@ class ObservabilityService:
                 try:
                     obs_db.close()
                 except Exception as close_error:
-                    logger.debug(f"Failed to close observability session: {close_error}")
+                    logger.debug("Failed to close observability session: %s", close_error)
 
     # ==============================
     # Token Usage Tracking
@@ -988,7 +988,7 @@ class ObservabilityService:
                     try:
                         obs_db.close()
                     except Exception as close_error:
-                        logger.debug(f"Failed to close observability session: {close_error}")
+                        logger.debug("Failed to close observability session: %s", close_error)
 
         # Also record as metrics for aggregation
         # Note: record_metric creates its own independent sessions
@@ -1022,7 +1022,7 @@ class ObservabilityService:
                 attributes={"model": model, "provider": provider},
             )
 
-        logger.debug(f"Recorded token usage: {input_tokens} in, {output_tokens} out, ${estimated_cost_usd:.6f}")
+        logger.debug("Recorded token usage: %s in, %s out, $%.6f", input_tokens, output_tokens, estimated_cost_usd)
 
     def _estimate_token_cost(self, model: str, input_tokens: int, output_tokens: int) -> float:
         """Estimate cost based on model and token counts.
@@ -1185,14 +1185,14 @@ class ObservabilityService:
                     # Commit error state
                     self._safe_commit(obs_db, "trace_a2a_request_error")
                 except Exception as end_error:
-                    logger.warning(f"Failed to end span on error: {end_error}")
+                    logger.warning("Failed to end span on error: %s", end_error)
             raise
         finally:
             if owned and obs_db is not None:
                 try:
                     obs_db.close()
                 except Exception as close_error:
-                    logger.debug(f"Failed to close observability session: {close_error}")
+                    logger.debug("Failed to close observability session: %s", close_error)
 
     # ==============================
     # Transport Metrics
@@ -1296,7 +1296,7 @@ class ObservabilityService:
                 },
             )
 
-        logger.debug(f"Recorded {transport_type} transport activity: {operation} ({message_count} messages)")
+        logger.debug("Recorded %s transport activity: %s (%s messages)", transport_type, operation, message_count)
 
     # ==============================
     # Metric Management
@@ -1362,7 +1362,7 @@ class ObservabilityService:
             if self._safe_commit(obs_db, "record_metric"):
                 # Only refresh and return ID if commit succeeded
                 obs_db.refresh(metric)
-                logger.debug(f"Recorded metric: {name} = {value} {unit or ''}")
+                logger.debug("Recorded metric: %s = %s %s", name, value, unit or "")
                 return metric.id
             # Commit failed - return 0
             return 0
@@ -1371,7 +1371,7 @@ class ObservabilityService:
                 try:
                     obs_db.close()
                 except Exception as close_error:
-                    logger.debug(f"Failed to close observability session: {close_error}")
+                    logger.debug("Failed to close observability session: %s", close_error)
 
     # ==============================
     # Query Methods
@@ -1762,7 +1762,7 @@ class ObservabilityService:
             obs_db, owned = _get_or_create_observability_session()
             deleted = obs_db.query(ObservabilityTrace).filter(ObservabilityTrace.start_time < before_time).delete()
             if self._safe_commit(obs_db, "delete_old_traces"):
-                logger.info(f"Deleted {deleted} traces older than {before_time}")
+                logger.info("Deleted %s traces older than %s", deleted, before_time)
                 return deleted
             # Commit failed - return 0
             return 0
@@ -1771,4 +1771,4 @@ class ObservabilityService:
                 try:
                     obs_db.close()
                 except Exception as close_error:
-                    logger.debug(f"Failed to close observability session: {close_error}")
+                    logger.debug("Failed to close observability session: %s", close_error)

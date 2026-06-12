@@ -141,7 +141,7 @@ class SystemStatsService:
             return stats
 
         except Exception as e:
-            logger.error(f"Error collecting system metrics: {str(e)}")
+            logger.error("Error collecting system metrics: %s", str(e))
             raise
 
     async def get_comprehensive_stats_cached(self, db: Session) -> Dict[str, Any]:

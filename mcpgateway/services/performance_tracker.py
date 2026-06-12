@@ -144,7 +144,7 @@ class PerformanceTracker:
                 if extra_context:
                     context.update(extra_context)
 
-                logger.warning(f"Slow operation detected: {operation_name} took {duration*1000:.2f}ms " f"(threshold: {threshold*1000:.2f}ms)", extra=context)
+                logger.warning("Slow operation detected: %s took %.2fms (threshold: %.2fms)", operation_name, duration * 1000, threshold * 1000, extra=context)
 
     def record_timing(self, operation_name: str, duration: float, component: Optional[str] = None, extra_context: Optional[Dict[str, Any]] = None) -> None:
         """Manually record a timing measurement.
@@ -174,7 +174,7 @@ class PerformanceTracker:
             if extra_context:
                 context.update(extra_context)
 
-            logger.warning(f"Slow operation: {operation_name} took {duration*1000:.2f}ms", extra=context)
+            logger.warning("Slow operation: %s took %.2fms", operation_name, duration * 1000, extra=context)
 
     def get_performance_summary(self, operation_name: Optional[str] = None, min_samples: int = 1) -> Dict[str, Any]:
         """Get performance summary for analytics.

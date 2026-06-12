@@ -81,7 +81,7 @@ class Argon2PasswordService:
         # Initialize Argon2 password hasher with configured parameters
         self.hasher = PasswordHasher(time_cost=self.time_cost, memory_cost=self.memory_cost, parallelism=self.parallelism, hash_len=hash_len, salt_len=salt_len)
 
-        logger.info(f"Initialized Argon2PasswordService with time_cost={self.time_cost}, memory_cost={self.memory_cost}, parallelism={self.parallelism}")
+        logger.info("Initialized Argon2PasswordService with time_cost=%s, memory_cost=%s, parallelism=%s", self.time_cost, self.memory_cost, self.parallelism)
 
     def hash_password(self, password: str) -> str:
         """Hash a password using Argon2id.
@@ -114,7 +114,7 @@ class Argon2PasswordService:
             logger.debug("Successfully hashed password for user authentication")
             return hash_value
         except HashingError as e:
-            logger.error(f"Failed to hash password: {e}")
+            logger.error("Failed to hash password: %s", e)
             raise HashingError(f"Password hashing failed: {e}") from e
 
     def verify_password(self, password: str, hash_value: str) -> bool:
@@ -149,10 +149,10 @@ class Argon2PasswordService:
             logger.debug("Password verification failed - password mismatch")
             return False
         except (InvalidHash, ValueError) as e:
-            logger.warning(f"Invalid hash format during verification: {e}")
+            logger.warning("Invalid hash format during verification: %s", e)
             return False
         except Exception as e:
-            logger.error(f"Unexpected error during password verification: {e}")
+            logger.error("Unexpected error during password verification: %s", e)
             return False
 
     async def hash_password_async(self, password: str) -> str:
@@ -205,10 +205,10 @@ class Argon2PasswordService:
         try:
             return self.hasher.check_needs_rehash(hash_value)
         except (InvalidHash, ValueError) as e:
-            logger.warning(f"Invalid hash format when checking rehash need: {e}")
+            logger.warning("Invalid hash format when checking rehash need: %s", e)
             return True
         except Exception as e:
-            logger.error(f"Unexpected error checking rehash need: {e}")
+            logger.error("Unexpected error checking rehash need: %s", e)
             return True
 
     def get_hash_info(self, hash_value: str) -> Optional[dict]:
@@ -259,7 +259,7 @@ class Argon2PasswordService:
 
             return params
         except (ValueError, IndexError) as e:
-            logger.warning(f"Failed to parse Argon2 hash info: {e}")
+            logger.warning("Failed to parse Argon2 hash info: %s", e)
             return None
 
     def __repr__(self) -> str:

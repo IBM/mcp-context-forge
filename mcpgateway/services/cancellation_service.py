@@ -68,7 +68,7 @@ class CancellationService:
                 self._pubsub_task = asyncio.create_task(self._listen_for_cancellations())
                 logger.info("CancellationService: Redis pubsub initialized for multi-worker cancellation")
         except Exception as e:
-            logger.warning(f"CancellationService: Could not initialize Redis pubsub: {e}")
+            logger.warning("CancellationService: Could not initialize Redis pubsub: %s", e)
 
     async def shutdown(self) -> None:
         """Shutdown Redis pubsub listener."""
@@ -134,12 +134,12 @@ class CancellationService:
                         # Cancel locally if we have this run (don't re-publish)
                         await self._cancel_run_local(run_id, reason=reason)
                 except Exception as e:
-                    logger.warning(f"Error processing cancellation message: {e}")
+                    logger.warning("Error processing cancellation message: %s", e)
         except asyncio.CancelledError:
             logger.info("CancellationService: Pubsub listener cancelled")
             raise
         except Exception as e:
-            logger.error(f"CancellationService: Pubsub listener error: {e}")
+            logger.error("CancellationService: Pubsub listener error: %s", e)
         finally:
             # Clean up pubsub on any exit
             if pubsub is not None:
@@ -150,7 +150,7 @@ class CancellationService:
                     except AttributeError:
                         await pubsub.close()
                 except Exception as e:
-                    logger.debug(f"Error closing cancellation pubsub: {e}")
+                    logger.debug("Error closing cancellation pubsub: %s", e)
 
     async def _cancel_run_local(self, run_id: str, reason: Optional[str] = None) -> bool:
         """Cancel a run locally without publishing to Redis (internal use).
@@ -288,7 +288,7 @@ class CancellationService:
             await self._redis.publish("cancellation:cancel", message)
             logger.debug("Published cancellation to Redis: run_id=%s", run_id)
         except Exception as e:
-            logger.warning(f"Failed to publish cancellation to Redis: {e}")
+            logger.warning("Failed to publish cancellation to Redis: %s", e)
 
     async def get_status(self, run_id: str) -> Optional[Dict[str, Any]]:
         """Return the status dict for a run if known, else None.

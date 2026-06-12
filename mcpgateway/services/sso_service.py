@@ -181,7 +181,7 @@ class SSOService:
             return orjson.loads(payload_bytes)
 
         except (ValueError, orjson.JSONDecodeError, UnicodeDecodeError) as e:
-            logger.warning(f"Failed to decode JWT claims: {e}")
+            logger.warning("Failed to decode JWT claims: %s", e)
             return None
 
     async def _get_oidc_provider_metadata(self, issuer: str) -> Optional[Dict[str, Any]]:
@@ -1219,11 +1219,11 @@ class SSOService:
         auth_session = self.db.execute(stmt).scalar_one_or_none()
 
         if not auth_session:
-            logger.warning(f"OAuth callback: no auth session found for state/provider {provider_id}. Possible CSRF or replay.")
+            logger.warning("OAuth callback: no auth session found for state/provider %s. Possible CSRF or replay.", provider_id)
             return None
 
         if auth_session.is_expired:
-            logger.warning(f"OAuth callback: auth session expired for provider {provider_id}.")
+            logger.warning("OAuth callback: auth session expired for provider %s.", provider_id)
             self.db.delete(auth_session)
             self.db.commit()
             return None
@@ -1238,21 +1238,21 @@ class SSOService:
 
         provider = auth_session.provider
         if not provider:
-            logger.error(f"OAuth callback: provider '{provider_id}' not found for auth session.")
+            logger.error("OAuth callback: provider '%s' not found for auth session.", provider_id)
             return None
 
         if not provider.is_enabled:
-            logger.warning(f"OAuth callback: provider '{provider_id}' is disabled.")
+            logger.warning("OAuth callback: provider '%s' is disabled.", provider_id)
             return None
 
         try:
             # Exchange authorization code for tokens
-            logger.info(f"Starting token exchange for provider {provider_id}")
+            logger.info("Starting token exchange for provider %s", provider_id)
             token_data = await self._exchange_code_for_tokens(provider, auth_session, code)
             if not token_data:
-                logger.error(f"Failed to exchange code for tokens for provider {provider_id}")
+                logger.error("Failed to exchange code for tokens for provider %s", provider_id)
                 return None
-            logger.info(f"Token exchange successful for provider {provider_id}")
+            logger.info("Token exchange successful for provider %s", provider_id)
             callback_nonce = getattr(auth_session, "nonce", None)
 
             # For OIDC providers, verify id_token before any claim extraction.
@@ -1285,7 +1285,7 @@ class SSOService:
             # Get user info from provider (pass full token_data for id_token parsing)
             user_info = await self._get_user_info(provider, token_data["access_token"], token_data, expected_nonce=callback_nonce)
             if not user_info:
-                logger.error(f"Failed to get user info for provider {provider_id}")
+                logger.error("Failed to get user info for provider %s", provider_id)
                 return None
 
             # Clean up auth session
@@ -1296,7 +1296,7 @@ class SSOService:
 
         except Exception as e:
             # Clean up auth session on error
-            logger.error(f"OAuth callback failed for provider {provider_id}: {type(e).__name__}: {str(e)}")
+            logger.error("OAuth callback failed for provider %s: %s: %s", provider_id, type(e).__name__, str(e))
             logger.exception("Full traceback for OAuth callback failure:")
             self.db.delete(auth_session)
             self.db.commit()
@@ -1365,7 +1365,7 @@ class SSOService:
 
         if response.status_code == 200:
             return response.json()
-        logger.error(f"Token exchange failed for {provider.name}: HTTP {response.status_code} - {response.text}")
+        logger.error("Token exchange failed for %s: HTTP %s - %s", provider.name, response.status_code, response.text)
 
         return None
 
@@ -1399,10 +1399,10 @@ class SSOService:
                 if orgs_response.status_code == 200:
                     user_data["organizations"] = [org["login"] for org in orgs_response.json()]
                 else:
-                    logger.warning(f"Failed to fetch GitHub organizations: HTTP {orgs_response.status_code}")
+                    logger.warning("Failed to fetch GitHub organizations: HTTP %s", orgs_response.status_code)
                     user_data["organizations"] = []
             except Exception as e:
-                logger.warning(f"Error fetching GitHub organizations: {e}")
+                logger.warning("Error fetching GitHub organizations: %s", e)
                 user_data["organizations"] = []
             return
 
@@ -1436,12 +1436,12 @@ class SSOService:
                 user_data["groups"] = entra_groups_from_graph
             elif "groups" in verified_id_token_claims:
                 user_data["groups"] = verified_id_token_claims["groups"]
-                logger.debug(f"Extracted {len(verified_id_token_claims['groups'])} groups from Entra ID token")
+                logger.debug("Extracted %s groups from Entra ID token", len(verified_id_token_claims["groups"]))
 
             # Extract roles from id_token (App Roles)
             if "roles" in verified_id_token_claims:
                 user_data["roles"] = verified_id_token_claims["roles"]
-                logger.debug(f"Extracted {len(verified_id_token_claims['roles'])} roles from Entra ID token")
+                logger.debug("Extracted %s roles from Entra ID token", len(verified_id_token_claims["roles"]))
 
             # Also extract any missing basic claims from id_token
             for claim in ["email", "name", "preferred_username", "oid", "sub"]:
@@ -1579,7 +1579,7 @@ class SSOService:
                 )
                 return self._normalize_user_info(provider, verified_id_token_claims)
 
-        logger.error(f"User info request failed for {provider.name}: HTTP {response.status_code} - {response.text}")
+        logger.error("User info request failed for %s: HTTP %s - %s", provider.name, response.status_code, response.text)
 
         return None
 
@@ -1936,7 +1936,7 @@ class SSOService:
             )
             self.db.add(pending)
             self.db.commit()
-            logger.info(f"Created pending approval request for SSO user: {SecurityValidator.sanitize_log_message(email)}")
+            logger.info("Created pending approval request for SSO user: %s", SecurityValidator.sanitize_log_message(email))
             return False
 
         if pending.status == "pending":
@@ -1944,7 +1944,7 @@ class SSOService:
                 pending.status = "expired"
                 self.db.commit()
                 self._reset_pending_approval(pending, incoming_provider, user_info)
-                logger.info(f"Refreshed expired pending approval request for SSO user: {SecurityValidator.sanitize_log_message(email)}")
+                logger.info("Refreshed expired pending approval request for SSO user: %s", SecurityValidator.sanitize_log_message(email))
             return False
 
         if pending.status == "rejected":
@@ -1959,13 +1959,13 @@ class SSOService:
 
         if pending.status == "expired":
             self._reset_pending_approval(pending, incoming_provider, user_info)
-            logger.info(f"Renewed expired pending approval request for SSO user: {SecurityValidator.sanitize_log_message(email)}")
+            logger.info("Renewed expired pending approval request for SSO user: %s", SecurityValidator.sanitize_log_message(email))
             return False
 
         if pending.status == "completed":
             return False
 
-        logger.warning(f"Unknown SSO pending approval status '{pending.status}' for user {SecurityValidator.sanitize_log_message(email)}. Denying by default.")
+        logger.warning("Unknown SSO pending approval status '%s' for user %s. Denying by default.", pending.status, SecurityValidator.sanitize_log_message(email))
         return False
 
     async def authenticate_or_create_user(self, user_info: Dict[str, Any]) -> Optional[str]:
@@ -2067,7 +2067,7 @@ class SSOService:
                 if should_be_admin:
                     # Grant admin access
                     if not current_is_admin:
-                        logger.info(f"Upgrading is_admin to True for {SecurityValidator.sanitize_log_message(email)} based on SSO admin groups")
+                        logger.info("Upgrading is_admin to True for %s based on SSO admin groups", SecurityValidator.sanitize_log_message(email))
                         user.is_admin = True
                         # Track that admin was granted via SSO (only set on initial grant)
                         user.admin_origin = "sso"
@@ -2075,7 +2075,7 @@ class SSOService:
                     # Do NOT change admin_origin if already admin - preserve manual/API grants
                 elif current_is_admin and current_admin_origin == "sso":
                     # User was SSO admin but no longer in admin groups - revoke access
-                    logger.info(f"Revoking is_admin for {SecurityValidator.sanitize_log_message(email)} - removed from SSO admin groups")
+                    logger.info("Revoking is_admin for %s - removed from SSO admin groups", SecurityValidator.sanitize_log_message(email))
                     user.is_admin = False
                     user.admin_origin = None
                     current_is_admin = False
@@ -2088,7 +2088,7 @@ class SSOService:
                 # Belt-and-suspenders: if role sync assigned platform_admin but is_admin is still False
                 # (e.g. user existed before the generic OIDC fix was deployed), promote now.
                 if not current_is_admin and any(ra.get("role_name") == "platform_admin" for ra in role_assignments):
-                    logger.info(f"Promoting is_admin for {SecurityValidator.sanitize_log_message(email)} — platform_admin role assigned via role_mappings")
+                    logger.info("Promoting is_admin for %s — platform_admin role assigned via role_mappings", SecurityValidator.sanitize_log_message(email))
                     user.is_admin = True
                     user.admin_origin = "sso"
                     current_is_admin = True
@@ -2280,7 +2280,7 @@ class SSOService:
 
         # Early exit: Skip role mapping if no configuration exists
         if not role_mappings and not has_entra_admin_groups and not has_generic_admin_groups and not has_provider_default_role:
-            logger.debug(f"No role mappings configured for provider {provider.id}, skipping role sync")
+            logger.debug("No role mappings configured for provider %s, skipping role sync", provider.id)
             return role_assignments
 
         personal_team_id: Optional[str] = None
@@ -2311,9 +2311,9 @@ class SSOService:
                 personal_team = await PersonalTeamService(self.db).get_personal_team(user_email)
                 personal_team_id = personal_team.id if personal_team else None
                 if not personal_team_id:
-                    logger.warning(f"Could not resolve personal team for {SecurityValidator.sanitize_log_message(user_email)}; skipping team-scoped SSO role mapping")
+                    logger.warning("Could not resolve personal team for %s; skipping team-scoped SSO role mapping", SecurityValidator.sanitize_log_message(user_email))
             except Exception as e:
-                logger.error(f"Failed to resolve personal team for {SecurityValidator.sanitize_log_message(user_email)}: {e}. All team-scoped SSO role assignments will be skipped for this login.")
+                logger.error("Failed to resolve personal team for %s: %s. All team-scoped SSO role assignments will be skipped for this login.", SecurityValidator.sanitize_log_message(user_email), e)
                 personal_team_id = None
 
             return personal_team_id
@@ -2324,7 +2324,7 @@ class SSOService:
             for group in user_groups:
                 if group.lower() in admin_groups_lower:
                     role_assignments.append({"role_name": settings.default_admin_role, "scope": "global", "scope_id": None})
-                    logger.debug(f"Mapped EntraID admin group to {settings.default_admin_role} role for {SecurityValidator.sanitize_log_message(user_email)}")
+                    logger.debug("Mapped EntraID admin group to %s role for %s", settings.default_admin_role, SecurityValidator.sanitize_log_message(user_email))
                     break  # Only need one admin assignment
 
         # Handle Generic OIDC admin groups -> admin role
@@ -2333,7 +2333,7 @@ class SSOService:
             for group in user_groups:
                 if group.lower() in admin_groups_lower:
                     role_assignments.append({"role_name": settings.default_admin_role, "scope": "global", "scope_id": None})
-                    logger.debug(f"Mapped Generic OIDC admin group to {settings.default_admin_role} role for {SecurityValidator.sanitize_log_message(user_email)}")
+                    logger.debug("Mapped Generic OIDC admin group to %s role for %s", settings.default_admin_role, SecurityValidator.sanitize_log_message(user_email))
                     break  # Only need one admin assignment
 
         # Batch role lookups: collect all role names that need to be looked up
@@ -2366,7 +2366,7 @@ class SSOService:
                 # Special case for "admin" shorthand or configured admin role name
                 if role_name in ["admin", settings.default_admin_role]:
                     role_assignments.append({"role_name": settings.default_admin_role, "scope": "global", "scope_id": None})
-                    logger.debug(f"Mapped group to {settings.default_admin_role} role for {SecurityValidator.sanitize_log_message(user_email)}")
+                    logger.debug("Mapped group to %s role for %s", settings.default_admin_role, SecurityValidator.sanitize_log_message(user_email))
                     continue
 
                 # Use pre-fetched role from cache
@@ -2378,9 +2378,9 @@ class SSOService:
                     # Avoid duplicate assignments
                     if not any(r["role_name"] == role.name and r["scope"] == role.scope and r.get("scope_id") == scope_id for r in role_assignments):
                         role_assignments.append({"role_name": role.name, "scope": role.scope, "scope_id": scope_id})
-                        logger.debug(f"Mapped group to role '{role.name}' for {SecurityValidator.sanitize_log_message(user_email)}")
+                        logger.debug("Mapped group to role '%s' for %s", role.name, SecurityValidator.sanitize_log_message(user_email))
                 else:
-                    logger.warning(f"Role '{role_name}' not found for group mapping")
+                    logger.warning("Role '%s' not found for group mapping", role_name)
 
         # Apply default role if no mappings found
         if not role_assignments and has_provider_default_role and provider_default_role:
@@ -2390,7 +2390,7 @@ class SSOService:
                 if default_role.scope == "team" and resolve_team_scope_to_personal_team and not scope_id:
                     return role_assignments
                 role_assignments.append({"role_name": default_role.name, "scope": default_role.scope, "scope_id": scope_id})
-                logger.info(f"Assigned default role '{default_role.name}' to {SecurityValidator.sanitize_log_message(user_email)}")
+                logger.info("Assigned default role '%s' to %s", default_role.name, SecurityValidator.sanitize_log_message(user_email))
 
         return role_assignments
 
@@ -2420,7 +2420,7 @@ class SSOService:
             role_tuple = (user_role.role.name, user_role.scope, user_role.scope_id)
             if role_tuple not in desired_roles:
                 await role_service.revoke_role_from_user(user_email=user_email, role_id=user_role.role_id, scope=user_role.scope, scope_id=user_role.scope_id)
-                logger.info(f"Revoked SSO role '{user_role.role.name}' from {SecurityValidator.sanitize_log_message(user_email)} (no longer in groups)")
+                logger.info("Revoked SSO role '%s' from %s (no longer in groups)", user_role.role.name, SecurityValidator.sanitize_log_message(user_email))
 
         # Assign new roles
         for assignment in role_assignments:
@@ -2428,7 +2428,7 @@ class SSOService:
                 # Get role by name
                 role = await role_service.get_role_by_name(assignment["role_name"], scope=assignment["scope"])
                 if not role:
-                    logger.warning(f"Role '{assignment['role_name']}' not found, skipping assignment for {SecurityValidator.sanitize_log_message(user_email)}")
+                    logger.warning("Role '%s' not found, skipping assignment for %s", assignment["role_name"], SecurityValidator.sanitize_log_message(user_email))
                     continue
 
                 # Check if assignment already exists
@@ -2439,14 +2439,16 @@ class SSOService:
                     await role_service.assign_role_to_user(
                         user_email=user_email, role_id=role.id, scope=assignment["scope"], scope_id=assignment.get("scope_id"), granted_by=user_email, grant_source="sso"
                     )
-                    logger.info(f"Assigned SSO role '{role.name}' to {SecurityValidator.sanitize_log_message(user_email)}")
+                    logger.info("Assigned SSO role '%s' to %s", role.name, SecurityValidator.sanitize_log_message(user_email))
 
             except Exception as e:
-                logger.warning(f"Failed to assign role '{assignment['role_name']}' to {SecurityValidator.sanitize_log_message(user_email)}: {e}", exc_info=True)
+                logger.warning("Failed to assign role '%s' to %s: %s", assignment["role_name"], SecurityValidator.sanitize_log_message(user_email), e, exc_info=True)
                 try:
                     self.db.rollback()
                 except Exception as rollback_error:
                     logger.error(
-                        f"Database rollback failed after role assignment error for {SecurityValidator.sanitize_log_message(user_email)}: {rollback_error}. Aborting remaining role assignments."
+                        "Database rollback failed after role assignment error for %s: %s. Aborting remaining role assignments.",
+                        SecurityValidator.sanitize_log_message(user_email),
+                        rollback_error,
                     )
                     break

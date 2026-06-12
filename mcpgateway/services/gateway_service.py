@@ -587,7 +587,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             self._follower_election_task: Optional[asyncio.Task] = None
 
             # Log instance mapping for debugging
-            logger.info(f"Instance started: instance_id={self._instance_id}, port={settings.port}, pid={os.getpid()}")
+            logger.info("Instance started: instance_id=%s, port=%s, pid=%s", self._instance_id, settings.port, os.getpid())
 
         # Always initialize file lock as fallback (used if Redis connection fails at runtime)
         if settings.cache_type != "none":
@@ -843,7 +843,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 if result:
                     logger.info("Released Redis leadership on shutdown")
             except Exception as e:
-                logger.warning(f"Failed to release Redis leader key on shutdown: {e}")
+                logger.warning("Failed to release Redis leader key on shutdown: %s", e)
 
         await self._http_client.aclose()
         await self._event_service.shutdown()
@@ -925,7 +925,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     if auth_value == existing_decoded:
                         return existing  # Duplicate credentials found
                 except Exception as e:
-                    logger.warning(f"Failed to decode auth_value for comparison: {e}")
+                    logger.warning("Failed to decode auth_value for comparison: %s", e)
                     continue
 
             # Case 3: Both have no auth (URL only, not allowed)
@@ -1033,7 +1033,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     try:
                         decoded_auth_value = decode_auth(gateway.auth_value)
                     except Exception as e:
-                        logger.warning(f"Failed to decode provided auth_value: {e}")
+                        logger.warning("Failed to decode provided auth_value: %s", e)
                         decoded_auth_value = None
                 elif isinstance(gateway.auth_value, dict):
                     decoded_auth_value = gateway.auth_value
@@ -1211,11 +1211,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             key = (res.team_id, res.owner_email, res.uri)
                             orphaned_resources_map[key] = res
                     if orphaned_resources_map:
-                        logger.info(f"Found {len(orphaned_resources_map)} orphaned resources to reassign for gateway {SecurityValidator.sanitize_log_message(gateway.name)}")
+                        logger.info("Found %s orphaned resources to reassign for gateway %s", len(orphaned_resources_map), SecurityValidator.sanitize_log_message(gateway.name))
                 except Exception as e:
                     # If orphan detection fails (e.g., in mocked tests), skip upsert and create new resources
                     # This is conservative - we won't accidentally reassign resources from active gateways
-                    logger.debug(f"Orphan resource detection skipped: {e}")
+                    logger.debug("Orphan resource detection skipped: %s", e)
 
             db_resources = []
             for r in resources:
@@ -1300,10 +1300,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             key = (pmt.team_id, pmt.owner_email, pmt.name)
                             orphaned_prompts_map[key] = pmt
                     if orphaned_prompts_map:
-                        logger.info(f"Found {len(orphaned_prompts_map)} orphaned prompts to reassign for gateway {SecurityValidator.sanitize_log_message(gateway.name)}")
+                        logger.info("Found %s orphaned prompts to reassign for gateway %s", len(orphaned_prompts_map), SecurityValidator.sanitize_log_message(gateway.name))
                 except Exception as e:
                     # If orphan detection fails (e.g., in mocked tests), skip upsert and create new prompts
-                    logger.debug(f"Orphan prompt detection skipped: {e}")
+                    logger.debug("Orphan prompt detection skipped: %s", e)
 
             db_prompts = []
             for prompt in prompts:
@@ -1430,7 +1430,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                 invalidate_passthrough_header_caches()
 
-            logger.info(f"Registered gateway: {SecurityValidator.sanitize_log_message(gateway.name)}")
+            logger.info("Registered gateway: %s", SecurityValidator.sanitize_log_message(gateway.name))
 
             # Structured logging: Audit trail for gateway creation
             audit_trail.log_action(
@@ -1480,12 +1480,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             gateway_read = self.convert_gateway_to_read(db_gateway)
             gateway_read.skipped_tools = validation_errors
             if validation_errors:
-                logger.warning(f"Gateway '{db_gateway.name}' registered successfully but {len(validation_errors)} tool(s) were " f"skipped due to validation errors: {validation_errors}")
+                logger.warning("Gateway '%s' registered successfully but %s tool(s) were skipped due to validation errors: %s", db_gateway.name, len(validation_errors), validation_errors)
             return gateway_read
         except* GatewayConnectionError as ge:  # pragma: no mutate
             if TYPE_CHECKING:
                 ge: ExceptionGroup[GatewayConnectionError]
-            logger.error(f"GatewayConnectionError in group: {ge.exceptions}")
+            logger.error("GatewayConnectionError in group: %s", ge.exceptions)
             db.rollback()
 
             structured_logger.log(
@@ -1502,7 +1502,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         except* GatewayNameConflictError as gnce:  # pragma: no mutate
             if TYPE_CHECKING:
                 gnce: ExceptionGroup[GatewayNameConflictError]
-            logger.error(f"GatewayNameConflictError in group: {gnce.exceptions}")
+            logger.error("GatewayNameConflictError in group: %s", gnce.exceptions)
             db.rollback()
 
             structured_logger.log(
@@ -1518,7 +1518,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         except* GatewayDuplicateConflictError as guce:  # pragma: no mutate
             if TYPE_CHECKING:
                 guce: ExceptionGroup[GatewayDuplicateConflictError]
-            logger.error(f"GatewayDuplicateConflictError in group: {guce.exceptions}")
+            logger.error("GatewayDuplicateConflictError in group: %s", guce.exceptions)
             db.rollback()
 
             structured_logger.log(
@@ -1534,7 +1534,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         except* ValueError as ve:  # pragma: no mutate
             if TYPE_CHECKING:
                 ve: ExceptionGroup[ValueError]
-            logger.error(f"ValueErrors in group: {ve.exceptions}")
+            logger.error("ValueErrors in group: %s", ve.exceptions)
             db.rollback()
 
             structured_logger.log(
@@ -1551,7 +1551,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         except* RuntimeError as re:  # pragma: no mutate
             if TYPE_CHECKING:
                 re: ExceptionGroup[RuntimeError]
-            logger.error(f"RuntimeErrors in group: {re.exceptions}")
+            logger.error("RuntimeErrors in group: %s", re.exceptions)
             db.rollback()
 
             structured_logger.log(
@@ -1568,7 +1568,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         except* IntegrityError as ie:  # pragma: no mutate
             if TYPE_CHECKING:
                 ie: ExceptionGroup[IntegrityError]
-            logger.error(f"IntegrityErrors in group: {ie.exceptions}")
+            logger.error("IntegrityErrors in group: %s", ie.exceptions)
             db.rollback()
 
             structured_logger.log(
@@ -1585,7 +1585,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         except* BaseException as other:  # catches every other sub-exception  # pragma: no mutate
             if TYPE_CHECKING:
                 other: ExceptionGroup[Exception]
-            logger.error(f"Other grouped errors: {other.exceptions}")
+            logger.error("Other grouped errors: %s", other.exceptions)
             db.rollback()
             raise other.exceptions[0]
 
@@ -1754,11 +1754,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             prompts_removed = len(stale_prompt_ids)
 
             if tools_removed > 0:
-                logger.info(f"Removed {tools_removed} tools no longer available from gateway")
+                logger.info("Removed %s tools no longer available from gateway", tools_removed)
             if resources_removed > 0:
-                logger.info(f"Removed {resources_removed} resources no longer available from gateway")
+                logger.info("Removed %s resources no longer available from gateway", resources_removed)
             if prompts_removed > 0:
-                logger.info(f"Removed {prompts_removed} prompts no longer available from gateway")
+                logger.info("Removed %s prompts no longer available from gateway", prompts_removed)
 
             # Update gateway capabilities and last_seen
             gateway.capabilities = capabilities
@@ -1777,7 +1777,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     db.add_all(chunk)
                     db.flush()  # Flush each chunk to avoid excessive memory usage
                 items_added += len(tools_to_add)
-                logger.info(f"Added {len(tools_to_add)} new tools to database")
+                logger.info("Added %s new tools to database", len(tools_to_add))
 
             if resources_to_add:
                 for i in range(0, len(resources_to_add), chunk_size):
@@ -1785,7 +1785,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     db.add_all(chunk)
                     db.flush()
                 items_added += len(resources_to_add)
-                logger.info(f"Added {len(resources_to_add)} new resources to database")
+                logger.info("Added %s new resources to database", len(resources_to_add))
 
             if prompts_to_add:
                 for i in range(0, len(prompts_to_add), chunk_size):
@@ -1793,11 +1793,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     db.add_all(chunk)
                     db.flush()
                 items_added += len(prompts_to_add)
-                logger.info(f"Added {len(prompts_to_add)} new prompts to database")
+                logger.info("Added %s new prompts to database", len(prompts_to_add))
 
             if items_added > 0:
                 db.commit()
-                logger.info(f"Total {items_added} new items added to database")
+                logger.info("Total %s new items added to database", items_added)
             else:
                 logger.info("No new items to add to database")
                 # Still commit to save any updates to existing items
@@ -1820,11 +1820,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         except GatewayConnectionError as gce:
             db.rollback()
             # Surface validation or depth-related failures directly to the user
-            logger.error(f"GatewayConnectionError during OAuth fetch for {SecurityValidator.sanitize_log_message(gateway_id)}: {gce}")
+            logger.error("GatewayConnectionError during OAuth fetch for %s: %s", SecurityValidator.sanitize_log_message(gateway_id), gce)
             raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(gce)}")
         except Exception as e:
             db.rollback()
-            logger.error(f"Failed to fetch tools after OAuth for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {e}")
+            logger.error("Failed to fetch tools after OAuth for gateway %s: %s", SecurityValidator.sanitize_log_message(gateway_id), e)
             raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(e)}")
 
     async def list_gateways(
@@ -1955,7 +1955,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             try:
                 result.append(self.convert_gateway_to_read(s))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                logger.exception(f"Failed to convert gateway {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
+                logger.exception("Failed to convert gateway %s (%s): %s", getattr(s, "id", "unknown"), getattr(s, "name", "unknown"), e)
                 # Continue with remaining gateways instead of failing completely
 
         # Return appropriate format based on pagination type
@@ -2059,7 +2059,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         # Team names are loaded via joinedload(DbGateway.email_team)
         result = []
         for g in gateways:
-            logger.info(f"Gateway: {SecurityValidator.sanitize_log_message(g.team_id)}, Team: {g.team}")
+            logger.info("Gateway: %s, Team: %s", SecurityValidator.sanitize_log_message(g.team_id), g.team)
             result.append(self.convert_gateway_to_read(g))
         return result
 
@@ -2184,7 +2184,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         try:
                             decoded_auth_value = decode_auth(gateway_update.auth_value)
                         except Exception as e:
-                            logger.warning(f"Failed to decode provided auth_value: {e}")
+                            logger.warning("Failed to decode provided auth_value: %s", e)
                     elif isinstance(gateway_update.auth_value, dict):
                         decoded_auth_value = gateway_update.auth_value
 
@@ -2314,7 +2314,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     # Clear auth_query_params when switching away from query_param auth
                     if original_auth_type == "query_param" and gateway_update.auth_type != "query_param":
                         gateway.auth_query_params = None
-                        logger.debug(f"Cleared auth_query_params for gateway {SecurityValidator.sanitize_log_message(gateway.id)} (switched from query_param to {gateway_update.auth_type})")
+                        logger.debug("Cleared auth_query_params for gateway %s (switched from query_param to %s)", SecurityValidator.sanitize_log_message(gateway.id), gateway_update.auth_type)
 
                     # if auth_type is not None and only then check auth_value
                 # Handle OAuth configuration updates
@@ -2488,12 +2488,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     items_added = len(tools_to_add) + len(resources_to_add) + len(prompts_to_add)
                     if items_added > 0:
                         if tools_to_add:
-                            logger.info(f"Added {len(tools_to_add)} new tools during gateway update")
+                            logger.info("Added %s new tools during gateway update", len(tools_to_add))
                         if resources_to_add:
-                            logger.info(f"Added {len(resources_to_add)} new resources during gateway update")
+                            logger.info("Added %s new resources during gateway update", len(resources_to_add))
                         if prompts_to_add:
-                            logger.info(f"Added {len(prompts_to_add)} new prompts during gateway update")
-                        logger.info(f"Total {items_added} new items added during gateway update")
+                            logger.info("Added %s new prompts during gateway update", len(prompts_to_add))
+                        logger.info("Total %s new items added during gateway update", items_added)
 
                     # Count items before cleanup for logging
 
@@ -2549,11 +2549,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     prompts_removed = len(stale_prompt_ids)
 
                     if tools_removed > 0:
-                        logger.info(f"Removed {tools_removed} tools no longer available during gateway update")
+                        logger.info("Removed %s tools no longer available during gateway update", tools_removed)
                     if resources_removed > 0:
-                        logger.info(f"Removed {resources_removed} resources no longer available during gateway update")
+                        logger.info("Removed %s resources no longer available during gateway update", resources_removed)
                     if prompts_removed > 0:
-                        logger.info(f"Removed {prompts_removed} prompts no longer available during gateway update")
+                        logger.info("Removed %s prompts no longer available during gateway update", prompts_removed)
 
                     gateway.last_seen = datetime.now(timezone.utc)
 
@@ -2581,7 +2581,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     self._active_gateways.add(gateway.url)
                     reinit_succeeded = True
                 except Exception as e:
-                    logger.warning(f"Failed to initialize updated gateway: {e}")
+                    logger.warning("Failed to initialize updated gateway: %s", e)
                     reinit_succeeded = False
 
                 # Update tags if provided
@@ -2650,7 +2650,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     try:
                         await self._classification_service.mark_poll_completed(gateway.url, "tool_discovery", gateway_id=str(gateway.id))
                     except Exception as poll_ts_err:
-                        logger.debug(f"Best-effort tool_discovery poll timestamp update failed: {poll_ts_err}")
+                        logger.debug("Best-effort tool_discovery poll timestamp update failed: %s", poll_ts_err)
 
                 # Invalidate loopback passthrough cache when gateway headers change (#3640)
                 if gateway_update.passthrough_headers is not None:
@@ -2662,7 +2662,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # Notify subscribers
                 await self._notify_gateway_updated(gateway)
 
-                logger.info(f"Updated gateway: {SecurityValidator.sanitize_log_message(gateway.name)}")
+                logger.info("Updated gateway: %s", SecurityValidator.sanitize_log_message(gateway.name))
 
                 # Structured logging: Audit trail for gateway update
                 audit_trail.log_action(
@@ -2707,7 +2707,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # Gateway is inactive and include_inactive is False → skip update, return None
             return None
         except GatewayNameConflictError as ge:
-            logger.error(f"GatewayNameConflictError in group: {ge}")
+            logger.error("GatewayNameConflictError in group: %s", ge)
             db.rollback()
 
             structured_logger.log(
@@ -2722,7 +2722,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             )
             raise ge
         except GatewayNotFoundError as gnfe:
-            logger.error(f"GatewayNotFoundError: {gnfe}")
+            logger.error("GatewayNotFoundError: %s", gnfe)
             db.rollback()
 
             structured_logger.log(
@@ -2737,7 +2737,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             )
             raise gnfe
         except IntegrityError as ie:
-            logger.error(f"IntegrityErrors in group: {ie}")
+            logger.error("IntegrityErrors in group: %s", ie)
             db.rollback()
 
             structured_logger.log(
@@ -3025,7 +3025,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                         decrypted = decode_auth(encrypted_value)
                                         auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
                                     except Exception:
-                                        logger.debug(f"Failed to decrypt query param '{param_key}' for gateway activation")
+                                        logger.debug("Failed to decrypt query param '%s' for gateway activation", param_key)
                             if auth_query_params_decrypted:
                                 init_url = apply_query_param_auth(gateway.url, auth_query_params_decrypted)
 
@@ -3061,12 +3061,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         items_added = len(tools_to_add) + len(resources_to_add) + len(prompts_to_add)
                         if items_added > 0:
                             if tools_to_add:
-                                logger.info(f"Added {len(tools_to_add)} new tools during gateway reactivation")
+                                logger.info("Added %s new tools during gateway reactivation", len(tools_to_add))
                             if resources_to_add:
-                                logger.info(f"Added {len(resources_to_add)} new resources during gateway reactivation")
+                                logger.info("Added %s new resources during gateway reactivation", len(resources_to_add))
                             if prompts_to_add:
-                                logger.info(f"Added {len(prompts_to_add)} new prompts during gateway reactivation")
-                            logger.info(f"Total {items_added} new items added during gateway reactivation")
+                                logger.info("Added %s new prompts during gateway reactivation", len(prompts_to_add))
+                            logger.info("Total %s new items added during gateway reactivation", items_added)
 
                         # Count items before cleanup for logging
 
@@ -3078,7 +3078,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         is_auth_code_gateway = gateway.oauth_config and isinstance(gateway.oauth_config, dict) and gateway.oauth_config.get("grant_type") == "authorization_code"
                         skip_stale_cleanup = not tools and not resources and not prompts and is_auth_code_gateway
                         if skip_stale_cleanup:
-                            logger.debug(f"Empty response from auth_code gateway {gateway.name} during reactivation, preserving existing items")
+                            logger.debug("Empty response from auth_code gateway %s during reactivation, preserving existing items", gateway.name)
 
                         # Bulk delete tools that are no longer available from the gateway
                         # Use chunking to avoid SQLite's 999 parameter limit for IN clauses
@@ -3133,11 +3133,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         prompts_removed = len(stale_prompt_ids)
 
                         if tools_removed > 0:
-                            logger.info(f"Removed {tools_removed} tools no longer available during gateway reactivation")
+                            logger.info("Removed %s tools no longer available during gateway reactivation", tools_removed)
                         if resources_removed > 0:
-                            logger.info(f"Removed {resources_removed} resources no longer available during gateway reactivation")
+                            logger.info("Removed %s resources no longer available during gateway reactivation", resources_removed)
                         if prompts_removed > 0:
-                            logger.info(f"Removed {prompts_removed} prompts no longer available during gateway reactivation")
+                            logger.info("Removed %s prompts no longer available during gateway reactivation", prompts_removed)
 
                         gateway.last_seen = datetime.now(timezone.utc)
 
@@ -3160,7 +3160,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 db.add_all(chunk)
                                 db.flush()
                     except Exception as e:
-                        logger.warning(f"Failed to initialize reactivated gateway: {e}")
+                        logger.warning("Failed to initialize reactivated gateway: %s", e)
                 else:
                     self._active_gateways.discard(gateway.url)
 
@@ -3226,9 +3226,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         db.commit()
                         await cache.invalidate_resources()
 
-                logger.debug(f"Gateway {SecurityValidator.sanitize_log_message(gateway.name)} bulk state update: {tools_updated} tools, {prompts_updated} prompts, {resources_updated} resources")
+                logger.debug(
+                    "Gateway %s bulk state update: %s tools, %s prompts, %s resources", SecurityValidator.sanitize_log_message(gateway.name), tools_updated, prompts_updated, resources_updated
+                )
 
-                logger.info(f"Gateway status: {SecurityValidator.sanitize_log_message(gateway.name)} - {'enabled' if activate else 'disabled'} and {'accessible' if reachable else 'inaccessible'}")
+                logger.info(
+                    "Gateway status: %s - %s and %s", SecurityValidator.sanitize_log_message(gateway.name), "enabled" if activate else "disabled", "accessible" if reachable else "inaccessible"
+                )
 
                 # Structured logging: Audit trail for gateway state change
                 audit_trail.log_action(
@@ -3457,7 +3461,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # Notify subscribers
             await self._notify_gateway_deleted(gateway_info)
 
-            logger.info(f"Permanently deleted gateway: {gateway_name}")
+            logger.info("Permanently deleted gateway: %s", gateway_name)
 
             # Structured logging: Audit trail for gateway deletion
             audit_trail.log_action(
@@ -3564,10 +3568,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         count = self._gateway_failure_counts.get(gateway.id, 0) + 1
         self._gateway_failure_counts[gateway.id] = count
 
-        logger.warning(f"Gateway {SecurityValidator.sanitize_log_message(gateway.name)} failed health check {count} time(s).")
+        logger.warning("Gateway %s failed health check %s time(s).", SecurityValidator.sanitize_log_message(gateway.name), count)
 
         if count >= GW_FAILURE_THRESHOLD:
-            logger.error(f"Gateway {SecurityValidator.sanitize_log_message(gateway.name)} failed {GW_FAILURE_THRESHOLD} times. Deactivating...")
+            logger.error("Gateway %s failed %s times. Deactivating...", SecurityValidator.sanitize_log_message(gateway.name), GW_FAILURE_THRESHOLD)
             with cast(Any, SessionLocal)() as db:
                 await self.set_gateway_state(db, gateway.id, activate=True, reachable=False, only_update_reachable=True)
                 self._gateway_failure_counts[gateway.id] = 0  # Reset after deactivation
@@ -3658,7 +3662,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         timeout=settings.gateway_health_check_timeout,
                     )
                 except asyncio.TimeoutError:
-                    logger.warning(f"Gateway {getattr(gateway, 'name', 'unknown')} health check timed out after {settings.gateway_health_check_timeout}s")
+                    logger.warning("Gateway %s health check timed out after %ss", getattr(gateway, "name", "unknown"), settings.gateway_health_check_timeout)
                     # Treat timeout as a failed health check
                     await self._handle_gateway_failure(gateway)
 
@@ -3685,7 +3689,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 set_span_attribute(batch_span, "check.duration_ms", int(elapsed * 1000))
                 set_span_attribute(batch_span, "check.completed", True)
 
-            logger.debug(f"Health check batch completed for {len(gateways)} gateways in {elapsed:.2f}s")
+            logger.debug("Health check batch completed for %s gateways in %.2fs", len(gateways), elapsed)
 
         return True
 
@@ -3729,7 +3733,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         decrypted = decode_auth(encrypted_value)
                         auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
                     except Exception:
-                        logger.debug(f"Failed to decrypt query param '{param_key}' for health check")
+                        logger.debug("Failed to decrypt query param '%s' for health check", param_key)
             if auth_query_params_decrypted:
                 gateway_url = apply_query_param_auth(gateway_url, auth_query_params_decrypted)
 
@@ -3809,7 +3813,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # Use admin timeout for health checks (fail fast, don't wait 120s for slow upstreams)
             # Pass ssl_context if present, otherwise let get_isolated_http_client use skip_ssl_verify setting
             async with get_isolated_http_client(timeout=settings.httpx_admin_read_timeout, verify=ssl_context) as client:
-                logger.debug(f"Checking health of gateway: {gateway_name} ({gateway_url_sanitized})")
+                logger.debug("Checking health of gateway: %s (%s)", gateway_name, gateway_url_sanitized)
                 try:
                     # Handle different authentication types
                     headers = {}
@@ -3846,7 +3850,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                     await self._handle_gateway_failure(gateway)
                                     return
                             except Exception as e:
-                                logger.error(f"Failed to obtain stored OAuth token for gateway {gateway_name}: {e}")
+                                logger.error("Failed to obtain stored OAuth token for gateway %s: %s", gateway_name, e)
                                 if span:
                                     set_span_attribute(span, "health.status", "unhealthy")
                                     set_span_error(span, "Failed to obtain stored OAuth token")
@@ -3898,7 +3902,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                     # Reactivate gateway if it was previously inactive and health check passed now
                     if gateway_enabled and not gateway_reachable:
-                        logger.info(f"Reactivating gateway: {gateway_name}, as it is healthy now")
+                        logger.info("Reactivating gateway: %s, as it is healthy now", gateway_name)
                         with cast(Any, SessionLocal)() as status_db:
                             await self.set_gateway_state(status_db, gateway_id, activate=True, reachable=True, only_update_reachable=True)
 
@@ -3910,7 +3914,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 db_gateway.last_seen = datetime.now(timezone.utc)
                                 update_db.commit()
                     except Exception as update_error:
-                        logger.warning(f"Failed to update last_seen for gateway {gateway_name}: {update_error}")
+                        logger.warning("Failed to update last_seen for gateway %s: %s", gateway_name, update_error)
 
                     # Auto-refresh tools/resources/prompts if enabled
                     should_auto_refresh = False
@@ -3920,10 +3924,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             try:
                                 should_auto_refresh = await self._classification_service.should_poll_server(gateway_base_url, "tool_discovery", gateway_id=str(gateway_id))
                                 if not should_auto_refresh:
-                                    logger.debug(f"Skipping auto-refresh for {SecurityValidator.sanitize_log_message(gateway_name)}: " f"not yet due based on hot/cold classification")
+                                    logger.debug("Skipping auto-refresh for %s: not yet due based on hot/cold classification", SecurityValidator.sanitize_log_message(gateway_name))
                             except Exception as e:
                                 # Fail open: proceed with auto-refresh if classification check fails
-                                logger.warning(f"Classification check failed for {SecurityValidator.sanitize_log_message(gateway_name)}, proceeding with auto-refresh (fail-open): {e}")
+                                logger.warning("Classification check failed for %s, proceeding with auto-refresh (fail-open): %s", SecurityValidator.sanitize_log_message(gateway_name), e)
                                 should_auto_refresh = True
                         else:
                             should_auto_refresh = True
@@ -3948,7 +3952,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                                 if time_since_refresh < refresh_interval:
                                     refresh_needed = False
-                                    logger.debug(f"Skipping auto-refresh for {gateway_name}: last refreshed {int(time_since_refresh)}s ago")
+                                    logger.debug("Skipping auto-refresh for %s: last refreshed %ss ago", gateway_name, int(time_since_refresh))
 
                             if refresh_needed:
                                 # Locking: Try to acquire lock to avoid conflict with manual refresh
@@ -3965,9 +3969,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                         )
                                         # mark_poll_completed is called inside _refresh_gateway_tools_resources_prompts
                                 else:
-                                    logger.debug(f"Skipping auto-refresh for {gateway_name}: lock held (likely manual refresh in progress)")
+                                    logger.debug("Skipping auto-refresh for %s: lock held (likely manual refresh in progress)", gateway_name)
                         except Exception as refresh_error:
-                            logger.warning(f"Failed to refresh tools for gateway {gateway_name}: {refresh_error}")
+                            logger.warning("Failed to refresh tools for gateway %s: %s", gateway_name, refresh_error)
 
                     if span:
                         set_span_attribute(span, "health.status", "healthy")
@@ -3979,7 +3983,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         set_span_error(span, e)
 
                     # Set the logger as debug as this check happens for each interval
-                    logger.debug(f"Health check failed for gateway {gateway_name}: {e}")
+                    logger.debug("Health check failed for gateway %s: %s", gateway_name, e)
                     await self._handle_gateway_failure(gateway)
 
     async def aggregate_capabilities(self, db: Session) -> Dict[str, Any]:
@@ -4204,7 +4208,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         access_token = await self.oauth_manager.get_access_token(oauth_config, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
                         authentication = {"Authorization": f"Bearer {access_token}"}
                     except Exception as e:
-                        logger.error(f"Failed to obtain OAuth access token: {e}")
+                        logger.error("Failed to obtain OAuth access token: %s", e)
                         raise GatewayConnectionError(f"OAuth authentication failed: {str(e)}")
 
             capabilities = {}
@@ -4234,7 +4238,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             sanitized_url = sanitize_url_for_logging(url, auth_query_params)
             raw_error = str(root_cause) or type(root_cause).__name__
             sanitized_error = sanitize_exception_message(raw_error, auth_query_params)
-            logger.error(f"Gateway initialization failed for {sanitized_url}: {sanitized_error}", exc_info=True)
+            logger.error("Gateway initialization failed for %s: %s", sanitized_url, sanitized_error, exc_info=True)
             raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: {sanitized_error}")
 
     def _get_gateways(self, include_inactive: bool = True) -> list[DbGateway]:
@@ -4331,12 +4335,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                 # Refresh the leader key TTL
                 await self._redis_client.expire(self._leader_key, self._leader_ttl)
-                logger.debug(f"Leader heartbeat: refreshed TTL to {self._leader_ttl}s")
+                logger.debug("Leader heartbeat: refreshed TTL to %ss", self._leader_ttl)
                 consecutive_failures = 0
 
             except Exception as e:
                 consecutive_failures += 1
-                logger.warning(f"Leader heartbeat error (failure {consecutive_failures}/{max_failures}): {e}")
+                logger.warning("Leader heartbeat error (failure %s/%s): %s", consecutive_failures, max_failures, e)
                 if consecutive_failures >= max_failures:
                     logger.error("Too many consecutive heartbeat failures, starting follower election")
                     self._start_follower_election()
@@ -4382,7 +4386,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     return  # Exit follower loop, now running as leader
 
             except Exception as e:
-                logger.warning(f"Follower election error: {e}", exc_info=True)
+                logger.warning("Follower election error: %s", e, exc_info=True)
 
     async def _run_health_checks(self, user_email: str) -> None:
         """Run health checks periodically,
@@ -4434,7 +4438,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         if gateways:
                             await self.check_health_of_gateways(gateways, user_email)
                     except Exception as e:
-                        logger.error(f"Health check run failed: {str(e)}")
+                        logger.error("Health check run failed: %s", str(e))
 
                     await asyncio.sleep(self._health_check_interval)
 
@@ -4455,7 +4459,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         await asyncio.sleep(self._health_check_interval)
 
                     except Exception as e:
-                        logger.error(f"FileLock health check failed: {str(e)}")
+                        logger.error("FileLock health check failed: %s", str(e))
 
                     finally:
                         if self._file_lock.is_locked:
@@ -4463,10 +4467,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 self._file_lock.release()
                                 logger.info("Released file lock.")
                             except Exception as e:
-                                logger.warning(f"Failed to release file lock: {str(e)}")
+                                logger.warning("Failed to release file lock: %s", str(e))
 
             except Exception as e:
-                logger.error(f"Unexpected error in health check loop: {str(e)}")
+                logger.error("Unexpected error in health check loop: %s", str(e))
                 await asyncio.sleep(self._health_check_interval)
 
     def _get_auth_headers(self) -> Dict[str, str]:
@@ -4797,7 +4801,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_tool.auth_value = encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value
                         if update_visibility and upstream_tool_visibility is not None:
                             existing_tool.visibility = upstream_tool_visibility
-                        logger.debug(f"Updated existing tool: {tool.name}")
+                        logger.debug("Updated existing tool: %s", tool.name)
                 else:
                     # Create new tool if it doesn't exist
                     db_tool = self._create_db_tool(
@@ -4809,9 +4813,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     # Attach relationship to avoid NoneType during flush
                     db_tool.gateway = gateway
                     tools_to_add.append(db_tool)
-                    logger.debug(f"Created new tool: {tool.name}")
+                    logger.debug("Created new tool: %s", tool.name)
             except Exception as e:
-                logger.warning(f"Failed to process tool {getattr(tool, 'name', 'unknown')}: {e}")
+                logger.warning("Failed to process tool %s: %s", getattr(tool, "name", "unknown"), e)
                 continue
 
         return tools_to_add
@@ -4875,7 +4879,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_resource.title = getattr(resource, "title", None)
                         if update_visibility and upstream_visibility is not None:
                             existing_resource.visibility = upstream_visibility
-                        logger.debug(f"Updated existing resource: {resource.uri}")
+                        logger.debug("Updated existing resource: %s", resource.uri)
                 else:
                     # Create new resource if it doesn't exist
                     db_resource = DbResource(
@@ -4891,9 +4895,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         visibility=getattr(resource, "visibility", None) or gateway.visibility,
                     )
                     resources_to_add.append(db_resource)
-                    logger.debug(f"Created new resource: {resource.uri}")
+                    logger.debug("Created new resource: %s", resource.uri)
             except Exception as e:
-                logger.warning(f"Failed to process resource {getattr(resource, 'uri', 'unknown')}: {e}")
+                logger.warning("Failed to process resource %s: %s", getattr(resource, "uri", "unknown"), e)
                 continue
 
         return resources_to_add
@@ -4983,7 +4987,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_prompt.title = getattr(prompt, "title", None)
                         if update_visibility and upstream_prompt_visibility is not None:
                             existing_prompt.visibility = upstream_prompt_visibility
-                        logger.debug(f"Updated existing prompt: {prompt.name}")
+                        logger.debug("Updated existing prompt: %s", prompt.name)
                 else:
                     # Create new prompt if it doesn't exist
                     db_prompt = DbPrompt(
@@ -5002,9 +5006,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     )
                     db_prompt.gateway = gateway
                     prompts_to_add.append(db_prompt)
-                    logger.debug(f"Created new prompt: {prompt.name}")
+                    logger.debug("Created new prompt: %s", prompt.name)
             except Exception as e:
-                logger.warning(f"Failed to process prompt {getattr(prompt, 'name', 'unknown')}: {e}")
+                logger.warning("Failed to process prompt %s: %s", getattr(prompt, "name", "unknown"), e)
                 continue
 
         return prompts_to_add
@@ -5119,7 +5123,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         if gateway:
             if not gateway.enabled or not gateway.reachable:
-                logger.debug(f"Skipping tool refresh for disabled/unreachable gateway {SecurityValidator.sanitize_log_message(gateway.name)}")
+                logger.debug("Skipping tool refresh for disabled/unreachable gateway %s", SecurityValidator.sanitize_log_message(gateway.name))
                 return result
 
             gateway_name = gateway.name
@@ -5137,11 +5141,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 gateway_obj = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
 
                 if not gateway_obj:
-                    logger.warning(f"Gateway {SecurityValidator.sanitize_log_message(gateway_id)} not found for tool refresh")
+                    logger.warning("Gateway %s not found for tool refresh", SecurityValidator.sanitize_log_message(gateway_id))
                     return result
 
                 if not gateway_obj.enabled or not gateway_obj.reachable:
-                    logger.debug(f"Skipping tool refresh for disabled/unreachable gateway {gateway_obj.name}")
+                    logger.debug("Skipping tool refresh for disabled/unreachable gateway %s", gateway_obj.name)
                     return result
 
                 # Extract metadata before session closes
@@ -5169,7 +5173,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         decrypted = decode_auth(encrypted_value)
                         auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
                     except Exception:
-                        logger.debug(f"Failed to decrypt query param '{param_key}' for tool refresh")
+                        logger.debug("Failed to decrypt query param '%s' for tool refresh", param_key)
             if auth_query_params_decrypted:
                 gateway_url = apply_query_param_auth(gateway_url, auth_query_params_decrypted)
 
@@ -5198,7 +5202,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 client_key=_refresh_key,
             )
         except Exception as e:
-            logger.warning(f"Failed to fetch tools from gateway {gateway_name}: {e}")
+            logger.warning("Failed to fetch tools from gateway %s: %s", gateway_name, e)
             result["success"] = False
             result["error"] = str(e)
             return result
@@ -5207,7 +5211,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         # Skip only if it's an auth_code gateway with no data (user may not have completed authorization)
         is_auth_code_gateway = gateway_oauth_config and isinstance(gateway_oauth_config, dict) and gateway_oauth_config.get("grant_type") == "authorization_code"
         if not tools and not resources and not prompts and is_auth_code_gateway:
-            logger.debug(f"No tools/resources/prompts returned from auth_code gateway {gateway_name} (user may not have authorized)")
+            logger.debug("No tools/resources/prompts returned from auth_code gateway %s (user may not have authorized)", gateway_name)
             return result
 
         # For non-auth_code gateways, empty responses are legitimate and will clear stale items
@@ -5334,10 +5338,17 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if has_changes:
                 db.commit()
                 logger.info(
-                    f"Refreshed gateway {gateway_name}: "
-                    f"tools(+{result['tools_added']}/-{result['tools_removed']}/~{result['tools_updated']}), "
-                    f"resources(+{result['resources_added']}/-{result['resources_removed']}/~{result['resources_updated']}), "
-                    f"prompts(+{result['prompts_added']}/-{result['prompts_removed']}/~{result['prompts_updated']})"
+                    "Refreshed gateway %s: tools(+%s/-%s/~%s), resources(+%s/-%s/~%s), prompts(+%s/-%s/~%s)",
+                    gateway_name,
+                    result["tools_added"],
+                    result["tools_removed"],
+                    result["tools_updated"],
+                    result["resources_added"],
+                    result["resources_removed"],
+                    result["resources_updated"],
+                    result["prompts_added"],
+                    result["prompts_removed"],
+                    result["prompts_updated"],
                 )
 
                 # Invalidate caches per-type based on actual changes
@@ -5354,7 +5365,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 await tool_lookup_cache.invalidate_gateway(str(gateway_id))
             else:
                 db.commit()
-                logger.debug(f"No changes detected during refresh of gateway {gateway_name}")
+                logger.debug("No changes detected during refresh of gateway %s", gateway_name)
 
         # Advance poll schedule so hot/cold classification tracks the actual last refresh
         # regardless of whether the refresh was triggered by health check, manual API, or registration.
@@ -5363,7 +5374,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             try:
                 await self._classification_service.mark_poll_completed(gateway_base_url, "tool_discovery", gateway_id=str(gateway_id))
             except Exception as poll_ts_err:
-                logger.debug(f"Best-effort tool_discovery poll timestamp update failed: {poll_ts_err}")
+                logger.debug("Best-effort tool_discovery poll timestamp update failed: %s", poll_ts_err)
 
         return result
 
@@ -5457,7 +5468,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             raise GatewayError(f"Refresh already in progress for gateway {gateway_name}")
 
         async with lock:
-            logger.info(f"Starting manual refresh for gateway {gateway_name} (ID: {SecurityValidator.sanitize_log_message(gateway_id)})")
+            logger.info("Starting manual refresh for gateway %s (ID: %s)", gateway_name, SecurityValidator.sanitize_log_message(gateway_id))
 
             result = await self._refresh_gateway_tools_resources_prompts(
                 gateway_id=gateway_id,
@@ -5478,11 +5489,16 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         logger.log(
             log_level,
-            f"Manual refresh for gateway {gateway_id} {status_msg}. Stats: "
-            f"tools(+{result['tools_added']}/-{result['tools_removed']}), "
-            f"resources(+{result['resources_added']}/-{result['resources_removed']}), "
-            f"prompts(+{result['prompts_added']}/-{result['prompts_removed']}) "
-            f"in {result['duration_ms']:.2f}ms",
+            "Manual refresh for gateway %s %s. Stats: tools(+%s/-%s), resources(+%s/-%s), prompts(+%s/-%s) in %.2fms",
+            gateway_id,
+            status_msg,
+            result["tools_added"],
+            result["tools_removed"],
+            result["resources_added"],
+            result["resources_removed"],
+            result["prompts_added"],
+            result["prompts_removed"],
+            result["duration_ms"],
         )
 
         return result
@@ -5528,15 +5544,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         for i, tool_dict in enumerate(tools):
             tool_name = tool_dict.get("name", f"unknown_tool_{i}")
             try:
-                logger.debug(f"Validating tool: {tool_name}")
+                logger.debug("Validating tool: %s", tool_name)
                 validated_tool = ToolCreate.model_validate(tool_dict)
                 valid_tools.append(validated_tool)
-                logger.debug(f"Tool '{tool_name}' validated successfully")
+                logger.debug("Tool '%s' validated successfully", tool_name)
             except ValidationError as e:
                 clean_msgs = "; ".join(err["msg"].removeprefix("Value error, ") for err in e.errors())
                 error_msg = f"{tool_name}: {clean_msgs}"
-                logger.error(f"Validation failed for tool '{tool_name}': {e.errors()}")
-                logger.debug(f"Failed tool schema: {tool_dict}")
+                logger.error("Validation failed for tool '%s': %s", tool_name, e.errors())
+                logger.debug("Failed tool schema: %s", tool_dict)
                 validation_errors.append(error_msg)
             except ValueError as e:
                 if "JSON structure exceeds maximum depth" in str(e):
@@ -5553,9 +5569,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 validation_errors.append(error_msg)
 
         if validation_errors:
-            logger.warning(f"Tool validation completed with {len(validation_errors)} error(s). " f"Successfully validated {len(valid_tools)} tool(s).")
+            logger.warning("Tool validation completed with %s error(s). Successfully validated %s tool(s).", len(validation_errors), len(valid_tools))
             for err in validation_errors[:3]:
-                logger.debug(f"Validation error: {err}")
+                logger.debug("Validation error: %s", err)
 
         if not valid_tools and validation_errors:
             if context == "oauth":
@@ -5592,7 +5608,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     # Initialize the session
                     response = await session.initialize()
                     capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
-                    logger.debug(f"Server capabilities: {capabilities}")
+                    logger.debug("Server capabilities: %s", capabilities)
 
                     response = await session.list_tools()
                     tools = response.tools
@@ -5600,10 +5616,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                     tools, validation_errors = self._validate_tools(tools, context="oauth")
                     if tools:
-                        logger.info(f"Fetched {len(tools)} tools from gateway")
+                        logger.info("Fetched %s tools from gateway", len(tools))
                     # Fetch resources if supported
 
-                    logger.debug(f"Checking for resources support: {capabilities.get('resources')}")
+                    logger.debug("Checking for resources support: %s", capabilities.get("resources"))
                     resources = []
                     if capabilities.get("resources"):
                         try:
@@ -5631,9 +5647,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                             content="",
                                         )
                                     )
-                            logger.info(f"Fetched {len(resources)} resources from gateway")
+                            logger.info("Fetched %s resources from gateway", len(resources))
                         except Exception as e:
-                            logger.warning(f"Failed to fetch resources: {e}")
+                            logger.warning("Failed to fetch resources: %s", e)
 
                         # resource template URI
                         try:
@@ -5652,13 +5668,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                                 resources.append(ResourceCreate.model_validate(resource_template_data))
                                 resource_templates.append(ResourceCreate.model_validate(resource_template_data))
-                            logger.info(f"Fetched {len(resource_templates)} resource templates from gateway")
+                            logger.info("Fetched %s resource templates from gateway", len(resource_templates))
                         except Exception as e:
-                            logger.warning(f"Failed to fetch resource templates: {e}")
+                            logger.warning("Failed to fetch resource templates: %s", e)
 
                     # Fetch prompts if supported
                     prompts = []
-                    logger.debug(f"Checking for prompts support: {capabilities.get('prompts')}")
+                    logger.debug("Checking for prompts support: %s", capabilities.get("prompts"))
                     if capabilities.get("prompts"):
                         try:
                             response = await session.list_prompts()
@@ -5679,9 +5695,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                             template=prompt_data.get("template", ""),
                                         )
                                     )
-                            logger.info(f"Fetched {len(prompts)} prompts from gateway")
+                            logger.info("Fetched %s prompts from gateway", len(prompts))
                         except Exception as e:
-                            logger.warning(f"Failed to fetch prompts: {e}")
+                            logger.warning("Failed to fetch prompts: %s", e)
 
                     return capabilities, tools, resources, prompts, validation_errors
         except Exception as e:
@@ -5689,7 +5705,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # Still sanitize in case exception contains URL with static sensitive params
             sanitized_url = sanitize_url_for_logging(server_url)
             sanitized_error = sanitize_exception_message(str(e))
-            logger.error(f"SSE connection error details: {type(e).__name__}: {sanitized_error}", exc_info=True)
+            logger.error("SSE connection error details: %s: %s", type(e).__name__, sanitized_error, exc_info=True)
 
             # Surface diagnostic context for likely auth rejections (401/403)
             error_str = str(e).lower()
@@ -5771,7 +5787,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 response = await session.initialize()
 
                 capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
-                logger.debug(f"Server capabilities: {capabilities}")
+                logger.debug("Server capabilities: %s", capabilities)
 
                 response = await session.list_tools()
                 tools = response.tools
@@ -5779,11 +5795,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                 tools, validation_errors = self._validate_tools(tools)
                 if tools:
-                    logger.info(f"Fetched {len(tools)} tools from gateway")
+                    logger.info("Fetched %s tools from gateway", len(tools))
                 # Fetch resources if supported
                 resources = []
                 if include_resources:
-                    logger.debug(f"Checking for resources support: {capabilities.get('resources')}")
+                    logger.debug("Checking for resources support: %s", capabilities.get("resources"))
                     if capabilities.get("resources"):
                         try:
                             response = await session.list_resources()
@@ -5810,9 +5826,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                             content="",
                                         )
                                     )
-                            logger.info(f"Fetched {len(resources)} resources from gateway")
+                            logger.info("Fetched %s resources from gateway", len(resources))
                         except Exception as e:
-                            logger.warning(f"Failed to fetch resources: {e}")
+                            logger.warning("Failed to fetch resources: %s", e)
 
                         # resource template URI
                         try:
@@ -5831,14 +5847,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                                 resources.append(ResourceCreate.model_validate(resource_template_data))
                                 resource_templates.append(ResourceCreate.model_validate(resource_template_data))
-                            logger.info(f"Fetched {len(raw_resources_templates)} resource templates from gateway")
+                            logger.info("Fetched %s resource templates from gateway", len(raw_resources_templates))
                         except Exception as ei:
-                            logger.warning(f"Failed to fetch resource templates: {ei}")
+                            logger.warning("Failed to fetch resource templates: %s", ei)
 
                 # Fetch prompts if supported
                 prompts = []
                 if include_prompts:
-                    logger.debug(f"Checking for prompts support: {capabilities.get('prompts')}")
+                    logger.debug("Checking for prompts support: %s", capabilities.get("prompts"))
                     if capabilities.get("prompts"):
                         try:
                             response = await session.list_prompts()
@@ -5859,9 +5875,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                             template=prompt_data.get("template", ""),
                                         )
                                     )
-                            logger.info(f"Fetched {len(prompts)} prompts from gateway")
+                            logger.info("Fetched %s prompts from gateway", len(prompts))
                         except Exception as e:
-                            logger.warning(f"Failed to fetch prompts: {e}")
+                            logger.warning("Failed to fetch prompts: %s", e)
 
                 return capabilities, tools, resources, prompts, validation_errors
         sanitized_url = sanitize_url_for_logging(server_url, auth_query_params)
@@ -5937,7 +5953,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # Initialize the session
                 response = await session.initialize()
                 capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
-                logger.debug(f"Server capabilities: {capabilities}")
+                logger.debug("Server capabilities: %s", capabilities)
 
                 response = await session.list_tools()
                 tools = response.tools
@@ -5947,12 +5963,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 for tool in tools:
                     tool.request_type = "STREAMABLEHTTP"
                 if tools:
-                    logger.info(f"Fetched {len(tools)} tools from gateway")
+                    logger.info("Fetched %s tools from gateway", len(tools))
 
                 # Fetch resources if supported
                 resources = []
                 if include_resources:
-                    logger.debug(f"Checking for resources support: {capabilities.get('resources')}")
+                    logger.debug("Checking for resources support: %s", capabilities.get("resources"))
                     if capabilities.get("resources"):
                         try:
                             response = await session.list_resources()
@@ -5979,9 +5995,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                             content="",
                                         )
                                     )
-                            logger.info(f"Fetched {len(resources)} resources from gateway")
+                            logger.info("Fetched %s resources from gateway", len(resources))
                         except Exception as e:
-                            logger.warning(f"Failed to fetch resources: {e}")
+                            logger.warning("Failed to fetch resources: %s", e)
 
                         # resource template URI
                         try:
@@ -6000,14 +6016,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                                 resources.append(ResourceCreate.model_validate(resource_template_data))
                                 resource_templates.append(ResourceCreate.model_validate(resource_template_data))
-                            logger.info(f"Fetched {len(resource_templates)} resource templates from gateway")
+                            logger.info("Fetched %s resource templates from gateway", len(resource_templates))
                         except Exception as e:
-                            logger.warning(f"Failed to fetch resource templates: {e}")
+                            logger.warning("Failed to fetch resource templates: %s", e)
 
                 # Fetch prompts if supported
                 prompts = []
                 if include_prompts:
-                    logger.debug(f"Checking for prompts support: {capabilities.get('prompts')}")
+                    logger.debug("Checking for prompts support: %s", capabilities.get("prompts"))
                     if capabilities.get("prompts"):
                         try:
                             response = await session.list_prompts()
@@ -6018,9 +6034,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 if "template" not in prompt_data:
                                     prompt_data["template"] = ""
                                 prompts.append(PromptCreate.model_validate(prompt_data))
-                            logger.info(f"Fetched {len(prompts)} prompts from gateway")
+                            logger.info("Fetched %s prompts from gateway", len(prompts))
                         except Exception as e:
-                            logger.warning(f"Failed to fetch prompts: {e}")
+                            logger.warning("Failed to fetch prompts: %s", e)
 
                 return capabilities, tools, resources, prompts, validation_errors
         sanitized_url = sanitize_url_for_logging(server_url, auth_query_params)

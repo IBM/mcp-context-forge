@@ -80,7 +80,7 @@ async def _get_redis_client():
             if _redis_client:
                 logger.info("OAuth manager connected to shared Redis client")
         except Exception as e:
-            logger.warning(f"Failed to get Redis client, falling back to in-memory storage: {e}")
+            logger.warning("Failed to get Redis client, falling back to in-memory storage: %s", e)
             _redis_client = None
     else:
         _redis_client = None
@@ -247,7 +247,7 @@ class OAuthManager:
             True
         """
         grant_type = credentials.get("grant_type")
-        logger.debug(f"Getting access token for grant type: {grant_type}")
+        logger.debug("Getting access token for grant type: %s", grant_type)
 
         if grant_type == "client_credentials":
             return await self._client_credentials_flow(credentials, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
@@ -557,7 +557,7 @@ class OAuthManager:
                 return token_response["access_token"]
 
             except httpx.HTTPError as e:
-                logger.warning(f"Token request attempt {attempt + 1} failed: {str(e)}")
+                logger.warning("Token request attempt %s failed: %s", attempt + 1, str(e))
                 if attempt == self.max_retries - 1:
                     raise OAuthError(f"Failed to obtain access token after {self.max_retries} attempts: {str(e)}")
                 await asyncio.sleep(2**attempt)  # Exponential backoff
@@ -627,7 +627,7 @@ class OAuthManager:
                 return token_response["access_token"]
 
             except httpx.HTTPError as e:
-                logger.warning(f"Token request attempt {attempt + 1} failed: {str(e)}")
+                logger.warning("Token request attempt %s failed: %s", attempt + 1, str(e))
                 if attempt == self.max_retries - 1:
                     raise OAuthError(f"Failed to obtain access token after {self.max_retries} attempts: {str(e)}")
                 await asyncio.sleep(2**attempt)  # Exponential backoff
@@ -655,7 +655,7 @@ class OAuthManager:
         # Generate authorization URL with state for CSRF protection
         auth_url, state = oauth.authorization_url(authorization_url)
 
-        logger.info(f"Generated authorization URL for client {client_id}")
+        logger.info("Generated authorization URL for client %s", client_id)
 
         return {"authorization_url": auth_url, "state": state}
 
@@ -728,7 +728,7 @@ class OAuthManager:
                 return token_response["access_token"]
 
             except httpx.HTTPError as e:
-                logger.warning(f"Token exchange attempt {attempt + 1} failed: {str(e)}")
+                logger.warning("Token exchange attempt %s failed: %s", attempt + 1, str(e))
                 if attempt == self.max_retries - 1:
                     raise OAuthError(f"Failed to exchange code for token after {self.max_retries} attempts: {str(e)}")
                 await asyncio.sleep(2**attempt)  # Exponential backoff
@@ -778,7 +778,7 @@ class OAuthManager:
                     if decrypted:
                         client_secret = decrypted
             except Exception as e:
-                logger.warning(f"Failed to decrypt client secret for token exchange: {e}")
+                logger.warning("Failed to decrypt client secret for token exchange: %s", e)
 
         token_data: Dict[str, str] = {
             "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
@@ -807,7 +807,7 @@ class OAuthManager:
                 return token_response
 
             except httpx.HTTPError as e:
-                logger.warning(f"Token exchange attempt {attempt + 1} failed: {e}")
+                logger.warning("Token exchange attempt %s failed: %s", attempt + 1, e)
                 if attempt == self.max_retries - 1:
                     raise OAuthError(f"Token exchange failed after {self.max_retries} attempts: {e}")
                 await asyncio.sleep(2**attempt)
@@ -844,7 +844,7 @@ class OAuthManager:
         # Generate authorization URL with PKCE
         auth_url = self._create_authorization_url_with_pkce(credentials, state, pkce_params["code_challenge"], pkce_params["code_challenge_method"])
 
-        logger.info(f"Generated authorization URL with PKCE for gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
+        logger.info("Generated authorization URL with PKCE for gateway %s", SecurityValidator.sanitize_log_message(gateway_id))
 
         return {"authorization_url": auth_url, "state": state, "gateway_id": gateway_id}
 
@@ -1020,7 +1020,7 @@ class OAuthManager:
                             gateway_id = gateway_id.decode("utf-8")
                         return gateway_id
                 except Exception as e:
-                    logger.warning(f"Failed to resolve state gateway in Redis: {e}")
+                    logger.warning("Failed to resolve state gateway in Redis: %s", e)
 
         if settings.cache_type == "database":
             try:
@@ -1036,7 +1036,7 @@ class OAuthManager:
                 finally:
                     db_gen.close()
             except Exception as e:
-                logger.warning(f"Failed to resolve state gateway in database: {e}")
+                logger.warning("Failed to resolve state gateway in database: %s", e)
 
         async with _state_lock:
             now = datetime.now(timezone.utc)
@@ -1092,10 +1092,10 @@ class OAuthManager:
                     # Store in Redis with TTL
                     await redis.setex(state_key, STATE_TTL_SECONDS, orjson.dumps(state_data))
                     await redis.setex(lookup_key, STATE_TTL_SECONDS, gateway_id)
-                    logger.debug(f"Stored OAuth state in Redis for gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
+                    logger.debug("Stored OAuth state in Redis for gateway %s", SecurityValidator.sanitize_log_message(gateway_id))
                     return
                 except Exception as e:
-                    logger.warning(f"Failed to store state in Redis: {e}, falling back")
+                    logger.warning("Failed to store state in Redis: %s, falling back", e)
 
         # Try database storage for multi-worker deployments
         if settings.cache_type == "database":
@@ -1123,12 +1123,12 @@ class OAuthManager:
                     oauth_state = OAuthState(**oauth_state_kwargs)
                     db.add(oauth_state)
                     db.commit()
-                    logger.debug(f"Stored OAuth state in database for gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
+                    logger.debug("Stored OAuth state in database for gateway %s", SecurityValidator.sanitize_log_message(gateway_id))
                     return
                 finally:
                     db_gen.close()
             except Exception as e:
-                logger.warning(f"Failed to store state in database: {e}, falling back to memory")
+                logger.warning("Failed to store state in database: %s, falling back to memory", e)
 
         # Fallback to in-memory storage for development
         async with _state_lock:
@@ -1149,12 +1149,12 @@ class OAuthManager:
                 del _oauth_states[key]
                 if expired_state_value:
                     _oauth_state_lookup.pop(expired_state_value, None)
-                logger.debug(f"Cleaned up expired state: {key[:20]}...")
+                logger.debug("Cleaned up expired state: %s...", key[:20])
 
             # Store the new state with expiration
             _oauth_states[state_key] = state_data
             _oauth_state_lookup[state] = gateway_id
-            logger.debug(f"Stored OAuth state in memory for gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
+            logger.debug("Stored OAuth state in memory for gateway %s", SecurityValidator.sanitize_log_message(gateway_id))
 
     async def _validate_authorization_state(self, gateway_id: str, state: str) -> bool:
         """Validate authorization state parameter and mark as used.
@@ -1179,7 +1179,7 @@ class OAuthManager:
                     state_json = await redis.getdel(state_key)
                     await redis.delete(lookup_key)
                     if not state_json:
-                        logger.warning(f"State not found in Redis for gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
+                        logger.warning("State not found in Redis for gateway %s", SecurityValidator.sanitize_log_message(gateway_id))
                         return False
 
                     state_data = orjson.loads(state_json)
@@ -1198,18 +1198,18 @@ class OAuthManager:
 
                     # Check if state has expired
                     if expires_at < datetime.now(timezone.utc):
-                        logger.warning(f"State has expired for gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
+                        logger.warning("State has expired for gateway %s", SecurityValidator.sanitize_log_message(gateway_id))
                         return False
 
                     # Check if state was already used (should not happen with getdel)
                     if state_data.get("used", False):
-                        logger.warning(f"State was already used for gateway {SecurityValidator.sanitize_log_message(gateway_id)} - possible replay attack")
+                        logger.warning("State was already used for gateway %s - possible replay attack", SecurityValidator.sanitize_log_message(gateway_id))
                         return False
 
-                    logger.debug(f"Successfully validated OAuth state from Redis for gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
+                    logger.debug("Successfully validated OAuth state from Redis for gateway %s", SecurityValidator.sanitize_log_message(gateway_id))
                     return True
                 except Exception as e:
-                    logger.warning(f"Failed to validate state in Redis: {e}, falling back")
+                    logger.warning("Failed to validate state in Redis: %s, falling back", e)
 
         # Try database storage for multi-worker deployments
         if settings.cache_type == "database":
@@ -1224,7 +1224,7 @@ class OAuthManager:
                     oauth_state = db.query(OAuthState).filter(OAuthState.gateway_id == gateway_id, OAuthState.state == state).first()
 
                     if not oauth_state:
-                        logger.warning(f"State not found in database for gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
+                        logger.warning("State not found in database for gateway %s", SecurityValidator.sanitize_log_message(gateway_id))
                         return False
 
                     # Check if state has expired
@@ -1234,25 +1234,25 @@ class OAuthManager:
                         expires_at = expires_at.replace(tzinfo=timezone.utc)
 
                     if expires_at < datetime.now(timezone.utc):
-                        logger.warning(f"State has expired for gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
+                        logger.warning("State has expired for gateway %s", SecurityValidator.sanitize_log_message(gateway_id))
                         db.delete(oauth_state)
                         db.commit()
                         return False
 
                     # Check if state was already used
                     if oauth_state.used:
-                        logger.warning(f"State has already been used for gateway {SecurityValidator.sanitize_log_message(gateway_id)} - possible replay attack")
+                        logger.warning("State has already been used for gateway %s - possible replay attack", SecurityValidator.sanitize_log_message(gateway_id))
                         return False
 
                     # Mark as used and delete (single-use)
                     db.delete(oauth_state)
                     db.commit()
-                    logger.debug(f"Successfully validated OAuth state from database for gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
+                    logger.debug("Successfully validated OAuth state from database for gateway %s", SecurityValidator.sanitize_log_message(gateway_id))
                     return True
                 finally:
                     db_gen.close()
             except Exception as e:
-                logger.warning(f"Failed to validate state in database: {e}, falling back to memory")
+                logger.warning("Failed to validate state in database: %s, falling back to memory", e)
 
         # Fallback to in-memory storage for development
         state_key = f"oauth:state:{gateway_id}:{state}"
@@ -1261,7 +1261,7 @@ class OAuthManager:
 
             # Check if state exists
             if not state_data:
-                logger.warning(f"State not found in memory for gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
+                logger.warning("State not found in memory for gateway %s", SecurityValidator.sanitize_log_message(gateway_id))
                 return False
 
             # Parse and normalize expires_at to timezone-aware datetime
@@ -1270,20 +1270,20 @@ class OAuthManager:
                 expires_at = expires_at.replace(tzinfo=timezone.utc)
 
             if expires_at < datetime.now(timezone.utc):
-                logger.warning(f"State has expired for gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
+                logger.warning("State has expired for gateway %s", SecurityValidator.sanitize_log_message(gateway_id))
                 del _oauth_states[state_key]  # Clean up expired state
                 _oauth_state_lookup.pop(state, None)
                 return False
 
             # Check if state has already been used (prevent replay)
             if state_data.get("used", False):
-                logger.warning(f"State has already been used for gateway {SecurityValidator.sanitize_log_message(gateway_id)} - possible replay attack")
+                logger.warning("State has already been used for gateway %s - possible replay attack", SecurityValidator.sanitize_log_message(gateway_id))
                 return False
 
             # Mark state as used and remove it (single-use)
             del _oauth_states[state_key]
             _oauth_state_lookup.pop(state, None)
-            logger.debug(f"Successfully validated OAuth state from memory for gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
+            logger.debug("Successfully validated OAuth state from memory for gateway %s", SecurityValidator.sanitize_log_message(gateway_id))
             return True
 
     async def _validate_and_retrieve_state(self, gateway_id: str, state: str) -> Optional[Dict[str, Any]]:
@@ -1326,7 +1326,7 @@ class OAuthManager:
 
                     return state_data
                 except Exception as e:
-                    logger.warning(f"Failed to validate state in Redis: {e}, falling back")
+                    logger.warning("Failed to validate state in Redis: %s, falling back", e)
 
         # Try database
         if settings.cache_type == "database":
@@ -1374,7 +1374,7 @@ class OAuthManager:
                 finally:
                     db_gen.close()
             except Exception as e:
-                logger.warning(f"Failed to validate state in database: {e}")
+                logger.warning("Failed to validate state in database: %s", e)
 
         # Fallback to in-memory
         state_key = f"oauth:state:{gateway_id}:{state}"
@@ -1619,7 +1619,7 @@ class OAuthManager:
                 return token_response
 
             except httpx.HTTPError as e:
-                logger.warning(f"Token exchange attempt {attempt + 1} failed: {str(e)}")
+                logger.warning("Token exchange attempt %s failed: %s", attempt + 1, str(e))
                 if attempt == self.max_retries - 1:
                     raise OAuthError(f"Failed to exchange code for token after {self.max_retries} attempts: {str(e)}")
                 await asyncio.sleep(2**attempt)  # Exponential backoff
@@ -1739,7 +1739,7 @@ class OAuthManager:
                 logger.warning("Token refresh failed with status %s: %s", response.status_code, error_payload)
 
             except httpx.HTTPError as e:
-                logger.warning(f"Token refresh attempt {attempt + 1} failed: {str(e)}")
+                logger.warning("Token refresh attempt %s failed: %s", attempt + 1, str(e))
                 if attempt == self.max_retries - 1:
                     raise OAuthError(f"Failed to refresh token after {self.max_retries} attempts: {str(e)}")
                 await asyncio.sleep(2**attempt)  # Exponential backoff

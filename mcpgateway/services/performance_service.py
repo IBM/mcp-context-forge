@@ -314,7 +314,7 @@ class PerformanceService:
                     uptime_seconds=uptime,
                 )
         except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-            logger.warning(f"Could not get metrics for process {proc.pid}: {e}")
+            logger.warning("Could not get metrics for process %s: %s", proc.pid, e)
             return WorkerMetrics(
                 pid=proc.pid,
                 cpu_percent=0.0,
@@ -432,7 +432,7 @@ class PerformanceService:
                 self._last_request_time = current_time
 
         except Exception as e:
-            logger.warning(f"Error collecting Prometheus metrics: {e}")
+            logger.warning("Error collecting Prometheus metrics: %s", e)
 
         return metrics
 
@@ -459,7 +459,7 @@ class PerformanceService:
                 metrics.connections_available = pool.checkedin()
                 metrics.overflow = pool.overflow()
         except Exception as e:
-            logger.warning(f"Error collecting database metrics: {e}")
+            logger.warning("Error collecting database metrics: %s", e)
 
         return metrics
 
@@ -503,7 +503,7 @@ class PerformanceService:
 
             # Don't close the shared client
         except Exception as e:
-            logger.warning(f"Error collecting Redis metrics: {e}")
+            logger.warning("Error collecting Redis metrics: %s", e)
             metrics.connected = False
 
         return metrics
@@ -582,7 +582,7 @@ class PerformanceService:
 
             return snapshot
         except Exception as e:
-            logger.error(f"Error saving performance snapshot: {e}")
+            logger.error("Error saving performance snapshot: %s", e)
             db.rollback()
             return None
 
@@ -603,11 +603,11 @@ class PerformanceService:
             db.commit()
 
             if deleted > 0:
-                logger.info(f"Cleaned up {deleted} old performance snapshots")
+                logger.info("Cleaned up %s old performance snapshots", deleted)
 
             return deleted
         except Exception as e:
-            logger.error(f"Error cleaning up snapshots: {e}")
+            logger.error("Error cleaning up snapshots: %s", e)
             db.rollback()
             return 0
 
@@ -749,7 +749,7 @@ class PerformanceService:
 
             return aggregate
         except Exception as e:
-            logger.error(f"Error creating hourly aggregate: {e}")
+            logger.error("Error creating hourly aggregate: %s", e)
             db.rollback()
             return None
 

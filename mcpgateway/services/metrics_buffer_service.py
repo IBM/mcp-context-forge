@@ -132,8 +132,11 @@ class MetricsBufferService:
         self._flush_count = 0
 
         logger.info(
-            f"MetricsBufferService initialized: recording_enabled={self.recording_enabled}, "
-            f"buffer_enabled={self.enabled}, flush_interval={self.flush_interval}s, max_buffer_size={self.max_buffer_size}"
+            "MetricsBufferService initialized: recording_enabled=%s, buffer_enabled=%s, flush_interval=%ss, max_buffer_size=%s",
+            self.recording_enabled,
+            self.enabled,
+            self.flush_interval,
+            self.max_buffer_size,
         )
 
     async def start(self) -> None:
@@ -214,7 +217,7 @@ class MetricsBufferService:
         # Final flush to persist any remaining metrics
         await self._flush_all()
 
-        logger.info(f"MetricsBufferService shutdown complete: " f"total_buffered={self._total_buffered}, total_flushed={self._total_flushed}, " f"flush_count={self._flush_count}")
+        logger.info("MetricsBufferService shutdown complete: total_buffered=%s, total_flushed=%s, flush_count=%s", self._total_buffered, self._total_flushed, self._flush_count)
 
     def record_tool_metric(
         self,
@@ -501,7 +504,7 @@ class MetricsBufferService:
         Raises:
             asyncio.CancelledError: When the flush loop is cancelled.
         """
-        logger.info(f"Metrics flush loop started (interval={self.flush_interval}s)")
+        logger.info("Metrics flush loop started (interval=%ss)", self.flush_interval)
 
         while not self._shutdown_event.is_set():
             try:
@@ -523,7 +526,7 @@ class MetricsBufferService:
                 logger.debug("Flush loop cancelled")
                 raise
             except Exception as e:
-                logger.error(f"Error in metrics flush loop: {e}", exc_info=True)
+                logger.error("Error in metrics flush loop: %s", e, exc_info=True)
                 # Continue the loop despite errors
                 await asyncio.sleep(5)
 
@@ -547,9 +550,13 @@ class MetricsBufferService:
             return
 
         logger.debug(
-            f"Flushing {total} metrics: "
-            f"tools={len(tool_metrics)}, resources={len(resource_metrics)}, prompts={len(prompt_metrics)}, "
-            f"servers={len(server_metrics)}, a2a_agents={len(a2a_agent_metrics)}"
+            "Flushing %s metrics: tools=%s, resources=%s, prompts=%s, servers=%s, a2a_agents=%s",
+            total,
+            len(tool_metrics),
+            len(resource_metrics),
+            len(prompt_metrics),
+            len(server_metrics),
+            len(a2a_agent_metrics),
         )
 
         # Flush in thread to avoid blocking event loop
@@ -566,9 +573,14 @@ class MetricsBufferService:
         self._flush_count += 1
 
         logger.info(
-            f"Metrics flush #{self._flush_count}: wrote {total} records "
-            f"(tools={len(tool_metrics)}, resources={len(resource_metrics)}, prompts={len(prompt_metrics)}, "
-            f"servers={len(server_metrics)}, a2a={len(a2a_agent_metrics)})"
+            "Metrics flush #%s: wrote %s records (tools=%s, resources=%s, prompts=%s, servers=%s, a2a=%s)",
+            self._flush_count,
+            total,
+            len(tool_metrics),
+            len(resource_metrics),
+            len(prompt_metrics),
+            len(server_metrics),
+            len(a2a_agent_metrics),
         )
 
     def _flush_to_db(
@@ -612,7 +624,7 @@ class MetricsBufferService:
                         ],
                     )
             except Exception as e:
-                logger.error(f"Failed to flush tool metrics to database: {e}", exc_info=True)
+                logger.error("Failed to flush tool metrics to database: %s", e, exc_info=True)
 
         if resource_metrics:
             try:
@@ -631,7 +643,7 @@ class MetricsBufferService:
                         ],
                     )
             except Exception as e:
-                logger.error(f"Failed to flush resource metrics to database: {e}", exc_info=True)
+                logger.error("Failed to flush resource metrics to database: %s", e, exc_info=True)
 
         if prompt_metrics:
             try:
@@ -650,7 +662,7 @@ class MetricsBufferService:
                         ],
                     )
             except Exception as e:
-                logger.error(f"Failed to flush prompt metrics to database: {e}", exc_info=True)
+                logger.error("Failed to flush prompt metrics to database: %s", e, exc_info=True)
 
         if a2a_agent_metrics:
             try:
@@ -670,7 +682,7 @@ class MetricsBufferService:
                         ],
                     )
             except Exception as e:
-                logger.error(f"Failed to flush A2A agent metrics to database: {e}", exc_info=True)
+                logger.error("Failed to flush A2A agent metrics to database: %s", e, exc_info=True)
 
         # ``server_id`` can originate from untrusted headers (X-Server-ID) in
         # admin API paths, so it may reference a nonexistent server.  Same
@@ -692,7 +704,7 @@ class MetricsBufferService:
                         ],
                     )
             except Exception as e:
-                logger.error(f"Failed to flush server metrics to database: {e}", exc_info=True)
+                logger.error("Failed to flush server metrics to database: %s", e, exc_info=True)
 
     def _write_tool_metric_immediately(
         self,
@@ -720,7 +732,7 @@ class MetricsBufferService:
                 )
                 db.add(metric)
         except Exception as e:
-            logger.error(f"Failed to write tool metric: {e}")
+            logger.error("Failed to write tool metric: %s", e)
 
     def _write_tool_metric_with_duration_immediately(
         self,
@@ -748,7 +760,7 @@ class MetricsBufferService:
                 )
                 db.add(metric)
         except Exception as e:
-            logger.error(f"Failed to write tool metric: {e}")
+            logger.error("Failed to write tool metric: %s", e)
 
     def _write_resource_metric_immediately(
         self,
@@ -776,7 +788,7 @@ class MetricsBufferService:
                 )
                 db.add(metric)
         except Exception as e:
-            logger.error(f"Failed to write resource metric: {e}")
+            logger.error("Failed to write resource metric: %s", e)
 
     def _write_prompt_metric_immediately(
         self,
@@ -804,7 +816,7 @@ class MetricsBufferService:
                 )
                 db.add(metric)
         except Exception as e:
-            logger.error(f"Failed to write prompt metric: {e}")
+            logger.error("Failed to write prompt metric: %s", e)
 
     def _write_server_metric_immediately(
         self,
@@ -832,7 +844,7 @@ class MetricsBufferService:
                 )
                 db.add(metric)
         except Exception as e:
-            logger.error(f"Failed to write server metric: {e}")
+            logger.error("Failed to write server metric: %s", e)
 
     def _write_server_metric_with_duration_immediately(
         self,
@@ -860,7 +872,7 @@ class MetricsBufferService:
                 )
                 db.add(metric)
         except Exception as e:
-            logger.error(f"Failed to write server metric: {e}")
+            logger.error("Failed to write server metric: %s", e)
 
     def _write_a2a_agent_metric_immediately(
         self,
@@ -891,7 +903,7 @@ class MetricsBufferService:
                 )
                 db.add(metric)
         except Exception as e:
-            logger.error(f"Failed to write A2A agent metric: {e}")
+            logger.error("Failed to write A2A agent metric: %s", e)
 
     def _write_a2a_agent_metric_with_duration_immediately(
         self,
@@ -922,7 +934,7 @@ class MetricsBufferService:
                 )
                 db.add(metric)
         except Exception as e:
-            logger.error(f"Failed to write A2A agent metric: {e}")
+            logger.error("Failed to write A2A agent metric: %s", e)
 
     def get_stats(self) -> dict:
         """Get buffer statistics for monitoring.

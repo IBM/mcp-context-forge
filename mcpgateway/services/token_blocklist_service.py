@@ -75,7 +75,7 @@ class TokenBlocklistService:
                     self._redis_client.ping()
                     logger.debug("Redis connection established for token blocklist")
             except Exception as e:
-                logger.warning(f"Redis not available for token blocklist caching: {e}")
+                logger.warning("Redis not available for token blocklist caching: %s", e)
                 self._redis_client = False  # Mark as unavailable
 
         return self._redis_client if self._redis_client is not False else None
@@ -106,7 +106,7 @@ class TokenBlocklistService:
                 existing = db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti)).scalar_one_or_none()
 
                 if existing:
-                    logger.debug(f"Token {jti} already revoked")
+                    logger.debug("Token %s already revoked", jti)
                     return True
 
                 # Create revocation record
@@ -121,7 +121,7 @@ class TokenBlocklistService:
                     existing = db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti)).scalar_one_or_none()
 
                     if existing:
-                        logger.debug(f"Token {jti} already revoked")
+                        logger.debug("Token %s already revoked", jti)
                         return True
 
                     # Create revocation record
@@ -142,17 +142,20 @@ class TokenBlocklistService:
 
                     redis_client.setex(f"token:revoked:{jti}", ttl_seconds, "1")
                 except Exception as e:
-                    logger.warning(f"Failed to cache revocation in Redis: {e}")
+                    logger.warning("Failed to cache revocation in Redis: %s", e)
 
             logger.info(
-                f"Token revoked: jti={jti}, reason={reason}, revoked_by={revoked_by}",
+                "Token revoked: jti=%s, reason=%s, revoked_by=%s",
+                jti,
+                reason,
+                revoked_by,
                 extra={"security_event": "token_revocation", "security_severity": "medium", "jti": jti, "reason": reason, "revoked_by": revoked_by},
             )
 
             return True
 
         except Exception as e:
-            logger.error(f"Failed to revoke token {jti}: {e}")
+            logger.error("Failed to revoke token %s: %s", jti, e)
             return False
 
     def is_token_revoked(self, jti: str) -> bool:
@@ -177,7 +180,7 @@ class TokenBlocklistService:
                     if redis_client.exists(f"token:revoked:{jti}"):
                         return True
                 except Exception as e:
-                    logger.debug(f"Redis cache check failed: {e}")
+                    logger.debug("Redis cache check failed: %s", e)
 
             # Fall back to database
             if self.db is not None:
@@ -189,7 +192,7 @@ class TokenBlocklistService:
                 return result is not None
 
         except Exception as e:
-            logger.error(f"Failed to check token revocation status: {e}")
+            logger.error("Failed to check token revocation status: %s", e)
             # Fail closed - treat as revoked on error
             return True
 
@@ -216,7 +219,9 @@ class TokenBlocklistService:
 
         if idle_duration > max_idle:
             logger.info(
-                f"Token {jti} exceeded idle timeout: {idle_duration.total_seconds()/60:.1f} minutes",
+                "Token %s exceeded idle timeout: %.1f minutes",
+                jti,
+                idle_duration.total_seconds() / 60,
                 extra={"security_event": "idle_timeout", "security_severity": "low", "jti": jti, "idle_minutes": idle_duration.total_seconds() / 60},
             )
             return True
@@ -239,12 +244,12 @@ class TokenBlocklistService:
                 try:
                     redis_client.setex(f"token:activity:{jti}", settings.token_idle_timeout * 60, utc_now().isoformat())  # TTL in seconds
                 except Exception as e:
-                    logger.debug(f"Failed to update activity in Redis: {e}")
+                    logger.debug("Failed to update activity in Redis: %s", e)
 
             return True
 
         except Exception as e:
-            logger.error(f"Failed to update token activity: {e}")
+            logger.error("Failed to update token activity: %s", e)
             return False
 
     def get_last_activity(self, jti: str) -> Optional[datetime]:
@@ -265,12 +270,12 @@ class TokenBlocklistService:
                     if activity_str:
                         return datetime.fromisoformat(activity_str)
                 except Exception as e:
-                    logger.debug(f"Failed to get activity from Redis: {e}")
+                    logger.debug("Failed to get activity from Redis: %s", e)
 
             return None
 
         except Exception as e:
-            logger.error(f"Failed to get token activity: {e}")
+            logger.error("Failed to get token activity: %s", e)
             return None
 
     def cleanup_expired_tokens(self, hours_retention: Optional[int] = None) -> int:
@@ -296,7 +301,8 @@ class TokenBlocklistService:
 
                 if deleted_count > 0:
                     logger.info(
-                        f"Cleaned up {deleted_count} expired tokens from blocklist",
+                        "Cleaned up %s expired tokens from blocklist",
+                        deleted_count,
                         extra={"security_event": "blocklist_cleanup", "deleted_count": deleted_count, "cutoff_time": cutoff_time.isoformat()},
                     )
 
@@ -310,14 +316,15 @@ class TokenBlocklistService:
 
                 if deleted_count > 0:
                     logger.info(
-                        f"Cleaned up {deleted_count} expired tokens from blocklist",
+                        "Cleaned up %s expired tokens from blocklist",
+                        deleted_count,
                         extra={"security_event": "blocklist_cleanup", "deleted_count": deleted_count, "cutoff_time": cutoff_time.isoformat()},
                     )
 
                 return deleted_count
 
         except Exception as e:
-            logger.error(f"Failed to cleanup expired tokens: {e}")
+            logger.error("Failed to cleanup expired tokens: %s", e)
             return 0
 
     def revoke_user_tokens(self, user_email: str, revoked_by: str, reason: str = "security") -> int:
@@ -336,7 +343,8 @@ class TokenBlocklistService:
         # Note: This requires tracking active tokens per user, which would need
         # additional implementation. For now, this is a placeholder for future enhancement.
         logger.warning(
-            f"Bulk token revocation requested for user {user_email} but not yet implemented",
+            "Bulk token revocation requested for user %s but not yet implemented",
+            user_email,
             extra={"security_event": "bulk_revocation_requested", "target_user": user_email, "revoked_by": revoked_by, "reason": reason},
         )
         return 0
@@ -377,7 +385,7 @@ class TokenBlocklistService:
                 return stats
 
         except Exception as e:
-            logger.error(f"Failed to get revocation stats: {e}")
+            logger.error("Failed to get revocation stats: %s", e)
             return {"total_revoked": 0, "by_reason": {}}
 
 

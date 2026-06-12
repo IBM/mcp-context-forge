@@ -80,7 +80,7 @@ class RootService:
             try:
                 await self.add_root(root_uri)
             except RootServiceError as e:
-                logger.error(f"Failed to add default root {root_uri}: {e}")
+                logger.error("Failed to add default root %s: %s", root_uri, e)
 
     async def shutdown(self) -> None:
         """Shutdown root service.
@@ -198,7 +198,7 @@ class RootService:
         self._roots[normalized_key] = root_obj
 
         await self._notify_root_added(root_obj)
-        logger.info(f"Added root: {root_uri}")
+        logger.info("Added root: %s", root_uri)
         return root_obj
 
     async def get_root_by_uri(self, root_uri: str) -> Root:
@@ -281,7 +281,7 @@ class RootService:
         event = {"type": "root_updated", "data": {"uri": root_obj.uri, "name": root_obj.name}}
         await self._notify_subscribers(event)
 
-        logger.info(f"Updated root: {root_uri}, name: {name}")
+        logger.info("Updated root: %s, name: %s", root_uri, name)
         return root_obj
 
     async def remove_root(self, root_uri: str) -> None:
@@ -314,7 +314,7 @@ class RootService:
             raise RootServiceNotFoundError(f"Root not found: {root_uri}")
         root_obj = self._roots.pop(normalized_uri)
         await self._notify_root_removed(root_obj)
-        logger.info(f"Removed root: {root_uri}")
+        logger.info("Removed root: %s", root_uri)
 
     async def subscribe_changes(self) -> AsyncGenerator[Dict, None]:
         """Subscribe to root changes.
@@ -473,7 +473,7 @@ class RootService:
             try:
                 await queue.put(event)
             except Exception as e:
-                logger.error(f"Failed to notify subscriber: {e}")
+                logger.error("Failed to notify subscriber: %s", e)
 
 
 # Lazy singleton - created on first access, not at module import time.

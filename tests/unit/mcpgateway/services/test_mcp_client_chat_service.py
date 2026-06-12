@@ -306,7 +306,8 @@ async def test_mcpclient_get_tools_logs_and_raises_on_error(patch_logger):
     with pytest.raises(RuntimeError, match="tool load failed"):
         await client.get_tools(force_reload=True)
 
-    patch_logger.error.assert_called_with("Failed to load tools: tool load failed")
+    assert patch_logger.error.call_args[0][0] == "Failed to load tools: %s"
+    assert str(patch_logger.error.call_args[0][1]) == "tool load failed"
 
 
 # --------------------------------------------------------------------------- #
@@ -1338,7 +1339,7 @@ async def test_clear_history_calls_manager_and_logs(monkeypatch, patch_logger):
     service.history_manager = SimpleNamespace(clear_history=AsyncMock())
     await service.clear_history()
     service.history_manager.clear_history.assert_awaited_once_with("u1")
-    patch_logger.info.assert_any_call("Conversation history cleared for user u1")
+    patch_logger.info.assert_any_call("Conversation history cleared for user %s", "u1")
 
 
 @pytest.mark.asyncio
@@ -1377,7 +1378,8 @@ async def test_shutdown_logs_and_raises_on_disconnect_error(monkeypatch, patch_l
     with pytest.raises(RuntimeError, match="disconnect boom"):
         await service.shutdown()
 
-    patch_logger.error.assert_called_with("Error during shutdown: disconnect boom")
+    assert patch_logger.error.call_args[0][0] == "Error during shutdown: %s"
+    assert str(patch_logger.error.call_args[0][1]) == "disconnect boom"
 
 
 @pytest.mark.asyncio
@@ -1410,7 +1412,7 @@ async def test_reload_tools_success(monkeypatch, patch_logger):
     assert count == 2
     assert service._agent is agent_obj
     assert service._tools == ["t1", "t2"]
-    patch_logger.info.assert_any_call("Reloaded 2 tools successfully")
+    patch_logger.info.assert_any_call("Reloaded %s tools successfully", 2)
 
 
 @pytest.mark.asyncio
@@ -1427,7 +1429,8 @@ async def test_reload_tools_logs_and_raises_on_error(monkeypatch, patch_logger):
     with pytest.raises(RuntimeError, match="reload failed"):
         await service.reload_tools()
 
-    patch_logger.error.assert_called_with("Failed to reload tools: reload failed")
+    assert patch_logger.error.call_args[0][0] == "Failed to reload tools: %s"
+    assert str(patch_logger.error.call_args[0][1]) == "reload failed"
 
 
 # --------------------------------------------------------------------------- #
