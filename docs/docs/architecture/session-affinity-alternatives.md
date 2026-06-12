@@ -237,70 +237,6 @@ The other sub-options swap the transport without changing the surrounding archit
 
 </details>
 
-### Sub-option 3b — Redis pub/sub over Unix Domain Sockets
-
-Transport tweak only: swap TCP loopback to Redis for UDS. ~15–25% net latency win. Dev / single-node / edge.
-
-<details><summary>Config, pros, cons</summary>
-
-Keep Redis as the broker; connect the gateway to it over UDS instead of TCP loopback.
-
-```
-   redis.conf:
-     unixsocket /var/run/redis/redis.sock
-     unixsocketperm 770
-
-   gateway:
-     redis.Redis(unix_socket_path="/var/run/redis/redis.sock")
-```
-
-**Pros**
-- Smallest change of all the options: a few lines of config, no code change.
-- ~15–25% net latency improvement (transport layer is 2–5× faster; transport is one slice of the per-call cost).
-
-**Cons**
-- Requires co-located Redis (shared filesystem path). Easy in docker-compose; hard in Kubernetes where Redis is a separate Pod.
-- Transport tweak only; no architectural improvement over 3a.
-
-**When to pick:** dev / single-node / edge. Don't pick for multi-Pod Kubernetes.
-
-</details>
-
-### Sub-option 3c — Worker-to-Worker UDS (Redis as directory only)
-
-Remove Redis from the data path; forward worker-to-worker over UDS directly. 10–100× faster than 3a. Intra-container only.
-
-<details><summary>Diagram, pros, cons</summary>
-
-Each worker opens a UDS listener; Redis only stores `worker_id → UDS path`. Forwarding is a direct HTTP POST over UDS, no broker.
-
-```
-   Redis (directory only)
-     mcpgw:pool_owner:{sid} → worker-7
-     mcpgw:worker_uds:worker-7 → /var/run/mcpgw/worker-7.sock
-
-   Worker X
-     │ httpx.AsyncClient(transport=httpx.AsyncHTTPTransport(uds="/var/run/mcpgw/worker-7.sock"))
-     │     .post("/rpc", content=body, headers=headers)
-     ▼
-   Worker 7  ◄── kernel-mediated direct copy, no network, no broker
-```
-
-**Pros**
-- ~10–100× faster than Redis pub/sub (~5–50 μs per round-trip).
-- Backpressure for free (UDS has TCP-style flow control; pub/sub has none).
-- Synchronous request/response; `forward_to_owner` shrinks to ~15 lines (no correlation-id channel, no subscription teardown).
-- `httpx` supports UDS natively (`AsyncHTTPTransport(uds=...)`). No new dependency.
-
-**Cons**
-- Doesn't cross pod/node boundaries. Needs fallback (TCP loopback, or sticky LB at nginx) for cross-container forwards.
-- Lifecycle overhead: workers must clean up their `.sock` on shutdown; stale entries accumulate otherwise.
-- Shared mount required: the UDS directory must be writable by all worker UIDs.
-
-**When to pick:** when intra-container forwards dominate (e.g., 24 × 3 setup) and the cross-container case is rare enough to fall back.
-
-</details>
-
 ### Sub-option 3d — Direct TCP per worker
 
 Each worker binds an internal TCP port; forward directly to it. Works cross-container. 2–10× faster than 3a.
@@ -421,7 +357,7 @@ Externalise session state to Redis so any worker can serve any session. Workers 
 
 ## Comparison Matrix
 
-Side-by-side comparison of all 8 variants: latency, cross-container support, operational delta, code-change size, and pub/sub dependency.
+Side-by-side comparison of all 6 variants: latency, cross-container support, operational delta, code-change size, and pub/sub dependency.
 
 <details><summary>Comparison table</summary>
 
@@ -432,8 +368,6 @@ Side-by-side comparison of all 8 variants: latency, cross-container support, ope
 | **1. Sticky LB** | 0 (no forward); 352 RPS / p99 530 ms measured on a 3-pod sticky-on-`Authorization` prototype | n/a | nginx config + 1-worker-per-container | small | no |
 | **2. Coordinator-worker** | ~10 μs UDS to coordinator | yes | new process type, lifecycle, monitoring | very large | no |
 | **3a. Redis pub/sub TCP** | ~1–2 ms | yes | none | bounded (honour the Approach-3 invariants) | yes |
-| **3b. Redis pub/sub UDS** | ~0.8–1.7 ms (15–25% faster) | only if co-located | shared volume, config | tiny | yes |
-| **3c. Worker-to-worker UDS** | ~5–50 μs (10–100× faster) | no (needs fallback) | shared mount, UDS lifecycle | medium | no, intra-container |
 | **3d. Direct TCP per worker** | ~50 μs–5 ms | yes | per-worker port allocation, auth | medium | no |
 | **3e. ZeroMQ** | ~20–50 μs over ipc | yes | new dependency, custom observability | medium-large | no |
 | **4. Redis-resident sessions** | n/a (no forward; +50–500 ms per call to re-establish upstream) | yes | Redis becomes data path | very large | no |
@@ -454,4 +388,4 @@ Priority order (try in this sequence; fall through if the constraints don't fit)
 
 4. **Approach 4: Redis-resident sessions.** Last resort. Only viable if every upstream MCP server supports cross-connection session resumption AND the per-call reconnect cost (50–500 ms) is acceptable. Most rmcp / Python SDK upstreams don't support this today.
 
-Within Approach 3, the transport sub-options (3b / 3c / 3d / 3e) can be adopted incrementally as performance demands grow. See [Approach 3](#approach-3--redis-based-cross-worker-forwarding) above. They don't change the priority order.
+Within Approach 3, the transport sub-options (3d / 3e) can be adopted incrementally as performance demands grow. See [Approach 3](#approach-3--redis-based-cross-worker-forwarding) above. They don't change the priority order.
