@@ -202,7 +202,7 @@ class OAuthManager:
 
         return audience
 
-    async def get_access_token(self, credentials: Dict[str, Any], ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None) -> str:
+    async def get_access_token(self, credentials: Dict[str, Any], ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None, subject_token: Optional[str] = None) -> str:
         """Get access token based on grant type.
 
         Args:
@@ -210,6 +210,8 @@ class OAuthManager:
             ca_certificate: Optional custom CA certificate for SSL verification (PEM format)
             client_cert: Optional client certificate for mTLS (PEM format or file path)
             client_key: Optional client private key for mTLS (PEM format or file path)
+            subject_token: Optional subject token (e.g. the inbound user's JWT) required
+                for the RFC 8693 ``token-exchange`` grant type
 
         Returns:
             Access token string
@@ -253,6 +255,20 @@ class OAuthManager:
             return await self._client_credentials_flow(credentials, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
         if grant_type == "password":
             return await self._password_flow(credentials, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
+        if grant_type == "token-exchange":
+            if not subject_token:
+                raise OAuthError("Token exchange requires a subject token; the user must be authenticated.")
+            scopes = credentials.get("scopes") or []
+            response = await self.token_exchange(
+                token_url=credentials["token_url"],
+                subject_token=subject_token,
+                client_id=credentials.get("client_id", ""),
+                client_secret=credentials.get("client_secret", ""),
+                audience=credentials.get("target_audience"),
+                scope=" ".join(scopes) if scopes else None,
+                requested_token_type=credentials.get("requested_token_type", "urn:ietf:params:oauth:token-type:access_token"),
+            )
+            return response["access_token"]
         if grant_type == "authorization_code":
             raise OAuthError("Authorization code flow requires user consent via /oauth/authorize and does not support client_credentials fallback")
         raise ValueError(f"Unsupported grant type: {grant_type}")
@@ -807,7 +823,7 @@ class OAuthManager:
                 return token_response
 
             except httpx.HTTPError as e:
-                logger.warning("Token exchange attempt %s failed: %s", attempt + 1, e)
+                logger.debug("Token exchange attempt %s failed: %s", attempt + 1, e)
                 if attempt == self.max_retries - 1:
                     raise OAuthError(f"Token exchange failed after {self.max_retries} attempts: {e}")
                 await asyncio.sleep(2**attempt)

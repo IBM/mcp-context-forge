@@ -1,6 +1,10 @@
 # tests/unit/mcpgateway/services/test_token_exchange_integration.py
+from unittest.mock import AsyncMock
+
 import pytest
+
 from mcpgateway.services.gateway_service import GatewayService
+from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 
 
 class TestTokenExchangeConfigValidation:
@@ -45,3 +49,44 @@ class TestTokenExchangeConfigValidation:
         }
         with pytest.raises(ValueError):
             GatewayService._validate_token_exchange_config(cfg)
+
+
+@pytest.mark.asyncio
+class TestGetAccessTokenTokenExchange:
+    async def test_token_exchange_branch_calls_token_exchange(self):
+        mgr = OAuthManager()
+        mgr.token_exchange = AsyncMock(return_value={"access_token": "exch-tok", "expires_in": 3600})
+        cfg = {
+            "grant_type": "token-exchange",
+            "client_id": "cf",
+            "client_secret": "shh",
+            "token_url": "https://as/token",
+            "target_audience": "https://downstream",
+            "scopes": ["a", "b"],
+        }
+        tok = await mgr.get_access_token(cfg, subject_token="user-jwt")
+        assert tok == "exch-tok"
+        mgr.token_exchange.assert_awaited_once()
+        kwargs = mgr.token_exchange.await_args.kwargs
+        assert kwargs["subject_token"] == "user-jwt"
+        assert kwargs["audience"] == "https://downstream"
+
+    async def test_token_exchange_missing_subject_token_raises(self):
+        mgr = OAuthManager()
+        cfg = {"grant_type": "token-exchange", "client_id": "cf", "token_url": "https://as/token", "target_audience": "aud"}
+        with pytest.raises(OAuthError, match="subject token"):
+            await mgr.get_access_token(cfg, subject_token=None)
+
+    async def test_other_grants_still_dispatch_with_new_param(self):
+        # G6 back-compat: adding subject_token must not disturb existing grant dispatch.
+        mgr = OAuthManager()
+        mgr._client_credentials_flow = AsyncMock(return_value="cc-tok")
+        mgr._password_flow = AsyncMock(return_value="pw-tok")
+        assert await mgr.get_access_token({"grant_type": "client_credentials"}) == "cc-tok"
+        assert await mgr.get_access_token({"grant_type": "password"}) == "pw-tok"
+        # authorization_code still requires interactive consent
+        with pytest.raises(OAuthError):
+            await mgr.get_access_token({"grant_type": "authorization_code"})
+        # unknown grant still raises ValueError
+        with pytest.raises(ValueError):
+            await mgr.get_access_token({"grant_type": "bogus"})
