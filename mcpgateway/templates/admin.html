@@ -3364,6 +3364,7 @@
                       type="password"
                       name="oauth_client_secret"
                       id="server-oauth-client-secret"
+                      autocomplete="off"
                       placeholder="Enter client secret"
                       class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     />
@@ -9923,7 +9924,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Credential Value</label>
-              <input type="password" id="credential-value" placeholder="Enter your API key, token, or username:password"
+              <input type="password" id="credential-value" autocomplete="off" placeholder="Enter your API key, token, or username:password"
                 class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-indigo-500" />
               <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">The credential is encrypted at rest and only used when you invoke tools on this gateway.</p>
             </div>
@@ -12078,6 +12079,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           type="password"
                           name="oauth_client_secret"
                           id="edit-server-oauth-client-secret"
+                          autocomplete="off"
                           placeholder="Enter new client secret (leave blank to keep existing)"
                           class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                         />
