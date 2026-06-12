@@ -1,8 +1,6 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes, PyDict, PyList, PyString};
-use pyo3_stub_gen::define_stub_info_gatherer;
-use pyo3_stub_gen::derive::*;
 use serde_json::Value;
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
@@ -304,7 +302,6 @@ fn mask_json_value_inner(
     }
 }
 
-#[gen_stub_pyfunction]
 #[pyfunction]
 fn mask_sensitive_data(
     py: Python<'_>,
@@ -315,7 +312,6 @@ fn mask_sensitive_data(
     mask_sensitive_data_inner(py, data, max_depth.unwrap_or(10), &mut key_cache)
 }
 
-#[gen_stub_pyfunction]
 #[pyfunction]
 fn mask_sensitive_headers(py: Python<'_>, headers: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     let source = headers.cast::<PyDict>()?;
@@ -343,7 +339,6 @@ fn mask_sensitive_headers(py: Python<'_>, headers: &Bound<'_, PyAny>) -> PyResul
     Ok(masked.into_any().unbind())
 }
 
-#[gen_stub_pyfunction]
 #[pyfunction]
 fn mask_sensitive_json_bytes(
     py: Python<'_>,
@@ -366,8 +361,6 @@ fn request_logging_masking_native_extension(module: &Bound<'_, PyModule>) -> PyR
     module.add_function(wrap_pyfunction!(mask_sensitive_json_bytes, module)?)?;
     Ok(())
 }
-
-define_stub_info_gatherer!(stub_info);
 
 #[cfg(test)]
 mod tests {
