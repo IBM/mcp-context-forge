@@ -147,7 +147,10 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             if raw_token:
                 try:
                     payload = await verify_jwt_token_cached(raw_token, request)
-                    user_id = payload.get("sub") or payload.get("email") or payload.get("user", {}).get("email")
+                    # First-Party
+                    from mcpgateway.auth import extract_identity_from_jwt_payload  # pylint: disable=import-outside-toplevel
+
+                    user_id = extract_identity_from_jwt_payload(payload) or payload.get("user", {}).get("email")
                     session_id = payload.get("jti")
                 except Exception as exc:
                     logger.warning("CSRF fallback JWT verification failed for %s %s: %s", request.method, request.url.path, exc)

@@ -744,7 +744,10 @@ class TokenScopingMiddleware:
             bool: True if team membership is valid, False otherwise
         """
         teams = payload.get("teams", [])
-        user_email = payload.get("sub")
+        # First-Party
+        from mcpgateway.auth import extract_identity_from_jwt_payload  # pylint: disable=import-outside-toplevel
+
+        user_email = extract_identity_from_jwt_payload(payload)
 
         # PUBLIC-ONLY TOKEN: No team validation needed
         if not teams or len(teams) == 0:
@@ -1240,7 +1243,10 @@ class TokenScopingMiddleware:
 
             # TEAM VALIDATION: Use single DB session for both team checks
             # This reduces connection pool overhead from 2 sessions to 1 for resource endpoints
-            user_email = payload.get("sub") or payload.get("email")  # Extract user email for ownership check
+            # First-Party
+            from mcpgateway.auth import extract_identity_from_jwt_payload  # pylint: disable=import-outside-toplevel
+
+            user_email = extract_identity_from_jwt_payload(payload)  # Extract user email for ownership check
 
             # Resolve teams based on token_use claim
             token_use = payload.get("token_use")

@@ -485,7 +485,10 @@ def main() -> None:  # pragma: no cover
     scopes_dict = None
 
     if args.admin or args.teams or args.scopes or args.full_name:
-        user_email = payload.get("sub") or payload.get("username", "admin@example.com")
+        # First-Party
+        from mcpgateway.auth import extract_identity_from_jwt_payload  # pylint: disable=import-outside-toplevel
+
+        user_email = extract_identity_from_jwt_payload(payload) or "admin@example.com"
 
         # Build user data
         user_data = {
