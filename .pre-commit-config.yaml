@@ -34,6 +34,9 @@ exclude: |
     |(^|/)tests/load/
     # Jinja templates
     |.*\.(jinja|j2)$
+    # Symlinks that may be treated as plain text on Windows checkouts
+    |^\.pylintrc\.mcpgateway$
+    |^CLAUDE\.md$
   )
 fail_fast: true
 
