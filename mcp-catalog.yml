@@ -993,6 +993,18 @@ catalog_servers:
     requires_api_key: false
     tags: ["twitter", "social-media", "archive"]
 
+  - id: xquik
+    name: "Xquik"
+    category: "Social Media"
+    url: "https://xquik.com/mcp"
+    auth_type: "API Key"
+    provider: "Xquik"
+    transport: "STREAMABLEHTTP"
+    secure: true
+    description: "X/Twitter data workflows, API exploration, monitoring, webhooks, and confirmation-gated actions"
+    requires_api_key: true
+    tags: ["twitter", "x", "social-media", "data", "monitoring", "webhooks"]
+
   # Parallel AI
   - id: parallel-task
     name: "Parallel Task"
