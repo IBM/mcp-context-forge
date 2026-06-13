@@ -166,8 +166,9 @@ The Authorization Server at `token_url` must **trust the ContextForge JWT issuer
 
 ### Example Configuration
 
+The following `oauth_config` exchanges the caller's inbound ContextForge JWT (`inbound_user_jwt`, the default `subject_token_source`):
+
 ```json
-// inbound_user_jwt: exchange the caller's ContextForge JWT
 {
   "name": "downstream-mcp",
   "url": "https://downstream.example.com/mcp",
