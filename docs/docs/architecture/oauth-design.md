@@ -158,7 +158,7 @@ Exchanged tokens are cached (`TokenExchangeCache`, Redis-backed with an in-memor
 - **TTL**: Taken from the Authorization Server's `expires_in` response field.
 - **Single-flight**: Concurrent requests for the same cache key share one in-flight exchange instead of issuing duplicate calls to the AS.
 - **Negative caching**: A failed exchange is cached briefly so repeated failures don't hammer the AS; callers see a "token exchange unavailable" degraded-mode error until the cooldown expires.
-- **401 invalidation**: If the downstream MCP server rejects the exchanged token with `401`, the cache entry is evicted and exactly **one** re-exchange is attempted before failing.
+- **401 invalidation**: For REST-integration tool calls, if the downstream server rejects the exchanged token with `401`, the cache entry is evicted and exactly **one** re-exchange is attempted before failing. (MCP-protocol tool calls over SSE/streamable HTTP do not expose a retryable HTTP status and are out of scope for this retry.)
 
 ### Shared-Issuer Trust Requirement
 
