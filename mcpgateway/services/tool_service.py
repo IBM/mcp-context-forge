@@ -3763,12 +3763,7 @@ class ToolService(BaseService):
         Raises:
             ToolInvocationError: If no usable subject token exists or the exchange fails.
         """
-        # Standard
-        import time  # pylint: disable=import-outside-toplevel
-
         # First-Party
-        from mcpgateway.common.validators import SecurityValidator  # pylint: disable=import-outside-toplevel
-        from mcpgateway.services.structured_logger import get_structured_logger  # pylint: disable=import-outside-toplevel
         from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
         from mcpgateway.utils.subject_token import extract_inbound_bearer, looks_like_jwt  # pylint: disable=import-outside-toplevel
         from mcpgateway.utils.token_exchange_audit import audit_token_exchange  # pylint: disable=import-outside-toplevel
@@ -3782,7 +3777,16 @@ class ToolService(BaseService):
         sec_logger = get_structured_logger("tool_service")
 
         def _coerce_ttl(raw):
-            # L8: never let a non-numeric AS expires_in crash the request.
+            """Coerce the AS-provided ``expires_in`` into a positive int TTL.
+
+            Args:
+                raw: The raw ``expires_in`` value returned by the authorization server.
+
+            Returns:
+                int: ``raw`` as an integer, or the fallback TTL if ``raw`` is missing
+                or cannot be coerced to ``int`` (L8: never let a non-numeric AS
+                expires_in crash the request).
+            """
             try:
                 return int(raw) if raw else self._TOKEN_EXCHANGE_FALLBACK_TTL
             except (TypeError, ValueError):
@@ -5327,7 +5331,9 @@ class ToolService(BaseService):
                                 # the JSON path merges them into the body via payload.update() for
                                 # backward compatibility and signed-URL support.
                                 form_payload = {k: self._form_value_to_str(v) for k, v in payload.items()}
-                                return await asyncio.wait_for(self._http_client.request(method, final_url, data=form_payload, params=_url_query_params, headers=call_headers), timeout=effective_timeout)
+                                return await asyncio.wait_for(
+                                    self._http_client.request(method, final_url, data=form_payload, params=_url_query_params, headers=call_headers), timeout=effective_timeout
+                                )
                             if _ct_base == "multipart/form-data":
                                 # Strip Content-Type so httpx can set it with the correct boundary parameter.
                                 # URL query params forwarded via params= (same asymmetry as form-urlencoded above).

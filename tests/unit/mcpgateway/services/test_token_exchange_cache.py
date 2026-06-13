@@ -1,6 +1,8 @@
 # tests/unit/mcpgateway/services/test_token_exchange_cache.py
-import asyncio
+# Third-Party
 import pytest
+
+# First-Party
 from mcpgateway.services.token_exchange_cache import TokenExchangeCache
 
 
@@ -24,7 +26,9 @@ class TestTokenExchangeCache:
         c = TokenExchangeCache(redis_url=None, skew_seconds=300)
         await c.set("gw1", "u@e", "aud", "tok", expires_in=3600)
         # advance time to within the skew window of hard expiry -> miss
+        # First-Party
         import mcpgateway.services.token_exchange_cache as mod
+
         real = mod.time.time
         try:
             mod.time.time = lambda: real() + 3500  # 100s before expiry, inside 300s skew
@@ -61,8 +65,10 @@ class TestTokenExchangeCache:
 
     async def test_redis_hit_is_single_round_trip(self):
         # P3: a cache hit must issue exactly one Redis GET (no separate TTL call).
-        from unittest.mock import AsyncMock
+        # Standard
         import time as _t
+        from unittest.mock import AsyncMock
+
         c = TokenExchangeCache(redis_url=None)
         fake = AsyncMock()
         fake.get = AsyncMock(return_value=f"{_t.time() + 3600}:tok-redis")  # serve_until:token
@@ -74,6 +80,7 @@ class TestTokenExchangeCache:
     async def test_redis_set_get_invalidate_round_trip(self):
         # G9: exercise the Redis path for set/get/invalidate with a fakeredis-style store.
         try:
+            # Third-Party
             import fakeredis.aioredis as fakeredis_aio  # optional dev dep
         except ImportError:
             pytest.skip("fakeredis not installed")
@@ -87,6 +94,7 @@ class TestTokenExchangeCache:
     async def test_redis_negative_cache_round_trip(self):
         # G9: is_failed/set_failure on the Redis backend.
         try:
+            # Third-Party
             import fakeredis.aioredis as fakeredis_aio
         except ImportError:
             pytest.skip("fakeredis not installed")
@@ -98,7 +106,9 @@ class TestTokenExchangeCache:
 
     async def test_malformed_redis_value_is_miss_not_raise(self):
         # G10: a corrupt stored value must degrade to a miss, never propagate.
+        # Standard
         from unittest.mock import AsyncMock
+
         c = TokenExchangeCache(redis_url=None)
         fake = AsyncMock()
         fake.get = AsyncMock(return_value="not-a-valid-serve_until:tok")  # float() will fail
@@ -115,8 +125,10 @@ class TestTokenExchangeCache:
     async def test_redis_breaker_opens_and_logs_once(self, caplog):
         # L5: after threshold consecutive errors, Redis is disabled for the cooldown and
         # exactly one WARNING is emitted (no per-call flood).
+        # Standard
         import logging
         from unittest.mock import AsyncMock
+
         c = TokenExchangeCache(redis_url=None, redis_breaker_threshold=3, redis_breaker_cooldown=30)
         boom = AsyncMock(side_effect=RuntimeError("redis down"))
         c._redis = AsyncMock()
@@ -125,5 +137,5 @@ class TestTokenExchangeCache:
             for _ in range(10):
                 await c.get("gw1", "u@e", "aud")  # each falls back to memory (miss)
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING and "Redis disabled" in r.getMessage()]
-        assert len(warnings) == 1            # logged once, not 10x
-        assert c._redis_live() is False      # breaker open
+        assert len(warnings) == 1  # logged once, not 10x
+        assert c._redis_live() is False  # breaker open
