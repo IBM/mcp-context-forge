@@ -20,7 +20,7 @@ import pytest
 
 pytestmark = pytest.mark.e2e
 
-_FAKE_JWT = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1QGUifQ.sig"
+_FAKE_JWT = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1QGUifQ.sig"  # pragma: allowlist secret
 
 
 @pytest.mark.asyncio

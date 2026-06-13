@@ -176,15 +176,17 @@ class TokenExchangeCache:
         """
         key = self._key(gateway_id, user_email, audience)
         if self._redis_live():
+            assert self._redis is not None  # nosec B101 (type-narrowing only)
             try:
                 raw = await self._redis.get(key)  # single round-trip (P3)
                 self._note_redis_ok()
             except Exception as e:  # pragma: no cover
                 self._note_redis_failure("get", e)  # L5; fall through to memory
             else:
-                if raw and ":" in raw:
+                raw_str = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+                if raw_str and ":" in raw_str:
                     try:  # G10: malformed value -> miss, not a Redis failure
-                        serve_until_s, token = raw.split(":", 1)
+                        serve_until_s, token = raw_str.split(":", 1)
                         return token if float(serve_until_s) > time.time() else None
                     except ValueError:
                         return None
@@ -212,6 +214,7 @@ class TokenExchangeCache:
         serve_window = self._serve_window(expires_in)
         serve_until = time.time() + serve_window
         if self._redis_live():
+            assert self._redis is not None  # nosec B101 (type-narrowing only)
             try:
                 await self._redis.set(key, f"{serve_until}:{token}", ex=max(int(expires_in), 1))
                 self._note_redis_ok()
@@ -234,6 +237,7 @@ class TokenExchangeCache:
         """
         key = self._key(gateway_id, user_email, audience)
         if self._redis_live():
+            assert self._redis is not None  # nosec B101 (type-narrowing only)
             try:
                 await self._redis.delete(key)
                 self._note_redis_ok()
@@ -254,6 +258,7 @@ class TokenExchangeCache:
         """
         key = self._key(gateway_id, user_email, audience) + ":neg"
         if self._redis_live():
+            assert self._redis is not None  # nosec B101 (type-narrowing only)
             try:
                 result = await self._redis.get(key) is not None
                 self._note_redis_ok()
@@ -279,6 +284,7 @@ class TokenExchangeCache:
         """
         key = self._key(gateway_id, user_email, audience) + ":neg"
         if self._redis_live():
+            assert self._redis is not None  # nosec B101 (type-narrowing only)
             try:
                 await self._redis.set(key, "1", ex=max(int(ttl), 1))
                 self._note_redis_ok()

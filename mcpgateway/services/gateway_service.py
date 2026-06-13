@@ -809,11 +809,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         Raises:
             GatewayConnectionError: If no usable subject token exists or the exchange fails.
         """
-        # Standard
-        import time  # pylint: disable=import-outside-toplevel
-
         # First-Party
-        from mcpgateway.common.validators import SecurityValidator  # pylint: disable=import-outside-toplevel
         from mcpgateway.utils.subject_token import extract_inbound_bearer, looks_like_jwt  # pylint: disable=import-outside-toplevel
         from mcpgateway.utils.token_exchange_audit import audit_token_exchange  # pylint: disable=import-outside-toplevel
 
@@ -825,7 +821,16 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         request_id = rh.get("x-request-id") or rh.get("X-Request-ID")
 
         def _coerce_ttl(raw):
-            # L8: never let a non-numeric AS expires_in crash the request.
+            """Coerce the AS-provided ``expires_in`` into a positive int TTL.
+
+            Args:
+                raw: The raw ``expires_in`` value returned by the authorization server.
+
+            Returns:
+                int: ``raw`` as an integer, or the fallback TTL if ``raw`` is missing
+                or cannot be coerced to ``int`` (L8: never let a non-numeric AS
+                expires_in crash the request).
+            """
             try:
                 return int(raw) if raw else self._TOKEN_EXCHANGE_FALLBACK_TTL
             except (TypeError, ValueError):
