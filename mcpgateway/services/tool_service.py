@@ -1061,6 +1061,11 @@ class ToolService(BaseService):
         )
         self._content_security = ContentSecurityService()
 
+        # First-Party
+        from mcpgateway.services.token_exchange_cache import TokenExchangeCache  # pylint: disable=import-outside-toplevel
+
+        self._token_exchange_cache = TokenExchangeCache(redis_url=getattr(settings, "redis_url", None))
+
     async def initialize(self) -> None:
         """Initialize the service.
 
@@ -3772,6 +3777,166 @@ class ToolService(BaseService):
             logger.exception("Direct proxy tool invocation failed for %s: %s", name, e)
             raise ToolInvocationError(f"Direct proxy tool invocation failed: {str(e)}")
 
+    # Conservative TTL when the AS omits expires_in (RFC 8693 makes it optional, L1).
+    _TOKEN_EXCHANGE_FALLBACK_TTL = 60
+
+    async def _resolve_token_exchange_header(self, oauth_config: dict, gateway_id: str, gateway_name: str, app_user_email: str, request_headers: dict) -> dict:
+        """Return an Authorization header carrying the exchanged token (cached or fresh).
+
+        Calls ``OAuthManager.token_exchange`` directly (not ``get_access_token``)
+        so the real ``expires_in`` drives the cache TTL (B1).
+
+        Args:
+            oauth_config: Gateway OAuth configuration (grant_type == "token-exchange").
+            gateway_id: Gateway identifier used as a cache key component.
+            gateway_name: Gateway display name, used in error messages and logs.
+            app_user_email: Authenticated end-user email, used as a cache key component.
+            request_headers: Incoming request headers, used to resolve the subject token
+                and for forensic correlation (X-Correlation-ID / X-Request-ID).
+
+        Returns:
+            A dict with a single ``Authorization`` header carrying the exchanged token.
+
+        Raises:
+            ToolInvocationError: If no usable subject token exists or the exchange fails.
+        """
+        # Standard
+        import time  # pylint: disable=import-outside-toplevel
+
+        # First-Party
+        from mcpgateway.common.validators import SecurityValidator  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.structured_logger import get_structured_logger  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+        from mcpgateway.utils.subject_token import extract_inbound_bearer, looks_like_jwt  # pylint: disable=import-outside-toplevel
+        from mcpgateway.utils.token_exchange_audit import audit_token_exchange  # pylint: disable=import-outside-toplevel
+
+        audience = oauth_config.get("target_audience")
+        user_key = app_user_email or ""
+        # L3: forensic correlation. Pull request/correlation ids from inbound headers when present.
+        rh = request_headers or {}
+        correlation_id = rh.get("x-correlation-id") or rh.get("X-Correlation-ID")
+        request_id = rh.get("x-request-id") or rh.get("X-Request-ID")
+        sec_logger = get_structured_logger("tool_service")
+
+        def _coerce_ttl(raw):
+            # L8: never let a non-numeric AS expires_in crash the request.
+            try:
+                return int(raw) if raw else self._TOKEN_EXCHANGE_FALLBACK_TTL
+            except (TypeError, ValueError):
+                return self._TOKEN_EXCHANGE_FALLBACK_TTL
+
+        cached = await self._token_exchange_cache.get(gateway_id, user_key, audience)
+        if cached:
+            return {"Authorization": f"Bearer {cached}"}
+
+        # P4: short-circuit while a recent failure is still negatively cached (no AS hammering).
+        if await self._token_exchange_cache.is_failed(gateway_id, user_key, audience):
+            # L6: record the degraded-mode denial so an outage burst is observable.
+            logger.debug("token-exchange short-circuited by negative cache for gateway %s", gateway_name, extra={"gateway_id": gateway_id, "correlation_id": correlation_id})
+            raise ToolInvocationError(f"Token exchange unavailable for gateway '{gateway_name}'. Contact your administrator.")
+
+        # Resolve subject token. inbound_user_jwt must structurally be a JWT (H2);
+        # an opaque CF session/API token is never forwarded to the external AS.
+        source = oauth_config.get("subject_token_source", "inbound_user_jwt")
+        if source == "user_oauth_token":
+            with fresh_db_session() as token_db:
+                subject_token = await TokenStorageService(token_db).get_user_token(gateway_id, app_user_email)
+        else:
+            subject_token = extract_inbound_bearer(request_headers)
+            if subject_token and not looks_like_jwt(subject_token):
+                subject_token = None
+
+        if not subject_token:
+            raise ToolInvocationError(f"User authentication required for token-exchange gateway '{gateway_name}'.")
+
+        # P1: single-flight. Only one coroutine exchanges per {gw,user,aud}; the rest
+        # await the lock and read the freshly-cached token via the double-check below.
+        async with self._token_exchange_cache.lock(gateway_id, user_key, audience):
+            cached = await self._token_exchange_cache.get(gateway_id, user_key, audience)
+            if cached:
+                return {"Authorization": f"Bearer {cached}"}
+
+            scopes = oauth_config.get("scopes") or []
+            started = time.monotonic()
+            try:
+                response = await self.oauth_manager.token_exchange(
+                    token_url=oauth_config["token_url"],
+                    subject_token=subject_token,
+                    client_id=oauth_config.get("client_id", ""),
+                    client_secret=oauth_config.get("client_secret", ""),
+                    audience=audience,
+                    scope=" ".join(scopes) if scopes else None,
+                    requested_token_type=oauth_config.get("requested_token_type", "urn:ietf:params:oauth:token-type:access_token"),
+                )
+            except Exception as e:
+                latency_ms = int((time.monotonic() - started) * 1000)
+                # H1: caller gets a generic message; AS detail never echoed out.
+                safe_reason = SecurityValidator.sanitize_log_message(str(e))
+                await self._token_exchange_cache.set_failure(gateway_id, user_key, audience)  # P4
+                audit_token_exchange(
+                    user_email=app_user_email,
+                    gateway_id=gateway_id,
+                    target_audience=audience,
+                    success=False,
+                    expires_in=None,
+                    upstream=gateway_name,
+                    error=safe_reason,
+                    latency_ms=latency_ms,
+                    correlation_id=correlation_id,
+                    request_id=request_id,
+                )
+                sec_logger.log(
+                    level="WARNING",
+                    message=f"Token exchange failed for gateway {gateway_name}",
+                    event_type="token_exchange_failed",
+                    user_email=app_user_email,
+                    custom_fields={
+                        "gateway_id": gateway_id,
+                        "target_audience": audience,
+                        "latency_ms": latency_ms,
+                        "error": safe_reason,
+                        "correlation_id": correlation_id,
+                        "request_id": request_id,
+                    },
+                    is_security_event=True,
+                )
+                # L1: keep the stack server-side for debugging (exc_info); message stays sanitized.
+                logger.warning("Token exchange failed for gateway %s: %s", gateway_name, safe_reason, exc_info=True, extra={"gateway_id": gateway_id, "correlation_id": correlation_id})
+                raise ToolInvocationError(f"Token exchange failed for gateway '{gateway_name}'. Contact your administrator.") from None
+
+            exchanged = response["access_token"]
+            expires_in = _coerce_ttl(response.get("expires_in"))  # L8/L1/B1
+            latency_ms = int((time.monotonic() - started) * 1000)
+            await self._token_exchange_cache.set(gateway_id, user_key, audience, exchanged, expires_in=expires_in)
+            audit_token_exchange(
+                user_email=app_user_email,
+                gateway_id=gateway_id,
+                target_audience=audience,
+                success=True,
+                expires_in=expires_in,
+                upstream=gateway_name,
+                error=None,
+                latency_ms=latency_ms,
+                correlation_id=correlation_id,
+                request_id=request_id,
+            )
+            sec_logger.log(
+                level="INFO",
+                message=f"Token exchange succeeded for gateway {gateway_name}",
+                event_type="token_exchange_succeeded",
+                user_email=app_user_email,
+                custom_fields={
+                    "gateway_id": gateway_id,
+                    "target_audience": audience,
+                    "expires_in": expires_in,
+                    "latency_ms": latency_ms,
+                    "correlation_id": correlation_id,
+                    "request_id": request_id,
+                },
+                is_security_event=True,
+            )
+            return {"Authorization": f"Bearer {exchanged}"}
+
     async def prepare_rust_mcp_tool_execution(
         self,
         db: Session,
@@ -4075,6 +4240,8 @@ class ToolService(BaseService):
                 except Exception as e:
                     logger.error("Failed to obtain stored OAuth token for gateway %s: %s", gateway_name, e)
                     raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
+            elif grant_type == "token-exchange":
+                headers = await self._resolve_token_exchange_header(gateway_oauth_config, gateway_id_str, gateway_name, app_user_email, request_headers)
             else:
                 try:
                     access_token = await self.oauth_manager.get_access_token(gateway_oauth_config, ca_certificate=gateway_ca_cert, client_cert=gateway_client_cert, client_key=gateway_client_key)
@@ -5265,6 +5432,8 @@ class ToolService(BaseService):
                             except Exception as e:
                                 logger.error("Failed to obtain stored OAuth token for gateway %s: %s", gateway_name, e)
                                 raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
+                        elif grant_type == "token-exchange":
+                            headers = await self._resolve_token_exchange_header(gateway_oauth_config, gateway_id_str, gateway_name, app_user_email, request_headers)
                         else:
                             # For Client Credentials flow, get token directly (no DB needed)
                             try:
