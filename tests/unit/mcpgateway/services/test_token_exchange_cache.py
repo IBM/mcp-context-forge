@@ -122,6 +122,106 @@ class TestTokenExchangeCache:
             c.lock("gw1", f"user{i}@e", "aud")  # not awaited/held -> evictable
         assert len(c._locks) <= 11  # current key is always retained
 
+    async def test_lock_eviction_skips_held_lock(self):
+        # G7: a held lock must survive eviction; idle locks are dropped first.
+        c = TokenExchangeCache(redis_url=None, max_entries=2)
+        held = c.lock("gw1", "held@e", "aud")
+        async with held:
+            for i in range(5):
+                c.lock("gw1", f"user{i}@e", "aud")
+            held_key = TokenExchangeCache._key("gw1", "held@e", "aud")
+            assert held_key in c._locks  # held lock survives eviction
+            assert len(c._locks) <= 3  # bounded (held + up to max_entries)
+
+    async def test_redis_get_empty_value_is_miss(self):
+        # G10: an empty/falsy Redis value (no ":" separator) is a clean miss.
+        # Standard
+        from unittest.mock import AsyncMock
+
+        c = TokenExchangeCache(redis_url=None)
+        c._redis = AsyncMock()
+        c._redis.get = AsyncMock(return_value="")
+        assert await c.get("gw1", "u@e", "aud") is None
+
+    async def test_redis_set_live_success_path(self):
+        # P1: set() on a live Redis connection issues SET with the embedded
+        # serve_until and resets the breaker on success.
+        # Standard
+        from unittest.mock import AsyncMock
+
+        c = TokenExchangeCache(redis_url=None)
+        c._redis = AsyncMock()
+        c._redis.set = AsyncMock()
+        await c.set("gw1", "u@e", "aud", "tok-live", expires_in=3600)
+        c._redis.set.assert_awaited_once()
+        args, kwargs = c._redis.set.call_args
+        key, value = args[0], args[1]
+        assert key == TokenExchangeCache._key("gw1", "u@e", "aud")
+        assert value.endswith(":tok-live")
+        assert kwargs["ex"] == 3600
+        assert c._redis_fail_count == 0
+        # in-memory store is untouched on the Redis-success path
+        assert key not in c._mem
+
+    async def test_redis_invalidate_live_path(self):
+        # invalidate() on a live Redis connection issues DELETE and resets the breaker.
+        # Standard
+        from unittest.mock import AsyncMock
+
+        c = TokenExchangeCache(redis_url=None)
+        c._redis = AsyncMock()
+        c._redis.delete = AsyncMock()
+        await c.invalidate("gw1", "u@e", "aud")
+        c._redis.delete.assert_awaited_once_with(TokenExchangeCache._key("gw1", "u@e", "aud"))
+        assert c._redis_fail_count == 0
+
+    async def test_redis_is_failed_live_path(self):
+        # is_failed() on a live Redis connection issues GET on the ":neg" key.
+        # Standard
+        from unittest.mock import AsyncMock
+
+        c = TokenExchangeCache(redis_url=None)
+        c._redis = AsyncMock()
+        c._redis.get = AsyncMock(return_value="1")
+        assert await c.is_failed("gw1", "u@e", "aud") is True
+        c._redis.get.assert_awaited_once_with(TokenExchangeCache._key("gw1", "u@e", "aud") + ":neg")
+        assert c._redis_fail_count == 0
+
+        c._redis.get = AsyncMock(return_value=None)
+        assert await c.is_failed("gw1", "u@e", "aud") is False
+
+    async def test_in_memory_negative_cache_expiry(self):
+        # P4: an expired negative-cache entry is popped and reported as not-failed.
+        # Standard
+        import time as _t
+
+        c = TokenExchangeCache(redis_url=None)
+        key = TokenExchangeCache._key("gw1", "u@e", "aud") + ":neg"
+        c._neg[key] = _t.time() - 1  # already expired
+        assert await c.is_failed("gw1", "u@e", "aud") is False
+        assert key not in c._neg
+
+    async def test_redis_set_failure_live_path(self):
+        # set_failure() on a live Redis connection issues SET with the failure TTL.
+        # Standard
+        from unittest.mock import AsyncMock
+
+        c = TokenExchangeCache(redis_url=None)
+        c._redis = AsyncMock()
+        c._redis.set = AsyncMock()
+        await c.set_failure("gw1", "u@e", "aud", ttl=10)
+        c._redis.set.assert_awaited_once_with(TokenExchangeCache._key("gw1", "u@e", "aud") + ":neg", "1", ex=10)
+        assert c._redis_fail_count == 0
+        # in-memory negative cache is untouched on the Redis-success path
+        assert TokenExchangeCache._key("gw1", "u@e", "aud") + ":neg" not in c._neg
+
+    async def test_negative_cache_memory_is_bounded(self):
+        # M2: unbounded negative-cache growth is the same DoS class as the token map.
+        c = TokenExchangeCache(redis_url=None, max_entries=2)
+        for i in range(3):
+            await c.set_failure("gw1", f"user{i}@e", "aud", ttl=10)
+        assert len(c._neg) <= 2
+
     async def test_redis_breaker_opens_and_logs_once(self, caplog):
         # L5: after threshold consecutive errors, Redis is disabled for the cooldown and
         # exactly one WARNING is emitted (no per-call flood).
