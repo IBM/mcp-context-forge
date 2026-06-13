@@ -28,7 +28,7 @@ import re
 import ssl
 import time
 from types import SimpleNamespace
-from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
+from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 from urllib.parse import parse_qs, urlparse
 import uuid
 
@@ -3937,6 +3937,94 @@ class ToolService(BaseService):
             )
             return {"Authorization": f"Bearer {exchanged}"}
 
+    @staticmethod
+    def _sanitize_passthrough_for_token_exchange(passthrough_allowed: Optional[List[str]], grant_type: Optional[str]) -> Optional[List[str]]:
+        """Drop ``authorization`` from passthrough when token-exchange owns the header (B3).
+
+        When ``grant_type`` is ``"token-exchange"``, the gateway's exchanged
+        ``Authorization`` header must not be overridden by the inbound caller's
+        JWT, even if ``authorization`` is in the gateway's ``passthrough_allowed``
+        list. Removing it from the allow-list ensures the exchanged token always
+        wins in ``compute_passthrough_headers_cached``.
+
+        Args:
+            passthrough_allowed: The gateway's configured passthrough header allow-list.
+            grant_type: The OAuth grant type for the target gateway, or ``None``
+                if the gateway is not an OAuth gateway.
+
+        Returns:
+            The list unchanged for any grant type other than ``"token-exchange"``;
+            otherwise a copy with ``authorization`` (case-insensitive) removed.
+        """
+        if grant_type != "token-exchange" or not passthrough_allowed:
+            return passthrough_allowed
+        return [h for h in passthrough_allowed if h.lower() != "authorization"]
+
+    async def _invalidate_token_exchange_on_unauthorized(self, status_code: int, oauth_config: Optional[dict], gateway_id: str, app_user_email: Optional[str]) -> None:
+        """Evict the cached exchanged token on an upstream 401 (B2).
+
+        A 401 from the upstream means the cached exchanged token is no longer
+        valid (revoked, expired early, or wrong audience). Evicting it forces
+        the next ``_resolve_token_exchange_header`` call to re-exchange.
+
+        Args:
+            status_code: The HTTP status code returned by the upstream call.
+            oauth_config: Gateway OAuth configuration; a no-op unless
+                ``grant_type == "token-exchange"``.
+            gateway_id: Gateway identifier used as a cache key component.
+            app_user_email: Authenticated end-user email, used as a cache key component.
+        """
+        if status_code != 401:
+            return
+        if not oauth_config or oauth_config.get("grant_type") != "token-exchange":
+            return
+        await self._token_exchange_cache.invalidate(gateway_id, app_user_email or "", oauth_config.get("target_audience"))
+
+    async def _send_with_token_exchange_retry(
+        self,
+        send: Callable[[dict], Awaitable[Any]],
+        headers: dict,
+        oauth_config: Optional[dict],
+        gateway_id: str,
+        gateway_name: str,
+        app_user_email: Optional[str],
+        request_headers: dict,
+    ) -> Any:
+        """Send the upstream request, retrying exactly once on a 401 from a token-exchange gateway (B2).
+
+        On a 401 response from a ``grant_type == "token-exchange"`` gateway, the
+        cached exchanged token is invalidated and a fresh token is resolved via
+        ``_resolve_token_exchange_header``, then the request is retried once with
+        the fresh ``Authorization`` header. For all other gateways/grant types,
+        or non-401 responses, this is a single send with no retry.
+
+        Args:
+            send: An async callable taking a headers dict and returning a response
+                object exposing ``.status_code``. Kept generic so the retry policy
+                is testable without a live upstream connection.
+            headers: The initial headers to send (including any cached/exchanged
+                ``Authorization`` header).
+            oauth_config: Gateway OAuth configuration; retry only applies when
+                ``grant_type == "token-exchange"``.
+            gateway_id: Gateway identifier used for cache invalidation and re-exchange.
+            gateway_name: Gateway display name, used in error messages and logs.
+            app_user_email: Authenticated end-user email, used for cache keys.
+            request_headers: Incoming request headers, forwarded to
+                ``_resolve_token_exchange_header`` to resolve a fresh subject token.
+
+        Returns:
+            The response object from ``send``, either from the first attempt or
+            the single retry.
+        """
+        resp = await send(headers)
+        if getattr(resp, "status_code", None) != 401:
+            return resp
+        if not oauth_config or oauth_config.get("grant_type") != "token-exchange":
+            return resp
+        await self._invalidate_token_exchange_on_unauthorized(401, oauth_config, gateway_id, app_user_email)
+        fresh = await self._resolve_token_exchange_header(oauth_config, gateway_id, gateway_name, app_user_email, request_headers)
+        return await send(fresh)  # single retry; no loop
+
     async def prepare_rust_mcp_tool_execution(
         self,
         db: Session,
@@ -4210,8 +4298,10 @@ class ToolService(BaseService):
         # plugin invocation enforces the requirement locally with an actionable error.
         oauth_authcode_no_db_token = False
 
+        gateway_grant_type = None
         if has_gateway and gateway_auth_type == "oauth" and isinstance(gateway_oauth_config, dict) and gateway_oauth_config:
             grant_type = gateway_oauth_config.get("grant_type", "client_credentials")
+            gateway_grant_type = grant_type
             if grant_type == "authorization_code":
                 try:
                     # First-Party
@@ -4253,12 +4343,19 @@ class ToolService(BaseService):
             headers = decode_auth(gateway_auth_value) if gateway_auth_value else {}
 
         if request_headers:
+            # B3: when the gateway uses token-exchange, the exchanged Authorization header
+            # must win over any inbound user JWT that the passthrough config would otherwise
+            # forward verbatim.
+            effective_passthrough_allowed = self._sanitize_passthrough_for_token_exchange(passthrough_allowed, gateway_grant_type)
+            gateway_passthrough_headers = gateway_payload.get("passthrough_headers") if has_gateway else None
+            if gateway_grant_type == "token-exchange":
+                gateway_passthrough_headers = self._sanitize_passthrough_for_token_exchange(gateway_passthrough_headers, gateway_grant_type)
             headers = compute_passthrough_headers_cached(
                 request_headers,
                 headers,
-                passthrough_allowed,
+                effective_passthrough_allowed,
                 gateway_auth_type=gateway_auth_type,
-                gateway_passthrough_headers=gateway_payload.get("passthrough_headers") if has_gateway else None,
+                gateway_passthrough_headers=gateway_passthrough_headers,
             )
 
         runtime_headers = {str(header_name): str(header_value) for header_name, header_value in headers.items() if header_name and header_value}
@@ -5110,6 +5207,13 @@ class ToolService(BaseService):
                     },
                 ):
                     headers = tool_headers.copy()
+
+                # B2: gateway grant type, used to decide whether upstream 401s should
+                # trigger a single re-exchange-and-retry (REST and MCP branches below).
+                gateway_grant_type = None
+                if has_gateway and gateway_auth_type == "oauth" and isinstance(gateway_oauth_config, dict) and gateway_oauth_config:
+                    gateway_grant_type = gateway_oauth_config.get("grant_type", "client_credentials")
+
                 if tool_integration_type == "REST":
                     # Handle OAuth authentication for REST tools
                     if tool_auth_type == "oauth" and isinstance(tool_oauth_config, dict) and tool_oauth_config:
@@ -5248,6 +5352,30 @@ class ToolService(BaseService):
 
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "REST"}):
                         rest_start_time = time.time()
+
+                        async def _send(call_headers: dict) -> Any:
+                            """Issue the REST upstream call with the given headers (B2 retry hook)."""
+                            if method == "GET":
+                                return await asyncio.wait_for(self._http_client.get(final_url, params=payload, headers=call_headers), timeout=effective_timeout)
+                            if _ct_base == "application/x-www-form-urlencoded":
+                                # NOTE: Intentional asymmetry with the JSON/default path below.
+                                # Form-encoded bodies use params= to keep URL query params on the
+                                # query string (semantically correct for form encoding), whereas
+                                # the JSON path merges them into the body via payload.update() for
+                                # backward compatibility and signed-URL support.
+                                form_payload = {k: self._form_value_to_str(v) for k, v in payload.items()}
+                                return await asyncio.wait_for(self._http_client.request(method, final_url, data=form_payload, params=_url_query_params, headers=call_headers), timeout=effective_timeout)
+                            if _ct_base == "multipart/form-data":
+                                # Strip Content-Type so httpx can set it with the correct boundary parameter.
+                                # URL query params forwarded via params= (same asymmetry as form-urlencoded above).
+                                headers_mp = {k: v for k, v in call_headers.items() if k.lower() != "content-type"}
+                                files_payload = {k: (None, self._form_value_to_str(v)) for k, v in payload.items()}
+                                return await asyncio.wait_for(
+                                    self._http_client.request(method, final_url, files=files_payload, params=_url_query_params, headers=headers_mp), timeout=effective_timeout
+                                )
+                            # For POST/PUT/PATCH/DELETE (JSON body, default path)
+                            return await asyncio.wait_for(self._http_client.request(method, final_url, json=payload, headers=call_headers), timeout=effective_timeout)
+
                         try:
                             if method == "GET":
                                 # For GET: Extract and merge URL query params with input arguments
@@ -5266,32 +5394,22 @@ class ToolService(BaseService):
                                         )
 
                                 payload.update(query_params)
-                                response = await asyncio.wait_for(self._http_client.get(final_url, params=payload, headers=headers), timeout=effective_timeout)
-                            elif _ct_base == "application/x-www-form-urlencoded":
-                                # NOTE: Intentional asymmetry with the JSON/default path below.
-                                # Form-encoded bodies use params= to keep URL query params on the
-                                # query string (semantically correct for form encoding), whereas
-                                # the JSON path merges them into the body via payload.update() for
-                                # backward compatibility and signed-URL support.
-                                form_payload = {k: self._form_value_to_str(v) for k, v in payload.items()}
-                                response = await asyncio.wait_for(self._http_client.request(method, final_url, data=form_payload, params=_url_query_params, headers=headers), timeout=effective_timeout)
-                            elif _ct_base == "multipart/form-data":
-                                # Strip Content-Type so httpx can set it with the correct boundary parameter.
-                                # URL query params forwarded via params= (same asymmetry as form-urlencoded above).
-                                headers_mp = {k: v for k, v in headers.items() if k.lower() != "content-type"}
-                                files_payload = {k: (None, self._form_value_to_str(v)) for k, v in payload.items()}
-                                response = await asyncio.wait_for(
-                                    self._http_client.request(method, final_url, files=files_payload, params=_url_query_params, headers=headers_mp), timeout=effective_timeout
-                                )
-                            else:
-                                # For POST/PUT/PATCH/DELETE: Different behavior based on mapping presence
-                                if has_query_mapping or has_header_mapping:
-                                    # When mappings are used (not None/empty), query params were already extracted and mapped
-                                    # Merge them into the JSON body for backward compatibility with mapped tools
-                                    payload.update(query_params)
-                                # else: No mappings (None or empty) - preserve query params in URL for signed URL support
-                                # (Azure SAS, AWS presigned URLs, webhook signatures, etc.)
-                                response = await asyncio.wait_for(self._http_client.request(method, final_url, json=payload, headers=headers), timeout=effective_timeout)
+                            elif has_query_mapping or has_header_mapping:
+                                # When mappings are used (not None/empty), query params were already extracted and mapped
+                                # Merge them into the JSON body for backward compatibility with mapped tools
+                                payload.update(query_params)
+                            # else: No mappings (None or empty) - preserve query params in URL for signed URL support
+                            # (Azure SAS, AWS presigned URLs, webhook signatures, etc.)
+
+                            response = await self._send_with_token_exchange_retry(
+                                _send,
+                                headers,
+                                gateway_oauth_config if (has_gateway and gateway_grant_type == "token-exchange") else None,
+                                gateway_id_str,
+                                gateway_name,
+                                app_user_email,
+                                request_headers or {},
+                            )
                         except (asyncio.TimeoutError, httpx.TimeoutException):
                             rest_elapsed_ms = (time.time() - rest_start_time) * 1000
                             structured_logger.log(
@@ -5396,6 +5514,7 @@ class ToolService(BaseService):
 
                     # Handle OAuth authentication for the gateway (using local variables)
                     # NOTE: Use has_gateway instead of gateway to avoid accessing detached ORM object
+                    # gateway_grant_type was already computed above (shared with the REST branch for B2).
                     if has_gateway and gateway_auth_type == "oauth" and isinstance(gateway_oauth_config, dict) and gateway_oauth_config:
                         grant_type = gateway_oauth_config.get("grant_type", "client_credentials")
 
@@ -5449,8 +5568,13 @@ class ToolService(BaseService):
 
                     # Use cached passthrough headers (no DB query needed)
                     if request_headers:
+                        # B3: when the gateway uses token-exchange, the exchanged Authorization header
+                        # must win over any inbound user JWT that the passthrough config would otherwise
+                        # forward verbatim.
+                        effective_passthrough_allowed = self._sanitize_passthrough_for_token_exchange(passthrough_allowed, gateway_grant_type)
+                        effective_gateway_passthrough = self._sanitize_passthrough_for_token_exchange(gateway_passthrough, gateway_grant_type)
                         headers = compute_passthrough_headers_cached(
-                            request_headers, headers, passthrough_allowed, gateway_auth_type=gateway_auth_type, gateway_passthrough_headers=gateway_passthrough
+                            request_headers, headers, effective_passthrough_allowed, gateway_auth_type=gateway_auth_type, gateway_passthrough_headers=effective_gateway_passthrough
                         )
                         # Read MCP-Session-Id from downstream client (MCP protocol header)
                         # and normalize to x-mcp-session-id for our internal session affinity logic

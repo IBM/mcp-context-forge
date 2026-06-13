@@ -502,3 +502,254 @@ class TestGatewayPathTokenExchange:
         ])
         assert all(r == {"Authorization": "Bearer exch-tok"} for r in results)
         assert calls["n"] == 1
+
+
+from mcpgateway.services.tool_service import ToolService
+
+
+class TestPassthroughHardening:
+    def test_authorization_excluded_from_passthrough_for_token_exchange(self):
+        # B3: the exchanged Authorization must win; inbound user JWT must not pass through.
+        allowed = ["authorization", "x-trace-id"]
+        result = ToolService._sanitize_passthrough_for_token_exchange(allowed, grant_type="token-exchange")
+        assert "authorization" not in [h.lower() for h in result]
+        assert "x-trace-id" in result
+
+    def test_passthrough_untouched_for_other_grants(self):
+        allowed = ["authorization", "x-trace-id"]
+        result = ToolService._sanitize_passthrough_for_token_exchange(allowed, grant_type="client_credentials")
+        assert result == allowed
+
+
+@pytest.mark.asyncio
+class TestUnauthorizedInvalidation:
+    async def test_upstream_401_invalidates_cache(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        svc = ToolService()
+        svc._token_exchange_cache = MagicMock()
+        svc._token_exchange_cache.invalidate = AsyncMock()
+
+        await svc._invalidate_token_exchange_on_unauthorized(
+            status_code=401,
+            oauth_config={"grant_type": "token-exchange", "target_audience": "aud"},
+            gateway_id="gw1",
+            app_user_email="u@e",
+        )
+        svc._token_exchange_cache.invalidate.assert_awaited_once_with("gw1", "u@e", "aud")
+
+    async def test_non_401_does_not_invalidate(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        svc = ToolService()
+        svc._token_exchange_cache = MagicMock()
+        svc._token_exchange_cache.invalidate = AsyncMock()
+
+        await svc._invalidate_token_exchange_on_unauthorized(
+            status_code=200,
+            oauth_config={"grant_type": "token-exchange", "target_audience": "aud"},
+            gateway_id="gw1",
+            app_user_email="u@e",
+        )
+        svc._token_exchange_cache.invalidate.assert_not_awaited()
+
+
+class TestPassthroughMergeOutcome:
+    def test_exchanged_token_wins_over_inbound_when_authorization_passthrough(self):
+        # B3 outcome (not just the helper): feed the sanitized list through the real merge and
+        # prove the exchanged Authorization survives, never the inbound user JWT.
+        from mcpgateway.services.tool_service import compute_passthrough_headers_cached, ToolService
+
+        inbound = {"authorization": f"Bearer {_FAKE_JWT}", "x-trace-id": "t1"}
+        base = {"Authorization": "Bearer exch-tok"}  # set by the resolver
+        allowed = ToolService._sanitize_passthrough_for_token_exchange(["authorization", "x-trace-id"], "token-exchange")
+        merged = compute_passthrough_headers_cached(inbound, base, allowed, gateway_auth_type="oauth", gateway_passthrough_headers=None)
+        auth = next(v for k, v in merged.items() if k.lower() == "authorization")
+        assert auth == "Bearer exch-tok"
+        assert _FAKE_JWT not in auth
+
+
+@pytest.mark.asyncio
+class TestUnauthorizedRetryOnce:
+    async def test_401_triggers_single_reexchange_then_succeeds(self):
+        # B2 end-to-end: first send 401 -> invalidate + re-resolve -> second send 200. Exactly one retry.
+        from unittest.mock import AsyncMock, MagicMock
+        from mcpgateway.services.tool_service import ToolService
+
+        svc = ToolService()
+        svc._token_exchange_cache = MagicMock()
+        svc._token_exchange_cache.invalidate = AsyncMock()
+        svc._resolve_token_exchange_header = AsyncMock(return_value={"Authorization": "Bearer fresh-tok"})
+
+        sends = []
+
+        async def _send(headers):
+            sends.append(headers)
+            resp = MagicMock()
+            resp.status_code = 401 if len(sends) == 1 else 200
+            return resp
+
+        cfg = {"grant_type": "token-exchange", "target_audience": "aud"}
+        resp = await svc._send_with_token_exchange_retry(
+            _send,
+            {"Authorization": "Bearer stale-tok"},
+            cfg,
+            "gw1",
+            "gw",
+            "u@e",
+            {"authorization": f"Bearer {_FAKE_JWT}"},
+        )
+        assert resp.status_code == 200
+        assert len(sends) == 2  # exactly one retry, no loop
+        assert sends[1] == {"Authorization": "Bearer fresh-tok"}
+        svc._token_exchange_cache.invalidate.assert_awaited_once()
+
+    async def test_persistent_401_retries_only_once(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from mcpgateway.services.tool_service import ToolService
+
+        svc = ToolService()
+        svc._token_exchange_cache = MagicMock()
+        svc._token_exchange_cache.invalidate = AsyncMock()
+        svc._resolve_token_exchange_header = AsyncMock(return_value={"Authorization": "Bearer fresh-tok"})
+
+        count = {"n": 0}
+
+        async def _send(headers):
+            count["n"] += 1
+            resp = MagicMock()
+            resp.status_code = 401
+            return resp
+
+        cfg = {"grant_type": "token-exchange", "target_audience": "aud"}
+        resp = await svc._send_with_token_exchange_retry(_send, {"Authorization": "Bearer x"}, cfg, "gw1", "gw", "u@e", {})
+        assert resp.status_code == 401
+        assert count["n"] == 2  # initial + one retry, never more
+
+
+@pytest.mark.asyncio
+class TestRestIntegrationB2Wiring:
+    """B2 end-to-end via the REST-integration call site in invoke_tool.
+
+    Proves the REST upstream HTTP send (self._http_client.request/get) is routed
+    through _send_with_token_exchange_retry for a gateway with
+    grant_type == "token-exchange": a 401 invalidates the cached exchanged token,
+    re-resolves it, and retries exactly once with the fresh Authorization header.
+    """
+
+    async def test_rest_tool_401_triggers_single_reexchange_then_succeeds(self):
+        # Standard
+        from unittest.mock import AsyncMock, MagicMock, Mock, patch
+
+        # First-Party
+        from mcpgateway.cache.global_config_cache import global_config_cache
+        from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache
+        from mcpgateway.db import Gateway as DbGateway
+        from mcpgateway.db import Tool as DbTool
+        from mcpgateway.services.tool_service import ToolService
+
+        # Reset caches so the DB lookup path runs (no stale entries from other tests).
+        tool_lookup_cache.invalidate_all_local()
+        global_config_cache.invalidate()
+
+        svc = ToolService()
+        svc._http_client = AsyncMock()
+        svc.get_plugin_manager = AsyncMock()
+
+        # Cached exchanged token -> invalidate -> fresh token after re-exchange.
+        svc._token_exchange_cache = MagicMock()
+        svc._token_exchange_cache.invalidate = AsyncMock()
+        svc._resolve_token_exchange_header = AsyncMock(return_value={"Authorization": "Bearer fresh-tok"})
+
+        # Gateway configured for token-exchange.
+        mock_gateway = MagicMock(spec=DbGateway)
+        mock_gateway.id = "gw1"
+        mock_gateway.name = "test_gateway"
+        mock_gateway.slug = "test-gateway"
+        mock_gateway.url = "http://example.com/gateway"
+        mock_gateway.auth_type = "oauth"
+        mock_gateway.auth_value = {}
+        mock_gateway.oauth_config = {"grant_type": "token-exchange", "target_audience": "aud"}
+        mock_gateway.passthrough_headers = []
+        mock_gateway.auth_query_params = None
+        mock_gateway.ca_certificate = None
+        mock_gateway.ca_certificate_sig = None
+        mock_gateway.client_cert = None
+        mock_gateway.client_key = None
+        mock_gateway.enabled = True
+        mock_gateway.reachable = True
+
+        # REST tool hanging off the token-exchange gateway.
+        mock_tool = MagicMock(spec=DbTool)
+        mock_tool.id = "1"
+        mock_tool.original_name = "test_tool"
+        mock_tool.name = "test-gateway-test-tool"
+        mock_tool.custom_name = "test_tool"
+        mock_tool.custom_name_slug = "test-tool"
+        mock_tool.gateway_slug = "test-gateway"
+        mock_tool.display_name = None
+        mock_tool.url = "http://example.com/tools/test"
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.headers = {}
+        mock_tool.input_schema = {"type": "object", "properties": {}}
+        mock_tool.output_schema = None
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        mock_tool.gateway_id = mock_gateway.id
+        mock_tool.gateway = mock_gateway
+        mock_tool.annotations = {}
+        mock_tool.tags = []
+        mock_tool.team = None
+        mock_tool.team_id = None
+        mock_tool.visibility = "public"
+        mock_tool.owner_email = "admin@admin.org"
+        mock_tool.enabled = True
+        mock_tool.deprecated = False
+        mock_tool.reachable = True
+        mock_tool.query_mapping = None
+        mock_tool.header_mapping = None
+        mock_tool.timeout_ms = None
+
+        test_db = MagicMock()
+        mock_scalar_tool = Mock()
+        mock_scalar_tool.scalar_one_or_none.return_value = mock_tool
+        mock_scalar_tool.scalars.return_value = mock_scalar_tool
+        mock_scalar_tool.all.return_value = [mock_tool]
+        test_db.execute = Mock(return_value=mock_scalar_tool)
+
+        mock_global_config = MagicMock()
+        mock_global_config.passthrough_headers = []
+        mock_query_result = Mock()
+        mock_query_result.first.return_value = mock_global_config
+        test_db.query = Mock(return_value=mock_query_result)
+
+        # First call -> 401, second call -> 200.
+        responses = []
+
+        def _make_response(status_code):
+            resp = AsyncMock()
+            resp.status_code = status_code
+            resp.raise_for_status = Mock()
+            resp.json = Mock(return_value={"result": "ok"})
+            return resp
+
+        async def _get(_url, params=None, headers=None):
+            responses.append(headers)
+            status = 401 if len(responses) == 1 else 200
+            return _make_response(status)
+
+        svc._http_client.get = AsyncMock(side_effect=_get)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await svc.invoke_tool(test_db, "test_tool", {}, request_headers={"authorization": "Bearer inbound"})
+
+        assert result.content[0].text == '{\n  "result": "ok"\n}'
+        assert len(responses) == 2  # exactly one retry
+        # Second attempt carried the freshly re-exchanged Authorization header.
+        assert responses[1].get("Authorization") == "Bearer fresh-tok"
+        svc._token_exchange_cache.invalidate.assert_awaited_once()
+        svc._resolve_token_exchange_header.assert_awaited_once()
