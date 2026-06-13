@@ -189,3 +189,39 @@ class TestTokenExchangeAudit:
         event = next(r.token_exchange for r in caplog.records if hasattr(r, "token_exchange"))
         assert event["correlation_id"] == "corr-123"
         assert event["request_id"] == "req-456"
+
+
+from mcpgateway.utils.subject_token import extract_inbound_bearer
+
+
+class TestSubjectTokenExtraction:
+    def test_extracts_bearer_case_insensitive(self):
+        assert extract_inbound_bearer({"Authorization": "Bearer abc.def"}) == "abc.def"
+        assert extract_inbound_bearer({"authorization": "bearer xyz"}) == "xyz"
+
+    def test_returns_none_when_absent(self):
+        assert extract_inbound_bearer({}) is None
+        assert extract_inbound_bearer(None) is None
+
+    def test_ignores_non_bearer_scheme(self):
+        assert extract_inbound_bearer({"authorization": "Basic abc"}) is None
+
+
+class TestLooksLikeJwt:
+    def test_three_segment_token_is_jwt(self):
+        from mcpgateway.utils.subject_token import looks_like_jwt
+        assert looks_like_jwt("eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.sig") is True
+
+    def test_opaque_token_is_not_jwt(self):
+        from mcpgateway.utils.subject_token import looks_like_jwt
+        assert looks_like_jwt("opaque-token") is False
+        assert looks_like_jwt(None) is False
+        assert looks_like_jwt("a.b") is False
+
+    def test_jwt_edge_cases(self):
+        # G12: empty segment and 4-segment strings are not compact-serialization JWTs.
+        from mcpgateway.utils.subject_token import looks_like_jwt
+        assert looks_like_jwt("a..b") is False      # empty middle segment
+        assert looks_like_jwt("a.b.c.d") is False   # too many segments
+        assert looks_like_jwt("") is False
+        assert looks_like_jwt("...") is False
