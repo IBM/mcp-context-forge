@@ -79,6 +79,50 @@ Three new fields on `AuditTrail` records:
 
 An `OAuthManager.token_exchange()` method supports on-behalf-of flows for gateways that require a user-scoped access token rather than client credentials.
 
+> **Update (2026-06):** Implemented. See "Implementation Update: RFC 8693 Token Exchange" below for the realized design.
+
+## Implementation Update: RFC 8693 Token Exchange
+
+- *Status:* Implemented
+- *Date:* 2026-06
+
+RFC 8693 / On-Behalf-Of token exchange (item 7 above) was implemented via **Approach B**: a central resolver-method seam rather than a new standalone service. Each consuming service (`ToolService`, `GatewayService`) gets its own `_resolve_token_exchange_header()` resolver, backed by a shared `TokenExchangeCache`.
+
+### Configuration
+
+A gateway's `oauth_config` opts into the flow with `grant_type: "token-exchange"`, plus:
+
+- `target_audience` (required) — the downstream resource the exchanged token is for.
+- `subject_token_source` (default `inbound_user_jwt`) — `inbound_user_jwt` uses the caller's ContextForge JWT as the RFC 8693 `subject_token`; `user_oauth_token` uses the user's previously stored per-gateway OAuth token instead (supported on the tool-invocation path).
+- `requested_token_type` (default `urn:ietf:params:oauth:token-type:access_token`).
+
+### Resolver Seam (Approach B)
+
+- `ToolService._resolve_token_exchange_header()` covers the tool-invocation path and supports both `subject_token_source` values.
+- `GatewayService._resolve_token_exchange_header()` covers gateway connection/health-check paths, which have no per-request user context and therefore **fail closed** for `token-exchange` gateways (only `inbound_user_jwt` is meaningful on a per-request path).
+- `GatewayService._validate_token_exchange_config()` performs SSRF-style validation of `token_url` at gateway create/update time.
+
+### Caching
+
+A shared `TokenExchangeCache` (Redis-backed with in-memory fallback) caches exchanged tokens per gateway/user/audience:
+
+- TTL derived from the Authorization Server's `expires_in`.
+- Single-flight de-duplication of concurrent exchange requests for the same key.
+- Negative caching of failed exchanges to avoid hammering the AS during outages.
+- On a downstream `401`, the cache entry is invalidated and exactly one re-exchange is attempted before the request fails.
+
+### Security Boundary
+
+With `subject_token_source: inbound_user_jwt`, the caller's ContextForge JWT is POSTed to `token_url` as the `subject_token` — but it is **never forwarded to the downstream MCP server**. Only the token returned by the exchange is sent upstream as the `Bearer` credential. `token_url` is therefore an SSRF/egress boundary validated at config time, and creating or modifying `token-exchange` gateways is a privileged action requiring a shared-issuer trust relationship between ContextForge and the downstream IdP.
+
+### Audit
+
+Token exchange attempts (success, failure, and degraded/negative-cache responses) are recorded via `audit_token_exchange`, writing both a structured log entry and a `StructuredLogEntry` database row with `is_security_event=True`, keyed by `correlation_id`. Typed audit columns are deferred to a Phase 2 follow-up with its own Alembic migration.
+
+### Documentation
+
+See [Token Exchange (RFC 8693 / On-Behalf-Of)](../oauth-design.md#token-exchange-rfc-8693--on-behalf-of) and [Migrating OAuth Gateways to Token Exchange](../../manage/identity-propagation.md#migrating-oauth-gateways-to-token-exchange).
+
 ## Consequences
 
 ### Positive
