@@ -4,6 +4,7 @@ nav:
   - mcp-developer-guide-json-rpc.md
   - github.md
   - building.md
+  - scripts.md
   - documentation.md
   - review.md
   - packaging.md
