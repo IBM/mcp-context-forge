@@ -938,6 +938,93 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             return {"Authorization": f"Bearer {exchanged}"}
 
     @staticmethod
+    def _sanitize_passthrough_for_token_exchange(passthrough_allowed: Optional[List[str]], grant_type: Optional[str]) -> Optional[List[str]]:
+        """Drop ``authorization`` from passthrough when token-exchange owns the header (B3).
+
+        Mirrors ``ToolService._sanitize_passthrough_for_token_exchange`` for API
+        parity. When ``grant_type`` is ``"token-exchange"``, the gateway's
+        exchanged ``Authorization`` header must not be overridden by an inbound
+        caller's JWT via the passthrough allow-list.
+
+        Args:
+            passthrough_allowed: The gateway's configured passthrough header allow-list.
+            grant_type: The OAuth grant type for the target gateway, or ``None``
+                if the gateway is not an OAuth gateway.
+
+        Returns:
+            The list unchanged for any grant type other than ``"token-exchange"``;
+            otherwise a copy with ``authorization`` (case-insensitive) removed.
+        """
+        if grant_type != "token-exchange" or not passthrough_allowed:
+            return passthrough_allowed
+        return [h for h in passthrough_allowed if h.lower() != "authorization"]
+
+    async def _invalidate_token_exchange_on_unauthorized(self, status_code: int, oauth_config: Optional[dict], gateway_id: str, app_user_email: Optional[str]) -> None:
+        """Evict the cached exchanged token on an upstream 401 (B2).
+
+        Mirrors ``ToolService._invalidate_token_exchange_on_unauthorized`` for API
+        parity.
+
+        Args:
+            status_code: The HTTP status code returned by the upstream call.
+            oauth_config: Gateway OAuth configuration; a no-op unless
+                ``grant_type == "token-exchange"``.
+            gateway_id: Gateway identifier used as a cache key component.
+            app_user_email: Authenticated end-user email, used as a cache key component.
+        """
+        if status_code != 401:
+            return
+        if not oauth_config or oauth_config.get("grant_type") != "token-exchange":
+            return
+        await self._token_exchange_cache.invalidate(gateway_id, app_user_email or "", oauth_config.get("target_audience"))
+
+    async def _send_with_token_exchange_retry(
+        self,
+        send: Callable[[dict], Awaitable[Any]],
+        headers: dict,
+        oauth_config: Optional[dict],
+        gateway_id: str,
+        gateway_name: str,
+        app_user_email: Optional[str],
+        request_headers: dict,
+    ) -> Any:
+        """Send the upstream request, retrying exactly once on a 401 from a token-exchange gateway (B2).
+
+        Mirrors ``ToolService._send_with_token_exchange_retry`` for API parity.
+        Not currently wired into a forward path: ``GatewayService`` has no
+        per-request outbound forwarding analogous to ``ToolService``'s tool
+        invocation (its ``grant_type == "token-exchange"`` sites are
+        connection-setup/health-check only). Provided here so a future
+        per-request forwarding path can reuse the same retry policy without
+        duplicating it.
+
+        Args:
+            send: An async callable taking a headers dict and returning a response
+                object exposing ``.status_code``.
+            headers: The initial headers to send (including any cached/exchanged
+                ``Authorization`` header).
+            oauth_config: Gateway OAuth configuration; retry only applies when
+                ``grant_type == "token-exchange"``.
+            gateway_id: Gateway identifier used for cache invalidation and re-exchange.
+            gateway_name: Gateway display name, used in error messages and logs.
+            app_user_email: Authenticated end-user email, used for cache keys.
+            request_headers: Incoming request headers, forwarded to
+                ``_resolve_token_exchange_header`` to resolve a fresh subject token.
+
+        Returns:
+            The response object from ``send``, either from the first attempt or
+            the single retry.
+        """
+        resp = await send(headers)
+        if getattr(resp, "status_code", None) != 401:
+            return resp
+        if not oauth_config or oauth_config.get("grant_type") != "token-exchange":
+            return resp
+        await self._invalidate_token_exchange_on_unauthorized(401, oauth_config, gateway_id, app_user_email)
+        fresh = await self._resolve_token_exchange_header(oauth_config, gateway_id, gateway_name, app_user_email, request_headers)
+        return await send(fresh)  # single retry; no loop
+
+    @staticmethod
     def normalize_url(url: str) -> str:
         """
         Normalize a URL by ensuring it's properly formatted.
