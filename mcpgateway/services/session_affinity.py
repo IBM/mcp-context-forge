@@ -1022,29 +1022,19 @@ class SessionAffinity:
     async def _execute_forwarded_http_request(self, request: Dict[str, Any], redis: Any) -> None:
         """Execute a forwarded Streamable HTTP request in-process and reply via Redis.
 
-        A forwarded request lands here on the worker that OWNS the downstream
-        session, so the bound upstream session in this process's
-        ``UpstreamSessionRegistry`` can serve it. We dispatch to the **trusted
-        internal** ``/_internal/mcp/rpc`` endpoint via an in-process ASGI
-        transport.
+        The request lands on the worker that owns the downstream session, so the
+        bound upstream session in this process can serve it. It is dispatched
+        in-process to the trusted-internal ``/_internal/mcp/rpc`` endpoint rather
+        than the public ``/rpc``.
 
-        Why the trusted internal endpoint (not public ``/rpc``):
-
-        - The originating worker already ran ``streamable_http_auth()``, which
-          for ``/servers/{id}/mcp`` paths handles virtual-server OAuth verifiers
-          and ``MCP_REQUIRE_AUTH=false`` public-only mode. Public ``/rpc`` only
-          knows ContextForge JWTs / cookies, so re-authenticating an OAuth
-          bearer or an unauthenticated public-only request through ``/rpc``
-          would 401.
-        - The originating worker packages its already-validated identity into
-          ``auth_context`` (the encoded ``x-contextforge-auth-context`` value)
-          and forwards it here. Combined with the
-          ``x-contextforge-mcp-runtime: affinity`` marker, the shared-secret
-          HMAC header, and the loopback client address synthesised by
-          ASGITransport, the trusted endpoint's
-          ``_is_trusted_internal_mcp_runtime_request`` gate accepts the
-          request and ``_build_internal_mcp_forwarded_user`` reconstructs the
-          same user the edge saw.
+        Public ``/rpc`` only understands ContextForge JWTs and cookies, so an
+        OAuth bearer or an ``MCP_REQUIRE_AUTH=false`` public-only request would
+        401 if re-authenticated there. Instead, the originating worker's
+        already-validated identity rides in ``auth_context`` (the encoded
+        ``x-contextforge-auth-context`` header); with the
+        ``x-contextforge-mcp-runtime: affinity`` marker, the shared-secret HMAC,
+        and the loopback client address, the trusted endpoint accepts the request
+        and reconstructs the same user the edge established.
 
         Args:
             request: Serialized HTTP request data from Redis Pub/Sub containing:
@@ -1111,23 +1101,17 @@ class SessionAffinity:
             from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
             from mcpgateway.utils.verify_credentials import _resolve_auth_header_name  # pylint: disable=import-outside-toplevel,protected-access
 
-            # Old / mixed-version forwarded payloads (e.g. a worker still on a
-            # pre-auth-context build during a rolling deploy) may omit the auth
-            # context. Fall back to an encoded public-only ({}) context so the
-            # trusted-internal endpoint applies default visibility instead of
-            # rejecting the dispatch with 400 (it requires a non-empty context).
+            # A forwarded payload may omit the auth context; fall back to an
+            # encoded public-only ({}) context so the endpoint applies default
+            # visibility instead of rejecting the dispatch with 400.
             if not auth_context_header:
                 auth_context_header = encode_internal_mcp_auth_context({})
 
-            # Build headers for the TRUSTED internal /_internal/mcp/rpc endpoint:
-            # - x-contextforge-mcp-runtime: "affinity" marker that identifies us
-            #   to _is_trusted_internal_mcp_runtime_request.
-            # - x-contextforge-mcp-runtime-auth: shared-secret-derived HMAC
-            #   matched by has_valid_internal_mcp_runtime_auth_header.
-            # - x-contextforge-auth-context: the encoded auth context from the
-            #   originating worker; decoded server-side via
-            #   _build_internal_mcp_forwarded_user so the dispatcher uses the
-            #   same user identity streamable_http_auth() established.
+            # Trust headers for the internal /_internal/mcp/rpc endpoint:
+            # - x-contextforge-mcp-runtime: "affinity" caller marker
+            # - x-contextforge-mcp-runtime-auth: shared-secret HMAC
+            # - x-contextforge-auth-context: the encoded edge auth context, so the
+            #   endpoint reconstructs the same user without re-authenticating.
             rpc_headers = {
                 "content-type": "application/json",
                 "x-mcp-session-id": mcp_session_id or "",
