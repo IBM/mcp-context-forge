@@ -169,6 +169,12 @@ def _bypass_gatewayread_validation(monkeypatch):
     monkeypatch.setattr(GatewayRead, "model_validate", staticmethod(lambda x: _PassthroughMasked(x)))
 
 
+@pytest.fixture(autouse=True)
+def _default_sync_gateway_lifecycle(monkeypatch):
+    """Keep legacy gateway service unit tests on sync mode unless they opt in."""
+    monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", False)
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

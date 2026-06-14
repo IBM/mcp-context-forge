@@ -52,7 +52,7 @@ import os
 import ssl
 import tempfile
 import time
-from typing import Any, AsyncGenerator, cast, Dict, List, Optional, Set, TYPE_CHECKING, Union
+from typing import Any, AsyncGenerator, Awaitable, Callable, cast, Dict, List, Optional, Set, TYPE_CHECKING, Union
 from urllib.parse import urlparse, urlunparse
 import uuid
 
@@ -3736,7 +3736,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 .scalars()
                 .all()
             )
-        return [*deleting_ids, *pending_ids]
+        return [*deleting_ids, *(f"pending:{gateway_id}" for gateway_id in pending_ids)]
 
     async def _run_gateway_lifecycle_pass(self) -> None:
         """Process all due async lifecycle gateways for the current polling tick."""
@@ -3744,12 +3744,40 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             return
 
         gateway_ids = await asyncio.to_thread(self._get_due_gateway_lifecycle_ids)
+        deleting_ids, pending_ids = self._split_gateway_lifecycle_ids(gateway_ids)
+
+        await self._process_gateway_lifecycle_batch(deleting_ids)
+        await self._process_gateway_lifecycle_batch(pending_ids)
+
+    @staticmethod
+    def _split_gateway_lifecycle_ids(gateway_ids: List[str]) -> tuple[List[str], List[str]]:
+        """Split due lifecycle IDs into deleting-first and pending groups."""
+        deleting_ids: list[str] = []
+        pending_ids: list[str] = []
         for gateway_id in gateway_ids:
-            try:
-                with fresh_db_session() as db:
-                    await self._process_gateway_lifecycle_once(db, str(gateway_id))
-            except Exception as exc:
-                logger.warning("Gateway lifecycle processing failed for %s: %s", gateway_id, exc, exc_info=True)
+            if str(gateway_id).startswith("pending:"):
+                pending_ids.append(str(gateway_id).split(":", 1)[1])
+            else:
+                deleting_ids.append(str(gateway_id))
+        return deleting_ids, pending_ids
+
+    async def _process_gateway_lifecycle_batch(self, gateway_ids: List[str]) -> None:
+        """Process a lifecycle batch with bounded per-gateway concurrency."""
+        if not gateway_ids:
+            return
+
+        concurrency_limit = max(1, min(len(gateway_ids), settings.max_concurrent_health_checks))
+        semaphore = asyncio.Semaphore(concurrency_limit)
+
+        async def process_one(gateway_id: str) -> None:
+            async with semaphore:
+                try:
+                    with fresh_db_session() as db:
+                        await self._process_gateway_lifecycle_once(db, str(gateway_id))
+                except Exception as exc:
+                    logger.warning("Gateway lifecycle processing failed for %s: %s", gateway_id, exc, exc_info=True)
+
+        await asyncio.gather(*(process_one(str(gateway_id)) for gateway_id in gateway_ids))
 
     async def _process_pending_gateway(self, db: Session, gateway: DbGateway) -> None:
         """Handle one worker pass for a pending gateway."""
@@ -3764,16 +3792,17 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 log_context="gateway lifecycle worker",
             )
 
-            capabilities, tools, resources, prompts, _ = await self._initialize_gateway(
-                connection_material.url,
-                gateway.auth_value,
-                gateway.transport,
-                gateway.auth_type,
-                gateway.oauth_config,
-                gateway.ca_certificate,
+            capabilities, tools, resources, prompts, _ = await self._initialize_gateway_with_timeout(
+                url=connection_material.url,
+                authentication=gateway.auth_value,
+                transport=gateway.transport,
+                auth_type=gateway.auth_type,
+                oauth_config=gateway.oauth_config,
+                ca_certificate=gateway.ca_certificate,
                 auth_query_params=connection_material.auth_query_params_decrypted,
                 client_cert=connection_material.client_cert,
                 client_key=connection_material.client_key,
+                initialize_timeout=settings.httpx_admin_read_timeout,
             )
 
             created_via = "update" if gateway.tools or gateway.resources or gateway.prompts else "federation"
@@ -3826,6 +3855,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             await admin_stats_cache.invalidate_tags()
         except Exception as exc:
+            current_status = db.execute(select(DbGateway.status).where(DbGateway.id == gateway.id)).scalar_one_or_none()
+            if current_status in {None, "deleting"}:
+                db.rollback()
+                return
+
             gateway.status = "pending"
             gateway.reachable = False
             gateway.registration_attempts = (gateway.registration_attempts or 0) + 1
@@ -4725,6 +4759,44 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             except Exception as e:
                 logger.warning("Follower election error: %s", e, exc_info=True)
 
+    async def _run_gateway_maintenance_cycle(
+        self,
+        user_email: str,
+        *,
+        require_leader: Optional[Callable[[], Awaitable[bool]]] = None,
+    ) -> None:
+        """Run health checks and async lifecycle passes on independent schedules."""
+        next_health_check_at = time.monotonic()
+        next_lifecycle_pass_at = time.monotonic()
+
+        while True:
+            if require_leader is not None and not await require_leader():
+                return
+
+            now = time.monotonic()
+            health_due = now >= next_health_check_at
+            lifecycle_enabled = getattr(settings, "gateway_async_lifecycle_enabled", False) is True
+            lifecycle_due = lifecycle_enabled and now >= next_lifecycle_pass_at
+
+            if health_due:
+                gateways = await asyncio.to_thread(self._get_gateways)
+                if gateways:
+                    await self.check_health_of_gateways(gateways, user_email)
+                next_health_check_at = now + max(self._health_check_interval, 0)
+
+            if lifecycle_due:
+                await self._run_gateway_lifecycle_pass()
+                next_lifecycle_pass_at = now + max(settings.gateway_async_lifecycle_poll_interval, 0)
+
+            if require_leader is not None and not await require_leader():
+                return
+
+            now = time.monotonic()
+            sleep_for = max(next_health_check_at - now, 0)
+            if lifecycle_enabled:
+                sleep_for = min(sleep_for, max(next_lifecycle_pass_at - now, 0))
+            await asyncio.sleep(sleep_for)
+
     async def _run_health_checks(self, user_email: str) -> None:
         """Run health checks periodically,
         Uses Redis or FileLock - for multiple workers.
@@ -4755,47 +4827,24 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         while True:
             try:
                 if self._redis_client and settings.cache_type == "redis":
-                    # Redis-based leader check (async, decode_responses=True returns strings)
-                    # Note: Leader key TTL refresh is handled by _run_leader_heartbeat task
-                    current_leader = await self._redis_client.get(self._leader_key)
-                    if current_leader != self._instance_id:
-                        return
+                    async def require_redis_leader() -> bool:
+                        current_leader = await self._redis_client.get(self._leader_key)
+                        return current_leader == self._instance_id
 
-                    # Run health checks
-                    gateways = await asyncio.to_thread(self._get_gateways)
-                    if gateways:
-                        await self.check_health_of_gateways(gateways, user_email)
-                    if getattr(settings, "gateway_async_lifecycle_enabled", False) is True:
-                        await self._run_gateway_lifecycle_pass()
-
-                    await asyncio.sleep(self._health_check_interval)
+                    await self._run_gateway_maintenance_cycle(user_email, require_leader=require_redis_leader)
 
                 elif settings.cache_type == "none":
                     try:
-                        # For single worker mode, run health checks directly
-                        gateways = await asyncio.to_thread(self._get_gateways)
-                        if gateways:
-                            await self.check_health_of_gateways(gateways, user_email)
-                        if getattr(settings, "gateway_async_lifecycle_enabled", False) is True:
-                            await self._run_gateway_lifecycle_pass()
+                        await self._run_gateway_maintenance_cycle(user_email)
                     except Exception as e:
                         logger.error("Health check run failed: %s", str(e))
-
-                    await asyncio.sleep(self._health_check_interval)
 
                 else:
                     # FileLock-based leader fallback
                     try:
                         self._file_lock.acquire(timeout=0)
                         logger.info("File lock acquired. Running health checks.")
-
-                        while True:
-                            gateways = await asyncio.to_thread(self._get_gateways)
-                            if gateways:
-                                await self.check_health_of_gateways(gateways, user_email)
-                            if getattr(settings, "gateway_async_lifecycle_enabled", False) is True:
-                                await self._run_gateway_lifecycle_pass()
-                            await asyncio.sleep(self._health_check_interval)
+                        await self._run_gateway_maintenance_cycle(user_email)
 
                     except Timeout:
                         logger.debug("File lock already held. Retrying later.")
