@@ -4322,12 +4322,10 @@ class SessionManagerWrapper:
                             body = orjson.dumps(json_body)
                             logger.debug("[HTTP_AFFINITY_LOCAL] Injected server_id %s into /rpc params", server_id)
 
-                        # Owner-direct path: dispatch to the TRUSTED internal
-                        # /_internal/mcp/rpc endpoint carrying the auth context that
-                        # streamable_http_auth() already validated for this request, so
-                        # virtual-server OAuth and MCP_REQUIRE_AUTH=false public-only
-                        # sessions are honored without re-authenticating against public
-                        # /rpc (which only understands ContextForge JWTs/cookies).
+                        # Owner-direct path: dispatch to the trusted internal
+                        # /_internal/mcp/rpc endpoint carrying the edge-validated auth
+                        # context, so OAuth and public-only sessions are honored without
+                        # re-authenticating against public /rpc (JWTs/cookies only).
                         # First-Party
                         from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header, encode_internal_mcp_auth_context  # pylint: disable=import-outside-toplevel,protected-access
                         from mcpgateway.main import app  # pylint: disable=import-outside-toplevel
@@ -4341,10 +4339,10 @@ class SessionManagerWrapper:
                             "x-contextforge-mcp-runtime-auth": _expected_internal_mcp_runtime_auth_header(),
                             "x-contextforge-auth-context": encode_internal_mcp_auth_context(get_streamable_http_auth_context()),
                         }
-                        # Preserve the originating bearer under the CONFIGURED auth
-                        # header (AUTH_HEADER_NAME), not a hardcoded "authorization":
-                        # /_internal/mcp/ is CSRF-exempt so this is defense-in-depth, but
-                        # the CSRF bearer short-circuit keys on the configured header.
+                        # Preserve the bearer under the configured auth header (AUTH_HEADER_NAME),
+                        # not a hardcoded "authorization": the CSRF bearer short-circuit keys on
+                        # the configured header, so a custom header would otherwise be dropped.
+                        # This is defense-in-depth; the endpoint trusts the auth-context above.
                         _auth_header_name = _resolve_auth_header_name(settings).lower()
                         _original_auth = headers.get(_auth_header_name) or headers.get(_resolve_auth_header_name(settings))
                         if _original_auth:
@@ -4352,9 +4350,9 @@ class SessionManagerWrapper:
                         # Forward passthrough headers for upstream MCP servers (see #3640).
                         rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
 
-                        # Dispatch IN-PROCESS so the request runs on this worker — the
-                        # session owner that holds the bound upstream session — instead of
-                        # looping back over the shared socket to a random worker (#4205).
+                        # Dispatch in-process so the request runs on this worker, the
+                        # session owner that holds the bound upstream session, instead of
+                        # looping back over the shared socket to a random worker.
                         transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 0))
                         async with httpx.AsyncClient(transport=transport, base_url=internal_loopback_base_url()) as client:
                             response = await client.post(
