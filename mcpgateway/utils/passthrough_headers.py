@@ -565,12 +565,10 @@ _LOOPBACK_SKIP_HEADERS: frozenset[str] = frozenset(
         "upgrade",
         "x-mcp-session-id",
         "x-forwarded-internally",
-        # Gateway-internal trust headers for the /_internal/mcp/* dispatch.
-        # These carry the server-established auth context, runtime marker, and
-        # HMAC; a client-supplied passthrough header must never overwrite them
-        # (it would let a caller spoof the trusted identity while the server's
-        # valid HMAC still rides along). Mirrors the authorization / proxy-user
-        # protection above.
+        # Gateway-internal trust headers for the /_internal/mcp/* dispatch: the
+        # server-established auth context, runtime marker, and HMAC. A client
+        # passthrough header must never overwrite them, or a caller could spoof
+        # the trusted identity while the server's valid HMAC still rides along.
         "x-contextforge-auth-context",
         "x-contextforge-mcp-runtime",
         "x-contextforge-mcp-runtime-auth",

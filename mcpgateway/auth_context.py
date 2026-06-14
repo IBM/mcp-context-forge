@@ -222,20 +222,18 @@ def get_internal_mcp_auth_context(request: Request) -> Optional[Dict[str, Any]]:
 
 
 def encode_internal_mcp_auth_context(auth_context: Dict[str, Any]) -> str:
-    """Encode a trusted internal MCP auth context for forwarding.
+    """Encode an edge-validated auth context for forwarding to a trusted internal dispatcher.
 
-    Mirror of :func:`decode_internal_mcp_auth_context`. Used to package the
-    StreamableHTTP auth result (whatever ``streamable_http_auth()`` already
-    established at the edge) so it can be propagated to a trusted internal
-    dispatcher (e.g. ``/_internal/mcp/rpc``) without that dispatcher re-running
-    authentication. The unpadded base64url shape keeps the value header-safe.
+    Mirror of :func:`decode_internal_mcp_auth_context`. Packages the auth context
+    so a trusted internal dispatcher (e.g. ``/_internal/mcp/rpc``) can use it
+    without re-running authentication. The unpadded base64url shape keeps the
+    value header-safe.
 
     Args:
-        auth_context: Auth-context dict (typically the return value of
-            :func:`mcpgateway.transports.streamablehttp_transport.get_streamable_http_auth_context`).
+        auth_context: Auth-context dict to encode.
 
     Returns:
-        Unpadded base64url-encoded JSON payload suitable for the
+        Unpadded base64url-encoded JSON payload for the
         ``x-contextforge-auth-context`` header.
     """
     encoded = base64.urlsafe_b64encode(orjson.dumps(auth_context)).decode("ascii")
