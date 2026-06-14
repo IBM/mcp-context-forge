@@ -1119,13 +1119,10 @@ class SessionAffinity:
                 "x-contextforge-mcp-runtime-auth": _expected_internal_mcp_runtime_auth_header(),
                 "x-contextforge-auth-context": auth_context_header,
             }
-            # Preserve the originating bearer under the CONFIGURED auth header
-            # (AUTH_HEADER_NAME), not a hardcoded "authorization". /_internal/mcp/
-            # is CSRF-exempt so this is defense-in-depth, but the CSRF bearer
-            # short-circuit keys on the configured header via get_auth_header_value,
-            # so hardcoding "authorization" would drop the bearer on custom-header
-            # deployments. The endpoint trusts the encoded auth-context above and
-            # does not re-authenticate from the bearer.
+            # Preserve the bearer under the configured auth header (AUTH_HEADER_NAME),
+            # not a hardcoded "authorization": the CSRF bearer short-circuit keys on
+            # the configured header, so a custom header would otherwise be dropped.
+            # This is defense-in-depth; the endpoint trusts the auth-context above.
             auth_header_name = _resolve_auth_header_name(settings).lower()
             original_auth = headers.get(auth_header_name) or headers.get(_resolve_auth_header_name(settings))
             if original_auth:
@@ -1199,12 +1196,10 @@ class SessionAffinity:
             headers: Request headers.
             body: Request body bytes.
             query_string: Query string if any.
-            auth_context: Encoded ``x-contextforge-auth-context`` value carrying
-                the result of ``streamable_http_auth()`` from the originating
-                worker. Lets the owner dispatch via the trusted internal
-                ``/_internal/mcp/rpc`` endpoint without re-authenticating, so
-                OAuth bearers and ``MCP_REQUIRE_AUTH=false`` public-only modes
-                survive forwarding.
+            auth_context: Encoded ``x-contextforge-auth-context`` value carrying the
+                originating worker's already-validated identity, so the owner can
+                dispatch to the trusted internal endpoint without re-authenticating
+                (OAuth bearers and ``MCP_REQUIRE_AUTH=false`` public-only survive).
 
         Returns:
             Dict with 'status', 'headers', and 'body' from the owner worker's response,
@@ -1246,10 +1241,7 @@ class SessionAffinity:
                 "body": body.hex() if body else "",  # Hex encode binary body
                 "original_worker": WORKER_ID,
                 "timestamp": time.time(),
-                # Encoded auth context from the originating worker's
-                # streamable_http_auth() result; the owner uses this to
-                # dispatch via the trusted internal /_internal/mcp/rpc
-                # endpoint without re-authenticating.
+                # Encoded edge identity; lets the owner dispatch without re-authenticating.
                 "auth_context": auth_context,
             }
 
