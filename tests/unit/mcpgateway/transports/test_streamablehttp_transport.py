@@ -8911,8 +8911,7 @@ async def test_local_affinity_post_preserves_custom_auth_header(monkeypatch):
     """Owner-direct dispatch preserves the bearer under the CONFIGURED auth header.
 
     On ``AUTH_HEADER_NAME=X-MCP-Gateway-Auth`` the bearer rides that header and
-    the CSRF short-circuit keys on it. Hardcoding ``authorization`` would drop it.
-    Regression for the review finding, owner-direct path.
+    the CSRF short-circuit keys on it, so hardcoding ``authorization`` would drop it.
     """
     # Third-Party
     import orjson

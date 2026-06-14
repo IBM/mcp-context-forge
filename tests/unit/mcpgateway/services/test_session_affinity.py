@@ -1523,10 +1523,8 @@ class _FakeHttpxClient:
     async def as_post_rpc(self, *, content=None, headers=None, timeout=None):
         """Adapter so this fake can stand in for ``utils.internal_http.post_rpc_in_process``.
 
-        After PR #4987 the executor dispatches via a single helper instead of
-        constructing its own ``httpx.AsyncClient``. Patching the helper to this
-        method lets the existing fake capture ``content``/``headers``/``timeout``
-        for the call-site assertions.
+        Patching the helper to this method lets the fake capture
+        ``content``/``headers``/``timeout`` for the call-site assertions.
         """
         self.last_post_kwargs = {"content": content, "headers": headers, "timeout": timeout}
         if self._raise_exc is not None:
@@ -2422,9 +2420,8 @@ async def test_execute_forwarded_http_request_preserves_custom_auth_header():
     """Executor side: the bearer is preserved under the CONFIGURED auth header.
 
     On a deployment with ``AUTH_HEADER_NAME=X-MCP-Gateway-Auth`` the CSRF bearer
-    short-circuit keys on that header (``get_auth_header_value``). Hardcoding
-    ``authorization`` would drop the bearer and risk a 403 on the inner dispatch.
-    Regression for the review finding on custom auth-header deployments.
+    short-circuit keys on that header, so hardcoding ``authorization`` would drop
+    the bearer and risk a 403 on the inner dispatch.
     """
     # Third-Party
     import orjson

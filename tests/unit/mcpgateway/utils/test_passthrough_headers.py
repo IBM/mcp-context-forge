@@ -506,9 +506,7 @@ class TestLoopbackSkipTrustedInternalHeaders:
     server-established identity), ``x-contextforge-mcp-runtime``, and the HMAC.
     If the loopback passthrough echoed a client-supplied copy of those, a caller
     could spoof the trusted identity while the server's valid HMAC still rode
-    along (the trusted headers are set, then passthrough is ``update()``-d over
-    them). The loopback skip set must strip them. Regression for the review
-    finding on trusted-header overwrite.
+    along. The loopback skip set must strip them.
     """
 
     def test_filter_strips_trusted_internal_headers(self):

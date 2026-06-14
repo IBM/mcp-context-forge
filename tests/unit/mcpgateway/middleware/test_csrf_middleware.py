@@ -234,10 +234,10 @@ async def test_exempt_path_passes_without_token():
 async def test_internal_mcp_dispatch_is_csrf_exempt_by_default():
     """``/_internal/mcp/*`` is CSRF-exempt by default (loopback-only, HMAC-gated).
 
-    Regression for the cross-worker forward 403: the affinity dispatch posts to
-    the trusted-internal endpoint, which must not require a CSRF token. Without
-    the exemption, custom AUTH_HEADER_NAME deployments (whose bearer the CSRF
-    short-circuit can't find) would 403 on the inner dispatch.
+    The affinity dispatch posts to the trusted-internal endpoint, which must not
+    require a CSRF token. Without the exemption, custom AUTH_HEADER_NAME
+    deployments (whose bearer the CSRF short-circuit can't find) would 403 on the
+    inner dispatch.
     """
     # First-Party
     from mcpgateway.config import settings as real_settings
