@@ -8832,6 +8832,147 @@ async def test_local_affinity_post_injects_server_id_regression(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_local_affinity_post_dispatches_to_internal_endpoint_with_auth_context(monkeypatch):
+    """Owner-direct affinity POST dispatches to the trusted-internal /_internal/mcp/rpc.
+
+    Closes the coverage gap for the local-owner path: instead of re-authenticating
+    against public /rpc (which only understands ContextForge JWTs/cookies and would
+    401 virtual-server OAuth or MCP_REQUIRE_AUTH=false public-only sessions), the
+    owner dispatches to the trusted-internal endpoint carrying the affinity runtime
+    marker, the HMAC, and the edge-validated auth context. The originating
+    Authorization header is preserved for the CSRF bearer short-circuit.
+    """
+    # Third-Party
+    import orjson
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            pass
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=True))
+    # Deterministic auth context regardless of request-scoped state.
+    monkeypatch.setattr(tr, "get_streamable_http_auth_context", lambda: {"email": "u@example.com"})
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    server_id = "abc-def-123-456"
+    body = orjson.dumps({"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 1})
+    scope = _make_scope(f"/servers/{server_id}/mcp", method="POST", headers=[(b"mcp-session-id", b"sess-1"), (b"authorization", b"Bearer tok")])
+    receive = _make_receive(body)
+    send, messages = _make_send_collector()
+
+    mock_pool = MagicMock()
+    mock_pool.get_session_owner = AsyncMock(return_value="worker-1")
+
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b'{"jsonrpc":"2.0","result":{},"id":1}'
+
+    with (
+        patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
+        patch("mcpgateway.services.session_affinity.WORKER_ID", "worker-1"),
+        patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
+        patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client_cls.return_value = mock_client
+
+        await wrapper.handle_streamable_http(scope, receive, send)
+
+        mock_client.post.assert_called_once()
+        # Routed to the trusted-internal endpoint, NOT public /rpc.
+        assert mock_client.post.call_args.args[0] == "/_internal/mcp/rpc"
+        headers = mock_client.post.call_args.kwargs["headers"]
+        assert headers["x-contextforge-mcp-runtime"] == "affinity"
+        assert headers["x-contextforge-mcp-runtime-auth"]
+        assert headers["x-contextforge-auth-context"]
+        # Authorization preserved for the CSRF bearer short-circuit.
+        assert headers["authorization"] == "Bearer tok"
+
+    await wrapper.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_local_affinity_post_preserves_custom_auth_header(monkeypatch):
+    """Owner-direct dispatch preserves the bearer under the CONFIGURED auth header.
+
+    On ``AUTH_HEADER_NAME=X-MCP-Gateway-Auth`` the bearer rides that header and
+    the CSRF short-circuit keys on it. Hardcoding ``authorization`` would drop it.
+    Regression for the review finding, owner-direct path.
+    """
+    # Third-Party
+    import orjson
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            pass
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_header_name", "X-MCP-Gateway-Auth")
+    monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=True))
+    monkeypatch.setattr(tr, "get_streamable_http_auth_context", lambda: {"email": "u@example.com"})
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    server_id = "abc-def-123-456"
+    body = orjson.dumps({"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 1})
+    scope = _make_scope(f"/servers/{server_id}/mcp", method="POST", headers=[(b"mcp-session-id", b"sess-1"), (b"x-mcp-gateway-auth", b"Bearer custom-tok")])
+    receive = _make_receive(body)
+    send, messages = _make_send_collector()
+
+    mock_pool = MagicMock()
+    mock_pool.get_session_owner = AsyncMock(return_value="worker-1")
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b'{"jsonrpc":"2.0","result":{},"id":1}'
+
+    with (
+        patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
+        patch("mcpgateway.services.session_affinity.WORKER_ID", "worker-1"),
+        patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
+        patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client_cls.return_value = mock_client
+
+        await wrapper.handle_streamable_http(scope, receive, send)
+
+        mock_client.post.assert_called_once()
+        headers = mock_client.post.call_args.kwargs["headers"]
+        # Configured header preserved (lowercased); hardcoded "authorization" not used.
+        assert headers["x-mcp-gateway-auth"] == "Bearer custom-tok"
+        assert "authorization" not in headers
+
+    await wrapper.shutdown()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "params_value,params_json",
     [
@@ -9011,6 +9152,65 @@ async def test_affinity_forward_to_owner_worker_multipart_body(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_affinity_forward_to_owner_propagates_encoded_auth_context(monkeypatch):
+    """The sender encodes the live ``get_streamable_http_auth_context()`` result and passes it through ``forward_to_owner``.
+
+    Without this, OAuth-enabled virtual servers and ``MCP_REQUIRE_AUTH=false``
+    public-only mode would 401 after a cross-worker forward, because the owner
+    would have nothing to reconstruct the edge-authenticated user from.
+    """
+    # First-Party
+    from mcpgateway.auth_context import encode_internal_mcp_auth_context
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            raise AssertionError("Should not reach SDK")
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+    # Stand-in for the authenticated identity the edge worker already established.
+    edge_auth_ctx = {"email": "alice@example.com", "is_admin": False, "teams": ["t1"]}
+    expected_encoded = encode_internal_mcp_auth_context(edge_auth_ctx)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_streamable_http_auth_context", lambda: edge_auth_ctx)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    send, _messages = _make_send_collector()
+    scope = _make_scope("/mcp", method="POST", headers=[(b"mcp-session-id", b"sess-auth")])
+
+    mock_pool = MagicMock()
+    mock_pool.get_session_owner = AsyncMock(return_value="worker-2")
+    mock_pool.forward_to_owner = AsyncMock(
+        return_value={
+            "status": 200,
+            "headers": {"content-type": "application/json"},
+            "body": b'{"jsonrpc":"2.0","result":{}}',
+        }
+    )
+
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    with (
+        patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
+        patch("mcpgateway.services.session_affinity.WORKER_ID", "worker-1"),
+        patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
+    ):
+        await wrapper.handle_streamable_http(scope, _make_receive(b'{"jsonrpc":"2.0"}'), send)
+
+    await wrapper.shutdown()
+    # auth_context kwarg is supplied and equals the encoded edge identity.
+    assert mock_pool.forward_to_owner.call_args.kwargs["auth_context"] == expected_encoded
+
+
+@pytest.mark.asyncio
 async def test_affinity_forward_failure_falls_through(monkeypatch):
     """Test affinity forward failure falls through to local handling (line 1525-1527)."""
 
@@ -9186,66 +9386,6 @@ async def test_local_affinity_post_routes_to_rpc(monkeypatch):
     assert messages[0]["status"] == 200
 
 
-@pytest.mark.asyncio
-async def test_local_affinity_post_dispatches_via_post_rpc_in_process(monkeypatch):
-    """Local-owned path goes through the shared ``post_rpc_in_process`` helper (PR #4987).
-
-    Before this PR the dispatch built its own ``httpx.AsyncClient`` and
-    looped back to ``127.0.0.1`` over the shared gunicorn socket — which the
-    kernel then routed to a random worker that did not hold the bound
-    upstream session. Routing through the helper enforces in-process dispatch
-    so ``/rpc`` resolves the session from THIS worker's
-    ``UpstreamSessionRegistry``. Pins both the helper call and the loop-stop
-    header that prevents the re-entered handler from forwarding again.
-    """
-
-    class DummySessionManager:
-        @asynccontextmanager
-        async def run(self):
-            yield self
-
-        async def handle_request(self, scope, receive, send_func):
-            raise AssertionError("Should not reach SDK")
-
-    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
-
-    wrapper = SessionManagerWrapper()
-    await wrapper.initialize()
-
-    send, _messages = _make_send_collector()
-    body = b'{"jsonrpc":"2.0","method":"tools/list","id":1}'
-    scope = _make_scope("/mcp", method="POST", headers=[(b"mcp-session-id", b"sess-local"), (b"authorization", b"Bearer original-jwt")])
-
-    mock_pool = MagicMock()
-    mock_pool.get_session_owner = AsyncMock(return_value="worker-1")  # we own it → local-owned path
-
-    mock_session_class = MagicMock()
-    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
-
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.content = b'{"jsonrpc":"2.0","result":{}}'
-
-    mock_post_rpc = AsyncMock(return_value=mock_response)
-
-    with (
-        patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
-        patch("mcpgateway.services.session_affinity.WORKER_ID", "worker-1"),
-        patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
-        patch("mcpgateway.transports.streamablehttp_transport.post_rpc_in_process", mock_post_rpc),
-    ):
-        await wrapper.handle_streamable_http(scope, _make_receive(body), send)
-
-    await wrapper.shutdown()
-    # Helper was invoked exactly once with the loop-stop header so the re-entered handler doesn't forward again.
-    mock_post_rpc.assert_awaited_once()
-    sent_headers = mock_post_rpc.await_args.kwargs["headers"]
-    assert sent_headers["x-forwarded-internally"] == "true"
-    assert sent_headers["x-mcp-session-id"] == "sess-local"
-    # Original Authorization is preserved so /rpc can re-authenticate the same caller.
-    assert sent_headers["authorization"] == "Bearer original-jwt"
 
 
 @pytest.mark.asyncio

@@ -49,6 +49,7 @@ from mcpgateway.services.upstream_session_registry import (  # re-exported as th
     MessageHandlerFactory,
 )
 from mcpgateway.utils.internal_http import (
+    internal_loopback_base_url,
     post_rpc_in_process,
 )
 
@@ -1021,27 +1022,42 @@ class SessionAffinity:
     async def _execute_forwarded_http_request(self, request: Dict[str, Any], redis: Any) -> None:
         """Execute a forwarded Streamable HTTP request in-process and reply via Redis.
 
-        A forwarded request always lands here on the worker that OWNS the
-        downstream session (its ``WORKER_ID`` matched the Redis owner key), so the
-        bound upstream session in this process's ``UpstreamSessionRegistry`` can
-        serve it. We therefore dispatch the JSON-RPC call to the local ``/rpc``
-        route via an **in-process ASGI transport** instead of a network loopback
-        to ``127.0.0.1``: a real loopback hits the shared gunicorn socket and the
-        kernel routes it to an arbitrary worker that does not hold this session,
-        which breaks upstream-session reuse and fails the request. The
-        ``x-forwarded-internally`` header stops the re-entered handler from
-        forwarding again.
+        A forwarded request lands here on the worker that OWNS the downstream
+        session, so the bound upstream session in this process's
+        ``UpstreamSessionRegistry`` can serve it. We dispatch to the **trusted
+        internal** ``/_internal/mcp/rpc`` endpoint via an in-process ASGI
+        transport.
+
+        Why the trusted internal endpoint (not public ``/rpc``):
+
+        - The originating worker already ran ``streamable_http_auth()``, which
+          for ``/servers/{id}/mcp`` paths handles virtual-server OAuth verifiers
+          and ``MCP_REQUIRE_AUTH=false`` public-only mode. Public ``/rpc`` only
+          knows ContextForge JWTs / cookies, so re-authenticating an OAuth
+          bearer or an unauthenticated public-only request through ``/rpc``
+          would 401.
+        - The originating worker packages its already-validated identity into
+          ``auth_context`` (the encoded ``x-contextforge-auth-context`` value)
+          and forwards it here. Combined with the
+          ``x-contextforge-mcp-runtime: affinity`` marker, the shared-secret
+          HMAC header, and the loopback client address synthesised by
+          ASGITransport, the trusted endpoint's
+          ``_is_trusted_internal_mcp_runtime_request`` gate accepts the
+          request and ``_build_internal_mcp_forwarded_user`` reconstructs the
+          same user the edge saw.
 
         Args:
             request: Serialized HTTP request data from Redis Pub/Sub containing:
                 - type: "http_forward"
                 - response_channel: Redis channel to publish response to
                 - mcp_session_id: Session identifier
-                - method: HTTP method (GET, POST, DELETE)
-                - path: Request path (e.g., /servers/{id}/mcp)
-                - headers: Request headers dict (lowercased keys)
-                - body: Hex-encoded request body
-            redis: Redis client for publishing response
+                - method: HTTP method (POST primarily)
+                - path: Original request path (e.g., /servers/{id}/mcp)
+                - headers: Original request headers (lowercased keys)
+                - body: Hex-encoded JSON-RPC request body
+                - auth_context: base64url-encoded auth context from the
+                  originating worker's ``streamable_http_auth()`` result
+            redis: Redis client for publishing the response
         """
         response_channel = request.get("response_channel")
 
@@ -1057,6 +1073,7 @@ class SessionAffinity:
             headers = request.get("headers", {})
             body_hex = request.get("body", "")
             mcp_session_id = request.get("mcp_session_id")
+            auth_context_header = request.get("auth_context") or ""
             body = bytes.fromhex(body_hex) if body_hex else b""
 
             session_short = mcp_session_id[:8] if mcp_session_id and len(mcp_session_id) >= 8 else "unknown"
@@ -1079,7 +1096,8 @@ class SessionAffinity:
                 await _publish(202, b"")
                 return
 
-            # Inject the virtual server id (from the path) into params so /rpc routes correctly.
+            # Inject the virtual server id (from the path) into params so the
+            # dispatcher routes to the right virtual server.
             server_match = _SERVER_ID_RE.search(path)
             if server_match and isinstance(json_body, dict):
                 if not isinstance(json_body.get("params"), dict):
@@ -1088,31 +1106,62 @@ class SessionAffinity:
                 body = orjson.dumps(json_body)
 
             # First-Party - lazy imports avoid a circular dependency with main/transport.
-            # First-Party
+            from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header, encode_internal_mcp_auth_context  # pylint: disable=import-outside-toplevel,protected-access
+            from mcpgateway.main import app  # pylint: disable=import-outside-toplevel
             from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
-            from mcpgateway.utils.verify_credentials import _resolve_auth_header_name  # pylint: disable=import-outside-toplevel
+            from mcpgateway.utils.verify_credentials import _resolve_auth_header_name  # pylint: disable=import-outside-toplevel,protected-access
 
+            # Old / mixed-version forwarded payloads (e.g. a worker still on a
+            # pre-auth-context build during a rolling deploy) may omit the auth
+            # context. Fall back to an encoded public-only ({}) context so the
+            # trusted-internal endpoint applies default visibility instead of
+            # rejecting the dispatch with 400 (it requires a non-empty context).
+            if not auth_context_header:
+                auth_context_header = encode_internal_mcp_auth_context({})
+
+            # Build headers for the TRUSTED internal /_internal/mcp/rpc endpoint:
+            # - x-contextforge-mcp-runtime: "affinity" marker that identifies us
+            #   to _is_trusted_internal_mcp_runtime_request.
+            # - x-contextforge-mcp-runtime-auth: shared-secret-derived HMAC
+            #   matched by has_valid_internal_mcp_runtime_auth_header.
+            # - x-contextforge-auth-context: the encoded auth context from the
+            #   originating worker; decoded server-side via
+            #   _build_internal_mcp_forwarded_user so the dispatcher uses the
+            #   same user identity streamable_http_auth() established.
             rpc_headers = {
                 "content-type": "application/json",
                 "x-mcp-session-id": mcp_session_id or "",
-                "x-forwarded-internally": "true",
+                "x-contextforge-mcp-runtime": "affinity",
+                "x-contextforge-mcp-runtime-auth": _expected_internal_mcp_runtime_auth_header(),
+                "x-contextforge-auth-context": auth_context_header,
             }
-            auth_header = _resolve_auth_header_name(settings).lower()
-            if auth_header in headers:
-                rpc_headers[auth_header] = headers[auth_header]
+            # Preserve the originating bearer under the CONFIGURED auth header
+            # (AUTH_HEADER_NAME), not a hardcoded "authorization". /_internal/mcp/
+            # is CSRF-exempt so this is defense-in-depth, but the CSRF bearer
+            # short-circuit keys on the configured header via get_auth_header_value,
+            # so hardcoding "authorization" would drop the bearer on custom-header
+            # deployments. The endpoint trusts the encoded auth-context above and
+            # does not re-authenticate from the bearer.
+            auth_header_name = _resolve_auth_header_name(settings).lower()
+            original_auth = headers.get(auth_header_name) or headers.get(_resolve_auth_header_name(settings))
+            if original_auth:
+                rpc_headers[auth_header_name] = original_auth
             # Preserve passthrough headers destined for upstream MCP servers (#3640).
             rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
 
-            # Dispatch IN-PROCESS so /rpc resolves the bound upstream session from
-            # this worker's registry instead of bouncing back through the shared
-            # socket to a random worker (see post_rpc_in_process).
-            response = await post_rpc_in_process(
-                content=body,
-                headers=rpc_headers,
-                timeout=settings.mcpgateway_pool_rpc_forward_timeout,
-            )
+            # Dispatch IN-PROCESS to the trusted internal endpoint. The explicit
+            # client=("127.0.0.1", 0) tells ASGITransport to set scope["client"]
+            # to a loopback address so the trust check accepts the request.
+            transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 0))
+            async with httpx.AsyncClient(transport=transport, base_url=internal_loopback_base_url()) as client:
+                response = await client.post(
+                    "/_internal/mcp/rpc",
+                    content=body,
+                    headers=rpc_headers,
+                    timeout=settings.mcpgateway_pool_rpc_forward_timeout,
+                )
 
-            logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Executed in-process: {response.status_code}")
+            logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Executed in-process via /_internal/mcp/rpc: {response.status_code}")
 
             resp_headers = {"content-type": "application/json"}
             if mcp_session_id:
@@ -1149,6 +1198,7 @@ class SessionAffinity:
         headers: Dict[str, str],
         body: bytes,
         query_string: str = "",
+        auth_context: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Forward a Streamable HTTP request to the worker that owns the session via Redis Pub/Sub.
 
@@ -1165,6 +1215,12 @@ class SessionAffinity:
             headers: Request headers.
             body: Request body bytes.
             query_string: Query string if any.
+            auth_context: Encoded ``x-contextforge-auth-context`` value carrying
+                the result of ``streamable_http_auth()`` from the originating
+                worker. Lets the owner dispatch via the trusted internal
+                ``/_internal/mcp/rpc`` endpoint without re-authenticating, so
+                OAuth bearers and ``MCP_REQUIRE_AUTH=false`` public-only modes
+                survive forwarding.
 
         Returns:
             Dict with 'status', 'headers', and 'body' from the owner worker's response,
@@ -1206,6 +1262,11 @@ class SessionAffinity:
                 "body": body.hex() if body else "",  # Hex encode binary body
                 "original_worker": WORKER_ID,
                 "timestamp": time.time(),
+                # Encoded auth context from the originating worker's
+                # streamable_http_auth() result; the owner uses this to
+                # dispatch via the trusted internal /_internal/mcp/rpc
+                # endpoint without re-authenticating.
+                "auth_context": auth_context,
             }
 
             # Subscribe to response channel BEFORE publishing request (prevent race)
