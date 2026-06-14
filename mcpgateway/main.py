@@ -282,14 +282,12 @@ def _is_trusted_internal_mcp_runtime_request(request: Request) -> bool:
     Two callers are trusted today:
 
     - ``"rust"`` — the local Rust runtime sidecar (over loopback).
-    - ``"affinity"`` — the in-process ASGITransport dispatch used by
-      session-affinity forwarding to propagate a request to the owner worker
-      after the originating worker already ran ``streamable_http_auth()``.
+    - ``"affinity"`` — the in-process dispatch used by session-affinity
+      forwarding to reach the owner worker, carrying the identity the edge
+      already validated.
 
-    Both share the same defense-in-depth gates: a shared-secret-derived auth
-    header (``has_valid_internal_mcp_runtime_auth_header``) AND a loopback
-    client address. Only the ``x-contextforge-mcp-runtime`` marker value
-    differs.
+    Both share the same gates: a shared-secret HMAC header AND a loopback client
+    address. Only the ``x-contextforge-mcp-runtime`` marker value differs.
 
     Args:
         request: Incoming request to inspect.
