@@ -777,8 +777,12 @@ async def test_run_gateway_maintenance_cycle_uses_independent_lifecycle_interval
         if len(sleep_calls) >= 2:
             raise asyncio.CancelledError()
 
+    async def fake_to_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
     monkeypatch.setattr("mcpgateway.services.gateway_service.time.monotonic", fake_monotonic)
     monkeypatch.setattr("mcpgateway.services.gateway_service.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("mcpgateway.services.gateway_service.asyncio.to_thread", fake_to_thread)
 
     with pytest.raises(asyncio.CancelledError):
         await service._run_gateway_maintenance_cycle("admin@example.com")

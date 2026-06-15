@@ -35,6 +35,7 @@ from functools import lru_cache
 import html
 import json
 import logging
+import math
 import multiprocessing
 import os
 import re
@@ -7004,6 +7005,7 @@ async def register_gateway(
             result_status = result.get("status")
         if result_status == "pending" and response is not None:
             response.status_code = status.HTTP_202_ACCEPTED
+            response.headers["Retry-After"] = str(max(1, math.ceil(settings.gateway_async_lifecycle_poll_interval)))
         return result
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
@@ -7100,6 +7102,7 @@ async def update_gateway(
             result_status = result.get("status")
         if result_status == "pending" and response is not None:
             response.status_code = status.HTTP_202_ACCEPTED
+            response.headers["Retry-After"] = str(max(1, math.ceil(settings.gateway_async_lifecycle_poll_interval)))
         db.commit()
         db.close()
         return result
@@ -7173,6 +7176,7 @@ async def delete_gateway(
         if result_status == "deleting":
             if response is not None:
                 response.status_code = status.HTTP_202_ACCEPTED
+                response.headers["Retry-After"] = str(max(1, math.ceil(settings.gateway_async_lifecycle_poll_interval)))
             return result
         return {"status": "success", "message": f"Gateway {gateway_id} deleted"}
     except PermissionError as e:

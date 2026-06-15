@@ -315,7 +315,7 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 
 When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=false` (default), gateway registration remains synchronous.
 
-When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=true`, `POST /gateways` returns `202 Accepted` after the gateway row is persisted with `status="pending"`. `202 Accepted` means the work was accepted, not completed. The background lifecycle worker performs MCP initialization and catalog sync after the response returns.
+When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=true`, `POST /gateways` returns `202 Accepted` after the gateway row is persisted with `status="pending"`. `202 Accepted` means the work was accepted, not completed. The background lifecycle worker performs MCP initialization and catalog sync after the response returns. Async `POST`, `PUT`, and `DELETE` gateway lifecycle responses also include a `Retry-After` header derived from `GATEWAY_ASYNC_LIFECYCLE_POLL_INTERVAL` so clients have a polling hint.
 
 **Async create response example (`202 Accepted`):**
 

@@ -1999,6 +1999,7 @@ class TestGatewayEndpoints:
         response = test_client.put("/gateways/1", json=req, headers=auth_headers)
         assert response.status_code == 202
         assert response.json()["status"] == "pending"
+        assert response.headers["Retry-After"] == "5"
         mock_update.assert_called_once()
 
     @patch("mcpgateway.main.gateway_service.delete_gateway")
@@ -2021,6 +2022,7 @@ class TestGatewayEndpoints:
         response = test_client.delete("/gateways/1", headers=auth_headers)
         assert response.status_code == 202
         assert response.json()["status"] == "deleting"
+        assert response.headers["Retry-After"] == "5"
         mock_delete.assert_called_once()
 
     @patch("mcpgateway.main.gateway_service.delete_gateway")
@@ -2097,6 +2099,7 @@ class TestGatewayEndpoints:
         response = test_client.post("/gateways/", json=req, headers=auth_headers)
         assert response.status_code == 202
         assert response.json()["status"] == "pending"
+        assert response.headers["Retry-After"] == "5"
         mock_create.assert_called_once()
 
     @patch("mcpgateway.main.gateway_service.register_gateway")
@@ -2163,6 +2166,7 @@ class TestGatewayEndpoints:
         response = test_client.put("/gateways/1", json=req, headers=auth_headers)
         assert response.status_code == 202
         assert response.json()["status"] == "pending"
+        assert response.headers["Retry-After"] == "5"
         mock_update.assert_called_once()
 
     @patch("mcpgateway.main.gateway_service.delete_gateway")
@@ -2184,6 +2188,7 @@ class TestGatewayEndpoints:
         response = test_client.delete("/gateways/1", headers=auth_headers)
         assert response.status_code == 202
         assert response.json()["status"] == "deleting"
+        assert response.headers["Retry-After"] == "5"
 
     @patch("mcpgateway.main.gateway_service.set_gateway_state")
     def test_set_gateway_state(self, mock_toggle, test_client, auth_headers):
