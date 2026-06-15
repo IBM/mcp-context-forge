@@ -40,7 +40,9 @@ export function PasswordInput({
         {label}
         {required && (
           <>
-            <span className="text-red-500" aria-hidden="true">*</span>
+            <span className="text-red-500" aria-hidden="true">
+              *
+            </span>
             <span className="sr-only">(required)</span>
           </>
         )}
@@ -74,11 +76,7 @@ export function PasswordInput({
         </button>
       </div>
       {error ? (
-        <p
-          id={errorId}
-          className="text-sm text-red-600 dark:text-red-400"
-          role="alert"
-        >
+        <p id={errorId} className="text-sm text-red-600 dark:text-red-400" role="alert">
           {error}
         </p>
       ) : hint ? (

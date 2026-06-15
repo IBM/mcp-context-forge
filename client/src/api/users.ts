@@ -5,7 +5,6 @@
  */
 
 import { api } from "./client";
-import type { User, UpdateUserRequest } from "@/types/user";
 
 export interface DeleteUserResponse {
   success: boolean;
