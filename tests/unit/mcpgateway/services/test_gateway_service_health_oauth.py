@@ -491,6 +491,57 @@ class TestCheckSingleGatewayHealthReal:
         service._handle_gateway_failure.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_oauth_token_exchange_health_fails_closed(self):
+        # Token-exchange (RFC 8693) needs an inbound end-user JWT as the subject token.
+        # A periodic health check has no user request, so the grant cannot be satisfied:
+        # the gateway must be marked unhealthy rather than silently falling through.
+        service = GatewayService()
+        service._handle_gateway_failure = AsyncMock()
+
+        gateway = self._make_gateway(
+            transport="sse",
+            auth_type="oauth",
+            oauth_config={"grant_type": "token-exchange", "target_audience": "aud"},
+        )
+
+        class _SpanCM:
+            def __enter__(self):
+                return MagicMock()
+
+            def __exit__(self, *exc):
+                return False
+
+        class _IsoClientCM:
+            async def __aenter__(self):
+                return MagicMock()
+
+            async def __aexit__(self, *exc):
+                return False
+
+        with (
+            patch(
+                "mcpgateway.services.gateway_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=False,
+                    ed25519_public_key="pk",
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    httpx_admin_read_timeout=1,
+                    health_check_timeout=1,
+                    mcp_session_pool_enabled=False,
+                    mcp_session_pool_explicit_health_rpc=False,
+                    auto_refresh_servers=False,
+                ),
+            ),
+            patch("mcpgateway.services.gateway_service.create_span", return_value=_SpanCM()),
+            patch("mcpgateway.services.gateway_service.get_isolated_http_client", return_value=_IsoClientCM()),
+        ):
+            await service._check_single_gateway_health(gateway, user_email="user@test.com")
+
+        service._handle_gateway_failure.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_query_param_decryption_applied_and_sse_stream_health_check(self):
         service = GatewayService()
         service._handle_gateway_failure = AsyncMock()
