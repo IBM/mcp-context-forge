@@ -65,5 +65,17 @@
   "users.delete.error.self": "No puede eliminar su propia cuenta",
   "users.delete.error.lastAdmin": "No se puede eliminar al último administrador",
   "users.delete.error.notFound": "Usuario no encontrado",
-  "users.delete.error.generic": "Error al eliminar usuario: {error}"
+  "users.delete.error.generic": "Error al eliminar usuario: {error}",
+  "users.edit.dialog.title": "Editar Usuario",
+  "users.edit.dialog.description": "Actualizar detalles de la cuenta para {email}",
+  "users.form.button.save": "Guardar Cambios",
+  "users.form.button.saving": "Guardando...",
+  "users.form.error.updateFailed": "Error al actualizar usuario. Por favor, inténtelo de nuevo.",
+  "users.form.password.optional": "Dejar en blanco para mantener la contraseña actual",
+  "users.form.password.optional.placeholder": "Dejar en blanco para mantener",
+  "users.form.password.show": "Mostrar contraseña",
+  "users.form.password.hide": "Ocultar contraseña",
+  "users.edit.success": "Usuario {email} actualizado correctamente",
+  "users.edit.error.notFound": "Usuario no encontrado",
+  "users.edit.error.generic": "Error al actualizar usuario: {error}"
 }
