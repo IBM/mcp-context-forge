@@ -19,6 +19,36 @@ export async function withErrorHandling<T>(
 }
 
 /**
+ * Extracts error message from FastAPI validation error format
+ *
+ * @param body - The error body from API response
+ * @returns Extracted error message or null if not found
+ */
+export function extractApiErrorDetail(body: unknown): string | null {
+  if (!body || typeof body !== "object") {
+    return null;
+  }
+
+  const errorBody = body as { detail?: string | Array<{ msg: string }> };
+
+  if (!errorBody.detail) {
+    return null;
+  }
+
+  // String detail
+  if (typeof errorBody.detail === "string") {
+    return errorBody.detail;
+  }
+
+  // Array of validation errors
+  if (Array.isArray(errorBody.detail) && errorBody.detail.length > 0) {
+    return errorBody.detail[0].msg || null;
+  }
+
+  return null;
+}
+
+/**
  * Sanitizes error messages to prevent information leakage
  *
  * @param err - The error object to sanitize
