@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { screen, render, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AdvancedSettings } from "./AdvancedSettings";
+import { AuthProvider } from "@/auth/AuthContext";
 
 describe("AdvancedSettings", () => {
   const defaultProps = {
@@ -53,42 +54,42 @@ describe("AdvancedSettings", () => {
   };
 
   it("renders auth content according to authType", () => {
-    const { rerender } = render(<AdvancedSettings {...defaultProps} />);
+    const { rerender } = render(<AuthProvider><AdvancedSettings {...defaultProps} /></AuthProvider>);
     // "none" auth renders nothing special
     expect(screen.queryByLabelText(/Username/i)).not.toBeInTheDocument();
 
     // "basic" auth
-    rerender(<AdvancedSettings {...defaultProps} authType="basic" />);
+    rerender(<AuthProvider><AdvancedSettings {...defaultProps} authType="basic" /></AuthProvider>);
     expect(screen.getByLabelText(/Username/i)).toBeInTheDocument();
 
     // "bearer" auth
-    rerender(<AdvancedSettings {...defaultProps} authType="bearer" />);
+    rerender(<AuthProvider><AdvancedSettings {...defaultProps} authType="bearer" /></AuthProvider>);
     expect(screen.getByPlaceholderText(/Paste bearer token/i)).toBeInTheDocument();
 
     // "custom" auth
-    rerender(<AdvancedSettings {...defaultProps} authType="custom" />);
+    rerender(<AuthProvider><AdvancedSettings {...defaultProps} authType="custom" /></AuthProvider>);
     expect(screen.getByRole("button", { name: /\+?\s*Add header/i })).toBeInTheDocument();
 
     // "oauth" auth
-    rerender(<AdvancedSettings {...defaultProps} authType="oauth" />);
+    rerender(<AuthProvider><AdvancedSettings {...defaultProps} authType="oauth" /></AuthProvider>);
     expect(screen.getByLabelText(/Client ID/i)).toBeInTheDocument();
 
     // "query" auth
-    rerender(<AdvancedSettings {...defaultProps} authType="query" />);
+    rerender(<AuthProvider><AdvancedSettings {...defaultProps} authType="query" /></AuthProvider>);
     expect(screen.getByLabelText(/Parameter name/i)).toBeInTheDocument();
 
     // invalid/default authType
-    rerender(<AdvancedSettings {...defaultProps} authType={"invalid-type" as any} />);
+    rerender(<AuthProvider><AdvancedSettings {...defaultProps} authType={"invalid-type" as any} /></AuthProvider>);
     expect(screen.queryByLabelText(/Username/i)).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/Paste bearer token/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/Parameter name/i)).not.toBeInTheDocument();
   });
 
   it("renders warning when oneTimeAuth is true", () => {
-    const { rerender } = render(<AdvancedSettings {...defaultProps} oneTimeAuth={false} />);
+    const { rerender } = render(<AuthProvider><AdvancedSettings {...defaultProps} oneTimeAuth={false} /></AuthProvider>);
     expect(screen.queryByText(/Add passthrough headers when one-time/i)).not.toBeInTheDocument();
 
-    rerender(<AdvancedSettings {...defaultProps} oneTimeAuth={true} />);
+    rerender(<AuthProvider><AdvancedSettings {...defaultProps} oneTimeAuth={true} /></AuthProvider>);
     expect(screen.getByText(/Add passthrough headers when one-time/i)).toBeInTheDocument();
   });
 
@@ -99,12 +100,14 @@ describe("AdvancedSettings", () => {
     const handlePassthroughHeadersChange = vi.fn();
 
     render(
-      <AdvancedSettings
-        {...defaultProps}
-        onAuthTypeChange={handleAuthTypeChange}
-        onOneTimeAuthChange={handleOneTimeAuthChange}
-        onPassthroughHeadersChange={handlePassthroughHeadersChange}
-      />
+      <AuthProvider>
+        <AdvancedSettings
+          {...defaultProps}
+          onAuthTypeChange={handleAuthTypeChange}
+          onOneTimeAuthChange={handleOneTimeAuthChange}
+          onPassthroughHeadersChange={handlePassthroughHeadersChange}
+        />
+      </AuthProvider>,
     );
 
     // Switch auth type
@@ -123,3 +126,4 @@ describe("AdvancedSettings", () => {
     expect(handlePassthroughHeadersChange).toHaveBeenCalled();
   });
 });
+

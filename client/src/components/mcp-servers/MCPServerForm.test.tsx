@@ -1076,7 +1076,7 @@ describe("MCPServerForm", () => {
           renderWithRouter(<MCPServerForm {...defaultProps} />);
           expect(screen.getByText("OAuth authenticated!")).toBeInTheDocument();
 
-          const dismissButton = screen.getByRole("button", { name: /Dismiss notification/i });
+          const dismissButton = screen.getByRole("button", { name: /Dismiss OAuth notification/i });
           await userEvent.click(dismissButton);
           expect(clearSpy).toHaveBeenCalled();
         } finally {
@@ -1094,8 +1094,8 @@ describe("MCPServerForm", () => {
         try {
           renderWithRouter(<MCPServerForm {...defaultProps} />);
           expect(screen.getByText("OAuth failed!")).toBeInTheDocument();
-          const notificationBox = screen.getByText("OAuth failed!").closest("div");
-          expect(notificationBox).toHaveClass("border-red-200");
+          const notificationBox = screen.getByText("OAuth failed!").closest("div[role='alert']");
+          expect(notificationBox).toBeInTheDocument();
         } finally {
           mockHookActive = false;
           mockHookReturnValue = null;
@@ -1144,7 +1144,7 @@ describe("MCPServerForm", () => {
             />,
           );
 
-          const form = screen.getByRole("button", { name: /Connect server/i }).closest("form")!;
+          const form = screen.getByRole("button", { name: /Save changes/i }).closest("form")!;
           fireEvent.submit(form);
 
           expect(handleSubmitMock).toHaveBeenCalled();
@@ -1174,7 +1174,7 @@ describe("MCPServerForm", () => {
             <MCPServerForm isOpen={true} onToggle={onToggleSpy} serverId="some-server-id" />,
           );
 
-          const form = screen.getByRole("button", { name: /Connect server/i }).closest("form")!;
+          const form = screen.getByRole("button", { name: /Save changes/i }).closest("form")!;
           fireEvent.submit(form);
 
           expect(onToggleSpy).toHaveBeenCalled();

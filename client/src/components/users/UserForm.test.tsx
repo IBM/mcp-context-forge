@@ -168,7 +168,7 @@ describe("UserForm", () => {
 
       const errorMsg = screen.getByText("Passwords do not match");
       expect(errorMsg).toBeInTheDocument();
-      expect(errorMsg).toHaveAttribute("id", "confirm-password-error");
+      expect(errorMsg).toHaveAttribute("id", "user-confirm-password-error");
     });
 
     it("should render full name error when present", () => {
@@ -181,7 +181,7 @@ describe("UserForm", () => {
 
       const errorMsg = screen.getByText("Full name is required");
       expect(errorMsg).toBeInTheDocument();
-      expect(errorMsg).toHaveAttribute("id", "full-name-error");
+      expect(errorMsg).toHaveAttribute("id", "user-full-name-error");
     });
   });
 
@@ -569,3 +569,4 @@ describe("UserForm", () => {
     });
   });
 });
+
