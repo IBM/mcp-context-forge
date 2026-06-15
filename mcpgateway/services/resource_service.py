@@ -166,7 +166,7 @@ class ResourceURIConflictError(ResourceError):
         self.enabled = enabled
         self.resource_id = resource_id
         message = f"{visibility.capitalize()} Resource already exists with URI: {uri}"
-        logger.info(f"ResourceURIConflictError: {message}")
+        logger.info("ResourceURIConflictError: %s", message)
         if not enabled:
             message += f" (currently inactive, ID: {resource_id})"
         super().__init__(message)
@@ -491,7 +491,7 @@ class ResourceService(BaseService):
             'resource_read'
         """
         try:
-            logger.info(f"Registering resource: {resource.uri}")
+            logger.info("Registering resource: %s", resource.uri)
 
             # Validate content size BEFORE any database operations
             content_security = get_content_security_service()
@@ -525,14 +525,14 @@ class ResourceService(BaseService):
             if url_detected_mime:
                 mime_type = url_detected_mime
                 if resource.mime_type and resource.mime_type != url_detected_mime:
-                    logger.info(f"Using URL-detected MIME type '{url_detected_mime}' instead of user-provided '{resource.mime_type}' for URI: {resource.uri}")
+                    logger.info("Using URL-detected MIME type '%s' instead of user-provided '%s' for URI: %s", url_detected_mime, resource.mime_type, resource.uri)
             elif resource.mime_type:
                 # No URL detection possible, use user-provided
                 mime_type = resource.mime_type
             else:
                 # No URL detection and no user input, fallback to content-based detection
                 mime_type = self._detect_mime_type(resource.uri, resource.content)
-                logger.info(f"Fallback MIME type detection for {resource.uri}: {mime_type}")
+                logger.info("Fallback MIME type detection for %s: %s", resource.uri, mime_type)
 
             # Validate MIME type against allowlist
             content_security.validate_resource_mime_type(
@@ -547,7 +547,7 @@ class ResourceService(BaseService):
 
             # Check for existing server with the same uri
             if visibility.lower() == "public":
-                logger.info(f"visibility:: {visibility}")
+                logger.info("visibility:: %s", visibility)
                 # Check for existing public resource with the same uri and gateway_id
                 existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "public", DbResource.gateway_id == gateway_id)).scalar_one_or_none()
                 if existing_resource:
@@ -598,7 +598,7 @@ class ResourceService(BaseService):
             # Notify subscribers
             await self._notify_resource_added(db_resource)
 
-            logger.info(f"Registered resource: {resource.uri}")
+            logger.info("Registered resource: %s", resource.uri)
 
             # Structured logging: Audit trail for resource creation
             audit_trail.log_action(
@@ -646,7 +646,7 @@ class ResourceService(BaseService):
             db_resource.team = self._get_team_name(db, db_resource.team_id)
             return self.convert_resource_to_read(db_resource)
         except IntegrityError as ie:
-            logger.error(f"IntegrityErrors in group: {ie}")
+            logger.error("IntegrityErrors in group: %s", ie)
 
             # Structured logging: Log database integrity error
             structured_logger.log(
@@ -663,7 +663,7 @@ class ResourceService(BaseService):
             )
             raise ie
         except ResourceURIConflictError as rce:
-            logger.error(f"ResourceURIConflictError in group: {resource.uri}")
+            logger.error("ResourceURIConflictError in group: %s", resource.uri)
 
             # Structured logging: Log URI conflict error
             structured_logger.log(
@@ -959,7 +959,7 @@ class ResourceService(BaseService):
                     except Exception as e:
                         stats["failed"] += 1
                         stats["errors"].append(f"Failed to process resource {resource.uri}: {str(e)}")
-                        logger.warning(f"Failed to process resource {resource.uri} in bulk operation: {str(e)}")
+                        logger.warning("Failed to process resource %s in bulk operation: %s", resource.uri, str(e))
                         continue
 
                 # Bulk add new resources
@@ -1001,11 +1001,11 @@ class ResourceService(BaseService):
                         db=db,
                     )
 
-                logger.info(f"Bulk registered {len(resources_to_add)} resources, updated {len(resources_to_update)} resources in chunk")
+                logger.info("Bulk registered %s resources, updated %s resources in chunk", len(resources_to_add), len(resources_to_update))
 
             except Exception as e:
                 db.rollback()
-                logger.error(f"Failed to process chunk in bulk resource registration: {str(e)}")
+                logger.error("Failed to process chunk in bulk resource registration: %s", str(e))
                 stats["failed"] += len(chunk)
                 stats["errors"].append(f"Chunk processing failed: {str(e)}")
                 continue
@@ -1265,7 +1265,7 @@ class ResourceService(BaseService):
                     s.team = team_map.get(s.team_id) if s.team_id else None
                     result.append(self.convert_resource_to_read(s, include_metrics=False))
                 except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                    logger.exception(f"Failed to convert resource {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
+                    logger.exception("Failed to convert resource %s (%s): %s", getattr(s, "id", "unknown"), getattr(s, "name", "unknown"), e)
                     # Continue with remaining resources instead of failing completely
             # Return appropriate format based on pagination type
             if page is not None:
@@ -1407,7 +1407,7 @@ class ResourceService(BaseService):
                 t.team = team_map.get(str(t.team_id)) if t.team_id else None
                 result.append(self.convert_resource_to_read(t, include_metrics=False))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                logger.exception(f"Failed to convert resource {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
+                logger.exception("Failed to convert resource %s (%s): %s", getattr(t, "id", "unknown"), getattr(t, "name", "unknown"), e)
                 # Continue with remaining resources instead of failing completely
         return result
 
@@ -1469,7 +1469,7 @@ class ResourceService(BaseService):
                 "team.scope": format_trace_team_scope(token_teams) if token_teams is not None else None,
             },
         ):
-            logger.debug(f"Listing resources for server_id: {server_id}, include_inactive: {include_inactive}")
+            logger.debug("Listing resources for server_id: %s, include_inactive: %s", server_id, include_inactive)
             query = (
                 select(DbResource)
                 .join(server_resource_association, DbResource.id == server_resource_association.c.resource_id)
@@ -1531,7 +1531,7 @@ class ResourceService(BaseService):
                     t.team = team_map.get(str(t.team_id)) if t.team_id else None
                     result.append(self.convert_resource_to_read(t, include_metrics=include_metrics))
                 except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                    logger.exception(f"Failed to convert resource {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
+                    logger.exception("Failed to convert resource %s (%s): %s", getattr(t, "id", "unknown"), getattr(t, "name", "unknown"), e)
                     # Continue with remaining resources instead of failing completely
             return result
 
@@ -1725,7 +1725,7 @@ class ResourceService(BaseService):
         elif resource_uri:
             uri = resource_uri
 
-        logger.info(f"Invoking the resource: {uri}")
+        logger.info("Invoking the resource: %s", uri)
         gateway_id = None
         # Use pre-fetched resource if provided (avoids Q5 re-fetch)
         resource_info = resource_obj
@@ -1784,9 +1784,9 @@ class ResourceService(BaseService):
                                 "gateway.url": getattr(gateway, "url") or "unknown",
                             },
                         )
-                        logger.debug(f"✓ Created resource.read span: {db_span_id} for resource: {resource_id} & {uri}")
+                        logger.debug("✓ Created resource.read span: %s for resource: %s & %s", db_span_id, resource_id, uri)
                     except Exception as e:
-                        logger.warning(f"Failed to start the observability span for invoking resource: {e}")
+                        logger.warning("Failed to start the observability span for invoking resource: %s", e)
                         db_span_id = None
 
                 span_attributes = {
@@ -1869,7 +1869,7 @@ class ResourceService(BaseService):
                                         auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
                                     except Exception:  # noqa: S110 - intentionally skip failed decryptions
                                         # Silently skip params that fail decryption (corrupted or old key)
-                                        logger.debug(f"Failed to decrypt query param '{param_key}' for resource")
+                                        logger.debug("Failed to decrypt query param '%s' for resource", param_key)
                             if auth_query_params_decrypted:
                                 gateway_url = apply_query_param_auth(gateway_url, auth_query_params_decrypted)
 
@@ -1908,7 +1908,7 @@ class ResourceService(BaseService):
                                             set_span_error(span, "No valid OAuth token for user")
 
                                 except Exception as e:
-                                    logger.error(f"Failed to obtain stored OAuth token for gateway {gateway_name}: {e}")
+                                    logger.error("Failed to obtain stored OAuth token for gateway %s: %s", gateway_name, e)
                                     if span:
                                         set_span_attribute(span, "health.status", "unhealthy")
                                         set_span_error(span, "Failed to obtain stored OAuth token")
@@ -2019,7 +2019,7 @@ class ResourceService(BaseService):
                             except Exception as e:
                                 # Sanitize error message to prevent URL secrets from leaking in logs
                                 sanitized_error = sanitize_exception_message(str(e), auth_query_params_decrypted)
-                                logger.debug(f"Exception while connecting to sse gateway: {sanitized_error}")
+                                logger.debug("Exception while connecting to sse gateway: %s", sanitized_error)
                                 return None
 
                         async def connect_to_streamablehttp_server(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
@@ -2098,7 +2098,7 @@ class ResourceService(BaseService):
                             except Exception as e:
                                 # Sanitize error message to prevent URL secrets from leaking in logs
                                 sanitized_error = sanitize_exception_message(str(e), auth_query_params_decrypted)
-                                logger.debug(f"Exception while connecting to streamablehttp gateway: {sanitized_error}")
+                                logger.debug("Exception while connecting to streamablehttp gateway: %s", sanitized_error)
                                 return None
 
                         if span:
@@ -2134,9 +2134,10 @@ class ResourceService(BaseService):
                                     status_message=error_message if error_message else None,
                                 )
                                 db_span_ended = True
-                                logger.debug(f"✓ Ended resource.read span: {db_span_id}")
+
+                                logger.debug("✓ Ended resource.read span: %s", db_span_id)
                             except Exception as e:
-                                logger.warning(f"Failed to end observability span for invoking resource: {e}")
+                                logger.warning("Failed to end observability span for invoking resource: %s", e)
 
     async def read_resource(
         self,
@@ -2258,9 +2259,9 @@ class ResourceService(BaseService):
                         "resource.type": "template" if (uri is not None and "{" in uri and "}" in uri) else "static",
                     },
                 )
-                logger.debug(f"✓ Created resource.read span: {db_span_id} for resource: {uri}")
+                logger.debug("✓ Created resource.read span: %s for resource: %s", db_span_id, uri)
             except Exception as e:
-                logger.warning(f"Failed to start observability span for resource reading: {e}")
+                logger.warning("Failed to start observability span for resource reading: %s", e)
                 db_span_id = None
 
         span_attributes = {
@@ -2334,7 +2335,7 @@ class ResourceService(BaseService):
                     # Use modified URI if plugin changed it
                     if pre_result.modified_payload:
                         uri = pre_result.modified_payload.uri
-                        logger.debug(f"Resource URI modified by plugin: {original_uri} -> {uri}")
+                        logger.debug("Resource URI modified by plugin: %s -> %s", original_uri, uri)
 
                 # Validate resource path if experimental validation is enabled
                 if getattr(settings, "experimental_validate_io", False) and uri and isinstance(uri, str):
@@ -2344,7 +2345,7 @@ class ResourceService(BaseService):
                         raise ResourceError(f"Path validation failed: {e}")
 
                 # Original resource fetching logic
-                logger.info(f"Fetching resource: {resource_id} (URI: {uri})")
+                logger.info("Fetching resource: %s (URI: %s)", resource_id, uri)
 
                 # Check if resource's gateway is in direct_proxy mode
                 # First, try to find the resource to get its gateway
@@ -2382,7 +2383,7 @@ class ResourceService(BaseService):
                         if not await check_gateway_access(db, resource_db.gateway, user, token_teams):
                             raise ResourceNotFoundError(f"Resource not found: {uri}")
 
-                        logger.info(f"Using direct_proxy mode for resource '{uri}' via gateway {resource_db.gateway.id}")
+                        logger.info("Using direct_proxy mode for resource '%s' via gateway %s", uri, resource_db.gateway.id)
 
                         try:  # First-Party
                             # First-Party
@@ -2420,12 +2421,14 @@ class ResourceService(BaseService):
 
                                     success = True
                                     logger.info(
-                                        f"[READ RESOURCE] Using direct_proxy mode for gateway {SecurityValidator.sanitize_log_message(gateway.id)} (from X-Context-Forge-Gateway-Id header). Meta Attached: {meta_data is not None}"
+                                        "[READ RESOURCE] Using direct_proxy mode for gateway %s (from X-Context-Forge-Gateway-Id header). Meta Attached: %s",
+                                        SecurityValidator.sanitize_log_message(gateway.id),
+                                        meta_data is not None,
                                     )
                                     # Skip the rest of the DB lookup logic
 
                         except Exception as e:
-                            logger.exception(f"Error in direct_proxy mode for resource '{uri}': {e}")
+                            logger.exception("Error in direct_proxy mode for resource '%s': %s", uri, e)
                             raise ResourceError(f"Direct proxy resource read failed: {str(e)}")
 
                     elif resource_db:
@@ -2613,7 +2616,7 @@ class ResourceService(BaseService):
                 raise
             finally:
                 # Record metrics only if we found a resource (not for templates)
-                logger.debug(f"read_resource finally block: resource_db={'present' if resource_db else None}, resource_id={resource_db.id if resource_db else None}, server_id={server_id}")
+                logger.debug("read_resource finally block: resource_db=%s, resource_id=%s, server_id=%s", "present" if resource_db else None, resource_db.id if resource_db else None, server_id)
 
                 if resource_db:
                     try:
@@ -2624,14 +2627,14 @@ class ResourceService(BaseService):
                             error_message=error_message,
                         )
                     except Exception as metrics_error:
-                        logger.warning(f"Failed to record resource metric: {metrics_error}")
+                        logger.warning("Failed to record resource metric: %s", metrics_error)
 
                 # Record server metrics ONLY when the server scoping check passed.
                 # This prevents recording metrics with unvalidated server_id values
                 # from admin API headers (X-Server-ID) or RPC params.
                 if resource_db and server_scoped:
                     try:
-                        logger.debug(f"Recording server metric for server_id={server_id}, resource_id={resource_db.id}, success={success}")
+                        logger.debug("Recording server metric for server_id=%s, resource_id=%s, success=%s", server_id, resource_db.id, success)
                         # Record server metric only for the specific virtual server being accessed
                         metrics_buffer.record_server_metric(
                             server_id=server_id,
@@ -2640,7 +2643,7 @@ class ResourceService(BaseService):
                             error_message=error_message,
                         )
                     except Exception as metrics_error:
-                        logger.warning(f"Failed to record server metric: {metrics_error}")
+                        logger.warning("Failed to record server metric: %s", metrics_error)
 
                 # End database span for observability dashboard
                 # NOTE: Use fresh_db_session() since db may have been closed by invoke_resource
@@ -2652,9 +2655,9 @@ class ResourceService(BaseService):
                             status_message=error_message if error_message else None,
                         )
                         db_span_ended = True
-                        logger.debug(f"✓ Ended resource.read span: {db_span_id}")
+                        logger.debug("✓ Ended resource.read span: %s", db_span_id)
                     except Exception as e:
-                        logger.warning(f"Failed to end observability span for resource reading: {e}")
+                        logger.warning("Failed to end observability span for resource reading: %s", e)
 
     async def set_resource_state(self, db: Session, resource_id: int, activate: bool, user_email: Optional[str] = None, skip_cache_invalidation: bool = False) -> ResourceRead:
         """
@@ -2731,7 +2734,7 @@ class ResourceService(BaseService):
                 else:
                     await self._notify_resource_deactivated(resource)
 
-                logger.info(f"Resource {resource.uri} {'activated' if activate else 'deactivated'}")
+                logger.info("Resource %s %s", resource.uri, "activated" if activate else "deactivated")
 
                 # Structured logging: Audit trail for resource state change
                 audit_trail.log_action(
@@ -2853,7 +2856,7 @@ class ResourceService(BaseService):
             db.add(db_sub)
             db.commit()
 
-            logger.info(f"Added subscription for {subscription.uri} by {subscription.subscriber_id}")
+            logger.info("Added subscription for %s by %s", subscription.uri, subscription.subscriber_id)
 
         except PermissionError:
             db.rollback()
@@ -2892,11 +2895,11 @@ class ResourceService(BaseService):
             db.execute(select(DbSubscription).where(DbSubscription.resource_id == resource.id).where(DbSubscription.subscriber_id == subscription.subscriber_id)).delete()
             db.commit()
 
-            logger.info(f"Removed subscription for {subscription.uri} by {subscription.subscriber_id}")
+            logger.info("Removed subscription for %s by %s", subscription.uri, subscription.subscriber_id)
 
         except Exception as e:
             db.rollback()
-            logger.error(f"Failed to unsubscribe: {str(e)}")
+            logger.error("Failed to unsubscribe: %s", str(e))
 
     async def update_resource(
         self,
@@ -2966,7 +2969,7 @@ class ResourceService(BaseService):
             'resource_read'
         """
         try:
-            logger.info(f"Updating resource: {resource_id}")
+            logger.info("Updating resource: %s", resource_id)
             resource = get_for_update(db, DbResource, resource_id)
             if not resource:
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
@@ -3014,7 +3017,7 @@ class ResourceService(BaseService):
                 if url_detected_mime:
                     # URL detection successful - use it
                     if resource_update.mime_type and resource_update.mime_type != url_detected_mime:
-                        logger.info(f"Using URL-detected MIME type '{url_detected_mime}' instead of user-provided '{resource_update.mime_type}' for resource {resource_id}")
+                        logger.info("Using URL-detected MIME type '%s' instead of user-provided '%s' for resource %s", url_detected_mime, resource_update.mime_type, resource_id)
                     resource.mime_type = url_detected_mime
                 elif resource_update.mime_type is not None:
                     # No URL detection, handle user-provided value
@@ -3022,7 +3025,7 @@ class ResourceService(BaseService):
                         # Empty string - fallback to content-based detection
                         content_for_detection = resource_update.content if resource_update.content is not None else (resource.text_content or resource.binary_content)
                         detected_mime_type = self._detect_mime_type(uri_for_detection, content_for_detection)
-                        logger.info(f"Fallback MIME type detection for resource {resource_id}: {detected_mime_type}")
+                        logger.info("Fallback MIME type detection for resource %s: %s", resource_id, detected_mime_type)
                         resource.mime_type = detected_mime_type
                     else:
                         # Use user-provided MIME type
@@ -3121,7 +3124,7 @@ class ResourceService(BaseService):
             # Notify subscribers
             await self._notify_resource_updated(resource)
 
-            logger.info(f"Updated resource: {resource.uri}")
+            logger.info("Updated resource: %s", resource.uri)
 
             # Structured logging: Audit trail for resource update
             changes = []
@@ -3189,7 +3192,7 @@ class ResourceService(BaseService):
             raise
         except IntegrityError as ie:
             db.rollback()
-            logger.error(f"IntegrityErrors in group: {ie}")
+            logger.error("IntegrityErrors in group: %s", ie)
 
             # Structured logging: Log database integrity error
             structured_logger.log(
@@ -3253,7 +3256,7 @@ class ResourceService(BaseService):
             )
             raise cpe
         except ResourceURIConflictError as pe:
-            logger.error(f"Resource URI conflict: {pe}")
+            logger.error("Resource URI conflict: %s", pe)
 
             # Structured logging: Log URI conflict error
             structured_logger.log(
@@ -3382,7 +3385,7 @@ class ResourceService(BaseService):
             # Notify subscribers.
             await self._notify_resource_deleted(resource_info)
 
-            logger.info(f"Permanently deleted resource: {resource.uri}")
+            logger.info("Permanently deleted resource: %s", resource.uri)
 
             # Structured logging: Audit trail for resource deletion
             audit_trail.log_action(

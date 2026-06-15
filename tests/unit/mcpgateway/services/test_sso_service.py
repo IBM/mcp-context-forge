@@ -661,6 +661,180 @@ class TestTokenExchange:
         with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client:
             mock_get_client.return_value = mock_client
 
+    @pytest.mark.asyncio
+    async def test_exchange_code_for_tokens_basic_auth(self, sso_service):
+        """client_secret_basic: credentials in Authorization header, not in body."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"access_token": "tok", "token_type": "bearer"}
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        provider = _make_provider(provider_metadata={"token_endpoint_auth_method": "client_secret_basic"})
+        auth_session = _make_auth_session()
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client:
+            mock_get_client.return_value = mock_client
+            result = await sso_service._exchange_code_for_tokens(provider, auth_session, "code123")
+
+        assert result == {"access_token": "tok", "token_type": "bearer"}
+        _call_kwargs = mock_client.post.call_args.kwargs
+        assert "data" in _call_kwargs
+        assert "client_secret" not in _call_kwargs["data"]
+        assert "client_id" not in _call_kwargs["data"]
+        assert "Authorization" in _call_kwargs["headers"]
+
+    @pytest.mark.asyncio
+    async def test_exchange_code_for_tokens_basic_auth_no_secret(self, sso_service):
+        """client_secret_basic without decrypted secret falls back to POST body."""
+        sso_service._encryption.decrypt_secret_async = AsyncMock(return_value=None)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"access_token": "tok", "token_type": "bearer"}
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        provider = _make_provider(provider_metadata={"token_endpoint_auth_method": "client_secret_basic"})
+        auth_session = _make_auth_session()
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client:
+            mock_get_client.return_value = mock_client
+            result = await sso_service._exchange_code_for_tokens(provider, auth_session, "code123")
+
+        assert result == {"access_token": "tok", "token_type": "bearer"}
+        _call_kwargs = mock_client.post.call_args.kwargs
+        assert "client_id" in _call_kwargs["data"]
+        assert "Authorization" not in _call_kwargs["headers"]
+
+    @pytest.mark.asyncio
+    async def test_exchange_code_for_tokens_default_post_body(self, sso_service):
+        """Default (client_secret_post): credentials in POST body, no Authorization header."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"access_token": "tok", "token_type": "bearer"}
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        provider = _make_provider()  # No provider_metadata set
+        auth_session = _make_auth_session()
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client:
+            mock_get_client.return_value = mock_client
+            result = await sso_service._exchange_code_for_tokens(provider, auth_session, "code123")
+
+        assert result == {"access_token": "tok", "token_type": "bearer"}
+        _call_kwargs = mock_client.post.call_args.kwargs
+        assert "client_id" in _call_kwargs["data"]
+        assert "client_secret" in _call_kwargs["data"]
+        assert "Authorization" not in _call_kwargs["headers"]
+
+    @pytest.mark.asyncio
+    async def test_exchange_code_for_tokens_basic_auth_header_format(self, sso_service):
+        """Verify Basic Auth header is correctly formatted."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"access_token": "tok", "token_type": "bearer"}
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        provider = _make_provider(client_id="test-client-id", provider_metadata={"token_endpoint_auth_method": "client_secret_basic"})
+        auth_session = _make_auth_session()
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client:
+            mock_get_client.return_value = mock_client
+            await sso_service._exchange_code_for_tokens(provider, auth_session, "code123")
+
+        _call_kwargs = mock_client.post.call_args.kwargs
+        auth_header = _call_kwargs["headers"]["Authorization"]
+        assert auth_header.startswith("Basic ")
+        # Verify it's valid base64
+        import base64
+        payload = auth_header[len("Basic "):]
+        decoded = base64.b64decode(payload).decode("utf-8")
+        assert decoded.startswith("test-client-id:")
+        assert decoded.count(":") == 1
+
+    @pytest.mark.asyncio
+    async def test_exchange_code_for_tokens_default_post_body_no_secret(self, sso_service):
+        """Default (client_secret_post) without decrypted secret sends client_id only."""
+        sso_service._encryption.decrypt_secret_async = AsyncMock(return_value=None)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"access_token": "tok", "token_type": "bearer"}
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        provider = _make_provider()
+        auth_session = _make_auth_session()
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client:
+            mock_get_client.return_value = mock_client
+            result = await sso_service._exchange_code_for_tokens(provider, auth_session, "code123")
+
+        assert result == {"access_token": "tok", "token_type": "bearer"}
+        _call_kwargs = mock_client.post.call_args.kwargs
+        assert "client_id" in _call_kwargs["data"]
+        assert "client_secret" not in _call_kwargs["data"]
+        assert "Authorization" not in _call_kwargs["headers"]
+
+    @pytest.mark.asyncio
+    async def test_exchange_code_for_tokens_http_error(self, sso_service):
+        """Non-200 response from token endpoint returns None."""
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        mock_response.text = "Unauthorized"
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        provider = _make_provider()
+        auth_session = _make_auth_session()
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client:
+            mock_get_client.return_value = mock_client
+            result = await sso_service._exchange_code_for_tokens(provider, auth_session, "code123")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_build_basic_auth_header_url_encodes_special_chars(self, sso_service):
+        """Special characters in client_id/secret are URL-encoded per RFC 6749 Appendix B."""
+        header = sso_service._build_basic_auth_header("client@id", "secret:+?")
+        assert header.startswith("Basic ")
+        import base64
+        payload = base64.b64decode(header[len("Basic "):]).decode("utf-8")
+        assert payload == "client%40id:secret%3A%2B%3F"
+
+    @pytest.mark.asyncio
+    async def test_exchange_code_for_tokens_provider_metadata_none(self, sso_service):
+        """provider_metadata=None is treated the same as {} (defaults to client_secret_post)."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"access_token": "tok", "token_type": "bearer"}
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        provider = _make_provider(provider_metadata=None)
+        auth_session = _make_auth_session()
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client:
+            mock_get_client.return_value = mock_client
+            result = await sso_service._exchange_code_for_tokens(provider, auth_session, "code123")
+
+        assert result == {"access_token": "tok", "token_type": "bearer"}
+        _call_kwargs = mock_client.post.call_args.kwargs
+        assert "client_id" in _call_kwargs["data"]
+        assert "client_secret" in _call_kwargs["data"]
+        assert "Authorization" not in _call_kwargs["headers"]
+
 
 # ---------------------------------------------------------------------------
 # User info extraction tests

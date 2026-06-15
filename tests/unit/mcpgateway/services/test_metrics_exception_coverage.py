@@ -11,7 +11,7 @@ server_id filtering paths in prompt_service, resource_service, and tool_service.
 
 # Standard
 from contextlib import contextmanager
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
@@ -108,7 +108,7 @@ class TestPromptServiceMetricsException:
             result = await prompt_service.get_prompt(db=db, prompt_id="1", arguments={"name": "Alice"}, server_id="test-server-id")
 
             # Verify the exception was caught and logged
-            mock_logger.warning.assert_any_call("Failed to record server metric: Metrics recording failed")
+            mock_logger.warning.assert_any_call("Failed to record server metric: %s", ANY)
 
             # Verify prompt was still returned successfully
             assert result is not None
@@ -172,7 +172,7 @@ class TestResourceServiceMetricsException:
             result = await resource_service.read_resource(db=db, resource_id="test-resource-id", server_id="test-server-id")
 
             # Verify the exception was caught and logged
-            mock_logger.warning.assert_any_call("Failed to record server metric: Metrics recording failed")
+            mock_logger.warning.assert_any_call("Failed to record server metric: %s", ANY)
 
             # Verify resource was still returned successfully
             assert result is not None
@@ -272,8 +272,8 @@ class TestToolServiceMetricsException:
             # Call invoke_tool with server_id to trigger server metrics recording
             result = await tool_service.invoke_tool(db, "test_tool", {}, server_id="test-server-id")
 
-        # Verify the exception was caught and logged
-        mock_logger.warning.assert_any_call("Failed to record server metric: Metrics recording failed")
+            # Verify the exception was caught and logged
+            mock_logger.warning.assert_any_call("Failed to record server metric: %s", ANY)
 
         # Verify tool invocation still succeeded
         assert result is not None

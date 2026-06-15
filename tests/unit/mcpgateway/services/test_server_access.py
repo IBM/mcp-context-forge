@@ -2,6 +2,7 @@
 """Location: ./tests/unit/mcpgateway/services/test_server_access.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Tests for server access control (_check_server_access) with admin bypass and owner matching.
 """

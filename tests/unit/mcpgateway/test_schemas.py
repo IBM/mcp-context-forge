@@ -1675,3 +1675,279 @@ class TestTitleSchemas:
             ),
         )
         assert prompt_read.title == "Read Prompt Title"
+
+
+class TestAuthValidationErrors:
+    """Test error handling in auth validation for GatewayCreate, GatewayUpdate, A2AAgentCreate, A2AAgentUpdate."""
+
+    def test_gateway_create_invalid_query_param_key(self):
+        """Test GatewayCreate field validator rejects invalid query_param_key format."""
+        from mcpgateway.schemas import GatewayCreate
+
+        # Test the field validator directly by calling it
+        with pytest.raises(ValueError, match="Query parameter key must start with a letter or underscore"):
+            GatewayCreate.validate_auth_query_param_key("123invalid")
+
+    def test_gateway_update_invalid_query_param_key(self):
+        """Test GatewayUpdate field validator rejects invalid query_param_key format."""
+        from mcpgateway.schemas import GatewayUpdate
+
+        # Test the field validator directly by calling it
+        with pytest.raises(ValueError, match="Query parameter key must start with a letter or underscore"):
+            GatewayUpdate.validate_auth_query_param_key("@invalid")
+
+    def test_gateway_create_invalid_auth_type(self):
+        """Test GatewayCreate rejects invalid auth_type."""
+        from mcpgateway.schemas import GatewayCreate
+
+        with pytest.raises(ValidationError) as exc_info:
+            GatewayCreate(url="http://example.com", name="test", auth_type="invalid_type")
+        assert "Invalid 'auth_type'" in str(exc_info.value)
+
+    def test_gateway_update_invalid_auth_type(self):
+        """Test GatewayUpdate rejects invalid auth_type."""
+        from mcpgateway.schemas import GatewayUpdate
+
+        with pytest.raises(ValidationError) as exc_info:
+            GatewayUpdate(auth_type="invalid_type")
+        assert "Invalid 'auth_type'" in str(exc_info.value)
+
+    def test_a2a_agent_create_invalid_auth_type(self):
+        """Test A2AAgentCreate rejects invalid auth_type."""
+        from mcpgateway.schemas import A2AAgentCreate
+
+        with pytest.raises(ValidationError) as exc_info:
+            A2AAgentCreate(name="test", uaid="test@example.com", auth_type="invalid_type")
+        assert "Invalid 'auth_type'" in str(exc_info.value)
+
+    def test_a2a_agent_update_invalid_auth_type(self):
+        """Test A2AAgentUpdate rejects invalid auth_type."""
+        from mcpgateway.schemas import A2AAgentUpdate
+
+        with pytest.raises(ValidationError) as exc_info:
+            A2AAgentUpdate(auth_type="invalid_type")
+        assert "Invalid 'auth_type'" in str(exc_info.value)
+
+    def test_gateway_create_query_param_missing_key(self):
+        """Test GatewayCreate validation when query param key is missing."""
+        from mcpgateway.schemas import GatewayCreate
+
+        with patch("mcpgateway.schemas.settings") as mock_settings:
+            mock_settings.insecure_allow_queryparam_auth = True
+
+            with pytest.raises(ValidationError) as exc_info:
+                GatewayCreate(
+                    name="test-gateway",
+                    url="http://example.com",
+                    auth_type="query_param",
+                    auth_query_param_value="secret123",
+                    # Missing: auth_query_param_key
+                )
+
+            assert "auth_query_param_key is required" in str(exc_info.value)
+
+    def test_gateway_create_query_param_missing_value(self):
+        """Test GatewayCreate validation when query param value is missing."""
+        from mcpgateway.schemas import GatewayCreate
+
+        with patch("mcpgateway.schemas.settings") as mock_settings:
+            mock_settings.insecure_allow_queryparam_auth = True
+
+            with pytest.raises(ValidationError) as exc_info:
+                GatewayCreate(
+                    name="test-gateway",
+                    url="http://example.com",
+                    auth_type="query_param",
+                    auth_query_param_key="api_key",
+                    # Missing: auth_query_param_value
+                )
+
+            assert "auth_query_param_value is required" in str(exc_info.value)
+
+    def test_gateway_create_query_param_disabled(self):
+        """Test GatewayCreate validation when query param auth is disabled."""
+        from mcpgateway.schemas import GatewayCreate
+
+        with patch("mcpgateway.schemas.settings") as mock_settings:
+            mock_settings.insecure_allow_queryparam_auth = False
+
+            with pytest.raises(ValidationError) as exc_info:
+                GatewayCreate(
+                    name="test-gateway",
+                    url="http://example.com",
+                    auth_type="query_param",
+                    auth_query_param_key="api_key",
+                    auth_query_param_value="secret123",
+                )
+
+            assert "Query parameter authentication is disabled" in str(exc_info.value)
+            assert "INSECURE_ALLOW_QUERYPARAM_AUTH=true" in str(exc_info.value)
+
+    def test_gateway_create_query_param_host_not_allowed(self):
+        """Test GatewayCreate validation when host is not in allowlist."""
+        from mcpgateway.schemas import GatewayCreate
+
+        with patch("mcpgateway.schemas.settings") as mock_settings:
+            mock_settings.insecure_allow_queryparam_auth = True
+            mock_settings.insecure_queryparam_auth_allowed_hosts = ["allowed.com", "trusted.org"]
+
+            with pytest.raises(ValidationError) as exc_info:
+                GatewayCreate(
+                    name="test-gateway",
+                    url="http://forbidden.com/api",
+                    auth_type="query_param",
+                    auth_query_param_key="api_key",
+                    auth_query_param_value="secret123",
+                )
+
+            assert "not in the allowed hosts" in str(exc_info.value)
+            assert "forbidden.com" in str(exc_info.value)
+            assert "allowed.com" in str(exc_info.value)
+
+    def test_gateway_create_authheaders_empty_list(self):
+        """Test GatewayCreate validation when auth_headers list is empty."""
+        from mcpgateway.schemas import GatewayCreate
+
+        with pytest.raises(ValidationError) as exc_info:
+            GatewayCreate(
+                name="test-gateway",
+                url="http://example.com",
+                auth_type="authheaders",
+                auth_headers=[],
+            )
+
+        assert "either 'auth_headers' list or both" in str(exc_info.value).lower()
+
+    def test_gateway_create_authheaders_no_valid_keys(self):
+        """Test GatewayCreate validation when auth_headers has no valid keys."""
+        from mcpgateway.schemas import GatewayCreate
+
+        with pytest.raises(ValidationError) as exc_info:
+            GatewayCreate(
+                name="test-gateway",
+                url="http://example.com",
+                auth_type="authheaders",
+                auth_headers=[
+                    {"value": "only-value"},  # Missing key
+                    {"key": "", "value": "empty-key"},  # Empty key
+                ],
+            )
+
+        assert "at least one valid header with a key must be provided" in str(exc_info.value)
+
+    def test_gateway_create_authheaders_invalid_key_format(self):
+        """Test GatewayCreate validation when auth_headers has invalid key format."""
+        from mcpgateway.schemas import GatewayCreate
+
+        with pytest.raises(ValidationError) as exc_info:
+            GatewayCreate(
+                name="test-gateway",
+                url="http://example.com",
+                auth_type="authheaders",
+                auth_headers=[
+                    {"key": "Invalid@Key!", "value": "test"},
+                ],
+            )
+
+        assert "Invalid header key format" in str(exc_info.value)
+        assert "Invalid@Key!" in str(exc_info.value)
+
+    def test_gateway_create_authheaders_excessive_headers(self):
+        """Test GatewayCreate validation when auth_headers exceeds limit."""
+        from mcpgateway.schemas import GatewayCreate
+
+        # Create 101 headers (exceeds 100 limit)
+        headers = [{"key": f"Header-{i}", "value": f"value-{i}"} for i in range(101)]
+
+        with pytest.raises(ValidationError) as exc_info:
+            GatewayCreate(
+                name="test-gateway",
+                url="http://example.com",
+                auth_type="authheaders",
+                auth_headers=headers,
+            )
+
+        assert "Maximum of 100 headers allowed" in str(exc_info.value)
+
+    def test_gateway_create_authheaders_duplicate_keys_warning(self, caplog):
+        """Test GatewayCreate logs warning for duplicate header keys."""
+        from mcpgateway.schemas import GatewayCreate
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.schemas"):
+            gw = GatewayCreate(
+                name="test-gateway",
+                url="http://example.com",
+                auth_type="authheaders",
+                auth_headers=[
+                    {"key": "X-API-Key", "value": "first"},
+                    {"key": "X-API-Key", "value": "second"},  # Duplicate
+                    {"key": "Authorization", "value": "Bearer token"},
+                ],
+            )
+
+        assert gw.auth_type == "authheaders"
+        assert "Duplicate header keys detected" in caplog.text
+        assert "X-API-Key" in caplog.text
+
+    def test_gateway_create_authheaders_empty_value_allowed(self):
+        """Test GatewayCreate allows empty header values."""
+        from mcpgateway.schemas import GatewayCreate
+
+        gw = GatewayCreate(
+            name="test-gateway",
+            url="http://example.com",
+            auth_type="authheaders",
+            auth_headers=[
+                {"key": "X-Empty-Header", "value": ""},
+                {"key": "X-Valid-Header", "value": "test"},
+            ],
+        )
+
+        assert gw.auth_type == "authheaders"
+
+    def test_gateway_create_authheaders_non_dict_items_rejected(self):
+        """Test GatewayCreate rejects non-dict items in auth_headers."""
+        from mcpgateway.schemas import GatewayCreate
+
+        with pytest.raises(ValidationError):
+            GatewayCreate(
+                name="test-gateway",
+                url="http://example.com",
+                auth_type="authheaders",
+                auth_headers=[
+                    "invalid-string",
+                    {"key": "Valid-Header", "value": "test"},
+                    None,
+                ],
+            )
+
+    def test_gateway_create_authheaders_legacy_missing_key(self):
+        """Test GatewayCreate validation for legacy format missing key."""
+        from mcpgateway.schemas import GatewayCreate
+
+        with pytest.raises(ValidationError) as exc_info:
+            GatewayCreate(
+                name="test-gateway",
+                url="http://example.com",
+                auth_type="authheaders",
+                auth_header_value="test-value",
+                # Missing: auth_header_key
+            )
+
+        assert "either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided" in str(exc_info.value)
+
+    def test_gateway_create_authheaders_legacy_missing_value(self):
+        """Test GatewayCreate validation for legacy format missing value."""
+        from mcpgateway.schemas import GatewayCreate
+
+        with pytest.raises(ValidationError) as exc_info:
+            GatewayCreate(
+                name="test-gateway",
+                url="http://example.com",
+                auth_type="authheaders",
+                auth_header_key="X-API-Key",
+                # Missing: auth_header_value
+            )
+
+        assert "either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided" in str(exc_info.value)

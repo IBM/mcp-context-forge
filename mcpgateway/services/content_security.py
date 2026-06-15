@@ -529,7 +529,7 @@ class ContentSecurityService:
             )
             raise ContentSizeError("Resource content", actual_size, self.max_resource_size)
 
-        logger.debug(f"Resource size validation passed: {actual_size} bytes")
+        logger.debug("Resource size validation passed: %s bytes", actual_size)
 
     def validate_prompt_size(self, template: str, name: Optional[str] = None, user_email: Optional[str] = None, ip_address: Optional[str] = None) -> None:
         """Validate prompt template size.
@@ -564,7 +564,7 @@ class ContentSecurityService:
             logger.warning("Prompt size limit exceeded", extra={"actual_size": actual_size, "max_size": self.max_prompt_size, "content_type": "prompt", "name_provided": name is not None, **sanitized})
             raise ContentSizeError("Prompt template", actual_size, self.max_prompt_size)
 
-        logger.debug(f"Prompt size validation passed: {actual_size} bytes")
+        logger.debug("Prompt size validation passed: %s bytes", actual_size)
 
     def validate_resource_mime_type(
         self,
@@ -765,7 +765,7 @@ class ContentSecurityService:
                     # Lenient mode must `continue`, not `return`: keep scanning so
                     # co-occurring violations (e.g. XSS+SQLi in one payload) all land in the audit log.
                     if validation_mode == "lenient":
-                        logger.info(f"Lenient mode: allowing {content_type} with {violation_type} pattern")
+                        logger.info("Lenient mode: allowing %s with %s pattern", content_type, violation_type)
                         continue
 
                     # In strict or moderate mode, raise exception
@@ -924,7 +924,7 @@ class ContentSecurityService:
             # Generic message - don't leak template fragments (CWE-209 fix)
             raise TemplateValidationError(template_name, "Invalid Jinja2 syntax - template contains parsing errors")
 
-        logger.debug(f"Template validation passed for: {template_name}")
+        logger.debug("Template validation passed for: %s", template_name)
 
     @staticmethod
     def _check_balanced_braces(template: str) -> bool:

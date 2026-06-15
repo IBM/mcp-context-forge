@@ -85,7 +85,7 @@ class ElicitationService:
         self.cleanup_interval = cleanup_interval
         self._pending: Dict[str, PendingElicitation] = {}
         self._cleanup_task: Optional[asyncio.Task] = None
-        logger.info(f"ElicitationService initialized: timeout={default_timeout}s, " f"max_concurrent={max_concurrent}, cleanup_interval={cleanup_interval}s")
+        logger.info("ElicitationService initialized: timeout=%ss, max_concurrent=%s, cleanup_interval=%ss", default_timeout, max_concurrent, cleanup_interval)
 
     async def start(self):
         """Start background cleanup task."""
@@ -110,7 +110,7 @@ class ElicitationService:
                 cancelled_count += 1
 
         self._pending.clear()
-        logger.info(f"ElicitationService shutdown complete (cancelled {cancelled_count} pending requests)")
+        logger.info("ElicitationService shutdown complete (cancelled %s pending requests)", cancelled_count)
 
     async def create_elicitation(self, upstream_session_id: str, downstream_session_id: str, message: str, requested_schema: Dict[str, Any], timeout: Optional[float] = None) -> ElicitResult:
         """Create and track an elicitation request.
@@ -134,7 +134,7 @@ class ElicitationService:
         """
         # Check concurrent limit
         if len(self._pending) >= self.max_concurrent:
-            logger.warning(f"Max concurrent elicitations reached: {self.max_concurrent}")
+            logger.warning("Max concurrent elicitations reached: %s", self.max_concurrent)
             raise ValueError(f"Maximum concurrent elicitations ({self.max_concurrent}) reached")
 
         # Validate schema (primitive types only per MCP spec)
@@ -157,15 +157,15 @@ class ElicitationService:
         )
 
         self._pending[request_id] = elicitation
-        logger.info(f"Created elicitation request {request_id}: upstream={upstream_session_id}, downstream={downstream_session_id}, timeout={timeout_val}s")
+        logger.info("Created elicitation request %s: upstream=%s, downstream=%s, timeout=%ss", request_id, upstream_session_id, downstream_session_id, timeout_val)
 
         try:
             # Wait for response with timeout
             result = await asyncio.wait_for(future, timeout=timeout_val)
-            logger.info(f"Elicitation {request_id} completed: action={result.action}")
+            logger.info("Elicitation %s completed: action=%s", request_id, result.action)
             return result
         except asyncio.TimeoutError:
-            logger.warning(f"Elicitation {request_id} timed out after {timeout_val}s")
+            logger.warning("Elicitation %s timed out after %ss", request_id, timeout_val)
             raise
         finally:
             # Cleanup
@@ -183,15 +183,15 @@ class ElicitationService:
         """
         elicitation = self._pending.get(request_id)
         if not elicitation:
-            logger.warning(f"Attempted to complete unknown elicitation: {request_id}")
+            logger.warning("Attempted to complete unknown elicitation: %s", request_id)
             return False
 
         if elicitation.future.done():
-            logger.warning(f"Elicitation {request_id} already completed")
+            logger.warning("Elicitation %s already completed", request_id)
             return False
 
         elicitation.future.set_result(result)
-        logger.debug(f"Completed elicitation {request_id}: action={result.action}")
+        logger.debug("Completed elicitation %s: action=%s", request_id, result.action)
         return True
 
     def get_pending_elicitation(self, request_id: str) -> Optional[PendingElicitation]:
@@ -238,7 +238,7 @@ class ElicitationService:
                 logger.info("Elicitation cleanup loop cancelled")
                 raise
             except Exception as e:
-                logger.error(f"Error in elicitation cleanup loop: {e}", exc_info=True)
+                logger.error("Error in elicitation cleanup loop: %s", e, exc_info=True)
 
     async def _cleanup_expired(self):
         """Remove expired elicitation requests that have timed out."""
@@ -256,7 +256,7 @@ class ElicitationService:
             self._pending.pop(request_id, None)
 
         if expired:
-            logger.info(f"Cleaned up {len(expired)} expired elicitations")
+            logger.info("Cleaned up %s expired elicitations", len(expired))
 
     def _validate_schema(self, schema: Dict[str, Any]):
         """Validate that schema only contains primitive types per MCP spec.
@@ -306,9 +306,9 @@ class ElicitationService:
             if prop_type == "string" and "format" in prop_schema:
                 fmt = prop_schema["format"]
                 if fmt not in allowed_formats:
-                    logger.warning(f"Property '{prop_name}' has non-standard format '{fmt}'. " f"Allowed formats: {allowed_formats}")
+                    logger.warning("Property '%s' has non-standard format '%s'. Allowed formats: %s", prop_name, fmt, allowed_formats)
 
-        logger.debug(f"Schema validation passed: {len(properties)} properties")
+        logger.debug("Schema validation passed: %s properties", len(properties))
 
 
 # Global singleton instance

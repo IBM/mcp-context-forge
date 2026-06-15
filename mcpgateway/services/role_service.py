@@ -224,7 +224,7 @@ class RoleService:
         self.db.commit()
         self.db.refresh(role)
 
-        logger.info(f"Created role: {role.name} (scope: {role.scope}, id: {role.id})")
+        logger.info("Created role: %s (scope: %s, id: %s)", role.name, role.scope, role.id)
         return role
 
     async def get_role_by_id(self, role_id: str) -> Optional[Role]:
@@ -466,7 +466,7 @@ class RoleService:
         self.db.commit()
         self.db.refresh(role)
 
-        logger.info(f"Updated role: {role.name} (id: {role.id})")
+        logger.info("Updated role: %s (id: %s)", role.name, role.id)
         return role
 
     async def delete_role(self, role_id: str) -> bool:
@@ -523,7 +523,7 @@ class RoleService:
 
         self.db.commit()
 
-        logger.info(f"Deleted role: {role.name} (id: {role.id})")
+        logger.info("Deleted role: %s (id: %s)", role.name, role.id)
         return True
 
     async def assign_role_to_user(
@@ -628,7 +628,7 @@ class RoleService:
         self.db.commit()
         self.db.refresh(user_role)
 
-        logger.info(f"Assigned role {role.name} to {user_email} (scope: {scope}, scope_id: {scope_id})")
+        logger.info("Assigned role %s to %s (scope: %s, scope_id: %s)", role.name, user_email, scope, scope_id)
         return user_role
 
     async def revoke_role_from_user(self, user_email: str, role_id: str, scope: str, scope_id: Optional[str]) -> bool:
@@ -671,7 +671,7 @@ class RoleService:
         user_role.is_active = False
         self.db.commit()
 
-        logger.info(f"Revoked role {role_id} from {user_email} (scope: {scope}, scope_id: {scope_id})")
+        logger.info("Revoked role %s from %s (scope: %s, scope_id: %s)", role_id, user_email, scope, scope_id)
         return True
 
     async def get_user_role_assignment(self, user_email: str, role_id: str, scope: str, scope_id: Optional[str]) -> Optional[UserRole]:
@@ -891,5 +891,5 @@ class RoleService:
         stmt = delete(UserRole).where(UserRole.user_email == user_email)
         result = self.db.execute(stmt)
         deleted_count = result.rowcount
-        logger.info(f"Deleted {deleted_count} role assignment(s) for user {user_email}")
+        logger.info("Deleted %s role assignment(s) for user %s", deleted_count, user_email)
         return deleted_count

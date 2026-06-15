@@ -1,4 +1,10 @@
-"""Experimental Dataplane publisher service for periodically exporting user configuration to Redis.
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/services/dataplane_publisher.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Experimental Dataplane publisher service for periodically exporting user configuration to Redis.
 NOTE: This publisher backs dataplane wip feature and it is disabled by default.
 Be careful not to overfit production-grade assumptions onto the design.
 """
@@ -121,7 +127,7 @@ class DataplanePublisherService:
         while not self._shutdown_event.is_set():
             redis = await get_redis_client()
             if redis is None:
-                logger.error(f"Redis client is unavailable; retrying in {REDIS_PUBLISHER_TIME} seconds.")
+                logger.error("Redis client is unavailable; retrying in %s seconds.", REDIS_PUBLISHER_TIME)
                 await asyncio.sleep(REDIS_PUBLISHER_TIME)
                 continue
 
@@ -143,7 +149,7 @@ class DataplanePublisherService:
                     continue
 
                 # We hold the lock - publish data
-                logger.info(f"Worker {WORKER_ID} publishing dataplane payload...")
+                logger.info("Worker %s publishing dataplane payload...", WORKER_ID)
                 payload = await self.fetch_payload()
 
                 if payload is None:
@@ -159,11 +165,11 @@ class DataplanePublisherService:
                         )
                     try:
                         await pipe.execute()
-                        logger.info(f"Published {len(payload)} user configs")
+                        logger.info("Published %d user configs", len(payload))
                     except Exception as e:
-                        logger.error(f"Could not write dataplane payload to Redis: {e}")
+                        logger.error("Could not write dataplane payload to Redis: %s", e)
             except Exception as e:
-                logger.error(f"Error during publish: {e}")
+                logger.error("Error during publish: %s", e)
             finally:
                 if acquired:
                     # Release lock if we still own it (CAS to prevent stealing)
@@ -177,7 +183,7 @@ class DataplanePublisherService:
                     try:
                         await redis.eval(release_script, 1, PUBLISHER_LOCK_KEY, WORKER_ID)
                     except Exception as e:
-                        logger.warning(f"Failed to release lock: {e}")
+                        logger.warning("Failed to release lock: %s", e)
 
             # Wait for next cycle
             try:
@@ -304,7 +310,7 @@ class DataplanePublisherService:
                 }
 
             except Exception as err:
-                logger.error(f"Could not build dataplane payload data from the database: {err}")
+                logger.error("Could not build dataplane payload data from the database: %s", err)
                 return None
 
     def _build_user_data(

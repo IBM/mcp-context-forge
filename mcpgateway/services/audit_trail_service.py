@@ -240,14 +240,18 @@ class AuditTrailService:
             db.refresh(audit_entry)
 
             logger.debug(
-                f"Audit trail logged: {action} {resource_type}/{resource_id} by {user_id}",
+                "Audit trail logged: %s %s/%s by %s",
+                action,
+                resource_type,
+                resource_id,
+                user_id,
                 extra={"correlation_id": correlation_id, "action": action, "resource_type": resource_type, "resource_id": resource_id, "user_id": user_id, "success": success},
             )
 
             return audit_entry
 
         except Exception as e:
-            logger.error(f"Failed to log audit trail: {e}", exc_info=True, extra={"correlation_id": correlation_id, "action": action, "resource_type": resource_type, "resource_id": resource_id})
+            logger.error("Failed to log audit trail: %s", e, exc_info=True, extra={"correlation_id": correlation_id, "action": action, "resource_type": resource_type, "resource_id": resource_id})
             if close_db:
                 db.rollback()
             return None

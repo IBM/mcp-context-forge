@@ -215,7 +215,7 @@ def iframe_host_with_teams(page: Page, base_url: str):
         style="width:100%;height:100vh;border:none"
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals">
 </iframe>
-</body></html>""")
+</body></html>""", wait_until="domcontentloaded")
 
     frame_locator = page.frame_locator("#admin-frame")
     try:

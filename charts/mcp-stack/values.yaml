@@ -838,7 +838,7 @@ mcpContextForge:
     JWT_ALGORITHM: HS256                   # signing algorithm for JWT tokens
     JWT_AUDIENCE: mcpgateway-api           # JWT audience claim for token validation
     JWT_ISSUER: mcpgateway                 # JWT issuer claim for token validation
-    TOKEN_EXPIRY: "10080"                  # JWT validity (minutes); 10080 = 7 days
+    TOKEN_EXPIRY: "1440"                   # JWT validity (minutes); max allowed: 1440 = 24 hours
     REQUIRE_TOKEN_EXPIRATION: "true"       # require all JWT tokens to have expiration claims
     REQUIRE_JTI: "true"                    # require JTI (JWT ID) claim for revocation support
     REQUIRE_USER_IN_DB: "false"            # require all users to exist in database (disables platform admin bootstrap)
