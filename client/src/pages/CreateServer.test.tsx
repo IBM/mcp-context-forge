@@ -520,7 +520,7 @@ describe("CreateServer", () => {
     const user = userEvent.setup();
     const apiError = new ApiError(
       { url: "", ok: false, status: 400, statusText: "Bad Request" },
-      { message: "Api message error" }
+      { message: "Api message error" },
     );
     mockCreateVirtualServer.mockRejectedValueOnce(apiError);
     renderWithProviders(<CreateServer />);
@@ -537,7 +537,7 @@ describe("CreateServer", () => {
     const user = userEvent.setup();
     const apiError = new ApiError(
       { url: "", ok: false, status: 400, statusText: "Bad Request" },
-      { detail: "Api detail string error" }
+      { detail: "Api detail string error" },
     );
     mockCreateVirtualServer.mockRejectedValueOnce(apiError);
     renderWithProviders(<CreateServer />);
@@ -554,7 +554,7 @@ describe("CreateServer", () => {
     const user = userEvent.setup();
     const apiError = new ApiError(
       { url: "", ok: false, status: 400, statusText: "Bad Request" },
-      { detail: [{ msg: "Msg 1" }, "String msg 2"] }
+      { detail: [{ msg: "Msg 1" }, "String msg 2"] },
     );
     mockCreateVirtualServer.mockRejectedValueOnce(apiError);
     renderWithProviders(<CreateServer />);
@@ -577,7 +577,9 @@ describe("CreateServer", () => {
     await screen.findByRole("heading", { name: "Connect a source" });
     await user.click(screen.getByRole("button", { name: "Skip for now" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Unable to create server. Please try again.");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Unable to create server. Please try again.",
+    );
   });
 
   it("should set step back to details if handleSkipForNow is called and serverDetails is null", async () => {

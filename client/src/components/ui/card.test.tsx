@@ -38,9 +38,7 @@ describe("Card Components", () => {
   });
 
   it("renders CardDescription", () => {
-    render(
-      <CardDescription data-testid="desc">Description</CardDescription>,
-    );
+    render(<CardDescription data-testid="desc">Description</CardDescription>);
     expect(screen.getByTestId("desc")).toHaveTextContent("Description");
   });
 
