@@ -54,11 +54,13 @@ export function ToolDetailsPanel({
   gatewaySlug,
   open,
   onClose,
+  onDeleteTool,
 }: {
   tools: Tool[];
   gatewaySlug: string;
   open: boolean;
   onClose: () => void;
+  onDeleteTool?: (toolId: string) => void;
 }) {
   const [selectedTool, setSelectedTool] = useState<Tool | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -165,6 +167,7 @@ export function ToolDetailsPanel({
                 tools={tools}
                 selectedToolId={selectedTool?.id}
                 onSelectTool={setSelectedTool}
+                onDeleteTool={onDeleteTool}
               />
             </div>
 
