@@ -135,6 +135,7 @@ Typical use case: the user authenticates to ContextForge once (JWT/SSO), and eve
 | `token_url` | yes | — | The Authorization Server's token endpoint. Validated at config time (SSRF guard — see below). |
 | `target_audience` | yes | — | The `audience` parameter sent to the AS, identifying the downstream resource the exchanged token is for. |
 | `subject_token_source` | no | `inbound_user_jwt` | Where the `subject_token` for the exchange comes from. See below. |
+| `subject_token_type` | no | `urn:ietf:params:oauth:token-type:jwt` | The `subject_token_type` parameter sent to the AS, describing the type of `subject_token` (RFC 8693 §3). |
 | `requested_token_type` | no | `urn:ietf:params:oauth:token-type:access_token` | The `requested_token_type` parameter sent to the AS. |
 | `client_id` / `client_secret` | yes | — | Client credentials used to authenticate the exchange request itself. `client_secret` is stored encrypted. |
 | `scopes` | no | — | Optional scopes requested for the exchanged token. |
@@ -143,6 +144,19 @@ Typical use case: the user authenticates to ContextForge once (JWT/SSO), and eve
 
 - **`inbound_user_jwt`** (default): The ContextForge JWT presented by the calling user on the current request is used as the `subject_token` in the exchange. This requires the inbound request to carry a verifiable JWT (not an opaque API key).
 - **`user_oauth_token`**: The user's previously stored per-gateway OAuth access token (obtained via the Authorization Code flow described above) is used as the `subject_token` instead. This is supported on the tool-invocation path; gateway connection/health-check paths fail closed for `token-exchange` because they have no per-request user context.
+
+### `subject_token_type`
+
+Per RFC 8693 §3, `subject_token_type` tells the Authorization Server how to interpret `subject_token`:
+
+- `urn:ietf:params:oauth:token-type:jwt` (default): the `subject_token` is a generic JWT — ContextForge's own inbound JWT, not a token previously issued by this AS. This is correct for the default `subject_token_source: inbound_user_jwt`.
+- `urn:ietf:params:oauth:token-type:access_token`: signals that the `subject_token` is an access token the AS itself previously issued and can recognize as one of its own. Set this only if the configured `subject_token_source` actually returns an AS-issued access token (e.g. `user_oauth_token` against the same AS).
+
+Some Authorization Servers (e.g. Keycloak) enforce this distinction and reject the exchange if `subject_token_type` doesn't match the actual token shape.
+
+### Response `token_type` Validation
+
+RFC 8693 §2.2.1 requires the AS to return a `token_type` field. `OAuthManager.token_exchange()` validates this field (case-insensitively) and only accepts `Bearer` — if the AS returns anything else (e.g. `N_A` for a non-access-token `issued_token_type`), the exchange fails with an `OAuthError` rather than silently forwarding a token under the wrong scheme. If `token_type` is absent from the response, it defaults to `Bearer` for compatibility with ASes that omit this REQUIRED field.
 
 ### Security Boundary: The Inbound JWT Is Never Forwarded
 
@@ -195,6 +209,7 @@ The following `oauth_config` exchanges the caller's inbound ContextForge JWT (`i
 | "Token exchange failed… Contact your administrator." | The Authorization Server returned a 4xx/5xx for the exchange request | Server WARNING log (with stack trace) and audit entry with `error` status, searchable by `correlation_id` |
 | "Token exchange unavailable…" | Negative cache is open after a recent failure (degraded mode) | Wait for the cooldown to expire; investigate the original failure that triggered the negative cache entry |
 | `ValueError: target_audience is required` / `token_url` rejected at config time | Invalid or incomplete `oauth_config` for a `token-exchange` gateway | Review the gateway create/update response; check for an SSRF-validation WARNING in logs |
+| `OAuthError: Unsupported token_type '...'` | The Authorization Server returned a `token_type` other than `Bearer` (e.g. `N_A`) for the exchanged token | Check `requested_token_type`/`subject_token_type` against what the AS expects; the exchanged token cannot be forwarded as a `Bearer` credential |
 
 ## Token Verification
 
