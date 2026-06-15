@@ -25,7 +25,7 @@ Examples:
 """
 
 # Standard
-from typing import Any, Dict
+from typing import Any, Dict, List, Union
 
 # Third-Party
 from pydantic import ValidationError
@@ -68,8 +68,8 @@ class ErrorFormatter:
             Dict[str, Any]: ``{"detail": str}`` by default, or
                 ``{"message": str, "details": [...], "success": bool}`` when verbose mode is enabled.
         """
-        # Log full detail server-side always; only expose to callers in verbose mode
-        logger.warning("Validation error: %s", error)
+        # Log only loc/type — never msg, ctx, input, or input_value (Pydantic v2 includes input_value in str())
+        logger.warning("Validation error: %s", sanitize_validation_error_for_log(error))
 
         if not should_expose_error_details():
             return {"detail": "An error occurred, please try again."}
@@ -288,6 +288,27 @@ class ErrorFormatter:
 
         # Generic database error
         return {"message": "Unable to complete the operation. Please try again.", "success": False}
+
+
+def sanitize_validation_error_for_log(error: Union[ValidationError, Any]) -> str:
+    """Return a safe log summary of a Pydantic ValidationError.
+
+    Includes only error count, loc, and type — never msg, ctx, input, or input_value,
+    which can contain user-submitted data in Pydantic v2 (input_value=...).
+
+    Args:
+        error: A Pydantic ValidationError (or any object with an .errors() method).
+
+    Returns:
+        str: A safe log string, e.g. "2 error(s): [loc=('name',) type=value_error] [loc=('url',) type=url_error]"
+    """
+    try:
+        raw_errors: List[Dict[str, Any]] = error.errors()
+    except Exception:
+        return "validation error (could not extract detail)"
+
+    parts = [f"[loc={err.get('loc', ())} type={err.get('type', 'unknown')}]" for err in raw_errors]
+    return f"{len(raw_errors)} error(s): {' '.join(parts)}"
 
 
 def should_expose_error_details() -> bool:

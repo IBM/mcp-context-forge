@@ -20,7 +20,7 @@ import pytest
 from sqlalchemy.exc import DatabaseError, IntegrityError
 
 # First-Party
-from mcpgateway.utils.error_formatter import ErrorFormatter
+from mcpgateway.utils.error_formatter import ErrorFormatter, sanitize_validation_error_for_log
 
 
 class NameModel(BaseModel):
@@ -381,3 +381,32 @@ def test_format_database_error_token_uniqueness_production(monkeypatch):
     assert "already exists" in result["message"]
     assert "unique per user per team" not in result["message"]
     assert result["success"] is False
+
+
+def test_sanitize_validation_error_for_log_omits_input_values():
+    """sanitize_validation_error_for_log must not include msg, input, or input_value in output."""
+    with pytest.raises(ValidationError) as exc:
+        NameModel(name="sensitive-value-should-not-appear")
+    result = sanitize_validation_error_for_log(exc.value)
+    assert "sensitive-value-should-not-appear" not in result
+    assert "error(s)" in result
+    assert "loc=" in result
+    assert "type=" in result
+
+
+def test_sanitize_validation_error_for_log_format():
+    """sanitize_validation_error_for_log returns count and loc/type for each error."""
+    with pytest.raises(ValidationError) as exc:
+        NameModel(name="Bobby")
+    result = sanitize_validation_error_for_log(exc.value)
+    assert result.startswith("1 error(s):")
+    assert "loc=" in result
+    assert "type=" in result
+
+
+def test_sanitize_validation_error_for_log_bad_errors_method():
+    """sanitize_validation_error_for_log returns safe fallback when .errors() raises."""
+    bad = Mock()
+    bad.errors = Mock(side_effect=RuntimeError("boom"))
+    result = sanitize_validation_error_for_log(bad)
+    assert "could not extract detail" in result

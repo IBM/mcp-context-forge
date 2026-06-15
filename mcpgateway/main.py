@@ -197,7 +197,7 @@ from mcpgateway.transports.streamablehttp_transport import (
 from mcpgateway.utils import uaid as uaid_utils
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
-from mcpgateway.utils.error_formatter import ErrorFormatter, should_expose_error_details
+from mcpgateway.utils.error_formatter import ErrorFormatter, sanitize_validation_error_for_log, should_expose_error_details
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -2165,7 +2165,7 @@ async def request_validation_exception_handler(_request: Request, exc: RequestVa
     Returns:
         JSONResponse: A 422 Unprocessable Entity response with error details.
     """
-    logger.warning("Request validation error on %s: %s", _request.url.path if _request else "unknown", exc)
+    logger.warning("Request validation error on %s: %s", _request.url.path if _request else "unknown", sanitize_validation_error_for_log(exc))
 
     if not should_expose_error_details():
         return ORJSONResponse(status_code=422, content={"detail": "An error occurred, please try again."})
