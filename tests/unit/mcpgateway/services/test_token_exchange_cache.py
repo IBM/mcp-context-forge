@@ -133,6 +133,23 @@ class TestTokenExchangeCache:
             assert held_key in c._locks  # held lock survives eviction
             assert len(c._locks) <= 3  # bounded (held + up to max_entries)
 
+    async def test_lock_eviction_skips_the_current_key(self):
+        # G7: when every other lock is held, the eviction loop iterates all the way to the
+        # just-created current key and skips it via `continue` instead of deleting it.
+        c = TokenExchangeCache(redis_url=None, max_entries=2)
+        l0 = c.lock("gw1", "user0@e", "aud")
+        l1 = c.lock("gw1", "user1@e", "aud")
+        await l0.acquire()
+        await l1.acquire()
+        try:
+            c.lock("gw1", "current@e", "aud")  # over budget -> eviction loop reaches current key
+            current_key = TokenExchangeCache._key("gw1", "current@e", "aud")
+            assert current_key in c._locks  # current key retained via the `continue` branch
+            assert len(c._locks) == 3  # nothing evictable: held locks + current all survive
+        finally:
+            l0.release()
+            l1.release()
+
     async def test_redis_get_empty_value_is_miss(self):
         # G10: an empty/falsy Redis value (no ":" separator) is a clean miss.
         # Standard

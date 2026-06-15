@@ -698,6 +698,150 @@ class TestUnauthorizedRetryOnce:
         assert count["n"] == 2  # initial + one retry, never more
 
 
+class TestGatewayServiceSanitizeMirror:
+    """GatewayService._sanitize_passthrough_for_token_exchange mirrors ToolService (B3)."""
+
+    def test_sanitize_drops_authorization_for_token_exchange(self):
+        # First-Party
+        from mcpgateway.services.gateway_service import GatewayService
+
+        result = GatewayService._sanitize_passthrough_for_token_exchange(["authorization", "x-trace-id"], grant_type="token-exchange")
+        assert "authorization" not in [h.lower() for h in result]
+        assert "x-trace-id" in result
+
+    def test_sanitize_noop_for_other_grants(self):
+        # First-Party
+        from mcpgateway.services.gateway_service import GatewayService
+
+        allowed = ["authorization", "x-trace-id"]
+        assert GatewayService._sanitize_passthrough_for_token_exchange(allowed, grant_type="client_credentials") == allowed
+
+    def test_sanitize_noop_for_empty_passthrough(self):
+        # First-Party
+        from mcpgateway.services.gateway_service import GatewayService
+
+        assert GatewayService._sanitize_passthrough_for_token_exchange([], grant_type="token-exchange") == []
+
+
+@pytest.mark.asyncio
+class TestGatewayServiceTokenExchangeMirrors:
+    """GatewayService carries B2/B3 helpers mirroring ToolService for API parity.
+
+    They are not yet wired into a per-request forward path, so they have no
+    end-to-end coverage; these unit tests exercise the helpers directly.
+    """
+
+    async def test_invalidate_on_401(self):
+        # Standard
+        from unittest.mock import AsyncMock, MagicMock
+
+        # First-Party
+        from mcpgateway.services.gateway_service import GatewayService
+
+        svc = GatewayService()
+        svc._token_exchange_cache = MagicMock()
+        svc._token_exchange_cache.invalidate = AsyncMock()
+
+        await svc._invalidate_token_exchange_on_unauthorized(401, {"grant_type": "token-exchange", "target_audience": "aud"}, "gw1", "u@e")
+        svc._token_exchange_cache.invalidate.assert_awaited_once_with("gw1", "u@e", "aud")
+
+    async def test_invalidate_noop_on_non_401(self):
+        # Standard
+        from unittest.mock import AsyncMock, MagicMock
+
+        # First-Party
+        from mcpgateway.services.gateway_service import GatewayService
+
+        svc = GatewayService()
+        svc._token_exchange_cache = MagicMock()
+        svc._token_exchange_cache.invalidate = AsyncMock()
+
+        await svc._invalidate_token_exchange_on_unauthorized(200, {"grant_type": "token-exchange", "target_audience": "aud"}, "gw1", "u@e")
+        svc._token_exchange_cache.invalidate.assert_not_awaited()
+
+    async def test_invalidate_noop_for_non_token_exchange(self):
+        # Standard
+        from unittest.mock import AsyncMock, MagicMock
+
+        # First-Party
+        from mcpgateway.services.gateway_service import GatewayService
+
+        svc = GatewayService()
+        svc._token_exchange_cache = MagicMock()
+        svc._token_exchange_cache.invalidate = AsyncMock()
+
+        await svc._invalidate_token_exchange_on_unauthorized(401, {"grant_type": "client_credentials"}, "gw1", "u@e")
+        svc._token_exchange_cache.invalidate.assert_not_awaited()
+
+    async def test_send_retry_reexchanges_once_then_succeeds(self):
+        # Standard
+        from unittest.mock import AsyncMock, MagicMock
+
+        # First-Party
+        from mcpgateway.services.gateway_service import GatewayService
+
+        svc = GatewayService()
+        svc._token_exchange_cache = MagicMock()
+        svc._token_exchange_cache.invalidate = AsyncMock()
+        svc._resolve_token_exchange_header = AsyncMock(return_value={"Authorization": "Bearer fresh-tok"})
+
+        sends = []
+
+        async def _send(headers):
+            sends.append(headers)
+            resp = MagicMock()
+            resp.status_code = 401 if len(sends) == 1 else 200
+            return resp
+
+        cfg = {"grant_type": "token-exchange", "target_audience": "aud"}
+        resp = await svc._send_with_token_exchange_retry(_send, {"Authorization": "Bearer stale"}, cfg, "gw1", "gw", "u@e", {"authorization": f"Bearer {_FAKE_JWT}"})
+        assert resp.status_code == 200
+        assert len(sends) == 2  # exactly one retry
+        assert sends[1] == {"Authorization": "Bearer fresh-tok"}
+        svc._token_exchange_cache.invalidate.assert_awaited_once()
+
+    async def test_send_retry_returns_first_response_when_not_401(self):
+        # Standard
+        from unittest.mock import AsyncMock, MagicMock
+
+        # First-Party
+        from mcpgateway.services.gateway_service import GatewayService
+
+        svc = GatewayService()
+        svc._resolve_token_exchange_header = AsyncMock()
+
+        async def _send(headers):
+            resp = MagicMock()
+            resp.status_code = 200
+            return resp
+
+        cfg = {"grant_type": "token-exchange", "target_audience": "aud"}
+        resp = await svc._send_with_token_exchange_retry(_send, {"Authorization": "Bearer x"}, cfg, "gw1", "gw", "u@e", {})
+        assert resp.status_code == 200
+        svc._resolve_token_exchange_header.assert_not_awaited()  # no retry, no re-exchange
+
+    async def test_send_retry_skips_reexchange_for_non_token_exchange(self):
+        # A 401 from a non-token-exchange gateway must not trigger re-exchange.
+        # Standard
+        from unittest.mock import AsyncMock, MagicMock
+
+        # First-Party
+        from mcpgateway.services.gateway_service import GatewayService
+
+        svc = GatewayService()
+        svc._resolve_token_exchange_header = AsyncMock()
+
+        async def _send(headers):
+            resp = MagicMock()
+            resp.status_code = 401
+            return resp
+
+        cfg = {"grant_type": "client_credentials"}
+        resp = await svc._send_with_token_exchange_retry(_send, {"Authorization": "Bearer x"}, cfg, "gw1", "gw", "u@e", {})
+        assert resp.status_code == 401
+        svc._resolve_token_exchange_header.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 class TestRestIntegrationB2Wiring:
     """B2 end-to-end via the REST-integration call site in invoke_tool.
