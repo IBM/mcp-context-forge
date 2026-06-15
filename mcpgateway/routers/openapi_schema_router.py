@@ -40,20 +40,20 @@ async def generate_schema_from_openapi(
 ) -> JSONResponse:
     """
     Generate input_schema and output_schema from OpenAPI specification.
-    
+
     This endpoint is part of the versioned REST API and does not require
     admin UI access. It delegates to the same service logic as the admin
     endpoint but without CSRF protection.
-    
+
     Expects JSON body with:
       - url: The tool URL (e.g., http://localhost:8100/calculate)
       - request_type: HTTP method (GET, POST, etc.) - defaults to GET
       - openapi_url: (optional) Direct OpenAPI spec URL
-    
+
     Args:
         request: FastAPI Request object containing JSON body
         _user: Authenticated user from RBAC dependency
-    
+
     Returns:
         JSONResponse with generated schemas or error message.
     """
@@ -65,34 +65,34 @@ async def generate_schema_from_openapi(
             content={"message": "Invalid JSON in request body", "success": False},
             status_code=400,
         )
-    
+
     if not isinstance(body, dict):
         return ORJSONResponse(
             content={"message": "Request body must be a JSON object", "success": False},
             status_code=400,
         )
-    
+
     # Extract and validate fields
     tool_url = body.get("url", "")
     request_type = body.get("request_type", "GET")
     openapi_url = body.get("openapi_url", "")
-    
+
     if not isinstance(tool_url, str) or not isinstance(request_type, str) or not isinstance(openapi_url, str):
         return ORJSONResponse(
             content={"message": "'url', 'request_type', and 'openapi_url' must be strings", "success": False},
             status_code=400,
         )
-    
+
     tool_url = tool_url.strip()
     request_type = request_type.strip()
     openapi_url = openapi_url.strip()
-    
+
     if not tool_url:
         return ORJSONResponse(
             content={"message": "'url' is required to identify the API path and base URL", "success": False},
             status_code=400,
         )
-    
+
     # Security validation
     try:
         SecurityValidator.validate_url(tool_url, "Tool URL")
@@ -101,12 +101,12 @@ async def generate_schema_from_openapi(
             content={"message": str(e), "success": False},
             status_code=400,
         )
-    
+
     # Parse URL to extract base and path
     parsed = urllib.parse.urlparse(tool_url)
     base_url = f"{parsed.scheme}://{parsed.netloc}"
     tool_path = parsed.path
-    
+
     # Fetch and extract schemas
     try:
         input_schema, output_schema, spec_url = await fetch_and_extract_schemas(
@@ -144,7 +144,7 @@ async def generate_schema_from_openapi(
             content={"message": "An unexpected error occurred while processing the OpenAPI spec", "success": False},
             status_code=500,
         )
-    
+
     return ORJSONResponse(
         content={
             "message": "Schemas generated successfully from OpenAPI spec",
