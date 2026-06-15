@@ -224,6 +224,47 @@ class TestToolServiceHelpersExtended:
         result = extract_using_jq({"a": 1}, ".a")
         assert result == [TextContent(type="text", text="Error applying jsonpath filter: boom")]
 
+    def test_extract_using_jq_jsonpath_simple(self):
+        """JSONPath expression ($.data) should extract nested value."""
+        data = {"data": {"temperature": 25}, "meta": {"source": "api"}}
+        result = extract_using_jq(data, "$.data")
+        assert result == {"temperature": 25}
+
+    def test_extract_using_jq_jsonpath_deep(self):
+        """Deep JSONPath ($.store.book[0].title) should extract nested value."""
+        data = {"store": {"book": [{"title": "The Name of the Wind"}, {"title": "A Game of Thrones"}]}}
+        result = extract_using_jq(data, "$.store.book[0].title")
+        assert result == "The Name of the Wind"
+
+    def test_extract_using_jq_jsonpath_string_input(self):
+        """JSONPath expression should work with string JSON input."""
+        result = extract_using_jq('{"data": {"temperature": 25}, "meta": {"source": "api"}}', "$.data")
+        assert result == {"temperature": 25}
+
+    def test_extract_using_jq_jsonpath_no_match(self):
+        """JSONPath expression with no match should return TextContent error."""
+        result = extract_using_jq({"a": 1}, "$.b")
+        assert result == [TextContent(type="text", text="Error applying jsonpath filter")]
+
+    def test_extract_using_jq_jsonpath_invalid_expression(self):
+        """Invalid JSONPath expression should return TextContent error."""
+        result = extract_using_jq({"a": 1}, "$.[invalid")
+        assert len(result) == 1
+        assert result[0].type == "text"
+        assert result[0].text.startswith("Error applying jsonpath filter")
+
+    def test_extract_using_jq_jsonpath_multiple_matches(self):
+        """JSONPath expression with multiple matches should return list of values."""
+        data = {"items": [{"id": 1}, {"id": 2}, {"id": 3}]}
+        result = extract_using_jq(data, "$.items[*].id")
+        assert result == [1, 2, 3]
+
+    def test_extract_using_jq_jsonpath_root(self):
+        """JSONPath expression ($) should return the full data."""
+        data = {"a": 1}
+        result = extract_using_jq(data, "$")
+        assert result == {"a": 1}
+
     def test_tool_service_plugin_env_override(self, monkeypatch):
         """PLUGINS_ENABLED env flag controls whether the plugin factory is available."""
         # First-Party
