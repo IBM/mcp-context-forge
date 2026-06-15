@@ -1,5 +1,8 @@
-import { useIntl } from "react-intl";
-import { Box, EllipsisVertical, MessageSquareCode, Plus, Upload, Wrench } from "lucide-react";
+import {
+  formatServerTimestamp,
+  getTagDisplay,
+  getVirtualServerComponentCounts,
+} from "@/components/gateways/utils";
 import { MCPIcon } from "@/components/icons/MCPIcon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,25 +11,29 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { VirtualServer } from "@/types/server";
-import {
-  formatServerTimestamp,
-  getTagDisplay,
-  getVirtualServerComponentCounts,
-} from "@/components/gateways/utils";
 import { cn } from "@/lib/utils";
+import type { VirtualServer } from "@/types/server";
+import { Box, EllipsisVertical, MessageSquareCode, Plus, Upload, Wrench } from "lucide-react";
+import { useIntl } from "react-intl";
 
 export function VirtualServerCard({
   server,
   onViewDetails,
   onAddComponents,
+  onEdit,
+  onDelete,
+  onToggleStatus,
   className,
 }: {
   server: VirtualServer;
   onViewDetails: (server: VirtualServer) => void;
   onAddComponents?: (server: VirtualServer) => void;
+  onEdit?: (server: VirtualServer) => void;
+  onDelete?: (server: VirtualServer) => void;
+  onToggleStatus?: (server: VirtualServer) => void;
   className?: string;
 }) {
   const intl = useIntl();
@@ -39,10 +46,12 @@ export function VirtualServerCard({
       size="sm"
       className={cn(
         isEmptyComposition ? "min-h-29 justify-center" : "min-h-35 justify-between",
+        "cursor-pointer transition-colors hover:bg-accent/50",
         className,
       )}
       data-testid="virtual-server-card"
       data-server-name={server.name}
+      onClick={() => onViewDetails(server)}
     >
       <CardHeader className="gap-3">
         <div className="flex items-center gap-3">
@@ -72,23 +81,58 @@ export function VirtualServerCard({
             )}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon-xs" aria-label={`Actions for ${server.name}`}>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={`Actions for ${server.name}`}
+                  onClick={(e) => e.stopPropagation()}
+                >
                   <EllipsisVertical className="size-4" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => onViewDetails(server)}>
+                <DropdownMenuItem
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onViewDetails(server);
+                  }}
+                >
                   {intl.formatMessage({ id: "gateways.card.viewDetails" })}
                 </DropdownMenuItem>
-                <DropdownMenuItem disabled>
-                  {intl.formatMessage({ id: "gateways.card.testConnection" })}
-                </DropdownMenuItem>
-                <DropdownMenuItem disabled>
-                  {intl.formatMessage({ id: "gateways.card.editServer" })}
-                </DropdownMenuItem>
-                <DropdownMenuItem disabled className="text-destructive">
-                  {intl.formatMessage({ id: "common.button.delete" })}
-                </DropdownMenuItem>
+                {onEdit && (
+                  <DropdownMenuItem
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onEdit(server);
+                    }}
+                  >
+                    {intl.formatMessage({ id: "gateways.card.editServer" })}
+                  </DropdownMenuItem>
+                )}
+                {onToggleStatus && (
+                  <DropdownMenuItem
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleStatus(server);
+                    }}
+                  >
+                    {server.enabled ? "Deactivate" : "Activate"}
+                  </DropdownMenuItem>
+                )}
+                {onDelete && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete(server);
+                      }}
+                      className="text-destructive focus:text-destructive"
+                    >
+                      {intl.formatMessage({ id: "common.button.delete" })}
+                    </DropdownMenuItem>
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
