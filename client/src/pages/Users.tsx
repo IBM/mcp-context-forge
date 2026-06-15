@@ -9,7 +9,8 @@ import { DeleteUserDialog } from "@/components/users/DeleteUserDialog";
 import { useUsersList } from "@/hooks/useUsersList";
 import { usersApi } from "@/api/users";
 import { ApiError } from "@/api/client";
-import type { User, CreateUserRequest } from "@/types/user";
+import { createOptimisticUser } from "@/hooks/useUserForm";
+import type { User, CreateUserRequest, UpdateUserRequest } from "@/types/user";
 
 const DEFAULT_PAGE_SIZE = 10;
 
@@ -26,6 +27,7 @@ export function Users() {
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [userToEdit, setUserToEdit] = useState<User | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -68,6 +70,16 @@ export function Users() {
 
   const handleLimitChange = useCallback((newLimit: number) => {
     setLimit(newLimit);
+  }, []);
+
+  const handleEditClick = useCallback((user: User) => {
+    setUserToEdit(user);
+    setIsFormOpen(true);
+  }, []);
+
+  const handleFormClose = useCallback(() => {
+    setIsFormOpen(false);
+    setUserToEdit(null);
   }, []);
 
   const handleDeleteClick = useCallback((user: User) => {
@@ -130,33 +142,28 @@ export function Users() {
     <main className="p-6">
       {isFormOpen ? (
         <UserForm
+          key={userToEdit?.email ?? "create"}
           isOpen={isFormOpen}
-          onToggle={() => setIsFormOpen(false)}
-          onOptimisticCreate={(userData: CreateUserRequest) => {
-            // Create optimistic user object
-            const optimisticUser: User = {
-              email: userData.email,
-              full_name: userData.full_name,
-              is_admin: userData.is_admin ?? false,
-              is_active: userData.is_active ?? true,
-              auth_provider: "email",
-              created_at: new Date().toISOString(),
-              email_verified: false,
-              password_change_required: userData.password_change_required ?? false,
-              failed_login_attempts: 0,
-              is_locked: false,
-            };
-
-            // Add to the beginning of the list
-            setAllUsers((prev) => [optimisticUser, ...prev]);
+          onToggle={handleFormClose}
+          user={userToEdit ?? undefined}
+          onOptimisticCreate={(userData: CreateUserRequest | UpdateUserRequest) => {
+            if ("email" in userData) {
+              const optimisticUser = createOptimisticUser(userData);
+              setAllUsers((prev) => [optimisticUser, ...prev]);
+            }
           }}
-          onSuccess={() => {
-            setIsFormOpen(false);
+          onSuccess={(result?: User) => {
+            if (result) {
+              setAllUsers((prev) => prev.map((u) => (u.email === result.email ? result : u)));
+              toast.success(
+                intl.formatMessage({ id: "users.edit.success" }, { email: result.email }),
+              );
+            }
+            handleFormClose();
           }}
-          onError={(optimisticUser) => {
-            // Rollback: remove the optimistic user by email
-            if (optimisticUser) {
-              setAllUsers((prev) => prev.filter((u) => u.email !== optimisticUser.email));
+          onError={(userData: CreateUserRequest | UpdateUserRequest) => {
+            if ("email" in userData) {
+              setAllUsers((prev) => prev.filter((u) => u.email !== userData.email));
             }
           }}
         />
@@ -203,7 +210,11 @@ export function Users() {
 
               {allUsers.length > 0 ? (
                 <>
-                  <UsersTable users={allUsers} onDeleteClick={handleDeleteClick} />
+                  <UsersTable
+                    users={allUsers}
+                    onDeleteClick={handleDeleteClick}
+                    onEditClick={handleEditClick}
+                  />
 
                   <div className="mt-6 flex items-center justify-between">
                     <div className="flex items-center gap-4">

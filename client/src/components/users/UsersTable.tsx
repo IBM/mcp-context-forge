@@ -37,9 +37,10 @@ function getDisplayName(user: User, intl: IntlShape): string {
 interface UsersTableProps {
   users: User[];
   onDeleteClick: (user: User) => void;
+  onEditClick: (user: User) => void;
 }
 
-export function UsersTable({ users, onDeleteClick }: UsersTableProps) {
+export function UsersTable({ users, onDeleteClick, onEditClick }: UsersTableProps) {
   const intl = useIntl();
 
   return (
@@ -169,10 +170,7 @@ export function UsersTable({ users, onDeleteClick }: UsersTableProps) {
                   <UserActionsMenu
                     user={user}
                     displayName={displayName}
-                    onEdit={(u) => {
-                      // TODO: Implement edit functionality
-                      console.log("Edit user:", u);
-                    }}
+                    onEdit={(u) => onEditClick(u)}
                     onDelete={(email) => {
                       const userToDelete = users.find((u) => u.email === email);
                       if (userToDelete) {
