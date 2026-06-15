@@ -17,10 +17,13 @@ class BuildPyWithUI(build_py):
 
     def run(self):
         """Run UI build before standard build_py."""
-        # Only run npm build during actual distribution builds (wheel/sdist).
-        # During editable installs and uv sync, skip to avoid modifying package-lock.json.
-        dist_commands = self.distribution.command_obj or {}
-        if not any(cmd in dist_commands for cmd in ("bdist_wheel", "sdist")):
+        import os
+
+        # Only run npm build when explicitly requested via BUILD_UI_ASSETS=1.
+        # uv sync, pip install, and pre-commit hooks all trigger build_py via PEP 517,
+        # so we cannot use the command chain to distinguish PyPI dist builds from
+        # dependency installs. The env var is the only reliable discriminator.
+        if not os.getenv("BUILD_UI_ASSETS"):
             super().run()
             return
 

@@ -68,7 +68,9 @@ You can bump the version manually or automate it via Git tags or CI/CD.
 The project uses a custom build hook (`build_hooks/__init__.py`) that automatically generates UI assets during packaging:
 
 ```bash
-python -m build
+make dist
+# or manually:
+BUILD_UI_ASSETS=1 python -m build
 ```
 
 This automatically:
@@ -80,6 +82,8 @@ This automatically:
 5. Builds wheel and sdist with assets included
 
 **Prerequisites**: Node.js and npm must be installed.
+
+**Note**: The `BUILD_UI_ASSETS=1` env var is required to trigger the npm build. Without it, the hook is skipped (preventing unintended `package-lock.json` mutations during `uv sync` or `pip install`).
 
 **Output**: `dist/mcp_contextforge_gateway-{version}-py3-none-any.whl` and `.tar.gz`
 

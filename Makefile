@@ -5083,7 +5083,7 @@ deps-update:
 
 dist: clean uv               ## Build wheel + sdist into ./dist (optionally includes Rust)
 	@echo "📦 Building Python package..."
-	@$(UV_BIN) build
+	@BUILD_UI_ASSETS=1 $(UV_BIN) build
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust..."; \
 		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust"; exit 0; }; \
@@ -5099,7 +5099,7 @@ dist: clean uv               ## Build wheel + sdist into ./dist (optionally incl
 
 wheel: uv                    ## Build wheel only (Python + optionally Rust)
 	@echo "📦 Building Python wheel..."
-	@$(UV_BIN) build --wheel
+	@BUILD_UI_ASSETS=1 $(UV_BIN) build --wheel
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust wheels..."; \
 		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust"; exit 0; }; \
