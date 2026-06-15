@@ -1,6 +1,9 @@
 import { Plus, Globe, Lock, Shield, Activity, CircleDashed, MoreHorizontal } from "lucide-react";
 import { PromptIcon } from "@/components/icons/PromptIcon";
 import { Button } from "@/components/ui/button";
+import { useRouter } from "@/router";
+import { useState, useEffect } from "react";
+import { promptsApi, type Prompt as ApiPrompt } from "@/api/prompts";
 import {
   Table,
   TableBody,
@@ -13,78 +16,16 @@ import {
 
 type Visibility = "private" | "team" | "public";
 
-interface PromptArgument {
-  name: string;
-  required: boolean;
-}
-
 interface Prompt {
   id: string;
   name: string;
   displayName: string | null;
   description: string | null;
-  arguments: PromptArgument[];
+  arguments: Array<{ name: string; required?: boolean }>;
   gatewaySlug: string | null;
   visibility: Visibility;
   enabled: boolean;
 }
-
-const MOCK_PROMPTS: Prompt[] = [
-  {
-    id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    name: "code_review",
-    displayName: "Code Review",
-    description: "Review code for bugs, security issues, and style violations.",
-    arguments: [
-      { name: "language", required: true },
-      { name: "code", required: true },
-      { name: "focus", required: false },
-    ],
-    gatewaySlug: "github-mcp",
-    visibility: "public",
-    enabled: true,
-  },
-  {
-    id: "b2c3d4e5-f6a7-8901-bcde-f12345678901",
-    name: "summarise_document",
-    displayName: "Summarise Document",
-    description: "Produce a concise summary of the provided document text.",
-    arguments: [
-      { name: "text", required: true },
-      { name: "max_words", required: false },
-    ],
-    gatewaySlug: "docs-mcp",
-    visibility: "team",
-    enabled: true,
-  },
-  {
-    id: "c3d4e5f6-a7b8-9012-cdef-123456789012",
-    name: "sql_query_builder",
-    displayName: "SQL Query Builder",
-    description: "Generate a SQL query from a plain-language description.",
-    arguments: [
-      { name: "description", required: true },
-      { name: "dialect", required: false },
-      { name: "schema", required: false },
-    ],
-    gatewaySlug: null,
-    visibility: "private",
-    enabled: false,
-  },
-  {
-    id: "d4e5f6a7-b8c9-0123-defa-234567890123",
-    name: "test_case_generator",
-    displayName: "Test Case Generator",
-    description: "Generate unit test cases for a given function signature.",
-    arguments: [
-      { name: "function_signature", required: true },
-      { name: "framework", required: false },
-    ],
-    gatewaySlug: "dev-tools-mcp",
-    visibility: "public",
-    enabled: true,
-  },
-];
 
 function getVisibilityConfig(visibility: Visibility) {
   switch (visibility) {
@@ -207,7 +148,65 @@ function PromptsTable({ prompts }: { prompts: Prompt[] }) {
 }
 
 export function Prompts() {
-  const prompts = MOCK_PROMPTS;
+  const [prompts, setPrompts] = useState<Prompt[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const { navigate } = useRouter();
+
+  useEffect(() => {
+    const fetchPrompts = async () => {
+      try {
+        setLoading(true);
+        const data = await promptsApi.list();
+        
+        // Transform API response to match component interface
+        const transformedPrompts: Prompt[] = data.map((prompt: ApiPrompt) => ({
+          id: prompt.id,
+          name: prompt.name,
+          displayName: prompt.display_name,
+          description: prompt.description,
+          arguments: prompt.arguments,
+          gatewaySlug: prompt.gateway_slug,
+          visibility: prompt.visibility,
+          enabled: prompt.enabled,
+        }));
+        
+        setPrompts(transformedPrompts);
+        setError(null);
+      } catch (err) {
+        console.error("Failed to fetch prompts:", err);
+        setError("Failed to load prompts. Please try again.");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchPrompts();
+  }, []);
+
+  const handleAddPrompt = () => {
+    navigate("/app/prompts/create");
+  };
+
+  if (loading) {
+    return (
+      <div className="p-6">
+        <div className="flex justify-center items-center h-64">
+          <p className="text-sm text-gray-600 dark:text-gray-400">Loading prompts...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-6">
+        <div className="flex justify-center items-center h-64">
+          <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6">
@@ -215,7 +214,7 @@ export function Prompts() {
         <>
           <div className="flex justify-between items-center mb-6">
             <h1 className="text-base font-semibold text-foreground">Prompts</h1>
-            <Button variant="default" className="h-7 rounded-sm px-4">
+            <Button variant="default" className="h-7 rounded-sm px-4" onClick={handleAddPrompt}>
               <Plus className="h-4 w-4" />
               Add Prompt
             </Button>
@@ -243,7 +242,10 @@ export function Prompts() {
             </p>
           </div>
 
-          <Button className="bg-foreground text-background hover:bg-foreground/90 h-8 w-38 rounded-sm px-2 gap-1.5 text-sm font-medium">
+          <Button
+            className="bg-foreground text-background hover:bg-foreground/90 h-8 w-38 rounded-sm px-2 gap-1.5 text-sm font-medium"
+            onClick={handleAddPrompt}
+          >
             <Plus className="size-3" />
             Add Prompt
           </Button>

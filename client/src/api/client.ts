@@ -97,10 +97,12 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   } = options;
 
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
     "X-Requested-With": "XMLHttpRequest",
     ...extraHeaders,
   };
+  if (!(body instanceof FormData)) {
+    headers["Content-Type"] = "application/json";
+  }
 
   if (method !== "GET" && authenticated) {
     const csrfToken = getCookie("mcpgateway_csrf_token");
@@ -113,7 +115,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   const requestOptions: RequestInit = {
     method,
     headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body: body instanceof FormData ? body : (body !== undefined ? JSON.stringify(body) : undefined),
     credentials: "same-origin", // pragma: allowlist secret
   };
 
