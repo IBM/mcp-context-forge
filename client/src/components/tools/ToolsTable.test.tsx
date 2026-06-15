@@ -186,6 +186,24 @@ describe("ToolsTable", () => {
     expect(schemaButton).toBeInTheDocument();
   });
 
+  it("opens schema dialog when schema button is clicked", async () => {
+    const user = userEvent.setup();
+    const tools = [
+      createMockTool(1, {
+        inputSchema: { type: "object", properties: { query: { type: "string" } } },
+        outputSchema: { type: "object", properties: { result: { type: "string" } } },
+      }),
+    ];
+    render(<ToolsTable tools={tools} onSelectTool={mockOnSelectTool} />);
+
+    const schemaButton = screen.getByLabelText("View schema");
+    await user.click(schemaButton);
+
+    // Dialog should be visible
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText("Tool schema")).toBeInTheDocument();
+  });
+
   it("does not trigger row selection when schema button is clicked", async () => {
     const user = userEvent.setup();
     const tools = [createMockTool(1)];
@@ -195,6 +213,25 @@ describe("ToolsTable", () => {
     await user.click(schemaButton);
 
     expect(mockOnSelectTool).not.toHaveBeenCalled();
+  });
+
+  it("closes schema dialog when Close button is clicked", async () => {
+    const user = userEvent.setup();
+    const tools = [createMockTool(1)];
+    render(<ToolsTable tools={tools} onSelectTool={mockOnSelectTool} />);
+
+    // Open dialog
+    const schemaButton = screen.getByLabelText("View schema");
+    await user.click(schemaButton);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    // Close dialog — two buttons share the name "Close" (footer button + dialog's sr-only × button);
+    // the footer button is first in DOM order since Radix appends × after children
+    const [closeButton] = screen.getAllByRole("button", { name: /close/i });
+    await user.click(closeButton);
+
+    // Dialog should be closed
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("renders more options button", () => {
