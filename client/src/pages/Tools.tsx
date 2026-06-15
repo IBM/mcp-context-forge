@@ -1,6 +1,10 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useCallback } from "react";
 import { Plus, MoreHorizontal, Wrench } from "lucide-react";
+import { toast } from "sonner";
 import { useQuery } from "@/hooks/useQuery";
+import { toolsApi } from "@/api/tools";
+import { ApiError } from "@/api/client";
+import { extractApiErrorDetail } from "@/utils/errors";
 import type { Tool, ToolGroup } from "@/types/tool";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,6 +16,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ToolDetailsPanel } from "@/components/tools/ToolDetailsPanel";
 import { ToolForm } from "@/components/tools/ToolForm";
+import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
 
 function buildGroups(tools: Tool[]): ToolGroup[] {
   const map = new Map<string, ToolGroup>();
@@ -143,6 +148,9 @@ export function Tools() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<ToolGroup | null>(null);
   const [isDetailsPanelOpen, setIsDetailsPanelOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
+  const [selectedToolName, setSelectedToolName] = useState<string | null>(null);
 
   const { data: toolsData, error, isLoading, refetch } = useQuery<Tool[]>("/tools?limit=0");
 
@@ -161,6 +169,43 @@ export function Tools() {
   const handleCloseDetails = () => {
     setIsDetailsPanelOpen(false);
   };
+
+  const handleDelete = useCallback(
+    (id: string) => {
+      const tool = toolsData?.find((t) => t.id === id);
+      setSelectedToolId(id);
+      setSelectedToolName(tool?.displayName || tool?.name || id);
+      setDeleteDialogOpen(true);
+    },
+    [toolsData],
+  );
+
+  const confirmDelete = useCallback(async () => {
+    if (!selectedToolId || !selectedToolName) return;
+
+    setDeleteDialogOpen(false);
+
+    try {
+      await toolsApi.delete(selectedToolId);
+      toast.success(`Tool "${selectedToolName}" deleted successfully`);
+      setSelectedToolId(null);
+      setSelectedToolName(null);
+      setIsDetailsPanelOpen(false);
+      setSelectedGroup(null);
+      await refetch();
+    } catch (err) {
+      let errorMessage = "Failed to delete tool";
+
+      if (err instanceof ApiError) {
+        const detail = extractApiErrorDetail(err.body);
+        errorMessage = detail || `Failed to delete tool: ${err.message || "Unknown error"}`;
+      } else if (err instanceof Error) {
+        errorMessage = `Failed to delete tool: ${err.message}`;
+      }
+
+      toast.error(errorMessage);
+    }
+  }, [selectedToolId, selectedToolName, refetch]);
 
   return (
     <div className="p-6">
@@ -216,8 +261,19 @@ export function Tools() {
               gatewaySlug={selectedGroup.gatewaySlug}
               open={isDetailsPanelOpen}
               onClose={handleCloseDetails}
+              onDeleteTool={handleDelete}
             />
           )}
+
+          <ConfirmDialog
+            open={deleteDialogOpen}
+            onOpenChange={setDeleteDialogOpen}
+            onConfirm={confirmDelete}
+            title="Delete Tool"
+            description={`Are you sure you want to delete "${selectedToolName}"? This action cannot be undone.`}
+            confirmLabel="Delete"
+            variant="destructive"
+          />
         </>
       )}
     </div>
