@@ -267,6 +267,7 @@ class OAuthManager:
                 audience=credentials.get("target_audience"),
                 scope=" ".join(scopes) if scopes else None,
                 requested_token_type=credentials.get("requested_token_type", "urn:ietf:params:oauth:token-type:access_token"),
+                subject_token_type=credentials.get("subject_token_type", "urn:ietf:params:oauth:token-type:jwt"),
             )
             return response["access_token"]
         if grant_type == "authorization_code":
@@ -761,6 +762,7 @@ class OAuthManager:
         audience: Optional[str] = None,
         scope: Optional[str] = None,
         requested_token_type: str = "urn:ietf:params:oauth:token-type:access_token",
+        subject_token_type: str = "urn:ietf:params:oauth:token-type:jwt",
     ) -> Dict[str, Any]:
         """RFC 8693 token exchange for on-behalf-of flows.
 
@@ -776,13 +778,22 @@ class OAuthManager:
             audience: Intended audience for the exchanged token.
             scope: Requested scope for the exchanged token.
             requested_token_type: The type of token being requested.
+            subject_token_type: RFC 8693 §3 identifier for the type of token in
+                ``subject_token``. Defaults to ``urn:ietf:params:oauth:token-type:jwt``
+                (a generic JWT), which is correct for CF's own inbound JWT — as
+                opposed to ``...:access_token``, which per §3 implies a token the
+                AS itself previously issued and can recognize as its own.
 
         Returns:
             Dict with ``access_token``, ``token_type``, and optionally
             ``expires_in`` and ``scope``.
 
         Raises:
-            OAuthError: If token exchange fails after all retries.
+            OAuthError: If token exchange fails after all retries, or the
+                response ``token_type`` is not ``Bearer`` (RFC 8693 §2.2.1
+                allows ``N_A`` for non-access-token ``issued_token_type``
+                values, but CF only forwards exchanged tokens as
+                ``Authorization: Bearer <token>``).
         """
         # Decrypt client secret if encrypted
         if client_secret:
@@ -799,7 +810,7 @@ class OAuthManager:
         token_data: Dict[str, str] = {
             "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
             "subject_token": subject_token,
-            "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",  # nosec B105 - RFC 8693 token type URI, not a credential
+            "subject_token_type": subject_token_type,  # nosec B105 - RFC 8693 token type URI, not a credential
             "requested_token_type": requested_token_type,
             "client_id": client_id,
             "client_secret": client_secret,
@@ -818,6 +829,15 @@ class OAuthManager:
                 token_response = response.json()
                 if "access_token" not in token_response:
                     raise OAuthError(f"No access_token in token exchange response: {token_response}")
+
+                # RFC 8693 §2.2.1: token_type is REQUIRED and MUST be "Bearer" for an
+                # access_token, or "N_A" when issued_token_type is not an access token
+                # (e.g. requested_token_type=jwt for a non-OAuth downstream). CF only
+                # ever forwards the exchanged token as "Authorization: Bearer <token>",
+                # so fail closed rather than mislabel a non-bearer token.
+                token_type = token_response.get("token_type", "Bearer")
+                if not isinstance(token_type, str) or token_type.lower() != "bearer":
+                    raise OAuthError(f"Unsupported token_type '{token_type}' in token exchange response; only 'Bearer' is supported")
 
                 logger.info("Successfully performed RFC 8693 token exchange")
                 return token_response

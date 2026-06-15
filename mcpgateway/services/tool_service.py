@@ -3873,6 +3873,7 @@ class ToolService(BaseService):
                     audience=audience,
                     scope=" ".join(scopes) if scopes else None,
                     requested_token_type=oauth_config.get("requested_token_type", "urn:ietf:params:oauth:token-type:access_token"),
+                    subject_token_type=oauth_config.get("subject_token_type", "urn:ietf:params:oauth:token-type:jwt"),
                 )
             except Exception as e:
                 latency_ms = int((time.monotonic() - started) * 1000)

@@ -27,6 +27,9 @@ class TestTokenExchangeConfigValidation:
         out = GatewayService._validate_token_exchange_config(cfg)
         assert out["subject_token_source"] == "inbound_user_jwt"
         assert out["requested_token_type"] == "urn:ietf:params:oauth:token-type:access_token"
+        # RFC 8693 §3: default subject_token_type is "jwt" (CF's own inbound JWT),
+        # not "access_token" (which implies an AS-issued token).
+        assert out["subject_token_type"] == "urn:ietf:params:oauth:token-type:jwt"
 
     def test_non_exchange_grant_is_untouched(self):
         cfg = {"grant_type": "client_credentials", "client_id": "cf"}
