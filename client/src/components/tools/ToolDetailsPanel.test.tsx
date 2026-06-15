@@ -561,6 +561,64 @@ describe("ToolDetailsPanel", () => {
     expect(screen.queryByLabelText("Copy URL")).not.toBeInTheDocument();
   });
 
+  describe("onDeleteTool propagation", () => {
+    it("passes onDeleteTool down to the table so the Delete item appears", async () => {
+      const user = userEvent.setup();
+      const mockOnDeleteTool = vi.fn();
+      const tools = [createMockTool(1)];
+      render(
+        <ToolDetailsPanel
+          tools={tools}
+          gatewaySlug="test-gateway"
+          open={true}
+          onClose={mockOnClose}
+          onDeleteTool={mockOnDeleteTool}
+        />,
+      );
+
+      await user.click(screen.getByLabelText("More options"));
+      expect(await screen.findByText("Delete")).toBeInTheDocument();
+    });
+
+    it("calls onDeleteTool with the correct tool id when Delete is clicked", async () => {
+      const user = userEvent.setup();
+      const mockOnDeleteTool = vi.fn();
+      const tools = [createMockTool(1, { id: "tool-panel-xyz" })];
+      render(
+        <ToolDetailsPanel
+          tools={tools}
+          gatewaySlug="test-gateway"
+          open={true}
+          onClose={mockOnClose}
+          onDeleteTool={mockOnDeleteTool}
+        />,
+      );
+
+      await user.click(screen.getByLabelText("More options"));
+      await user.click(await screen.findByText("Delete"));
+
+      expect(mockOnDeleteTool).toHaveBeenCalledOnce();
+      expect(mockOnDeleteTool).toHaveBeenCalledWith("tool-panel-xyz");
+    });
+
+    it("does not show Delete item when onDeleteTool is not provided", async () => {
+      const user = userEvent.setup();
+      const tools = [createMockTool(1)];
+      render(
+        <ToolDetailsPanel
+          tools={tools}
+          gatewaySlug="test-gateway"
+          open={true}
+          onClose={mockOnClose}
+        />,
+      );
+
+      await user.click(screen.getByLabelText("More options"));
+
+      expect(screen.queryByText("Delete")).not.toBeInTheDocument();
+    });
+  });
+
   it("generates unique heading ID based on gateway slug", () => {
     const tools = [createMockTool(1)];
     const { container } = render(
