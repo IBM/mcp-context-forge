@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { http, HttpResponse } from "msw";
+import { server } from "@/test/mocks/server";
 import { renderWithProviders } from "@/test/test-utils";
 import { createVirtualServer } from "@/api/virtualServers";
 import { CreateServer } from "./CreateServer";
@@ -88,11 +90,37 @@ describe("CreateServer", () => {
 
   it("supports source selection actions after continuing from details", async () => {
     const user = userEvent.setup();
+    let gatewaysRequestCount = 0;
+    server.use(
+      http.get("*/gateways", () => {
+        gatewaysRequestCount += 1;
+        return HttpResponse.json({
+          gateways: [
+            {
+              id: "github-notify",
+              name: "github-notify",
+              url: "http://localhost:9000",
+              transport: "SSE",
+              enabled: true,
+              reachable: true,
+              visibility: "public",
+              tool_count: 5,
+              resource_count: 2,
+              prompt_count: 1,
+              created_at: "2024-01-01T00:00:00Z",
+              updated_at: "2024-01-01T00:00:00Z",
+            },
+          ],
+        });
+      }),
+    );
+
     renderWithProviders(<CreateServer />);
 
     await user.type(screen.getByLabelText(/Name/), "Research server");
     await user.click(screen.getByRole("button", { name: /Continue/ }));
     await screen.findByRole("heading", { name: "Connect a source" });
+    expect(gatewaysRequestCount).toBe(0);
 
     await user.click(screen.getByRole("button", { name: "Back" }));
     expect(screen.getByRole("heading", { name: "Create server" })).toBeInTheDocument();
@@ -106,7 +134,12 @@ describe("CreateServer", () => {
         name: "Add tools, resources, and prompts from connected sources",
       }),
     );
-    expect(mockNavigate).toHaveBeenCalledWith("/app/tools");
+    expect(await screen.findByText("github-notify")).toBeInTheDocument();
+    expect(screen.getByText("5")).toBeInTheDocument();
+    expect(screen.getByText("2")).toBeInTheDocument();
+    expect(screen.getByText("1")).toBeInTheDocument();
+    expect(gatewaysRequestCount).toBe(1);
+    expect(mockNavigate).not.toHaveBeenCalledWith("/app/tools");
 
     await user.click(screen.getByRole("button", { name: "Skip for now" }));
     await waitFor(() => {
@@ -114,6 +147,7 @@ describe("CreateServer", () => {
         name: "Research server",
         visibility: "team",
         oauthEnabled: false,
+        associatedMCPServerIds: [],
       });
     });
     expect(mockNavigate).toHaveBeenCalledWith("/app/gateways");
@@ -144,6 +178,7 @@ describe("CreateServer", () => {
         oauthEnabled: true,
         tags: ["research", "tools"],
         description: "A composed endpoint for research tools.",
+        associatedMCPServerIds: [],
       });
     });
     expect(mockNavigate).toHaveBeenCalledWith("/app/gateways");

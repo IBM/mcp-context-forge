@@ -39,6 +39,7 @@ export function CreateServer() {
   const { navigate } = useRouter();
   const [step, setStep] = useState<CreateServerStep>("details");
   const [serverDetails, setServerDetails] = useState<CreateServerDetails | null>(null);
+  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -89,7 +90,11 @@ export function CreateServer() {
     setIsCreating(true);
     setCreateError(null);
     try {
-      await createVirtualServer(serverDetails);
+      const detailsWithSources = {
+        ...serverDetails,
+        associatedMCPServerIds: selectedSourceIds,
+      };
+      await createVirtualServer(detailsWithSources);
       navigate("/app/gateways");
     } catch (error) {
       setCreateError(
@@ -108,9 +113,10 @@ export function CreateServer() {
       <main className="bg-background px-6 py-10">
         <SourceSelection
           actionCards={actionCards}
+          associatedMCPServerIds={serverDetails?.associatedMCPServerIds}
+          onSelectSources={setSelectedSourceIds}
           createServerActions={{
             onBack: () => setStep("details"),
-            onAddComponents: () => navigate("/app/tools"),
             onSkip: handleSkipForNow,
             isSkipping: isCreating,
             skipError: createError,
