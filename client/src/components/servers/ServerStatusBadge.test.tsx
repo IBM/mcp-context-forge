@@ -34,13 +34,21 @@ describe("ServerStatusBadge", () => {
 
   it("renders Warning when last_seen is older than threshold", () => {
     const oldDate = new Date(Date.now() - 6 * 60 * 1000).toISOString();
-    render(<ServerStatusBadge server={{ ...baseServer, enabled: true, reachable: true, last_seen: oldDate }} />);
+    render(
+      <ServerStatusBadge
+        server={{ ...baseServer, enabled: true, reachable: true, lastSeen: oldDate }}
+      />,
+    );
     expect(screen.getByText("Warning")).toBeInTheDocument();
   });
 
   it("renders Active when reachable and recently seen", () => {
     const recentDate = new Date(Date.now() - 1 * 60 * 1000).toISOString();
-    render(<ServerStatusBadge server={{ ...baseServer, enabled: true, reachable: true, last_seen: recentDate }} />);
+    render(
+      <ServerStatusBadge
+        server={{ ...baseServer, enabled: true, reachable: true, lastSeen: recentDate }}
+      />,
+    );
     expect(screen.getByText("Active")).toBeInTheDocument();
   });
 
@@ -49,3 +57,4 @@ describe("ServerStatusBadge", () => {
     expect(screen.getByText("Active")).toBeInTheDocument();
   });
 });
+

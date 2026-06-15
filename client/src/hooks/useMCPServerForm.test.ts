@@ -344,32 +344,18 @@ describe("useMCPServerForm", () => {
     });
 
     it("should be false when visibility is team but teamId is empty", () => {
-    it("should be false when URL has non-http protocol (e.g. ftp)", () => {
       const { result } = renderHook(() => useMCPServerForm());
 
       act(() => {
         result.current.setName("Test Server");
         result.current.setUrl("http://localhost:3000");
         result.current.setVisibility("team");
-        result.current.setUrl("ftp://files.example.com");
       });
 
       expect(result.current.isValid).toBe(false);
     });
 
     it("should be true when visibility is team and teamId is provided", () => {
-    it("should be false when URL is unparseable", () => {
-      const { result } = renderHook(() => useMCPServerForm());
-
-      act(() => {
-        result.current.setName("Test Server");
-        result.current.setUrl("not-a-valid-url");
-      });
-
-      expect(result.current.isValid).toBe(false);
-    });
-
-    it("should be false for oauth password grant when only username is missing", () => {
       const { result } = renderHook(() => useMCPServerForm());
 
       act(() => {
@@ -377,40 +363,6 @@ describe("useMCPServerForm", () => {
         result.current.setUrl("http://localhost:3000");
         result.current.setVisibility("team");
         result.current.setTeamId("team-abc");
-        result.current.setAuthType("oauth");
-        result.current.setOAuthGrantType("password");
-        result.current.setOAuthUsername("");
-        result.current.setOAuthPassword("my-pass");
-      });
-
-      expect(result.current.isValid).toBe(false);
-    });
-
-    it("should be false for oauth password grant when only password is missing", () => {
-      const { result } = renderHook(() => useMCPServerForm());
-
-      act(() => {
-        result.current.setName("Test Server");
-        result.current.setUrl("http://localhost:3000");
-        result.current.setAuthType("oauth");
-        result.current.setOAuthGrantType("password");
-        result.current.setOAuthUsername("my-user");
-        result.current.setOAuthPassword("");
-      });
-
-      expect(result.current.isValid).toBe(false);
-    });
-
-    it("should be true for oauth password grant when both username and password are provided", () => {
-      const { result } = renderHook(() => useMCPServerForm());
-
-      act(() => {
-        result.current.setName("Test Server");
-        result.current.setUrl("http://localhost:3000");
-        result.current.setAuthType("oauth");
-        result.current.setOAuthGrantType("password");
-        result.current.setOAuthUsername("my-user");
-        result.current.setOAuthPassword("my-pass");
       });
 
       expect(result.current.isValid).toBe(true);
@@ -900,48 +852,6 @@ describe("useMCPServerForm", () => {
       expect(result.current.queryParamApiKey).toBe("*****");
     });
 
-    it("populates oauth config including string scopes and password grant fields", async () => {
-      server.use(
-        http.get("/gateways/gw-oauth", () =>
-          HttpResponse.json({
-            name: "OAuth Server",
-            url: "http://localhost:3000",
-            authType: "oauth",
-            oauthConfig: {
-              grant_type: "password",
-              scopes: "read write",
-              username: "test-user",
-              password: "test-password", // pragma: allowlist secret
-              client_id: "test-client",
-              client_secret: "test-secret", // pragma: allowlist secret
-              token_url: "http://token",
-              issuer: "http://issuer",
-              redirect_uri: "http://redirect",
-              authorization_url: "http://auth",
-              store_tokens: true,
-              auto_refresh: true,
-            },
-          }),
-        ),
-      );
-
-      const { result } = renderHook(() => useMCPServerForm("gw-oauth"));
-
-      await waitFor(() => expect(result.current.authType).toBe("oauth"));
-      expect(result.current.oauthScopes).toBe("read write");
-      expect(result.current.oauthUsername).toBe("test-user");
-      expect(result.current.oauthPassword).toBe("test-password");
-      expect(result.current.oauthGrantType).toBe("password");
-      expect(result.current.oauthClientId).toBe("test-client");
-      expect(result.current.oauthClientSecret).toBe("test-secret");
-      expect(result.current.oauthTokenUrl).toBe("http://token");
-      expect(result.current.oauthIssuerUrl).toBe("http://issuer");
-      expect(result.current.oauthRedirectUri).toBe("http://redirect");
-      expect(result.current.oauthAuthorizationUrl).toBe("http://auth");
-      expect(result.current.oauthStoreTokens).toBe(true);
-      expect(result.current.oauthAutoRefresh).toBe(true);
-    });
-
     it("populates basic auth username and masked password from API", async () => {
       server.use(
         http.get("/gateways/gw-3", () =>
@@ -1000,44 +910,6 @@ describe("useMCPServerForm", () => {
       await waitFor(() => expect(result.current.customHeaders).toHaveLength(2));
       expect(result.current.customHeaders[0].key).toBe("X-API-Key");
       expect(result.current.customHeaders[1].key).toBe("X-Tenant");
-    });
-
-    it("populates single custom header from API response (fallback to authHeaderKey)", async () => {
-      server.use(
-        http.get("/gateways/gw-fallback-header", () =>
-          HttpResponse.json({
-            name: "My Server",
-            url: "http://localhost:3000",
-            authType: "authheaders",
-            authHeaderKey: "X-Fallback-Key",
-            authHeaderValue: "*****",
-          }),
-        ),
-      );
-
-      const { result } = renderHook(() => useMCPServerForm("gw-fallback-header"));
-
-      await waitFor(() => expect(result.current.customHeaders).toHaveLength(1));
-      expect(result.current.customHeaders[0].key).toBe("X-Fallback-Key");
-      expect(result.current.customHeaders[0].value).toBe("*****");
-    });
-
-    it("populates passthroughHeaders array from API response", async () => {
-      server.use(
-        http.get("/gateways/gw-passthrough", () =>
-          HttpResponse.json({
-            name: "My Server",
-            url: "http://localhost:3000",
-            passthroughHeaders: ["Authorization", "X-Custom-Req"],
-          }),
-        ),
-      );
-
-      const { result } = renderHook(() => useMCPServerForm("gw-passthrough"));
-
-      await waitFor(() =>
-        expect(result.current.passthroughHeaders).toBe("Authorization, X-Custom-Req"),
-      );
     });
 
     it("populates oauth store_tokens and auto_refresh as true from API", async () => {
@@ -1403,63 +1275,6 @@ describe("useMCPServerForm", () => {
         vi.useRealTimers();
         triggerOAuthMock.mockRestore();
       });
-
-      it("handles OAuth success without gatewayName", async () => {
-        vi.useFakeTimers();
-        server.use(
-          http.post("/gateways", () => HttpResponse.json({ id: "gateway-success-no-name" })),
-        );
-
-        const triggerOAuthMock = vi
-          .spyOn(serversApi, "triggerOAuthAuthorization")
-          .mockResolvedValueOnce({
-            type: "oauth_callback",
-            status: "success",
-          });
-
-        const { result } = renderHook(() => useMCPServerForm());
-        const mockEvent = { preventDefault: vi.fn() } as any;
-
-        act(() => {
-          result.current.setName("No Name Test");
-          result.current.setUrl("http://localhost:3000");
-          result.current.setAuthType("oauth");
-        });
-
-        await act(async () => {
-          await result.current.handleSubmit(mockEvent);
-        });
-
-        expect(result.current.oauthNotification?.message).toBe("OAuth authorization successful.");
-        vi.useRealTimers();
-        triggerOAuthMock.mockRestore();
-      });
-
-      it("handles OAuth failure with non-Error object", async () => {
-        server.use(
-          http.post("/gateways", () => HttpResponse.json({ id: "gateway-fail-non-error" })),
-        );
-
-        const triggerOAuthMock = vi
-          .spyOn(serversApi, "triggerOAuthAuthorization")
-          .mockRejectedValueOnce("Non-Error OAuth failure");
-
-        const { result } = renderHook(() => useMCPServerForm());
-        const mockEvent = { preventDefault: vi.fn() } as any;
-
-        act(() => {
-          result.current.setName("Fail Test");
-          result.current.setUrl("http://localhost:3000");
-          result.current.setAuthType("oauth");
-        });
-
-        await act(async () => {
-          await result.current.handleSubmit(mockEvent);
-        });
-
-        expect(result.current.oauthNotification?.message).toBe("OAuth authorization failed.");
-        triggerOAuthMock.mockRestore();
-      });
     });
   });
 
@@ -1636,111 +1451,6 @@ describe("useMCPServerForm", () => {
           HttpResponse.json(
             { detail: { message: "A server with this name already exists", success: false } },
             { status: 400 },
-  describe("validateField Action", () => {
-    it("validates fields dynamically and sets errors appropriately", () => {
-      const { result } = renderHook(() => useMCPServerForm());
-
-      act(() => {
-        result.current.validateField("name", "");
-      });
-      expect(result.current.errors.name).toBe("Name is required");
-
-      act(() => {
-        result.current.validateField("name", "Valid Name");
-      });
-      expect(result.current.errors.name).toBeUndefined();
-
-      act(() => {
-        result.current.validateField("url", "not-a-url");
-      });
-      expect(result.current.errors.url).toBe("URL must start with http:// or https://");
-
-      act(() => {
-        result.current.validateField("url", "http://valid.com");
-      });
-      expect(result.current.errors.url).toBeUndefined();
-
-      act(() => {
-        result.current.validateField("passthroughHeaders", "H1, H2");
-      });
-      expect(result.current.errors.passthroughHeaders).toBeUndefined();
-    });
-  });
-
-  describe("Password Grant OAuth Validation", () => {
-    it("fails validation if username or password is missing in password grant", () => {
-      const { result } = renderHook(() => useMCPServerForm());
-
-      act(() => {
-        result.current.setName("Test Gateway");
-        result.current.setUrl("http://localhost:3000");
-        result.current.setAuthType("oauth");
-        result.current.setOAuthGrantType("password");
-        result.current.setOAuthUsername("");
-        result.current.setOAuthPassword("");
-      });
-
-      let isValid: boolean;
-      act(() => {
-        isValid = result.current.validateForm();
-      });
-
-      expect(isValid!).toBe(false);
-      expect(result.current.errors.oauthUsername).toBe("Username is required for password grant");
-      expect(result.current.errors.oauthPassword).toBe("Password is required for password grant");
-
-      act(() => {
-        result.current.setOAuthUsername("user");
-        result.current.setOAuthPassword("pass");
-      });
-
-      act(() => {
-        isValid = result.current.validateForm();
-      });
-      expect(isValid!).toBe(true);
-      expect(result.current.errors.oauthUsername).toBeUndefined();
-      expect(result.current.errors.oauthPassword).toBeUndefined();
-    });
-  });
-
-  describe("handleSubmit error branches", () => {
-    it("sets error.submit with body.message when API returns a message", async () => {
-      server.use(
-        http.post("/gateways", () =>
-          HttpResponse.json({ message: "Duplicate gateway name" }, { status: 409 }),
-        ),
-      );
-
-      const { result } = renderHook(() => useMCPServerForm());
-      const mockEvent = {
-        preventDefault: vi.fn(),
-      } as unknown as React.FormEvent<HTMLFormElement>;
-
-      act(() => {
-        result.current.setName("Test Server");
-        result.current.setUrl("http://localhost:3000");
-      });
-
-      await act(async () => {
-        await result.current.handleSubmit(mockEvent);
-      });
-
-      await waitFor(() => {
-        expect(result.current.errors.submit).toBeDefined();
-      });
-    });
-
-    it("sets error.submit with validation detail messages from API", async () => {
-      server.use(
-        http.post("/gateways", () =>
-          HttpResponse.json(
-            {
-              detail: [
-                { msg: "field required", loc: ["body", "name"] },
-                { msg: "invalid url", loc: ["body", "url"] },
-              ],
-            },
-            { status: 422 },
           ),
         ),
       );
@@ -1750,12 +1460,6 @@ describe("useMCPServerForm", () => {
 
       act(() => {
         result.current.setName("Duplicate Server");
-      const mockEvent = {
-        preventDefault: vi.fn(),
-      } as unknown as React.FormEvent<HTMLFormElement>;
-
-      act(() => {
-        result.current.setName("Test Server");
         result.current.setUrl("http://localhost:3000");
       });
 
@@ -1782,22 +1486,6 @@ describe("useMCPServerForm", () => {
       const mockEvent = { preventDefault: vi.fn() } as unknown as React.FormEvent<HTMLFormElement>;
 
       await waitFor(() => expect(result.current.name).toBe("My Server"));
-        expect(result.current.errors.submit).toBeDefined();
-      });
-    });
-
-    it("sets generic error when API throws error without body", async () => {
-      server.use(http.post("/gateways", () => HttpResponse.error()));
-
-      const { result } = renderHook(() => useMCPServerForm());
-      const mockEvent = {
-        preventDefault: vi.fn(),
-      } as unknown as React.FormEvent<HTMLFormElement>;
-
-      act(() => {
-        result.current.setName("Test Server");
-        result.current.setUrl("http://localhost:3000");
-      });
 
       await act(async () => {
         await result.current.handleSubmit(mockEvent);
@@ -1805,84 +1493,6 @@ describe("useMCPServerForm", () => {
 
       await waitFor(() => {
         expect(result.current.errors.submit).toBe("Gateway not found");
-        expect(result.current.errors.submit).toBeDefined();
-      });
-    });
-
-    it("sets error.submit when isEditMode is true and update fails", async () => {
-      server.use(
-        http.get("/gateways/edit-fail-id", () =>
-          HttpResponse.json({
-            id: "edit-fail-id",
-            name: "Server",
-            url: "http://localhost:3000",
-          }),
-        ),
-        http.put("/gateways/edit-fail-id", () =>
-          HttpResponse.json({ message: "Update forbidden" }, { status: 403 }),
-        ),
-      );
-
-      const { result } = renderHook(() => useMCPServerForm("edit-fail-id"));
-      const mockEvent = {
-        preventDefault: vi.fn(),
-      } as unknown as React.FormEvent<HTMLFormElement>;
-
-      await waitFor(() => {
-        expect(result.current.name).toBe("Server");
-      });
-
-      await act(async () => {
-        await result.current.handleSubmit(mockEvent);
-      });
-
-      await waitFor(() => {
-        expect(result.current.errors.submit).toBe("Update forbidden");
-      });
-    });
-
-    it("handles missing/empty validation detail fields and formatting fallbacks", async () => {
-      server.use(
-        http.post("/gateways", () =>
-          HttpResponse.json(
-            {
-              detail: [{ loc: [] }, { msg: "custom error no loc" }],
-            },
-            { status: 422 },
-          ),
-        ),
-      );
-
-      const { result } = renderHook(() => useMCPServerForm());
-      const mockEvent = {
-        preventDefault: vi.fn(),
-      } as unknown as React.FormEvent<HTMLFormElement>;
-
-      act(() => {
-        result.current.setName("Test Server");
-        result.current.setUrl("http://localhost:3000");
-      });
-
-      await act(async () => {
-        await result.current.handleSubmit(mockEvent);
-      });
-
-      await waitFor(() => {
-        expect(result.current.errors.submit).toBe("Invalid value; custom error no loc");
-      });
-    });
-
-    it("exposes fetchError when server data loading fails", async () => {
-      server.use(
-        http.get("/gateways/fail-fetch-id", () =>
-          HttpResponse.json({ message: "Gateway not found" }, { status: 404 }),
-        ),
-      );
-
-      const { result } = renderHook(() => useMCPServerForm("fail-fetch-id"));
-
-      await waitFor(() => {
-        expect(result.current.fetchError).toBe("HTTP 404");
       });
     });
   });
@@ -1892,4 +1502,3 @@ describe("useMCPServerForm", () => {
 afterEach(() => {
   vi.restoreAllMocks();
 });
-

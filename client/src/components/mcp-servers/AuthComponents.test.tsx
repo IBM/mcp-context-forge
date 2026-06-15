@@ -12,14 +12,14 @@ describe("Auth Components", () => {
       const user = userEvent.setup();
       const onUsernameChange = vi.fn();
       const onPasswordChange = vi.fn();
-      
+
       render(
         <BasicAuth
           username=""
           password=""
           onUsernameChange={onUsernameChange}
           onPasswordChange={onPasswordChange}
-        />
+        />,
       );
 
       const usernameInput = screen.getByLabelText(/Username/i);
@@ -37,13 +37,8 @@ describe("Auth Components", () => {
     it("calls change handler on input", async () => {
       const user = userEvent.setup();
       const onTokenChange = vi.fn();
-      
-      render(
-        <BearerTokenAuth
-          token=""
-          onTokenChange={onTokenChange}
-        />
-      );
+
+      render(<BearerTokenAuth token="" onTokenChange={onTokenChange} />);
 
       const tokenInput = screen.getByLabelText(/Bearer token/i);
 
@@ -57,14 +52,14 @@ describe("Auth Components", () => {
       const user = userEvent.setup();
       const onParameterNameChange = vi.fn();
       const onApiKeyChange = vi.fn();
-      
+
       render(
         <QueryParameterAuth
           parameterName=""
           apiKey=""
           onParameterNameChange={onParameterNameChange}
           onApiKeyChange={onApiKeyChange}
-        />
+        />,
       );
 
       const paramNameInput = screen.getByLabelText(/Query parameter name/i);

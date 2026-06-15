@@ -14,7 +14,7 @@ describe("Button Component", () => {
     render(
       <Button asChild data-testid="link-btn">
         <a href="https://example.com">Link Button</a>
-      </Button>
+      </Button>,
     );
     const link = screen.getByTestId("link-btn");
     expect(link.tagName).toBe("A");
@@ -26,7 +26,7 @@ describe("Button Component", () => {
     render(
       <Button variant="destructive" size="sm" data-testid="custom-btn">
         Custom
-      </Button>
+      </Button>,
     );
     const btn = screen.getByTestId("custom-btn");
     expect(btn).toHaveAttribute("data-variant", "destructive");

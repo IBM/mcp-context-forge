@@ -42,7 +42,7 @@ describe("VirtualServerDetailsDrawer", () => {
         onAddComponents={vi.fn()}
         onAddSources={vi.fn()}
         onOpenChange={vi.fn()}
-      />
+      />,
     );
 
     expect(screen.getByText("Loading server details...")).toBeInTheDocument();
@@ -57,7 +57,7 @@ describe("VirtualServerDetailsDrawer", () => {
         onAddComponents={vi.fn()}
         onAddSources={vi.fn()}
         onOpenChange={vi.fn()}
-      />
+      />,
     );
 
     expect(screen.getByRole("alert")).toHaveTextContent("Failed to load");
@@ -72,7 +72,7 @@ describe("VirtualServerDetailsDrawer", () => {
         onAddComponents={vi.fn()}
         onAddSources={vi.fn()}
         onOpenChange={vi.fn()}
-      />
+      />,
     );
 
     expect(screen.getByRole("heading", { name: "Active Server" })).toBeInTheDocument();
@@ -91,7 +91,7 @@ describe("VirtualServerDetailsDrawer", () => {
         onAddComponents={vi.fn()}
         onAddSources={vi.fn()}
         onOpenChange={vi.fn()}
-      />
+      />,
     );
 
     expect(screen.getByRole("heading", { name: "Inactive Server" })).toBeInTheDocument();
@@ -111,7 +111,7 @@ describe("VirtualServerDetailsDrawer", () => {
         onAddComponents={vi.fn()}
         onAddSources={vi.fn()}
         onOpenChange={vi.fn()}
-      />
+      />,
     );
 
     // Switch filter to tools
@@ -135,7 +135,7 @@ describe("VirtualServerDetailsDrawer", () => {
         onAddComponents={handleAddComponents}
         onAddSources={handleAddSources}
         onOpenChange={handleOpenChange}
-      />
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Add components" }));

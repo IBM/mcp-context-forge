@@ -465,7 +465,10 @@ describe("Users", () => {
     await user.click(loadMoreButton);
 
     await waitFor(() => {
-      expect(consoleErrorSpy).toHaveBeenCalledWith("Failed to load more users:", expect.any(Object));
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        "Failed to load more users:",
+        expect.any(Object),
+      );
     });
     consoleErrorSpy.mockRestore();
   });

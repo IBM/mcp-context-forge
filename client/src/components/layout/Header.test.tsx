@@ -22,7 +22,7 @@ describe("Header", () => {
     return render(
       <SidebarProvider>
         <Header />
-      </SidebarProvider>
+      </SidebarProvider>,
     );
   };
 
@@ -32,7 +32,7 @@ describe("Header", () => {
 
     expect(screen.getByTestId("quick-nav")).toBeInTheDocument();
     expect(screen.getByTestId("profile-menu")).toBeInTheDocument();
-    
+
     // Check that there is no version string visible (like v1.2.3)
     const versionMatch = screen.queryByText(/v\d+\.\d+\.\d+/);
     expect(versionMatch).not.toBeInTheDocument();
