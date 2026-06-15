@@ -124,6 +124,7 @@ from mcpgateway.plugins import (
     stop_plugin_invalidation_listener,
 )
 from mcpgateway.plugins.violation_codes import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode, VALID_HTTP_STATUS_CODES
+from mcpgateway.routers.openapi_schema_router import router as openapi_schema_router
 from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
@@ -12057,6 +12058,8 @@ app.include_router(server_well_known_router, prefix="/servers")
 app.include_router(metrics_router)
 app.include_router(tag_router)
 app.include_router(export_import_router)
+app.include_router(openapi_schema_router)
+logger.info("OpenAPI schema generation router included")
 
 # Compliance report router (admin API)
 if settings.mcpgateway_admin_api_enabled:
