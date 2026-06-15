@@ -17,11 +17,24 @@ class BuildPyWithUI(build_py):
 
     def run(self):
         """Run UI build before standard build_py."""
+        # Only run npm build during actual distribution builds (wheel/sdist).
+        # During editable installs and uv sync, skip to avoid modifying package-lock.json.
+        dist_commands = self.distribution.command_obj or {}
+        if not any(cmd in dist_commands for cmd in ("bdist_wheel", "sdist")):
+            super().run()
+            return
+
         print("=" * 70)
         print("Building UI assets (Vite bundle + Tailwind CSS)...")
         print("=" * 70)
 
-        project_root = Path(__file__).resolve().parent.parent
+        # Walk up from this file to find the project root (contains pyproject.toml)
+        _path = Path(__file__).resolve().parent
+        project_root = _path
+        while project_root.parent != project_root:
+            if (project_root / "pyproject.toml").exists():
+                break
+            project_root = project_root.parent
 
         # Clean old bundle files before building
         static_dir = project_root / "mcpgateway" / "static"
