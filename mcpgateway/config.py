@@ -449,6 +449,7 @@ class Settings(BaseSettings):
             "/admin/login",
             "/admin/forgot-password",
             "/admin/reset-password",
+            "/llmchat",  # Exempt: LLM Chat routes use per-route enforce_admin_csrf dependency (Admin UI feature)
             "/oauth/fetch-tools",  # Exempt: OAuth callback uses enforce_fetch_tools_csrf with origin+double-submit
             "/docs",
             "/redoc",
