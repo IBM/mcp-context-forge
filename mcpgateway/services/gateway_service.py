@@ -106,6 +106,7 @@ from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.session_affinity import register_gateway_capabilities_for_notifications
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.token_exchange_cache import TokenExchangeCache
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
@@ -641,10 +642,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         self._gateway_failure_counts: dict[str, int] = {}
         self.oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
         self._event_service = EventService(channel_name="mcpgateway:gateway_events")
-
-        # First-Party
-        from mcpgateway.services.token_exchange_cache import TokenExchangeCache  # pylint: disable=import-outside-toplevel
-
         self._token_exchange_cache = TokenExchangeCache(redis_url=getattr(settings, "redis_url", None))
 
         # Per-gateway refresh locks to prevent concurrent refreshes for the same gateway
