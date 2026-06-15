@@ -40,7 +40,7 @@ describe("serversApi", () => {
             "X-Requested-With": "XMLHttpRequest",
             "X-CSRF-Token": "test-csrf-token",
           }),
-          credentials: "same-origin",
+          credentials: "same-origin", // pragma: allowlist secret
         }),
       );
     });
@@ -118,7 +118,7 @@ describe("serversApi", () => {
           headers: expect.objectContaining({
             "X-CSRF-Token": "test-csrf-token",
           }),
-          credentials: "same-origin",
+          credentials: "same-origin", // pragma: allowlist secret
         }),
       );
     });

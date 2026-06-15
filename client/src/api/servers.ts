@@ -98,7 +98,10 @@ export const serversApi = {
   /**
    * Fetch tools, resources, and prompts from the MCP server after OAuth authorization
    */
-  fetchToolsAfterOAuth: (id: string): Promise<{ success: boolean; message: string }> => {
+  // prettier-ignore
+  fetchToolsAfterOAuth: ( // pragma: allowlist secret
+    id: string,
+  ): Promise<{ success: boolean; message: string }> => {
     const validId = validateServerId(id);
     return api.post(`/oauth/fetch-tools/${validId}`);
   },
