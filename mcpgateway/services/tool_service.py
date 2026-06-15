@@ -88,6 +88,7 @@ from mcpgateway.services.observability_service import current_trace_id, Observab
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.token_exchange_cache import TokenExchangeCache
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context, get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
@@ -1060,10 +1061,6 @@ class ToolService(BaseService):
             max_retries=int(settings.oauth_max_retries if hasattr(settings, "oauth_max_retries") else 3),
         )
         self._content_security = ContentSecurityService()
-
-        # First-Party
-        from mcpgateway.services.token_exchange_cache import TokenExchangeCache  # pylint: disable=import-outside-toplevel
-
         self._token_exchange_cache = TokenExchangeCache(redis_url=getattr(settings, "redis_url", None))
 
     async def initialize(self) -> None:

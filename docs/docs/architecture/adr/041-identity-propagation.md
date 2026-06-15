@@ -86,7 +86,7 @@ An `OAuthManager.token_exchange()` method supports on-behalf-of flows for gatewa
 - *Status:* Implemented
 - *Date:* 2026-06
 
-RFC 8693 / On-Behalf-Of token exchange (item 7 above) was implemented via **Approach B**: a central resolver-method seam rather than a new standalone service. Each consuming service (`ToolService`, `GatewayService`) gets its own `_resolve_token_exchange_header()` resolver, backed by a shared `TokenExchangeCache`.
+RFC 8693 / On-Behalf-Of token exchange (item 7 above) was implemented as a central resolver-method seam rather than a new standalone service: each consuming service (`ToolService`, `GatewayService`) gets its own `_resolve_token_exchange_header()` resolver, backed by a shared `TokenExchangeCache`. (A standalone `TokenExchangeService` was considered and deferred — the resolver-method seam is simpler and sufficient for the current call sites.)
 
 ### Configuration
 
@@ -94,9 +94,10 @@ A gateway's `oauth_config` opts into the flow with `grant_type: "token-exchange"
 
 - `target_audience` (required) — the downstream resource the exchanged token is for.
 - `subject_token_source` (default `inbound_user_jwt`) — `inbound_user_jwt` uses the caller's ContextForge JWT as the RFC 8693 `subject_token`; `user_oauth_token` uses the user's previously stored per-gateway OAuth token instead (supported on the tool-invocation path).
+- `subject_token_type` (default `urn:ietf:params:oauth:token-type:jwt`) — the RFC 8693 §3 type descriptor for `subject_token`.
 - `requested_token_type` (default `urn:ietf:params:oauth:token-type:access_token`).
 
-### Resolver Seam (Approach B)
+### Resolver Seam
 
 - `ToolService._resolve_token_exchange_header()` covers the tool-invocation path and supports both `subject_token_source` values.
 - `GatewayService._resolve_token_exchange_header()` covers gateway connection/health-check paths, which have no per-request user context and therefore **fail closed** for `token-exchange` gateways (only `inbound_user_jwt` is meaningful on a per-request path).
