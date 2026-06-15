@@ -22,6 +22,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 # First-Party
+from mcpgateway.auth_context import is_trusted_internal_mcp_request
 from mcpgateway.config import settings
 from mcpgateway.services.csrf_service import get_csrf_service
 from mcpgateway.utils.verify_credentials import get_auth_header_value, verify_jwt_token_cached
@@ -102,6 +103,12 @@ class CSRFMiddleware(BaseHTTPMiddleware):
 
         # 2. Skip safe methods (GET, HEAD, OPTIONS, TRACE)
         if request.method in SAFE_METHODS:
+            return await call_next(request)
+
+        # 2b. Skip the trusted-internal dispatch. The skip is contingent on the full
+        # trust gate (loopback + HMAC + runtime marker + auth context), not merely a
+        # URL prefix, so no externally reachable path is left CSRF-free.
+        if is_trusted_internal_mcp_request(request):
             return await call_next(request)
 
         # 3. Skip exempt paths (exact or prefix match)

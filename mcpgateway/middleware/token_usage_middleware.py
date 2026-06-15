@@ -30,6 +30,7 @@ from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 # First-Party
+from mcpgateway.auth_context import is_trusted_internal_mcp_request
 from mcpgateway.db import fresh_db_session
 from mcpgateway.middleware.path_filter import should_skip_auth_context
 from mcpgateway.services.token_catalog_service import TokenCatalogService
@@ -84,6 +85,13 @@ class TokenUsageMiddleware:
         # Skip health checks and static files
         path = scope.get("path", "")
         if should_skip_auth_context(path):
+            await self.app(scope, receive, send)
+            return
+
+        # Skip the trusted-internal dispatch (loopback + HMAC + runtime marker + auth
+        # context): the edge request that triggered it is already recorded, so the
+        # in-process replay must not log a second usage row.
+        if is_trusted_internal_mcp_request(Request(scope), path=path):
             await self.app(scope, receive, send)
             return
 

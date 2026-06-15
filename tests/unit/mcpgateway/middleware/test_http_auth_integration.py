@@ -690,3 +690,69 @@ class TestCustomAuthExamplePlugin:
         assert response_headers["x-auth-status"] == "authenticated"
         # Note: x-auth-method comes from local_context which isn't being used correctly yet
         # assert response_headers.get("x-auth-method") == "api_key"
+
+
+def _trusted_internal_request(path, *, marker="rust", hmac_value=None, ctx="ctx", client="127.0.0.1"):
+    """Build a real loopback internal request for trust-gate exemption tests."""
+    # Third-Party
+    from starlette.requests import Request
+
+    # First-Party
+    from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header
+
+    headers = [
+        (b"x-contextforge-mcp-runtime", marker.encode()),
+        (b"x-contextforge-mcp-runtime-auth", (hmac_value or _expected_internal_mcp_runtime_auth_header()).encode()),
+    ]
+    if ctx is not None:
+        headers.append((b"x-contextforge-auth-context", ctx.encode()))
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "headers": headers,
+        "client": (client, 12345),
+    }
+    return Request(scope)
+
+
+@pytest.mark.asyncio
+async def test_trusted_internal_dispatch_skips_http_auth_hooks():
+    """A trusted-internal hop does not re-run HTTP auth plugin hooks.
+
+    The exemption short-circuits before the plugin manager is consulted, so the
+    in-process replay cannot re-fire HTTP_PRE/POST_REQUEST hooks that already ran on
+    the originating edge request.
+    """
+    # First-Party
+    from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
+
+    middleware = HttpAuthMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value="passthrough")
+    request = _trusted_internal_request("/_internal/mcp/rpc")
+
+    with patch("mcpgateway.middleware.http_auth_middleware.get_plugin_manager", new=AsyncMock()) as gpm:
+        result = await middleware.dispatch(request, call_next)
+
+    assert result == "passthrough"
+    call_next.assert_awaited_once_with(request)
+    gpm.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_forged_internal_request_runs_http_auth_path():
+    """A forged HMAC fails the trust gate, so the hook path runs (plugin manager consulted)."""
+    # First-Party
+    from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
+
+    middleware = HttpAuthMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value="passthrough")
+    request = _trusted_internal_request("/_internal/mcp/rpc", hmac_value="forged")
+
+    with patch("mcpgateway.middleware.http_auth_middleware.get_plugin_manager", new=AsyncMock(return_value=None)) as gpm:
+        result = await middleware.dispatch(request, call_next)
+
+    assert result == "passthrough"
+    gpm.assert_awaited_once()
