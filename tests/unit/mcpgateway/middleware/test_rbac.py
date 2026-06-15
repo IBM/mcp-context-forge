@@ -945,11 +945,15 @@ async def test_no_proxy_no_trust_auth_required_api_401(no_cookie_request):
     mock_settings.auth_required = True
     mock_settings.app_root_path = ""
 
+    # Create proper HTTPAuthorizationCredentials mock with None credentials
+    mock_credentials = MagicMock()
+    mock_credentials.credentials = None
+
     with patch("mcpgateway.middleware.rbac.settings", mock_settings), patch("mcpgateway.middleware.rbac.is_proxy_auth_trust_active", return_value=False):
         with pytest.raises(HTTPException) as exc:
-            await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+            await rbac.get_current_user_with_permissions(mock_request, credentials=mock_credentials, jwt_token=None)
     assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
-    assert "no auth method configured" in exc.value.detail
+    assert "Authentication required but no auth method configured" in exc.value.detail
 
 
 # --- Plugin hook grant/deny (lines 416-457) ---
@@ -1646,18 +1650,28 @@ async def test_require_any_permission_no_user_context():
 
 @pytest.mark.asyncio
 async def test_no_token_auth_required_api_401():
-    """No token, auth required, non-browser → 401 (line 315)."""
+    """No token, auth required, non-browser → 401 (line 313)."""
     mock_request = MagicMock(spec=Request)
     mock_request.cookies = {}
     mock_request.headers = {"accept": "application/json", "user-agent": "api"}
-    mock_request.state = MagicMock()
+    mock_request.state = MagicMock(plugin_context_table=None, plugin_global_context=None)
     mock_request.client = MagicMock(host="127.0.0.1")
 
     mock_credentials = MagicMock()
     mock_credentials.credentials = None
 
-    with pytest.raises(HTTPException) as exc:
-        await rbac.get_current_user_with_permissions(mock_request, credentials=mock_credentials, jwt_token=None)
+    # Mock settings to trigger line 313 path:
+    # - MCP client auth disabled (proxy auth path)
+    # - Proxy trust NOT active
+    # - Auth required
+    mock_settings = MagicMock()
+    mock_settings.mcp_client_auth_enabled = False
+    mock_settings.trust_proxy_auth = False
+    mock_settings.auth_required = True
+
+    with patch("mcpgateway.middleware.rbac.settings", mock_settings), patch("mcpgateway.middleware.rbac.is_proxy_auth_trust_active", return_value=False):
+        with pytest.raises(HTTPException) as exc:
+            await rbac.get_current_user_with_permissions(mock_request, credentials=mock_credentials, jwt_token=None)
     assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
     assert "Authentication required but no auth method configured" in exc.value.detail
 
