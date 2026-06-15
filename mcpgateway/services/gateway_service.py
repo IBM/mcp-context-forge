@@ -785,6 +785,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         return oauth_config
 
     # Conservative TTL when the AS omits expires_in (RFC 8693 makes it optional, L1).
+    # pylint: disable=duplicate-code
+    # Mirrors ToolService's token-exchange helpers below for API parity (both fully tested).
     _TOKEN_EXCHANGE_FALLBACK_TTL = 60
 
     async def _resolve_token_exchange_header(self, oauth_config: dict, gateway_id: str, gateway_name: str, app_user_email: str, request_headers: dict) -> dict:
@@ -1028,6 +1030,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         await self._invalidate_token_exchange_on_unauthorized(401, oauth_config, gateway_id, app_user_email)
         fresh = await self._resolve_token_exchange_header(oauth_config, gateway_id, gateway_name, app_user_email, request_headers)
         return await send(fresh)  # single retry; no loop
+    # pylint: enable=duplicate-code
 
     @staticmethod
     def normalize_url(url: str) -> str:
