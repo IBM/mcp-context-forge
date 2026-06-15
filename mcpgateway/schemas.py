@@ -559,7 +559,7 @@ class ToolCreate(BaseModel):
         input_schema (Optional[Dict[str, Any]]): JSON Schema for validating tool parameters. Alias 'inputSchema'.
         output_schema (Optional[Dict[str, Any]]): JSON Schema for validating tool output. Alias 'outputSchema'.
         annotations (Optional[Dict[str, Any]]): Tool annotations for behavior hints such as title, readOnlyHint, destructiveHint, idempotentHint, openWorldHint.
-        jsonpath_filter (Optional[str]): JSON modification filter.
+        jsonpath_filter (Optional[str]): Filter expression to extract a subset of the JSON response. Supports JSONPath (e.g., `$.data`) and jq (e.g., `.data`) syntax.
         auth (Optional[AuthenticationValues]): Authentication credentials (Basic or Bearer Token or custom headers) if required.
         gateway_id (Optional[str]): ID of the gateway for the tool.
     """
@@ -581,7 +581,7 @@ class ToolCreate(BaseModel):
         default_factory=dict,
         description="Tool annotations for behavior hints (title, readOnlyHint, destructiveHint, idempotentHint, openWorldHint)",
     )
-    jsonpath_filter: Optional[str] = Field(default="", description="JSON modification filter")
+    jsonpath_filter: Optional[str] = Field(default="", description="Filter expression to extract a subset of the JSON response. Supports JSONPath (e.g., `$.data`) and jq (e.g., `.data`) syntax.")
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
     tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the tool")
@@ -1147,7 +1147,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     input_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for validating tool parameters")
     output_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for validating tool output")
     annotations: Optional[Dict[str, Any]] = Field(None, description="Tool annotations for behavior hints")
-    jsonpath_filter: Optional[str] = Field(None, description="JSON path filter for rpc tool calls")
+    jsonpath_filter: Optional[str] = Field(None, description="Filter expression to extract a subset of the JSON response. Supports JSONPath (e.g., `$.data`) and jq (e.g., `.data`) syntax.")
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the tool")
