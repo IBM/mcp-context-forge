@@ -320,13 +320,14 @@ export function VirtualServerDetailsPanel({
 
   const componentsLoading = toolsLoading || resourcesLoading || promptsLoading;
 
-  // Reset filter and search when server changes
+  // Reset filter and search when the panel opens or the selected server changes.
   useEffect(() => {
+    if (!open) return;
     setSourceFilter("all");
     setComponentFilter("all");
     setSearchQuery("");
     setIsSearchExpanded(false);
-  }, [server?.id]);
+  }, [open, server?.id]);
 
   useEffect(() => {
     if (sourceFilter === "all") return;
@@ -397,7 +398,7 @@ export function VirtualServerDetailsPanel({
         role="region"
         aria-labelledby={headingId}
         aria-hidden={!open}
-        inert={!open ? ("" as unknown as undefined) : undefined}
+        inert={!open ? true : undefined}
         data-state={open ? "open" : "closed"}
         className={cn(
           "absolute inset-y-0 right-0 z-20 flex w-[min(1236px,calc(100%-2rem))] border-l border-border bg-popover text-[13px] shadow-lg",

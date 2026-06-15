@@ -531,6 +531,7 @@ describe("Gateways", () => {
       expect.anything(),
     );
     expect(mockUseQuery).not.toHaveBeenCalledWith("/servers/__pending__", expect.anything());
+    const detailsPanel = screen.getByRole("region", { name: "GH repo tasks details" });
     expect(screen.getByText("Virtual server details")).toBeInTheDocument();
     expect(
       screen.getByText(
@@ -561,6 +562,8 @@ describe("Gateways", () => {
     expect(screen.queryByText("summarize_pull_request")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Close virtual server details" }));
+    expect(detailsPanel).toHaveAttribute("data-state", "closed");
+    expect(detailsPanel).toHaveAttribute("aria-hidden", "true");
     await user.click(screen.getByRole("button", { name: "Actions for GH repo tasks" }));
     await user.click(await screen.findByRole("menuitem", { name: "View details" }));
 
