@@ -866,8 +866,12 @@ class ToolCreate(BaseModel):
         """
         Assemble authentication information from separate keys if provided.
 
-        Looks for keys "auth_type", "auth_username", "auth_password", "auth_token", "auth_header_key" and "auth_header_value".
+        Looks for keys "auth_type", "auth_username", "auth_password", "auth_token", "auth_headers",
+        "auth_header_key" and "auth_header_value".
         Constructs the "auth" field as a dictionary suitable for BasicAuth or BearerTokenAuth or HeadersAuth.
+
+        For "authheaders" type, the "auth_headers" list (array of {"key": ..., "value": ...} dicts)
+        takes precedence over the legacy "auth_header_key"/"auth_header_value" single-header pair.
 
         Args:
             values: Dict with authentication information
@@ -890,7 +894,13 @@ class ToolCreate(BaseModel):
             >>> result['auth']['auth_type']
             'bearer'
 
-            >>> # Test authheaders
+            >>> # Test authheaders with array (multi-header)
+            >>> values = {'auth_type': 'authheaders', 'auth_headers': [{'key': 'X-API-Key', 'value': 'secret'}, {'key': 'X-Tenant', 'value': 'acme'}]}
+            >>> result = ToolCreate.assemble_auth(values)
+            >>> result['auth']['auth_type']
+            'authheaders'
+
+            >>> # Test authheaders with legacy single-header fallback
             >>> values = {'auth_type': 'authheaders', 'auth_header_key': 'X-API-Key', 'auth_header_value': 'secret'}
             >>> result = ToolCreate.assemble_auth(values)
             >>> result['auth']['auth_type']
@@ -922,14 +932,22 @@ class ToolCreate(BaseModel):
                 encoded_auth = encode_auth({"Authorization": f"Bearer {values.get('auth_token', '')}"})
                 values["auth"] = {"auth_type": "bearer", "auth_value": encoded_auth}
             elif auth_type.lower() == "authheaders":
-                header_key = values.get("auth_header_key", "")
-                header_value = values.get("auth_header_value", "")
-                if header_key and header_value:
-                    encoded_auth = encode_auth({header_key: header_value})
-                    values["auth"] = {"auth_type": "authheaders", "auth_value": encoded_auth}
+                auth_headers = values.get("auth_headers")
+                if auth_headers and isinstance(auth_headers, list):
+                    header_dict = {h.get("key"): h.get("value", "") for h in auth_headers if h.get("key")}
+                    if header_dict:
+                        encoded_auth = encode_auth(header_dict)
+                        values["auth"] = {"auth_type": "authheaders", "auth_value": encoded_auth}
+                    else:
+                        values["auth"] = {"auth_type": "authheaders", "auth_value": None}
                 else:
-                    # Don't encode empty headers - leave auth empty
-                    values["auth"] = {"auth_type": "authheaders", "auth_value": None}
+                    header_key = values.get("auth_header_key", "")
+                    header_value = values.get("auth_header_value", "")
+                    if header_key and header_value:
+                        encoded_auth = encode_auth({header_key: header_value})
+                        values["auth"] = {"auth_type": "authheaders", "auth_value": encoded_auth}
+                    else:
+                        values["auth"] = {"auth_type": "authheaders", "auth_value": None}
         return values
 
     @model_validator(mode="before")
@@ -1335,8 +1353,12 @@ class ToolUpdate(BaseModelWithConfigDict):
         """
         Assemble authentication information from separate keys if provided.
 
-        Looks for keys "auth_type", "auth_username", "auth_password", "auth_token", "auth_header_key" and "auth_header_value".
+        Looks for keys "auth_type", "auth_username", "auth_password", "auth_token", "auth_headers",
+        "auth_header_key" and "auth_header_value".
         Constructs the "auth" field as a dictionary suitable for BasicAuth or BearerTokenAuth or HeadersAuth.
+
+        For "authheaders" type, the "auth_headers" list (array of {"key": ..., "value": ...} dicts)
+        takes precedence over the legacy "auth_header_key"/"auth_header_value" single-header pair.
 
         Args:
             values: Dict with authentication information
@@ -1345,7 +1367,7 @@ class ToolUpdate(BaseModelWithConfigDict):
             Dict: Reformatedd values dict
         """
         logger.debug(
-            "Assembling auth in ToolCreate with raw values",
+            "Assembling auth in ToolUpdate with raw values",
             extra={
                 "auth_type": values.get("auth_type"),
                 "auth_username": values.get("auth_username"),
@@ -1364,14 +1386,22 @@ class ToolUpdate(BaseModelWithConfigDict):
                 encoded_auth = encode_auth({"Authorization": f"Bearer {values.get('auth_token', '')}"})
                 values["auth"] = {"auth_type": "bearer", "auth_value": encoded_auth}
             elif auth_type.lower() == "authheaders":
-                header_key = values.get("auth_header_key", "")
-                header_value = values.get("auth_header_value", "")
-                if header_key and header_value:
-                    encoded_auth = encode_auth({header_key: header_value})
-                    values["auth"] = {"auth_type": "authheaders", "auth_value": encoded_auth}
+                auth_headers = values.get("auth_headers")
+                if auth_headers and isinstance(auth_headers, list):
+                    header_dict = {h.get("key"): h.get("value", "") for h in auth_headers if h.get("key")}
+                    if header_dict:
+                        encoded_auth = encode_auth(header_dict)
+                        values["auth"] = {"auth_type": "authheaders", "auth_value": encoded_auth}
+                    else:
+                        values["auth"] = {"auth_type": "authheaders", "auth_value": None}
                 else:
-                    # Don't encode empty headers - leave auth empty
-                    values["auth"] = {"auth_type": "authheaders", "auth_value": None}
+                    header_key = values.get("auth_header_key", "")
+                    header_value = values.get("auth_header_value", "")
+                    if header_key and header_value:
+                        encoded_auth = encode_auth({header_key: header_value})
+                        values["auth"] = {"auth_type": "authheaders", "auth_value": encoded_auth}
+                    else:
+                        values["auth"] = {"auth_type": "authheaders", "auth_value": None}
         return values
 
     @model_validator(mode="before")
