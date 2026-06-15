@@ -39,9 +39,7 @@ class TestObservability:
 
     def setup_method(self):
         """Reset environment before each test."""
-        get_settings.cache_clear()
-        configure_baggage_span_attribute_policy()
-        # Clear relevant environment variables
+        # Clear relevant environment variables BEFORE clearing settings cache
         env_vars = [
             "OTEL_ENABLE_OBSERVABILITY",
             "OTEL_TRACES_EXPORTER",
@@ -59,6 +57,10 @@ class TestObservability:
         ]
         for var in env_vars:
             os.environ.pop(var, None)
+
+        # Clear settings cache AFTER environment variables are cleared
+        get_settings.cache_clear()
+        configure_baggage_span_attribute_policy()
 
         # Reset module-level state
         observability._TRACER = None
@@ -92,6 +94,8 @@ class TestObservability:
         """Test that observability is disabled when OTLP endpoint is not configured."""
         self._enable_observability()
         os.environ["OTEL_TRACES_EXPORTER"] = "otlp"
+        # Explicitly set endpoint to empty to override .env file
+        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = ""
         get_settings.cache_clear()
         result = init_telemetry()
         assert result is None
@@ -253,7 +257,7 @@ class TestObservability:
             exporter_cls,
             endpoint="https://collector.example.com/v1/traces",
             headers=None,
-            protocol="http",
+            _protocol="http",
             insecure=True,
         )
 
