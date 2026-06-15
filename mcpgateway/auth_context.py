@@ -310,6 +310,101 @@ def has_valid_internal_mcp_runtime_auth_header(request: Request) -> bool:
     return hmac.compare_digest(provided, _expected_internal_mcp_runtime_auth_header())
 
 
+# Internal-dispatch trust gate, shared by main and token_scoping so the trust
+# decision is defined in exactly one place.
+INTERNAL_MCP_PATH_PREFIX = "/_internal/mcp"
+INTERNAL_A2A_PATH_PREFIX = "/_internal/a2a"
+INTERNAL_RUNTIME_MARKER_HEADER = "x-contextforge-mcp-runtime"
+INTERNAL_AUTH_CONTEXT_HEADER = "x-contextforge-auth-context"
+TRUSTED_INTERNAL_RUNTIME_MARKERS = frozenset({"rust", "affinity"})
+
+
+def _internal_path_requires_auth_context(path: str) -> bool:
+    """Auth context is required for every internal route except ``*/authenticate``.
+
+    The ``/authenticate`` endpoints create the context, so they are the only
+    internal routes exempt from the requirement; everything else under the
+    internal prefixes must carry it. Encoding it as a rule (rather than a
+    positive route whitelist) keeps the gate correct as new internal routes are
+    added.
+
+    Args:
+        path: The request path to classify.
+
+    Returns:
+        ``False`` for ``*/authenticate``, otherwise ``True``.
+    """
+    return not path.rstrip("/").endswith("/authenticate")
+
+
+def is_trusted_internal_runtime_request(
+    request: Request,
+    *,
+    allowed_prefixes: tuple[str, ...],
+    require_auth_context: bool,
+    path: Optional[str] = None,
+) -> bool:
+    """Return whether a request is a trusted in-process internal-runtime hop.
+
+    The trust boundary is the shared-secret HMAC header AND (when required) the
+    encoded ``x-contextforge-auth-context``. The loopback client check is
+    defense-in-depth only: under ``ProxyHeadersMiddleware(trusted_hosts="*")``,
+    ``request.client.host`` is influenceable by forwarded headers on *direct*
+    external requests, so loopback is NOT an independent gate. The internal
+    ASGITransport replay is hardened separately by stripping forwarded /
+    client-IP headers from loopback passthrough.
+
+    Args:
+        request: Incoming request to inspect.
+        allowed_prefixes: Internal path prefixes this caller trusts.
+        require_auth_context: Require a non-empty ``x-contextforge-auth-context``.
+        path: Explicit path override for callers that strip a ``root_path``;
+            defaults to ``request.url.path``.
+
+    Returns:
+        ``True`` only when prefix, runtime marker, HMAC, optional auth context,
+        and loopback all hold; otherwise ``False``.
+    """
+    p = path if path is not None else (getattr(getattr(request, "url", None), "path", "") or "")
+    if not any(p == prefix or p.startswith(f"{prefix}/") for prefix in allowed_prefixes):
+        return False
+    if request.headers.get(INTERNAL_RUNTIME_MARKER_HEADER) not in TRUSTED_INTERNAL_RUNTIME_MARKERS:
+        return False
+    if not has_valid_internal_mcp_runtime_auth_header(request):
+        return False
+    if require_auth_context and not request.headers.get(INTERNAL_AUTH_CONTEXT_HEADER):
+        return False
+    client_host = getattr(getattr(request, "client", None), "host", None)
+    return client_host in ("127.0.0.1", "::1")
+
+
+def is_trusted_internal_mcp_request(request: Request, *, path: Optional[str] = None) -> bool:
+    """MCP + A2A internal trust gate with a path-aware auth-context requirement.
+
+    ``*/authenticate`` routes do not require an auth context (they create it);
+    every other internal route does. ``/_internal/a2a/*`` additionally requires
+    the A2A feature to be enabled (defense-in-depth: a legitimate sidecar should
+    not be live when the feature is off).
+
+    Args:
+        request: Incoming request to inspect.
+        path: Explicit path override (e.g. a ``root_path``-stripped path);
+            defaults to ``request.url.path``.
+
+    Returns:
+        ``True`` when the request is a trusted internal MCP/A2A hop.
+    """
+    p = path if path is not None else (getattr(getattr(request, "url", None), "path", "") or "")
+    if p.startswith(f"{INTERNAL_A2A_PATH_PREFIX}/") and not settings.mcpgateway_a2a_enabled:
+        return False
+    return is_trusted_internal_runtime_request(
+        request,
+        allowed_prefixes=(INTERNAL_MCP_PATH_PREFIX, INTERNAL_A2A_PATH_PREFIX),
+        require_auth_context=_internal_path_requires_auth_context(p),
+        path=p,
+    )
+
+
 def get_token_teams_from_request(request: Request) -> Optional[List[str]]:
     """Extract and normalize teams from verified JWT token.
 

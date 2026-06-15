@@ -573,6 +573,19 @@ _LOOPBACK_SKIP_HEADERS: frozenset[str] = frozenset(
         "x-contextforge-mcp-runtime",
         "x-contextforge-mcp-runtime-auth",
         "x-contextforge-session-validated",
+        # Forwarded / client-IP headers: the in-process internal hop must never
+        # carry caller-controlled values that ProxyHeaders(trusted_hosts="*")
+        # would turn into a spoofed loopback client address. The HMAC remains the
+        # trust boundary; stripping these keeps loopback meaningful on the replay.
+        "forwarded",
+        "x-forwarded-for",
+        "x-forwarded-host",
+        "x-forwarded-proto",
+        "x-forwarded-port",
+        "x-forwarded-prefix",
+        "x-real-ip",
+        "cf-connecting-ip",
+        "true-client-ip",
     }
 )
 
