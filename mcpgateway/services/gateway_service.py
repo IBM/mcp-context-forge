@@ -743,6 +743,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
     _VALID_SUBJECT_TOKEN_SOURCES = ("inbound_user_jwt", "user_oauth_token")
     _DEFAULT_REQUESTED_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:access_token"  # nosec B105 - RFC 8693 URI
+    # RFC 8693 §3: "jwt" means a generic JWT is being sent, vs "access_token" which implies
+    # a token the AS itself previously issued and can recognize as one of its own. CF's inbound
+    # subject token is a CF-issued JWT, not an AS-issued access token, so "jwt" is the correct
+    # default subject_token_type for ASes that enforce the distinction (e.g. Keycloak).
+    _DEFAULT_SUBJECT_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:jwt"  # nosec B105 - RFC 8693 URI
 
     @staticmethod
     def _validate_token_exchange_config(oauth_config: dict) -> dict:
@@ -782,6 +787,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             raise ValueError(f"subject_token_source must be one of {GatewayService._VALID_SUBJECT_TOKEN_SOURCES}, got '{source}'")
 
         oauth_config.setdefault("requested_token_type", GatewayService._DEFAULT_REQUESTED_TOKEN_TYPE)
+        oauth_config.setdefault("subject_token_type", GatewayService._DEFAULT_SUBJECT_TOKEN_TYPE)
         return oauth_config
 
     # Conservative TTL when the AS omits expires_in (RFC 8693 makes it optional, L1).
@@ -874,6 +880,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     audience=audience,
                     scope=" ".join(scopes) if scopes else None,
                     requested_token_type=oauth_config.get("requested_token_type", "urn:ietf:params:oauth:token-type:access_token"),
+                    subject_token_type=oauth_config.get("subject_token_type", "urn:ietf:params:oauth:token-type:jwt"),
                 )
             except Exception as e:
                 latency_ms = int((time.monotonic() - started) * 1000)
