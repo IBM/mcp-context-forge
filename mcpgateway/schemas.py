@@ -126,7 +126,7 @@ _SENSITIVE_HEADER_MAPPING_PATTERNS = (
 )
 
 
-def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def _validate_oauth_config_urls(v: Optional[Union[Dict[str, Any], "OAuthConfig"]]) -> Optional[Union[Dict[str, Any], "OAuthConfig"]]:
     """Validate URL-bearing OAuth config entries against core URL/SSRF rules.
 
     Applies only to known outbound or redirect endpoints that the gateway may
@@ -134,16 +134,39 @@ def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[st
     ``oauth_config["token_url"]`` previously bypassed [`validate_core_url`](mcpgateway/common/validators.py:1939).
 
     Args:
-        v: OAuth configuration dict or ``None``.
+        v: OAuth configuration dict, OAuthConfig instance, or ``None``.
 
     Returns:
-        The original dict when valid.
+        The original dict or OAuthConfig instance when valid.
 
     Raises:
         ValueError: If a URL-bearing field is not a string or fails validation.
     """
     if v is None:
         return v
+    
+    # Handle OAuthConfig model instances
+    if hasattr(v, 'model_dump'):
+        # It's an OAuthConfig instance, validate its fields
+        for field_name in ("token_url", "authorization_url", "issuer"):
+            raw_value = getattr(v, field_name, None)
+            if raw_value in (None, ""):
+                continue
+            if not isinstance(raw_value, str):
+                raise ValueError(f"oauth_config.{field_name} must be a string URL")
+            validate_core_url(raw_value, f"OAuth config {field_name}")
+        
+        raw_servers = getattr(v, "authorization_servers", None)
+        if raw_servers not in (None, ""):
+            if not isinstance(raw_servers, list):
+                raise ValueError("oauth_config.authorization_servers must be a list of URLs")
+            for idx, server in enumerate(raw_servers):
+                if not isinstance(server, str):
+                    raise ValueError(f"oauth_config.authorization_servers[{idx}] must be a string URL")
+                validate_core_url(server, f"OAuth config authorization_servers[{idx}]")
+        return v
+    
+    # Handle dict input (will be converted to OAuthConfig by Pydantic)
     if not isinstance(v, dict):
         raise ValueError("oauth_config must be an object")
     for field_name in ("token_url", "authorization_url", "issuer", "authorization_server"):
@@ -2789,6 +2812,78 @@ class GlobalConfigRead(BaseModel):
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through globally")
 
 
+
+
+# --- OAuth Configuration Schema ---
+
+
+class OAuthConfig(BaseModel):
+    """
+    OAuth 2.0 configuration schema.
+
+    Defines the structure for OAuth authentication configuration used by gateways,
+    servers, and A2A agents. Supports multiple OAuth 2.0 grant types and provider-specific
+    extensions.
+
+    Attributes:
+        grant_type (Optional[str]): OAuth 2.0 grant type. Supported values:
+            - 'client_credentials': Machine-to-machine authentication
+            - 'authorization_code': User authorization flow with code exchange
+            - 'password': Resource owner password credentials (legacy)
+            - 'refresh_token': Token refresh flow
+        client_id (Optional[str]): OAuth client identifier issued by the authorization server
+        client_secret (Optional[str]): OAuth client secret (stored encrypted). Sensitive field.
+        token_url (Optional[str]): Token endpoint URL for obtaining access tokens
+        authorization_url (Optional[str]): Authorization endpoint URL for user consent (authorization_code flow)
+        scope (Optional[str]): Space-separated list of OAuth scopes to request
+        scopes (Optional[List[str]]): Alternative list format for OAuth scopes
+        audience (Optional[str]): Target audience for the token (Auth0, Atlassian, etc.)
+        resource (Optional[Union[str, List[str]]]): Resource indicator per RFC 8707
+        authorization_servers (Optional[List[str]]): List of authorization server URLs for multi-server scenarios
+        issuer (Optional[str]): Token issuer URL for validation
+
+    Examples:
+        >>> # Client credentials flow
+        >>> config = OAuthConfig(
+        ...     grant_type="client_credentials",
+        ...     client_id="my-client-id",
+        ...     client_secret="my-secret",
+        ...     token_url="https://auth.example.com/token",
+        ...     scope="read write"
+        ... )
+        >>> config.grant_type
+        'client_credentials'
+
+        >>> # Authorization code flow with audience
+        >>> config = OAuthConfig(
+        ...     grant_type="authorization_code",
+        ...     client_id="web-app",
+        ...     client_secret="secret",
+        ...     authorization_url="https://auth.example.com/authorize",
+        ...     token_url="https://auth.example.com/token",
+        ...     audience="https://api.example.com",
+        ...     scope="openid profile email"
+        ... )
+        >>> config.audience
+        'https://api.example.com'
+    """
+
+    grant_type: Optional[str] = Field(
+        None,
+        description="OAuth 2.0 grant type: 'client_credentials', 'authorization_code', 'password', or 'refresh_token'",
+    )
+    client_id: Optional[str] = Field(None, description="OAuth client identifier")
+    client_secret: Optional[str] = Field(None, description="OAuth client secret (stored encrypted)")
+    token_url: Optional[str] = Field(None, description="Token endpoint URL")
+    authorization_url: Optional[str] = Field(None, description="Authorization endpoint URL (for authorization_code flow)")
+    scope: Optional[str] = Field(None, description="Space-separated OAuth scopes")
+    scopes: Optional[List[str]] = Field(None, description="OAuth scopes as a list")
+    audience: Optional[str] = Field(None, description="Target audience for the token (Auth0, Atlassian)")
+    resource: Optional[Union[str, List[str]]] = Field(None, description="Resource indicator per RFC 8707")
+    authorization_servers: Optional[List[str]] = Field(None, description="List of authorization server URLs")
+    issuer: Optional[str] = Field(None, description="Token issuer URL")
+
+
 # --- Gateway Schemas ---
 
 
@@ -2849,8 +2944,8 @@ class GatewayCreate(BaseModelWithConfigDict):
     auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for authentication")
 
     # OAuth 2.0 configuration
-    oauth_config: Optional[Dict[str, Any]] = Field(
-        None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), and resource (RFC 8707)"
+    oauth_config: Optional[OAuthConfig] = Field(
+        None, description="OAuth 2.0 configuration. See OAuthConfig schema for available fields."
     )
 
     # Query Parameter Authentication (INSECURE)
@@ -3266,8 +3361,8 @@ class GatewayUpdate(BaseModelWithConfigDict):
         return v
 
     # OAuth 2.0 configuration
-    oauth_config: Optional[Dict[str, Any]] = Field(
-        None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), and resource (RFC 8707)"
+    oauth_config: Optional[OAuthConfig] = Field(
+        None, description="OAuth 2.0 configuration. See OAuthConfig schema for available fields."
     )
 
     # Query Parameter Authentication (INSECURE)
@@ -3643,8 +3738,8 @@ class GatewayRead(BaseModelWithConfigDict):
     auth_headers_unmasked: Optional[List[Dict[str, str]]] = Field(default=None, description="Unmasked custom headers for administrative views")
 
     # OAuth 2.0 configuration
-    oauth_config: Optional[Dict[str, Any]] = Field(
-        None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), and resource (RFC 8707)"
+    oauth_config: Optional[OAuthConfig] = Field(
+        None, description="OAuth 2.0 configuration. See OAuthConfig schema for available fields."
     )
 
     # Query Parameter Authentication (masked for security)
@@ -4254,7 +4349,7 @@ class ServerCreate(BaseModel):
 
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: bool = Field(False, description="Enable OAuth 2.0 for MCP client authentication")
-    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+    oauth_config: Optional[OAuthConfig] = Field(None, description="OAuth 2.0 configuration. See OAuthConfig schema for available fields.")
 
     @field_validator("name")
     @classmethod
@@ -4368,7 +4463,7 @@ class ServerUpdate(BaseModelWithConfigDict):
 
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: Optional[bool] = Field(None, description="Enable OAuth 2.0 for MCP client authentication")
-    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+    oauth_config: Optional[OAuthConfig] = Field(None, description="OAuth 2.0 configuration. See OAuthConfig schema for available fields.")
 
     @field_validator("tags")
     @classmethod
@@ -4543,7 +4638,7 @@ class ServerRead(BaseModelWithConfigDict):
 
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: bool = Field(False, description="Whether OAuth 2.0 is enabled for MCP client authentication")
-    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+    oauth_config: Optional[OAuthConfig] = Field(None, description="OAuth 2.0 configuration. See OAuthConfig schema for available fields.")
 
     _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
@@ -4725,8 +4820,8 @@ class A2AAgentCreate(BaseModel):
     auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for authentication")
 
     # OAuth 2.0 configuration
-    oauth_config: Optional[Dict[str, Any]] = Field(
-        None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), and resource (RFC 8707)"
+    oauth_config: Optional[OAuthConfig] = Field(
+        None, description="OAuth 2.0 configuration. See OAuthConfig schema for available fields."
     )
 
     # Query Parameter Authentication (CWE-598 security concern - use only when required by upstream)
@@ -5077,8 +5172,8 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
     auth_value: Optional[str] = Field(None, validate_default=True)
 
     # OAuth 2.0 configuration
-    oauth_config: Optional[Dict[str, Any]] = Field(
-        None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), and resource (RFC 8707)"
+    oauth_config: Optional[OAuthConfig] = Field(
+        None, description="OAuth 2.0 configuration. See OAuthConfig schema for available fields."
     )
 
     # Query Parameter Authentication (CWE-598 security concern - use only when required by upstream)
@@ -5437,8 +5532,8 @@ class A2AAgentRead(BaseModelWithConfigDict):
     auth_value: Optional[str] = Field(None, description="auth value: username/password or token or custom headers")
 
     # OAuth 2.0 configuration
-    oauth_config: Optional[Dict[str, Any]] = Field(
-        None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), and resource (RFC 8707)"
+    oauth_config: Optional[OAuthConfig] = Field(
+        None, description="OAuth 2.0 configuration. See OAuthConfig schema for available fields."
     )
 
     # auth_value will populate the following fields
