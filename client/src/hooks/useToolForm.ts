@@ -328,6 +328,7 @@ export function useToolForm({
     authPassword,
     customHeaders,
     openApiSpecUrl,
+    maxCustomHeaders,
   ]);
 
   const getFormData = useCallback((): ApiToolPayload => {
@@ -408,6 +409,7 @@ export function useToolForm({
     customHeaders,
     visibility,
     teamId,
+    maxCustomHeaders,
   ]);
 
   const validateForm = useCallback((): boolean => {

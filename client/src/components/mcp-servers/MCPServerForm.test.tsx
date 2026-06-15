@@ -17,6 +17,17 @@ const server = setupServer(
   http.post("/gateways", () => {
     return HttpResponse.json({ id: "test-gateway-123", name: "Test Server" });
   }),
+  // Mock single gateway fetch (used in edit mode)
+  http.get("/gateways/:id", ({ params }) => {
+    return HttpResponse.json({
+      id: params.id,
+      name: "Test Server",
+      url: "http://localhost:9000",
+      transport: "STREAMABLEHTTP",
+      visibility: "public",
+      authType: "none",
+    });
+  }),
   // Mock ExposeComponentsForm API calls
   http.get("/tools", () => {
     return HttpResponse.json([]);
