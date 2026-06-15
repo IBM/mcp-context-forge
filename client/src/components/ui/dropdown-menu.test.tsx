@@ -197,14 +197,14 @@ describe("DropdownMenu Components", () => {
     );
     await user.click(screen.getByRole("button"));
     await waitFor(() => expect(screen.getByText("Sub Menu")).toBeInTheDocument());
-    
+
     // Open the submenu
     await user.hover(screen.getByText("Sub Menu"));
     await waitFor(() => {
       const subItem = screen.getByText("Sub Item");
       expect(subItem).toBeInTheDocument();
       // Assert className on SubContent wrapper (parent or closest)
-      expect(subItem.closest('.custom-sub-content')).toBeInTheDocument();
+      expect(subItem.closest(".custom-sub-content")).toBeInTheDocument();
     });
   });
 

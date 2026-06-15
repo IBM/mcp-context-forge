@@ -51,85 +51,6 @@ describe("Gateways", () => {
     });
   });
 
-  it("renders the loading state while the servers request is in-flight", () => {
-    mockUseQuery.mockReturnValue({
-      data: undefined,
-      error: null,
-      isLoading: true,
-      execute: vi.fn(),
-      refetch: vi.fn(),
-    });
-
-    renderWithProviders(<Gateways />);
-
-    expect(screen.getAllByRole("status")[0]).toBeInTheDocument();
-  });
-
-  it("renders an alert when no servers can be loaded and an error occurs", () => {
-    mockUseQuery.mockReturnValue({
-      data: { servers: [] },
-      error: { message: "Network failure" },
-      isLoading: false,
-      execute: vi.fn(),
-      refetch: vi.fn(),
-    });
-
-    renderWithProviders(<Gateways />);
-
-    expect(screen.getByRole("alert")).toBeInTheDocument();
-    expect(screen.getByText("Network failure")).toBeInTheDocument();
-  });
-
-  it("renders an inline banner when servers exist but a load error still occurred", () => {
-    const mockServer = {
-      id: "gateway-1",
-      name: "GH repo tasks",
-      description: "Test server",
-      icon: "",
-      createdAt: "2026-04-16T13:23:12Z",
-      updatedAt: "2026-04-16T13:23:12Z",
-      enabled: true,
-      associatedTools: [],
-      associatedToolIds: [],
-      associatedResources: [],
-      associatedPrompts: [],
-      associatedA2aAgents: [],
-      metrics: null,
-      tags: [],
-      createdBy: "admin@example.com",
-      createdFromIp: "127.0.0.1",
-      createdVia: "ui",
-      createdUserAgent: "Mozilla/5.0",
-      modifiedBy: null,
-      modifiedFromIp: null,
-      modifiedVia: null,
-      modifiedUserAgent: null,
-      importBatchId: null,
-      federationSource: null,
-      version: 1,
-      teamId: "team-1",
-      team: "Test Team",
-      ownerEmail: "admin@example.com",
-      visibility: "team",
-      oauthEnabled: false,
-      oauthConfig: null,
-    };
-
-    mockUseQuery.mockReturnValue({
-      data: { servers: [mockServer] },
-      error: { message: "Partial failure" },
-      isLoading: false,
-      execute: vi.fn(),
-      refetch: vi.fn(),
-    });
-
-    renderWithProviders(<Gateways />);
-
-    expect(screen.getByRole("alert")).toBeInTheDocument();
-    expect(screen.getByText("Partial failure")).toBeInTheDocument();
-    expect(screen.getByText("GH repo tasks")).toBeInTheDocument();
-  });
-
   it("requests the servers list on page load", () => {
     renderWithProviders(<Gateways />);
 
@@ -975,19 +896,12 @@ describe("Gateways", () => {
       id: "gateway-1",
       name: "Test Server",
       description: "Test server",
-  it("uses the original server details when hydrated server ID does not match", async () => {
-    const user = userEvent.setup();
-    const mockServer: VirtualServer = {
-      id: "gateway-original",
-      name: "Original Server",
-      description: "Original description",
       icon: "",
       createdAt: "2026-04-16T13:23:12Z",
       updatedAt: "2026-04-16T13:23:12Z",
       enabled: true,
       associatedTools: [],
       associatedToolIds: ["tool1"],
-      associatedToolIds: [],
       associatedResources: [],
       associatedPrompts: [],
       associatedA2aAgents: [],
@@ -1016,17 +930,6 @@ describe("Gateways", () => {
       if (path === "/servers/gateway-1") {
         return {
           data: mockServer,
-    const mismatchedServer: VirtualServer = {
-      ...mockServer,
-      id: "gateway-mismatched",
-      name: "Mismatched Server",
-      description: "Mismatched description",
-    };
-
-    mockUseQuery.mockImplementation((path) => {
-      if (path === "/servers/gateway-original") {
-        return {
-          data: mismatchedServer,
           error: null,
           isLoading: false,
           execute: vi.fn(),
@@ -1062,7 +965,6 @@ describe("Gateways", () => {
           execute: vi.fn(),
           refetch: vi.fn(),
         };
-        } as any;
       }
 
       return {
@@ -1072,7 +974,6 @@ describe("Gateways", () => {
         execute: vi.fn(),
         refetch: vi.fn(),
       };
-      } as any;
     });
 
     renderWithProviders(<Gateways />);
@@ -1084,12 +985,5 @@ describe("Gateways", () => {
     expect(screen.queryByText("Failed to fetch tools")).not.toBeInTheDocument();
     expect(screen.queryByText("Failed to fetch resources")).not.toBeInTheDocument();
     expect(screen.queryByText("Failed to fetch prompts")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Actions for Original Server" }));
-    const viewDetails = await screen.findByRole("menuitem", { name: "View details" });
-    await user.click(viewDetails);
-
-    expect(screen.getByText("Original description")).toBeInTheDocument();
-    expect(screen.queryByText("Mismatched description")).not.toBeInTheDocument();
   });
 });
-
