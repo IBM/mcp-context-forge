@@ -3770,6 +3770,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         semaphore = asyncio.Semaphore(concurrency_limit)
 
         async def process_one(gateway_id: str) -> None:
+            """Process on gateway"""
             async with semaphore:
                 try:
                     with fresh_db_session() as db:
@@ -4828,6 +4829,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             try:
                 if self._redis_client and settings.cache_type == "redis":
                     async def require_redis_leader() -> bool:
+                        """Check for redis leader"""
                         current_leader = await self._redis_client.get(self._leader_key)
                         return current_leader == self._instance_id
 
@@ -5450,6 +5452,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             logger.info(f"Total {catalog_sync.items_added} new items added during {log_context}")
 
         def _created_via_allowed(created_via: Optional[str]) -> bool:
+            """Check if already created"""
             return stale_created_via_values is None or created_via in stale_created_via_values
 
         stale_tool_ids = []
