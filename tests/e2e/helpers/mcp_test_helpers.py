@@ -76,7 +76,7 @@ def assert_json_response(
     """Assert response status and return parsed JSON body."""
     if isinstance(expected_status, int):
         expected_status = (expected_status,)
-    
+
     assert response.status_code in expected_status, (
         f"Expected status {expected_status}, got {response.status_code}: {response.text}"
     )
@@ -103,4 +103,3 @@ def assert_mcp_error(payload: dict[str, Any], expected_code: int | None = None) 
             f"Expected error code {expected_code}, got {error.get('code')}: {error}"
         )
     return error
-

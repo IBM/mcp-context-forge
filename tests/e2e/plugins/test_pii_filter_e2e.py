@@ -97,7 +97,7 @@ class TestPiiFilterE2E:
         assert plugin_harness["plugin_kind"], (
             f"Plugin kind must be configured. Got: {plugin_harness['plugin_kind']}"
         )
-        
+
         # PII filter specific validation
         assert plugin_harness["plugin_kind"] == "cpex_pii_filter.pii_filter.PIIFilterPlugin", (
             f"Expected PII filter plugin, got: {plugin_harness['plugin_kind']}"
@@ -108,7 +108,7 @@ class TestPiiFilterE2E:
         assert plugin_harness["tool_name"], (
             f"Tool name must be configured. Got: {plugin_harness['tool_name']}"
         )
-        
+
         logger.info(
             "✅ Plugin stack validated: plugins=%s, observability=%s, plugin=%s",
             plugin_harness["plugins_enabled"],
@@ -124,7 +124,7 @@ class TestPiiFilterE2E:
     ) -> None:
         """The harness should be able to invoke a real gateway-backed MCP tool."""
         response = invoke_tool(plugin_harness, arguments={"timezone": "UTC"}, request_id=10)
-        
+
         # Strong assertion: HTTP request must succeed
         assert response["status_code"] == 200, (
             f"Expected HTTP 200, got {response['status_code']}. Response: {response}"
@@ -151,7 +151,7 @@ class TestPiiFilterE2E:
         )
         text = _extract_tool_text(response["result"])
         logger.info("✅ E2E tool round-trip successful. Output: %s", text or response["result"])
-        
+
         assert isinstance(text, str), f"Expected text to be str, got {type(text)}"
         assert text or response["result"].get("content"), (
             f"Tool response is empty - expected content. Response: {response['result']}"
@@ -181,7 +181,7 @@ class TestPiiFilterE2E:
         # Validate test has PII to detect
         if not sensitive_values or not any(sensitive_values):
             pytest.skip("No PII values to test")
-        
+
         primary_value = sensitive_values[0] if sensitive_values else ""
         secondary_value = sensitive_values[1] if len(sensitive_values) > 1 else primary_value
 
@@ -215,11 +215,11 @@ class TestPiiFilterE2E:
         # Log output without exposing PII values
         output_preview = prompt_text[:100] if prompt_text else str(response["result"])[:100]
         logger.info("E2E prompt output for %s: %s...", category_name, output_preview)
-        
+
         assert prompt_text, (
             f"Prompt text is empty for {category_name} - expected content. Response: {response['result']}"
         )
-        
+
         prompt_lines = [line.strip() for line in prompt_text.splitlines() if line.strip()]
         assert prompt_lines, (
             f"No non-empty lines in prompt text for {category_name}. Text: {prompt_text}"
@@ -267,7 +267,7 @@ class TestPiiFilterE2E:
         # Validate test has PII to detect
         if not sensitive_values or not any(sensitive_values):
             pytest.skip("No PII values to test")
-        
+
         primary_value = sensitive_values[0] if sensitive_values else ""
         secondary_value = " ".join(sensitive_values[1:]) if len(sensitive_values) > 1 else primary_value
 
@@ -320,7 +320,7 @@ class TestPiiFilterE2E:
             f"Expected output to contain masking markers (e.g., ***, [REDACTED], XXX) for {category_name}, "
             f"but no markers found. This indicates PII may not have been properly redacted. Text: {text}"
         )
-        
+
         logger.info("✅ All PII values redacted for %s", category_name)
 
     def test_plugin_harness_is_tenant_scoped(
@@ -341,7 +341,7 @@ class TestPiiFilterE2E:
         assert plugin_harness["prompt_name"].startswith("e2e-plugin"), (
             f"Prompt name must start with 'e2e-plugin' for test isolation. Got: {plugin_harness['prompt_name']}"
         )
-        
+
         logger.info(
             "✅ Tenant isolation validated: team=%s, server=%s",
             plugin_harness["team_id"],
@@ -362,15 +362,15 @@ class TestPiiFilterStateTransitions:
         invoke_tool: Callable,
     ) -> None:
         """Plugin mode changes should take effect immediately without restart.
-        
+
         Tests the requirement: 'Plugin state: disabled → enabled → disabled
         (confirm state transitions take effect on subsequent invocations without restart)'
-        
+
         Uses the existing PUT /plugins/{name} API to change plugin mode.
         """
         plugin_name = plugin_harness["plugin_name"]
         test_pii = "john@example.com"
-        
+
         # Step 1: Set plugin to permissive mode (effectively disabled for blocking)
         response = admin_client.put(
             f"/admin/plugins/{plugin_name}",
@@ -378,7 +378,7 @@ class TestPiiFilterStateTransitions:
             follow_redirects=True,
         )
         assert response.status_code in (200, 204), f"Failed to set permissive mode: {response.text}"
-        
+
         # Verify mode change by checking response (API may return execution_mode not policy_mode)
         verify_response = admin_client.get(f"/admin/plugins/{plugin_name}", follow_redirects=True)
         if verify_response.status_code == 200:
@@ -386,7 +386,7 @@ class TestPiiFilterStateTransitions:
             current_mode = plugin_data.get("mode") or plugin_data.get("policy_mode") or plugin_data.get("execution_mode")
             logger.info(f"Plugin mode after change: {current_mode} (requested: permissive)")
         logger.info("✅ Plugin set to permissive mode via API")
-        
+
         # Step 2: Invoke tool - in permissive mode, errors are logged but don't block
         result = invoke_tool(
             plugin_harness,
@@ -395,7 +395,7 @@ class TestPiiFilterStateTransitions:
         )
         assert result["status_code"] == 200, f"Expected success in permissive mode: {result}"
         logger.info("✅ Tool invocation succeeded in permissive mode")
-        
+
         # Step 3: Set plugin to enforce mode
         response = admin_client.put(
             f"/admin/plugins/{plugin_name}",
@@ -403,7 +403,7 @@ class TestPiiFilterStateTransitions:
             follow_redirects=True,
         )
         assert response.status_code in (200, 204), f"Failed to set enforce mode: {response.text}"
-        
+
         # Verify mode change by checking response (API may return execution_mode not policy_mode)
         verify_response = admin_client.get(f"/admin/plugins/{plugin_name}", follow_redirects=True)
         if verify_response.status_code == 200:
@@ -411,7 +411,7 @@ class TestPiiFilterStateTransitions:
             current_mode = plugin_data.get("mode") or plugin_data.get("policy_mode") or plugin_data.get("execution_mode")
             logger.info(f"Plugin mode after change: {current_mode} (requested: enforce)")
         logger.info("✅ Plugin set to enforce mode via API")
-        
+
         # Step 4: Invoke tool - in enforce mode, PII should be redacted or blocked
         result = invoke_tool(
             plugin_harness,
@@ -433,7 +433,7 @@ class TestPiiFilterStateTransitions:
                 f"Expected policy block in enforce mode: {result}"
             )
             logger.info("✅ Request blocked by policy in enforce mode")
-        
+
         # Step 5: Return to permissive mode
         response = admin_client.put(
             f"/admin/plugins/{plugin_name}",
@@ -441,14 +441,14 @@ class TestPiiFilterStateTransitions:
             follow_redirects=True,
         )
         assert response.status_code in (200, 204), f"Failed to restore permissive mode: {response.text}"
-        
+
         # Verify mode change by checking response (API may return execution_mode not policy_mode)
         verify_response = admin_client.get(f"/admin/plugins/{plugin_name}", follow_redirects=True)
         if verify_response.status_code == 200:
             plugin_data = verify_response.json()
             current_mode = plugin_data.get("mode") or plugin_data.get("policy_mode") or plugin_data.get("execution_mode")
             logger.info(f"Plugin mode after change: {current_mode} (requested: permissive)")
-        
+
         result = invoke_tool(
             plugin_harness,
             arguments={"user_input": test_pii, "timezone": "UTC"},
@@ -469,17 +469,17 @@ class TestPiiFilterBindingIsolation:
         invoke_tool: Callable,
     ) -> None:
         """Plugin bound to specific tools should not affect non-bound tools.
-        
+
         Tests the requirement: 'Scope / binding: plugin bound globally vs. per-tool;
         confirm non-bound tools/tenants are unaffected'
-        
+
         Uses the existing POST /tool-plugin-bindings API (tool-centric binding).
         """
         import uuid
-        
-        test_pii = "sensitive@company.com"  
+
+        test_pii = "sensitive@company.com"
         plugin_name = plugin_harness["plugin_name"]
-        
+
         # Create two tools: tool_A (will be bound) and tool_B (will NOT be bound)
         tool_a = admin_client.post(
             "/tools/",
@@ -500,7 +500,7 @@ class TestPiiFilterBindingIsolation:
                 "visibility": "team",
             },
         ).json()
-        
+
         tool_b = admin_client.post(
             "/tools/",
             json={
@@ -520,7 +520,7 @@ class TestPiiFilterBindingIsolation:
                 "visibility": "team",
             },
         ).json()
-        
+
         # Create server with both tools
         server = admin_client.post(
             "/servers",
@@ -534,7 +534,7 @@ class TestPiiFilterBindingIsolation:
                 "visibility": "team",
             },
         ).json()
-        
+
         # Override tool_A to permissive mode via API
         # This should override the global YAML 'enforce' mode for this specific tool
         response = admin_client.post(
@@ -561,7 +561,7 @@ class TestPiiFilterBindingIsolation:
         )
         assert response.status_code in (200, 201), f"Failed to bind plugin: {response.text}"
         logger.info("✅ Plugin mode overridden to permissive for tool_A")
-        
+
         # Test tool_A: should have lenient behavior (permissive mode)
         # In permissive mode, the plugin still filters PII but errors don't block requests
         harness_a = {**plugin_harness, "tool_name": tool_a["name"], "server_id": server["id"]}
@@ -582,7 +582,7 @@ class TestPiiFilterBindingIsolation:
                     f"Tool A should have PII filtered even in permissive mode: {text_a}"
                 )
                 logger.info("✅ Tool A has lenient behavior (permissive mode override)")
-        
+
         # Test tool_B: should have strict behavior (global enforce mode from YAML)
         harness_b = {**plugin_harness, "tool_name": tool_b["name"], "server_id": server["id"]}
         result_b = invoke_tool(
@@ -624,16 +624,16 @@ class TestPiiFilterModes:
         invoke_tool: Callable,
     ) -> None:
         """Plugin should behave differently based on configured mode.
-        
+
         Tests the requirement: 'Mode: block, redact, flag-only (or whatever modes the plugin exposes)'
-        
+
         Uses the existing PUT /plugins/{name} API which supports 'enforce' and 'permissive' modes.
         - Enforce mode: Strict error handling, failures block requests
         - Permissive mode: Lenient error handling, failures are logged but don't block
         """
         test_pii = "confidential@enterprise.com"
         plugin_name = plugin_harness["plugin_name"]
-        
+
         # Set plugin mode via existing API
         response = admin_client.put(
             f"/admin/plugins/{plugin_name}",
@@ -641,7 +641,7 @@ class TestPiiFilterModes:
             follow_redirects=True,
         )
         assert response.status_code in (200, 204), f"Failed to set plugin mode: {response.text}"
-        
+
         # Verify mode change took effect by checking response structure
         # The GET endpoint may return different fields (execution_mode vs policy mode)
         verify_response = admin_client.get(f"/admin/plugins/{plugin_name}", follow_redirects=True)
@@ -655,14 +655,14 @@ class TestPiiFilterModes:
             if current_mode and current_mode not in (mode, "transform", "sequential"):
                 logger.warning(f"Mode mismatch: expected '{mode}', got '{current_mode}' - will verify via behavior")
         logger.info(f"✅ Plugin mode set to {mode} via API")
-        
+
         # Invoke tool with PII
         result = invoke_tool(
             plugin_harness,
             arguments={"user_input": test_pii, "timezone": "UTC"},
             request_id=400 + hash(mode) % 100,
         )
-        
+
         if expected_behavior == "strict":
             # Enforce mode: either succeeds with redaction or fails with policy block
             if result["status_code"] == 200 and result["result"]:
@@ -680,12 +680,10 @@ class TestPiiFilterModes:
                     f"Expected policy block in enforce mode, got: {result}"
                 )
                 logger.info(f"✅ {mode} mode: Request blocked by policy")
-        
+
         elif expected_behavior == "lenient":
             # Permissive mode: should succeed even if plugin has issues
             assert result["status_code"] == 200, (
                 f"Permissive mode should allow requests through, got: {result}"
             )
             logger.info(f"✅ {mode} mode: Request processed successfully")
-
-

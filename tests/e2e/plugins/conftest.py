@@ -87,7 +87,7 @@ def _request_json(
     **kwargs: Any,
 ) -> Any:
     """Send a JSON API request and return the parsed body.
-    
+
     Automatically follows redirects (307, 308) to handle Admin API routing.
     """
     response = client.request(method, path, follow_redirects=True, **kwargs)
@@ -199,14 +199,14 @@ def plugin_team(admin_client: httpx.Client) -> dict[str, Any]:
 @pytest.fixture(scope="module")
 def plugin_user(admin_client: httpx.Client, plugin_team: dict[str, Any]) -> dict[str, Any]:
     """Provide user context for plugin E2E tests.
-    
+
     For e2e tests, we use the admin token since we're testing plugin behavior,
     not user authentication or RBAC. The admin already has access to the team.
     """
     # Extract admin token from client headers
     auth_header = admin_client.headers.get("Authorization", "")
     admin_token = auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else auth_header
-    
+
     return {
         "id": "admin-user-id",  # Placeholder - not used in plugin tests
         "email": "admin@example.com",
@@ -222,17 +222,17 @@ def plugin_server(
     request: pytest.FixtureRequest,
 ) -> Generator[dict[str, Any], None, None]:
     """Create a virtual server with self-provisioned REST tool and prompt for plugin E2E tests.
-    
+
     This fixture creates resources directly via the API (no external MCP server needed):
     1. Creates a REST tool via POST /tools/
     2. Creates a prompt via POST /prompts
     3. Creates a virtual server that aggregates these resources
-    
+
     This approach is simpler, faster, and more reliable than using external MCP servers.
     Plugins work identically with REST tools as they do with MCP server tools.
-    
+
     This fixture can be customized via indirect parametrization:
-    
+
     Example:
         @pytest.mark.parametrize("plugin_server", [
             {
@@ -242,12 +242,12 @@ def plugin_server(
         ], indirect=True)
         def test_with_custom_server(plugin_server):
             ...
-    
+
     Args:
         admin_client: Authenticated admin HTTP client
         plugin_team: Team for resource scoping
         request: Pytest request object for parametrization
-    
+
     Returns:
         Dict with server metadata including tool/prompt IDs and names
     """
@@ -385,7 +385,7 @@ def invoke_tool() -> Callable:
                 server_id=harness["server_id"],
                 token=harness["token"],
             )
-            
+
             # Now invoke the tool with the session ID
             response = _mcp_post(
                 client,
@@ -432,7 +432,7 @@ def invoke_prompt() -> Callable:
                 server_id=harness["server_id"],
                 token=harness["token"],
             )
-            
+
             # Now fetch the prompt with the session ID
             response = _mcp_post(
                 client,
@@ -640,5 +640,3 @@ def verify_plugin_execution(query_observability_traces: Callable) -> Callable:
         return False
 
     return _verify
-
-
