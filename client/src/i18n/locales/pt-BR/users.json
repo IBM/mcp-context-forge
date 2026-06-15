@@ -65,5 +65,17 @@
   "users.delete.error.self": "Você não pode excluir sua própria conta",
   "users.delete.error.lastAdmin": "Não é possível excluir o último administrador",
   "users.delete.error.notFound": "Usuário não encontrado",
-  "users.delete.error.generic": "Falha ao excluir usuário: {error}"
+  "users.delete.error.generic": "Falha ao excluir usuário: {error}",
+  "users.edit.dialog.title": "Editar Usuário",
+  "users.edit.dialog.description": "Atualizar detalhes da conta para {email}",
+  "users.form.button.save": "Salvar Alterações",
+  "users.form.button.saving": "Salvando...",
+  "users.form.error.updateFailed": "Falha ao atualizar usuário. Por favor, tente novamente.",
+  "users.form.password.optional": "Deixe em branco para manter a senha atual",
+  "users.form.password.optional.placeholder": "Deixe em branco para manter",
+  "users.form.password.show": "Mostrar senha",
+  "users.form.password.hide": "Ocultar senha",
+  "users.edit.success": "Usuário {email} atualizado com sucesso",
+  "users.edit.error.notFound": "Usuário não encontrado",
+  "users.edit.error.generic": "Falha ao atualizar usuário: {error}"
 }

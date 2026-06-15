@@ -5,19 +5,82 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useUserForm } from "@/hooks/useUserForm";
-import type { CreateUserRequest } from "@/types/user";
+import { PasswordInput } from "./PasswordInput";
+import type { CreateUserRequest, UpdateUserRequest, User as UserType } from "@/types/user";
 
 interface UserFormProps {
   isOpen: boolean;
   onToggle: () => void;
-  onSuccess?: () => void;
-  onOptimisticCreate?: (userData: CreateUserRequest) => void;
-  onError?: (userData: CreateUserRequest) => void;
+  user?: UserType;
+  onSuccess?: (result?: UserType) => void;
+  onOptimisticCreate?: (userData: CreateUserRequest | UpdateUserRequest) => void;
+  onError?: (userData: CreateUserRequest | UpdateUserRequest) => void;
+}
+
+interface FormFieldProps {
+  id: string;
+  label: string;
+  required?: boolean;
+  error?: string;
+  children: React.ReactNode;
+}
+
+function FormField({ id, label, required = false, error, children }: FormFieldProps) {
+  return (
+    <div className="space-y-1">
+      <label
+        htmlFor={id}
+        className="inline-flex items-center gap-0.5 text-sm font-medium text-neutral-900 dark:text-neutral-100"
+      >
+        {label}
+        {required && (
+          <>
+            <span className="text-red-500" aria-hidden="true">
+              *
+            </span>
+            <span className="sr-only">(required)</span>
+          </>
+        )}
+      </label>
+      {children}
+      {error && (
+        <p id={`${id}-error`} className="text-sm text-red-600 dark:text-red-400" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+interface CheckboxFieldProps {
+  id: string;
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+  label: string;
+}
+
+function CheckboxField({ id, checked, onCheckedChange, label }: CheckboxFieldProps) {
+  return (
+    <div className="flex items-center space-x-2">
+      <Checkbox
+        id={id}
+        checked={checked}
+        onCheckedChange={(value) => onCheckedChange(value === true)}
+      />
+      <label
+        htmlFor={id}
+        className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+      >
+        {label}
+      </label>
+    </div>
+  );
 }
 
 export function UserForm({
   isOpen,
   onToggle,
+  user,
   onSuccess,
   onOptimisticCreate,
   onError,
@@ -33,6 +96,7 @@ export function UserForm({
     passwordChangeRequired,
     errors,
     isSubmitting,
+    isEditMode,
     setEmail,
     setPassword,
     setConfirmPassword,
@@ -41,17 +105,16 @@ export function UserForm({
     setIsActive,
     setPasswordChangeRequired,
     handleSubmit,
-  } = useUserForm();
+  } = useUserForm({ initialUser: user });
 
-  const [advancedOpen, setAdvancedOpen] = React.useState(false);
+  const [advancedOpen, setAdvancedOpen] = React.useState(isEditMode);
 
   const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     handleSubmit(
       event,
-      () => {
-        // Success callback
+      (result?: UserType) => {
         if (onSuccess) {
-          onSuccess();
+          onSuccess(result);
         } else {
           onToggle();
         }
@@ -76,119 +139,57 @@ export function UserForm({
                 id="user-form-title"
                 className="text-2xl font-semibold tracking-tight text-neutral-950 dark:text-neutral-50"
               >
-                {intl.formatMessage({ id: "users.form.title" })}
+                {intl.formatMessage({
+                  id: isEditMode ? "users.edit.dialog.title" : "users.form.title",
+                })}
               </h2>
             </div>
 
             <p className="text-sm leading-6 text-neutral-600 dark:text-neutral-400">
-              {intl.formatMessage({ id: "users.form.description" })}
+              {isEditMode && user
+                ? intl.formatMessage({ id: "users.edit.dialog.description" }, { email: user.email })
+                : intl.formatMessage({ id: "users.form.description" })}
             </p>
           </div>
 
           <form className="space-y-6" onSubmit={onSubmit} aria-labelledby="user-form-title">
             <div className="space-y-1">
-              <label
-                htmlFor="user-email"
-                className="inline-flex items-center gap-0.5 text-sm font-medium text-neutral-900 dark:text-neutral-100"
-              >
-                {intl.formatMessage({ id: "users.form.email" })}
-                <span className="text-red-500">*</span>
-                <span className="sr-only">(required)</span>
-              </label>
-              <Input
-                id="user-email"
-                type="email"
-                autoComplete="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder={intl.formatMessage({ id: "users.form.email.placeholder" })}
-                className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
-                aria-invalid={!!errors.email}
-                aria-describedby={errors.email ? "email-error" : undefined}
-              />
-              {errors.email && (
-                <p
-                  id="email-error"
-                  className="text-sm text-red-600 dark:text-red-400"
-                  role="alert"
-                  aria-live="polite"
+              {isEditMode ? (
+                <>
+                  <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                    {intl.formatMessage({ id: "users.form.email" })}
+                  </p>
+                  <p className="rounded-md border border-neutral-200 bg-neutral-50 px-4 py-2 text-sm text-neutral-600 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400">
+                    {user?.email}
+                  </p>
+                </>
+              ) : (
+                <FormField
+                  id="user-email"
+                  label={intl.formatMessage({ id: "users.form.email" })}
+                  required
+                  error={errors.email}
                 >
-                  {errors.email}
-                </p>
+                  <Input
+                    id="user-email"
+                    type="email"
+                    autoComplete="email"
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    placeholder={intl.formatMessage({ id: "users.form.email.placeholder" })}
+                    className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+                    aria-invalid={!!errors.email}
+                    aria-describedby={errors.email ? "user-email-error" : undefined}
+                  />
+                </FormField>
               )}
             </div>
 
-            <div className="space-y-1">
-              <label
-                htmlFor="user-password"
-                className="inline-flex items-center gap-0.5 text-sm font-medium text-neutral-900 dark:text-neutral-100"
-              >
-                {intl.formatMessage({ id: "users.form.password" })}
-                <span className="text-red-500">*</span>
-                <span className="sr-only">(required)</span>
-              </label>
-              <Input
-                id="user-password"
-                type="password"
-                autoComplete="new-password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder={intl.formatMessage({ id: "users.form.password.placeholder" })}
-                className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
-                aria-invalid={!!errors.password}
-                aria-describedby={errors.password ? "password-error" : undefined}
-              />
-              {errors.password && (
-                <p
-                  id="password-error"
-                  className="text-sm text-red-600 dark:text-red-400"
-                  role="alert"
-                  aria-live="polite"
-                >
-                  {errors.password}
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-1">
-              <label
-                htmlFor="user-confirm-password"
-                className="inline-flex items-center gap-0.5 text-sm font-medium text-neutral-900 dark:text-neutral-100"
-              >
-                {intl.formatMessage({ id: "users.form.confirmPassword" })}
-                <span className="text-red-500">*</span>
-                <span className="sr-only">(required)</span>
-              </label>
-              <Input
-                id="user-confirm-password"
-                type="password"
-                autoComplete="new-password"
-                value={confirmPassword}
-                onChange={(event) => setConfirmPassword(event.target.value)}
-                placeholder={intl.formatMessage({ id: "users.form.confirmPassword.placeholder" })}
-                className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
-                aria-invalid={!!errors.confirmPassword}
-                aria-describedby={errors.confirmPassword ? "confirm-password-error" : undefined}
-              />
-              {errors.confirmPassword && (
-                <p
-                  id="confirm-password-error"
-                  className="text-sm text-red-600 dark:text-red-400"
-                  role="alert"
-                  aria-live="polite"
-                >
-                  {errors.confirmPassword}
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-1">
-              <label
-                htmlFor="user-full-name"
-                className="text-sm font-medium text-neutral-900 dark:text-neutral-100"
-              >
-                {intl.formatMessage({ id: "users.form.fullName" })}
-              </label>
+            <FormField
+              id="user-full-name"
+              label={intl.formatMessage({ id: "users.form.fullName" })}
+              error={errors.fullName}
+            >
               <Input
                 id="user-full-name"
                 type="text"
@@ -198,19 +199,38 @@ export function UserForm({
                 placeholder={intl.formatMessage({ id: "users.form.fullName.placeholder" })}
                 className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
                 aria-invalid={!!errors.fullName}
-                aria-describedby={errors.fullName ? "full-name-error" : undefined}
+                aria-describedby={errors.fullName ? "user-full-name-error" : undefined}
               />
-              {errors.fullName && (
-                <p
-                  id="full-name-error"
-                  className="text-sm text-red-600 dark:text-red-400"
-                  role="alert"
-                  aria-live="polite"
-                >
-                  {errors.fullName}
-                </p>
-              )}
-            </div>
+            </FormField>
+
+            <PasswordInput
+              id="user-password"
+              value={password}
+              onChange={setPassword}
+              label={intl.formatMessage({ id: "users.form.password" })}
+              required={!isEditMode}
+              placeholder={intl.formatMessage({
+                id: isEditMode
+                  ? "users.form.password.optional.placeholder"
+                  : "users.form.password.placeholder",
+              })}
+              error={errors.password}
+              hint={
+                isEditMode ? intl.formatMessage({ id: "users.form.password.optional" }) : undefined
+              }
+            />
+
+            {(!isEditMode || password) && (
+              <PasswordInput
+                id="user-confirm-password"
+                value={confirmPassword}
+                onChange={setConfirmPassword}
+                label={intl.formatMessage({ id: "users.form.confirmPassword" })}
+                required
+                placeholder={intl.formatMessage({ id: "users.form.confirmPassword.placeholder" })}
+                error={errors.confirmPassword}
+              />
+            )}
 
             <div className="flex flex-col gap-5 pt-2">
               <button
@@ -239,47 +259,24 @@ export function UserForm({
                   </span>
                   <fieldset className="space-y-4">
                     <legend className="sr-only">User Permissions and Settings</legend>
-                    <div className="flex items-center space-x-2">
-                      <Checkbox
-                        id="user-is-admin"
-                        checked={isAdmin}
-                        onCheckedChange={(checked) => setIsAdmin(checked === true)}
-                      />
-                      <label
-                        htmlFor="user-is-admin"
-                        className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                      >
-                        {intl.formatMessage({ id: "users.form.isAdmin" })}
-                      </label>
-                    </div>
-
-                    <div className="flex items-center space-x-2">
-                      <Checkbox
-                        id="user-is-active"
-                        checked={isActive}
-                        onCheckedChange={(checked) => setIsActive(checked === true)}
-                      />
-                      <label
-                        htmlFor="user-is-active"
-                        className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                      >
-                        {intl.formatMessage({ id: "users.form.isActive" })}
-                      </label>
-                    </div>
-
-                    <div className="flex items-center space-x-2">
-                      <Checkbox
-                        id="user-password-change-required"
-                        checked={passwordChangeRequired}
-                        onCheckedChange={(checked) => setPasswordChangeRequired(checked === true)}
-                      />
-                      <label
-                        htmlFor="user-password-change-required"
-                        className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                      >
-                        {intl.formatMessage({ id: "users.form.passwordChangeRequired" })}
-                      </label>
-                    </div>
+                    <CheckboxField
+                      id="user-is-admin"
+                      checked={isAdmin}
+                      onCheckedChange={setIsAdmin}
+                      label={intl.formatMessage({ id: "users.form.isAdmin" })}
+                    />
+                    <CheckboxField
+                      id="user-is-active"
+                      checked={isActive}
+                      onCheckedChange={setIsActive}
+                      label={intl.formatMessage({ id: "users.form.isActive" })}
+                    />
+                    <CheckboxField
+                      id="user-password-change-required"
+                      checked={passwordChangeRequired}
+                      onCheckedChange={setPasswordChangeRequired}
+                      label={intl.formatMessage({ id: "users.form.passwordChangeRequired" })}
+                    />
                   </fieldset>
                 </div>
               )}
@@ -309,8 +306,12 @@ export function UserForm({
                   className="h-10 rounded-md bg-neutral-950 px-4 text-sm font-medium text-white hover:enabled:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-950 dark:hover:enabled:bg-neutral-200"
                 >
                   {isSubmitting
-                    ? intl.formatMessage({ id: "users.form.button.creating" })
-                    : intl.formatMessage({ id: "users.form.button.create" })}
+                    ? intl.formatMessage({
+                        id: isEditMode ? "users.form.button.saving" : "users.form.button.creating",
+                      })
+                    : intl.formatMessage({
+                        id: isEditMode ? "users.form.button.save" : "users.form.button.create",
+                      })}
                 </Button>
               </div>
             </div>

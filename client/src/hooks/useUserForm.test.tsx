@@ -28,6 +28,7 @@ describe("useUserForm", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useFakeTimers();
     vi.mocked(useQueryModule.useQuery).mockReturnValue({
       data: null,
       error: null,
@@ -35,6 +36,10 @@ describe("useUserForm", () => {
       execute: mockExecute,
       refetch: vi.fn(),
     });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   describe("initial state", () => {
@@ -132,12 +137,14 @@ describe("useUserForm", () => {
 
       act(() => {
         result.current.validateField("email", "invalid-email");
+        vi.advanceTimersByTime(300);
       });
 
       expect(result.current.errors.email).toBe("Invalid email address");
 
       act(() => {
         result.current.validateField("email", "valid@example.com");
+        vi.advanceTimersByTime(300);
       });
 
       expect(result.current.errors.email).toBeUndefined();
@@ -148,12 +155,14 @@ describe("useUserForm", () => {
 
       act(() => {
         result.current.validateField("password", "short");
+        vi.advanceTimersByTime(300);
       });
 
       expect(result.current.errors.password).toBe("Password must be at least 8 characters");
 
       act(() => {
         result.current.validateField("password", "LongEnoughPassword123!");
+        vi.advanceTimersByTime(300);
       });
 
       expect(result.current.errors.password).toBeUndefined();
@@ -165,12 +174,14 @@ describe("useUserForm", () => {
       act(() => {
         result.current.setPassword("SecurePass123!");
         result.current.validateField("confirmPassword", "DifferentPass123!");
+        vi.advanceTimersByTime(300);
       });
 
       expect(result.current.errors.confirmPassword).toBe("Passwords do not match");
 
       act(() => {
         result.current.validateField("confirmPassword", "SecurePass123!");
+        vi.advanceTimersByTime(300);
       });
 
       expect(result.current.errors.confirmPassword).toBeUndefined();
