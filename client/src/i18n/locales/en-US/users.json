@@ -65,5 +65,17 @@
   "users.delete.error.self": "You cannot delete your own account",
   "users.delete.error.lastAdmin": "Cannot delete the last remaining admin user",
   "users.delete.error.notFound": "User not found",
-  "users.delete.error.generic": "Failed to delete user: {error}"
+  "users.delete.error.generic": "Failed to delete user: {error}",
+  "users.edit.dialog.title": "Edit User",
+  "users.edit.dialog.description": "Update account details for {email}",
+  "users.form.button.save": "Save Changes",
+  "users.form.button.saving": "Saving...",
+  "users.form.error.updateFailed": "Failed to update user. Please try again.",
+  "users.form.password.optional": "Leave blank to keep the current password",
+  "users.form.password.optional.placeholder": "Leave blank to keep current",
+  "users.form.password.show": "Show password",
+  "users.form.password.hide": "Hide password",
+  "users.edit.success": "User {email} updated successfully",
+  "users.edit.error.notFound": "User not found",
+  "users.edit.error.generic": "Failed to update user: {error}"
 }
