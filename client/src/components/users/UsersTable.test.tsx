@@ -32,7 +32,7 @@ const renderWithIntl = (component: React.ReactNode) => {
   return render(
     <IntlProvider locale={mockIntl.locale} messages={mockIntl.messages}>
       {component}
-    </IntlProvider>
+    </IntlProvider>,
   );
 };
 
@@ -52,7 +52,7 @@ const baseUser: User = {
 describe("UsersTable", () => {
   it("renders user information correctly", () => {
     renderWithIntl(<UsersTable users={[baseUser]} />);
-    
+
     expect(screen.getByText("Test User")).toBeInTheDocument();
     expect(screen.getByText("test@example.com")).toBeInTheDocument();
     expect(screen.getByText("Local")).toBeInTheDocument(); // Provider
@@ -68,14 +68,24 @@ describe("UsersTable", () => {
   });
 
   it("renders admin role and inactive status correctly", () => {
-    const user: User = { ...baseUser, email: "admin@example.com", is_admin: true, is_active: false };
+    const user: User = {
+      ...baseUser,
+      email: "admin@example.com",
+      is_admin: true,
+      is_active: false,
+    };
     renderWithIntl(<UsersTable users={[user]} />);
     expect(screen.getByText("Admin")).toBeInTheDocument();
     expect(screen.getByText("Inactive")).toBeInTheDocument();
   });
 
   it("renders locked security state", () => {
-    const user: User = { ...baseUser, is_locked: true, password_change_required: true, email_verified: true };
+    const user: User = {
+      ...baseUser,
+      is_locked: true,
+      password_change_required: true,
+      email_verified: true,
+    };
     renderWithIntl(<UsersTable users={[user]} />);
     expect(screen.getByText("Locked")).toBeInTheDocument();
   });

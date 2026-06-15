@@ -52,11 +52,11 @@ describe("Gateways Utils", () => {
     it("returns relative path if window or origin is not available", () => {
       // Mock window.location to simulate missing origin
       const originalLocation = window.location;
-      // @ts-expect-error - testing missing window.location
+      // @ts-expect-error - invalid url - testing missing window.location
       delete window.location;
-      
+
       expect(getVirtualServerEndpoint("test-id")).toBe("/servers/test-id/mcp");
-      
+
       // Restore window.location
       window.location = originalLocation;
     });
@@ -78,17 +78,17 @@ describe("Gateways Utils", () => {
       copyToClipboard("test-text");
       expect(writeTextMock).toHaveBeenCalledWith("test-text");
     });
-    
+
     it("does not throw if clipboard is undefined", () => {
       const originalClipboard = navigator.clipboard;
-      // @ts-expect-error - testing missing clipboard
+      // @ts-expect-error - invalid url - testing missing clipboard
       delete navigator.clipboard;
-      
-      expect(() => copyToClipboard("test")).not.toThrow();
-      
-      // @ts-ignore
 
-      // @ts-expect-error - restoring clipboard
+      expect(() => copyToClipboard("test")).not.toThrow();
+
+      // @ts-expect-error - invalid url
+
+      // @ts-expect-error - invalid url - restoring clipboard
       navigator.clipboard = originalClipboard;
     });
   });
@@ -99,14 +99,29 @@ describe("Gateways Utils", () => {
     });
 
     it("handles object tags with label", () => {
-      expect(getTagDisplay({ label: "tag-label" } as any, 1)).toEqual({ key: "tag-label-1", label: "tag-label" });
+      expect(getTagDisplay({ label: "tag-label" } as any, 1)).toEqual({
+        key: "tag-label-1",
+        label: "tag-label",
+      });
     });
 
     it("handles object tags with various fallbacks", () => {
-      expect(getTagDisplay({ name: "tag-name" } as any, 2)).toEqual({ key: "tag-name-2", label: "tag-name" });
-      expect(getTagDisplay({ value: "tag-value" } as any, 3)).toEqual({ key: "tag-value-3", label: "tag-value" });
-      expect(getTagDisplay({ id: "tag-id" } as any, 4)).toEqual({ key: "tag-id-4", label: "tag-id" });
-      expect(getTagDisplay({} as any, 5, "Fallback")).toEqual({ key: "Fallback-5", label: "Fallback" });
+      expect(getTagDisplay({ name: "tag-name" } as any, 2)).toEqual({
+        key: "tag-name-2",
+        label: "tag-name",
+      });
+      expect(getTagDisplay({ value: "tag-value" } as any, 3)).toEqual({
+        key: "tag-value-3",
+        label: "tag-value",
+      });
+      expect(getTagDisplay({ id: "tag-id" } as any, 4)).toEqual({
+        key: "tag-id-4",
+        label: "tag-id",
+      });
+      expect(getTagDisplay({} as any, 5, "Fallback")).toEqual({
+        key: "Fallback-5",
+        label: "Fallback",
+      });
     });
   });
 
@@ -141,7 +156,7 @@ describe("Gateways Utils", () => {
         promptCount: 0,
         total: 0,
       });
-      
+
       // Test fallback to associatedTools length
       const serverToolsOnly = {
         id: "3",
@@ -160,20 +175,29 @@ describe("Gateways Utils", () => {
     it("buildComponentItems", () => {
       const items = buildComponentItems(serverWithTools);
       expect(items).toHaveLength(4);
-      expect(items[0]).toEqual({ id: "tool-id1-0", name: "tool1", secondary: "id1", type: "tools" });
+      expect(items[0]).toEqual({
+        id: "tool-id1-0",
+        name: "tool1",
+        secondary: "id1",
+        type: "tools",
+      });
       expect(items[2]).toEqual({ id: "resource-res1-0", name: "res1", type: "resources" });
       expect(items[3]).toEqual({ id: "prompt-prompt1-0", name: "prompt1", type: "prompts" });
 
       const emptyItems = buildComponentItems(serverWithoutTools);
       expect(emptyItems).toHaveLength(0);
-      
+
       // Test when toolIds is empty but toolNames is populated
       const serverNamesOnly = {
         associatedTools: ["toolA"],
       } as any;
       const itemsNames = buildComponentItems(serverNamesOnly);
-      expect(itemsNames[0]).toEqual({ id: "tool-toolA-0", name: "toolA", secondary: undefined, type: "tools" });
+      expect(itemsNames[0]).toEqual({
+        id: "tool-toolA-0",
+        name: "toolA",
+        secondary: undefined,
+        type: "tools",
+      });
     });
   });
 });
-

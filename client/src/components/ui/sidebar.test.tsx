@@ -88,7 +88,9 @@ describe("Sidebar Components", () => {
               </SidebarMenu>
               <SidebarMenuSub data-testid="menu-sub">
                 <SidebarMenuSubItem data-testid="menu-sub-item">
-                  <SidebarMenuSubButton data-testid="menu-sub-button">SubButton</SidebarMenuSubButton>
+                  <SidebarMenuSubButton data-testid="menu-sub-button">
+                    SubButton
+                  </SidebarMenuSubButton>
                 </SidebarMenuSubItem>
               </SidebarMenuSub>
             </SidebarGroupContent>
@@ -120,7 +122,7 @@ describe("Sidebar Components", () => {
     const trigger = screen.getByTestId("trigger");
     const sidebarContainer = screen.getByTestId("sidebar");
     const sidebar = sidebarContainer.closest('[data-slot="sidebar"]');
-    
+
     // Default open
     expect(sidebar).toHaveAttribute("data-state", "expanded");
 
@@ -172,13 +174,21 @@ describe("Sidebar Components", () => {
   it("handles SidebarMenuButton variants and sizes", () => {
     renderWithProvider(
       <SidebarProvider>
-        <SidebarMenuButton variant="outline" size="sm" data-testid="btn-outline-sm">Outline SM</SidebarMenuButton>
-        <SidebarMenuButton variant="default" size="lg" data-testid="btn-default-lg">Default LG</SidebarMenuButton>
-        <SidebarMenuButton isActive data-testid="btn-active">Active</SidebarMenuButton>
+        <SidebarMenuButton variant="outline" size="sm" data-testid="btn-outline-sm">
+          Outline SM
+        </SidebarMenuButton>
+        <SidebarMenuButton variant="default" size="lg" data-testid="btn-default-lg">
+          Default LG
+        </SidebarMenuButton>
+        <SidebarMenuButton isActive data-testid="btn-active">
+          Active
+        </SidebarMenuButton>
         <SidebarMenuButton asChild data-testid="btn-as-child">
           <a href="#">Link</a>
         </SidebarMenuButton>
-        <SidebarMenuButton tooltip="My tooltip" data-testid="btn-tooltip">Tooltip</SidebarMenuButton>
+        <SidebarMenuButton tooltip="My tooltip" data-testid="btn-tooltip">
+          Tooltip
+        </SidebarMenuButton>
       </SidebarProvider>,
     );
 
@@ -208,7 +218,9 @@ describe("Sidebar Components", () => {
     const consoleSpy = vi.spyOn(console, "error");
     consoleSpy.mockImplementation(() => {});
 
-    expect(() => renderWithProvider(<TestComponent />)).toThrow("useSidebar must be used within a SidebarProvider.");
+    expect(() => renderWithProvider(<TestComponent />)).toThrow(
+      "useSidebar must be used within a SidebarProvider.",
+    );
 
     consoleSpy.mockRestore();
   });
