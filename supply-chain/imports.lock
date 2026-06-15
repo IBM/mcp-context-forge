@@ -479,15 +479,15 @@ user-login = "JohnTitor"
 user-name = "Yuki Okushi"
 
 [[publisher.postgres-protocol]]
-version = "0.6.11"
-when = "2026-03-30"
+version = "0.6.12"
+when = "2026-06-12"
 user-id = 55015
 user-login = "paolobarbolini"
 user-name = "Paolo Barbolini"
 
 [[publisher.postgres-types]]
-version = "0.2.13"
-when = "2026-03-30"
+version = "0.2.14"
+when = "2026-06-12"
 user-id = 55015
 user-login = "paolobarbolini"
 user-name = "Paolo Barbolini"
@@ -808,8 +808,8 @@ user-login = "Darksonn"
 user-name = "Alice Ryhl"
 
 [[publisher.tokio-postgres]]
-version = "0.7.17"
-when = "2026-03-30"
+version = "0.7.18"
+when = "2026-06-12"
 user-id = 55015
 user-login = "paolobarbolini"
 user-name = "Paolo Barbolini"
