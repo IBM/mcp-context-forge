@@ -23,6 +23,7 @@ export interface CreateServerDetails {
   associatedTools?: string[];
   associatedResources?: string[];
   associatedPrompts?: string[];
+  associatedMCPServerIds?: string[];
 }
 
 export interface DetailComponentItem {

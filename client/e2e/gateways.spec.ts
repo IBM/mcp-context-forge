@@ -184,9 +184,7 @@ test.describe("Gateways page", () => {
     await expect(card.getByTestId("last-updated")).toBeVisible();
   });
 
-  test("opens server actions dropdown menu and shows disabled placeholder items", async ({
-    page,
-  }) => {
+  test("opens server actions dropdown menu and hides unavailable actions", async ({ page }) => {
     await page.route("**/servers?*", async (route) => {
       await route.fulfill({
         status: 200,
@@ -204,14 +202,12 @@ test.describe("Gateways page", () => {
     await expect(viewDetails).toBeVisible();
     await expect(viewDetails).not.toHaveAttribute("data-disabled", "");
 
-    for (const label of ["Test connection", "Edit server", "Delete"]) {
-      const item = page.getByRole("menuitem", { name: label });
-      await expect(item).toBeVisible();
-      await expect(item).toHaveAttribute("data-disabled", "");
-    }
+    await expect(page.getByRole("menuitem", { name: "Edit server" })).toHaveCount(0);
+    await expect(page.getByRole("menuitem", { name: "Deactivate" })).toHaveCount(0);
+    await expect(page.getByRole("menuitem", { name: "Delete" })).toHaveCount(0);
   });
 
-  test("opens virtual server details drawer from row actions", async ({ page }) => {
+  test("opens virtual server details panel from row actions", async ({ page }) => {
     await page.route("**/servers?*", async (route) => {
       await route.fulfill({
         status: 200,
@@ -233,34 +229,36 @@ test.describe("Gateways page", () => {
     await page.getByRole("button", { name: "Actions for testVS" }).click();
     await page.getByRole("menuitem", { name: "View details" }).click();
 
-    const drawer = page.getByRole("dialog", { name: "testVS details" });
-    await expect(drawer).toBeVisible();
-    await expect(drawer.getByRole("heading", { name: "Virtual server details" })).toBeVisible();
+    const detailsPanel = page.getByRole("region", { name: "testVS details" });
+    await expect(detailsPanel).toBeVisible();
     await expect(
-      drawer.getByText(
+      detailsPanel.getByRole("heading", { name: "Virtual server details" }),
+    ).toBeVisible();
+    await expect(
+      detailsPanel.getByText(
         "Virtual server endpoint: developer tooling server exposing repository workflows.",
       ),
     ).toBeVisible();
-    await expect(drawer.getByText("Status")).toBeVisible();
-    await expect(drawer.getByText("Active")).toBeVisible();
-    await expect(drawer.getByText("Visibility")).toBeVisible();
-    await expect(drawer.getByText("Public")).toBeVisible();
-    await expect(drawer.getByText("development")).toBeVisible();
-    await expect(drawer.getByText("Get Repo Issues")).toBeVisible();
-    await expect(drawer.getByText("GITHUB_GET_REPO_ISSUES")).toBeVisible();
-    await expect(drawer.getByText("github://repo/{owner}/{repo}").first()).toBeVisible();
-    await expect(drawer.getByText("summarize_pull_request").first()).toBeVisible();
+    await expect(detailsPanel.getByText("Status")).toBeVisible();
+    await expect(detailsPanel.getByText("Active")).toBeVisible();
+    await expect(detailsPanel.getByText("Visibility")).toBeVisible();
+    await expect(detailsPanel.getByText("Public")).toBeVisible();
+    await expect(detailsPanel.getByText("development")).toBeVisible();
+    await expect(detailsPanel.getByText("Get Repo Issues")).toBeVisible();
+    await expect(detailsPanel.getByText("GITHUB_GET_REPO_ISSUES")).toBeVisible();
+    await expect(detailsPanel.getByText("github://repo/{owner}/{repo}").first()).toBeVisible();
+    await expect(detailsPanel.getByText("summarize_pull_request").first()).toBeVisible();
 
-    const addSourcesButton = drawer.getByRole("button", { name: "Add sources" });
+    const addSourcesButton = detailsPanel.getByRole("button", { name: "Add source" });
     await expect(addSourcesButton).toBeVisible();
 
-    await drawer.getByRole("button", { name: "Tools" }).click();
-    await expect(drawer.getByText("Create New Issue")).toBeVisible();
-    await expect(drawer.getByText("github://repo/{owner}/{repo}")).toHaveCount(0);
-    await expect(drawer.getByText("summarize_pull_request")).toHaveCount(0);
+    await detailsPanel.getByRole("tab", { name: "Tools" }).click();
+    await expect(detailsPanel.getByText("Create New Issue")).toBeVisible();
+    await expect(detailsPanel.getByText("github://repo/{owner}/{repo}")).toHaveCount(0);
+    await expect(detailsPanel.getByText("summarize_pull_request")).toHaveCount(0);
   });
 
-  test("drawer add sources button navigates to the create server UI", async ({ page }) => {
+  test("details panel add source button navigates to the create server UI", async ({ page }) => {
     await page.route("**/servers?*", async (route) => {
       await route.fulfill({
         status: 200,
@@ -282,9 +280,9 @@ test.describe("Gateways page", () => {
     await page.getByRole("button", { name: "Actions for testVS" }).click();
     await page.getByRole("menuitem", { name: "View details" }).click();
     await page
-      .getByRole("dialog", { name: "testVS details" })
+      .getByRole("region", { name: "testVS details" })
       .getByRole("button", {
-        name: "Add sources",
+        name: "Add source",
       })
       .click();
 
