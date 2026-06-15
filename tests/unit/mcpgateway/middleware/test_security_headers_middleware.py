@@ -330,3 +330,268 @@ async def test_root_path_is_stripped_from_path_for_csp_skip_check():
         assert response.status_code == 200
     finally:
         mock.stop()
+
+
+@pytest.mark.asyncio
+async def test_sse_streaming_preserves_no_cache_header():
+    """Test that SSE streaming endpoints preserve Cache-Control: no-cache."""
+
+    async def call_next_sse(req):
+        """Mock call_next that returns an SSE streaming response."""
+        resp = Response("data: test\n\n", media_type="text/event-stream")
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+    mock, settings = _mock_settings()
+    try:
+        middleware = SecurityHeadersMiddleware(app=None)
+        # Use a protected path that would normally get no-store, private
+        request = Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/a2a/test-agent/stream",
+                "scheme": "https",
+                "headers": [],
+            }
+        )
+
+        response = await middleware.dispatch(request, call_next_sse)
+
+        # SSE endpoints should preserve no-cache, not get no-store, private
+        assert response.headers.get("Cache-Control") == "no-cache"
+        assert "no-store" not in response.headers.get("Cache-Control", "")
+        assert "private" not in response.headers.get("Cache-Control", "")
+        # Should still have security headers
+        assert response.headers.get("Pragma") == "no-cache"
+        assert response.headers.get("Expires") == "0"
+        assert "Authorization" in response.headers.get("Vary", "")
+    finally:
+        mock.stop()
+
+
+@pytest.mark.asyncio
+async def test_sse_streaming_adds_no_cache_if_missing():
+    """Test that SSE streaming endpoints get no-cache added if not present."""
+
+    async def call_next_sse_no_cache(req):
+        """Mock call_next that returns an SSE streaming response without Cache-Control."""
+        resp = Response("data: test\n\n", media_type="text/event-stream")
+        # Intentionally omit Cache-Control header
+        return resp
+
+    mock, settings = _mock_settings()
+    try:
+        middleware = SecurityHeadersMiddleware(app=None)
+        request = Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/a2a/test-agent/stream",
+                "scheme": "https",
+                "headers": [],
+            }
+        )
+
+        response = await middleware.dispatch(request, call_next_sse_no_cache)
+
+        # SSE endpoints should get no-cache added
+        assert response.headers.get("Cache-Control") == "no-cache"
+    finally:
+        mock.stop()
+
+
+@pytest.mark.asyncio
+async def test_non_sse_protected_path_gets_no_store_private():
+    """Test that non-SSE protected endpoints get Cache-Control: no-store, private."""
+
+    async def call_next_api(req):
+        """Mock call_next that returns a regular API response."""
+        resp = Response('{"status": "ok"}', media_type="application/json")
+        return resp
+
+    mock, settings = _mock_settings()
+    try:
+        middleware = SecurityHeadersMiddleware(app=None)
+        # Use a protected path
+        request = Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/a2a/agents",
+                "scheme": "https",
+                "headers": [],
+            }
+        )
+
+        response = await middleware.dispatch(request, call_next_api)
+
+        # Non-SSE protected endpoints should get no-store, private
+        assert response.headers.get("Cache-Control") == "no-store, private"
+        assert response.headers.get("Pragma") == "no-cache"
+        assert response.headers.get("Expires") == "0"
+        assert "Authorization" in response.headers.get("Vary", "")
+    finally:
+        mock.stop()
+
+
+@pytest.mark.asyncio
+async def test_exempted_path_no_cache_control_override():
+    """Test that exempted paths don't get cache control headers."""
+
+    async def call_next_static(req):
+        """Mock call_next that returns a static file response."""
+        resp = Response("static content", media_type="text/plain")
+        return resp
+
+    mock, settings = _mock_settings()
+    try:
+        middleware = SecurityHeadersMiddleware(app=None)
+        # Use an exempted path (static files)
+        request = Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/static/app.js",
+                "scheme": "https",
+                "headers": [],
+            }
+        )
+
+        response = await middleware.dispatch(request, call_next_static)
+
+        # Exempted paths should not get cache control headers added
+        assert "Cache-Control" not in response.headers
+        assert "Pragma" not in response.headers
+        assert "Expires" not in response.headers
+    finally:
+        mock.stop()
+
+
+@pytest.mark.asyncio
+async def test_sse_content_type_with_charset():
+    """Test that SSE detection works with charset in Content-Type."""
+
+    async def call_next_sse_charset(req):
+        """Mock call_next that returns an SSE response with charset."""
+        resp = Response("data: test\n\n", media_type="text/event-stream; charset=utf-8")
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+    mock, settings = _mock_settings()
+    try:
+        middleware = SecurityHeadersMiddleware(app=None)
+        request = Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/a2a/test-agent/stream",
+                "scheme": "https",
+                "headers": [],
+            }
+        )
+
+        response = await middleware.dispatch(request, call_next_sse_charset)
+
+        # Should still detect SSE and preserve no-cache
+        assert "text/event-stream" in response.headers.get("content-type", "")
+        assert response.headers.get("Cache-Control") == "no-cache"
+    finally:
+        mock.stop()
+
+
+@pytest.mark.asyncio
+async def test_non_sse_with_no_cache_gets_overridden():
+    """Test that non-SSE endpoints with no-cache get it overridden to no-store, private."""
+
+    async def call_next_api_with_no_cache(req):
+        """Mock call_next that returns a regular API response with no-cache."""
+        resp = Response('{"status": "ok"}', media_type="application/json")
+        resp.headers["Cache-Control"] = "no-cache"  # Will be overridden
+        return resp
+
+    mock, settings = _mock_settings()
+    try:
+        middleware = SecurityHeadersMiddleware(app=None)
+        request = Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/a2a/agents",
+                "scheme": "https",
+                "headers": [],
+            }
+        )
+
+        response = await middleware.dispatch(request, call_next_api_with_no_cache)
+
+        # Non-SSE protected endpoints should have no-cache overridden
+        assert response.headers.get("Cache-Control") == "no-store, private"
+    finally:
+        mock.stop()
+
+
+@pytest.mark.asyncio
+async def test_sse_vary_authorization_header_added():
+    """Test that SSE endpoints get Vary: Authorization header added."""
+
+    async def call_next_sse_no_vary(req):
+        """Mock call_next that returns an SSE response without Vary header."""
+        resp = Response("data: test\n\n", media_type="text/event-stream")
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+    mock, settings = _mock_settings()
+    try:
+        middleware = SecurityHeadersMiddleware(app=None)
+        request = Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/a2a/test-agent/stream",
+                "scheme": "https",
+                "headers": [],
+            }
+        )
+
+        response = await middleware.dispatch(request, call_next_sse_no_vary)
+
+        # Should have Vary: Authorization added
+        assert "Authorization" in response.headers.get("Vary", "")
+    finally:
+        mock.stop()
+
+
+@pytest.mark.asyncio
+async def test_sse_vary_authorization_preserves_existing_vary():
+    """Test that SSE endpoints preserve existing Vary headers and add Authorization."""
+
+    async def call_next_sse_with_vary(req):
+        """Mock call_next that returns an SSE response with existing Vary header."""
+        resp = Response("data: test\n\n", media_type="text/event-stream")
+        resp.headers["Cache-Control"] = "no-cache"
+        resp.headers["Vary"] = "Accept-Encoding, Origin"
+        return resp
+
+    mock, settings = _mock_settings()
+    try:
+        middleware = SecurityHeadersMiddleware(app=None)
+        request = Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/a2a/test-agent/stream",
+                "scheme": "https",
+                "headers": [],
+            }
+        )
+
+        response = await middleware.dispatch(request, call_next_sse_with_vary)
+
+        # Should have Authorization added to existing Vary headers
+        vary_header = response.headers.get("Vary", "")
+        assert "Authorization" in vary_header
+        assert "Accept-Encoding" in vary_header
+        assert "Origin" in vary_header
+    finally:
+        mock.stop()
