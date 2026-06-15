@@ -23,6 +23,15 @@ export interface CreateUserRequest {
   password_change_required?: boolean;
 }
 
+export interface UpdateUserRequest {
+  full_name?: string;
+  is_admin?: boolean;
+  is_active?: boolean;
+  email_verified?: boolean;
+  password_change_required?: boolean;
+  password?: string; // pragma: allowlist secret
+}
+
 export interface UsersResponse {
   users: User[];
   nextCursor?: string;
