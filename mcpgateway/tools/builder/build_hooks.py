@@ -1,4 +1,8 @@
-"""
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/tools/builder/build_hooks.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+
 Custom setuptools build hook to generate UI assets before packaging.
 
 This hook runs during `python -m build` to ensure bundle-*.js and tailwind.min.css
