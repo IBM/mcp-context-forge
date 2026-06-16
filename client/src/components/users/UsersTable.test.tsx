@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+﻿import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { IntlProvider } from "react-intl";
 import { UsersTable } from "./UsersTable";
@@ -57,8 +57,13 @@ const baseUser: User = {
 
 describe("UsersTable", () => {
   it("renders user information correctly", () => {
-    renderWithIntl(<UsersTable users={[baseUser]} onDeleteClick={mockOnDeleteClick} onEditClick={mockOnEditClick} />);
-
+    renderWithIntl(
+      <UsersTable
+        users={[baseUser]}
+        onDeleteClick={mockOnDeleteClick}
+        onEditClick={mockOnEditClick}
+      />,
+    );
     expect(screen.getByText("Test User")).toBeInTheDocument();
     expect(screen.getByText("test@example.com")).toBeInTheDocument();
     expect(screen.getByText("Local")).toBeInTheDocument();
@@ -69,7 +74,9 @@ describe("UsersTable", () => {
 
   it("handles missing full name by showing unnamed fallback", () => {
     const user: User = { ...baseUser, full_name: "", email: "unnamed@example.com" };
-    renderWithIntl(<UsersTable users={[user]} onDeleteClick={mockOnDeleteClick} onEditClick={mockOnEditClick} />);
+    renderWithIntl(
+      <UsersTable users={[user]} onDeleteClick={mockOnDeleteClick} onEditClick={mockOnEditClick} />,
+    );
     expect(screen.getByText("Unnamed User")).toBeInTheDocument();
   });
 
@@ -80,7 +87,9 @@ describe("UsersTable", () => {
       is_admin: true,
       is_active: false,
     };
-    renderWithIntl(<UsersTable users={[user]} onDeleteClick={mockOnDeleteClick} onEditClick={mockOnEditClick} />);
+    renderWithIntl(
+      <UsersTable users={[user]} onDeleteClick={mockOnDeleteClick} onEditClick={mockOnEditClick} />,
+    );
     expect(screen.getByText("Admin")).toBeInTheDocument();
     expect(screen.getByText("Inactive")).toBeInTheDocument();
   });
@@ -92,31 +101,41 @@ describe("UsersTable", () => {
       password_change_required: true,
       email_verified: true,
     };
-    renderWithIntl(<UsersTable users={[user]} onDeleteClick={mockOnDeleteClick} onEditClick={mockOnEditClick} />);
+    renderWithIntl(
+      <UsersTable users={[user]} onDeleteClick={mockOnDeleteClick} onEditClick={mockOnEditClick} />,
+    );
     expect(screen.getByText("Locked")).toBeInTheDocument();
   });
 
   it("renders password reset security state", () => {
     const user: User = { ...baseUser, password_change_required: true, email_verified: true };
-    renderWithIntl(<UsersTable users={[user]} onDeleteClick={mockOnDeleteClick} onEditClick={mockOnEditClick} />);
+    renderWithIntl(
+      <UsersTable users={[user]} onDeleteClick={mockOnDeleteClick} onEditClick={mockOnEditClick} />,
+    );
     expect(screen.getByText("Password Reset")).toBeInTheDocument();
   });
 
   it("renders verified security state", () => {
     const user: User = { ...baseUser, email_verified: true };
-    renderWithIntl(<UsersTable users={[user]} onDeleteClick={mockOnDeleteClick} onEditClick={mockOnEditClick} />);
+    renderWithIntl(
+      <UsersTable users={[user]} onDeleteClick={mockOnDeleteClick} onEditClick={mockOnEditClick} />,
+    );
     expect(screen.getByText("Verified")).toBeInTheDocument();
   });
 
   it("handles empty date strings", () => {
     const user: User = { ...baseUser, created_at: "", last_login: null as any };
-    renderWithIntl(<UsersTable users={[user]} onDeleteClick={mockOnDeleteClick} onEditClick={mockOnEditClick} />);
+    renderWithIntl(
+      <UsersTable users={[user]} onDeleteClick={mockOnDeleteClick} onEditClick={mockOnEditClick} />,
+    );
     expect(screen.getAllByText("Never")).toHaveLength(2);
   });
 
   it("handles invalid date strings gracefully", () => {
     const user: User = { ...baseUser, created_at: "invalid-date", last_login: "not-a-date" };
-    renderWithIntl(<UsersTable users={[user]} onDeleteClick={mockOnDeleteClick} onEditClick={mockOnEditClick} />);
+    renderWithIntl(
+      <UsersTable users={[user]} onDeleteClick={mockOnDeleteClick} onEditClick={mockOnEditClick} />,
+    );
     expect(screen.getByText("invalid-date")).toBeInTheDocument();
     expect(screen.getByText("not-a-date")).toBeInTheDocument();
   });
@@ -128,11 +147,11 @@ describe("UsersTable", () => {
     }) as any;
     mockDate.now = originalDate.now;
     global.Date = mockDate;
-
     const user: User = { ...baseUser, created_at: "error-date" };
-    renderWithIntl(<UsersTable users={[user]} onDeleteClick={mockOnDeleteClick} onEditClick={mockOnEditClick} />);
+    renderWithIntl(
+      <UsersTable users={[user]} onDeleteClick={mockOnDeleteClick} onEditClick={mockOnEditClick} />,
+    );
     expect(screen.getByText("error-date")).toBeInTheDocument();
-
     global.Date = originalDate;
   });
 });
