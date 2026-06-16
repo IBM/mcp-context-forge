@@ -57,6 +57,8 @@ def upgrade() -> None:
         "resources": ["uri"],
     }
 
+    failures = []
+
     for table_name, columns_to_fix in tables_to_fix.items():
         if table_name not in existing_tables:
             continue
@@ -94,7 +96,23 @@ def upgrade() -> None:
                 print(f"  ✓ {table_name}: Removed {len(constraints_to_drop)} constraint(s)")
 
         except Exception as e:
-            print(f"  ✗ Warning: Could not update unique constraints on {table_name}: {e}")
+            error_msg = f"Failed to update unique constraints on {table_name}: {e}"
+            print(f"  ✗ {error_msg}")
+            failures.append(error_msg)
+
+    if failures:
+        error_summary = "\n  - ".join(failures)
+        if dialect == "sqlite":
+            raise RuntimeError(
+                f"Migration failed with {len(failures)} error(s):\n  - {error_summary}\n\n"
+                "SQLite batch mode commits per table, so partial changes may have been applied. "
+                "Run 'alembic downgrade -1' to roll back this migration manually."
+            )
+        else:
+            raise RuntimeError(
+                f"Migration failed with {len(failures)} error(s):\n  - {error_summary}\n\n"
+                "PostgreSQL will automatically roll back all changes in this transaction."
+            )
 
 
 def downgrade() -> None:
@@ -118,6 +136,8 @@ def downgrade() -> None:
         "prompts": ["name"],
         "resources": ["uri"],
     }
+
+    failures = []
 
     for table_name, columns_to_restore in tables_to_restore.items():
         if table_name not in existing_tables:
@@ -161,4 +181,20 @@ def downgrade() -> None:
                 print(f"  ✓ {table_name}: Created {len(constraints_to_create)} constraint(s)")
 
         except Exception as e:
-            print(f"  ✗ Warning: Could not restore unique constraints on {table_name}: {e}")
+            error_msg = f"Failed to restore unique constraints on {table_name}: {e}"
+            print(f"  ✗ {error_msg}")
+            failures.append(error_msg)
+
+    if failures:
+        error_summary = "\n  - ".join(failures)
+        if dialect == "sqlite":
+            raise RuntimeError(
+                f"Migration downgrade failed with {len(failures)} error(s):\n  - {error_summary}\n\n"
+                "SQLite batch mode commits per table, so partial changes may have been applied. "
+                "Run 'alembic downgrade -1' again or manually inspect schema state."
+            )
+        else:
+            raise RuntimeError(
+                f"Migration downgrade failed with {len(failures)} error(s):\n  - {error_summary}\n\n"
+                "PostgreSQL will automatically roll back all changes in this transaction."
+            )
