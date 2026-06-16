@@ -54,42 +54,78 @@ describe("AdvancedSettings", () => {
   };
 
   it("renders auth content according to authType", () => {
-    const { rerender } = render(<AuthProvider><AdvancedSettings {...defaultProps} /></AuthProvider>);
+    const { rerender } = render(
+      <AuthProvider>
+        <AdvancedSettings {...defaultProps} />
+      </AuthProvider>,
+    );
     // "none" auth renders nothing special
     expect(screen.queryByLabelText(/Username/i)).not.toBeInTheDocument();
 
     // "basic" auth
-    rerender(<AuthProvider><AdvancedSettings {...defaultProps} authType="basic" /></AuthProvider>);
+    rerender(
+      <AuthProvider>
+        <AdvancedSettings {...defaultProps} authType="basic" />
+      </AuthProvider>,
+    );
     expect(screen.getByLabelText(/Username/i)).toBeInTheDocument();
 
     // "bearer" auth
-    rerender(<AuthProvider><AdvancedSettings {...defaultProps} authType="bearer" /></AuthProvider>);
+    rerender(
+      <AuthProvider>
+        <AdvancedSettings {...defaultProps} authType="bearer" />
+      </AuthProvider>,
+    );
     expect(screen.getByPlaceholderText(/Paste bearer token/i)).toBeInTheDocument();
 
     // "custom" auth
-    rerender(<AuthProvider><AdvancedSettings {...defaultProps} authType="custom" /></AuthProvider>);
+    rerender(
+      <AuthProvider>
+        <AdvancedSettings {...defaultProps} authType="custom" />
+      </AuthProvider>,
+    );
     expect(screen.getByRole("button", { name: /\+?\s*Add header/i })).toBeInTheDocument();
 
     // "oauth" auth
-    rerender(<AuthProvider><AdvancedSettings {...defaultProps} authType="oauth" /></AuthProvider>);
+    rerender(
+      <AuthProvider>
+        <AdvancedSettings {...defaultProps} authType="oauth" />
+      </AuthProvider>,
+    );
     expect(screen.getByLabelText(/Client ID/i)).toBeInTheDocument();
 
     // "query" auth
-    rerender(<AuthProvider><AdvancedSettings {...defaultProps} authType="query" /></AuthProvider>);
+    rerender(
+      <AuthProvider>
+        <AdvancedSettings {...defaultProps} authType="query" />
+      </AuthProvider>,
+    );
     expect(screen.getByLabelText(/Parameter name/i)).toBeInTheDocument();
 
     // invalid/default authType
-    rerender(<AuthProvider><AdvancedSettings {...defaultProps} authType={"invalid-type" as any} /></AuthProvider>);
+    rerender(
+      <AuthProvider>
+        <AdvancedSettings {...defaultProps} authType={"invalid-type" as any} />
+      </AuthProvider>,
+    );
     expect(screen.queryByLabelText(/Username/i)).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/Paste bearer token/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/Parameter name/i)).not.toBeInTheDocument();
   });
 
   it("renders warning when oneTimeAuth is true", () => {
-    const { rerender } = render(<AuthProvider><AdvancedSettings {...defaultProps} oneTimeAuth={false} /></AuthProvider>);
+    const { rerender } = render(
+      <AuthProvider>
+        <AdvancedSettings {...defaultProps} oneTimeAuth={false} />
+      </AuthProvider>,
+    );
     expect(screen.queryByText(/Add passthrough headers when one-time/i)).not.toBeInTheDocument();
 
-    rerender(<AuthProvider><AdvancedSettings {...defaultProps} oneTimeAuth={true} /></AuthProvider>);
+    rerender(
+      <AuthProvider>
+        <AdvancedSettings {...defaultProps} oneTimeAuth={true} />
+      </AuthProvider>,
+    );
     expect(screen.getByText(/Add passthrough headers when one-time/i)).toBeInTheDocument();
   });
 
@@ -126,4 +162,3 @@ describe("AdvancedSettings", () => {
     expect(handlePassthroughHeadersChange).toHaveBeenCalled();
   });
 });
-
