@@ -57,7 +57,6 @@ export function Users() {
   }, [loadMoreError]);
 
   const handleLoadMore = useCallback(async () => {
-    /* v8 ignore next */
     if (!nextCursor || isLoadingMore) return;
 
     try {
