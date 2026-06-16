@@ -836,7 +836,7 @@ class TestStreamAgentResponseAuthDecryption:
         """
         # Set agent with query param auth
         sample_streaming_agent.auth_type = "query_param"
-        sample_streaming_agent.auth_query_params = {"api_key": "encrypted:invalid_data"}
+        sample_streaming_agent.auth_query_params = {"api_key": "encrypted:invalid_data"}  # pragma: allowlist secret
 
         mock_db.execute.return_value.scalar_one_or_none.return_value = sample_streaming_agent.id
 
@@ -1317,3 +1317,29 @@ class TestStreamAgentResponseCoverageGaps:
                             assert len(chunks) == 1
                             # Verify plugin hook was called
                             mock_manager.invoke_hook.assert_called()
+
+
+    async def test_stream_passthrough_headers_filtered(self, a2a_service, mock_db, sample_streaming_agent):
+        """Test that request headers are filtered by passthrough_headers whitelist (covers lines 2734-2735)."""
+        sample_streaming_agent.passthrough_headers = ["x-custom-header"]
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_streaming_agent.id
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_streaming_agent):
+            with patch.object(a2a_service, "_check_agent_access", return_value=True):
+                with patch("mcpgateway.services.a2a_service.httpx.AsyncClient") as mock_client:
+                    mock_response = AsyncMock()
+                    mock_response.status_code = 200
+                    mock_response.aiter_bytes = AsyncMock(return_value=iter([b"success"]))
+                    mock_client.return_value.stream.return_value.__aenter__.return_value = mock_response
+
+                    # Pass headers that should be filtered
+                    request_headers = {"x-custom-header": "allowed", "x-filtered-header": "blocked", "authorization": "blocked"}
+
+                    chunks = []
+                    async for chunk in a2a_service.stream_agent_response(
+                        mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None, request_headers=request_headers
+                    ):
+                        chunks.append(chunk)
+
+                    assert len(chunks) > 0
