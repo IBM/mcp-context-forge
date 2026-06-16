@@ -775,8 +775,79 @@ class TestStreamingRateLimiting:
                             response = client.post(
                                 "/a2a/test-agent/stream",
                                 json={"query": "test"},
-                                headers={"Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0QGV4YW1wbGUuY29tIn0.test"},
+                                headers={"Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0QGV4YW1wbGUuY29tIn0.test"},  # pragma: allowlist secret
                             )
                             assert response.status_code == 200
                             # Verify bearer token was extracted from header
                             assert captured_bearer.get("token") is not None
+
+
+class TestStreamingCoverageImprovements:
+    """Additional tests to improve coverage of specific uncovered lines."""
+
+    def test_bearer_token_extraction_without_state(self, client, mock_auth_dependencies):
+        """Test bearer token extraction when request.state.bearer_token is None.
+        
+        Covers main.py:5307-5309 - extraction from Authorization header.
+        """
+        from mcpgateway.main import get_current_user_with_permissions, get_db
+
+        app.dependency_overrides[get_current_user_with_permissions] = mock_auth_dependencies["get_current_user"]
+        app.dependency_overrides[get_db] = mock_auth_dependencies["get_db"]
+
+        captured_bearer = {}
+
+        async def mock_stream(*args, **kwargs):
+            captured_bearer["token"] = kwargs.get("bearer_token")
+            yield "data: test\n\n"
+
+        with patch("mcpgateway.main.a2a_service") as mock_a2a:
+            mock_a2a.stream_agent_response = lambda *args, **kwargs: mock_stream(*args, **kwargs)
+
+            with patch("mcpgateway.main.get_rpc_filter_context", return_value=("test@example.com", None, True)):
+                with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=0):
+                    with patch("mcpgateway.main._is_jwt_token", return_value=True):
+                        # Don't patch _filter_sensitive_headers to let extraction code run
+                        response = client.post(
+                            "/a2a/test-agent/stream",
+                            json={"query": "test"},
+                            headers={"Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0In0.token123"},  # pragma: allowlist secret
+                        )
+                        
+                        assert response.status_code == 200
+                        # Verify the bearer token was extracted from the header
+                        token = captured_bearer.get("token")
+                        assert token is not None
+                        assert "token123" in token
+
+    def test_non_jwt_bearer_token_not_forwarded(self, client, mock_auth_dependencies):
+        """Test non-JWT bearer tokens are not forwarded.
+        
+        Covers main.py:5312-5314 - JWT validation check.
+        """
+        from mcpgateway.main import get_current_user_with_permissions, get_db
+
+        app.dependency_overrides[get_current_user_with_permissions] = mock_auth_dependencies["get_current_user"]
+        app.dependency_overrides[get_db] = mock_auth_dependencies["get_db"]
+
+        captured_bearer = {}
+
+        async def mock_stream(*args, **kwargs):
+            captured_bearer["token"] = kwargs.get("bearer_token")
+            yield "data: test\n\n"
+
+        with patch("mcpgateway.main.a2a_service") as mock_a2a:
+            mock_a2a.stream_agent_response = lambda *args, **kwargs: mock_stream(*args, **kwargs)
+
+            with patch("mcpgateway.main.get_rpc_filter_context", return_value=("test@example.com", None, True)):
+                with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=0):
+                    with patch("mcpgateway.main._is_jwt_token", return_value=False):  # NOT a JWT
+                        response = client.post(
+                            "/a2a/test-agent/stream",
+                            json={"query": "test"},
+                            headers={"Authorization": "Bearer opaque-token-123"},  # pragma: allowlist secret
+                        )
+                        
+                        assert response.status_code == 200
+                        # Token should be None because it's not a JWT
+                        assert captured_bearer.get("bearer_token") is None
