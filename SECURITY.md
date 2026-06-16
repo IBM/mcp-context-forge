@@ -755,14 +755,6 @@ This process ensures that security patches not only address vulnerabilities but 
 
 ## 🛡️ Reporting a Vulnerability
 
-If you discover a security vulnerability, please report it privately using [GitHub's built-in reporting feature](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability):
-
-1. Navigate to Security. If you cannot see the "Security" tab, select the dropdown menu, and then click Security.
-2. Click on **"Report a vulnerability"**.
-3. Fill out the form with details about the vulnerability.
-
-This process ensures that your report is handled confidentially and reaches the maintainers directly.
-
-We work closely with security researchers and follow responsible disclosure practices to ensure vulnerabilities are addressed promptly while minimizing risk to users.
+Report a security issue via e-mail or anonymous form to the IBM Product Security Incident Response Team (PSIRT) following the guidelines under the [IBM Security Vulnerability Management](https://www.ibm.com/support/pages/ibm-security-vulnerability-management) pages.
 
 Thank you for helping to keep the project secure!
