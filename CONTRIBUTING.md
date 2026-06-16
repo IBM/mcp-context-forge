@@ -32,6 +32,20 @@ are not interested in accepting into the code base.
 If you would like to fix a bug, please [raise an issue](https://github.com/ibm/mcp-context-forge/issues) before sending a
 pull request so it can be tracked.
 
+## Before Contributing
+
+### Setup
+
+For setup instructions, please see the [Quick Start sections](README.md#quick-start---pypi) in the README, or refer to the [Installation](README.md#installation) section for detailed instructions.
+
+### Testing
+
+Before submitting changes, run the test suite as outlined in the [Bug-fix PR template](.github/PULL_REQUEST_TEMPLATE/bug_fix.md):
+
+1. `make lint` - passes all linters
+2. `make test` - all unit + integration tests green
+3. `make coverage` - >= 90%
+
 ## ✅ Pull Request Standards
 
 All pull requests must be reviewable by a human maintainer. The same standard
@@ -109,6 +123,36 @@ bulk generated code that you cannot explain or validate.
 The project maintainers use LGTM (Looks Good To Me) in comments on the code
 review to indicate acceptance. A change requires an LGTM from at least one
 maintainer.
+
+## Coding Standards
+
+- **Python >= 3.11** with type hints
+- **Formatting**: Black (line length 200), isort (profile=black)
+- **Linting**: Ruff, Pylint per `pyproject.toml`
+- **Naming**: `snake_case` functions, `PascalCase` classes, `UPPER_CASE` constants
+
+See [CLAUDE.md](CLAUDE.md#code-style--standards) for complete coding standards.
+
+### Python File Headers
+
+All Python source files (`.py`) must begin with the following standardized header. This ensures consistency and proper licensing across the codebase.
+
+The header format is as follows:
+
+```python
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Module Description.
+Location: ./path/to/your/file.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: "Author One, Author Two"
+
+Your detailed module documentation begins here...
+"""
+```
+
+You can automatically check and fix file headers using the provided `make` targets. For detailed usage and examples, please see the [File Header Management section](docs/docs/development/module-documentation.md) in our development documentation.
 
 ## Legal
 
