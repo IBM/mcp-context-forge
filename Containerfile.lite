@@ -302,9 +302,7 @@ RUN set -euo pipefail \
     else \
         /app/.venv/bin/uv pip install ".[redis,postgres,observability,granian,plugins,llmchat]"; \
     fi \
-    && if ! [ -x /app/.venv/bin/gunicorn ]; then \
-        /app/.venv/bin/uv pip install "gunicorn>=26.0.0"; \
-    fi \
+    && /app/.venv/bin/uv pip install --reinstall-package gunicorn "gunicorn>=26.0.0" \
     && echo "✅ Plugins installed from PyPI via [plugins] extra" \
     && if [ "$ENABLE_RUST" = "true" ] && ls "/tmp/local-native-extension-wheels/"*.whl 1> /dev/null 2>&1; then \
         echo "🦀 Installing local native extensions..."; \
@@ -326,6 +324,7 @@ RUN set -euo pipefail \
     && (find /app/.venv -name "*.dist-info" -type d \
         \( -name "pip-*" -o -name "setuptools-*" -o -name "wheel-*" -o -name "uv-*" \) \
         -exec rm -rf {} + 2>/dev/null || true) \
+    && test -x /app/.venv/bin/gunicorn \
     && rm -rf /app/.venv/share/python-wheels \
     && rm -rf "/app/"*.egg-info /app/build /app/dist /app/.eggs
 
