@@ -13,18 +13,32 @@ Before opening this PR please:
 ---
 
 ## 📌 Summary
+
 _What problem does this PR fix and **why**?_
 
 ## 🔁 Reproduction Steps
+
 _Link the issue and minimal steps to reproduce the bug._
 
 ## 🐞 Root Cause
+
 _What was wrong and where?_
 
 ## 💡 Fix Description
+
 _How did you solve it?  Key design points._
 
+## 📏 Reviewability
+
+- [ ] This PR has one clear purpose
+- [ ] The linked issue is not labeled `triage`
+- [ ] Unrelated bugs or improvements are tracked in separate issues/PRs
+- [ ] Tests are included with the code they validate
+- [ ] If AI-assisted, I understand and can explain the generated changes
+
 ## 🧪 Verification
+
+_List exact commands, screenshots, videos, logs, reproduction steps, or manual validation. If evidence is not feasible, explain why._
 
 | Check                                 | Command              | Status |
 |---------------------------------------|----------------------|--------|
@@ -34,9 +48,11 @@ _How did you solve it?  Key design points._
 | Manual regression no longer fails     | steps / screenshots  |        |
 
 ## 📐 MCP Compliance (if relevant)
+
 - [ ] Matches current MCP spec
 - [ ] No breaking change to MCP clients
 
 ## ✅ Checklist
+
 - [ ] Code formatted (`make black isort pre-commit`)
 - [ ] No secrets/credentials committed

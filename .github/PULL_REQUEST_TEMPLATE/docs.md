@@ -7,17 +7,30 @@
 ---
 
 ## 🔗 Related Issue / Epic
+
 _Link to the doc bug or epic this PR addresses:_
 Closes #
 
 ---
 
 ## 📝 Summary (1-2 sentences)
+
 _What section of the docs is changing and why?_
 
 ---
 
+## 📏 Reviewability
+
+- [ ] This PR has one clear purpose
+- [ ] The linked issue is not labeled `triage`
+- [ ] Unrelated docs fixes or improvements are tracked in separate issues/PRs
+- [ ] Generated files are separated where that improves reviewability
+- [ ] If AI-assisted, I understand and can explain the generated changes
+
+---
+
 ## ✏️ Type of Change
+
 - [ ] Typo / formatting
 - [ ] Outdated or incorrect info
 - [ ] Missing explanation / example
@@ -26,3 +39,7 @@ _What section of the docs is changing and why?_
 - [ ] Other (describe)
 
 ---
+
+## 🧪 Verification
+
+_List exact commands, screenshots, preview links, logs, or manual validation. If evidence is not feasible, explain why._

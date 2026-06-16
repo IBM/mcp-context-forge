@@ -91,6 +91,15 @@ Notes:
 - `make doctest test htmlcov`
   - this is the main broad backend confidence pass
 
+### Python File Headers
+
+If you add or edit Python files while working on the runtime integration, keep
+their standardized headers valid:
+
+```bash
+make check-headers
+```
+
 Important behavior:
 
 - `make test` is a broad Python test run against the `tests/` tree with
