@@ -11,6 +11,7 @@ This module loads configurations for plugins.
 # Standard
 import copy
 import re
+from typing import Any
 
 # Third-Party
 from pydantic import BaseModel
@@ -53,6 +54,36 @@ class SearchReplaceConfig(BaseModel):
     words: list[SearchReplace]
 
 
+def _scan_and_replace_recursive(value: Any, patterns: list[tuple]) -> Any:
+    """Recursively scan and replace patterns in nested structures.
+
+    This function walks through nested dictionaries, lists, and strings,
+    applying regex patterns to all string values regardless of nesting depth.
+
+    Args:
+        value: The value to scan (can be str, dict, list, or other types).
+        patterns: List of (compiled_pattern, replacement) tuples.
+
+    Returns:
+        Modified value with patterns replaced in all nested strings.
+    """
+    if isinstance(value, str):
+        # Apply all patterns to this string
+        result = value
+        for pattern, replacement in patterns:
+            result = pattern.sub(replacement, result)
+        return result
+    elif isinstance(value, dict):
+        # Recursively process dictionary values
+        return {k: _scan_and_replace_recursive(v, patterns) for k, v in value.items()}
+    elif isinstance(value, list):
+        # Recursively process list items
+        return [_scan_and_replace_recursive(item, patterns) for item in value]
+    else:
+        # Return other types unchanged
+        return value
+
+
 class SearchReplacePlugin(Plugin):
     """Example search replace plugin."""
 
@@ -85,11 +116,7 @@ class SearchReplacePlugin(Plugin):
             The result of the plugin's analysis, including whether the prompt can proceed.
         """
         if payload.args:
-            modified_args = dict(payload.args)
-            for pattern, replacement in self.__patterns:
-                for key, value in modified_args.items():
-                    if isinstance(value, str):
-                        modified_args[key] = pattern.sub(replacement, value)
+            modified_args = _scan_and_replace_recursive(payload.args, self.__patterns)
             payload = payload.model_copy(update={"args": modified_args})
         return PromptPrehookResult(modified_payload=payload)
 
@@ -123,11 +150,7 @@ class SearchReplacePlugin(Plugin):
             The result of the plugin's analysis, including whether the tool can proceed.
         """
         if payload.args:
-            modified_args = dict(payload.args)
-            for pattern, replacement in self.__patterns:
-                for key, value in modified_args.items():
-                    if isinstance(value, str):
-                        modified_args[key] = pattern.sub(replacement, value)
+            modified_args = _scan_and_replace_recursive(payload.args, self.__patterns)
             payload = payload.model_copy(update={"args": modified_args})
         return ToolPreInvokeResult(modified_payload=payload)
 
@@ -142,11 +165,7 @@ class SearchReplacePlugin(Plugin):
             The result of the plugin's analysis, including whether the tool result should proceed.
         """
         if payload.result and isinstance(payload.result, dict):
-            modified_result = dict(payload.result)
-            for pattern, replacement in self.__patterns:
-                for key, value in modified_result.items():
-                    if isinstance(value, str):
-                        modified_result[key] = pattern.sub(replacement, value)
+            modified_result = _scan_and_replace_recursive(payload.result, self.__patterns)
             payload = payload.model_copy(update={"result": modified_result})
         elif payload.result and isinstance(payload.result, str):
             result = payload.result

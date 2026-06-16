@@ -8,6 +8,9 @@ Simple example plugin for searching and replacing text.
 This module loads configurations for plugins.
 """
 
+# Standard
+from typing import Any
+
 # Third-Party
 from pydantic import BaseModel
 
@@ -28,6 +31,41 @@ class DenyListConfig(BaseModel):
     """
 
     words: list[str]
+
+
+def _scan_for_denied_words(value: Any, deny_list: list[str], path: str = "") -> list[str]:
+    """Recursively scan for denied words in nested structures.
+
+    This function walks through nested dictionaries, lists, and strings,
+    checking all string values for denied words regardless of nesting depth.
+
+    Args:
+        value: The value to scan (can be str, dict, list, or other types).
+        deny_list: List of denied words to check for.
+        path: Current path in the structure (for error reporting).
+
+    Returns:
+        List of paths where denied words were found.
+    """
+    violations = []
+
+    if isinstance(value, str):
+        # Check if any denied word is in this string
+        for word in deny_list:
+            if word.lower() in value.lower():
+                violations.append(f"{path}: contains '{word}'")
+    elif isinstance(value, dict):
+        # Recursively check dictionary values
+        for k, v in value.items():
+            new_path = f"{path}.{k}" if path else k
+            violations.extend(_scan_for_denied_words(v, deny_list, new_path))
+    elif isinstance(value, list):
+        # Recursively check list items
+        for i, item in enumerate(value):
+            new_path = f"{path}[{i}]"
+            violations.extend(_scan_for_denied_words(item, deny_list, new_path))
+
+    return violations
 
 
 class DenyListPlugin(Plugin):
@@ -56,16 +94,20 @@ class DenyListPlugin(Plugin):
             The result of the plugin's analysis, including whether the prompt can proceed.
         """
         if payload.args:
-            for key in payload.args:
-                if any(word in payload.args[key] for word in self._deny_list):
-                    violation = PluginViolation(
-                        reason="Prompt not allowed",
-                        description="A deny word was found in the prompt",
-                        code="deny",
-                        details={},
-                    )
-                    logger.warning(f"Deny word detected in prompt argument '{key}'")
-                    return PromptPrehookResult(modified_payload=payload, violation=violation, continue_processing=False)
+            violations = _scan_for_denied_words(payload.args, self._deny_list)
+            if violations:
+                violation = PluginViolation(
+                    reason="Prompt not allowed",
+                    description="Denied words found in prompt",
+                    code="deny",
+                    details={"violations": violations},
+                )
+                logger.warning(f"Denied words detected: {violations}")
+                return PromptPrehookResult(
+                    modified_payload=payload,
+                    violation=violation,
+                    continue_processing=False
+                )
         return PromptPrehookResult(modified_payload=payload)
 
     async def shutdown(self) -> None:
