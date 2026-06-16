@@ -8,6 +8,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Button } from "../ui/button";
+import { Loading } from "../ui/loading";
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -17,7 +18,10 @@ interface ConfirmDialogProps {
   confirmLabel?: string;
   cancelLabel?: string;
   variant?: "default" | "destructive";
-  onConfirm: () => void;
+  onConfirm: () => void | Promise<void>;
+  isLoading?: boolean;
+  loadingLabel?: string;
+  closeOnConfirm?: boolean;
 }
 
 export function ConfirmDialog({
@@ -29,29 +33,49 @@ export function ConfirmDialog({
   cancelLabel = "Cancel",
   variant = "default",
   onConfirm,
+  isLoading = false,
+  loadingLabel,
+  closeOnConfirm = true,
 }: ConfirmDialogProps) {
+  const handleOpenChange = useCallback(
+    (nextOpen: boolean) => {
+      if (isLoading && !nextOpen) return;
+      onOpenChange(nextOpen);
+    },
+    [isLoading, onOpenChange],
+  );
+
   const handleCancel = useCallback(() => {
+    if (isLoading) return;
     onOpenChange(false);
-  }, [onOpenChange]);
+  }, [isLoading, onOpenChange]);
 
   const handleConfirm = useCallback(() => {
-    onConfirm();
-    onOpenChange(false);
-  }, [onConfirm, onOpenChange]);
+    void onConfirm();
+    if (closeOnConfirm && !isLoading) {
+      onOpenChange(false);
+    }
+  }, [closeOnConfirm, isLoading, onConfirm, onOpenChange]);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
         <DialogFooter>
-          <Button variant="outline" onClick={handleCancel}>
+          <Button variant="outline" onClick={handleCancel} disabled={isLoading}>
             {cancelLabel}
           </Button>
-          <Button variant={variant} onClick={handleConfirm}>
-            {confirmLabel}
+          <Button
+            variant={variant}
+            onClick={handleConfirm}
+            disabled={isLoading}
+            aria-busy={isLoading}
+          >
+            {isLoading && <Loading variant="inline" />}
+            {isLoading ? (loadingLabel ?? confirmLabel) : confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>
