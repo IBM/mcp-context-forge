@@ -14,7 +14,17 @@ vi.mock("@/api/client", () => ({
 }));
 
 vi.mock("@/components/users/UserForm", () => ({
-  UserForm: ({ onToggle, onOptimisticCreate, onSuccess, onError }: any) => (
+  UserForm: ({
+    onToggle,
+    onOptimisticCreate,
+    onSuccess,
+    onError,
+  }: {
+    onToggle: () => void;
+    onOptimisticCreate: (data: { email: string; full_name: string }) => void;
+    onSuccess: () => void;
+    onError: (data: { email: string }) => void;
+  }) => (
     <div data-testid="mock-user-form">
       <button onClick={onToggle}>Cancel Form</button>
       <button onClick={() => onOptimisticCreate({ email: "opt@example.com", full_name: "Opt" })}>
@@ -60,8 +70,8 @@ describe("Users", () => {
   });
 
   it("renders loading state while fetching users", () => {
-    const pendingRequest = new Promise(() => {});
-    vi.mocked(api.get).mockReturnValueOnce(pendingRequest as any);
+    const pendingRequest = new Promise<never>(() => {});
+    vi.mocked(api.get).mockReturnValueOnce(pendingRequest as ReturnType<typeof api.get>);
 
     renderWithRouter(<Users />);
 
@@ -269,13 +279,13 @@ describe("Users", () => {
       resolveLoadMore = resolve;
     });
 
-    vi.mocked(api.get).mockReturnValueOnce(pendingLoadMore as any);
+    vi.mocked(api.get).mockReturnValueOnce(pendingLoadMore as ReturnType<typeof api.get>);
 
     await user.click(loadMoreButton);
 
     // Resolve the promise
     if (resolveLoadMore) {
-      (resolveLoadMore as any)({
+      resolveLoadMore({
         users: createMockUsers(10, 5),
         nextCursor: null,
       });
@@ -489,11 +499,11 @@ describe("Users", () => {
     const loadMoreButton = screen.getByRole("button", { name: /load more users/i });
 
     // Mock load more with a delayed response
-    let resolveLoadMore: any;
+    let resolveLoadMore: (value: unknown) => void;
     const delayedPromise = new Promise((resolve) => {
       resolveLoadMore = resolve;
     });
-    vi.mocked(api.get).mockReturnValueOnce(delayedPromise as any);
+    vi.mocked(api.get).mockReturnValueOnce(delayedPromise as ReturnType<typeof api.get>);
 
     // First click
     await user.click(loadMoreButton);
