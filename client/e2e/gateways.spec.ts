@@ -249,7 +249,9 @@ test.describe("Gateways page", () => {
 
     await expect.poll(() => deleteRequestCount).toBe(1);
     await expect.poll(() => listRequestCount).toBeGreaterThan(1);
-    await expect(page.getByText("testVS")).toHaveCount(0);
+    await expect(page.getByTestId("virtual-server-card").filter({ hasText: "testVS" })).toHaveCount(
+      0,
+    );
     await expect(page.getByRole("status")).toContainText("testVS deleted.");
   });
 
