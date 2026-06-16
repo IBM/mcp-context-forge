@@ -1,0 +1,11 @@
+{"id":"7440e274-1aa5-40f5-be8e-5240ab8a18df","ts":"2026-06-02T09:35:41.503Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/tests/unit/mcpgateway/test_auth_coverage.py","version":"1.0.0","taskID":"23d05a24-0da2-4d05-9055-77042714b958"}
+{"id":"e033190e-9817-4dcd-8ae7-58f41f4aaf97","ts":"2026-06-02T09:37:32.366Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/tests/unit/mcpgateway/test_auth_coverage.py","version":"1.0.0","taskID":"23d05a24-0da2-4d05-9055-77042714b958"}
+{"id":"c2020512-800e-477b-8a78-44be8503984d","ts":"2026-06-02T09:37:50.985Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/tests/unit/mcpgateway/test_auth_coverage.py","version":"1.0.0","taskID":"23d05a24-0da2-4d05-9055-77042714b958"}
+
+{"id":"720da29e-371e-4a30-a8c3-eed31adab6cf","ts":"2026-06-02T09:03:35.969Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/tests/unit/test_cwe321_hardcoded_jwt.py","version":"1.0.0","taskID":"23d05a24-0da2-4d05-9055-77042714b958"}
+{"id":"1363e9eb-59b7-4900-8f36-f712963e1200","ts":"2026-06-02T09:05:14.877Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/auth.py","version":"1.0.0","taskID":"23d05a24-0da2-4d05-9055-77042714b958"}
+{"id":"b0bbf03e-d97c-4749-8143-8a073e1bfede","ts":"2026-06-02T09:05:23.441Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/auth.py","version":"1.0.0","taskID":"23d05a24-0da2-4d05-9055-77042714b958"}
+{"id":"86860605-ca64-45ba-b76b-f6715604bda2","ts":"2026-06-02T09:05:33.842Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/auth.py","version":"1.0.0","taskID":"23d05a24-0da2-4d05-9055-77042714b958"}
+{"id":"1f7fd7c4-a7db-4bea-92f7-0eed0e656ea1","ts":"2026-06-02T09:05:46.491Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/admin.py","version":"1.0.0","taskID":"23d05a24-0da2-4d05-9055-77042714b958"}
+{"id":"dcde7e6e-4031-4617-bfc7-cbf4212950e7","ts":"2026-06-02T09:06:16.942Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/tests/unit/test_cwe321_hardcoded_jwt.py","version":"1.0.0","taskID":"23d05a24-0da2-4d05-9055-77042714b958"}
+{"id":"22ecea14-d6be-485f-a7ac-74c523dfa5b4","ts":"2026-06-02T09:06:30.347Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/tests/unit/test_cwe321_hardcoded_jwt.py","version":"1.0.0","taskID":"23d05a24-0da2-4d05-9055-77042714b958"}
