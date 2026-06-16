@@ -2799,3 +2799,47 @@ async def test_mcp_client_auth_disabled_no_cookie_still_redirects(no_cookie_requ
         with pytest.raises(HTTPException) as exc:
             await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
     assert exc.value.status_code == status.HTTP_302_FOUND
+
+
+@pytest.mark.asyncio
+async def test_proxy_trust_valid_header_stale_cookie_uses_proxy_identity():
+    """Proxy trust active + valid proxy header + stale cookie → proxy identity wins, not cookie."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.cookies = {"jwt_token": "stale-or-invalid-cookie"}
+    mock_request.headers = {"x-forwarded-user": "proxy-user@example.com", "user-agent": "browser"}
+    mock_request.client = MagicMock(host="10.0.0.1")
+    mock_request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None, request_id="req1", team_id=None)
+
+    mock_settings = MagicMock()
+    mock_settings.mcp_client_auth_enabled = False
+    mock_settings.trust_proxy_auth = True
+    mock_settings.trust_proxy_auth_dangerously = True
+    mock_settings.proxy_user_header = "x-forwarded-user"
+    mock_settings.platform_admin_email = "admin@platform.com"
+
+    with patch("mcpgateway.middleware.rbac.settings", mock_settings):
+        result = await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+
+    assert result["email"] == "proxy-user@example.com"
+    assert result["auth_method"] == "proxy"
+
+
+@pytest.mark.asyncio
+async def test_proxy_trust_missing_header_valid_cookie_rejects():
+    """Proxy trust active + missing proxy header + valid cookie → 401, not authenticated via cookie."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.cookies = {"jwt_token": "valid-jwt-cookie"}
+    mock_request.headers = {"accept": "application/json", "user-agent": "api"}
+    mock_request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None)
+
+    mock_settings = MagicMock()
+    mock_settings.mcp_client_auth_enabled = False
+    mock_settings.trust_proxy_auth = True
+    mock_settings.trust_proxy_auth_dangerously = True
+    mock_settings.proxy_user_header = "x-forwarded-user"
+    mock_settings.auth_required = True
+
+    with patch("mcpgateway.middleware.rbac.settings", mock_settings):
+        with pytest.raises(HTTPException) as exc:
+            await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
