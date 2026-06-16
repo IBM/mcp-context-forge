@@ -5299,74 +5299,72 @@ async def stream_a2a_agent(
           (same authentication, RBAC, and governance).
         - For non-streaming behavior, use POST /a2a/{agent_name}/invoke instead.
         - Streaming is not supported when Rust runtime delegation is enabled.
+
+    Note:
+        - stream_agent_response yields error SSE events instead of raising exceptions.
+        - Errors are communicated to clients via SSE data events (e.g., "data: {\"error\": \"...\"}\\n\\n")
+          rather than HTTP status codes, which is the correct pattern for streaming responses.
     """
-    try:
-        logger.debug(f"User {safe_log_user(user)} is streaming A2A agent '{agent_name}' with type '{interaction_type}'")
-        if a2a_service is None:
-            raise HTTPException(status_code=503, detail="A2A service not available")
+    logger.debug(f"User {safe_log_user(user)} is streaming A2A agent '{agent_name}' with type '{interaction_type}'")
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
 
-        # Get filtering context from token (respects token scope)
-        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
+    # Get filtering context from token (respects token scope)
+    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
 
-        # Admin bypass - only when token has NO team restrictions
-        if is_admin and token_teams is None:
-            pass  # Admin unrestricted (token_teams already None)
-        elif token_teams is None:
-            token_teams = []  # Non-admin without teams = public-only
+    # Admin bypass - only when token has NO team restrictions
+    if is_admin and token_teams is None:
+        pass  # Admin unrestricted (token_teams already None)
+    elif token_teams is None:
+        token_teams = []  # Non-admin without teams = public-only
 
-        user_id = None
-        if isinstance(user, dict):
-            user_id = str(user.get("id") or user.get("sub") or user_email)
-        else:
-            user_id = str(user)
+    user_id = None
+    if isinstance(user, dict):
+        user_id = str(user.get("id") or user.get("sub") or user_email)
+    else:
+        user_id = str(user)
 
-        # Read the federation hop counter (same as invoke endpoint)
-        hop_count = uaid_utils.read_hop_count(request.headers)
+    # Read the federation hop counter (same as invoke endpoint)
+    hop_count = uaid_utils.read_hop_count(request.headers)
 
-        # Extract bearer token for cross-gateway forwarding
-        bearer_token = getattr(request.state, "bearer_token", None)
-        if not bearer_token:
-            auth_header = request.headers.get("authorization", "")
-            if auth_header.lower().startswith("bearer "):
-                bearer_token = auth_header[7:]
+    # Extract bearer token for cross-gateway forwarding
+    bearer_token = getattr(request.state, "bearer_token", None)
+    if not bearer_token:
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            bearer_token = auth_header[7:]
 
-        # Only forward JWT-shaped tokens
-        if bearer_token and not _is_jwt_token(bearer_token):
-            logger.info("Non-JWT token detected, not forwarding for cross-gateway auth")
-            bearer_token = None
+    # Only forward JWT-shaped tokens
+    if bearer_token and not _is_jwt_token(bearer_token):
+        logger.info("Non-JWT token detected, not forwarding for cross-gateway auth")
+        bearer_token = None
 
-        # Extract inbound request metadata for plugin context
-        content_type = request.headers.get("content-type")
-        request_headers = _filter_sensitive_headers({k.lower(): v for k, v in request.headers.items()})
+    # Extract inbound request metadata for plugin context
+    content_type = request.headers.get("content-type")
+    request_headers = _filter_sensitive_headers({k.lower(): v for k, v in request.headers.items()})
 
-        # Return StreamingResponse with SSE media type
-        return StreamingResponse(
-            a2a_service.stream_agent_response(
-                db,
-                agent_name,
-                parameters,
-                interaction_type,
-                user_id=user_id,
-                user_email=user_email,
-                token_teams=token_teams,
-                hop_count=hop_count,
-                bearer_token=bearer_token,
-                content_type=content_type,
-                request_headers=request_headers,
-            ),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",  # Disable nginx buffering
-            },
-        )
-    except HTTPException:
-        # Let FastAPI handle HTTPExceptions (503 for service unavailable)
-        raise
-    # Note: stream_agent_response yields error SSE events instead of raising exceptions.
-    # Errors are communicated to clients via SSE data events (e.g., "data: {\"error\": \"...\"}\\n\\n")
-    # rather than HTTP status codes, which is the correct pattern for streaming responses.
+    # Return StreamingResponse with SSE media type
+    return StreamingResponse(
+        a2a_service.stream_agent_response(
+            db,
+            agent_name,
+            parameters,
+            interaction_type,
+            user_id=user_id,
+            user_email=user_email,
+            token_teams=token_teams,
+            hop_count=hop_count,
+            bearer_token=bearer_token,
+            content_type=content_type,
+            request_headers=request_headers,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        },
+    )
 
 
 @a2a_router.post("/invoke", response_model=Dict[str, Any])
@@ -11264,7 +11262,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 )
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
-            except (PluginError, PluginViolationError):
+            except (PluginError, PluginViolationError):  # pylint: disable=try-except-raise
+                # Plugin errors should propagate unchanged to be handled by FastAPI
                 raise
             except ToolNotFoundError:
                 # Method name not registered as a tool → spec-mandated -32601
@@ -11277,7 +11276,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
 
         return {"jsonrpc": "2.0", "result": result, "id": req_id}
 
-    except (PluginError, PluginViolationError):
+    except (PluginError, PluginViolationError):  # pylint: disable=try-except-raise
+        # Let plugin errors propagate to FastAPI exception handlers
         raise
     except JSONRPCError as e:
         error = e.to_dict()
