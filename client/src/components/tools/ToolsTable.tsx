@@ -150,7 +150,6 @@ export function ToolsTable({
                           e.stopPropagation();
                           onDeleteTool(tool.id);
                         }}
-                        className="text-destructive focus:text-destructive"
                       >
                         Delete
                       </DropdownMenuItem>
