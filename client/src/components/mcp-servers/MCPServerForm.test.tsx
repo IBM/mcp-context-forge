@@ -1242,4 +1242,3 @@ describe("MCPServerForm", () => {
     });
   });
 });
-
