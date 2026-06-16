@@ -381,7 +381,8 @@ class TestCheckSingleGatewayHealthReal:
         update_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_oauth_authorization_code_missing_user_email_marks_unhealthy_and_handles_failure(self):
+    async def test_oauth_authorization_code_missing_user_email_proceeds_without_auth(self):
+        """Bug fix #5237: Missing user_email should not fail health check, just proceed without auth."""
         service = GatewayService()
         service._handle_gateway_failure = AsyncMock()
 
@@ -392,6 +393,9 @@ class TestCheckSingleGatewayHealthReal:
         )
 
         update_db = MagicMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()  # No exception - 200 OK
 
         class _DBCM:
             def __enter__(self):
@@ -409,7 +413,13 @@ class TestCheckSingleGatewayHealthReal:
 
         class _IsoClientCM:
             async def __aenter__(self):
-                return MagicMock()
+                client = MagicMock()
+                # Mock stream method to return our response
+                stream_cm = MagicMock()
+                stream_cm.__aenter__ = AsyncMock(return_value=mock_response)
+                stream_cm.__aexit__ = AsyncMock(return_value=False)
+                client.stream = MagicMock(return_value=stream_cm)
+                return client
 
             async def __aexit__(self, *exc):
                 return False
@@ -435,10 +445,11 @@ class TestCheckSingleGatewayHealthReal:
             patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=_DBCM()),
             patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
         ):
-            mock_tss.return_value.get_user_token = AsyncMock(return_value="token")
+            mock_tss.return_value.get_user_token = AsyncMock(return_value=None)  # No token available
             await service._check_single_gateway_health(gateway, user_email=None)
 
-        service._handle_gateway_failure.assert_awaited_once()
+        # Bug fix: Gateway should NOT be marked unhealthy - proceeds with unauthenticated check
+        service._handle_gateway_failure.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_oauth_client_credentials_failure_marks_unhealthy_and_handles_failure(self):
