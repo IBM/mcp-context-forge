@@ -34,7 +34,6 @@ from mcpgateway.instrumentation.sqlalchemy import _span_queue
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import ObservabilitySpanRead, ObservabilityTraceRead, ObservabilityTraceWithSpans
 from mcpgateway.services.observability_service import ObservabilityService
-from mcpgateway.instrumentation.sqlalchemy import _span_queue
 
 logger = logging.getLogger(__name__)
 
