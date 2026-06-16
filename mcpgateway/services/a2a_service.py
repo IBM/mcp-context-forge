@@ -2079,9 +2079,6 @@ class A2AAgentService(BaseService):
         # ═══════════════════════════════════════════════════════════════════════════
         # UAID HANDLING: Check if identifier is UAID format
         # ═══════════════════════════════════════════════════════════════════════════
-        # First-Party
-        from mcpgateway.utils.uaid import is_uaid  # pylint: disable=import-outside-toplevel
-
         if is_uaid(identifier):
             # Try local lookup first (by id or uaid column)
             agent_row = db.execute(select(DbA2AAgent.id).where((DbA2AAgent.id == identifier) | (DbA2AAgent.uaid == identifier))).scalar_one_or_none()
@@ -2233,8 +2230,6 @@ class A2AAgentService(BaseService):
         # ═══════════════════════════════════════════════════════════════════════════
 
         # First-Party
-        from mcpgateway.utils.url_auth import sanitize_exception_message  # pylint: disable=import-outside-toplevel
-
         correlation_id = get_correlation_id()
         try:
             prepared = prepare_a2a_invocation(
@@ -2259,19 +2254,6 @@ class A2AAgentService(BaseService):
         # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 2b: Plugin context setup and PRE_INVOKE hook
         # ═══════════════════════════════════════════════════════════════════════════
-        # Third-Party
-        from cpex.framework import (
-            AgentHookType,
-            AgentPreInvokePayload,
-            GlobalContext,
-            HttpHeaderPayload,
-            PluginViolationError,
-        )
-
-        # First-Party
-        from mcpgateway.plugins.gateway_plugin_manager import make_context_id  # pylint: disable=import-outside-toplevel
-        from mcpgateway.schemas import A2A_AGENT_METADATA, PydanticA2AAgent  # pylint: disable=import-outside-toplevel
-
         agent_context_id = make_context_id(str(agent_team_id), agent_name) if agent_team_id else agent_id
         plugin_manager = await self._get_plugin_manager(agent_context_id)
         context_table: Dict[str, Any] = {}
@@ -2382,10 +2364,21 @@ class A2AAgentService(BaseService):
         #     allowlist, and that path self-loops without bound.  The
         #     header is a ContextForge-internal marker and is safe for
         #     third-party agents to receive (they ignore it).
-        # First-Party
-        from mcpgateway.utils import uaid as uaid_utils  # pylint: disable=import-outside-toplevel
-
-        uaid_utils.stamp_hop(prepared.headers, hop_count)
+        # Use `_should_delegate_a2a_to_rust()` (not the raw settings flags)
+        # so this branch stays in lockstep with the dispatch decision below
+        # (`if _should_delegate_a2a_to_rust(): ...`).  The helper also
+        # honors the runtime-mutable `A2A_MODE` override introduced by
+        # `mcpgateway.version`; reading raw flags here would desync the
+        # hop-stamp contract from the dispatch contract when an operator
+        # flips the mode at runtime (e.g., `PATCH /admin/runtime/a2a-mode
+        # {mode: "shadow"}` while delegate flags are boot-true).  That
+        # desync would let Python emit the HTTP POST while the header
+        # was stamped for the Rust-delegate path — downstream gateways
+        # would then trip the guard at half the configured depth.
+        if _should_delegate_a2a_to_rust():
+            prepared.headers[uaid_utils.HOP_HEADER] = str(hop_count)
+        else:
+            uaid_utils.stamp_hop(prepared.headers, hop_count)
 
         with create_span("a2a.invoke", span_attributes) as span:
             try:
@@ -2420,7 +2413,7 @@ class A2AAgentService(BaseService):
                 else:
                     # Make HTTP request to the agent endpoint using shared HTTP client
                     # First-Party
-                    from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel,reimported,redefined-outer-name
 
                     client = await get_http_client()
                     http_response = await client.post(prepared.endpoint_url, json=prepared.request_data, headers=prepared.headers)
@@ -2532,9 +2525,6 @@ class A2AAgentService(BaseService):
                 # ═══════════════════════════════════════════════════════════════════════════
                 if plugin_manager and plugin_manager.has_hooks_for(AgentHookType.AGENT_POST_INVOKE):
                     try:
-                        # Third-Party
-                        from cpex.framework import AgentPostInvokePayload  # pylint: disable=import-outside-toplevel
-
                         post_result, _ = await plugin_manager.invoke_hook(
                             AgentHookType.AGENT_POST_INVOKE,
                             payload=AgentPostInvokePayload(
@@ -2565,7 +2555,7 @@ class A2AAgentService(BaseService):
 
                 try:
                     # First-Party
-                    from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel,reimported,redefined-outer-name
 
                     metrics_buffer = get_metrics_buffer_service()
                     metrics_buffer.record_a2a_agent_metric_with_duration(
@@ -2606,7 +2596,7 @@ class A2AAgentService(BaseService):
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
         hop_count: int = 0,
-        bearer_token: Optional[str] = None,
+        bearer_token: Optional[str] = None,  # pylint: disable=unused-argument
         content_type: Optional[str] = None,
         request_headers: Optional[Dict[str, str]] = None,
     ) -> AsyncGenerator[str, None]:
@@ -3327,7 +3317,7 @@ class A2AAgentService(BaseService):
 
             # Make HTTP request using shared client
             # First-Party
-            from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel,reimported,redefined-outer-name
 
             client = await get_http_client()
             # Stamp the outbound hop count so the receiving gateway can
@@ -3336,9 +3326,6 @@ class A2AAgentService(BaseService):
             # `endpoint_url` loops.  Uses the shared `stamp_hop` helper
             # so Python and Rust agree on header name and overflow
             # semantics.
-            # First-Party
-            from mcpgateway.utils import uaid as uaid_utils  # pylint: disable=import-outside-toplevel
-
             headers = {"Content-Type": "application/json"}
             uaid_utils.stamp_hop(headers, hop_count)
 
