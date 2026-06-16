@@ -2371,7 +2371,6 @@ class TestRootEndpoints:
         assert response.status_code == 500
         assert "Internal error" in response.json()["detail"]
 
-
     @patch("mcpgateway.main.root_service.subscribe_changes")
     def test_subscribe_root_changes(self, mock_subscribe, test_client, auth_headers):
         """Test subscribing to root directory changes via SSE."""
@@ -2613,6 +2612,7 @@ class TestRPCEndpoints:
         assert body["error"]["code"] == -32002
         assert "Resource not found" in body["error"]["message"]
         assert body["error"]["message"] != "Internal error"
+
     @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
     def test_rpc_resources_read_resource_error(self, mock_read, test_client, auth_headers):
         """Test resources/read returns -32000 when ResourceError is raised."""
@@ -2652,7 +2652,6 @@ class TestRPCEndpoints:
         assert "error" in body
         assert body["error"]["code"] == -32603
         assert "Internal error" in body["error"]["message"]
-
 
     @patch("mcpgateway.main.get_user_email", return_value="user_1")
     @patch("mcpgateway.main.resource_service.subscribe_resource", new_callable=AsyncMock)
@@ -2744,6 +2743,7 @@ class TestRPCEndpoints:
         body = response.json()["result"]
         assert body["nextCursor"] == "next-cursor"
         assert body["prompts"][0]["name"] == "prompt-1"
+
     @patch("mcpgateway.main.prompt_service.get_prompt", new_callable=AsyncMock)
     def test_rpc_prompts_get_not_found_error(self, mock_get, test_client, auth_headers):
         """Test prompts/get returns -32002 when PromptNotFoundError is raised."""
@@ -2804,7 +2804,6 @@ class TestRPCEndpoints:
         assert "error" in body
         assert body["error"]["code"] == -32603
         assert "Internal error" in body["error"]["message"]
-
 
     @patch("mcpgateway.main.gateway_service.list_gateways", new_callable=AsyncMock)
     def test_rpc_list_gateways(self, mock_list_gateways, test_client, auth_headers):
@@ -5238,6 +5237,50 @@ class TestGetRpcFilterContext:
         assert teams == ["t1"]
         assert is_admin is False
         assert any("internal_auth_context email non-string type" in record.message for record in caplog.records)
+
+    def test_get_rpc_filter_context_session_admin_token(self):
+        """Test that session admin token (token_teams=None, token_use=session) returns is_admin=True.
+
+        Session tokens do not embed is_admin in the JWT payload; resolve_session_teams()
+        queries the DB and sets token_teams=None for confirmed admins. get_rpc_filter_context
+        must recognize this as admin bypass and return is_admin=True.
+        """
+        # First-Party
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        # Session token: no is_admin in JWT, token_teams=None from DB, token_use="session"
+        mock_request.state._jwt_verified_payload = ("token", {"sub": "admin@example.com"})
+        mock_request.state.token_teams = None
+        mock_request.state.token_use = "session"
+        user = {"email": "admin@example.com"}
+
+        email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        assert email == "admin@example.com"
+        assert teams is None
+        assert is_admin is True
+
+    def test_get_rpc_filter_context_session_non_admin_keeps_is_admin_false(self):
+        """Test that session non-admin token keeps is_admin=False.
+
+        A non-admin session user has token_teams set to a list (not None),
+        so is_admin should remain False.
+        """
+        # First-Party
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"sub": "user@example.com"})
+        mock_request.state.token_teams = ["team-a"]
+        mock_request.state.token_use = "session"
+        user = {"email": "user@example.com"}
+
+        email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        assert email == "user@example.com"
+        assert teams == ["team-a"]
+        assert is_admin is False
 
 
 # --------------------------------------------------------------------------- #
