@@ -1,5 +1,6 @@
 {
   "gateways.title": "Servidores virtuais",
+  "gateways.notifications": "Notificações",
   "gateways.loadingVirtualServers": "Carregando servidores virtuais, aguarde...",
   "gateways.errorLoadingVirtualServers": "Erro ao carregar servidores virtuais",
   "gateways.action.mcpServer.title": "Servidor MCP",
@@ -64,6 +65,11 @@
   "gateways.card.resourceCount": "{count, plural, one {# recurso} other {# recursos}}",
   "gateways.card.promptCount": "{count, plural, one {# prompt} other {# prompts}}",
   "gateways.card.notSyncedYet": "Ainda não sincronizado",
+  "gateways.delete.title": "Excluir servidor virtual",
+  "gateways.delete.description": "Tem certeza de que deseja excluir {name}? Esta ação não pode ser desfeita.",
+  "gateways.delete.deleting": "Excluindo...",
+  "gateways.delete.success": "{name} excluído.",
+  "gateways.delete.errorTitle": "Erro ao excluir servidor virtual",
   "gateways.details.sheetTitle": "Detalhes de {name}",
   "gateways.details.sheetDescription": "Detalhes e atividade do servidor virtual.",
   "gateways.details.addSource": "Adicionar fonte",
