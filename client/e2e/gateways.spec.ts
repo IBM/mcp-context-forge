@@ -202,7 +202,9 @@ test.describe("Gateways page", () => {
     await expect(viewDetails).toBeVisible();
     await expect(viewDetails).not.toHaveAttribute("data-disabled", "");
 
-    await expect(page.getByRole("menuitem", { name: "Edit server" })).toHaveCount(0);
+    const editServer = page.getByRole("menuitem", { name: "Edit server" });
+    await expect(editServer).toBeVisible();
+    await expect(editServer).not.toHaveAttribute("data-disabled", "");
     await expect(page.getByRole("menuitem", { name: "Deactivate" })).toHaveCount(0);
     const deleteItem = page.getByRole("menuitem", { name: "Delete" });
     await expect(deleteItem).toBeVisible();

@@ -22,6 +22,20 @@ export interface CreateVirtualServerPayload {
   visibility: CreateServerDetails["visibility"];
 }
 
+export interface UpdateVirtualServerPayload {
+  name: string;
+  description: string;
+  icon?: string;
+  tags: string[];
+  associated_tools?: string[];
+  associated_resources?: string[];
+  associated_prompts?: string[];
+  team_id?: string;
+  visibility: CreateServerDetails["visibility"];
+  oauth_enabled: boolean;
+  oauth_config?: Record<string, unknown> | null;
+}
+
 export function buildCreateVirtualServerPayload(
   details: CreateServerDetails,
 ): CreateVirtualServerPayload {
@@ -53,4 +67,32 @@ export function createVirtualServer(details: CreateServerDetails): Promise<Virtu
 
 export function deleteVirtualServer(id: string): Promise<void> {
   return api.delete<void>(`/servers/${encodeURIComponent(id)}`);
+}
+
+export function buildUpdateVirtualServerPayload(
+  details: CreateServerDetails,
+): UpdateVirtualServerPayload {
+  return {
+    name: details.name,
+    description: details.description ?? "",
+    icon: "",
+    tags: details.tags ?? [],
+    associated_tools: details.associatedTools,
+    associated_resources: details.associatedResources,
+    associated_prompts: details.associatedPrompts,
+    team_id: details.visibility === "team" && details.teamId ? details.teamId : undefined,
+    visibility: details.visibility,
+    oauth_enabled: details.oauthEnabled,
+    oauth_config: details.oauthEnabled ? {} : null,
+  };
+}
+
+export function updateVirtualServer(
+  serverId: string,
+  details: CreateServerDetails,
+): Promise<VirtualServer> {
+  return api.put<VirtualServer>(
+    `/servers/${encodeURIComponent(serverId)}`,
+    buildUpdateVirtualServerPayload(details),
+  );
 }
