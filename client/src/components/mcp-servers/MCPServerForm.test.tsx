@@ -198,6 +198,20 @@ describe("MCPServerForm", () => {
       expect(screen.getByText("Passthrough headers")).toBeInTheDocument();
       expect(screen.getByText("CA certificate")).toBeInTheDocument();
     });
+
+    it("shows team-switcher hint when Team visibility is selected and no team is active", async () => {
+      const user = userEvent.setup();
+      renderWithRouter(<MCPServerForm {...defaultProps} />);
+
+      await user.click(screen.getByRole("button", { name: /Advanced settings/i }));
+      await user.click(screen.getByRole("combobox", { name: /visibility/i }));
+      await user.click(screen.getByRole("option", { name: /^Team$/i }));
+
+      // AuthProvider returns selectedTeamId: null (unauthenticated), so the sidebar prompt appears
+      expect(
+        screen.getByText(/please select a team using the team switcher in the sidebar/i),
+      ).toBeInTheDocument();
+    });
   });
 
   describe("Authentication Type Selection", () => {
