@@ -106,8 +106,15 @@ user-id = 55123
 user-login = "rust-lang-owner"
 
 [[publisher.chrono]]
-version = "0.4.44"
-when = "2026-02-23"
+version = "0.4.45"
+when = "2026-06-04"
+user-id = 4556
+user-login = "djc"
+user-name = "Dirkjan Ochtman"
+
+[[publisher.chrono-tz]]
+version = "0.10.4"
+when = "2025-07-11"
 user-id = 4556
 user-login = "djc"
 user-name = "Dirkjan Ochtman"
@@ -437,6 +444,13 @@ user-login = "JohnTitor"
 user-name = "Yuki Okushi"
 
 [[publisher.phf]]
+version = "0.12.1"
+when = "2025-06-19"
+user-id = 51017
+user-login = "JohnTitor"
+user-name = "Yuki Okushi"
+
+[[publisher.phf]]
 version = "0.13.1"
 when = "2025-08-23"
 user-id = 51017
@@ -451,6 +465,13 @@ user-login = "JohnTitor"
 user-name = "Yuki Okushi"
 
 [[publisher.phf_shared]]
+version = "0.12.1"
+when = "2025-06-19"
+user-id = 51017
+user-login = "JohnTitor"
+user-name = "Yuki Okushi"
+
+[[publisher.phf_shared]]
 version = "0.13.1"
 when = "2025-08-23"
 user-id = 51017
@@ -458,15 +479,15 @@ user-login = "JohnTitor"
 user-name = "Yuki Okushi"
 
 [[publisher.postgres-protocol]]
-version = "0.6.11"
-when = "2026-03-30"
+version = "0.6.12"
+when = "2026-06-12"
 user-id = 55015
 user-login = "paolobarbolini"
 user-name = "Paolo Barbolini"
 
 [[publisher.postgres-types]]
-version = "0.2.13"
-when = "2026-03-30"
+version = "0.2.14"
+when = "2026-06-12"
 user-id = 55015
 user-login = "paolobarbolini"
 user-name = "Paolo Barbolini"
@@ -787,8 +808,8 @@ user-login = "Darksonn"
 user-name = "Alice Ryhl"
 
 [[publisher.tokio-postgres]]
-version = "0.7.17"
-when = "2026-03-30"
+version = "0.7.18"
+when = "2026-06-12"
 user-id = 55015
 user-login = "paolobarbolini"
 user-name = "Paolo Barbolini"
@@ -871,8 +892,8 @@ user-login = "seanmonstar"
 user-name = "Sean McArthur"
 
 [[publisher.tower-http]]
-version = "0.6.10"
-when = "2026-05-06"
+version = "0.6.11"
+when = "2026-05-18"
 user-id = 359
 user-login = "seanmonstar"
 user-name = "Sean McArthur"

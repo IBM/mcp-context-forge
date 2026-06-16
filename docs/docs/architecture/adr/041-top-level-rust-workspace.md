@@ -15,7 +15,7 @@ Adopt **Option 1: workspace at repository root**.
 - Add a root `Cargo.toml` defining a Rust workspace.
 - Keep the root workspace member policy simple: workspace-owned crates live under `crates/`, and the root manifest includes them via `crates/*`.
 - Keep the existing directory layout: Python stays in `mcpgateway/`, `plugins/`, and related top-level folders; the Rust workspace-owned crates live in `crates/`.
-- Keep `mcp-servers/rust/` out of the shared workspace. Those sample/test servers remain separately managed and can move out of the repository later if we give them a plugin-like distribution path.
+- Keep Rust sample/test servers outside the shared workspace unless they are explicitly listed in the root `Cargo.toml`. Separately managed samples can move out of the repository later if we give them a plugin-like distribution path.
 - PyO3/maturin bindings and CI for Rust builds and tests follow this workspace (see [#3027](https://github.com/IBM/mcp-context-forge/issues/3027) for make targets and acceptance criteria).
 
 ## Consequences

@@ -1911,9 +1911,10 @@ resilience-up:                             ## Start slow-time-server for resilie
 	@echo ""
 	@echo "   Slow Time Server: $(RESILIENCE_HOST)"
 	@echo "     REST API:       $(RESILIENCE_HOST)/api/v1/time?delay=5"
-	@echo "     MCP SSE:        $(RESILIENCE_HOST)/sse"
-	@echo "     MCP HTTP:       $(RESILIENCE_HOST)/http"
-	@echo "     API Docs:       $(RESILIENCE_HOST)/api/v1/docs"
+	@echo "     MCP HTTP:       $(RESILIENCE_HOST)/mcp"
+	@echo "     Config:         $(RESILIENCE_HOST)/api/v1/config"
+	@echo "     Stats:          $(RESILIENCE_HOST)/api/v1/stats"
+	@echo "     Version:        $(RESILIENCE_HOST)/version"
 	@echo "     Health:         $(RESILIENCE_HOST)/health"
 	@echo ""
 	@echo "   Run: make resilience-locust  or  make resilience-jmeter"
@@ -8705,8 +8706,8 @@ upgrade-validate:                         ## Validate fresh + upgrade + roundtri
 # Intentional broad scan under crates/: workspace-owned crates live here and CI
 # should pick up new maturin crates automatically rather than curating a short list.
 RUST_MATURIN_CRATES := $(shell find crates -type d 2>/dev/null | while read d; do [ -f "$$d/Cargo.toml" ] && [ -f "$$d/pyproject.toml" ] && echo "$$d"; done | sort)
-# Keep rust server helpers discoverable without pulling mcp-servers/rust into the
-# shared workspace commands.
+# Keep rust server helpers discoverable even when samples are managed outside
+# the shared workspace commands.
 RUST_MCP_DIRS := $(shell find mcp-servers/rust -maxdepth 2 -name Cargo.toml -exec dirname {} \; 2>/dev/null | sort -u)
 
 rust-ensure-deps:                       ## Ensure Rust toolchain and maturin are available

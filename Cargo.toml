@@ -1,13 +1,14 @@
 [workspace]
 resolver = "3"
-# Workspace policy: repo-owned crates that participate in the shared Rust
-# workspace live under crates/. Keep the glob so new workspace-owned crates are
-# included automatically from the repo root.
+# Workspace policy: core repo-owned crates live under crates/. Rust sample
+# servers participate only when they are explicitly listed.
 members = [
     "crates/*",
+    "mcp-servers/rust/slow-time-server",
 ]
 default-members = [
     "crates/*",
+    "mcp-servers/rust/slow-time-server",
 ]
 
 [workspace.package]
@@ -23,6 +24,8 @@ anyhow = "1.0"
 axum = "0.8.9"
 base64 = "0.22.1"
 bytes = "1.11.1"
+chrono = { version = "0.4.45", features = ["serde"] }
+chrono-tz = "0.10.4"
 clap = { version = "4.5.60", features = ["derive", "env"] }
 futures = "0.3.31"
 futures-util = "0.3.31"
@@ -50,6 +53,7 @@ tokio = { version = "1.49", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0.16"
+tower-http = { version = "0.6.11", features = ["cors"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 url = "2.5.7"

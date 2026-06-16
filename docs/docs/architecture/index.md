@@ -231,7 +231,7 @@ ContextForge ecosystem consists of **independently deployable modules** that can
 Sample servers:
 
 - `mcp-contextforge-mcp-servers-python` - 4 Python servers
-- `mcp-contextforge-mcp-servers-go` - 5 Go servers (static binaries, 5-15 MB)
+- `mcp-contextforge-mcp-servers-go` - Go servers (static binaries, 5-15 MB)
 - `mcp-contextforge-mcp-servers-rust` - Rust servers (static binaries, 3-10 MB)
 
 **Agent Runtimes:**

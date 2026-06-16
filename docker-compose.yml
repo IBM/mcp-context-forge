@@ -1962,8 +1962,8 @@ services:
   ###############################################################################
   slow_time_server:
     build:
-      context: ./mcp-servers/go/slow-time-server
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: mcp-servers/rust/slow-time-server/Containerfile
     image: mcpgateway/slow-time-server:latest
     restart: unless-stopped
     networks: [mcpnet]
@@ -1972,9 +1972,8 @@ services:
     environment:
       - DEFAULT_LATENCY=${SLOW_TIME_LATENCY:-5s}
       - FAILURE_RATE=${SLOW_TIME_FAILURE_RATE:-0.0}
-    command: ["-transport=dual", "-listen=0.0.0.0", "-port=8081", "-log-level=info"]
     healthcheck:
-      test: ["CMD", "/slow-time-server", "-health", "-port=8081"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8081/health"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -2043,7 +2042,7 @@ services:
         try:
             result = api_request('POST', '/gateways', {
                 'name': 'slow_time',
-                'url': 'http://slow_time_server:8081/http',
+                'url': 'http://slow_time_server:8081/mcp',
                 'transport': 'STREAMABLEHTTP'
             })
             gateway_id = result.get('id')

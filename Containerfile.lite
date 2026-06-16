@@ -107,6 +107,7 @@ WORKDIR /build
 # Copy workspace and crates (only if ENABLE_RUST=true)
 COPY Cargo.toml Cargo.lock /build/
 COPY crates/ /build/crates/
+COPY mcp-servers/rust/slow-time-server/ /build/mcp-servers/rust/slow-time-server/
 
 # Build local native extensions from maturin crates under crates/
 # hadolint ignore=DL3013
