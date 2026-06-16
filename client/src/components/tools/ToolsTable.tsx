@@ -2,6 +2,12 @@ import { useState } from "react";
 import { Copy, MoreHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Table,
   TableBody,
   TableCell,
@@ -17,10 +23,12 @@ export function ToolsTable({
   tools,
   selectedToolId,
   onSelectTool,
+  onDeleteTool,
 }: {
   tools: Tool[];
   selectedToolId?: string | null;
   onSelectTool: (tool: Tool) => void;
+  onDeleteTool?: (toolId: string) => void;
 }) {
   const [schemaDialogTool, setSchemaDialogTool] = useState<Tool | null>(null);
   const [isSchemaDialogOpen, setIsSchemaDialogOpen] = useState(false);
@@ -120,19 +128,47 @@ export function ToolsTable({
               </TableCell>
 
               <TableCell className="px-4 py-3 text-center">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label="More options"
-                  className="size-5 text-muted-foreground hover:text-foreground"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    // TODO: Implement more options menu
-                  }}
-                >
-                  <MoreHorizontal className="size-4" />
-                </Button>
+                {onDeleteTool ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label="More options"
+                        className="size-5 text-muted-foreground hover:text-foreground"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                        }}
+                      >
+                        <MoreHorizontal className="size-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeleteTool(tool.id);
+                        }}
+                      >
+                        Delete
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label="More options"
+                    className="size-5 text-muted-foreground hover:text-foreground"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                    }}
+                  >
+                    <MoreHorizontal className="size-4" />
+                  </Button>
+                )}
               </TableCell>
             </TableRow>
           ))}
