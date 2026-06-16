@@ -746,3 +746,37 @@ class TestStreamingRateLimiting:
         # 2. Client receives error if limit exceeded
         # 3. Existing streams not interrupted by rate limit
         pass
+
+    def test_stream_endpoint_bearer_token_from_header(self, client, mock_auth_dependencies):
+        """Test bearer token extraction from Authorization header when not in request.state.
+
+        Covers main.py:5307-5309 (fallback to header extraction).
+        """
+        from mcpgateway.main import get_current_user_with_permissions, get_db
+
+        app.dependency_overrides[get_current_user_with_permissions] = mock_auth_dependencies["get_current_user"]
+        app.dependency_overrides[get_db] = mock_auth_dependencies["get_db"]
+
+        captured_bearer = {}
+
+        async def mock_stream(*args, **kwargs):
+            # Capture the bearer_token kwarg passed to service
+            captured_bearer["token"] = kwargs.get("bearer_token")
+            yield "data: test\n\n"
+
+        with patch("mcpgateway.main.a2a_service") as mock_a2a:
+            mock_a2a.stream_agent_response = lambda *args, **kwargs: mock_stream(*args, **kwargs)
+
+            with patch("mcpgateway.main.get_rpc_filter_context", return_value=("test@example.com", None, True)):
+                with patch("mcpgateway.main.uaid_utils.read_hop_count", return_value=0):
+                    with patch("mcpgateway.main._is_jwt_token", return_value=True):
+                        with patch("mcpgateway.main._filter_sensitive_headers", return_value={}):
+                            # Send request with Authorization header (will be extracted at line 5307-5309)
+                            response = client.post(
+                                "/a2a/test-agent/stream",
+                                json={"query": "test"},
+                                headers={"Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0QGV4YW1wbGUuY29tIn0.test"},
+                            )
+                            assert response.status_code == 200
+                            # Verify bearer token was extracted from header
+                            assert captured_bearer.get("token") is not None
