@@ -46,7 +46,7 @@ We will split ContextForge ecosystem into **14 independently deployable modules*
 
 ### MCP Servers (3 modules) - Zero Gateway Dependencies
 8. **mcp-contextforge-mcp-servers-python** - 4 Python servers
-9. **mcp-contextforge-mcp-servers-go** - 5 Go servers (static binaries, 5-15 MB)
+9. **mcp-contextforge-mcp-servers-go** - Go servers (static binaries, 5-15 MB)
 10. **mcp-contextforge-mcp-servers-rust** - Rust servers (static binaries, 3-10 MB)
 
 ### Agent Runtimes (1 module)
