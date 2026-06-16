@@ -128,14 +128,14 @@ async def _validate_server_id(match: re.Match[str] | None, path: str, scope: Sco
         try:
             with fresh_db_session() as db:
                 exists = db.execute(sa_exists().where(DbServer.id == server_id)).scalar()
+                if not exists:
+                    logger.warning("Invalid server ID in Rust proxy MCP request path: %s", server_id)
+                    response = ORJSONResponse({"detail": "Server not found"}, status_code=404, headers=_deprecation_response_headers())
+                    await response(scope, receive, send)
+                    return _REJECT
         except Exception as e:
             logger.error("Failed to validate server ID %s in Rust proxy: %s", server_id, e)
             response = ORJSONResponse({"detail": "Service unavailable — unable to verify server"}, status_code=503, headers=_deprecation_response_headers())
-            await response(scope, receive, send)
-            return _REJECT
-        if not exists:
-            logger.warning("Invalid server ID in Rust proxy MCP request path: %s", server_id)
-            response = ORJSONResponse({"detail": "Server not found"}, status_code=404, headers=_deprecation_response_headers())
             await response(scope, receive, send)
             return _REJECT
         return server_id
