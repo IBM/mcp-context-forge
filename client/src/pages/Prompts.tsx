@@ -8,8 +8,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useState, useEffect } from "react";
-import { promptsApi, type Prompt as ApiPrompt, type PromptArgument } from "@/api/prompts";
+import { useState, useEffect, useCallback } from "react";
+import {
+  promptsApi,
+  type PaginatedResponse,
+  type Prompt as ApiPrompt,
+  type PromptArgument,
+} from "@/api/prompts";
 import {
   Table,
   TableBody,
@@ -19,6 +24,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+
+const DEFAULT_PAGE_SIZE = 10;
 
 interface PromptListItem {
   id: string;
@@ -35,10 +42,10 @@ function toPromptListItem(prompt: ApiPrompt): PromptListItem {
   return {
     id: prompt.id,
     name: prompt.name,
-    displayName: prompt.display_name,
+    displayName: prompt.displayName,
     description: prompt.description,
     arguments: prompt.arguments,
-    gatewaySlug: prompt.gateway_slug,
+    gatewaySlug: prompt.gatewaySlug,
     visibility: prompt.visibility,
     enabled: prompt.enabled,
   };
@@ -176,15 +183,25 @@ function PromptsTable({ prompts }: { prompts: PromptListItem[] }) {
 
 export function Prompts() {
   const [prompts, setPrompts] = useState<PromptListItem[]>([]);
+  const [limit, setLimit] = useState(DEFAULT_PAGE_SIZE);
+  const [pagination, setPagination] = useState<PaginatedResponse<ApiPrompt>["pagination"] | null>(
+    null,
+  );
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchPrompts = async () => {
       try {
         setLoading(true);
-        const data = await promptsApi.list();
-        setPrompts(data.map(toPromptListItem));
+        const response = await promptsApi.list({
+          page: 1,
+          perPage: limit,
+          includeInactive: true,
+        });
+        setPrompts(response.data.map(toPromptListItem));
+        setPagination(response.pagination);
         setError(null);
       } catch (err) {
         console.error("Failed to fetch prompts:", err);
@@ -195,6 +212,32 @@ export function Prompts() {
     };
 
     fetchPrompts();
+  }, [limit]);
+
+  const handleLoadMore = useCallback(async () => {
+    if (!pagination?.has_next || loadingMore) return;
+
+    setLoadingMore(true);
+    try {
+      const response = await promptsApi.list({
+        page: pagination.page + 1,
+        perPage: limit,
+        includeInactive: true,
+      });
+      setPrompts((currentPrompts) => [
+        ...currentPrompts,
+        ...response.data.map(toPromptListItem),
+      ]);
+      setPagination(response.pagination);
+    } catch (err) {
+      console.error("Failed to load more prompts:", err);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [pagination, limit, loadingMore]);
+
+  const handleLimitChange = useCallback((newLimit: number) => {
+    setLimit(newLimit);
   }, []);
 
   if (loading) {
@@ -231,8 +274,39 @@ export function Prompts() {
 
           <PromptsTable prompts={prompts} />
 
-          <div className="mt-6 text-sm text-gray-600 dark:text-gray-400">
-            Showing {prompts.length} prompt{prompts.length !== 1 ? "s" : ""}
+          <div className="flex items-center justify-between mt-6">
+            <div className="flex items-center gap-4">
+              <div className="text-sm text-gray-600 dark:text-gray-400">
+                Showing {prompts.length} prompt{prompts.length !== 1 ? "s" : ""}
+              </div>
+              <div className="flex items-center gap-2">
+                <label htmlFor="limit-select" className="text-sm text-gray-600 dark:text-gray-400">
+                  Per page:
+                </label>
+                <select
+                  id="limit-select"
+                  value={limit}
+                  onChange={(event) => handleLimitChange(Number(event.target.value))}
+                  className="rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-1 text-sm"
+                >
+                  <option value={10}>10</option>
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+              </div>
+            </div>
+            {pagination?.has_next && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleLoadMore}
+                disabled={loadingMore}
+                aria-label="Load more prompts"
+              >
+                {loadingMore ? "Loading..." : "Load More"}
+              </Button>
+            )}
           </div>
         </>
       ) : (
