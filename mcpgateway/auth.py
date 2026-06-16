@@ -135,7 +135,6 @@ _LAST_USED_CACHE_LOCK = threading.Lock()
 
 def _log_auth_event(
     logger_handle: logging.Logger,
-    log_obj: logging.Logger,
     message: str,
     level: int = logging.INFO,
     user_id: Optional[str] = None,
@@ -152,7 +151,6 @@ def _log_auth_event(
 
     Args:
         logger_handle: Logger instance to use
-        log_obj: Logger instance to use
         message: Log message
         level: Log level (default: INFO)
         user_id: User identifier
@@ -184,7 +182,6 @@ def _log_auth_event(
 
     # Log with structured context
     logger_handle.log(level, message, extra=extra)
-    log_obj.log(level, message, extra=extra)
 
 
 def get_db() -> Generator[Session, Never, None]:
@@ -2213,4 +2210,3 @@ async def get_current_user_from_cookie(
         raise_auth_error("not_authenticated", "Not authenticated")
 
     return user, jti
-
