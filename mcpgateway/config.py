@@ -3326,6 +3326,24 @@ Disallow: /
     max_header_field_size_bytes: int = Field(default=8192, description="Maximum size of individual header field (8KB default)")
     max_header_count: int = Field(default=100, description="Maximum number of header fields")
 
+    # ===================================
+    # RFC 6585 Phase 2: Conditional Request Validation (428 Precondition Required)
+    # ===================================
+    conditional_requests_enabled: bool = Field(
+        default=False,
+        description="Enable RFC 6585 conditional request validation (428 Precondition Required). "
+        "When enabled, PUT/PATCH/DELETE operations require If-Match header with valid ETag to prevent lost updates.",
+    )
+    conditional_requests_required_methods: List[str] = Field(
+        default_factory=lambda: ["PUT", "PATCH", "DELETE"], description="HTTP methods that require conditional request headers (If-Match ETag validation)"
+    )
+    conditional_requests_exempt_paths: List[str] = Field(
+        default_factory=lambda: ["/health", "/metrics", "/auth/", "/admin/login", "/admin/logout"], description="Paths exempt from conditional request validation (health checks, auth, etc.)"
+    )
+    conditional_requests_require_etag: bool = Field(
+        default=True, description="Require ETag-based conditional requests (If-Match header). " "When true, uses version-based ETags for optimistic locking."
+    )
+
     # Header passthrough feature (disabled by default for security)
     enable_header_passthrough: bool = Field(default=False, description="Enable HTTP header passthrough feature (WARNING: Security implications - only enable if needed)")
     enable_overwrite_base_headers: bool = Field(default=False, description="Enable overwriting of base headers")
