@@ -295,11 +295,22 @@ class TokenStorageService:
             oauth_config = gateway.oauth_config.copy()
             if "client_secret" in oauth_config and oauth_config["client_secret"]:
                 if self.encryption:
-                    try:
-                        oauth_config["client_secret"] = await self.encryption.decrypt_secret_async(oauth_config["client_secret"])
-                    except Exception:  # nosec B110
-                        # If decryption fails, assume it's already plain text - intentional fallback
-                        pass
+                    client_secret_value = oauth_config["client_secret"]
+                    # Check if the value appears to be encrypted
+                    if self.encryption.is_encrypted(client_secret_value):
+                        try:
+                            oauth_config["client_secret"] = await self.encryption.decrypt_secret_async(client_secret_value)
+                        except Exception as decrypt_error:
+                            # Decryption failed on what appears to be encrypted data
+                            # This is a configuration error - fail explicitly rather than silently
+                            logger.error(
+                                "Failed to decrypt client_secret for gateway %s: %s. Token refresh cannot proceed. "
+                                "This may indicate a configuration issue (wrong encryption key or corrupted data).",
+                                token_record.gateway_id,
+                                str(decrypt_error),
+                            )
+                            raise OAuthError(f"Failed to decrypt client_secret for gateway {token_record.gateway_id}: {str(decrypt_error)}") from decrypt_error
+                    # else: value is not encrypted, use as-is (handles plaintext secrets from API registration)
 
             # RFC 8707: Set resource parameter for JWT access tokens during refresh
             # Standard
@@ -335,25 +346,33 @@ class TokenStorageService:
                 query = parsed.query if preserve_query else ""
                 return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, query, ""))
 
-            existing_resource = oauth_config.get("resource")
-            if existing_resource:
-                # Normalize existing resource - preserve query for explicit config
-                if isinstance(existing_resource, list):
-                    original_count = len(existing_resource)
-                    normalized = [normalize_resource(r, preserve_query=True) for r in existing_resource]
-                    oauth_config["resource"] = [r for r in normalized if r]
-                    if not oauth_config["resource"] and original_count > 0:
-                        logger.warning("All %s configured resource values were empty and removed during refresh", original_count)
-                else:
-                    normalized = normalize_resource(existing_resource, preserve_query=True)
-                    if not normalized and existing_resource:
-                        logger.warning("Configured resource was empty and removed during refresh: %s", existing_resource)
-                    oauth_config["resource"] = normalized
-            elif gateway.url:
-                # Derive from gateway.url if not explicitly configured (strip query)
-                oauth_config["resource"] = normalize_resource(gateway.url)
-                if not oauth_config.get("resource"):
-                    logger.warning("Gateway URL is empty, skipping resource parameter: %s", gateway.url)
+            # RFC 8707: Set resource parameter for JWT access tokens during refresh
+            # Respect omit_resource flag - if explicitly set to true, skip all resource handling
+            omit_resource = oauth_config.get("omit_resource", False)
+            if omit_resource:
+                # User explicitly disabled resource parameter - remove it if present
+                oauth_config.pop("resource", None)
+                logger.debug("Omitting resource parameter for gateway %s as per omit_resource=true config", token_record.gateway_id)
+            else:
+                existing_resource = oauth_config.get("resource")
+                if existing_resource:
+                    # Normalize existing resource - preserve query for explicit config
+                    if isinstance(existing_resource, list):
+                        original_count = len(existing_resource)
+                        normalized = [normalize_resource(r, preserve_query=True) for r in existing_resource]
+                        oauth_config["resource"] = [r for r in normalized if r]
+                        if not oauth_config["resource"] and original_count > 0:
+                            logger.warning("All %s configured resource values were empty and removed during refresh", original_count)
+                    else:
+                        normalized = normalize_resource(existing_resource, preserve_query=True)
+                        if not normalized and existing_resource:
+                            logger.warning("Configured resource was empty and removed during refresh: %s", existing_resource)
+                        oauth_config["resource"] = normalized
+                elif gateway.url:
+                    # Derive from gateway.url if not explicitly configured (strip query)
+                    oauth_config["resource"] = normalize_resource(gateway.url)
+                    if not oauth_config.get("resource"):
+                        logger.warning("Gateway URL is empty, skipping resource parameter: %s", gateway.url)
 
             # Use OAuthManager to refresh the token
             # First-Party
@@ -417,13 +436,37 @@ class TokenStorageService:
 
             return new_access_token
 
-        except Exception as e:
+        except OAuthError as e:
+            # OAuth-specific errors from OAuthManager
             logger.error("Failed to refresh OAuth token for gateway %s: %s", token_record.gateway_id, str(e))
-            # If refresh fails, we should clear the token to force re-authentication
-            if "invalid" in str(e).lower() or "expired" in str(e).lower():
-                logger.warning("Refresh token appears invalid/expired, clearing tokens for gateway %s", token_record.gateway_id)
+
+            # Only delete tokens on permanent OAuth grant failures.
+            # RFC 6749 §5.2: invalid_grant means the refresh token is invalid, expired,
+            # revoked, or does not match the authorization grant. This is permanent.
+            # Do NOT delete tokens for:
+            # - invalid_client (wrong client_secret - configuration issue, not token issue)
+            # - invalid_request (malformed request - our bug, not token issue)
+            # - Transient network/server failures
+            error_str = str(e).lower()
+            if "invalid_grant" in error_str:
+                logger.warning(
+                    "Refresh token is permanently invalid for gateway %s (invalid_grant). " "Deleting token to force re-authorization. Error: %s",
+                    token_record.gateway_id,
+                    str(e),
+                )
                 self.db.delete(token_record)
                 self.db.commit()
+            else:
+                logger.warning(
+                    "Token refresh failed for gateway %s but error does not indicate invalid refresh token. " "Preserving token for retry. Error: %s",
+                    token_record.gateway_id,
+                    str(e),
+                )
+            return None
+        except Exception as e:
+            # Non-OAuth errors (network, parsing, encryption, etc.)
+            logger.error("Unexpected error refreshing token for gateway %s: %s", token_record.gateway_id, str(e))
+            # Preserve token - this is likely a transient or configuration issue
             return None
 
     def _is_token_expired(self, token_record: OAuthToken, threshold_seconds: int = 300) -> bool:

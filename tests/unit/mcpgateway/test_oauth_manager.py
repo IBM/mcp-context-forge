@@ -1998,9 +1998,10 @@ class TestTokenStorageService:
 
     @pytest.mark.asyncio
     async def test_refresh_access_token_invalid_token(self):
-        """Test refresh with invalid refresh token."""
+        """Test refresh with invalid_grant error (permanent OAuth failure)."""
         # First-Party
         from mcpgateway.db import Gateway
+        from mcpgateway.services.oauth_manager import OAuthError
 
         mock_db = Mock()
         mock_db.delete = Mock()
@@ -2026,15 +2027,16 @@ class TestTokenStorageService:
                 expires_at=datetime.now(tz=timezone.utc) - timedelta(hours=1),
             )
 
-            # Mock the OAuthManager refresh_token method to raise an error
+            # Mock the OAuthManager refresh_token method to raise OAuthError with invalid_grant
+            # This is the ONLY error type that should delete tokens (per RFC 6749 §5.2)
             with patch("mcpgateway.services.oauth_manager.OAuthManager") as mock_oauth_manager_class:
                 mock_manager = mock_oauth_manager_class.return_value
-                mock_manager.refresh_token = AsyncMock(side_effect=Exception("Refresh token invalid or expired"))
+                mock_manager.refresh_token = AsyncMock(side_effect=OAuthError("invalid_grant: refresh token expired or revoked"))
 
                 result = await service._refresh_access_token(token_record)
 
                 assert result is None
-                # Should delete the invalid token
+                # Should delete the invalid token only on invalid_grant
                 mock_db.delete.assert_called_once_with(token_record)
                 mock_db.commit.assert_called_once()
 
