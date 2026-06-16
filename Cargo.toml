@@ -4,6 +4,7 @@ resolver = "3"
 # servers participate only when they are explicitly listed.
 members = [
     "crates/*",
+    "mcp-servers/rust/benchmark-server",
     "mcp-servers/rust/slow-time-server",
     "a2a-agents/rust/a2a-echo-agent",
 ]

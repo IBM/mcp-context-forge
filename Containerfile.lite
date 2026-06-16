@@ -107,6 +107,7 @@ WORKDIR /build
 # Copy workspace and crates (only if ENABLE_RUST=true)
 COPY Cargo.toml Cargo.lock /build/
 COPY crates/ /build/crates/
+COPY mcp-servers/rust/benchmark-server/ /build/mcp-servers/rust/benchmark-server/
 COPY mcp-servers/rust/slow-time-server/ /build/mcp-servers/rust/slow-time-server/
 COPY a2a-agents/rust/a2a-echo-agent/ /build/a2a-agents/rust/a2a-echo-agent/
 

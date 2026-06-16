@@ -1978,7 +1978,7 @@ resilience-jmeter: jmeter-check            ## Run JMeter baseline test against s
 	@echo "Report: $(JMETER_RESULTS_DIR)/resilience_*/index.html"
 
 # =============================================================================
-# help: 🎯 BENCHMARK STACK (Go benchmark-server)
+# help: 🎯 BENCHMARK STACK (Rust benchmark-server)
 # help: benchmark-up           - Start benchmark stack (MCP servers + auto-registration)
 # help: benchmark-down         - Stop benchmark stack
 # help: benchmark-clean        - Stop and remove all benchmark data (volumes)
@@ -5084,7 +5084,7 @@ deps-update:
 
 dist: clean uv               ## Build wheel + sdist into ./dist (optionally includes Rust)
 	@echo "📦 Building Python package..."
-	@$(UV_BIN) build
+	@BUILD_UI_ASSETS=true $(UV_BIN) build
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust..."; \
 		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust"; exit 0; }; \
@@ -5100,7 +5100,7 @@ dist: clean uv               ## Build wheel + sdist into ./dist (optionally incl
 
 wheel: uv                    ## Build wheel only (Python + optionally Rust)
 	@echo "📦 Building Python wheel..."
-	@$(UV_BIN) build --wheel
+	@BUILD_UI_ASSETS=true $(UV_BIN) build --wheel
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust wheels..."; \
 		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust"; exit 0; }; \
