@@ -98,7 +98,6 @@ export function Servers() {
   };
 
   const confirmDelete = async () => {
-    /* v8 ignore next */
     if (!selectedServerId) return;
 
     setDeleteDialogOpen(false);
@@ -156,7 +155,6 @@ export function Servers() {
   }, []);
 
   const handleLoadMore = useCallback(async () => {
-    /* v8 ignore next */
     if (!nextCursor || loadingMore) return;
 
     setLoadingMore(true);
