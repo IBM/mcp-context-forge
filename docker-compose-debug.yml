@@ -1391,8 +1391,8 @@ services:
   ###############################################################################
   benchmark_server:
     build:
-      context: ./mcp-servers/go/benchmark-server
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: mcp-servers/rust/benchmark-server/Dockerfile
     image: mcpgateway/benchmark-server:latest
     restart: unless-stopped
     networks: [mcpnet]
@@ -1407,8 +1407,11 @@ services:
       # Port range supports up to 100 servers (9000-9099)
       # Actual servers spawned controlled by BENCHMARK_SERVER_COUNT
       - "9000-9099:9000-9099"
-    # Note: No healthcheck - scratch-based Go image has no shell
-    # Verify health via: curl http://localhost:9000/health
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:${BENCHMARK_START_PORT:-9000}/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
     deploy:
       resources:
         limits:

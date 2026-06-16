@@ -15,6 +15,12 @@ deployment/
 docs/
 deployment/k8s/
 mcp-servers/
+!mcp-servers/
+!mcp-servers/rust/
+!mcp-servers/rust/benchmark-server/
+!mcp-servers/rust/benchmark-server/Cargo.toml
+!mcp-servers/rust/benchmark-server/src/
+!mcp-servers/rust/benchmark-server/src/**
 tests/
 test/
 attic/

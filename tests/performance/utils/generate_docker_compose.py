@@ -159,8 +159,8 @@ FAST_TEST_SERVER_TEMPLATE = """  fast_test_server:
 
 BENCHMARK_SERVER_TEMPLATE = """  benchmark_server:
     build:
-      context: ./mcp-servers/go/benchmark-server
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: mcp-servers/rust/benchmark-server/Dockerfile
     container_name: benchmark_server
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -170,7 +170,7 @@ BENCHMARK_SERVER_TEMPLATE = """  benchmark_server:
     networks:
       - mcpnet
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:{start_port}/health || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:{start_port}/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3

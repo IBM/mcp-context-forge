@@ -7,7 +7,6 @@ MCP server implementation guidance for AI coding assistants.
 ```
 mcp-servers/
 ├── go/                            # Go MCP servers
-│   ├── benchmark-server/          # Performance benchmarking
 │   └── fast-time-server/          # Time/date operations
 ├── python/                        # Python MCP servers
 │   ├── data_analysis_server/      # Data analysis tools
@@ -19,6 +18,7 @@ mcp-servers/
 │   ├── qr_code_server/            # QR code generation
 │   └── url_to_markdown_server/    # URL to markdown conversion
 ├── rust/                          # Rust MCP servers
+│   ├── benchmark-server/          # Performance benchmarking
 │   ├── fast-test-server/          # Fast testing server
 │   ├── filesystem-server/         # Filesystem operations
 │   └── slow-time-server/          # Configurable-latency testing server

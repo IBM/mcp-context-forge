@@ -52,6 +52,7 @@ Release 1.0.3 consolidates **61 PRs** focused on **authentication and JWT harden
 - **👥 AuthCache Full Team Objects** ([#4550](https://github.com/IBM/mcp-context-forge/pull/4550)) – Store full team objects in AuthCache to eliminate a secondary DB query. Reduces auth hot-path latency.
 - **🎫 Token Revocation Caching** ([#4527](https://github.com/IBM/mcp-context-forge/pull/4527)) – Cache `get_token_revocation` / `is_token_revoked` to eliminate hot-path DB queries. Improves request throughput.
 - **🦀 Rust Fast-Test Server Speedup** ([#5059](https://github.com/IBM/mcp-context-forge/pull/5059)) – Sped up the Rust fast-test server. Reduces benchmark/test cycle time.
+- **🦀 Benchmark Server Rust Migration** ([#5091](https://github.com/IBM/mcp-context-forge/pull/5091)) – Replaced the Go benchmark server with the Rust benchmark server and rewired benchmark compose profiles to build from `mcp-servers/rust/benchmark-server`. Breaking: local benchmark-server binary paths move from `./dist/benchmark-server` to Cargo targets such as `./target/release/benchmark-server`.
 
 #### **🖥️ Admin UI**
 
