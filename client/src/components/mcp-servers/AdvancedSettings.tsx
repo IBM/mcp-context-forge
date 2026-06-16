@@ -128,8 +128,8 @@ export function AdvancedSettings({
 
   useEffect(() => {
     if (visibility === "team") {
-      if (selectedTeamId && !teamId) {
-        onTeamIdChange(selectedTeamId);
+      if ((selectedTeamId ?? "") !== teamId) {
+        onTeamIdChange(selectedTeamId ?? "");
       }
     } else if (teamId) {
       onTeamIdChange("");
@@ -210,7 +210,10 @@ export function AdvancedSettings({
           Visibility
         </label>
         <Select value={visibility} onValueChange={onVisibilityChange}>
-          <SelectTrigger className="h-10 w-full border-neutral-300 bg-white dark:border-neutral-700 dark:bg-neutral-950">
+          <SelectTrigger
+            id="visibility"
+            className="h-10 w-full border-neutral-300 bg-white dark:border-neutral-700 dark:bg-neutral-950"
+          >
             <SelectValue placeholder="Select visibility" />
           </SelectTrigger>
           <SelectContent>
