@@ -3976,8 +3976,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     # but we don't have a valid token - this is expected and should not
                     # mark the gateway as unhealthy.
                     is_auth_failure = False
-                    if hasattr(e, "response") and hasattr(e.response, "status_code"):
-                        status_code = e.response.status_code
+                    if hasattr(e, "response") and hasattr(e.response, "status_code"):  # pylint: disable=no-member
+                        status_code = e.response.status_code  # pylint: disable=no-member
                         if status_code in (401, 403):
                             is_auth_failure = True
                             logger.debug(
