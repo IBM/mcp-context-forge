@@ -12344,9 +12344,8 @@ if ADMIN_API_ENABLED:
     # Lazy import: mcpgateway.admin is a large module (~19k lines, ~120ms cold).
     # Only load it when the admin API is actually mounted.
     # First-Party
-    from mcpgateway.admin import enforce_admin_csrf, validate_section_permissions  # pylint: disable=import-outside-toplevel
+    from mcpgateway.admin import admin_router, enforce_admin_csrf, validate_section_permissions  # pylint: disable=import-outside-toplevel
 
-    set_logging_service(logging_service)
     app.include_router(admin_router)  # Admin routes imported from admin.py
 
     # Validate section-to-permission mapping consistency at startup
