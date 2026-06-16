@@ -50,3 +50,7 @@ export function buildCreateVirtualServerPayload(
 export function createVirtualServer(details: CreateServerDetails): Promise<VirtualServer> {
   return api.post<VirtualServer>("/servers", buildCreateVirtualServerPayload(details));
 }
+
+export function deleteVirtualServer(id: string): Promise<void> {
+  return api.delete<void>(`/servers/${encodeURIComponent(id)}`);
+}

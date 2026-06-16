@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { toast } from "sonner";
 import { renderWithProviders } from "@/test/test-utils";
 import { Gateways } from "./Gateways";
 import { useQuery } from "@/hooks/useQuery";
+import { deleteVirtualServer } from "@/api/virtualServers";
 import type { VirtualServer } from "@/types/server";
 
 // Mock the router
@@ -20,17 +22,32 @@ vi.mock("@/hooks/useQuery", () => ({
   useQuery: vi.fn(),
 }));
 
+vi.mock("@/api/virtualServers", () => ({
+  deleteVirtualServer: vi.fn(),
+}));
+
+vi.mock("sonner", () => ({
+  toast: {
+    error: vi.fn(),
+  },
+}));
+
 const mockUseQuery = vi.mocked(useQuery);
+const mockDeleteVirtualServer = vi.mocked(deleteVirtualServer);
+const mockToastError = vi.mocked(toast.error);
 
 describe("Gateways", () => {
   beforeEach(() => {
     mockNavigate.mockClear();
+    mockToastError.mockClear();
+    mockDeleteVirtualServer.mockReset();
+    mockDeleteVirtualServer.mockResolvedValue(undefined);
     mockUseQuery.mockReturnValue({
       data: { servers: [] },
       error: null,
       isLoading: false,
       execute: vi.fn(),
-      refetch: vi.fn(),
+      refetch: vi.fn().mockResolvedValue({ servers: [] }),
     });
   });
 
@@ -126,7 +143,7 @@ describe("Gateways", () => {
 
     expect(await screen.findByRole("menuitem", { name: "View details" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Deactivate" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: "Delete" })).not.toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Delete" })).not.toHaveAttribute("data-disabled");
   });
 
   it("renders empty virtual servers as full-width add-components rows", () => {
@@ -383,7 +400,7 @@ describe("Gateways", () => {
     expect(mockNavigate).not.toHaveBeenCalled();
   });
 
-  it("opens virtual server details and keeps unfinished row actions disabled", async () => {
+  it("opens virtual server details from the actions menu", async () => {
     const user = userEvent.setup();
     const mockServer: VirtualServer = {
       id: "gateway/1?mode=detail",
@@ -510,6 +527,7 @@ describe("Gateways", () => {
 
     const viewDetails = await screen.findByRole("menuitem", { name: "View details" });
     expect(viewDetails).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Delete" })).not.toHaveAttribute("data-disabled");
 
     await user.click(viewDetails);
 
@@ -569,6 +587,203 @@ describe("Gateways", () => {
 
     expect(screen.getAllByText("github://repo/{owner}/{repo}").length).toBeGreaterThan(0);
     expect(screen.getAllByText("summarize_pull_request").length).toBeGreaterThan(0);
+  });
+
+  it("confirms and deletes a virtual server", async () => {
+    const user = userEvent.setup();
+    const refetch = vi.fn().mockResolvedValue({ servers: [] });
+    const mockServer: VirtualServer = {
+      id: "gateway/1?mode=delete",
+      name: "GH repo tasks",
+      description: "Test server",
+      icon: "",
+      createdAt: "2026-04-16T13:23:12Z",
+      updatedAt: "2026-04-16T13:23:12Z",
+      enabled: true,
+      associatedTools: [],
+      associatedToolIds: [],
+      associatedResources: [],
+      associatedPrompts: [],
+      associatedA2aAgents: [],
+      metrics: null,
+      tags: [],
+      createdBy: "admin@example.com",
+      createdFromIp: "127.0.0.1",
+      createdVia: "ui",
+      createdUserAgent: "Mozilla/5.0",
+      modifiedBy: null,
+      modifiedFromIp: null,
+      modifiedVia: null,
+      modifiedUserAgent: null,
+      importBatchId: null,
+      federationSource: null,
+      version: 1,
+      teamId: "team-1",
+      team: "Test Team",
+      ownerEmail: "admin@example.com",
+      visibility: "team",
+      oauthEnabled: false,
+      oauthConfig: null,
+    };
+
+    mockUseQuery.mockReturnValue({
+      data: { servers: [mockServer] },
+      error: null,
+      isLoading: false,
+      execute: vi.fn(),
+      refetch,
+    });
+
+    renderWithProviders(<Gateways />);
+
+    await user.click(screen.getByRole("button", { name: "Actions for GH repo tasks" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText("Delete virtual server")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Are you sure you want to delete GH repo tasks? This action cannot be undone.",
+      ),
+    ).toBeInTheDocument();
+    expect(mockDeleteVirtualServer).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    expect(mockDeleteVirtualServer).toHaveBeenCalledWith("gateway/1?mode=delete");
+    await waitFor(() => expect(refetch).toHaveBeenCalledOnce());
+    expect(screen.getByRole("status")).toHaveTextContent("GH repo tasks deleted.");
+    await waitFor(() => expect(screen.queryByText("GH repo tasks")).not.toBeInTheDocument());
+  });
+
+  it("shows delete progress and blocks repeated delete requests while pending", async () => {
+    const user = userEvent.setup();
+    let resolveDelete!: () => void;
+    const deletePromise = new Promise<void>((resolve) => {
+      resolveDelete = resolve;
+    });
+    const refetch = vi.fn().mockResolvedValue({ servers: [] });
+    const mockServer: VirtualServer = {
+      id: "gateway-pending",
+      name: "Pending server",
+      description: "Test server",
+      icon: "",
+      createdAt: "2026-04-16T13:23:12Z",
+      updatedAt: "2026-04-16T13:23:12Z",
+      enabled: true,
+      associatedTools: [],
+      associatedToolIds: [],
+      associatedResources: [],
+      associatedPrompts: [],
+      associatedA2aAgents: [],
+      metrics: null,
+      tags: [],
+      createdBy: "admin@example.com",
+      createdFromIp: "127.0.0.1",
+      createdVia: "ui",
+      createdUserAgent: "Mozilla/5.0",
+      modifiedBy: null,
+      modifiedFromIp: null,
+      modifiedVia: null,
+      modifiedUserAgent: null,
+      importBatchId: null,
+      federationSource: null,
+      version: 1,
+      teamId: "team-1",
+      team: "Test Team",
+      ownerEmail: "admin@example.com",
+      visibility: "team",
+      oauthEnabled: false,
+      oauthConfig: null,
+    };
+
+    mockDeleteVirtualServer.mockReturnValue(deletePromise);
+    mockUseQuery.mockReturnValue({
+      data: { servers: [mockServer] },
+      error: null,
+      isLoading: false,
+      execute: vi.fn(),
+      refetch,
+    });
+
+    renderWithProviders(<Gateways />);
+
+    await user.click(screen.getByRole("button", { name: "Actions for Pending server" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    const deletingButton = screen.getByRole("button", { name: /Deleting/i });
+    expect(deletingButton).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    expect(mockDeleteVirtualServer).toHaveBeenCalledOnce();
+
+    await user.click(deletingButton);
+    expect(mockDeleteVirtualServer).toHaveBeenCalledOnce();
+
+    resolveDelete();
+    await waitFor(() => expect(refetch).toHaveBeenCalledOnce());
+  });
+
+  it("shows delete failures in a toast without rendering a page alert", async () => {
+    const user = userEvent.setup();
+    const refetch = vi.fn();
+    const mockServer: VirtualServer = {
+      id: "gateway-error",
+      name: "Error server",
+      description: "Test server",
+      icon: "",
+      createdAt: "2026-04-16T13:23:12Z",
+      updatedAt: "2026-04-16T13:23:12Z",
+      enabled: true,
+      associatedTools: [],
+      associatedToolIds: [],
+      associatedResources: [],
+      associatedPrompts: [],
+      associatedA2aAgents: [],
+      metrics: null,
+      tags: [],
+      createdBy: "admin@example.com",
+      createdFromIp: "127.0.0.1",
+      createdVia: "ui",
+      createdUserAgent: "Mozilla/5.0",
+      modifiedBy: null,
+      modifiedFromIp: null,
+      modifiedVia: null,
+      modifiedUserAgent: null,
+      importBatchId: null,
+      federationSource: null,
+      version: 1,
+      teamId: "team-1",
+      team: "Test Team",
+      ownerEmail: "admin@example.com",
+      visibility: "team",
+      oauthEnabled: false,
+      oauthConfig: null,
+    };
+
+    mockDeleteVirtualServer.mockRejectedValue(new Error("HTTP 403: Forbidden"));
+    mockUseQuery.mockReturnValue({
+      data: { servers: [mockServer] },
+      error: null,
+      isLoading: false,
+      execute: vi.fn(),
+      refetch,
+    });
+
+    renderWithProviders(<Gateways />);
+
+    await user.click(screen.getByRole("button", { name: "Actions for Error server" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() =>
+      expect(mockToastError).toHaveBeenCalledWith("Error deleting virtual server", {
+        description: "You don't have permission to perform this action.",
+      }),
+    );
+    expect(screen.getByText("Error server")).toBeInTheDocument();
+    expect(screen.queryByText("Error deleting virtual server")).not.toBeInTheDocument();
+    expect(refetch).not.toHaveBeenCalled();
   });
 
   it("renders virtual server card without crashing when array fields are missing", () => {
