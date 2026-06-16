@@ -1,9 +1,21 @@
-import { Plus, Globe, Lock, Shield, Activity, CircleDashed, MoreHorizontal } from "lucide-react";
+import { Plus, Globe, Lock, Shield, Activity, CircleDashed, MoreVertical } from "lucide-react";
 import { PromptIcon } from "@/components/icons/PromptIcon";
+import { MCPIcon } from "@/components/icons/MCPIcon";
 import { Button } from "@/components/ui/button";
 import { useRouter } from "@/router";
-import { useState, useEffect } from "react";
-import { promptsApi, type Prompt as ApiPrompt } from "@/api/prompts";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { useState, useEffect, useCallback } from "react";
+import {
+  promptsApi,
+  type PaginatedResponse,
+  type Prompt as ApiPrompt,
+  type PromptArgument,
+} from "@/api/prompts";
 import {
   Table,
   TableBody,
@@ -14,20 +26,34 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-type Visibility = "private" | "team" | "public";
+const DEFAULT_PAGE_SIZE = 10;
+const CREATE_PROMPT_PATH = "/app/prompts/create";
 
-interface Prompt {
+interface PromptListItem {
   id: string;
   name: string;
   displayName: string | null;
   description: string | null;
-  arguments: Array<{ name: string; required?: boolean }>;
+  arguments: PromptArgument[];
   gatewaySlug: string | null;
-  visibility: Visibility;
+  visibility: ApiPrompt["visibility"];
   enabled: boolean;
 }
 
-function getVisibilityConfig(visibility: Visibility) {
+function toPromptListItem(prompt: ApiPrompt): PromptListItem {
+  return {
+    id: prompt.id,
+    name: prompt.name,
+    displayName: prompt.displayName,
+    description: prompt.description,
+    arguments: prompt.arguments,
+    gatewaySlug: prompt.gatewaySlug,
+    visibility: prompt.visibility,
+    enabled: prompt.enabled,
+  };
+}
+
+function getVisibilityConfig(visibility: PromptListItem["visibility"]) {
   switch (visibility) {
     case "private":
       return { label: "Private", Icon: Lock };
@@ -38,7 +64,7 @@ function getVisibilityConfig(visibility: Visibility) {
   }
 }
 
-function PromptsTable({ prompts }: { prompts: Prompt[] }) {
+function PromptsTable({ prompts }: { prompts: PromptListItem[] }) {
   return (
     <div className="overflow-hidden bg-white dark:bg-neutral-950/60">
       <Table className="min-w-full border-separate border-spacing-y-1.5">
@@ -101,12 +127,7 @@ function PromptsTable({ prompts }: { prompts: Prompt[] }) {
                     {prompt.arguments.map((arg) => (
                       <span
                         key={arg.name}
-                        className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium leading-none ${
-                          arg.required
-                            ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300"
-                            : "bg-neutral-100 text-neutral-600 dark:bg-neutral-700 dark:text-neutral-400"
-                        }`}
-                        title={arg.required ? "required" : "optional"}
+                        className="inline-flex items-center rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-medium leading-none text-neutral-600 dark:bg-neutral-700 dark:text-neutral-400"
                       >
                         {arg.name}
                       </span>
@@ -129,14 +150,29 @@ function PromptsTable({ prompts }: { prompts: Prompt[] }) {
                   </div>
                 </TableCell>
                 <TableCell className="px-4 py-2.5 text-right">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 w-7 p-0"
-                    aria-label={`Actions for ${prompt.displayName ?? prompt.name}`}
-                  >
-                    <MoreHorizontal className="h-4 w-4" />
-                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0"
+                        aria-label={`Actions for ${prompt.displayName ?? prompt.name}`}
+                        aria-haspopup="menu"
+                      >
+                        <MoreVertical className="h-4 w-4" aria-hidden="true" />
+                        <span className="sr-only">
+                          Open menu for {prompt.displayName ?? prompt.name}
+                        </span>
+                      </Button>
+                    </DropdownMenuTrigger>
+                    {/* TODO: add all actions to action menu */}
+                    <DropdownMenuContent align="end" role="menu">
+                      <DropdownMenuItem role="menuitem">Edit</DropdownMenuItem>
+                      <DropdownMenuItem className="text-destructive" role="menuitem">
+                        Delete
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </TableCell>
               </TableRow>
             );
@@ -148,30 +184,27 @@ function PromptsTable({ prompts }: { prompts: Prompt[] }) {
 }
 
 export function Prompts() {
-  const [prompts, setPrompts] = useState<Prompt[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const { navigate } = useRouter();
+  const [prompts, setPrompts] = useState<PromptListItem[]>([]);
+  const [limit, setLimit] = useState(DEFAULT_PAGE_SIZE);
+  const [pagination, setPagination] = useState<PaginatedResponse<ApiPrompt>["pagination"] | null>(
+    null,
+  );
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchPrompts = async () => {
       try {
         setLoading(true);
-        const data = await promptsApi.list();
-        
-        // Transform API response to match component interface
-        const transformedPrompts: Prompt[] = data.map((prompt: ApiPrompt) => ({
-          id: prompt.id,
-          name: prompt.name,
-          displayName: prompt.display_name,
-          description: prompt.description,
-          arguments: prompt.arguments,
-          gatewaySlug: prompt.gateway_slug,
-          visibility: prompt.visibility,
-          enabled: prompt.enabled,
-        }));
-        
-        setPrompts(transformedPrompts);
+        const response = await promptsApi.list({
+          page: 1,
+          perPage: limit,
+          includeInactive: true,
+        });
+        setPrompts(response.data.map(toPromptListItem));
+        setPagination(response.pagination);
         setError(null);
       } catch (err) {
         console.error("Failed to fetch prompts:", err);
@@ -182,11 +215,33 @@ export function Prompts() {
     };
 
     fetchPrompts();
-  }, []);
+  }, [limit]);
 
-  const handleAddPrompt = () => {
-    navigate("/app/prompts/create");
-  };
+  const handleLoadMore = useCallback(async () => {
+    if (!pagination?.has_next || loadingMore) return;
+
+    setLoadingMore(true);
+    try {
+      const response = await promptsApi.list({
+        page: pagination.page + 1,
+        perPage: limit,
+        includeInactive: true,
+      });
+      setPrompts((currentPrompts) => [
+        ...currentPrompts,
+        ...response.data.map(toPromptListItem),
+      ]);
+      setPagination(response.pagination);
+    } catch (err) {
+      console.error("Failed to load more prompts:", err);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [pagination, limit, loadingMore]);
+
+  const handleLimitChange = useCallback((newLimit: number) => {
+    setLimit(newLimit);
+  }, []);
 
   if (loading) {
     return (
@@ -214,7 +269,11 @@ export function Prompts() {
         <>
           <div className="flex justify-between items-center mb-6">
             <h1 className="text-base font-semibold text-foreground">Prompts</h1>
-            <Button variant="default" className="h-7 rounded-sm px-4" onClick={handleAddPrompt}>
+            <Button
+              variant="default"
+              className="h-7 rounded-sm px-4"
+              onClick={() => navigate(CREATE_PROMPT_PATH)}
+            >
               <Plus className="h-4 w-4" />
               Add Prompt
             </Button>
@@ -222,33 +281,79 @@ export function Prompts() {
 
           <PromptsTable prompts={prompts} />
 
-          <div className="mt-6 text-sm text-gray-600 dark:text-gray-400">
-            Showing {prompts.length} prompt{prompts.length !== 1 ? "s" : ""}
+          <div className="flex items-center justify-between mt-6">
+            <div className="flex items-center gap-4">
+              <div className="text-sm text-gray-600 dark:text-gray-400">
+                Showing {prompts.length} prompt{prompts.length !== 1 ? "s" : ""}
+              </div>
+              <div className="flex items-center gap-2">
+                <label htmlFor="limit-select" className="text-sm text-gray-600 dark:text-gray-400">
+                  Per page:
+                </label>
+                <select
+                  id="limit-select"
+                  value={limit}
+                  onChange={(event) => handleLimitChange(Number(event.target.value))}
+                  className="rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-1 text-sm"
+                >
+                  <option value={10}>10</option>
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+              </div>
+            </div>
+            {pagination?.has_next && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleLoadMore}
+                disabled={loadingMore}
+                aria-label="Load more prompts"
+              >
+                {loadingMore ? "Loading..." : "Load More"}
+              </Button>
+            )}
           </div>
         </>
       ) : (
-        <div className="border border-border rounded-lg p-6 flex flex-col gap-2">
-          <div className="flex items-center gap-2">
-            <div className="flex size-6 shrink-0 items-center justify-center rounded-sm bg-indigo-500">
-              <PromptIcon className="size-4 text-white" />
+        <div className="flex items-center justify-center min-h-[600px]">
+          <div className="flex flex-col items-center gap-6 w-full max-w-[324px]">
+            <div className="flex flex-col gap-3 items-center justify-center relative">
+              <div className="flex gap-3 items-center justify-center">
+                <div className="size-[54.4px] rounded-[10.2px] border border-border bg-background flex items-center justify-center" />
+                <div className="size-[54.4px] rounded-[10.2px] border border-border" />
+                <div className="size-[54.4px] rounded-[10.2px] border border-border bg-background flex items-center justify-center">
+                  <div className="grid grid-cols-3 gap-[4px]" />
+                </div>
+
+                <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 size-[54.4px] rounded-[10.2px] bg-background border border-white/25 shadow-[0px_4px_10px_rgba(255,255,255,0.05)] flex items-center justify-center">
+                  <MCPIcon className="size-6 text-foreground" />
+                </div>
+              </div>
             </div>
-            <h2 className="text-base font-medium">Add a prompt</h2>
-          </div>
 
-          <div className="py-5">
-            <p className="text-sm text-foreground">
-              Register a prompt template to make it available across virtual servers. Prompts are
-              sourced from connected MCP servers or defined locally.
-            </p>
-          </div>
+            <div className="flex flex-col items-center gap-3 w-full">
+              <h2 className="text-base font-medium text-foreground">Add Prompts</h2>
+              <p className="text-sm text-muted-foreground text-center">
+                Connect custom servers or Browse the MCP registry.
+              </p>
+            </div>
 
-          <Button
-            className="bg-foreground text-background hover:bg-foreground/90 h-8 w-38 rounded-sm px-2 gap-1.5 text-sm font-medium"
-            onClick={handleAddPrompt}
-          >
-            <Plus className="size-3" />
-            Add Prompt
-          </Button>
+            <div className="flex flex-col gap-2 w-full">
+              <Button
+                variant="default"
+                className="w-full h-10 rounded-lg"
+                onClick={() => navigate(CREATE_PROMPT_PATH)}
+              >
+                <Plus className="size-4" />
+                Add Prompt
+              </Button>
+              <Button variant="secondary" className="w-full h-10 rounded-lg" disabled>
+                Browse Servers
+              </Button>
+            </div>
+          </div>
         </div>
       )}
     </div>

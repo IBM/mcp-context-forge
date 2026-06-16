@@ -10,7 +10,6 @@ export interface PromptArgument {
 }
 
 export interface PromptCreate {
-  // Required fields
   name: string;
   template: string;
   arguments: PromptArgument[];
@@ -19,18 +18,18 @@ export interface PromptCreate {
 export interface Prompt {
   id: string;
   name: string;
-  display_name: string | null;
+  displayName: string | null;
   description: string | null;
   template: string;
   arguments: PromptArgument[];
-  gateway_slug: string | null;
+  gatewaySlug: string | null;
   visibility: "private" | "team" | "public";
   enabled: boolean;
-  created_at: string;
-  updated_at: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
-interface PaginatedResponse<T> {
+export interface PaginatedResponse<T> {
   data: T[];
   links: {
     first: string;
@@ -55,19 +54,37 @@ export const promptsApi = {
    */
   create: (data: PromptCreate): Promise<Prompt> => {
     const formData = new FormData();
-    
+
     formData.append("name", data.name);
     formData.append("template", data.template);
     formData.append("arguments", JSON.stringify(data.arguments));
-    
+
     return api.post("/admin/prompts", formData);
   },
 
   /**
    * List all prompts
    */
-  list: async (): Promise<Prompt[]> => {
-    const response = await api.get<PaginatedResponse<Prompt>>("/admin/prompts");
-    return response.data;
+  list: (params?: {
+    page?: number;
+    perPage?: number;
+    includeInactive?: boolean;
+  }): Promise<PaginatedResponse<Prompt>> => {
+    const searchParams = new URLSearchParams();
+
+    if (params?.page !== undefined) {
+      searchParams.set("page", params.page.toString());
+    }
+
+    if (params?.perPage !== undefined) {
+      searchParams.set("per_page", params.perPage.toString());
+    }
+
+    if (params?.includeInactive) {
+      searchParams.set("include_inactive", "true");
+    }
+
+    const query = searchParams.toString();
+    return api.get(`/admin/prompts${query ? `?${query}` : ""}`);
   },
 };
