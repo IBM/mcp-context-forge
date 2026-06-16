@@ -1009,11 +1009,13 @@ curl -sS -X POST "$BASE_URL/servers/$SERVER_ID/mcp/" \
 Check the plugin framework is healthy via the Admin UI or API. The bearer token must have the `admin.plugins` permission, so generate a platform admin token before calling the endpoint:
 
 ```bash
+export JWT_SECRET_KEY=$(grep '^JWT_SECRET_KEY=' .env | cut -d= -f2-)
+
 export MCPGATEWAY_ADMIN_TOKEN=$(./.venv/bin/python -m mcpgateway.utils.create_jwt_token \
   --username admin@example.com \
   --admin \
   --exp 10080 \
-  --secret "${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}" \
+  --secret "$JWT_SECRET_KEY" \
   --algo HS256 \
   2>/dev/null | tail -n 1)
 
@@ -1206,7 +1208,18 @@ The migration test suite follows an **n-2 support policy** and tests sequential 
 
 ## 14. Manual Testing
 
-These tests verify core user-facing workflows that automated tests do not fully cover. Build and start the compose stack first:
+These tests verify core user-facing workflows that automated tests do not fully cover.
+
+Before starting, ensure `.env` has a real JWT secret (the default `.env` ships with a placeholder that breaks token authentication):
+
+```bash
+# Generate secrets and merge into .env (skip if already done)
+make init-secrets
+# Confirm JWT_SECRET_KEY is no longer the placeholder
+grep JWT_SECRET_KEY .env   # must not contain __REPLACE_ME__
+```
+
+Build and start the compose stack:
 
 ```bash
 make docker-prod && make testing-up
@@ -1217,10 +1230,13 @@ make docker-prod && make testing-up
 Create a token for API and client access:
 
 ```bash
+# JWT_SECRET_KEY must match the value in .env (run make init-secrets if not set)
+export JWT_SECRET_KEY=$(grep '^JWT_SECRET_KEY=' .env | cut -d= -f2-)
+
 export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
   --username admin@example.com \
   --exp 10080 \
-  --secret my-test-key-but-now-longer-than-32-bytes)
+  --secret "$JWT_SECRET_KEY")
 
 export BASE_URL="http://localhost:8080"
 ```
@@ -1247,6 +1263,8 @@ curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $BASE_URL/tools | jq
 ```
 
+**Expected:** Each tool object contains `gateway_id` (UUID of the registering gateway) but no `gateway_name` field — the `/tools` API does not denormalize the gateway name. To resolve a human-readable name, call `GET /gateways/<gateway_id>`. This is by design.
+
 ### 14.3 Register an MCP server via Streamable HTTP
 
 Streamable HTTP transport requires the `--expose-streamable-http` flag and an explicit `"transport":"STREAMABLEHTTP"` field in the registration payload — the gateway does not auto-detect transport from the URL:
@@ -1269,6 +1287,8 @@ curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $BASE_URL/tools | jq
 ```
 
+**Expected:** Tools from both gateways appear in the catalog, each with `gateway_id` populated. As with SSE, `gateway_name` is not included in the response; use `GET /gateways/<gateway_id>` to resolve the name.
+
 ### 14.4 Create a virtual server and export it
 
 The request body must wrap the server fields under a `"server"` key:
@@ -1287,8 +1307,11 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $BASE_URL/servers | 
 Export the configuration for backup verification. Override `HOST`/`PORT` via env — do not use a `--url` flag:
 
 ```bash
-HOST=localhost PORT=8080 python -m mcpgateway.cli export --out release-test-export.json
+MCPGATEWAY_BEARER_TOKEN=$MCPGATEWAY_BEARER_TOKEN HOST=localhost PORT=8080 \
+  python -m mcpgateway.cli export --out release-test-export.json
 ```
+
+**Expected:** The export file contains the virtual server, both registered gateways, and any standalone (local REST) tools. MCP gateway-discovered tools — those imported from an upstream MCP server — are intentionally excluded from the `tools` list in the export. They are considered ephemeral: when the gateway is re-imported, the tools are re-discovered automatically. Only standalone tools created directly via `POST /tools` appear as independent exported entities. Verify that `entities.gateways` contains both `release_test_sse` and `release_test_streamable`, and `entities.servers` contains `release_test_server`.
 
 ### 14.5 Test with MCP Inspector
 
@@ -1312,6 +1335,8 @@ Repeat with **Streamable HTTP**:
 2. Set **URL** to `$BASE_URL/servers/<VIRTUAL_SERVER_UUID>/mcp`
 3. Set the same Authorization header
 4. Verify: tools list loads and tool calls execute correctly
+
+> **Note:** Streamable HTTP is a stateful protocol. Before `tools/list` can be called, the client must complete an `initialize` handshake, which the server responds to with a `Mcp-Session-Id` header. All subsequent requests must include that header. MCP Inspector handles this automatically. Raw `curl` calls that skip `initialize` will receive a `-32600 Missing session ID` error — this is expected protocol behaviour, not a gateway bug.
 
 ### 14.6 Test with VS Code (GitHub Copilot)
 
