@@ -417,6 +417,12 @@ def get_rpc_filter_context(request: Request, user) -> tuple[Optional[str], Optio
     if token_teams is not None and len(token_teams) == 0:
         is_admin = False
 
+    # Session token admin bypass: resolve_session_teams() confirmed admin from DB,
+    # but JWT payload lacks is_admin claim (by design — DB is the authority for
+    # session tokens so revocations take effect immediately).
+    if not is_admin and token_teams is None and getattr(request.state, "token_use", None) == "session":
+        is_admin = True
+
     return user_email, token_teams, is_admin
 
 
