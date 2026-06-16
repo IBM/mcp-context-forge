@@ -817,4 +817,5 @@ class TestStreamingUserIdExtraction:
                 )
 
                 # Will fail auth but that's OK - we're testing the user_id extraction path
-                assert response.status_code in [200, 401, 404]
+                # CI/CD may return 403 (RBAC denial) instead of 401/404 depending on environment
+                assert response.status_code in [200, 401, 403, 404]
