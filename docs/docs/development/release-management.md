@@ -1008,6 +1008,8 @@ curl -sS -X POST "$BASE_URL/servers/$SERVER_ID/mcp/" \
 Check the plugin framework is healthy via the Admin UI or API. The bearer token must have the `admin.plugins` permission, so generate a platform admin token before calling the endpoint:
 
 ```bash
+export JWT_SECRET_KEY=$(grep '^JWT_SECRET_KEY=' .env | cut -d= -f2-)
+
 export MCPGATEWAY_ADMIN_TOKEN=$(./.venv/bin/python -m mcpgateway.utils.create_jwt_token \
   --username admin@example.com \
   --admin \
