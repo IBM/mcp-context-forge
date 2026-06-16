@@ -458,6 +458,12 @@ class Settings(BaseSettings):
             "/sse",  # Exempt: SSE is a server-sent event stream, not vulnerable to CSRF
             "/message",  # Exempt: MCP SSE message endpoint
             "/rpc",  # Exempt: JSON-RPC is a programmatic protocol, not browser-based
+            "/api/metrics/",
+            "/toolops/",
+            "/tokens",
+            "/teams/",
+            "/llmchat/",
+            "/api/logs/",
         ],
         description="Paths exempt from CSRF protection",
     )
