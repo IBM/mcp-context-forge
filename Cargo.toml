@@ -6,10 +6,12 @@ members = [
     "crates/*",
     "mcp-servers/rust/benchmark-server",
     "mcp-servers/rust/slow-time-server",
+    "a2a-agents/rust/a2a-echo-agent",
 ]
 default-members = [
     "crates/*",
     "mcp-servers/rust/slow-time-server",
+    "a2a-agents/rust/a2a-echo-agent",
 ]
 
 [workspace.package]

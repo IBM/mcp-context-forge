@@ -1531,7 +1531,7 @@ mcpFastTimeServer:
       successThreshold: 1
       failureThreshold: 8
 
-  # Tiny Go process: ~10 MB runtime footprint
+  # Tiny Go process with a small runtime footprint
   resources:
     limits:
       cpu: 50m           # ~5 % of a core
