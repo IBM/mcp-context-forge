@@ -48,7 +48,7 @@ class TestAdminDcrPreflightValidation:
         )
         mock_request.client = Mock()
         mock_request.client.host = "127.0.0.1"
-        mock_request.headers = {}
+        mock_request.headers = {"content-type": "multipart/form-data"}
 
         mock_db = Mock(spec=Session)
         mock_user = {"email": "test@example.com", "is_admin": False}
@@ -111,7 +111,7 @@ class TestAdminDcrPreflightValidation:
         )
         mock_request.client = Mock()
         mock_request.client.host = "127.0.0.1"
-        mock_request.headers = {}
+        mock_request.headers = {"content-type": "multipart/form-data"}
 
         mock_db = Mock(spec=Session)
         mock_user = {"email": "test@example.com", "is_admin": False}
@@ -166,7 +166,7 @@ class TestAdminDcrPreflightValidation:
         )
         mock_request.client = Mock()
         mock_request.client.host = "127.0.0.1"
-        mock_request.headers = {}
+        mock_request.headers = {"content-type": "multipart/form-data"}
 
         mock_db = Mock(spec=Session)
         mock_db.get = Mock(return_value=None)  # No existing gateway team_id
@@ -225,7 +225,7 @@ class TestAdminDcrPreflightValidation:
         )
         mock_request.client = Mock()
         mock_request.client.host = "127.0.0.1"
-        mock_request.headers = {}
+        mock_request.headers = {"content-type": "multipart/form-data"}
 
         mock_db = Mock(spec=Session)
         mock_db.get = Mock(return_value=None)  # No existing gateway team_id
@@ -283,7 +283,7 @@ class TestAdminDcrPreflightValidation:
         )
         mock_request.client = Mock()
         mock_request.client.host = "127.0.0.1"
-        mock_request.headers = {}
+        mock_request.headers = {"content-type": "multipart/form-data"}
 
         mock_db = Mock(spec=Session)
         mock_user = {"email": "test@example.com", "is_admin": False}
