@@ -1,0 +1,6 @@
+{"id":"00f660ae-5c3c-4e2b-9395-d24ca735673b","ts":"2026-05-03T07:39:10.179Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/routers/app.py","version":"1.0.0","taskID":"4eb9e928-4d7c-4018-abea-a3c082b8fff0"}
+{"id":"5233f82f-eabd-42c8-a1c5-7f940d3116da","ts":"2026-05-03T07:39:15.847Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/routers/app.py","version":"1.0.0","taskID":"4eb9e928-4d7c-4018-abea-a3c082b8fff0"}
+{"id":"531b17f3-5f63-4be2-9020-87185a4413f3","ts":"2026-05-03T07:40:22.614Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/routers/app.py","version":"1.0.0","taskID":"4eb9e928-4d7c-4018-abea-a3c082b8fff0"}
+{"id":"6085c3e2-7cd2-499a-b1bf-c1da0610148a","ts":"2026-05-03T07:41:07.697Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/docs/docs/manage/securing.md","version":"1.0.0","taskID":"4eb9e928-4d7c-4018-abea-a3c082b8fff0"}
+{"id":"778e0ee2-dd83-4844-9269-3865e6ff31ff","ts":"2026-05-03T07:43:47.996Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/tests/e2e/test_app_auth.py","version":"1.0.0","taskID":"4eb9e928-4d7c-4018-abea-a3c082b8fff0"}
+{"id":"47a1a3d9-6582-4038-942d-1f30ed9b6da9","ts":"2026-05-03T07:43:56.438Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/tests/unit/mcpgateway/routers/test_app.py","version":"1.0.0","taskID":"4eb9e928-4d7c-4018-abea-a3c082b8fff0"}
