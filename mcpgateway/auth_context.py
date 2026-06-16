@@ -342,13 +342,11 @@ def is_trusted_internal_runtime_request(
 ) -> bool:
     """Return whether a request is a trusted in-process internal-runtime hop.
 
-    The trust boundary is the shared-secret HMAC header AND (when required) the
-    encoded ``x-contextforge-auth-context``. The loopback client check is
-    defense-in-depth only: under ``ProxyHeadersMiddleware(trusted_hosts="*")``,
-    ``request.client.host`` is influenceable by forwarded headers on *direct*
-    external requests, so loopback is NOT an independent gate. The internal
-    ASGITransport replay is hardened separately by stripping forwarded /
-    client-IP headers from loopback passthrough.
+    The trust boundary is the HMAC header and, when required, the encoded
+    ``x-contextforge-auth-context``. The loopback check is defense in depth,
+    not an independent gate: ProxyHeaders(trusted_hosts="*") lets a direct
+    external caller influence ``request.client.host`` (the replay is hardened
+    separately by stripping forwarded / client-IP headers).
 
     Args:
         request: Incoming request to inspect.
@@ -377,10 +375,9 @@ def is_trusted_internal_runtime_request(
 def is_trusted_internal_mcp_request(request: Request, *, path: Optional[str] = None) -> bool:
     """MCP + A2A internal trust gate with a path-aware auth-context requirement.
 
-    ``*/authenticate`` routes do not require an auth context (they create it);
-    every other internal route does. ``/_internal/a2a/*`` additionally requires
-    the A2A feature to be enabled (defense-in-depth: a legitimate sidecar should
-    not be live when the feature is off).
+    ``*/authenticate`` routes are exempt from the auth-context requirement;
+    every other internal route requires it. ``/_internal/a2a/*`` is trusted
+    only when the A2A feature is enabled.
 
     Args:
         request: Incoming request to inspect.
