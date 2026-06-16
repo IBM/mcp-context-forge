@@ -313,6 +313,4 @@ class TestDenyListPlugin:
     async def test_shutdown(self, plugin):
         """Test plugin shutdown."""
         await plugin.shutdown()
-        # Should complete without error
 
-# Made with Bob

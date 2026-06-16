@@ -405,5 +405,3 @@ class TestSearchReplacePlugin:
         plugin = SearchReplacePlugin(config)
         # Should only have one valid pattern
         assert len(plugin._SearchReplacePlugin__patterns) == 1
-
-# Made with Bob
