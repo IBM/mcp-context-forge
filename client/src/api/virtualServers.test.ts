@@ -1,7 +1,18 @@
-import { describe, expect, it } from "vitest";
-import { buildCreateVirtualServerPayload } from "./virtualServers";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { api } from "./client";
+import { buildCreateVirtualServerPayload, deleteVirtualServer } from "./virtualServers";
+
+vi.mock("./client", () => ({
+  api: {
+    delete: vi.fn(),
+  },
+}));
 
 describe("virtualServers API", () => {
+  beforeEach(() => {
+    vi.mocked(api.delete).mockReset();
+  });
+
   it("builds the create payload expected by POST /servers", () => {
     expect(
       buildCreateVirtualServerPayload({
@@ -212,5 +223,13 @@ describe("virtualServers API", () => {
 
     expect(payload.server.team_id).toBeNull();
     expect(payload.team_id).toBeNull();
+  });
+
+  it("deletes a virtual server by encoded id", async () => {
+    vi.mocked(api.delete).mockResolvedValue(undefined);
+
+    await deleteVirtualServer("gateway/1?mode=delete");
+
+    expect(api.delete).toHaveBeenCalledWith("/servers/gateway%2F1%3Fmode%3Ddelete");
   });
 });
