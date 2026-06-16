@@ -1,6 +1,14 @@
-import { Plus, Globe, Lock, Shield, Activity, CircleDashed, MoreHorizontal } from "lucide-react";
+import { Plus, Globe, Lock, Shield, Activity, CircleDashed, MoreVertical } from "lucide-react";
 import { PromptIcon } from "@/components/icons/PromptIcon";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { useState, useEffect } from "react";
+import { promptsApi, type Prompt as ApiPrompt, type PromptArgument } from "@/api/prompts";
 import {
   Table,
   TableBody,
@@ -11,82 +19,31 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-type Visibility = "private" | "team" | "public";
-
-interface PromptArgument {
-  name: string;
-  required: boolean;
-}
-
-interface Prompt {
+interface PromptListItem {
   id: string;
   name: string;
   displayName: string | null;
   description: string | null;
   arguments: PromptArgument[];
   gatewaySlug: string | null;
-  visibility: Visibility;
+  visibility: ApiPrompt["visibility"];
   enabled: boolean;
 }
 
-const MOCK_PROMPTS: Prompt[] = [
-  {
-    id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    name: "code_review",
-    displayName: "Code Review",
-    description: "Review code for bugs, security issues, and style violations.",
-    arguments: [
-      { name: "language", required: true },
-      { name: "code", required: true },
-      { name: "focus", required: false },
-    ],
-    gatewaySlug: "github-mcp",
-    visibility: "public",
-    enabled: true,
-  },
-  {
-    id: "b2c3d4e5-f6a7-8901-bcde-f12345678901",
-    name: "summarise_document",
-    displayName: "Summarise Document",
-    description: "Produce a concise summary of the provided document text.",
-    arguments: [
-      { name: "text", required: true },
-      { name: "max_words", required: false },
-    ],
-    gatewaySlug: "docs-mcp",
-    visibility: "team",
-    enabled: true,
-  },
-  {
-    id: "c3d4e5f6-a7b8-9012-cdef-123456789012",
-    name: "sql_query_builder",
-    displayName: "SQL Query Builder",
-    description: "Generate a SQL query from a plain-language description.",
-    arguments: [
-      { name: "description", required: true },
-      { name: "dialect", required: false },
-      { name: "schema", required: false },
-    ],
-    gatewaySlug: null,
-    visibility: "private",
-    enabled: false,
-  },
-  {
-    id: "d4e5f6a7-b8c9-0123-defa-234567890123",
-    name: "test_case_generator",
-    displayName: "Test Case Generator",
-    description: "Generate unit test cases for a given function signature.",
-    arguments: [
-      { name: "function_signature", required: true },
-      { name: "framework", required: false },
-    ],
-    gatewaySlug: "dev-tools-mcp",
-    visibility: "public",
-    enabled: true,
-  },
-];
+function toPromptListItem(prompt: ApiPrompt): PromptListItem {
+  return {
+    id: prompt.id,
+    name: prompt.name,
+    displayName: prompt.display_name,
+    description: prompt.description,
+    arguments: prompt.arguments,
+    gatewaySlug: prompt.gateway_slug,
+    visibility: prompt.visibility,
+    enabled: prompt.enabled,
+  };
+}
 
-function getVisibilityConfig(visibility: Visibility) {
+function getVisibilityConfig(visibility: PromptListItem["visibility"]) {
   switch (visibility) {
     case "private":
       return { label: "Private", Icon: Lock };
@@ -97,7 +54,7 @@ function getVisibilityConfig(visibility: Visibility) {
   }
 }
 
-function PromptsTable({ prompts }: { prompts: Prompt[] }) {
+function PromptsTable({ prompts }: { prompts: PromptListItem[] }) {
   return (
     <div className="overflow-hidden bg-white dark:bg-neutral-950/60">
       <Table className="min-w-full border-separate border-spacing-y-1.5">
@@ -160,12 +117,7 @@ function PromptsTable({ prompts }: { prompts: Prompt[] }) {
                     {prompt.arguments.map((arg) => (
                       <span
                         key={arg.name}
-                        className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium leading-none ${
-                          arg.required
-                            ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300"
-                            : "bg-neutral-100 text-neutral-600 dark:bg-neutral-700 dark:text-neutral-400"
-                        }`}
-                        title={arg.required ? "required" : "optional"}
+                        className="inline-flex items-center rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-medium leading-none text-neutral-600 dark:bg-neutral-700 dark:text-neutral-400"
                       >
                         {arg.name}
                       </span>
@@ -188,14 +140,29 @@ function PromptsTable({ prompts }: { prompts: Prompt[] }) {
                   </div>
                 </TableCell>
                 <TableCell className="px-4 py-2.5 text-right">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 w-7 p-0"
-                    aria-label={`Actions for ${prompt.displayName ?? prompt.name}`}
-                  >
-                    <MoreHorizontal className="h-4 w-4" />
-                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0"
+                        aria-label={`Actions for ${prompt.displayName ?? prompt.name}`}
+                        aria-haspopup="menu"
+                      >
+                        <MoreVertical className="h-4 w-4" aria-hidden="true" />
+                        <span className="sr-only">
+                          Open menu for {prompt.displayName ?? prompt.name}
+                        </span>
+                      </Button>
+                    </DropdownMenuTrigger>
+                    {/* TODO: add all actions to action menu */}
+                    <DropdownMenuContent align="end" role="menu">
+                      <DropdownMenuItem role="menuitem">Edit</DropdownMenuItem>
+                      <DropdownMenuItem className="text-destructive" role="menuitem">
+                        Delete
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </TableCell>
               </TableRow>
             );
@@ -207,7 +174,47 @@ function PromptsTable({ prompts }: { prompts: Prompt[] }) {
 }
 
 export function Prompts() {
-  const prompts = MOCK_PROMPTS;
+  const [prompts, setPrompts] = useState<PromptListItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchPrompts = async () => {
+      try {
+        setLoading(true);
+        const data = await promptsApi.list();
+        setPrompts(data.map(toPromptListItem));
+        setError(null);
+      } catch (err) {
+        console.error("Failed to fetch prompts:", err);
+        setError("Failed to load prompts. Please try again.");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchPrompts();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="p-6">
+        <div className="flex justify-center items-center h-64">
+          <p className="text-sm text-gray-600 dark:text-gray-400">Loading prompts...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-6">
+        <div className="flex justify-center items-center h-64">
+          <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6">
@@ -215,7 +222,7 @@ export function Prompts() {
         <>
           <div className="flex justify-between items-center mb-6">
             <h1 className="text-base font-semibold text-foreground">Prompts</h1>
-            <Button variant="default" className="h-7 rounded-sm px-4">
+            <Button variant="default" className="h-7 rounded-sm px-4" disabled>
               <Plus className="h-4 w-4" />
               Add Prompt
             </Button>
@@ -237,13 +244,13 @@ export function Prompts() {
           </div>
 
           <div className="py-5">
-            <p className="text-sm text-foreground">
-              Register a prompt template to make it available across virtual servers. Prompts are
-              sourced from connected MCP servers or defined locally.
-            </p>
+            <p className="text-sm text-foreground">Add a prompt template.</p>
           </div>
 
-          <Button className="bg-foreground text-background hover:bg-foreground/90 h-8 w-38 rounded-sm px-2 gap-1.5 text-sm font-medium">
+          <Button
+            className="bg-foreground text-background hover:bg-foreground/90 h-8 w-38 rounded-sm px-2 gap-1.5 text-sm font-medium"
+            disabled
+          >
             <Plus className="size-3" />
             Add Prompt
           </Button>
