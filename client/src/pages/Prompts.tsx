@@ -1,5 +1,6 @@
 import { Plus, Globe, Lock, Shield, Activity, CircleDashed, MoreVertical } from "lucide-react";
 import { PromptIcon } from "@/components/icons/PromptIcon";
+import { MCPIcon } from "@/components/icons/MCPIcon";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -235,25 +236,39 @@ export function Prompts() {
           </div>
         </>
       ) : (
-        <div className="border border-border rounded-lg p-6 flex flex-col gap-2">
-          <div className="flex items-center gap-2">
-            <div className="flex size-6 shrink-0 items-center justify-center rounded-sm bg-indigo-500">
-              <PromptIcon className="size-4 text-white" />
+        <div className="flex items-center justify-center min-h-[600px]">
+          <div className="flex flex-col items-center gap-6 w-full max-w-[324px]">
+            <div className="flex flex-col gap-3 items-center justify-center relative">
+              <div className="flex gap-3 items-center justify-center">
+                <div className="size-[54.4px] rounded-[10.2px] border border-border bg-background flex items-center justify-center" />
+                <div className="size-[54.4px] rounded-[10.2px] border border-border" />
+                <div className="size-[54.4px] rounded-[10.2px] border border-border bg-background flex items-center justify-center">
+                  <div className="grid grid-cols-3 gap-[4px]" />
+                </div>
+
+                <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 size-[54.4px] rounded-[10.2px] bg-background border border-white/25 shadow-[0px_4px_10px_rgba(255,255,255,0.05)] flex items-center justify-center">
+                  <MCPIcon className="size-6 text-foreground" />
+                </div>
+              </div>
             </div>
-            <h2 className="text-base font-medium">Add a prompt</h2>
-          </div>
 
-          <div className="py-5">
-            <p className="text-sm text-foreground">Add a prompt template.</p>
-          </div>
+            <div className="flex flex-col items-center gap-3 w-full">
+              <h2 className="text-base font-medium text-foreground">Add Prompts</h2>
+              <p className="text-sm text-muted-foreground text-center">
+                Connect custom servers or Browse the MCP registry.
+              </p>
+            </div>
 
-          <Button
-            className="bg-foreground text-background hover:bg-foreground/90 h-8 w-38 rounded-sm px-2 gap-1.5 text-sm font-medium"
-            disabled
-          >
-            <Plus className="size-3" />
-            Add Prompt
-          </Button>
+            <div className="flex flex-col gap-2 w-full">
+              <Button variant="default" className="w-full h-10 rounded-lg" disabled>
+                <Plus className="size-4" />
+                Add MCP Server
+              </Button>
+              <Button variant="secondary" className="w-full h-10 rounded-lg" disabled>
+                Browse Servers
+              </Button>
+            </div>
+          </div>
         </div>
       )}
     </div>
