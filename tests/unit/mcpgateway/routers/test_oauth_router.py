@@ -260,7 +260,7 @@ class TestPersistLearnedAudience:
 
     @pytest.mark.asyncio
     async def test_persists_list_aud_from_jwt(self):
-        """Persists the full aud list when token_aud is an array."""
+        """Persists only the first value when token_aud is an array (Keycloak fix)."""
         aud_list = ["https://api.example.com", "my-client-id"]
         oauth_result = {"token_aud": aud_list, "user_id": "u1"}
 
@@ -274,7 +274,8 @@ class TestPersistLearnedAudience:
 
         await _persist_learned_audience(gateway, oauth_result, db)
 
-        assert gateway.oauth_config["resource"] == aud_list
+        # Should persist only the first audience value to avoid "duplicated parameter" errors
+        assert gateway.oauth_config["resource"] == "https://api.example.com"
         db.flush.assert_called_once()
 
     @pytest.mark.asyncio
@@ -1844,6 +1845,144 @@ class TestOAuthRouterAdditionalCoverage:
         assert response.status_code == 200
         oauth_config_passed = mock_mgr.complete_authorization_code_flow.call_args[0][3]
         assert oauth_config_passed["resource"] == ["not-a-url"]
+    @pytest.mark.asyncio
+    async def test_persist_learned_audience_multi_audience_uses_first_value(self, mock_db):
+        """Test that multi-audience tokens are normalized to first value only (Keycloak fix)."""
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.name = "Test Gateway"
+        mock_gateway.oauth_config = {"grant_type": "authorization_code", "client_id": "test"}
+
+        # Simulate Keycloak multi-audience token
+        oauth_result = {"token_aud": ["https://resource-1.example.com", "https://resource-2.example.com", "account"]}
+
+        await _persist_learned_audience(mock_gateway, oauth_result, mock_db)
+
+        # Should persist only the first audience value
+        assert mock_gateway.oauth_config["resource"] == "https://resource-1.example.com"
+        mock_db.flush.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_persist_learned_audience_single_audience_unchanged(self, mock_db):
+        """Test that single-audience tokens are persisted as-is (backward compatibility)."""
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.name = "Test Gateway"
+        mock_gateway.oauth_config = {"grant_type": "authorization_code", "client_id": "test"}
+
+        # Single audience (string)
+        oauth_result = {"token_aud": "https://resource.example.com"}
+
+        await _persist_learned_audience(mock_gateway, oauth_result, mock_db)
+
+        # Should persist as-is
+        assert mock_gateway.oauth_config["resource"] == "https://resource.example.com"
+        mock_db.flush.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_persist_learned_audience_empty_list_skipped(self, mock_db):
+        """Test that empty audience lists are skipped."""
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.name = "Test Gateway"
+        mock_gateway.oauth_config = {"grant_type": "authorization_code", "client_id": "test"}
+
+        # Empty list
+        oauth_result = {"token_aud": []}
+
+        await _persist_learned_audience(mock_gateway, oauth_result, mock_db)
+
+        # Should not persist anything
+        assert "resource" not in mock_gateway.oauth_config
+        mock_db.flush.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_persist_learned_audience_none_skipped(self, mock_db):
+        """Test that None audience is skipped."""
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.name = "Test Gateway"
+        mock_gateway.oauth_config = {"grant_type": "authorization_code", "client_id": "test"}
+
+        # None
+        oauth_result = {"token_aud": None}
+
+        await _persist_learned_audience(mock_gateway, oauth_result, mock_db)
+
+        # Should not persist anything
+        assert "resource" not in mock_gateway.oauth_config
+        mock_db.flush.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_persist_learned_audience_first_write_only(self, mock_db):
+        """Test that existing resource is not overwritten (first-write-only)."""
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.name = "Test Gateway"
+        mock_gateway.oauth_config = {"grant_type": "authorization_code", "client_id": "test", "resource": "existing-resource"}
+
+        # New multi-audience token
+        oauth_result = {"token_aud": ["https://new-resource-1.example.com", "https://new-resource-2.example.com"]}
+
+        await _persist_learned_audience(mock_gateway, oauth_result, mock_db)
+
+        # Should NOT overwrite existing resource
+        assert mock_gateway.oauth_config["resource"] == "existing-resource"
+        mock_db.flush.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_multi_audience_normalized_before_persistence(self, mock_db, mock_request):
+        """Test OAuth callback normalizes multi-audience tokens before persisting."""
+        import base64
+        import orjson
+
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "gateway123"
+        mock_gateway.name = "Test Gateway"
+        mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.oauth_config = {
+            "grant_type": "authorization_code",
+            "client_id": "client",
+            "client_secret": "secret",
+            "authorization_url": "https://auth.example.com/authorize",
+            "token_url": "https://auth.example.com/token",
+            "redirect_uri": "https://gateway.example.com/oauth/callback",
+        }
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        payload = orjson.dumps({"gateway_id": "gateway123", "app_user_email": "test@example.com"})
+        state_raw = payload + (b"0" * 32)
+        state = base64.urlsafe_b64encode(state_raw).decode()
+
+        # Simulate Keycloak multi-audience token response
+        result_payload = {
+            "user_id": "u1",
+            "app_user_email": "test@example.com",
+            "expires_at": "2024-01-01T12:00:00",
+            "token_aud": ["https://resource-1.example.com", "https://resource-2.example.com", "account"],
+        }
+
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
+            mock_mgr = Mock()
+            mock_mgr.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+            mock_mgr.complete_authorization_code_flow = AsyncMock(return_value=result_payload)
+            mock_oauth_mgr.return_value = mock_mgr
+
+            with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                from mcpgateway.routers.oauth_router import oauth_callback
+
+                response = await oauth_callback(code="code", state=state, request=mock_request, db=mock_db)
+
+        assert response.status_code == 200
+        # Verify that only the first audience value was persisted
+        assert mock_gateway.oauth_config["resource"] == "https://resource-1.example.com"
+        mock_db.flush.assert_called()
+
 
     @pytest.mark.asyncio
     async def test_initiate_oauth_flow_dcr_error(self, mock_db, mock_request, mock_current_user):
