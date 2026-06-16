@@ -70,7 +70,6 @@ jobs:
       - name: 🔍  Dependency Review
         id: dep-scan
         uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
-        continue-on-error: true
         with:
           # ───────── Vulnerability policy ─────────
           fail-on-severity: moderate # MODERATE, HIGH, CRITICAL ⇒ ❌
@@ -101,7 +100,7 @@ jobs:
           # See: https://github.com/actions/dependency-review-action#configuration-options
           license-check: true # (default)
           # ───────── UX tweaks ─────────
-          warn-only: true # actually warn instead of failing the workflow when Dependency Graph is disabled
+          warn-only: false # actually fail the workflow
           comment-summary-in-pr: on-failure
 
           # ───────── Refs for non-PR events ─────────
