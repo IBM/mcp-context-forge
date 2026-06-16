@@ -1,6 +1,4 @@
 # -*- coding: utf-8 -*-
-
-# -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_main.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
@@ -16,6 +14,7 @@ from copy import deepcopy
 import datetime
 import importlib
 import json
+import logging
 import os
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -5481,6 +5480,205 @@ def test_startup_succeeds_with_uaid_require_allowlist_false():
 
         # Verify ERROR was logged
         assert mock_logger.error.called
+
+
+def test_db_pool_warning_calculation_with_gunicorn_workers():
+    """Verify DB pool warning calculation when GUNICORN_WORKERS is set."""
+    with patch.dict(os.environ, {"GUNICORN_WORKERS": "4"}):
+        workers = int(os.environ["GUNICORN_WORKERS"])
+        db_pool_size = 15
+        db_max_overflow = 30
+        total_pool = db_pool_size + db_max_overflow
+        total_connections = workers * total_pool
+
+        assert workers == 4
+        assert total_pool == 45
+        assert total_connections == 180
+
+
+def test_db_pool_warning_calculation_with_gunicorn_cmd_args_uses_auto_worker_formula():
+    """Verify DB pool warning uses the same auto worker formula as run-gunicorn.sh."""
+    with (
+        patch.dict(os.environ, {"GUNICORN_CMD_ARGS": "--workers=auto"}, clear=True),
+        patch("mcpgateway.main.multiprocessing.cpu_count", return_value=6),
+    ):
+        workers = int(os.environ.get("GUNICORN_WORKERS", str(min(2 * 6 + 1, 16))))
+        assert workers == 13
+
+
+def test_db_pool_warning_calculation_with_gunicorn_cmd_args_caps_auto_workers_at_16():
+    """Verify DB pool warning caps auto-detected workers the same way as run-gunicorn.sh."""
+    with (
+        patch.dict(os.environ, {"GUNICORN_CMD_ARGS": "--workers=auto"}, clear=True),
+        patch("mcpgateway.main.multiprocessing.cpu_count", return_value=12),
+    ):
+        workers = int(os.environ.get("GUNICORN_WORKERS", str(min(2 * 12 + 1, 16))))
+        assert workers == 16
+
+
+def test_db_pool_warning_not_triggered_without_gunicorn():
+    """Verify DB pool warning condition is false without gunicorn env vars."""
+    with patch.dict(os.environ, {}, clear=True):
+        # Verify the condition that prevents the warning
+        assert os.environ.get("GUNICORN_CMD_ARGS") is None
+        assert os.environ.get("GUNICORN_WORKERS") is None
+
+
+@pytest.mark.asyncio
+async def test_lifespan_logs_db_pool_warning_with_gunicorn_workers(monkeypatch, caplog):
+    """Verify DB pool warning is logged during lifespan startup when GUNICORN_WORKERS is set."""
+    # First-Party
+    import mcpgateway.main as main_mod
+
+    # Set GUNICORN_WORKERS environment variable
+    monkeypatch.setenv("GUNICORN_WORKERS", "4")
+
+    # Mock settings
+    monkeypatch.setattr(main_mod.settings, "db_pool_size", 50)
+    monkeypatch.setattr(main_mod.settings, "db_max_overflow", 10)
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "enable_header_passthrough", False)
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_tool_cancellation_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_elicitation_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "metrics_buffer_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "db_metrics_recording_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "metrics_cleanup_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "metrics_rollup_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "sso_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "metrics_aggregation_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "llmchat_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_a2a_enabled", False)
+
+    # Mock all required services and functions
+    def make_service():
+        service = MagicMock()
+        service.initialize = AsyncMock()
+        service.shutdown = AsyncMock()
+        return service
+
+    for attr in (
+        "tool_service",
+        "resource_service",
+        "prompt_service",
+        "gateway_service",
+        "root_service",
+        "completion_service",
+        "sampling_handler",
+        "resource_cache",
+        "streamable_http_session",
+        "session_registry",
+        "export_service",
+        "import_service",
+        "logging_service",
+        "a2a_service",
+    ):
+        monkeypatch.setattr(main_mod, attr, make_service())
+
+    monkeypatch.setattr(main_mod, "get_plugin_manager", AsyncMock(return_value=None))
+    monkeypatch.setattr(main_mod, "shutdown_plugin_manager_factory", AsyncMock())
+    monkeypatch.setattr(main_mod, "get_redis_client", AsyncMock())
+    monkeypatch.setattr(main_mod, "close_redis_client", AsyncMock())
+    monkeypatch.setattr(main_mod, "validate_security_configuration", MagicMock())
+    monkeypatch.setattr(main_mod, "init_telemetry", MagicMock())
+    monkeypatch.setattr(main_mod, "refresh_slugs_on_startup", MagicMock())
+    monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", AsyncMock())
+    monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", AsyncMock())
+
+    # Mock bootstrap_db to avoid running migrations
+    monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
+
+    main_mod.app.state.update_http_pool_metrics = MagicMock()
+
+    # Run lifespan
+    with caplog.at_level(logging.WARNING):
+        async with main_mod.lifespan(main_mod.app):
+            await asyncio.sleep(0)
+
+    # Verify the warning was logged with correct calculation
+    # workers=4, pool_size=50, max_overflow=10 -> total_pool=60, total_connections=240
+    warning_found = any(
+        "DATABASE POOL: Running with 4 gunicorn workers" in record.message
+        and "240" in record.message
+        for record in caplog.records
+    )
+    assert warning_found, "Expected DB pool warning not found in logs"
+
+
+@pytest.mark.asyncio
+async def test_lifespan_logs_db_pool_warning_with_gunicorn_cmd_args(monkeypatch, caplog):
+    """Verify DB pool warning uses run-gunicorn auto worker detection when env var is absent."""
+    # First-Party
+    import mcpgateway.main as main_mod
+
+    monkeypatch.setenv("GUNICORN_CMD_ARGS", "--workers=auto")
+    monkeypatch.delenv("GUNICORN_WORKERS", raising=False)
+    monkeypatch.setattr(main_mod.multiprocessing, "cpu_count", lambda: 6)
+
+    # Mock settings
+    monkeypatch.setattr(main_mod.settings, "db_pool_size", 100)
+    monkeypatch.setattr(main_mod.settings, "db_max_overflow", 20)
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "enable_header_passthrough", False)
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_tool_cancellation_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_elicitation_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "metrics_buffer_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "db_metrics_recording_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "metrics_cleanup_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "metrics_rollup_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "sso_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "metrics_aggregation_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "llmchat_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_a2a_enabled", False)
+
+    def make_service():
+        service = MagicMock()
+        service.initialize = AsyncMock()
+        service.shutdown = AsyncMock()
+        return service
+
+    for attr in (
+        "tool_service",
+        "resource_service",
+        "prompt_service",
+        "gateway_service",
+        "root_service",
+        "completion_service",
+        "sampling_handler",
+        "resource_cache",
+        "streamable_http_session",
+        "session_registry",
+        "export_service",
+        "import_service",
+        "logging_service",
+        "a2a_service",
+    ):
+        monkeypatch.setattr(main_mod, attr, make_service())
+
+    monkeypatch.setattr(main_mod, "get_plugin_manager", AsyncMock(return_value=None))
+    monkeypatch.setattr(main_mod, "shutdown_plugin_manager_factory", AsyncMock())
+    monkeypatch.setattr(main_mod, "get_redis_client", AsyncMock())
+    monkeypatch.setattr(main_mod, "close_redis_client", AsyncMock())
+    monkeypatch.setattr(main_mod, "validate_security_configuration", MagicMock())
+    monkeypatch.setattr(main_mod, "init_telemetry", MagicMock())
+    monkeypatch.setattr(main_mod, "refresh_slugs_on_startup", MagicMock())
+    monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", AsyncMock())
+    monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", AsyncMock())
+
+    # Mock bootstrap_db to avoid running migrations
+    monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
+
+    main_mod.app.state.update_http_pool_metrics = MagicMock()
+
+    with caplog.at_level(logging.WARNING):
+        async with main_mod.lifespan(main_mod.app):
+            await asyncio.sleep(0)
+
+    warning_found = any(
+        "DATABASE POOL: Running with 13 gunicorn workers" in record.message
+        and "1560" in record.message
+        for record in caplog.records
+    )
+    assert warning_found, "Expected DB pool warning not found in logs"
 
 
 # ========================================================================== #

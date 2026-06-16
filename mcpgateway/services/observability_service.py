@@ -26,8 +26,11 @@ Architecture (Issue #3883 - Separate Session Pattern):
     Query operations (get_trace, get_traces, get_spans, etc.) accept a session parameter
     to use the request-scoped session with proper RBAC and token scoping.
 
-    This pattern matches the SQL query instrumentation approach in
-    mcpgateway/instrumentation/sqlalchemy.py:58-87.
+    Session Reuse Optimization:
+    start_span() and end_span() accept an optional obs_db parameter to reuse an existing
+    session. When obs_db is provided, the caller owns the session lifecycle. This reduces
+    session proliferation in SQL instrumentation from 3 sessions per query to 1 session.
+    See mcpgateway/instrumentation/sqlalchemy.py:64-101 for the optimized pattern.
 
 Transaction Semantics:
     - Observability writes are NOT atomic with main request transaction

@@ -35,6 +35,8 @@ from functools import lru_cache
 import html
 import json
 import logging
+import multiprocessing
+import os
 import re
 import signal
 import sys
@@ -1626,6 +1628,25 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await attempt_to_bootstrap_sso_providers()
 
         logger.info("All services initialized successfully")
+
+        # Warn about per-worker database connection pool multiplication
+        if os.environ.get("GUNICORN_CMD_ARGS") or os.environ.get("GUNICORN_WORKERS"):
+            cpu_count = multiprocessing.cpu_count()
+            default_workers = min(2 * cpu_count + 1, 16)
+            workers = int(os.environ.get("GUNICORN_WORKERS", str(default_workers)))
+            total_pool = settings.db_pool_size + settings.db_max_overflow
+            total_connections = workers * total_pool
+            logger.warning(
+                "⚠️  DATABASE POOL: Running with %d gunicorn workers. "
+                "Total max DB connections = workers(%d) * (pool_size + max_overflow) = %d * %d = %d. "
+                "Ensure PostgreSQL max_connections >= %d. ",
+                workers,
+                workers,
+                workers,
+                total_pool,
+                total_connections,
+                total_connections,
+            )
 
         # Warn about unsafe UAID configuration if A2A is enabled
         if settings.mcpgateway_a2a_enabled:

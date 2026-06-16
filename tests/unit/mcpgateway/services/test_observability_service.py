@@ -238,6 +238,54 @@ def test_end_trace_merges_attributes(mock_session_factory):
     mock_session.commit.assert_called()
 
 
+def test_start_span_reuses_provided_obs_db_without_closing():
+    service = ObservabilityService()
+    obs_db = MagicMock()
+
+    with patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock()):
+        span_id = service.start_span("trace-1", "db.query", obs_db=obs_db, commit=False)
+
+    assert isinstance(span_id, str)
+    obs_db.add.assert_called_once()
+    obs_db.commit.assert_not_called()
+    obs_db.close.assert_not_called()
+
+
+def test_end_span_reuses_provided_obs_db_without_committing_or_closing():
+    service = ObservabilityService()
+    obs_db = MagicMock()
+    span = MagicMock()
+    span.start_time = datetime.now(timezone.utc)
+    span.attributes = {"existing": True}
+    obs_db.query.return_value.filter_by.return_value.first.return_value = span
+
+    with patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock()):
+        service.end_span("span-1", status="ok", attributes={"merged": True}, obs_db=obs_db, commit=False)
+
+    assert span.status == "ok"
+    assert span.attributes == {"existing": True, "merged": True}
+    obs_db.commit.assert_not_called()
+    obs_db.close.assert_not_called()
+
+
+@patch("mcpgateway.services.observability_service.ObservabilityEvent")
+def test_add_event_reuses_provided_obs_db_without_closing(mock_event_cls):
+    service = ObservabilityService()
+    obs_db = MagicMock()
+    event = MagicMock()
+    event.id = 123
+    mock_event_cls.return_value = event
+    obs_db.refresh.side_effect = lambda obj: None
+    obs_db.add.side_effect = lambda obj: None
+
+    with patch.object(service, "_safe_commit", return_value=True) as mock_safe_commit:
+        event_id = service.add_event("span-1", "evt", severity="info", obs_db=obs_db)
+
+    assert event_id == 123
+    mock_safe_commit.assert_called_once_with(obs_db, "add_event")
+    obs_db.close.assert_not_called()
+
+
 def test_end_trace_without_attributes_does_not_merge(mock_session_factory):
     """Cover end_trace branch where no attributes are provided."""
     mock_factory, mock_session = mock_session_factory
