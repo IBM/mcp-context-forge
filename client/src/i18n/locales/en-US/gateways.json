@@ -1,5 +1,6 @@
 {
   "gateways.title": "Virtual servers",
+  "gateways.notifications": "Notifications",
   "gateways.loadingVirtualServers": "Loading virtual servers, please wait...",
   "gateways.errorLoadingVirtualServers": "Error loading virtual servers",
   "gateways.action.mcpServer.title": "MCP server",
@@ -64,6 +65,11 @@
   "gateways.card.resourceCount": "{count, plural, one {# resource} other {# resources}}",
   "gateways.card.promptCount": "{count, plural, one {# prompt} other {# prompts}}",
   "gateways.card.notSyncedYet": "Not synced yet",
+  "gateways.delete.title": "Delete virtual server",
+  "gateways.delete.description": "Are you sure you want to delete {name}? This action cannot be undone.",
+  "gateways.delete.deleting": "Deleting...",
+  "gateways.delete.success": "{name} deleted.",
+  "gateways.delete.errorTitle": "Error deleting virtual server",
   "gateways.details.sheetTitle": "{name} details",
   "gateways.details.sheetDescription": "Virtual server details and activity.",
   "gateways.details.addSource": "Add source",

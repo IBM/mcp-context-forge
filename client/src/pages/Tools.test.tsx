@@ -1,8 +1,17 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+vi.mock("sonner", () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { render } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
+import { toast } from "sonner";
 import { server } from "@/test/mocks/server";
 import { Tools } from "./Tools";
 import { RouterProvider } from "@/router";
@@ -762,6 +771,198 @@ describe("Tools", () => {
       await waitFor(() => {
         expect(screen.getByRole("region", { name: /Tools for gateway-b/i })).toBeInTheDocument();
       });
+    });
+  });
+
+  describe("Delete Tool", () => {
+    // Helper: load tools, open the details panel for a given gateway, and return userEvent
+    async function openDetailsPanel(gatewaySlug: string) {
+      const user = userEvent.setup();
+      const moreOptionsButton = screen.getByLabelText(`More options for ${gatewaySlug}`);
+      await user.click(moreOptionsButton);
+      const viewDetailsItem = await screen.findByText("View Details");
+      await user.click(viewDetailsItem);
+      await waitFor(() => {
+        expect(
+          screen.getByRole("region", { name: new RegExp(`Tools for ${gatewaySlug}`, "i") }),
+        ).toBeInTheDocument();
+      });
+      return user;
+    }
+
+    beforeEach(() => {
+      vi.mocked(toast.success).mockClear();
+      vi.mocked(toast.error).mockClear();
+    });
+
+    it("shows Delete option in the tool row dropdown when panel is open", async () => {
+      const mockTools: Tool[] = [createMockTool(1, "test-gateway")];
+      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+      renderWithRouter(<Tools />);
+      await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
+
+      const user = await openDetailsPanel("test-gateway");
+
+      // "More options" button inside the table row (not the card-level one)
+      const tableMoreOptions = screen.getByLabelText("More options");
+      await user.click(tableMoreOptions);
+
+      expect(await screen.findByText("Delete")).toBeInTheDocument();
+    });
+
+    it("opens a confirm dialog with the tool name when Delete is clicked", async () => {
+      const mockTools: Tool[] = [createMockTool(1, "test-gateway")];
+      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+      renderWithRouter(<Tools />);
+      await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
+
+      const user = await openDetailsPanel("test-gateway");
+
+      await user.click(screen.getByLabelText("More options"));
+      await user.click(await screen.findByText("Delete"));
+
+      await waitFor(() => {
+        expect(screen.getByRole("dialog")).toBeInTheDocument();
+      });
+      const dialog = screen.getByRole("dialog");
+      expect(within(dialog).getByText("Delete tool")).toBeInTheDocument();
+      // Dialog description includes the tool name (createMockTool has no displayName, falls back to name)
+      expect(
+        within(dialog).getByText(/Are you sure you want to delete "Tool 1"/),
+      ).toBeInTheDocument();
+    });
+
+    it("does not call the API when the confirm dialog is cancelled", async () => {
+      const mockTools: Tool[] = [createMockTool(1, "test-gateway")];
+      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+      const deleteSpy = vi.fn(() => HttpResponse.json(null, { status: 204 }));
+      server.use(http.delete("/tools/:id", deleteSpy));
+
+      renderWithRouter(<Tools />);
+      await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
+
+      const user = await openDetailsPanel("test-gateway");
+      await user.click(screen.getByLabelText("More options"));
+      await user.click(await screen.findByText("Delete"));
+
+      await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
+
+      await user.click(screen.getByRole("button", { name: /cancel/i }));
+
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(deleteSpy).not.toHaveBeenCalled();
+      expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it("calls the delete API, shows success toast, and closes the panel on confirm", async () => {
+      const mockTools: Tool[] = [createMockTool(1, "test-gateway")];
+      server.use(
+        http.get("/tools", () => HttpResponse.json(mockTools)),
+        http.delete("/tools/tool-1", () => new HttpResponse(null, { status: 204 })),
+      );
+
+      renderWithRouter(<Tools />);
+      await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
+
+      const user = await openDetailsPanel("test-gateway");
+      await user.click(screen.getByLabelText("More options"));
+      await user.click(await screen.findByText("Delete"));
+
+      await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
+      await user.click(screen.getByRole("button", { name: /^delete$/i }));
+
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith(expect.stringContaining("Tool 1"));
+      });
+
+      // Details panel should close
+      await waitFor(() => {
+        expect(
+          screen.queryByRole("region", { name: /Tools for test-gateway/i }),
+        ).not.toBeInTheDocument();
+      });
+    });
+
+    it("shows an error toast when the delete API returns a string detail", async () => {
+      const mockTools: Tool[] = [createMockTool(1, "test-gateway")];
+      server.use(
+        http.get("/tools", () => HttpResponse.json(mockTools)),
+        http.delete("/tools/tool-1", () =>
+          HttpResponse.json({ detail: "Cannot delete: tool is in use" }, { status: 409 }),
+        ),
+      );
+
+      renderWithRouter(<Tools />);
+      await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
+
+      const user = await openDetailsPanel("test-gateway");
+      await user.click(screen.getByLabelText("More options"));
+      await user.click(await screen.findByText("Delete"));
+
+      await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
+      await user.click(screen.getByRole("button", { name: /^delete$/i }));
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith("Cannot delete: tool is in use");
+      });
+    });
+
+    it("shows a generic error toast when the delete API returns no detail", async () => {
+      const mockTools: Tool[] = [createMockTool(1, "test-gateway")];
+      server.use(
+        http.get("/tools", () => HttpResponse.json(mockTools)),
+        http.delete("/tools/tool-1", () =>
+          HttpResponse.json({ message: "Something went wrong" }, { status: 500 }),
+        ),
+      );
+
+      renderWithRouter(<Tools />);
+      await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
+
+      const user = await openDetailsPanel("test-gateway");
+      await user.click(screen.getByLabelText("More options"));
+      await user.click(await screen.findByText("Delete"));
+
+      await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
+      await user.click(screen.getByRole("button", { name: /^delete$/i }));
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("Failed to delete tool"));
+      });
+    });
+
+    it("uses displayName in the dialog description when available", async () => {
+      const mockTools: Tool[] = [
+        { ...createMockTool(1, "test-gateway"), displayName: "My Custom Tool" },
+      ];
+      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+
+      renderWithRouter(<Tools />);
+      await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
+
+      const user = await openDetailsPanel("test-gateway");
+      await user.click(screen.getByLabelText("More options"));
+      await user.click(await screen.findByText("Delete"));
+
+      await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
+      expect(within(screen.getByRole("dialog")).getByText(/My Custom Tool/)).toBeInTheDocument();
+    });
+
+    it("falls back to name in the dialog description when displayName is absent", async () => {
+      const mockTools: Tool[] = [{ ...createMockTool(1, "test-gateway"), displayName: undefined }];
+      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+
+      renderWithRouter(<Tools />);
+      await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
+
+      const user = await openDetailsPanel("test-gateway");
+      await user.click(screen.getByLabelText("More options"));
+      await user.click(await screen.findByText("Delete"));
+
+      await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
+      expect(
+        within(screen.getByRole("dialog")).getByText(/Are you sure you want to delete "Tool 1"/),
+      ).toBeInTheDocument();
     });
   });
 

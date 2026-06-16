@@ -26,6 +26,8 @@ export function VirtualServerCard({
   onEdit,
   onDelete,
   onToggleStatus,
+  isDeleting = false,
+  deleteDisabled = false,
   className,
 }: {
   server: VirtualServer;
@@ -34,6 +36,8 @@ export function VirtualServerCard({
   onEdit?: (server: VirtualServer) => void;
   onDelete?: (server: VirtualServer) => void;
   onToggleStatus?: (server: VirtualServer) => void;
+  isDeleting?: boolean;
+  deleteDisabled?: boolean;
   className?: string;
 }) {
   const intl = useIntl();
@@ -123,6 +127,7 @@ export function VirtualServerCard({
                   <>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
+                      disabled={isDeleting || deleteDisabled}
                       onClick={(e) => {
                         e.stopPropagation();
                         onDelete(server);

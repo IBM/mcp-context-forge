@@ -186,6 +186,24 @@ describe("ToolsTable", () => {
     expect(schemaButton).toBeInTheDocument();
   });
 
+  it("opens schema dialog when schema button is clicked", async () => {
+    const user = userEvent.setup();
+    const tools = [
+      createMockTool(1, {
+        inputSchema: { type: "object", properties: { query: { type: "string" } } },
+        outputSchema: { type: "object", properties: { result: { type: "string" } } },
+      }),
+    ];
+    render(<ToolsTable tools={tools} onSelectTool={mockOnSelectTool} />);
+
+    const schemaButton = screen.getByLabelText("View schema");
+    await user.click(schemaButton);
+
+    // Dialog should be visible
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText("Tool schema")).toBeInTheDocument();
+  });
+
   it("does not trigger row selection when schema button is clicked", async () => {
     const user = userEvent.setup();
     const tools = [createMockTool(1)];
@@ -195,6 +213,25 @@ describe("ToolsTable", () => {
     await user.click(schemaButton);
 
     expect(mockOnSelectTool).not.toHaveBeenCalled();
+  });
+
+  it("closes schema dialog when Close button is clicked", async () => {
+    const user = userEvent.setup();
+    const tools = [createMockTool(1)];
+    render(<ToolsTable tools={tools} onSelectTool={mockOnSelectTool} />);
+
+    // Open dialog
+    const schemaButton = screen.getByLabelText("View schema");
+    await user.click(schemaButton);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    // Close dialog — two buttons share the name "Close" (footer button + dialog's sr-only × button);
+    // the footer button is first in DOM order since Radix appends × after children
+    const [closeButton] = screen.getAllByRole("button", { name: /close/i });
+    await user.click(closeButton);
+
+    // Dialog should be closed
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("renders more options button", () => {
@@ -279,6 +316,73 @@ describe("ToolsTable", () => {
     );
     const span = displayName.closest("span");
     expect(span).toHaveClass("line-clamp-1");
+  });
+
+  describe("delete dropdown (onDeleteTool provided)", () => {
+    it("renders a dropdown instead of a plain button when onDeleteTool is provided", async () => {
+      const user = userEvent.setup();
+      const mockOnDeleteTool = vi.fn();
+      const tools = [createMockTool(1)];
+      render(
+        <ToolsTable
+          tools={tools}
+          onSelectTool={mockOnSelectTool}
+          onDeleteTool={mockOnDeleteTool}
+        />,
+      );
+
+      const moreButton = screen.getByLabelText("More options");
+      await user.click(moreButton);
+
+      expect(await screen.findByText("Delete")).toBeInTheDocument();
+    });
+
+    it("calls onDeleteTool with the tool id when Delete is clicked", async () => {
+      const user = userEvent.setup();
+      const mockOnDeleteTool = vi.fn();
+      const tools = [createMockTool(1, { id: "tool-xyz" })];
+      render(
+        <ToolsTable
+          tools={tools}
+          onSelectTool={mockOnSelectTool}
+          onDeleteTool={mockOnDeleteTool}
+        />,
+      );
+
+      await user.click(screen.getByLabelText("More options"));
+      await user.click(await screen.findByText("Delete"));
+
+      expect(mockOnDeleteTool).toHaveBeenCalledOnce();
+      expect(mockOnDeleteTool).toHaveBeenCalledWith("tool-xyz");
+    });
+
+    it("does not call onSelectTool when Delete is clicked", async () => {
+      const user = userEvent.setup();
+      const mockOnDeleteTool = vi.fn();
+      const tools = [createMockTool(1)];
+      render(
+        <ToolsTable
+          tools={tools}
+          onSelectTool={mockOnSelectTool}
+          onDeleteTool={mockOnDeleteTool}
+        />,
+      );
+
+      await user.click(screen.getByLabelText("More options"));
+      await user.click(await screen.findByText("Delete"));
+
+      expect(mockOnSelectTool).not.toHaveBeenCalled();
+    });
+
+    it("does not show Delete item when onDeleteTool is not provided", async () => {
+      const user = userEvent.setup();
+      const tools = [createMockTool(1)];
+      render(<ToolsTable tools={tools} onSelectTool={mockOnSelectTool} />);
+
+      await user.click(screen.getByLabelText("More options"));
+
+      expect(screen.queryByText("Delete")).not.toBeInTheDocument();
+    });
   });
 
   it("handles tools with special characters in names", () => {

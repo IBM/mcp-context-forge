@@ -36,6 +36,17 @@ const server = setupServer(
   http.post("/gateways", () => {
     return HttpResponse.json({ id: "test-gateway-123", name: "Test Server" });
   }),
+  // Mock single gateway fetch (used in edit mode)
+  http.get("/gateways/:id", ({ params }) => {
+    return HttpResponse.json({
+      id: params.id,
+      name: "Test Server",
+      url: "http://localhost:9000",
+      transport: "STREAMABLEHTTP",
+      visibility: "public",
+      authType: "none",
+    });
+  }),
   // Mock ExposeComponentsForm API calls
   http.get("/tools", () => {
     return HttpResponse.json([]);
@@ -252,6 +263,20 @@ describe("MCPServerForm", () => {
       expect(screen.getByText("One-time authentication")).toBeInTheDocument();
       expect(screen.getByText("Passthrough headers")).toBeInTheDocument();
       expect(screen.getByText("CA certificate")).toBeInTheDocument();
+    });
+
+    it("shows team-switcher hint when Team visibility is selected and no team is active", async () => {
+      const user = userEvent.setup();
+      renderWithRouter(<MCPServerForm {...defaultProps} />);
+
+      await user.click(screen.getByRole("button", { name: /Advanced settings/i }));
+      await user.click(screen.getByRole("combobox", { name: /visibility/i }));
+      await user.click(screen.getByRole("option", { name: /^Team$/i }));
+
+      // AuthProvider returns selectedTeamId: null (unauthenticated), so the sidebar prompt appears
+      expect(
+        screen.getByText(/please select a team using the team switcher in the sidebar/i),
+      ).toBeInTheDocument();
     });
   });
 
