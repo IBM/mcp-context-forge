@@ -367,7 +367,7 @@ class TestStreamA2AAgentEndpoint:
                             assert response.status_code == 200
                             # Verify JWT token forwarded
                             call_kwargs = mock_service.stream_agent_response.call_args.kwargs
-                            assert call_kwargs["_bearer_token"] == "jwt.token.here"
+                            assert call_kwargs["bearer_token"] == "jwt.token.here"
 
             mock_service.stream_agent_response.reset_mock()
             mock_service.stream_agent_response = MagicMock(return_value=mock_stream())
@@ -386,7 +386,7 @@ class TestStreamA2AAgentEndpoint:
                             assert response.status_code == 200
                             # Verify non-JWT token NOT forwarded
                             call_kwargs = mock_service.stream_agent_response.call_args.kwargs
-                            assert call_kwargs["_bearer_token"] is None
+                            assert call_kwargs["bearer_token"] is None
 
 
 # Edge case tests from test_a2a_streaming_endpoint_edge_cases.py
