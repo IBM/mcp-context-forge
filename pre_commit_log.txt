@@ -1,0 +1,524 @@
+﻿2026-06-11T06:07:45.9630998Z Current runner version: '2.334.0'
+2026-06-11T06:07:45.9657619Z ##[group]Runner Image Provisioner
+2026-06-11T06:07:45.9658449Z Hosted Compute Agent
+2026-06-11T06:07:45.9659168Z Version: 20260520.533
+2026-06-11T06:07:45.9659858Z Commit: 189110e25284a9812c124fd27b339e2fb4f2f9db
+2026-06-11T06:07:45.9660632Z Build Date: 2026-05-20T17:44:04Z
+2026-06-11T06:07:45.9661377Z Worker ID: {9e68ae03-e784-4974-9d57-1864d7bc785c}
+2026-06-11T06:07:45.9662127Z Azure Region: eastus
+2026-06-11T06:07:45.9662777Z ##[endgroup]
+2026-06-11T06:07:45.9664361Z ##[group]Operating System
+2026-06-11T06:07:45.9665061Z Ubuntu
+2026-06-11T06:07:45.9665621Z 24.04.4
+2026-06-11T06:07:45.9666151Z LTS
+2026-06-11T06:07:45.9666725Z ##[endgroup]
+2026-06-11T06:07:45.9667358Z ##[group]Runner Image
+2026-06-11T06:07:45.9667942Z Image: ubuntu-24.04
+2026-06-11T06:07:45.9668593Z Version: 20260525.161.1
+2026-06-11T06:07:45.9669865Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260525.161/images/ubuntu/Ubuntu2404-Readme.md
+2026-06-11T06:07:45.9671499Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260525.161
+2026-06-11T06:07:45.9672476Z ##[endgroup]
+2026-06-11T06:07:45.9673966Z ##[group]GITHUB_TOKEN Permissions
+2026-06-11T06:07:45.9676605Z Contents: read
+2026-06-11T06:07:45.9677331Z Metadata: read
+2026-06-11T06:07:45.9677968Z ##[endgroup]
+2026-06-11T06:07:45.9680136Z Secret source: Actions
+2026-06-11T06:07:45.9681531Z Prepare workflow directory
+2026-06-11T06:07:46.0005778Z Prepare all required actions
+2026-06-11T06:07:46.0042759Z Getting action download info
+2026-06-11T06:07:46.3784450Z Download action repository 'actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd' (SHA:93cb6efe18208431cddfb8368fd83d5badbf9bfd)
+2026-06-11T06:07:46.4852901Z Download action repository 'actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405' (SHA:a309ff8b426b58ec0e2a45f0f869d46889d02405)
+2026-06-11T06:07:46.5697496Z Download action repository 'actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff' (SHA:40f1582b2485089dde7abd97c1529aa768e1baff)
+2026-06-11T06:07:46.7432937Z Download action repository 'astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b' (SHA:08807647e7069bb48b6ef5acd8ec9567f424441b)
+2026-06-11T06:07:47.1085626Z Complete job name: Run pre-commit hooks
+2026-06-11T06:07:47.1933216Z ##[group]Run actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+2026-06-11T06:07:47.1934984Z with:
+2026-06-11T06:07:47.1935814Z   persist-credentials: false
+2026-06-11T06:07:47.1936782Z   fetch-depth: 0
+2026-06-11T06:07:47.1937689Z   repository: prince3235/mcp-context-forge
+2026-06-11T06:07:47.1947915Z   token: ***
+2026-06-11T06:07:47.1948748Z   ssh-strict: true
+2026-06-11T06:07:47.1949596Z   ssh-user: git
+2026-06-11T06:07:47.1950411Z   clean: true
+2026-06-11T06:07:47.1951288Z   sparse-checkout-cone-mode: true
+2026-06-11T06:07:47.1952324Z   fetch-tags: false
+2026-06-11T06:07:47.1953375Z   show-progress: true
+2026-06-11T06:07:47.1954270Z   lfs: false
+2026-06-11T06:07:47.1955078Z   submodules: false
+2026-06-11T06:07:47.1955989Z   set-safe-directory: true
+2026-06-11T06:07:47.1957279Z ##[endgroup]
+2026-06-11T06:07:47.2952525Z Syncing repository: prince3235/mcp-context-forge
+2026-06-11T06:07:47.2955974Z ##[group]Getting Git version info
+2026-06-11T06:07:47.2957658Z Working directory is '/home/runner/work/mcp-context-forge/mcp-context-forge'
+2026-06-11T06:07:47.2960203Z [command]/usr/bin/git version
+2026-06-11T06:07:47.2983802Z git version 2.54.0
+2026-06-11T06:07:47.3004267Z ##[endgroup]
+2026-06-11T06:07:47.3017223Z Temporarily overriding HOME='/home/runner/work/_temp/a7e02ef8-9400-4151-a12c-e25cc508b492' before making global git config changes
+2026-06-11T06:07:47.3021392Z Adding repository directory to the temporary git global config as a safe directory
+2026-06-11T06:07:47.3025085Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/mcp-context-forge/mcp-context-forge
+2026-06-11T06:07:47.3066684Z Deleting the contents of '/home/runner/work/mcp-context-forge/mcp-context-forge'
+2026-06-11T06:07:47.3070605Z ##[group]Initializing the repository
+2026-06-11T06:07:47.3074790Z [command]/usr/bin/git init /home/runner/work/mcp-context-forge/mcp-context-forge
+2026-06-11T06:07:47.3146909Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-06-11T06:07:47.3149884Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-06-11T06:07:47.3152153Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-06-11T06:07:47.3154439Z hint: call:
+2026-06-11T06:07:47.3155316Z hint:
+2026-06-11T06:07:47.3156559Z hint: 	git config --global init.defaultBranch <name>
+2026-06-11T06:07:47.3158095Z hint:
+2026-06-11T06:07:47.3159529Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-06-11T06:07:47.3161659Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-06-11T06:07:47.3163567Z hint:
+2026-06-11T06:07:47.3164737Z hint: 	git branch -m <name>
+2026-06-11T06:07:47.3166019Z hint:
+2026-06-11T06:07:47.3167558Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-06-11T06:07:47.3170001Z Initialized empty Git repository in /home/runner/work/mcp-context-forge/mcp-context-forge/.git/
+2026-06-11T06:07:47.3174754Z [command]/usr/bin/git remote add origin https://github.com/prince3235/mcp-context-forge
+2026-06-11T06:07:47.3233801Z ##[endgroup]
+2026-06-11T06:07:47.3236118Z ##[group]Disabling automatic garbage collection
+2026-06-11T06:07:47.3238250Z [command]/usr/bin/git config --local gc.auto 0
+2026-06-11T06:07:47.3268393Z ##[endgroup]
+2026-06-11T06:07:47.3270599Z ##[group]Setting up auth
+2026-06-11T06:07:47.3275448Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-06-11T06:07:47.3311747Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-06-11T06:07:47.3615516Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-06-11T06:07:47.3650699Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-06-11T06:07:47.3879997Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-06-11T06:07:47.3914464Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-06-11T06:07:47.4150489Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-06-11T06:07:47.4188894Z ##[endgroup]
+2026-06-11T06:07:47.4190581Z ##[group]Fetching the repository
+2026-06-11T06:07:47.4199818Z [command]/usr/bin/git -c protocol.version=2 fetch --prune --no-recurse-submodules origin +refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/* +b3720973878bc417e7f0f24d648c82282f7c2c5e:refs/remotes/pull/1/merge
+2026-06-11T06:07:52.8531406Z From https://github.com/prince3235/mcp-context-forge
+2026-06-11T06:07:52.8532687Z  * [new branch]        feat/4764-test-coverage                  -> origin/feat/4764-test-coverage
+2026-06-11T06:07:52.8534186Z  * [new branch]        fix/csrf-cookie-name-clean               -> origin/fix/csrf-cookie-name-clean
+2026-06-11T06:07:52.8535414Z  * [new branch]        fix/csrf-followup                        -> origin/fix/csrf-followup
+2026-06-11T06:07:52.8536532Z  * [new branch]        fix/standardise-csrf-cookie-name         -> origin/fix/standardise-csrf-cookie-name
+2026-06-11T06:07:52.8537498Z  * [new branch]        main                                     -> origin/main
+2026-06-11T06:07:52.8538285Z  * [new ref]           b3720973878bc417e7f0f24d648c82282f7c2c5e -> pull/1/merge
+2026-06-11T06:07:52.8563525Z ##[endgroup]
+2026-06-11T06:07:52.8564327Z ##[group]Determining the checkout info
+2026-06-11T06:07:52.8565546Z ##[endgroup]
+2026-06-11T06:07:52.8572606Z [command]/usr/bin/git sparse-checkout disable
+2026-06-11T06:07:52.8618967Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-06-11T06:07:52.8650864Z ##[group]Checking out the ref
+2026-06-11T06:07:52.8655340Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/1/merge
+2026-06-11T06:07:53.2536096Z Note: switching to 'refs/remotes/pull/1/merge'.
+2026-06-11T06:07:53.2536622Z 
+2026-06-11T06:07:53.2537111Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-06-11T06:07:53.2537879Z changes and commit them, and you can discard any commits you make in this
+2026-06-11T06:07:53.2538637Z state without impacting any branches by switching back to a branch.
+2026-06-11T06:07:53.2539079Z 
+2026-06-11T06:07:53.2539384Z If you want to create a new branch to retain commits you create, you may
+2026-06-11T06:07:53.2540022Z do so (now or later) by using -c with the switch command. Example:
+2026-06-11T06:07:53.2540318Z 
+2026-06-11T06:07:53.2540526Z   git switch -c <new-branch-name>
+2026-06-11T06:07:53.2540720Z 
+2026-06-11T06:07:53.2540872Z Or undo this operation with:
+2026-06-11T06:07:53.2541077Z 
+2026-06-11T06:07:53.2541189Z   git switch -
+2026-06-11T06:07:53.2542870Z 
+2026-06-11T06:07:53.2543398Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-06-11T06:07:53.2543739Z 
+2026-06-11T06:07:53.2544096Z HEAD is now at b3720973 Merge 64eca9f2559f5cebddfa3887c747a17bb85d4381 into 8f1a5348e75d8e8023486b931c94e08db7c06a3a
+2026-06-11T06:07:53.2614906Z ##[endgroup]
+2026-06-11T06:07:53.2670597Z [command]/usr/bin/git log -1 --format=%H
+2026-06-11T06:07:53.2693415Z b3720973878bc417e7f0f24d648c82282f7c2c5e
+2026-06-11T06:07:53.2704221Z ##[group]Removing auth
+2026-06-11T06:07:53.2708191Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-06-11T06:07:53.2740946Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-06-11T06:07:53.2983659Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-06-11T06:07:53.3010334Z http.https://github.com/.extraheader
+2026-06-11T06:07:53.3021582Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-06-11T06:07:53.3052892Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-06-11T06:07:53.3305726Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-06-11T06:07:53.3329527Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-06-11T06:07:53.3573333Z ##[endgroup]
+2026-06-11T06:07:53.3822372Z ##[group]Run actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+2026-06-11T06:07:53.3822809Z with:
+2026-06-11T06:07:53.3823403Z   python-version: 3.12
+2026-06-11T06:07:53.3823689Z   check-latest: false
+2026-06-11T06:07:53.3826525Z   token: ***
+2026-06-11T06:07:53.3826760Z   update-environment: true
+2026-06-11T06:07:53.3827018Z   allow-prereleases: false
+2026-06-11T06:07:53.3827257Z   freethreaded: false
+2026-06-11T06:07:53.3827484Z ##[endgroup]
+2026-06-11T06:07:53.5087597Z ##[group]Installed versions
+2026-06-11T06:07:53.5174276Z Successfully set up CPython (3.12.13)
+2026-06-11T06:07:53.5174927Z ##[endgroup]
+2026-06-11T06:07:53.5325263Z ##[group]Run actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+2026-06-11T06:07:53.5325672Z with:
+2026-06-11T06:07:53.5325888Z   go-version: 1.25.x
+2026-06-11T06:07:53.5326126Z   check-latest: false
+2026-06-11T06:07:53.5328965Z   token: ***
+2026-06-11T06:07:53.5329203Z   cache: true
+2026-06-11T06:07:53.5329411Z env:
+2026-06-11T06:07:53.5329689Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-06-11T06:07:53.5330150Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.13/x64/lib/pkgconfig
+2026-06-11T06:07:53.5330824Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-06-11T06:07:53.5331230Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-06-11T06:07:53.5331616Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-06-11T06:07:53.5331991Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.13/x64/lib
+2026-06-11T06:07:53.5332318Z ##[endgroup]
+2026-06-11T06:07:53.6998442Z Setup go version spec 1.25.x
+2026-06-11T06:07:53.7045741Z Found in cache @ /opt/hostedtoolcache/go/1.25.10/x64
+2026-06-11T06:07:53.7050034Z Added go to the path
+2026-06-11T06:07:53.7054047Z Successfully set up Go version 1.25.x
+2026-06-11T06:07:54.2988455Z [command]/opt/hostedtoolcache/go/1.25.10/x64/bin/go env GOMODCACHE
+2026-06-11T06:07:54.3019853Z [command]/opt/hostedtoolcache/go/1.25.10/x64/bin/go env GOCACHE
+2026-06-11T06:07:54.3044052Z /home/runner/go/pkg/mod
+2026-06-11T06:07:54.3069172Z /home/runner/.cache/go-build
+2026-06-11T06:07:54.3096053Z ##[warning]Restore cache failed: Dependencies file is not found in /home/runner/work/mcp-context-forge/mcp-context-forge. Supported file pattern: go.sum
+2026-06-11T06:07:54.3114292Z go version go1.25.10 linux/amd64
+2026-06-11T06:07:54.3114512Z 
+2026-06-11T06:07:54.3114819Z ##[group]go env
+2026-06-11T06:07:54.4281653Z AR='ar'
+2026-06-11T06:07:54.4282011Z CC='gcc'
+2026-06-11T06:07:54.4282337Z CGO_CFLAGS='-O2 -g'
+2026-06-11T06:07:54.4282717Z CGO_CPPFLAGS=''
+2026-06-11T06:07:54.4283138Z CGO_CXXFLAGS='-O2 -g'
+2026-06-11T06:07:54.4283484Z CGO_ENABLED='1'
+2026-06-11T06:07:54.4283710Z CGO_FFLAGS='-O2 -g'
+2026-06-11T06:07:54.4283936Z CGO_LDFLAGS='-O2 -g'
+2026-06-11T06:07:54.4284161Z CXX='g++'
+2026-06-11T06:07:54.4284394Z GCCGO='gccgo'
+2026-06-11T06:07:54.4284625Z GO111MODULE=''
+2026-06-11T06:07:54.4284838Z GOAMD64='v1'
+2026-06-11T06:07:54.4285042Z GOARCH='amd64'
+2026-06-11T06:07:54.4285284Z GOAUTH='netrc'
+2026-06-11T06:07:54.4285514Z GOBIN=''
+2026-06-11T06:07:54.4285756Z GOCACHE='/home/runner/.cache/go-build'
+2026-06-11T06:07:54.4286075Z GOCACHEPROG=''
+2026-06-11T06:07:54.4286289Z GODEBUG=''
+2026-06-11T06:07:54.4286510Z GOENV='/home/runner/.config/go/env'
+2026-06-11T06:07:54.4286772Z GOEXE=''
+2026-06-11T06:07:54.4287007Z GOEXPERIMENT=''
+2026-06-11T06:07:54.4287246Z GOFIPS140='off'
+2026-06-11T06:07:54.4287470Z GOFLAGS=''
+2026-06-11T06:07:54.4288207Z GOGCCFLAGS='-fPIC -m64 -pthread -Wl,--no-gc-sections -fmessage-length=0 -ffile-prefix-map=/tmp/go-build1853528557=/tmp/go-build -gno-record-gcc-switches'
+2026-06-11T06:07:54.4288957Z GOHOSTARCH='amd64'
+2026-06-11T06:07:54.4289215Z GOHOSTOS='linux'
+2026-06-11T06:07:54.4289460Z GOINSECURE=''
+2026-06-11T06:07:54.4289680Z GOMOD='/dev/null'
+2026-06-11T06:07:54.4289949Z GOMODCACHE='/home/runner/go/pkg/mod'
+2026-06-11T06:07:54.4290249Z GONOPROXY=''
+2026-06-11T06:07:54.4290483Z GONOSUMDB=''
+2026-06-11T06:07:54.4290699Z GOOS='linux'
+2026-06-11T06:07:54.4290954Z GOPATH='/home/runner/go'
+2026-06-11T06:07:54.4291213Z GOPRIVATE=''
+2026-06-11T06:07:54.4291522Z GOPROXY='https://proxy.golang.org,direct'
+2026-06-11T06:07:54.4291892Z GOROOT='/opt/hostedtoolcache/go/1.25.10/x64'
+2026-06-11T06:07:54.4292222Z GOSUMDB='sum.golang.org'
+2026-06-11T06:07:54.4292488Z GOTELEMETRY='local'
+2026-06-11T06:07:54.4292791Z GOTELEMETRYDIR='/home/runner/.config/go/telemetry'
+2026-06-11T06:07:54.4293396Z GOTMPDIR=''
+2026-06-11T06:07:54.4293637Z GOTOOLCHAIN='auto'
+2026-06-11T06:07:54.4293992Z GOTOOLDIR='/opt/hostedtoolcache/go/1.25.10/x64/pkg/tool/linux_amd64'
+2026-06-11T06:07:54.4294378Z GOVCS=''
+2026-06-11T06:07:54.4294901Z GOVERSION='go1.25.10'
+2026-06-11T06:07:54.4295154Z GOWORK=''
+2026-06-11T06:07:54.4295388Z PKG_CONFIG='pkg-config'
+2026-06-11T06:07:54.4295549Z 
+2026-06-11T06:07:54.4295935Z ##[endgroup]
+2026-06-11T06:07:54.4467559Z ##[group]Run astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+2026-06-11T06:07:54.4467958Z with:
+2026-06-11T06:07:54.4468188Z   activate-environment: false
+2026-06-11T06:07:54.4468450Z   no-project: false
+2026-06-11T06:07:54.4468795Z   working-directory: /home/runner/work/mcp-context-forge/mcp-context-forge
+2026-06-11T06:07:54.4471951Z   github-token: ***
+2026-06-11T06:07:54.4472184Z   enable-cache: auto
+2026-06-11T06:07:54.4472751Z   cache-dependency-glob: **/*requirements*.txt
+**/*requirements*.in
+**/*constraints*.txt
+**/*constraints*.in
+**/pyproject.toml
+**/uv.lock
+**/*.py.lock
+
+2026-06-11T06:07:54.4473615Z   restore-cache: true
+2026-06-11T06:07:54.4473862Z   save-cache: true
+2026-06-11T06:07:54.4474083Z   prune-cache: true
+2026-06-11T06:07:54.4474304Z   cache-python: false
+2026-06-11T06:07:54.4474545Z   ignore-nothing-to-cache: false
+2026-06-11T06:07:54.4474817Z   ignore-empty-workdir: false
+2026-06-11T06:07:54.4475083Z   add-problem-matchers: true
+2026-06-11T06:07:54.4475385Z   resolution-strategy: highest
+2026-06-11T06:07:54.4475632Z env:
+2026-06-11T06:07:54.4475907Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-06-11T06:07:54.4476353Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.13/x64/lib/pkgconfig
+2026-06-11T06:07:54.4476783Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-06-11T06:07:54.4477167Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-06-11T06:07:54.4477541Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-06-11T06:07:54.4477916Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.13/x64/lib
+2026-06-11T06:07:54.4478245Z ##[endgroup]
+2026-06-11T06:07:54.6249344Z Trying to find version for uv in: /home/runner/work/mcp-context-forge/mcp-context-forge/uv.toml
+2026-06-11T06:07:54.6250369Z Could not find file: /home/runner/work/mcp-context-forge/mcp-context-forge/uv.toml
+2026-06-11T06:07:54.6251412Z Trying to find version for uv in: /home/runner/work/mcp-context-forge/mcp-context-forge/pyproject.toml
+2026-06-11T06:07:54.6269015Z Found version for uv in /home/runner/work/mcp-context-forge/mcp-context-forge/pyproject.toml: >=0.11.6
+2026-06-11T06:07:54.6272797Z Found minimum version specifier, using latest version
+2026-06-11T06:07:54.6274363Z Fetching manifest data from https://raw.githubusercontent.com/astral-sh/versions/main/v1/uv.ndjson ...
+2026-06-11T06:07:54.6827735Z Downloading uv from "https://releases.astral.sh/github/uv/releases/download/0.11.20/uv-x86_64-unknown-linux-gnu.tar.gz" ...
+2026-06-11T06:07:54.8650817Z [command]/usr/bin/tar xz --warning=no-unknown-keyword --overwrite -C /home/runner/work/_temp/43b68a70-c1bc-4bcf-b8ca-dee5481b3e46 -f /home/runner/work/_temp/34189c88-74c6-4bc1-a8bb-a0d182c5200b
+2026-06-11T06:07:55.3706804Z Added /home/runner/.local/bin to the path
+2026-06-11T06:07:55.3710232Z Added /opt/hostedtoolcache/uv/0.11.20/x86_64 to the path
+2026-06-11T06:07:55.3734852Z Set UV_PYTHON_INSTALL_DIR to /home/runner/work/_temp/uv-python-dir
+2026-06-11T06:07:55.3735829Z Added /home/runner/work/_temp/uv-python-dir to the path
+2026-06-11T06:07:55.3740147Z Set UV_CACHE_DIR to /home/runner/work/_temp/setup-uv-cache
+2026-06-11T06:07:55.3740725Z Successfully installed uv version 0.11.20
+2026-06-11T06:07:55.4654241Z Searching files using cache dependency glob: /home/runner/work/mcp-context-forge/mcp-context-forge/**/*requirements*.txt,/home/runner/work/mcp-context-forge/mcp-context-forge/**/*requirements*.in,/home/runner/work/mcp-context-forge/mcp-context-forge/**/*constraints*.txt,/home/runner/work/mcp-context-forge/mcp-context-forge/**/*constraints*.in,/home/runner/work/mcp-context-forge/mcp-context-forge/**/pyproject.toml,/home/runner/work/mcp-context-forge/mcp-context-forge/**/uv.lock,/home/runner/work/mcp-context-forge/mcp-context-forge/**/*.py.lock
+2026-06-11T06:07:55.5439384Z /home/runner/work/mcp-context-forge/mcp-context-forge/crates/request_logging_masking_native_extension/pyproject.toml
+2026-06-11T06:07:55.5920465Z /home/runner/work/mcp-context-forge/mcp-context-forge/docs/requirements.txt
+2026-06-11T06:07:55.6040918Z /home/runner/work/mcp-context-forge/mcp-context-forge/mcp-servers/python/compliance_reference_server/pyproject.toml
+2026-06-11T06:07:55.6070628Z /home/runner/work/mcp-context-forge/mcp-context-forge/mcp-servers/python/data_analysis_server/pyproject.toml
+2026-06-11T06:07:55.6076960Z /home/runner/work/mcp-context-forge/mcp-context-forge/mcp-servers/python/data_analysis_server/requirements.txt
+2026-06-11T06:07:55.6132189Z /home/runner/work/mcp-context-forge/mcp-context-forge/mcp-servers/python/graphviz_server/pyproject.toml
+2026-06-11T06:07:55.6151616Z /home/runner/work/mcp-context-forge/mcp-context-forge/mcp-servers/python/mcp-rss-search/pyproject.toml
+2026-06-11T06:07:55.6236044Z /home/runner/work/mcp-context-forge/mcp-context-forge/mcp-servers/python/mcp_eval_server/pyproject.toml
+2026-06-11T06:07:55.6254918Z /home/runner/work/mcp-context-forge/mcp-context-forge/mcp-servers/python/output_schema_test_server/pyproject.toml
+2026-06-11T06:07:55.6276702Z /home/runner/work/mcp-context-forge/mcp-context-forge/mcp-servers/python/python_sandbox_server/pyproject.toml
+2026-06-11T06:07:55.6298063Z /home/runner/work/mcp-context-forge/mcp-context-forge/mcp-servers/python/url_to_markdown_server/pyproject.toml
+2026-06-11T06:07:55.6384490Z /home/runner/work/mcp-context-forge/mcp-context-forge/mcp-servers/templates/python/{{cookiecutter.project_slug}}/pyproject.toml
+2026-06-11T06:07:55.6885689Z /home/runner/work/mcp-context-forge/mcp-context-forge/plugins/external/cedar/pyproject.toml
+2026-06-11T06:07:55.6940667Z /home/runner/work/mcp-context-forge/mcp-context-forge/plugins/external/llmguard/pyproject.toml
+2026-06-11T06:07:55.6982614Z /home/runner/work/mcp-context-forge/mcp-context-forge/plugins/external/opa/pyproject.toml
+2026-06-11T06:07:55.7060649Z /home/runner/work/mcp-context-forge/mcp-context-forge/plugins/requirements.txt
+2026-06-11T06:07:55.7163372Z /home/runner/work/mcp-context-forge/mcp-context-forge/pyproject.toml
+2026-06-11T06:07:55.7478730Z /home/runner/work/mcp-context-forge/mcp-context-forge/tests/load/requirements.txt
+2026-06-11T06:07:55.7732728Z /home/runner/work/mcp-context-forge/mcp-context-forge/tests/populate/requirements.txt
+2026-06-11T06:07:55.8341236Z /home/runner/work/mcp-context-forge/mcp-context-forge/uv.lock
+2026-06-11T06:07:55.8364752Z Found 20 files to hash.
+2026-06-11T06:07:55.8437996Z Trying to restore cache from GitHub Actions cache with key: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.12.13-pruned-8a945f8219937a20d4427bf882b4cadcde8e336a6c9fcff65959c8f4db1aac8a
+2026-06-11T06:07:55.8951040Z Cache hit for: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.12.13-pruned-8a945f8219937a20d4427bf882b4cadcde8e336a6c9fcff65959c8f4db1aac8a
+2026-06-11T06:07:56.1263949Z Received 7590950 of 7590950 (100.0%), 40.4 MBs/sec
+2026-06-11T06:07:56.1264705Z Cache Size: ~7 MB (7590950 B)
+2026-06-11T06:07:56.1313670Z [command]/usr/bin/tar -xf /home/runner/work/_temp/6d09e739-d6d4-47a9-b6e8-23879a440f63/cache.tzst -P -C /home/runner/work/mcp-context-forge/mcp-context-forge --use-compress-program unzstd
+2026-06-11T06:07:56.1886452Z Cache restored successfully
+2026-06-11T06:07:56.1895240Z cache restored from GitHub Actions cache with key: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.12.13-pruned-8a945f8219937a20d4427bf882b4cadcde8e336a6c9fcff65959c8f4db1aac8a
+2026-06-11T06:07:56.2563630Z ##[group]Run make --no-print-directory pre-commit
+2026-06-11T06:07:56.2564133Z [36;1mmake --no-print-directory pre-commit[0m
+2026-06-11T06:07:56.2597592Z shell: /usr/bin/bash -e {0}
+2026-06-11T06:07:56.2597884Z env:
+2026-06-11T06:07:56.2598190Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-06-11T06:07:56.2598657Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.13/x64/lib/pkgconfig
+2026-06-11T06:07:56.2599117Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-06-11T06:07:56.2599532Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-06-11T06:07:56.2599936Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.13/x64
+2026-06-11T06:07:56.2600334Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.13/x64/lib
+2026-06-11T06:07:56.2600773Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+2026-06-11T06:07:56.2601168Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+2026-06-11T06:07:56.2601488Z ##[endgroup]
+2026-06-11T06:07:56.6432964Z 🪄  Running pre-commit hooks...
+2026-06-11T06:07:56.8633750Z Using CPython 3.12.13 interpreter at: /opt/hostedtoolcache/Python/3.12.13/x64/bin/python3
+2026-06-11T06:07:56.8634358Z Creating virtual environment at: .venv
+2026-06-11T06:07:56.8639303Z Activate with: .venv/bin/activate
+2026-06-11T06:07:56.8660305Z ✅  Virtual env created.
+2026-06-11T06:07:56.8660781Z 💡  Enter it with:
+2026-06-11T06:07:56.8661563Z     . /home/runner/work/mcp-context-forge/mcp-context-forge/.venv/bin/activate
+2026-06-11T06:07:56.8662037Z 
+2026-06-11T06:07:56.8677768Z 📦 Installing pre-commit in /home/runner/work/mcp-context-forge/mcp-context-forge/.venv...
+2026-06-11T06:07:57.5040054Z [INFO] Initializing environment for https://github.com/pre-commit/pre-commit-hooks.
+2026-06-11T06:07:57.6717294Z [INFO] Initializing environment for https://github.com/sirosen/texthooks.
+2026-06-11T06:07:57.8710037Z [INFO] Initializing environment for https://github.com/adrienverge/yamllint.
+2026-06-11T06:07:58.0703318Z [INFO] Initializing environment for https://github.com/Lucas-C/pre-commit-hooks.
+2026-06-11T06:07:58.2359250Z [INFO] Initializing environment for https://github.com/econchick/interrogate.
+2026-06-11T06:07:58.4207013Z [INFO] Initializing environment for https://github.com/ibm/detect-secrets.
+2026-06-11T06:07:58.6302534Z [INFO] Installing environment for https://github.com/pre-commit/pre-commit-hooks.
+2026-06-11T06:07:58.6303723Z [INFO] Once installed this environment will be reused.
+2026-06-11T06:07:58.6304184Z [INFO] This may take a few minutes...
+2026-06-11T06:08:02.5071503Z [INFO] Installing environment for https://github.com/sirosen/texthooks.
+2026-06-11T06:08:02.5072294Z [INFO] Once installed this environment will be reused.
+2026-06-11T06:08:02.5072854Z [INFO] This may take a few minutes...
+2026-06-11T06:08:05.2921759Z [INFO] Installing environment for https://github.com/adrienverge/yamllint.
+2026-06-11T06:08:05.2922586Z [INFO] Once installed this environment will be reused.
+2026-06-11T06:08:05.2923211Z [INFO] This may take a few minutes...
+2026-06-11T06:08:08.3639295Z [INFO] Installing environment for https://github.com/Lucas-C/pre-commit-hooks.
+2026-06-11T06:08:08.3640120Z [INFO] Once installed this environment will be reused.
+2026-06-11T06:08:08.3640499Z [INFO] This may take a few minutes...
+2026-06-11T06:08:11.6711782Z [INFO] Installing environment for https://github.com/econchick/interrogate.
+2026-06-11T06:08:11.6712604Z [INFO] Once installed this environment will be reused.
+2026-06-11T06:08:11.6713385Z [INFO] This may take a few minutes...
+2026-06-11T06:08:14.8111515Z [INFO] Installing environment for https://github.com/ibm/detect-secrets.
+2026-06-11T06:08:14.8112207Z [INFO] Once installed this environment will be reused.
+2026-06-11T06:08:14.8112575Z [INFO] This may take a few minutes...
+2026-06-11T06:08:19.9702036Z 🔐 Detect Private Key....................................................Passed
+2026-06-11T06:08:26.8485462Z 🔄 Alembic - Check for Multiple Heads....................................Passed
+2026-06-11T06:08:27.7347879Z 🔄 Alembic - Check for Branches..........................................Passed
+2026-06-11T06:08:28.5579785Z ❌ Forbid :contentReference..............................................Passed
+2026-06-11T06:08:29.3793228Z ❌ Forbid OpenAI Citations...............................................Passed
+2026-06-11T06:08:35.1460184Z ❌ Forbid AI Stock Phrases...............................................Passed
+2026-06-11T06:08:36.0184414Z ❌ Forbid Placeholder Citations..........................................Passed
+2026-06-11T06:08:36.5290403Z ❌ Forbid Source Placeholders............................................Passed
+2026-06-11T06:08:37.3594900Z ❌ Forbid Malformed Code Fences..........................................Passed
+2026-06-11T06:08:41.0197975Z ⚠️ Warn AI Transition Phrases............................................Passed
+2026-06-11T06:08:41.0198732Z - hook id: warn-ai-transitions
+2026-06-11T06:08:41.0199205Z - duration: 3.42s
+2026-06-11T06:08:42.3190956Z 📝 Normalize Smart Quotes................................................Passed
+2026-06-11T06:08:43.1073729Z 🔡 Normalize Ligatures...................................................Passed
+2026-06-11T06:08:43.8948879Z ␣ Normalize Unicode Spaces...............................................Passed
+2026-06-11T06:08:44.9881333Z 🚫 Forbid BiDi Unicode Controls..........................................Passed
+2026-06-11T06:08:45.3030192Z 🧹 Fix End of Files......................................................Passed
+2026-06-11T06:08:45.9144172Z 🧹 Trim Trailing Whitespace..............................................Failed
+2026-06-11T06:08:45.9144881Z - hook id: trailing-whitespace
+2026-06-11T06:08:46.1468858Z - exit code: 1
+2026-06-11T06:08:46.1469320Z - files were modified by this hook
+2026-06-11T06:08:46.1469641Z 
+2026-06-11T06:08:46.1469922Z Fixing tests/unit/mcpgateway/utils/test_csrf.py
+2026-06-11T06:08:46.1470267Z 
+2026-06-11T06:08:46.1470439Z pre-commit hook(s) made changes.
+2026-06-11T06:08:46.1471225Z If you are seeing this message in CI, reproduce locally with: `pre-commit run --all-files`.
+2026-06-11T06:08:46.1472130Z To run `pre-commit` as part of git workflow, use `pre-commit install`.
+2026-06-11T06:08:46.1472743Z All changes made by hooks:
+2026-06-11T06:08:46.1473677Z diff --git a/tests/unit/mcpgateway/utils/test_csrf.py b/tests/unit/mcpgateway/utils/test_csrf.py
+2026-06-11T06:08:46.1474438Z index be9ad187..f96e68c6 100644
+2026-06-11T06:08:46.1474920Z --- a/tests/unit/mcpgateway/utils/test_csrf.py
+2026-06-11T06:08:46.1475444Z +++ b/tests/unit/mcpgateway/utils/test_csrf.py
+2026-06-11T06:08:46.1475995Z @@ -39,13 +39,13 @@ def test_generate_csrf_token():
+2026-06-11T06:08:46.1476500Z  def test_set_csrf_cookie():
+2026-06-11T06:08:46.1477000Z      response = MagicMock(spec=Response)
+2026-06-11T06:08:46.1477633Z      token = "test_token_of_correct_length_1234567890123"
+2026-06-11T06:08:46.1478110Z -    
+2026-06-11T06:08:46.1478397Z +
+2026-06-11T06:08:46.1478972Z      with patch("mcpgateway.utils.csrf.settings") as mock_settings:
+2026-06-11T06:08:46.1479778Z          mock_settings.environment = "production"
+2026-06-11T06:08:46.1480397Z          mock_settings.token_expiry = 60
+2026-06-11T06:08:46.1480811Z -        
+2026-06-11T06:08:46.1481151Z +
+2026-06-11T06:08:46.1481608Z          set_csrf_cookie(response, token)
+2026-06-11T06:08:46.1481915Z -        
+2026-06-11T06:08:46.1482111Z +
+2026-06-11T06:08:46.1482453Z          response.set_cookie.assert_called_once_with(
+2026-06-11T06:08:46.1482866Z              key="csrf_token",
+2026-06-11T06:08:46.1483375Z              value=token,
+2026-06-11T06:08:46.1483684Z @@ -60,7 +60,7 @@ def test_get_csrf_token_from_cookie():
+2026-06-11T06:08:46.1484067Z      request = MagicMock(spec=Request)
+2026-06-11T06:08:46.1484489Z      request.cookies = {"csrf_token": "test_token"}
+2026-06-11T06:08:46.1484961Z      assert get_csrf_token_from_cookie(request) == "test_token"
+2026-06-11T06:08:46.1485306Z -    
+2026-06-11T06:08:46.1485502Z +
+2026-06-11T06:08:46.1485749Z      request.cookies = {}
+2026-06-11T06:08:46.1486492Z      assert get_csrf_token_from_cookie(request) is None
+2026-06-11T06:08:46.1486800Z  
+2026-06-11T06:08:46.1487051Z @@ -68,7 +68,7 @@ def test_get_csrf_token_from_header():
+2026-06-11T06:08:46.1487424Z      request = MagicMock(spec=Request)
+2026-06-11T06:08:46.1487829Z      request.headers = {"X-CSRF-Token": "test_token"}
+2026-06-11T06:08:46.1488267Z      assert get_csrf_token_from_header(request) == "test_token"
+2026-06-11T06:08:46.1488587Z -    
+2026-06-11T06:08:46.1488778Z +
+2026-06-11T06:08:46.1489016Z      request.headers = {}
+2026-06-11T06:08:46.1489361Z      assert get_csrf_token_from_header(request) is None
+2026-06-11T06:08:46.1489651Z  
+2026-06-11T06:08:46.1489889Z @@ -77,7 +77,7 @@ def test_validate_csrf_token_success():
+2026-06-11T06:08:46.1490247Z      token = generate_csrf_token()
+2026-06-11T06:08:46.1490600Z      request.cookies = {"csrf_token": token}
+2026-06-11T06:08:46.1490973Z      request.headers = {"X-CSRF-Token": token}
+2026-06-11T06:08:46.1491258Z -    
+2026-06-11T06:08:46.1491446Z +
+2026-06-11T06:08:46.1491835Z      # Should not raise exception
+2026-06-11T06:08:46.1492161Z      validate_csrf_token(request)
+2026-06-11T06:08:46.1492405Z  
+2026-06-11T06:08:46.1492732Z @@ -85,7 +85,7 @@ def test_validate_csrf_token_missing_cookie(mock_raise_auth_error):
+2026-06-11T06:08:46.1493362Z      request = MagicMock(spec=Request)
+2026-06-11T06:08:46.1493674Z      request.cookies = {}
+2026-06-11T06:08:46.1494019Z      request.headers = {"X-CSRF-Token": "test_token"}
+2026-06-11T06:08:46.1494311Z -    
+2026-06-11T06:08:46.1494500Z +
+2026-06-11T06:08:46.1494801Z      with pytest.raises(MockAuthError) as exc_info:
+2026-06-11T06:08:46.1495192Z          validate_csrf_token(request)
+2026-06-11T06:08:46.1495591Z      assert exc_info.value.code == "csrf_missing_cookie"
+2026-06-11T06:08:46.1496055Z @@ -95,7 +95,7 @@ def test_validate_csrf_token_missing_header(mock_raise_auth_error):
+2026-06-11T06:08:46.1496590Z      token = generate_csrf_token()
+2026-06-11T06:08:46.1496978Z      request.cookies = {"csrf_token": token}
+2026-06-11T06:08:46.1497328Z      request.headers = {}
+2026-06-11T06:08:46.1497566Z -    
+2026-06-11T06:08:46.1497764Z +
+2026-06-11T06:08:46.1498068Z      with pytest.raises(MockAuthError) as exc_info:
+2026-06-11T06:08:46.1498469Z          validate_csrf_token(request)
+2026-06-11T06:08:46.1498855Z      assert exc_info.value.code == "csrf_missing_header"
+2026-06-11T06:08:46.1499351Z @@ -105,7 +105,7 @@ def test_validate_csrf_token_invalid_cookie_format(mock_raise_auth_error):
+2026-06-11T06:08:46.1499830Z      token = generate_csrf_token()
+2026-06-11T06:08:46.1500206Z      request.cookies = {"csrf_token": "short_token"}
+2026-06-11T06:08:46.1500592Z      request.headers = {"X-CSRF-Token": token}
+2026-06-11T06:08:46.1500878Z -    
+2026-06-11T06:08:46.1501077Z +
+2026-06-11T06:08:46.1501372Z      with pytest.raises(MockAuthError) as exc_info:
+2026-06-11T06:08:46.1501880Z          validate_csrf_token(request)
+2026-06-11T06:08:46.1502261Z      assert exc_info.value.code == "csrf_invalid_format"
+2026-06-11T06:08:46.1502735Z @@ -115,7 +115,7 @@ def test_validate_csrf_token_invalid_header_format(mock_raise_auth_error):
+2026-06-11T06:08:46.1503379Z      token = generate_csrf_token()
+2026-06-11T06:08:46.1503726Z      request.cookies = {"csrf_token": token}
+2026-06-11T06:08:46.1504123Z      request.headers = {"X-CSRF-Token": "short_token"}
+2026-06-11T06:08:46.1504427Z -    
+2026-06-11T06:08:46.1504629Z +
+2026-06-11T06:08:46.1504930Z      with pytest.raises(MockAuthError) as exc_info:
+2026-06-11T06:08:46.1505318Z          validate_csrf_token(request)
+2026-06-11T06:08:46.1505697Z      assert exc_info.value.code == "csrf_invalid_format"
+2026-06-11T06:08:46.1506161Z @@ -124,14 +124,14 @@ def test_validate_csrf_token_mismatch(mock_raise_auth_error):
+2026-06-11T06:08:46.1506615Z      request = MagicMock(spec=Request)
+2026-06-11T06:08:46.1506949Z      token1 = generate_csrf_token()
+2026-06-11T06:08:46.1507279Z      token2 = generate_csrf_token()
+2026-06-11T06:08:46.1507537Z -    
+2026-06-11T06:08:46.1507737Z +
+2026-06-11T06:08:46.1508146Z      # Ensure they are different
+2026-06-11T06:08:46.1508467Z      while token1 == token2:
+2026-06-11T06:08:46.1508809Z          token2 = generate_csrf_token()
+2026-06-11T06:08:46.1509084Z -        
+2026-06-11T06:08:46.1509283Z +
+2026-06-11T06:08:46.1509575Z      request.cookies = {"csrf_token": token1}
+2026-06-11T06:08:46.1509959Z      request.headers = {"X-CSRF-Token": token2}
+2026-06-11T06:08:46.1510247Z -    
+2026-06-11T06:08:46.1510440Z +
+2026-06-11T06:08:46.1510751Z      with pytest.raises(MockAuthError) as exc_info:
+2026-06-11T06:08:46.1511149Z          validate_csrf_token(request)
+2026-06-11T06:08:46.1511520Z      assert exc_info.value.code == "csrf_mismatch"
+2026-06-11T06:08:46.1511859Z @@ -141,19 +141,19 @@ def test_require_csrf():
+2026-06-11T06:08:46.1512203Z      token = generate_csrf_token()
+2026-06-11T06:08:46.1512551Z      request.cookies = {"csrf_token": token}
+2026-06-11T06:08:46.1512913Z      request.headers = {"X-CSRF-Token": token}
+2026-06-11T06:08:46.1513369Z -    
+2026-06-11T06:08:46.1513696Z +
+2026-06-11T06:08:46.1513932Z      # Should not raise
+2026-06-11T06:08:46.1514219Z      require_csrf(request)
+2026-06-11T06:08:46.1514456Z  
+2026-06-11T06:08:46.1514679Z  def test_clear_csrf_cookie():
+2026-06-11T06:08:46.1515004Z      response = MagicMock(spec=Response)
+2026-06-11T06:08:46.1515277Z -    
+2026-06-11T06:08:46.1515474Z +
+2026-06-11T06:08:46.1515836Z      with patch("mcpgateway.utils.csrf.settings") as mock_settings:
+2026-06-11T06:08:46.1516323Z          mock_settings.csrf_cookie_secure = True
+2026-06-11T06:08:46.1516763Z          mock_settings.csrf_cookie_samesite = "strict"
+2026-06-11T06:08:46.1517066Z -        
+2026-06-11T06:08:46.1517269Z +
+2026-06-11T06:08:46.1517547Z          clear_csrf_cookie(response)
+2026-06-11T06:08:46.1517814Z -        
+2026-06-11T06:08:46.1518005Z +
+2026-06-11T06:08:46.1518345Z          response.set_cookie.assert_called_once_with(
+2026-06-11T06:08:46.1518737Z              key="csrf_token",
+2026-06-11T06:08:46.1519040Z              value="",
+2026-06-11T06:08:46.1519342Z @@ -169,9 +169,9 @@ def test_clear_csrf_cookie_with_cfg():
+2026-06-11T06:08:46.1519706Z      mock_cfg = MagicMock()
+2026-06-11T06:08:46.1520030Z      mock_cfg.csrf_cookie_secure = False
+2026-06-11T06:08:46.1520381Z      mock_cfg.csrf_cookie_samesite = "lax"
+2026-06-11T06:08:46.1520659Z -    
+2026-06-11T06:08:46.1520855Z +
+2026-06-11T06:08:46.1521147Z      clear_csrf_cookie(response, cfg=mock_cfg)
+2026-06-11T06:08:46.1521441Z -    
+2026-06-11T06:08:46.1521629Z +
+2026-06-11T06:08:46.1521925Z      response.set_cookie.assert_called_once_with(
+2026-06-11T06:08:46.1522292Z          key="csrf_token",
+2026-06-11T06:08:46.1522566Z          value="",
+2026-06-11T06:08:46.1705624Z make: *** [Makefile:4185: pre-commit] Error 1
+2026-06-11T06:08:46.1717092Z ##[error]Process completed with exit code 2.
+2026-06-11T06:08:46.1798070Z Post job cleanup.
+2026-06-11T06:08:46.2623291Z [command]/usr/bin/git version
+2026-06-11T06:08:46.2692151Z git version 2.54.0
+2026-06-11T06:08:46.2726637Z Temporarily overriding HOME='/home/runner/work/_temp/717bed0e-383c-4e7f-b6ea-2d58140a7223' before making global git config changes
+2026-06-11T06:08:46.2727523Z Adding repository directory to the temporary git global config as a safe directory
+2026-06-11T06:08:46.2732060Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/mcp-context-forge/mcp-context-forge
+2026-06-11T06:08:46.2768143Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-06-11T06:08:46.2802208Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-06-11T06:08:46.3047095Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-06-11T06:08:46.3081829Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-06-11T06:08:46.3325596Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-06-11T06:08:46.3357894Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-06-11T06:08:46.3738503Z Cleaning up orphan processes
+2026-06-11T06:08:46.4042053Z ##[warning]Node.js 20 actions are deprecated. The following actions are running on Node.js 20 and may not work as expected: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff. Actions will be forced to run with Node.js 24 by default starting June 16th, 2026. Node.js 20 will be removed from the runner on September 16th, 2026. Please check if updated versions of these actions are available that support Node.js 24. To opt into Node.js 24 now, set the FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true environment variable on the runner or in your workflow file. Once Node.js 24 becomes the default, you can temporarily opt out by setting ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

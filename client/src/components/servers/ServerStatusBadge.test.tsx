@@ -57,4 +57,3 @@ describe("ServerStatusBadge", () => {
     expect(screen.getByText("Active")).toBeInTheDocument();
   });
 });
-
