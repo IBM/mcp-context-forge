@@ -700,3 +700,96 @@ async def test_csrf_form_post_without_header_is_rejected_without_consuming_body(
     request.body.assert_not_awaited()
     mock_csrf_service.validate_csrf_token.assert_not_called()
     call_next.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/metrics/cleanup",
+        "/api/metrics/rollup",
+        "/toolops/validation/generate_testcases",
+        "/toolops/enrichment/enrich_tool",
+        "/toolops/validation/execute_tool_nl_testcases",
+        "/tokens",
+        "/tokens/",
+        "/teams/123/join",
+        "/teams/456/join-requests/789/approve",
+        "/llmchat/connect",
+        "/llmchat/disconnect",
+        "/api/logs/search",
+    ],
+)
+async def test_post_to_issue_5151_exempt_paths_passes_without_csrf_token(path):
+    """Paths added for issue #5151 must pass CSRF middleware without a CSRF token."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = path
+    request.headers = {}
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings:
+        mock_settings.csrf_enabled = True
+        mock_settings.auth_required = True
+        mock_settings.csrf_exempt_paths = [
+            "/health",
+            "/auth/login",
+            "/auth/logout",
+            "/auth/refresh",
+            "/auth/email/login",
+            "/auth/email/register",
+            "/auth/email/forgot-password",
+            "/auth/email/reset-password",
+            "/admin",
+            "/admin/login",
+            "/admin/forgot-password",
+            "/admin/reset-password",
+            "/oauth/fetch-tools",
+            "/docs",
+            "/redoc",
+            "/openapi.json",
+            "/metrics",
+            "/mcp/",
+            "/sse",
+            "/message",
+            "/rpc",
+            "/api/metrics/",
+            "/toolops/",
+            "/tokens",
+            "/teams/",
+            "/llmchat/",
+            "/api/logs/",
+        ]
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200, f"Expected 200 for {path}, got {response.status_code}"
+    call_next.assert_awaited_once_with(request)
+
+
+def test_csrf_exempt_paths_default_contains_issue_5151_paths():
+    """config.py default_factory must include all paths added for issue #5151.
+
+    Tests the default_factory directly (not a Settings() instance) so the
+    assertion is not affected by CSRF_EXEMPT_PATHS env var overrides.
+    """
+    from mcpgateway.config import Settings
+
+    defaults = Settings.model_fields["csrf_exempt_paths"].default_factory()
+    required = ["/api/metrics/", "/toolops/", "/tokens", "/teams/", "/llmchat/", "/api/logs/"]
+    missing = [p for p in required if p not in defaults]
+    assert not missing, f"csrf_exempt_paths default_factory missing: {missing}"
+
+
+def test_csrf_exempt_paths_default_contains_admin_subpaths():
+    """config.py default_factory must include /admin/login etc — regression for env drift.
+
+    Tests the default_factory directly so env var overrides don't mask gaps.
+    """
+    from mcpgateway.config import Settings
+
+    defaults = Settings.model_fields["csrf_exempt_paths"].default_factory()
+    for path in ["/admin/login", "/admin/forgot-password", "/admin/reset-password", "/rpc"]:
+        assert path in defaults, f"Expected '{path}' in csrf_exempt_paths default_factory, got: {defaults}"
