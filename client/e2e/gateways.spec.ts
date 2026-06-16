@@ -204,7 +204,128 @@ test.describe("Gateways page", () => {
 
     await expect(page.getByRole("menuitem", { name: "Edit server" })).toHaveCount(0);
     await expect(page.getByRole("menuitem", { name: "Deactivate" })).toHaveCount(0);
-    await expect(page.getByRole("menuitem", { name: "Delete" })).toHaveCount(0);
+    const deleteItem = page.getByRole("menuitem", { name: "Delete" });
+    await expect(deleteItem).toBeVisible();
+    await expect(deleteItem).not.toHaveAttribute("data-disabled", "");
+  });
+
+  test("confirms and deletes a virtual server", async ({ page }) => {
+    let isDeleted = false;
+    let listRequestCount = 0;
+    let deleteRequestCount = 0;
+
+    await page.route("**/servers?*", async (route) => {
+      listRequestCount += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ servers: isDeleted ? [] : [MOCK_VIRTUAL_SERVER] }),
+      });
+    });
+    await page.route(`**/servers/${MOCK_VIRTUAL_SERVER.id}`, async (route) => {
+      expect(route.request().method()).toBe("DELETE");
+      deleteRequestCount += 1;
+      isDeleted = true;
+      await route.fulfill({ status: 204 });
+    });
+
+    await page.goto(APP.GATEWAYS);
+    await page.waitForLoadState("networkidle");
+
+    await expect(page.getByText("testVS")).toBeVisible();
+
+    await page.getByRole("button", { name: "Actions for testVS" }).click();
+    await page.getByRole("menuitem", { name: "Delete" }).click();
+
+    const dialog = page.getByRole("dialog", { name: "Delete virtual server" });
+    await expect(dialog).toBeVisible();
+    await expect(
+      dialog.getByText("Are you sure you want to delete testVS? This action cannot be undone."),
+    ).toBeVisible();
+
+    await dialog.getByRole("button", { name: "Delete" }).click();
+
+    await expect.poll(() => deleteRequestCount).toBe(1);
+    await expect.poll(() => listRequestCount).toBeGreaterThan(1);
+    await expect(page.getByText("testVS")).toHaveCount(0);
+    await expect(page.getByRole("status")).toContainText("testVS deleted.");
+  });
+
+  test("shows delete progress while a virtual server delete is pending", async ({ page }) => {
+    let deleteRequestCount = 0;
+    let releaseDelete: () => void;
+    const deleteCanFinish = new Promise<void>((resolve) => {
+      releaseDelete = resolve;
+    });
+
+    await page.route("**/servers?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ servers: [MOCK_VIRTUAL_SERVER] }),
+      });
+    });
+    await page.route(`**/servers/${MOCK_VIRTUAL_SERVER.id}`, async (route) => {
+      expect(route.request().method()).toBe("DELETE");
+      deleteRequestCount += 1;
+      await deleteCanFinish;
+      await route.fulfill({ status: 204 });
+    });
+
+    await page.goto(APP.GATEWAYS);
+    await page.waitForLoadState("networkidle");
+
+    await page.getByRole("button", { name: "Actions for testVS" }).click();
+    await page.getByRole("menuitem", { name: "Delete" }).click();
+
+    const dialog = page.getByRole("dialog", { name: "Delete virtual server" });
+    await dialog.getByRole("button", { name: "Delete" }).click();
+
+    const deletingButton = dialog.getByRole("button", { name: /Deleting/i });
+    await expect(deletingButton).toBeDisabled();
+    await expect(deletingButton).toHaveAttribute("aria-busy", "true");
+    await expect(dialog.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    await expect.poll(() => deleteRequestCount).toBe(1);
+
+    releaseDelete!();
+    await expect(dialog).toHaveCount(0);
+    await expect.poll(() => deleteRequestCount).toBe(1);
+  });
+
+  test("shows delete failures in a toast instead of the page content", async ({ page }) => {
+    let deleteRequestCount = 0;
+
+    await page.route("**/servers?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ servers: [MOCK_VIRTUAL_SERVER] }),
+      });
+    });
+    await page.route(`**/servers/${MOCK_VIRTUAL_SERVER.id}`, async (route) => {
+      expect(route.request().method()).toBe("DELETE");
+      deleteRequestCount += 1;
+      await route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Forbidden" }),
+      });
+    });
+
+    await page.goto(APP.GATEWAYS);
+    await page.waitForLoadState("networkidle");
+
+    await page.getByRole("button", { name: "Actions for testVS" }).click();
+    await page.getByRole("menuitem", { name: "Delete" }).click();
+
+    const dialog = page.getByRole("dialog", { name: "Delete virtual server" });
+    await dialog.getByRole("button", { name: "Delete" }).click();
+
+    await expect.poll(() => deleteRequestCount).toBe(1);
+    await expect(page.getByText("Error deleting virtual server")).toBeVisible();
+    await expect(page.getByText("You don't have permission to perform this action.")).toBeVisible();
+    await expect(page.getByRole("main").getByText("Error deleting virtual server")).toHaveCount(0);
+    await expect(page.getByText("testVS")).toBeVisible();
   });
 
   test("opens virtual server details panel from row actions", async ({ page }) => {

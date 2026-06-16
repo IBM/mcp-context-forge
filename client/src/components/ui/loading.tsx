@@ -1,19 +1,26 @@
 import { useIntl } from "react-intl";
+import { cn } from "@/lib/utils";
 
-export function Loading() {
+export function Loading({ variant = "page" }: { variant?: "page" | "inline" }) {
   const intl = useIntl();
   const label = intl.formatMessage({ id: "common.loading" });
+  const isInline = variant === "inline";
 
   return (
-    <div className="flex min-h-[calc(100vh-200px)] items-center justify-center">
+    <div
+      className={cn(
+        "flex items-center justify-center",
+        isInline ? "size-4" : "min-h-[calc(100vh-200px)]",
+      )}
+    >
       <div
         role="status"
         aria-live="polite"
         aria-label={label}
-        className="flex flex-col items-center justify-center gap-4"
+        className={cn("flex items-center justify-center", isInline ? "size-4" : "flex-col gap-4")}
       >
         <svg
-          className="h-16 w-16"
+          className={cn(isInline ? "size-4" : "h-16 w-16")}
           xmlns="http://www.w3.org/2000/svg"
           width="22"
           height="20"
@@ -35,13 +42,15 @@ export function Loading() {
             style={{ animationDuration: "1.5s" }}
           />
         </svg>
-        <div
-          aria-hidden="true"
-          className="text-xl font-extrabold leading-none tracking-normal text-center animate-pulse"
-          style={{ animationDuration: "1.5s" }}
-        >
-          Context Forge
-        </div>
+        {!isInline && (
+          <div
+            aria-hidden="true"
+            className="text-xl font-extrabold leading-none tracking-normal text-center animate-pulse"
+            style={{ animationDuration: "1.5s" }}
+          >
+            Context Forge
+          </div>
+        )}
       </div>
     </div>
   );
