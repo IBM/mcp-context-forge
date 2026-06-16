@@ -70,7 +70,7 @@ The project uses a custom build hook (`build_hooks/__init__.py`) that automatica
 ```bash
 make dist
 # or manually:
-BUILD_UI_ASSETS=1 python -m build
+BUILD_UI_ASSETS=true python -m build
 ```
 
 This automatically:
@@ -83,7 +83,7 @@ This automatically:
 
 **Prerequisites**: Node.js and npm must be installed.
 
-**Note**: The `BUILD_UI_ASSETS=1` env var is required to trigger the npm build. Without it, the hook is skipped (preventing unintended `package-lock.json` mutations during `uv sync` or `pip install`).
+**Note**: The `BUILD_UI_ASSETS=true` env var is required to trigger the npm build. Without it, the hook is skipped (preventing unintended `package-lock.json` mutations during `uv sync` or `pip install`).
 
 **Output**: `dist/mcp_contextforge_gateway-{version}-py3-none-any.whl` and `.tar.gz`
 
