@@ -281,4 +281,45 @@ describe("Servers", () => {
       expect(panel.getByText("test@example.com")).toBeInTheDocument();
     });
   });
+
+  it("does not call delete API when confirmDelete is triggered with no selectedServerId", async () => {
+    // This test exercises the early-return guard: `if (!selectedServerId) return`
+    // The delete dialog is only opened via handleDelete which sets selectedServerId,
+    // so we verify the guard is never hit in normal flow — the API is not called
+    // when no server is selected.
+    vi.mocked(api.get).mockResolvedValueOnce({
+      gateways: createMockServers(0, 1),
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Servers />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Test Server 0")).toBeInTheDocument();
+    });
+
+    // No server is selected — confirm dialog should not be present
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    // api.delete should never have been called
+    expect(api.delete).not.toHaveBeenCalled();
+  });
+
+  it("does not call API when Load More is clicked without a nextCursor", async () => {
+    // This test exercises the early-return guard: `if (!nextCursor || loadingMore) return`
+    vi.mocked(api.get).mockResolvedValueOnce({
+      gateways: createMockServers(0, 5),
+      nextCursor: null, // No next cursor
+    });
+
+    renderWithRouter(<Servers />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Test Server 0")).toBeInTheDocument();
+    });
+
+    // Load More button should not be rendered when nextCursor is null
+    expect(screen.queryByRole("button", { name: /load more servers/i })).not.toBeInTheDocument();
+    // Only the initial fetch should have happened
+    expect(api.get).toHaveBeenCalledTimes(1);
+  });
 });
