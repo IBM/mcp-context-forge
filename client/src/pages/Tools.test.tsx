@@ -825,7 +825,7 @@ describe("Tools", () => {
         expect(screen.getByRole("dialog")).toBeInTheDocument();
       });
       const dialog = screen.getByRole("dialog");
-      expect(within(dialog).getByText("Delete Tool")).toBeInTheDocument();
+      expect(within(dialog).getByText("Delete tool")).toBeInTheDocument();
       // Dialog description includes the tool name (createMockTool has no displayName, falls back to name)
       expect(
         within(dialog).getByText(/Are you sure you want to delete "Tool 1"/),
