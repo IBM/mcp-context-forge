@@ -1116,6 +1116,187 @@ class TestStreamAgentResponseMetricsAndTimestamps:
                                         )
 
 
+class TestStreamAgentResponseAuthDecryptionErrors:
+    """Test auth decryption error paths (a2a_service.py:2807)."""
+
+    @pytest.mark.asyncio
+    async def test_stream_auth_decryption_generic_error(self, a2a_service, mock_db, sample_streaming_agent):
+        """Test generic auth decryption error path (covers a2a_service.py:2807)."""
+        sample_streaming_agent.auth_type = "custom"
+        sample_streaming_agent.auth_value = "encrypted-value"
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_streaming_agent.id
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_streaming_agent):
+            with patch.object(a2a_service, "_check_agent_access", return_value=True):
+                with patch("mcpgateway.services.a2a_service.prepare_a2a_invocation") as mock_prepare:
+                    mock_prepare.side_effect = Exception("Generic preparation error")
+
+                    chunks = []
+                    async for chunk in a2a_service.stream_agent_response(
+                        db=mock_db,
+                        agent_name="test-streaming-agent",
+                        parameters={"test": "value"},
+                        user_email="test@example.com",
+                        token_teams=None,
+                        interaction_type="invoke",
+                    ):
+                        chunks.append(chunk)
+
+                    assert len(chunks) == 1
+                    assert "Failed to prepare A2A invocation" in chunks[0]
+
+
+class TestStreamAgentResponseBinaryChunkAccumulation:
+    """Test binary chunk accumulation logic (a2a_service.py:2960-2963, 2965)."""
+
+    @pytest.mark.asyncio
+    async def test_stream_binary_chunk_accumulation_limit(self, a2a_service, mock_db, sample_streaming_agent):
+        """Test binary chunk accumulation stops at size limit (covers a2a_service.py:2960-2963, 2965)."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_streaming_agent.id
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_streaming_agent):
+            with patch.object(a2a_service, "_check_agent_access", return_value=True):
+                with patch("mcpgateway.services.a2a_service.prepare_a2a_invocation") as mock_prepare:
+                    mock_prepared = MagicMock()
+                    mock_prepared.headers = {}
+                    mock_prepared.sensitive_query_param_names = []
+                    mock_prepare.return_value = mock_prepared
+
+                    large_binary_chunk = b"\x00\x01\x02" * 50000
+
+                    with patch.object(a2a_service, "_get_plugin_manager", return_value=None):
+                        with patch("mcpgateway.services.a2a_service.get_http_client") as mock_client_fn:
+                            mock_response = AsyncMock()
+                            mock_response.status_code = 200
+
+                            async def mock_aiter_bytes():
+                                yield large_binary_chunk
+                                yield large_binary_chunk
+
+                            mock_response.aiter_bytes = mock_aiter_bytes
+
+                            mock_client = AsyncMock()
+                            mock_client.stream = MagicMock()
+                            mock_client.stream.return_value.__aenter__.return_value = mock_response
+                            mock_client_fn.return_value = mock_client
+
+                            with patch("mcpgateway.services.a2a_service.fresh_db_session"):
+                                with patch("mcpgateway.services.a2a_service.get_metrics_buffer_service"):
+                                    chunks = []
+                                    async for chunk in a2a_service.stream_agent_response(
+                                        db=mock_db,
+                                        agent_name="test-streaming-agent",
+                                        parameters={"test": "value"},
+                                        user_email="test@example.com",
+                                        token_teams=None,
+                                        interaction_type="invoke",
+                                    ):
+                                        chunks.append(chunk)
+
+                                    assert len(chunks) == 2
+
+
+class TestStreamAgentResponseTextChunkAccumulationLimit:
+    """Test text chunk accumulation limit (a2a_service.py:2950)."""
+
+    @pytest.mark.asyncio
+    async def test_stream_text_chunk_accumulation_stops_at_limit(self, a2a_service, mock_db, sample_streaming_agent):
+        """Test text chunk accumulation stops at size limit (covers a2a_service.py:2950)."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_streaming_agent.id
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_streaming_agent):
+            with patch.object(a2a_service, "_check_agent_access", return_value=True):
+                with patch("mcpgateway.services.a2a_service.prepare_a2a_invocation") as mock_prepare:
+                    mock_prepared = MagicMock()
+                    mock_prepared.headers = {}
+                    mock_prepared.sensitive_query_param_names = []
+                    mock_prepare.return_value = mock_prepared
+
+                    large_text_chunk = "x" * 60000
+
+                    with patch.object(a2a_service, "_get_plugin_manager", return_value=None):
+                        with patch("mcpgateway.services.a2a_service.get_http_client") as mock_client_fn:
+                            mock_response = AsyncMock()
+                            mock_response.status_code = 200
+
+                            async def mock_aiter_bytes():
+                                yield large_text_chunk.encode()
+                                yield large_text_chunk.encode()
+
+                            mock_response.aiter_bytes = mock_aiter_bytes
+
+                            mock_client = AsyncMock()
+                            mock_client.stream = MagicMock()
+                            mock_client.stream.return_value.__aenter__.return_value = mock_response
+                            mock_client_fn.return_value = mock_client
+
+                            with patch("mcpgateway.services.a2a_service.fresh_db_session"):
+                                with patch("mcpgateway.services.a2a_service.get_metrics_buffer_service"):
+                                    chunks = []
+                                    async for chunk in a2a_service.stream_agent_response(
+                                        db=mock_db,
+                                        agent_name="test-streaming-agent",
+                                        parameters={"test": "value"},
+                                        user_email="test@example.com",
+                                        token_teams=None,
+                                        interaction_type="invoke",
+                                    ):
+                                        chunks.append(chunk)
+
+                                    assert len(chunks) == 2
+
+
+class TestStreamAgentResponseInputCapture:
+    """Test input capture for observability (a2a_service.py:2884)."""
+
+    @pytest.mark.asyncio
+    async def test_stream_input_capture_enabled(self, a2a_service, mock_db, sample_streaming_agent, monkeypatch):
+        """Test that input is captured when enabled (covers a2a_service.py:2884)."""
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.observability_enabled", True)
+        monkeypatch.setattr("mcpgateway.services.a2a_service.is_input_capture_enabled", lambda x: True)
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_streaming_agent.id
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_streaming_agent):
+            with patch.object(a2a_service, "_check_agent_access", return_value=True):
+                with patch("mcpgateway.services.a2a_service.prepare_a2a_invocation") as mock_prepare:
+                    mock_prepared = MagicMock()
+                    mock_prepared.headers = {}
+                    mock_prepared.sensitive_query_param_names = []
+                    mock_prepare.return_value = mock_prepared
+
+                    with patch.object(a2a_service, "_get_plugin_manager", return_value=None):
+                        with patch("mcpgateway.services.a2a_service.get_http_client") as mock_client_fn:
+                            mock_response = AsyncMock()
+                            mock_response.status_code = 200
+
+                            async def mock_aiter_bytes():
+                                yield b"test"
+
+                            mock_response.aiter_bytes = mock_aiter_bytes
+
+                            mock_client = AsyncMock()
+                            mock_client.stream = MagicMock()
+                            mock_client.stream.return_value.__aenter__.return_value = mock_response
+                            mock_client_fn.return_value = mock_client
+
+                            with patch("mcpgateway.services.a2a_service.fresh_db_session"):
+                                with patch("mcpgateway.services.a2a_service.get_metrics_buffer_service"):
+                                    chunks = []
+                                    async for chunk in a2a_service.stream_agent_response(
+                                        db=mock_db,
+                                        agent_name="test-streaming-agent",
+                                        parameters={"test": "value"},
+                                        user_email="test@example.com",
+                                        token_teams=None,
+                                        interaction_type="invoke",
+                                    ):
+                                        chunks.append(chunk)
+
+                                    assert len(chunks) > 0
+
+
 class TestStreamAgentResponseCoverageGaps:
     """Tests to reach 93% coverage - missing error paths and edge cases."""
 
