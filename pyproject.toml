@@ -7,6 +7,10 @@
 requires = ["setuptools>=78.1.1", "wheel>=0.46.2"]
 build-backend = "setuptools.build_meta"
 
+# Custom build hook to generate UI assets before packaging
+[tool.setuptools.cmdclass]
+build_py = "mcpgateway.tools.builder.build_hooks.BuildPyWithUI"
+
 [tool.uv]
 exclude-newer = "10 days"
 
