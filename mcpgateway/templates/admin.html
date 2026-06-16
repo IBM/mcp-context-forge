@@ -3890,8 +3890,12 @@
                 <input
                   type="text"
                   name="jsonpath_filter"
+                  placeholder="$.main"
                   class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
+                <p class="mt-1 text-xs text-gray-500 dark:text-indigo-300">
+                  Filter to extract a subset of the JSON response. Supports JSONPath (e.g., <code>$.main</code>) and jq (e.g., <code>.main</code>) syntax.
+                </p>
               </div>
               <!-- Authentication Section -->
               <div>

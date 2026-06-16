@@ -47,6 +47,7 @@ from cpex.framework import (
 from cpex.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 import httpx
 import jq
+from jsonpath_ng.ext import parse as jsonpath_parse
 import jsonschema
 from jsonschema import Draft4Validator, Draft6Validator, Draft7Validator, validators
 from mcp import ClientSession, types
@@ -724,6 +725,20 @@ def extract_using_jq(data, jq_filter=""):
     elif not isinstance(data, (dict, list)):
         # If the input is not a string, dict, or list, raise an error
         return ["Input data must be a JSON string, dictionary, or list."]
+
+    # Check if the filter is a JSONPath expression (starts with $)
+    if jq_filter_str.startswith("$"):
+        try:
+            jsonpath_expr = jsonpath_parse(jq_filter_str)
+            matches = [m.value for m in jsonpath_expr.find(data)]
+            if not matches:
+                return [TextContent(type="text", text="Error applying jsonpath filter")]
+            if len(matches) == 1:
+                return matches[0]
+            return matches
+        except Exception as e:
+            message = "Error applying jsonpath filter: " + str(e)
+            return [TextContent(type="text", text=message)]
 
     # Apply the jq filter to the data using cached compiled program
     try:
@@ -4447,6 +4462,7 @@ class ToolService(BaseService):
         # ═══════════════════════════════════════════════════════════════════════════
         # First-Party
         from mcpgateway.transports.context import request_headers_var  # pylint: disable=import-outside-toplevel
+
         if request_headers:
             request_headers_var.set(request_headers)
         # ═══════════════════════════════════════════════════════════════════════════
