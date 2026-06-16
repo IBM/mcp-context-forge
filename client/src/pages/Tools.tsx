@@ -269,7 +269,7 @@ export function Tools() {
             open={deleteDialogOpen}
             onOpenChange={setDeleteDialogOpen}
             onConfirm={confirmDelete}
-            title="Delete Tool"
+            title="Delete tool"
             description={`Are you sure you want to delete "${selectedToolName}"? This action cannot be undone.`}
             confirmLabel="Delete"
             variant="destructive"
