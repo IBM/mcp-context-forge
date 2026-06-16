@@ -569,4 +569,3 @@ describe("UserForm", () => {
     });
   });
 });
-
