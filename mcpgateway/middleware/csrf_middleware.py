@@ -105,9 +105,8 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         if request.method in SAFE_METHODS:
             return await call_next(request)
 
-        # 2b. Skip the trusted-internal dispatch. The skip is contingent on the full
-        # trust gate (loopback + HMAC + runtime marker + auth context), not merely a
-        # URL prefix, so no externally reachable path is left CSRF-free.
+        # Skip CSRF for the trusted-internal dispatch. Gated on the full trust
+        # check, not a URL prefix, so no externally reachable path is CSRF-free.
         if is_trusted_internal_mcp_request(request):
             return await call_next(request)
 

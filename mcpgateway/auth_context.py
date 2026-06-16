@@ -310,8 +310,7 @@ def has_valid_internal_mcp_runtime_auth_header(request: Request) -> bool:
     return hmac.compare_digest(provided, _expected_internal_mcp_runtime_auth_header())
 
 
-# Internal-dispatch trust gate, shared by main and token_scoping so the trust
-# decision is defined in exactly one place.
+# Internal-dispatch trust gate, defined once and shared by all callers.
 INTERNAL_MCP_PATH_PREFIX = "/_internal/mcp"
 INTERNAL_A2A_PATH_PREFIX = "/_internal/a2a"
 INTERNAL_RUNTIME_MARKER_HEADER = "x-contextforge-mcp-runtime"
@@ -320,13 +319,10 @@ TRUSTED_INTERNAL_RUNTIME_MARKERS = frozenset({"rust", "affinity"})
 
 
 def _internal_path_requires_auth_context(path: str) -> bool:
-    """Auth context is required for every internal route except ``*/authenticate``.
+    """Whether an internal route requires an auth context.
 
-    The ``/authenticate`` endpoints create the context, so they are the only
-    internal routes exempt from the requirement; everything else under the
-    internal prefixes must carry it. Encoding it as a rule (rather than a
-    positive route whitelist) keeps the gate correct as new internal routes are
-    added.
+    Only ``*/authenticate`` is exempt, since it creates the context; every
+    other internal route must carry one.
 
     Args:
         path: The request path to classify.

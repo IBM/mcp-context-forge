@@ -200,9 +200,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if not self.enabled:
             return await call_next(request)
 
-        # Trusted-internal dispatch (loopback + HMAC + runtime marker + auth context):
-        # the in-process replay of an already-rate-limited edge request must not be
-        # counted a second time.
+        # Skip rate limiting for the trusted-internal dispatch; the edge request was already counted.
         if is_trusted_internal_mcp_request(request):
             return await call_next(request)
 

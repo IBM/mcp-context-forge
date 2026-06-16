@@ -88,9 +88,7 @@ class TokenUsageMiddleware:
             await self.app(scope, receive, send)
             return
 
-        # Skip the trusted-internal dispatch (loopback + HMAC + runtime marker + auth
-        # context): the edge request that triggered it is already recorded, so the
-        # in-process replay must not log a second usage row.
+        # Skip usage logging for the trusted-internal dispatch; the edge request is already recorded.
         if is_trusted_internal_mcp_request(Request(scope), path=path):
             await self.app(scope, receive, send)
             return

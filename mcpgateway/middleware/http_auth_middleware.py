@@ -164,9 +164,7 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
         Returns:
             The response from the application
         """
-        # Trusted-internal dispatch (loopback + HMAC + runtime marker + auth context):
-        # HTTP auth plugin hooks already ran for the originating edge request, so the
-        # in-process replay must not re-fire them.
+        # Skip HTTP auth hooks for the trusted-internal dispatch; they already ran on the edge request.
         if is_trusted_internal_mcp_request(request):
             return await call_next(request)
 
