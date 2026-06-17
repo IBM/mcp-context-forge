@@ -133,7 +133,12 @@ jobs:
   # Build each platform in parallel
   # ---------------------------------------------------------------
   build:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    # `needs: wheels` would otherwise force this job (all matrix entries,
+    # including amd64) to skip whenever `wheels` itself skips (e.g. on PR
+    # events) — GitHub's default `needs` gate requires success, and treats
+    # skipped the same as failed. `always() && needs.wheels.result != 'failure'`
+    # tolerates a skipped wheels job while still failing fast if it errored.
+    if: always() && needs.wheels.result != 'failure' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     needs: wheels
     name: Build ${{ matrix.suffix }}
     strategy:
