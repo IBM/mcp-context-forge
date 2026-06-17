@@ -1524,3 +1524,40 @@ class TestStreamAgentResponseCoverageGaps:
                         chunks.append(chunk)
 
                     assert len(chunks) > 0
+
+    @pytest.mark.asyncio
+    async def test_stream_content_type_metadata_assignment(self, a2a_service, mock_db, sample_streaming_agent):
+        """Test content_type assignment in agent metadata (covers a2a_service.py:2838-2840)."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_streaming_agent.id
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_streaming_agent):
+            with patch.object(a2a_service, "_check_agent_access", return_value=True):
+                with patch("mcpgateway.services.a2a_service.prepare_a2a_invocation") as mock_prep:
+                    mock_prep.return_value = MagicMock(headers={}, sensitive_query_param_names=[])
+
+                    # Mock plugin manager to trigger metadata building
+                    mock_plugin_mgr = MagicMock()
+                    with patch.object(a2a_service, "_get_plugin_manager", return_value=mock_plugin_mgr):
+                        with patch("mcpgateway.services.a2a_service.get_http_client") as mock_client:
+                            resp = AsyncMock(status_code=200)
+                            resp.aiter_bytes = AsyncMock(return_value=iter([b"ok"]))
+                            client = AsyncMock()
+                            client.stream = MagicMock()
+                            client.stream.return_value.__aenter__.return_value = resp
+                            mock_client.return_value = client
+
+                            with patch("mcpgateway.services.a2a_service.fresh_db_session"):
+                                with patch("mcpgateway.services.a2a_service.get_metrics_buffer_service"):
+                                    chunks = []
+                                    async for chunk in a2a_service.stream_agent_response(
+                                        db=mock_db,
+                                        agent_name="test-streaming-agent",
+                                        parameters={},
+                                        user_email="test@example.com",
+                                        token_teams=None,
+                                        interaction_type="invoke",
+                                        content_type="application/json",  # Trigger content_type path
+                                    ):
+                                        chunks.append(chunk)
+
+                                    assert len(chunks) > 0
