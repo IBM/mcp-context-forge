@@ -15,6 +15,7 @@ spec:
   # Job configuration
   backoffLimit: {{ .Values.migration.backoffLimit }}
   activeDeadlineSeconds: {{ .Values.migration.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: {{ .Values.migration.ttlSecondsAfterFinished | default 300 }}
 
   template:
     metadata:
@@ -40,6 +41,7 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             runAsNonRoot: true
+            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
@@ -127,9 +129,18 @@ spec:
             {{- if .Values.mcpContextForge.extraEnvFrom }}
             {{- toYaml .Values.mcpContextForge.extraEnvFrom | nindent 12 }}
             {{- end }}
+          # Volume mounts for writable directories
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
           # Resource limits
           resources:
 {{- toYaml .Values.migration.resources | nindent 12 }}
+
+      volumes:
+        - name: tmp
+          emptyDir: {}
 
       {{- if .Values.global.imagePullSecrets }}
       imagePullSecrets:
