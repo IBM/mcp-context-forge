@@ -13,7 +13,7 @@ export interface Tool {
   enabled: boolean;
   reachable: boolean;
   executionCount?: number;
-  tags: string[];
+  tags: Array<{ id: string; label: string } | string>;
   integrationType: string;
   requestType: string;
   url?: string | null;
@@ -24,6 +24,15 @@ export interface Tool {
   team?: string;
   teamId?: string;
   ownerEmail?: string;
+  auth?: {
+    authType?: string;
+    username?: string;
+    password?: string;
+    token?: string;
+    authHeaderKey?: string;
+    authHeaderValue?: string;
+    authHeaders?: Array<{ key: string; value: string }>;
+  };
   createdAt: string;
   updatedAt: string;
   createdBy?: string;

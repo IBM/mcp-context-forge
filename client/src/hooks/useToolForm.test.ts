@@ -294,7 +294,7 @@ describe("useToolForm", () => {
       expect(headers[0].value).toBe("valuewithnull");
     });
 
-    it("sends auth_header_key and auth_header_value when maxCustomHeaders is 1", () => {
+    it("sends authHeaderKey and authHeaderValue when maxCustomHeaders is 1", () => {
       const { result } = renderHook(() => useToolForm({ maxCustomHeaders: 1 }));
 
       act(() => {
@@ -524,6 +524,124 @@ describe("useToolForm", () => {
 
       expect(isValid!).toBe(true);
       expect(result.current.errors).toEqual({});
+    });
+  });
+
+  describe("Edit mode (toolId provided)", () => {
+    it("initializes form state from initialValues", () => {
+      const { result } = renderHook(() =>
+        useToolForm({
+          toolId: "tool-1",
+          initialValues: {
+            name: "existing-tool",
+            url: "https://api.example.com",
+            requestType: "GET",
+            visibility: "private",
+            authType: "bearer",
+            bearerToken: "my-token",
+          },
+        }),
+      );
+
+      expect(result.current.name).toBe("existing-tool");
+      expect(result.current.url).toBe("https://api.example.com");
+      expect(result.current.requestType).toBe("GET");
+      expect(result.current.visibility).toBe("private");
+      expect(result.current.authType).toBe("bearer");
+      expect(result.current.bearerToken).toBe("my-token");
+    });
+
+    it("sends PUT request when toolId is provided", async () => {
+      const putSpy = vi.fn(() => HttpResponse.json({ id: "tool-1" }, { status: 200 }));
+      server.use(http.put("*/tools/tool-1", putSpy));
+
+      const { result } = renderHook(() =>
+        useToolForm({
+          toolId: "tool-1",
+          initialValues: {
+            name: "my-tool",
+            url: "https://api.example.com",
+            integrationType: "REST",
+            requestType: "POST",
+          },
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleSubmit({
+          preventDefault: vi.fn(),
+        } as unknown as FormEvent<HTMLFormElement>);
+      });
+
+      await waitFor(() => expect(putSpy).toHaveBeenCalledOnce());
+    });
+
+    it("does not send POST request when toolId is provided", async () => {
+      const postSpy = vi.fn(() => HttpResponse.json({ id: "tool-1" }, { status: 201 }));
+      const putSpy = vi.fn(() => HttpResponse.json({ id: "tool-1" }, { status: 200 }));
+      server.use(http.post("*/tools", postSpy));
+      server.use(http.put("*/tools/tool-1", putSpy));
+
+      const { result } = renderHook(() =>
+        useToolForm({
+          toolId: "tool-1",
+          initialValues: {
+            name: "my-tool",
+            url: "https://api.example.com",
+            integrationType: "REST",
+            requestType: "POST",
+          },
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleSubmit({
+          preventDefault: vi.fn(),
+        } as unknown as FormEvent<HTMLFormElement>);
+      });
+
+      await waitFor(() => expect(putSpy).toHaveBeenCalledOnce());
+      expect(postSpy).not.toHaveBeenCalled();
+    });
+
+    it("sends POST request when no toolId (create mode)", async () => {
+      const postSpy = vi.fn(() => HttpResponse.json({ id: "tool-new" }, { status: 201 }));
+      server.use(http.post("*/tools", postSpy));
+
+      const { result } = renderHook(() => useToolForm());
+
+      act(() => {
+        result.current.setName("new-tool");
+        result.current.setUrl("https://api.example.com");
+      });
+
+      await act(async () => {
+        await result.current.handleSubmit({
+          preventDefault: vi.fn(),
+        } as unknown as FormEvent<HTMLFormElement>);
+      });
+
+      await waitFor(() => expect(postSpy).toHaveBeenCalledOnce());
+    });
+
+    it("initializes customHeaders from initialValues", () => {
+      const headers = [
+        { id: "1", key: "X-Api-Key", value: "secret" },
+        { id: "2", key: "X-Tenant", value: "acme" },
+      ];
+      const { result } = renderHook(() =>
+        useToolForm({ toolId: "tool-1", initialValues: { customHeaders: headers } }),
+      );
+
+      expect(result.current.customHeaders).toEqual(headers);
+    });
+
+    it("opens advanced settings when initialValues.advancedOpen is true", () => {
+      const { result } = renderHook(() =>
+        useToolForm({ toolId: "tool-1", initialValues: { advancedOpen: true } }),
+      );
+
+      expect(result.current.advancedOpen).toBe(true);
     });
   });
 

@@ -1,26 +1,76 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ChevronDown, Copy, RefreshCw, Wrench, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ToolAdvancedSettings } from "@/components/tools/ToolAdvancedSettings";
-import { useToolForm, type RequestType } from "@/hooks/useToolForm";
+import { useToolForm, type RequestType, type SchemaMode, type AuthType } from "@/hooks/useToolForm";
+import type { Tool } from "@/types/tool";
+import type { Visibility } from "@/types/server";
+
+const AUTH_TYPE_FROM_API: Partial<Record<string, AuthType>> = {
+  basic: "basic",
+  bearer: "bearer",
+  authheaders: "custom",
+};
+
+function toolToInitialValues(tool: Tool) {
+  const authType: AuthType = AUTH_TYPE_FROM_API[tool.auth?.authType ?? ""] ?? "none";
+  const customHeaders =
+    tool.auth?.authHeaders && tool.auth.authHeaders.length > 0
+      ? tool.auth.authHeaders.map((h, i) => ({ id: String(i + 1), key: h.key, value: h.value }))
+      : tool.auth?.authHeaderKey
+        ? [{ id: "1", key: tool.auth.authHeaderKey, value: tool.auth.authHeaderValue ?? "" }]
+        : [];
+
+  return {
+    name: tool.customName || tool.originalName,
+    url: tool.url ?? "",
+    description: tool.description ?? "",
+    requestType: tool.requestType as RequestType,
+    integrationType: tool.integrationType,
+    inputSchema: tool.inputSchema ? JSON.stringify(tool.inputSchema, null, 2) : "",
+    outputSchema: tool.outputSchema ? JSON.stringify(tool.outputSchema, null, 2) : "",
+    schemaMode: (tool.inputSchema || tool.outputSchema ? "manual" : "none") as SchemaMode,
+    tags: (tool.tags || []).map((t) => (typeof t === "string" ? t : t.label)).join(", "),
+    visibility: (tool.visibility || "public") as Visibility,
+    teamId: tool.teamId ?? "",
+    authType,
+    authUsername: tool.auth?.username ?? "",
+    authPassword: tool.auth?.password ?? "",
+    bearerToken: tool.auth?.token ?? "",
+    customHeaders,
+    advancedOpen: Boolean(
+      tool.description ||
+      (tool.tags && tool.tags.length > 0) ||
+      tool.visibility !== "public" ||
+      tool.teamId ||
+      authType !== "none",
+    ),
+  };
+}
 
 interface ToolFormProps {
   isOpen: boolean;
   onToggle: () => void;
   onSuccess?: () => void;
+  tool?: Tool;
 }
 
-export function ToolForm({ isOpen, onToggle, onSuccess }: ToolFormProps) {
+export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
   const [copiedInput, setCopiedInput] = useState(false);
   const [copiedOutput, setCopiedOutput] = useState(false);
+
+  const isEditMode = Boolean(tool);
+
+  const initialValues = tool ? toolToInitialValues(tool) : undefined;
 
   const {
     name,
     url,
     description,
     requestType,
+    integrationType,
     advancedOpen,
     visibility,
     teamId,
@@ -60,7 +110,33 @@ export function ToolForm({ isOpen, onToggle, onSuccess }: ToolFormProps) {
     setOpenApiSpecUrl,
     generateSchema,
     handleSubmit,
-  } = useToolForm({ maxCustomHeaders: 1 });
+  } = useToolForm({ maxCustomHeaders: 1, toolId: tool?.id, initialValues });
+
+  // When the full tool is fetched in the background, update auth fields only
+  useEffect(() => {
+    if (!tool?.auth?.authType) return;
+    const newAuthType: AuthType = AUTH_TYPE_FROM_API[tool.auth.authType] ?? "none";
+    setAuthType(newAuthType);
+    setAuthUsername(tool.auth.username ?? "");
+    setAuthPassword(tool.auth.password ?? "");
+    setBearerToken(tool.auth.token ?? "");
+    if (newAuthType !== "none") setAdvancedOpen(true);
+    const headers =
+      tool.auth.authHeaders && tool.auth.authHeaders.length > 0
+        ? tool.auth.authHeaders.map((h, i) => ({ id: String(i + 1), key: h.key, value: h.value }))
+        : tool.auth.authHeaderKey
+          ? [{ id: "1", key: tool.auth.authHeaderKey, value: tool.auth.authHeaderValue ?? "" }]
+          : [];
+    if (headers.length > 0) setCustomHeaders(headers);
+  }, [
+    tool,
+    setAuthType,
+    setAuthUsername,
+    setAuthPassword,
+    setBearerToken,
+    setAdvancedOpen,
+    setCustomHeaders,
+  ]);
 
   const handleCopy = (text: string, setCopied: (v: boolean) => void) => {
     void navigator.clipboard.writeText(text).then(() => {
@@ -95,7 +171,7 @@ export function ToolForm({ isOpen, onToggle, onSuccess }: ToolFormProps) {
                 <Wrench className="h-4 w-4 text-black" />
               </div>
               <h2 className="text-lg font-semibold tracking-tight text-neutral-950 dark:text-neutral-50">
-                Add tool
+                {isEditMode ? "Edit tool" : "Add tool"}
               </h2>
             </div>
 
@@ -105,41 +181,43 @@ export function ToolForm({ isOpen, onToggle, onSuccess }: ToolFormProps) {
           </div>
 
           <form className="space-y-6" onSubmit={onSubmit}>
-            <div className="space-y-3">
-              <label
-                id="request-type-label"
-                className="text-sm font-medium text-neutral-950 dark:text-white"
-              >
-                Request type
-              </label>
-              <div
-                role="radiogroup"
-                aria-labelledby="request-type-label"
-                className="flex gap-2 rounded-md bg-neutral-100 p-1 dark:bg-neutral-800"
-              >
-                {(["GET", "POST", "PUT", "PATCH", "DELETE"] as RequestType[]).map((type) => {
-                  return (
-                    <div key={type} className="flex-1">
-                      <input
-                        type="radio"
-                        id={`request-${type}`}
-                        name="requestType"
-                        value={type}
-                        checked={requestType === type}
-                        onChange={(e) => setRequestType(e.target.value as RequestType)}
-                        className="peer sr-only"
-                      />
-                      <label
-                        htmlFor={`request-${type}`}
-                        className="flex cursor-pointer items-center justify-center rounded-md px-4 py-1 text-sm font-medium text-neutral-500 transition hover:bg-neutral-200 hover:text-neutral-700 peer-checked:bg-neutral-800 peer-checked:text-white peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-300 dark:peer-checked:bg-neutral-950 dark:peer-checked:text-white"
-                      >
-                        {type}
-                      </label>
-                    </div>
-                  );
-                })}
+            {integrationType !== "MCP" && (
+              <div className="space-y-3">
+                <label
+                  id="request-type-label"
+                  className="text-sm font-medium text-neutral-950 dark:text-white"
+                >
+                  Request type
+                </label>
+                <div
+                  role="radiogroup"
+                  aria-labelledby="request-type-label"
+                  className="flex gap-2 rounded-md bg-neutral-100 p-1 dark:bg-neutral-800"
+                >
+                  {(["GET", "POST", "PUT", "PATCH", "DELETE"] as RequestType[]).map((type) => {
+                    return (
+                      <div key={type} className="flex-1">
+                        <input
+                          type="radio"
+                          id={`request-${type}`}
+                          name="requestType"
+                          value={type}
+                          checked={requestType === type}
+                          onChange={(e) => setRequestType(e.target.value as RequestType)}
+                          className="peer sr-only"
+                        />
+                        <label
+                          htmlFor={`request-${type}`}
+                          className="flex cursor-pointer items-center justify-center rounded-md px-4 py-1 text-sm font-medium text-neutral-500 transition hover:bg-neutral-200 hover:text-neutral-700 peer-checked:bg-neutral-800 peer-checked:text-white peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-300 dark:peer-checked:bg-neutral-950 dark:peer-checked:text-white"
+                        >
+                          {type}
+                        </label>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            )}
 
             <div className="space-y-1">
               <label
@@ -385,7 +463,13 @@ export function ToolForm({ isOpen, onToggle, onSuccess }: ToolFormProps) {
                   disabled={!isValid || isSubmitting}
                   className="h-10 rounded-md bg-neutral-950 px-4 text-sm font-medium text-white hover:enabled:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-950 dark:hover:enabled:bg-neutral-200"
                 >
-                  {isSubmitting ? "Adding..." : "Add tool"}
+                  {isSubmitting
+                    ? isEditMode
+                      ? "Updating..."
+                      : "Adding..."
+                    : isEditMode
+                      ? "Update tool"
+                      : "Add tool"}
                 </Button>
               </div>
             </div>

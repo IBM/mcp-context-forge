@@ -24,11 +24,13 @@ export function ToolsTable({
   selectedToolId,
   onSelectTool,
   onDeleteTool,
+  onEditTool,
 }: {
   tools: Tool[];
   selectedToolId?: string | null;
   onSelectTool: (tool: Tool) => void;
   onDeleteTool?: (toolId: string) => void;
+  onEditTool?: (tool: Tool) => void;
 }) {
   const [schemaDialogTool, setSchemaDialogTool] = useState<Tool | null>(null);
   const [isSchemaDialogOpen, setIsSchemaDialogOpen] = useState(false);
@@ -65,17 +67,17 @@ export function ToolsTable({
               <TableCell className="px-4 py-3">
                 <div className="flex min-w-0 items-center">
                   <span className="min-w-0 truncate font-mono text-xs text-muted-foreground">
-                    {tool.originalName}
+                    {tool.customName || tool.originalName}
                   </span>
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon-xs"
-                    aria-label={`Copy ${tool.originalName}`}
+                    aria-label={`Copy ${tool.customName || tool.originalName}`}
                     className="ml-4 size-4 shrink-0 text-muted-foreground hover:text-foreground"
                     onClick={(e) => {
                       e.stopPropagation();
-                      copyToClipboard(tool.originalName);
+                      copyToClipboard(tool.customName || tool.originalName);
                     }}
                   >
                     <Copy className="size-3" />
@@ -128,7 +130,7 @@ export function ToolsTable({
               </TableCell>
 
               <TableCell className="px-4 py-3 text-center">
-                {onDeleteTool ? (
+                {onEditTool || onDeleteTool ? (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button
@@ -145,14 +147,26 @@ export function ToolsTable({
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      <DropdownMenuItem
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDeleteTool(tool.id);
-                        }}
-                      >
-                        Delete
-                      </DropdownMenuItem>
+                      {onEditTool && (
+                        <DropdownMenuItem
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onEditTool(tool);
+                          }}
+                        >
+                          Edit
+                        </DropdownMenuItem>
+                      )}
+                      {onDeleteTool && (
+                        <DropdownMenuItem
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteTool(tool.id);
+                          }}
+                        >
+                          Delete
+                        </DropdownMenuItem>
+                      )}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 ) : (

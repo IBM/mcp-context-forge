@@ -45,7 +45,10 @@ const toolFormObjectSchema = z.object({
     .transform((val) => sanitizeString(val, 500))
     .pipe(z.string().max(500, "Description must be less than 500 characters"))
     .optional(),
-  requestType: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
+  requestType: z
+    .enum(["GET", "POST", "PUT", "PATCH", "DELETE", "STREAMABLEHTTP", "SSE"])
+    .optional(),
+  integrationType: z.string().optional(),
   responseFilter: z
     .string()
     .transform((val) => sanitizeString(val, 500))
@@ -83,15 +86,35 @@ const toolFormSchema = toolFormObjectSchema.superRefine((data, ctx) => {
       path: ["teamId"],
     });
   }
+
+  // Require requestType when integrationType is not "MCP"
+  if (data.integrationType !== "MCP" && !data.requestType) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Request type is required",
+      path: ["requestType"],
+    });
+  }
 });
 
 export type ToolFormData = z.infer<typeof toolFormSchema>;
+
+export interface ApiToolAuth {
+  authType?: string;
+  username?: string;
+  password?: string; // pragma: allowlist secret
+  token?: string;
+  authHeaderKey?: string;
+  authHeaderValue?: string;
+  authHeaders?: Array<{ key: string; value: string }>;
+}
 
 export interface ApiToolPayload {
   tool: {
     name: string;
     url?: string;
     description?: string;
+    integration_type: string;
     request_type: string;
     inputSchema?: Record<string, unknown>;
     outputSchema?: Record<string, unknown>;
@@ -128,6 +151,7 @@ export interface UseToolFormReturn {
   url: string;
   description: string;
   requestType: RequestType;
+  integrationType: string;
   advancedOpen: boolean;
   visibility: Visibility;
   teamId: string;
@@ -198,27 +222,76 @@ const initialState = {
   outputSchema: "",
 };
 
+export interface ToolFormInitialValues {
+  name?: string;
+  url?: string;
+  description?: string;
+  requestType?: RequestType;
+  integrationType?: string;
+  schemaMode?: SchemaMode;
+  inputSchema?: string;
+  outputSchema?: string;
+  tags?: string;
+  visibility?: Visibility;
+  teamId?: string;
+  advancedOpen?: boolean;
+  authType?: AuthType;
+  authUsername?: string;
+  authPassword?: string; // pragma: allowlist secret
+  bearerToken?: string;
+  customHeaders?: CustomHeader[];
+}
+
 export function useToolForm({
   maxCustomHeaders,
-}: { maxCustomHeaders?: number } = {}): UseToolFormReturn {
-  const [name, setName] = useState(initialState.name);
-  const [url, setUrl] = useState(initialState.url);
-  const [description, setDescription] = useState(initialState.description);
-  const [requestType, setRequestType] = useState<RequestType>(initialState.requestType);
-  const [advancedOpen, setAdvancedOpen] = useState(initialState.advancedOpen);
-  const [visibility, setVisibility] = useState(initialState.visibility);
-  const [teamId, setTeamId] = useState(initialState.teamId);
-  const [authType, setAuthType] = useState<AuthType>(initialState.authType);
-  const [authUsername, setAuthUsername] = useState(initialState.authUsername);
-  const [authPassword, setAuthPassword] = useState(initialState.authPassword);
-  const [bearerToken, setBearerToken] = useState(initialState.bearerToken);
-  const [customHeaders, setCustomHeaders] = useState<CustomHeader[]>(initialState.customHeaders);
+  toolId,
+  initialValues,
+}: {
+  maxCustomHeaders?: number;
+  toolId?: string;
+  initialValues?: ToolFormInitialValues;
+} = {}): UseToolFormReturn {
+  const [name, setName] = useState(initialValues?.name ?? initialState.name);
+  const [url, setUrl] = useState(initialValues?.url ?? initialState.url);
+  const [description, setDescription] = useState(
+    initialValues?.description ?? initialState.description,
+  );
+  const [requestType, setRequestType] = useState<RequestType>(
+    (initialValues?.requestType as RequestType) ?? initialState.requestType,
+  );
+  const integrationType = initialValues?.integrationType ?? "REST";
+  const [advancedOpen, setAdvancedOpen] = useState(
+    initialValues?.advancedOpen ?? initialState.advancedOpen,
+  );
+  const [visibility, setVisibility] = useState<Visibility>(
+    (initialValues?.visibility as Visibility) ?? initialState.visibility,
+  );
+  const [teamId, setTeamId] = useState(initialValues?.teamId ?? initialState.teamId);
+  const [authType, setAuthType] = useState<AuthType>(
+    initialValues?.authType ?? initialState.authType,
+  );
+  const [authUsername, setAuthUsername] = useState(
+    initialValues?.authUsername ?? initialState.authUsername,
+  );
+  const [authPassword, setAuthPassword] = useState(
+    initialValues?.authPassword ?? initialState.authPassword,
+  ); // pragma: allowlist secret
+  const [bearerToken, setBearerToken] = useState(
+    initialValues?.bearerToken ?? initialState.bearerToken,
+  );
+  const [customHeaders, setCustomHeaders] = useState<CustomHeader[]>(
+    initialValues?.customHeaders ?? initialState.customHeaders,
+  );
   const [responseFilter, setResponseFilter] = useState(initialState.responseFilter);
-  const [tags, setTags] = useState(initialState.tags);
-  const [inputSchema, setInputSchema] = useState(initialState.inputSchema);
-  const [outputSchema, setOutputSchema] = useState(initialState.outputSchema);
+  const [tags, setTags] = useState(initialValues?.tags ?? initialState.tags);
+  const [inputSchema, setInputSchema] = useState(
+    initialValues?.inputSchema ?? initialState.inputSchema,
+  );
+  const [outputSchema, setOutputSchema] = useState(
+    initialValues?.outputSchema ?? initialState.outputSchema,
+  );
   const [isGeneratingSchema, setIsGeneratingSchema] = useState(false);
-  const [schemaMode, setSchemaMode] = useState<SchemaMode>("none");
+  const [schemaMode, setSchemaMode] = useState<SchemaMode>(initialValues?.schemaMode ?? "none");
   const [openApiSpecUrl, setOpenApiSpecUrl] = useState("");
   const [showSpecUrlInput, setShowSpecUrlInput] = useState(false);
   const [errors, setErrors] = useState<FormErrors>({});
@@ -232,7 +305,17 @@ export function useToolForm({
     },
   );
 
-  const isSubmitting = isCreating;
+  // handleSubmit guards against a missing toolId before calling updateTool,
+  // so this URL is only ever used when toolId is defined.
+  const { execute: updateTool, isLoading: isUpdating } = useQuery<unknown, Record<string, unknown>>(
+    `/tools/${toolId}`,
+    {
+      method: "PUT",
+      enabled: false,
+    },
+  );
+
+  const isSubmitting = isCreating || isUpdating;
 
   const generateSchema = useCallback(async () => {
     if (!url.trim()) return;
@@ -352,6 +435,7 @@ export function useToolForm({
       name: sanitizeString(name, 100),
       url: sanitizeUrl(url, 2000),
       description: description ? sanitizeString(description, 500) : undefined,
+      integration_type: "REST",
       request_type: requestType,
       inputSchema: parseSchemaJson(inputSchema),
       outputSchema: parseSchemaJson(outputSchema),
@@ -442,6 +526,7 @@ export function useToolForm({
         url,
         description: description || undefined,
         requestType,
+        integrationType,
         responseFilter: responseFilter || undefined,
         tags: tags || undefined,
         visibility: visibility || undefined,
@@ -465,6 +550,7 @@ export function useToolForm({
     url,
     description,
     requestType,
+    integrationType,
     responseFilter,
     tags,
     visibility,
@@ -505,7 +591,35 @@ export function useToolForm({
       if (formValid) {
         try {
           const formData = getFormData();
-          const response = await createTool(formData);
+          let response: unknown;
+          if (toolId) {
+            const { request_type } = formData.tool;
+            const REST_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"];
+            const updatePayload = {
+              name: formData.tool.name,
+              url: formData.tool.url,
+              description: formData.tool.description,
+              inputSchema: formData.tool.inputSchema,
+              outputSchema: formData.tool.outputSchema,
+              jsonpath_filter: formData.tool.jsonpath_filter,
+              tags: formData.tool.tags,
+              visibility: formData.tool.visibility,
+              auth_type: formData.tool.auth_type,
+              auth_username: formData.tool.auth_username,
+              auth_password: formData.tool.auth_password, // pragma: allowlist secret
+              auth_token: formData.tool.auth_token,
+              auth_header_key: formData.tool.auth_header_key,
+              auth_header_value: formData.tool.auth_header_value,
+              auth_headers: formData.tool.auth_headers,
+              customName: formData.tool.name,
+              ...(REST_METHODS.includes(request_type)
+                ? { requestType: request_type, integrationType: "REST" }
+                : {}),
+            };
+            response = await updateTool(updatePayload);
+          } else {
+            response = await createTool(formData);
+          }
 
           // Call success callback if provided
           if (onSuccess) {
@@ -515,8 +629,9 @@ export function useToolForm({
           // Reset form after successful submission
           resetForm();
         } catch (error) {
-          // Handle API errors from useQuery
-          let errorMessage = "Failed to create tool. Please try again.";
+          let errorMessage = toolId
+            ? "Failed to update tool. Please try again."
+            : "Failed to create tool. Please try again.";
 
           if (error && typeof error === "object" && "body" in error) {
             const errorWithBody = error as {
@@ -550,7 +665,7 @@ export function useToolForm({
         }
       }
     },
-    [validateForm, getFormData, createTool, resetForm],
+    [validateForm, getFormData, createTool, updateTool, resetForm, toolId],
   );
 
   const isValid = useMemo(() => {
@@ -573,6 +688,7 @@ export function useToolForm({
       url,
       description: description || undefined,
       requestType,
+      integrationType,
       responseFilter: responseFilter || undefined,
       tags: tags || undefined,
       visibility: visibility || undefined,
@@ -583,6 +699,7 @@ export function useToolForm({
     url,
     description,
     requestType,
+    integrationType,
     responseFilter,
     tags,
     visibility,
@@ -597,6 +714,7 @@ export function useToolForm({
     url,
     description,
     requestType,
+    integrationType,
     advancedOpen,
     visibility,
     teamId,
