@@ -120,7 +120,7 @@ repos:
         verbose: true
         exclude: ^\.pre-commit-config\.yaml$
         stages: [pre-commit, pre-merge-commit, prepare-commit-msg, commit-msg, post-checkout, post-commit, post-merge, pre-push, manual]
-      
+
 
   - repo: https://github.com/pycqa/bandit
     rev: 92ae8b82fb422a639f0ed8d99e96cea769594e08 #1.8.3
