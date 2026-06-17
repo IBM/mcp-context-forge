@@ -55,12 +55,14 @@ export function ToolDetailsPanel({
   open,
   onClose,
   onDeleteTool,
+  onEditTool,
 }: {
   tools: Tool[];
   gatewaySlug: string;
   open: boolean;
   onClose: () => void;
   onDeleteTool?: (toolId: string) => void;
+  onEditTool?: (tool: Tool) => void;
 }) {
   const [selectedTool, setSelectedTool] = useState<Tool | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -168,6 +170,7 @@ export function ToolDetailsPanel({
                 selectedToolId={selectedTool?.id}
                 onSelectTool={setSelectedTool}
                 onDeleteTool={onDeleteTool}
+                onEditTool={onEditTool}
               />
             </div>
 
@@ -234,15 +237,18 @@ export function ToolDetailsPanel({
                         <div className="flex min-w-0 flex-wrap items-center gap-2">
                           {(selectedTool.tags || []).length > 0 ? (
                             <>
-                              {(selectedTool.tags || []).map((tag, index) => (
-                                <Badge
-                                  key={`${tag}-${index}`}
-                                  variant="outline"
-                                  className="rounded-full px-2 py-0 text-[11px] font-medium text-muted-foreground"
-                                >
-                                  {tag}
-                                </Badge>
-                              ))}
+                              {(selectedTool.tags || []).map((tag, index) => {
+                                const label = typeof tag === "string" ? tag : tag.label;
+                                return (
+                                  <Badge
+                                    key={`${label}-${index}`}
+                                    variant="outline"
+                                    className="rounded-full px-2 py-0 text-[11px] font-medium text-muted-foreground"
+                                  >
+                                    {label}
+                                  </Badge>
+                                );
+                              })}
                               <button
                                 type="button"
                                 tabIndex={-1}
