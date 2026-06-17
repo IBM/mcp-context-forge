@@ -41,7 +41,6 @@ jobs:
       MCPGATEWAY_UI_ENABLED: "true"
       MCPGATEWAY_ADMIN_API_ENABLED: "true"
       SECURE_COOKIES: "false"
-      PLAYWRIGHT_INSTALL_FLAGS: --with-deps
       UV_CACHE_DIR: /tmp/uv-cache
       # Disable forced password-change on bootstrap so Playwright tests can
       # access /admin/ without being redirected to /admin/change-password-required
@@ -97,6 +96,9 @@ jobs:
         run: |
           npm ci
           npm run vite:build
+
+      - name: 🎭 Install Playwright browser
+        run: make playwright-install
 
       - name: 🎭 Run gateway + CI smoke tests
         shell: bash
