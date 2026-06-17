@@ -5863,7 +5863,148 @@ class TestReadResourceCoverageEdges:
 
     @pytest.mark.asyncio
     async def test_read_resource_generic_uri_lookup_reports_ambiguity(self):
-        """Generic URI reads should fail cleanly when the same URI exists on multiple servers."""
+        """Test that ambiguous URIs are handled gracefully by returning the first match.
+
+        After fix for #4418: When MultipleResultsFound is raised for a generic /mcp/
+        endpoint request (no server_id), we log a warning and return the first match
+        instead of raising an error.
+        """
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceService
+        from mcpgateway.common.models import ResourceContent
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+        db.close = MagicMock()
+
+        # Mock resource to return on second call (after MultipleResultsFound)
+        mock_resource = MagicMock()
+        mock_resource.id = "test-resource-id"
+        mock_resource.uri = "time://formats"
+        mock_resource.enabled = True
+        mock_resource.content = ResourceContent(
+            type="resource",
+            id="test-resource-id",
+            uri="time://formats",
+            text="Test content"
+        )
+        mock_resource.visibility = "public"
+        mock_resource.gateway = None
+        mock_resource.gateway_id = None
+
+        call_count = [0]
+        def execute_side_effect(statement, *args, **kwargs):
+            sql = str(statement)
+            call_count[0] += 1
+            if "resources.uri" in sql and "resources.enabled" in sql:
+                if call_count[0] == 1:
+                    # First call raises MultipleResultsFound
+                    raise MultipleResultsFound("duplicate URI across gateways")
+                else:
+                    # Second call (with LIMIT 1) returns the first match
+                    result = MagicMock()
+                    result.scalar_one_or_none.return_value = mock_resource
+                    return result
+            # Mock gateway lookup (returns None since gateway_id is None)
+            if "gateways.id" in sql:
+                result = MagicMock()
+                result.scalar_one_or_none.return_value = None
+                return result
+            raise AssertionError(f"Unexpected SQL: {sql}")
+
+        db.execute.side_effect = execute_side_effect
+
+        with (
+            patch.object(svc, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+            patch.object(svc, "invoke_resource", new_callable=AsyncMock, return_value=mock_resource.content),
+        ):
+            # Should succeed and return the first match instead of raising an error
+            result = await svc.read_resource(db, resource_uri="time://formats")
+            assert result is not None
+            assert result.uri == "time://formats"
+
+    @pytest.mark.asyncio
+    async def test_list_resources_deduplicates_uris_without_gateway_filter(self):
+        """Test that list_resources deduplicates resources by URI when gateway_id is not specified.
+
+        This covers the debug log at lines 1304-1305 when duplicate URIs are skipped.
+        Regression test for #4418.
+        """
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+
+        # Create two resources with the same URI but different gateway_ids
+        mock_resource1 = MagicMock()
+        mock_resource1.id = "resource-1"
+        mock_resource1.uri = "timezone://info"
+        mock_resource1.name = "Timezone Info"
+        mock_resource1.description = "From gateway 1"
+        mock_resource1.enabled = True
+        mock_resource1.visibility = "public"
+        mock_resource1.gateway_id = "gateway-1"
+        mock_resource1.team_id = None
+        mock_resource1.created_at = datetime.now(timezone.utc)
+        mock_resource1.gateway = MagicMock()
+        mock_resource1.gateway.name = "fast_time"
+
+        mock_resource2 = MagicMock()
+        mock_resource2.id = "resource-2"
+        mock_resource2.uri = "timezone://info"  # Same URI
+        mock_resource2.name = "Timezone Info"
+        mock_resource2.description = "From gateway 2"
+        mock_resource2.enabled = True
+        mock_resource2.visibility = "public"
+        mock_resource2.gateway_id = "gateway-2"
+        mock_resource2.team_id = None
+        mock_resource2.created_at = datetime.now(timezone.utc)
+        mock_resource2.gateway = MagicMock()
+        mock_resource2.gateway.name = "fast_test"
+
+        # Create ResourceRead objects for the conversion
+        resource_read1 = MagicMock()
+        resource_read1.uri = "timezone://info"
+        resource_read1.gateway_name = "fast_time"
+
+        resource_read2 = MagicMock()
+        resource_read2.uri = "timezone://info"  # Same URI
+        resource_read2.gateway_name = "fast_test"
+
+        # Mock unified_paginate to return both resources and convert_resource_to_read to return ResourceRead objects
+        with (
+            patch("mcpgateway.services.resource_service.unified_paginate", new_callable=AsyncMock, return_value=([mock_resource1, mock_resource2], None)),
+            patch.object(svc, "convert_resource_to_read", side_effect=[resource_read1, resource_read2]),
+            patch("mcpgateway.services.resource_service.logger") as mock_logger,
+        ):
+            # Call without gateway_id filter - should deduplicate
+            result, next_cursor = await svc.list_resources(
+                db=db,
+                gateway_id=None,  # No gateway filter - triggers deduplication
+            )
+
+            # Should return only one resource (first occurrence)
+            assert len(result) == 1
+            assert result[0].uri == "timezone://info"
+            assert result[0].gateway_name == "fast_time"
+
+            # Verify debug log was called for the duplicate
+            mock_logger.debug.assert_called_once()
+            debug_call = mock_logger.debug.call_args[0][0]
+            assert "Skipping duplicate resource URI 'timezone://info'" in debug_call
+            assert "gateway-2" in debug_call
+
+    @pytest.mark.asyncio
+    async def test_read_resource_handles_multiple_inactive_resources(self):
+        """Test that read_resource handles multiple inactive resources gracefully.
+
+        This covers the debug log and limit query at lines 2497-2498 when multiple
+        inactive resources are found for the same URI on the generic /mcp/ endpoint.
+        Regression test for #4418.
+        """
         # First-Party
         from mcpgateway.services.resource_service import ResourceService
 
@@ -5872,16 +6013,57 @@ class TestReadResourceCoverageEdges:
         db.commit = MagicMock()
         db.close = MagicMock()
 
+        # Mock inactive resource
+        mock_inactive_resource = MagicMock()
+        mock_inactive_resource.id = "inactive-resource-id"
+        mock_inactive_resource.uri = "timezone://info"
+        mock_inactive_resource.enabled = False
+
+        call_count = [0]
         def execute_side_effect(statement, *args, **kwargs):
             sql = str(statement)
-            if "resources.uri" in sql and "resources.enabled" in sql:
-                raise MultipleResultsFound("duplicate URI across gateways")
-            raise AssertionError(sql)
+            call_count[0] += 1
+
+            # First query for active resource returns None
+            if "resources.uri" in sql and "resources.enabled" in sql and "NOT" not in sql.upper():
+                result = MagicMock()
+                result.scalar_one_or_none.return_value = None
+                return result
+
+            # Query for inactive resources
+            if "NOT" in sql.upper() and "resources.enabled" in sql:
+                if "LIMIT" not in sql.upper():
+                    # First call without LIMIT raises MultipleResultsFound
+                    raise MultipleResultsFound("multiple inactive resources")
+                else:
+                    # Second call with LIMIT 1 returns the first inactive resource
+                    result = MagicMock()
+                    result.scalar_one_or_none.return_value = mock_inactive_resource
+                    return result
+
+            # Mock gateway lookup
+            if "gateways.id" in sql:
+                result = MagicMock()
+                result.scalar_one_or_none.return_value = None
+                return result
+
+            raise AssertionError(f"Unexpected SQL: {sql}")
 
         db.execute.side_effect = execute_side_effect
 
-        with pytest.raises(ResourceError, match=r"ambiguous across multiple servers; use /servers/\{id\}/mcp"):
-            await svc.read_resource(db, resource_uri="time://formats")
+        with (
+            patch.object(svc, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.resource_service.logger") as mock_logger,
+        ):
+            # Should raise ResourceNotFoundError because the resource is inactive
+            with pytest.raises(Exception) as exc_info:
+                await svc.read_resource(db, resource_uri="timezone://info")
+
+            assert "inactive" in str(exc_info.value).lower()
+
+            # Verify debug log was called for multiple inactive resources
+            debug_calls = [call[0][0] for call in mock_logger.debug.call_args_list]
+            assert any("Multiple inactive resources found for URI 'timezone://info'" in call for call in debug_calls)
 
     @pytest.mark.asyncio
     async def test_read_resource_quack_branch_stateful_hasattr_covers_unreachable_elif_false_arc(self):

@@ -2125,6 +2125,7 @@ class ResourceRead(BaseModelWithConfigDict):
     description: Optional[str]
     mime_type: Optional[str]
     gateway_id: Optional[str] = Field(None, description="ID of the gateway for the resource")
+    gateway_name: Optional[str] = Field(None, description="Name of the gateway for the resource (for disambiguation)")
     uri_template: Optional[str] = Field(None, description="URI template for parameterized resources")
     size: Optional[int]
     created_at: datetime

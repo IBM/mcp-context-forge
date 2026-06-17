@@ -403,6 +403,16 @@ class ResourceService(BaseService):
         resource_dict["updated_at"] = getattr(resource, "updated_at", None)
         resource_dict["version"] = getattr(resource, "version", None)
         resource_dict["gateway_id"] = getattr(resource, "gateway_id", None)
+
+        # Include gateway name for disambiguation when multiple gateways expose the same resource URI
+        gateway = getattr(resource, "gateway", None)
+        if gateway and hasattr(gateway, "name"):
+            gateway_name = getattr(gateway, "name", None)
+            # Ensure it's a string (not a MagicMock or other object)
+            resource_dict["gateway_name"] = str(gateway_name) if gateway_name is not None else None
+        else:
+            resource_dict["gateway_name"] = None
+
         return ResourceRead.model_validate(resource_dict)
 
     def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
@@ -1260,10 +1270,22 @@ class ResourceService(BaseService):
 
             # Convert to ResourceRead (common for both pagination types)
             result = []
+            seen_uris = set()  # Track URIs to deduplicate when gateway_id is not filtered
             for s in resources_db:
                 try:
                     s.team = team_map.get(s.team_id) if s.team_id else None
-                    result.append(self.convert_resource_to_read(s, include_metrics=False))
+                    resource_read = self.convert_resource_to_read(s, include_metrics=False)
+
+                    # Deduplicate resources by URI when not filtering by gateway_id
+                    # This prevents ambiguity errors when multiple gateways expose the same resource URI
+                    # Only the first occurrence (by created_at DESC) is included
+                    if gateway_id is None and hasattr(resource_read, "uri") and resource_read.uri in seen_uris:
+                        logger.debug(f"Skipping duplicate resource URI '{resource_read.uri}' from gateway {s.gateway_id}")
+                        continue
+
+                    if hasattr(resource_read, "uri"):
+                        seen_uris.add(resource_read.uri)
+                    result.append(resource_read)
                 except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
                     logger.exception("Failed to convert resource %s (%s): %s", getattr(s, "id", "unknown"), getattr(s, "name", "unknown"), e)
                     # Continue with remaining resources instead of failing completely
@@ -2375,7 +2397,10 @@ class ResourceService(BaseService):
                     except MultipleResultsFound as exc:
                         if server_id:
                             raise ResourceError(f"Multiple resources matched URI '{uri}' for server '{server_id}'.") from exc
-                        raise ResourceError(f"Resource URI '{uri}' is ambiguous across multiple servers; use /servers/{{id}}/mcp.") from exc
+                        # For generic /mcp/ endpoint without server_id, pick the first match (by created_at DESC)
+                        # This allows resources/read to succeed even when multiple gateways expose the same URI
+                        logger.warning(f"Resource URI '{uri}' is ambiguous across multiple servers; returning first match. Use /servers/{{id}}/mcp for deterministic selection.")
+                        resource_db = db.execute(query.limit(1)).scalar_one_or_none()
 
                     # Check for direct_proxy mode
                     if resource_db and resource_db.gateway and getattr(resource_db.gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
@@ -2451,7 +2476,9 @@ class ResourceService(BaseService):
                         except MultipleResultsFound as exc:
                             if server_id:
                                 raise ResourceError(f"Multiple inactive resources matched URI '{resource_uri}' for server '{server_id}'.") from exc
-                            raise ResourceError(f"Resource URI '{resource_uri}' is ambiguous across multiple servers; use /servers/{{id}}/mcp.") from exc
+                            # For generic /mcp/ endpoint, check if any inactive resource exists (pick first)
+                            logger.debug(f"Multiple inactive resources found for URI '{resource_uri}'; checking first match")
+                            check_inactivity = db.execute(inactive_query.where(DbResource.uri == str(resource_uri)).where(not_(DbResource.enabled)).limit(1)).scalar_one_or_none()
                         if check_inactivity:
                             raise ResourceNotFoundError(f"Resource '{resource_uri}' exists but is inactive")
 
