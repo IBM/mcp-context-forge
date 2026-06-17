@@ -15,6 +15,11 @@
 # Tests for plugin framework
 /tests/unit/mcpgateway/plugins @araujof @terylt @jonpspri
 
+# UI related files
+/mcpgateway/admin_ui/ @gcgoncalves
+/tests/playwright/ @gcgoncalves
+/tests/js/ @gcgoncalves
+
 # All files in the repo
 /.github/workflows/ @crivetimihai @brian-hussey @Lang-Akshay @ja8zyjits
-* @crivetimihai @brian-hussey @Lang-Akshay @ja8zyjits
+* @crivetimihai @brian-hussey @Lang-Akshay @ja8zyjits @msureshkumar88
