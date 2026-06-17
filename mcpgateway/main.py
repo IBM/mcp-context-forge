@@ -5232,6 +5232,78 @@ async def invoke_a2a_agent_by_id(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@a2a_router.post("/{agent_name}/", response_model=Dict[str, Any])
+@require_permission("a2a.invoke")
+async def proxy_a2a_agent(
+    agent_name: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Proxy a raw A2A JSON-RPC request directly to the downstream agent.
+
+    Accepts a standard A2A JSON-RPC body (with ``method`` field such as
+    ``tasks/send``, ``tasks/get``, ``tasks/cancel``, ``agent/getCard``,
+    or their v1.0 equivalents) and forwards it to the agent without
+    protocol translation — preserving task lifecycle, streaming,
+    artifacts, and async push notification semantics.
+
+    This is the **transparent proxy endpoint** for standard A2A clients
+    (e.g. Google ADK ``RemoteA2aAgent``). ContextForge governance (Auth,
+    RBAC, Rate-limiting) is applied at the proxy layer, and the native
+    A2A JSON-RPC response is returned directly.
+    """
+    try:
+        if a2a_service is None:
+            raise HTTPException(status_code=503, detail="A2A service not available")
+
+        # Parse raw JSON-RPC body
+        try:
+            jsonrpc_body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Request body must be valid JSON")
+
+        # Get filtering context from token
+        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
+        if is_admin and token_teams is None:
+            token_teams = None
+        elif token_teams is None:
+            token_teams = []
+
+        user_id = None
+        if isinstance(user, dict):
+            user_id = str(user.get("id") or user.get("sub") or user_email)
+        else:
+            user_id = str(user)
+
+        # Federation hop counter
+        hop_count = uaid_utils.read_hop_count(request.headers)
+
+        # Bearer token for cross-gateway forwarding
+        bearer_token = getattr(request.state, "bearer_token", None)
+        if not bearer_token:
+            auth_header = request.headers.get("authorization", "")
+            if auth_header.lower().startswith("bearer "):
+                bearer_token = auth_header[7:]
+        if bearer_token and not _is_jwt_token(bearer_token):
+            bearer_token = None
+
+        return await a2a_service.proxy_a2a_request(
+            db,
+            agent_name,
+            jsonrpc_body,
+            user_id=user_id,
+            user_email=user_email,
+            token_teams=token_teams,
+            hop_count=hop_count,
+            bearer_token=bearer_token,
+        )
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 #############
 # Tool APIs #
 #############

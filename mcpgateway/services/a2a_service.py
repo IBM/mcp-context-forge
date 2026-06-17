@@ -2513,6 +2513,227 @@ class A2AAgentService(BaseService):
 
         return response or {"error": error_message}
 
+    async def proxy_a2a_request(
+        self,
+        db: Session,
+        agent_name: str,
+        jsonrpc_body: Dict[str, Any],
+        *,
+        user_id: Optional[str] = None,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+        hop_count: int = 0,
+        bearer_token: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Proxy a raw A2A JSON-RPC request to the downstream agent without protocol translation.
+
+        Unlike ``invoke_agent`` which translates parameters through MCP semantics,
+        this method forwards the raw JSON-RPC payload directly, preserving A2A
+        protocol semantics: task lifecycle, streaming, artifacts, and async push
+        notifications.
+
+        Args:
+            db: Database session.
+            agent_name: Name of the agent to proxy to.
+            jsonrpc_body: Raw A2A JSON-RPC request body (must include ``method`` field).
+            user_id: Identifier of the user initiating the call.
+            user_email: Email of the user initiating the call.
+            token_teams: Teams from JWT token.
+            hop_count: Federation hop counter.
+            bearer_token: Bearer token for cross-gateway auth.
+
+        Returns:
+            Native A2A JSON-RPC response from the downstream agent.
+
+        Raises:
+            A2AAgentNotFoundError: If the agent is not found or user lacks access.
+            A2AAgentError: If the agent is disabled, the method is invalid, or the proxy fails.
+        """
+        # ── Validate JSON-RPC structure ──
+        if not isinstance(jsonrpc_body, dict):
+            raise A2AAgentError("A2A proxy requires a JSON-RPC body with a 'method' field")
+        if "jsonrpc" not in jsonrpc_body:
+            jsonrpc_body["jsonrpc"] = "2.0"
+        method = jsonrpc_body.get("method")
+        if not method or not isinstance(method, str):
+            raise A2AAgentError("A2A proxy requires a 'method' field in the JSON-RPC body")
+
+        # ── Federation loop guard ──
+        max_hops = settings.uaid_max_federation_hops
+        if hop_count >= max_hops:
+            raise A2AAgentNotFoundError(
+                f"A2A Agent not found (federation hop limit reached): {agent_name}"
+            )
+
+        # ── Resolve agent ──
+        agent_row = db.execute(
+            select(DbA2AAgent.id).where(DbA2AAgent.name == agent_name)
+        ).scalar_one_or_none()
+        if not agent_row:
+            raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
+
+        agent = get_for_update(db, DbA2AAgent, agent_row)
+        if not agent:
+            raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
+
+        # ── Access check ──
+        if not await self._check_agent_access(db, agent, user_email, token_teams):
+            raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
+        if not agent.enabled:
+            raise A2AAgentError(f"A2A Agent '{agent_name}' is disabled")
+
+        # ── Extract agent config ──
+        agent_id = agent.id
+        endpoint_url = agent.endpoint_url
+        auth_type = agent.auth_type
+        auth_value = agent.auth_value
+        auth_query_params = agent.auth_query_params
+        protocol_version = agent.protocol_version
+
+        # ── Validate the A2A method ──
+        valid_methods = set()
+        from mcpgateway.services.a2a_protocol import (  # pylint: disable=import-outside-toplevel
+            _LEGACY_TO_V1_METHODS,
+            _V1_TO_LEGACY_METHODS,
+        )
+        valid_methods.update(_LEGACY_TO_V1_METHODS.keys())
+        valid_methods.update(_LEGACY_TO_V1_METHODS.values())
+        # Also accept the agent card and standard JSON-RPC methods
+        valid_methods.update({"agent/getCard", "GetAgentCard"})
+        if method not in valid_methods:
+            raise A2AAgentError(
+                f"Unknown A2A method '{method}' for agent '{agent_name}'. "
+                f"Valid methods include: message/send, tasks/get, tasks/cancel, "
+                f"tasks/list, agent/getCard, and their v1.0 equivalents."
+            )
+
+        # ── Release DB before HTTP call ──
+        db.commit()
+        db.close()
+
+        # ── Prepare headers ──
+        # First-Party
+        from mcpgateway.utils.uaid import HOP_HEADER, stamp_hop  # pylint: disable=import-outside-toplevel
+        from mcpgateway.utils.services_auth import decode_auth  # pylint: disable=import-outside-toplevel
+
+        request_headers: Dict[str, str] = {
+            "Content-Type": "application/json",
+        }
+
+        # Add A2A version header
+        if protocol_version:
+            request_headers["A2A-Version"] = protocol_version
+
+        # Add auth header
+        if auth_type == "bearer" and auth_value:
+            try:
+                request_headers["Authorization"] = f"Bearer {decode_auth(auth_value)}"
+            except Exception as e:
+                raise A2AAgentError(
+                    f"Failed to decrypt bearer auth for agent '{agent_name}': {e}"
+                ) from e
+        elif auth_type == "basic" and auth_value:
+            try:
+                request_headers["Authorization"] = f"Basic {decode_auth(auth_value)}"
+            except Exception as e:
+                raise A2AAgentError(
+                    f"Failed to decrypt basic auth for agent '{agent_name}': {e}"
+                ) from e
+        elif auth_type == "authheaders" and auth_value:
+            try:
+                decoded = decode_auth(auth_value)
+                extra_headers = orjson.loads(decoded)
+                if isinstance(extra_headers, dict):
+                    request_headers.update({str(k): str(v) for k, v in extra_headers.items()})
+            except Exception as e:
+                raise A2AAgentError(
+                    f"Failed to decrypt authheaders for agent '{agent_name}': {e}"
+                ) from e
+
+        # Forward bearer token for cross-gateway auth
+        if bearer_token:
+            request_headers["Authorization"] = f"Bearer {bearer_token}"
+
+        # Stamp federation hop counter
+        stamp_hop(request_headers, hop_count)
+
+        # Apply query param auth to URL
+        if auth_type == "query_param" and auth_query_params:
+            from mcpgateway.utils.url_auth import apply_query_param_auth  # pylint: disable=import-outside-toplevel
+            try:
+                endpoint_url = apply_query_param_auth(endpoint_url, auth_query_params)
+            except Exception as e:
+                raise A2AAgentError(
+                    f"Failed to apply query_param auth for agent '{agent_name}': {e}"
+                ) from e
+
+        # ── Forward the raw JSON-RPC request ──
+        # First-Party
+        from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
+
+        correlation_id = get_correlation_id()
+        structured_logger.log(
+            level="INFO",
+            message=f"A2A proxy call started: {agent_name}",
+            component="a2a_service",
+            user_id=user_id,
+            user_email=user_email,
+            correlation_id=correlation_id,
+            metadata={
+                "event": "a2a_proxy_started",
+                "agent_name": agent_name,
+                "agent_id": str(agent_id),
+                "method": method,
+            },
+        )
+
+        try:
+            client = await get_http_client()
+            http_response = await client.post(
+                endpoint_url,
+                json=jsonrpc_body,
+                headers=request_headers,
+            )
+            status_code = http_response.status_code
+
+            if 200 <= status_code < 300:
+                result = http_response.json() if http_response.text else {}
+                structured_logger.log(
+                    level="INFO",
+                    message=f"A2A proxy call completed: {agent_name}",
+                    component="a2a_service",
+                    user_id=user_id,
+                    user_email=user_email,
+                    correlation_id=correlation_id,
+                    metadata={
+                        "event": "a2a_proxy_completed",
+                        "agent_name": agent_name,
+                        "status_code": status_code,
+                    },
+                )
+                return result
+
+            error_text = http_response.text[:500]
+            structured_logger.log(
+                level="ERROR",
+                message=f"A2A proxy call failed: {agent_name}",
+                component="a2a_service",
+                user_id=user_id,
+                user_email=user_email,
+                correlation_id=correlation_id,
+                metadata={
+                    "event": "a2a_proxy_failed",
+                    "agent_name": agent_name,
+                    "status_code": status_code,
+                },
+            )
+            raise A2AAgentError(f"Agent '{agent_name}' returned HTTP {status_code}: {error_text}")
+
+        except A2AAgentError:
+            raise
+        except Exception as e:
+            raise A2AAgentError(f"Failed to proxy A2A request to '{agent_name}': {e}") from e
+
     async def _invoke_remote_agent(
         self,
         uaid: str,
