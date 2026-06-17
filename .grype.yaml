@@ -1,0 +1,18 @@
+ignore:
+  # CVE-2024-12254 (asyncio writelines() high-water-mark DoS): Red Hat shipped
+  # the fix for this CVE in python3.12-3.12.8-1.el8_10 (RHSA-2024:10980) and
+  # python3.12-3.12.5-2.el9_5.2 (RHSA-2024:10978), both predating the
+  # python3.12.13-2.el10_2 build used in our UBI10 base image. Verified by
+  # inspecting the shipped binary: asyncio.selector_events
+  # ._SelectorSocketTransport.writelines() already calls
+  # self._maybe_pause_protocol() after a partial write, the exact patched
+  # code path. Grype flags this only because Red Hat's RHEL 10 CPE/advisory
+  # feed (RHEL 10 GA'd after the fix already landed) has no RHEL-10-specific
+  # advisory entry yet - a vendor feed-coverage gap, not an unpatched
+  # vulnerability. Remove once Red Hat publishes that advisory entry.
+  - vulnerability: CVE-2024-12254
+    package:
+      name: python3
+  - vulnerability: CVE-2024-12254
+    package:
+      name: python3-libs

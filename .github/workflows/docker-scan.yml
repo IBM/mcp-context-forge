@@ -203,7 +203,6 @@ jobs:
           sbom: sbom.spdx.json
           fail-build: true
           severity-cutoff: high
-          vex: .github/vex/cve-2024-12254.openvex.json
           cache-db: true
 
       - name: Upload SBOM
