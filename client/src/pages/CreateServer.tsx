@@ -258,12 +258,20 @@ function SourcesLoadingStatus({ message }: { message: string }) {
 
 function EditMCPServersSection({
   connectedSourceIds,
+  associatedToolIds,
+  associatedResourceIds,
+  associatedPromptIds,
+  shouldResolveConnectedSources,
   removedConnectedSourceIds,
   selectedAvailableSourceIds,
   onRemovedConnectedSourceIdsChange,
   onSelectedAvailableSourceIdsChange,
 }: {
   connectedSourceIds: string[];
+  associatedToolIds: string[];
+  associatedResourceIds: string[];
+  associatedPromptIds: string[];
+  shouldResolveConnectedSources: boolean;
   removedConnectedSourceIds: string[];
   selectedAvailableSourceIds: string[];
   onRemovedConnectedSourceIdsChange: (sourceIds: string[]) => void;
@@ -286,19 +294,77 @@ function EditMCPServersSection({
     [selectedAvailableSourceIds],
   );
   const connectedSourceIdSet = useMemo(() => new Set(connectedSourceIds), [connectedSourceIds]);
+  const [resolvedConnectedSourceIds, setResolvedConnectedSourceIds] = useState<string[]>([]);
+  const associatedToolIdSet = useMemo(() => new Set(associatedToolIds), [associatedToolIds]);
+  const associatedResourceIdSet = useMemo(
+    () => new Set(associatedResourceIds),
+    [associatedResourceIds],
+  );
+  const associatedPromptIdSet = useMemo(() => new Set(associatedPromptIds), [associatedPromptIds]);
+  const effectiveConnectedSourceIdSet = useMemo(
+    () => new Set([...connectedSourceIds, ...resolvedConnectedSourceIds]),
+    [connectedSourceIds, resolvedConnectedSourceIds],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!shouldResolveConnectedSources || mcpServers.length === 0) {
+      setResolvedConnectedSourceIds([]);
+      return;
+    }
+
+    const candidateServers = mcpServers.filter((server) => !connectedSourceIdSet.has(server.id));
+    if (candidateServers.length === 0) {
+      setResolvedConnectedSourceIds([]);
+      return;
+    }
+
+    async function resolveConnectedSources() {
+      const matchedSourceIds = await Promise.all(
+        candidateServers.map(async (server) => {
+          const components = await fetchComponentsForMCPServer(server.id);
+          const hasConnectedComponent =
+            components.tools.some((tool) => associatedToolIdSet.has(tool.id)) ||
+            components.resources.some((resource) => associatedResourceIdSet.has(resource.id)) ||
+            components.prompts.some((prompt) => associatedPromptIdSet.has(prompt.id));
+
+          return hasConnectedComponent ? server.id : null;
+        }),
+      );
+
+      if (!cancelled) {
+        setResolvedConnectedSourceIds(uniqueStrings(matchedSourceIds));
+      }
+    }
+
+    void resolveConnectedSources();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    associatedPromptIdSet,
+    associatedResourceIdSet,
+    associatedToolIdSet,
+    connectedSourceIdSet,
+    mcpServers,
+    shouldResolveConnectedSources,
+  ]);
+
   const sortedMCPServers = useMemo(
     () =>
       [...mcpServers].sort((first, second) => {
-        const firstConnected = connectedSourceIdSet.has(first.id);
-        const secondConnected = connectedSourceIdSet.has(second.id);
+        const firstConnected = effectiveConnectedSourceIdSet.has(first.id);
+        const secondConnected = effectiveConnectedSourceIdSet.has(second.id);
         if (firstConnected === secondConnected) return 0;
         return firstConnected ? -1 : 1;
       }),
-    [connectedSourceIdSet, mcpServers],
+    [effectiveConnectedSourceIdSet, mcpServers],
   );
 
   const toggleMCPServerSelection = (serverId: string, checked: boolean) => {
-    if (!connectedSourceIdSet.has(serverId)) {
+    if (!effectiveConnectedSourceIdSet.has(serverId)) {
       const nextSelected = new Set(selectedAvailableSourceIdSet);
       if (checked) nextSelected.add(serverId);
       else nextSelected.delete(serverId);
@@ -337,7 +403,7 @@ function EditMCPServersSection({
           {servers.map((server) => {
             const status = getStatusConfig(getServerStatus(server));
             const StatusIcon = status.Icon;
-            const isConnected = connectedSourceIdSet.has(server.id);
+            const isConnected = effectiveConnectedSourceIdSet.has(server.id);
             const isSelected = isConnected
               ? !removedConnectedSourceIdSet.has(server.id)
               : selectedAvailableSourceIdSet.has(server.id);
@@ -510,6 +576,13 @@ export function CreateServer() {
     () => getResponseItems(editPromptsData, "prompts"),
     [editPromptsData],
   );
+  const hasComponentsWithoutSourceId = useMemo(
+    () =>
+      [...existingTools, ...existingResources, ...existingPrompts].some(
+        (component) => !getComponentGatewayId(component),
+      ),
+    [existingPrompts, existingResources, existingTools],
+  );
   const connectedSourceIds = useMemo(
     () =>
       uniqueStrings([
@@ -542,6 +615,18 @@ export function CreateServer() {
         ...(editingServer?.associatedPrompts ?? []),
       ]),
     [editingServer?.associatedPrompts, existingPrompts],
+  );
+  const shouldResolveConnectedSources = useMemo(
+    () =>
+      existingToolIds.length + existingResourceIds.length + existingPromptIds.length > 0 &&
+      (connectedSourceIds.length === 0 || hasComponentsWithoutSourceId),
+    [
+      connectedSourceIds.length,
+      existingPromptIds.length,
+      existingResourceIds.length,
+      existingToolIds.length,
+      hasComponentsWithoutSourceId,
+    ],
   );
 
   useEffect(() => {
@@ -781,6 +866,10 @@ export function CreateServer() {
           {isEditMode && (
             <EditMCPServersSection
               connectedSourceIds={connectedSourceIds}
+              associatedToolIds={existingToolIds}
+              associatedResourceIds={existingResourceIds}
+              associatedPromptIds={existingPromptIds}
+              shouldResolveConnectedSources={shouldResolveConnectedSources}
               removedConnectedSourceIds={removedConnectedSourceIds}
               selectedAvailableSourceIds={selectedAvailableSourceIds}
               onRemovedConnectedSourceIdsChange={setRemovedConnectedSourceIds}

@@ -135,7 +135,6 @@ describe("CreateServer", () => {
               id: "existing-tool-id",
               name: "existing-tool",
               originalName: "existing-tool",
-              gateway_id: "mcp-connected",
             },
           ],
         }),
@@ -147,7 +146,6 @@ describe("CreateServer", () => {
               id: "existing-resource-id",
               name: "existing-resource",
               uri: "mcp://existing-resource",
-              gateway_id: "mcp-connected",
             },
           ],
         }),
@@ -159,7 +157,6 @@ describe("CreateServer", () => {
               id: "existing-prompt-id",
               name: "existing-prompt",
               originalName: "existing-prompt",
-              gateway_id: "mcp-connected",
             },
           ],
         }),
@@ -257,7 +254,7 @@ describe("CreateServer", () => {
     const availableSourceCheckbox = screen.getByRole("checkbox", {
       name: "Select available-source",
     });
-    expect(connectedSourceCheckbox).toBeChecked();
+    await waitFor(() => expect(connectedSourceCheckbox).toBeChecked());
     expect(availableSourceCheckbox).not.toBeChecked();
     await user.click(connectedSourceCheckbox);
     expect(connectedSourceCheckbox).not.toBeChecked();
