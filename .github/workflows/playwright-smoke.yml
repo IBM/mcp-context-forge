@@ -34,6 +34,9 @@ jobs:
       PYTHONUNBUFFERED: "1"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
       TEST_BASE_URL: http://127.0.0.1:4444
+      HOST: "127.0.0.1"
+      PORT: "4444"
+      APP_DOMAIN: "http://127.0.0.1:4444"
       GUNICORN_WORKERS: "1"
       MCPGATEWAY_UI_ENABLED: "true"
       MCPGATEWAY_ADMIN_API_ENABLED: "true"
@@ -95,7 +98,7 @@ jobs:
           npm ci
           npm run vite:build
 
-      - name: 🎭 Run make serve + CI smoke tests
+      - name: 🎭 Run gateway + CI smoke tests
         shell: bash
         run: |
           set -euo pipefail
@@ -115,7 +118,7 @@ jobs:
 
           cp .env.example .env
 
-          make serve > /tmp/mcpgateway-ci.log 2>&1 &
+          ./run-gunicorn.sh > /tmp/mcpgateway-ci.log 2>&1 &
           echo $! > /tmp/mcpgateway-ci.pid
 
           for _ in {1..120}; do

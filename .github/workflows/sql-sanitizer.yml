@@ -107,6 +107,9 @@ jobs:
             - name: Start gateway
               env:
                   PLUGINS_ENABLED: true
+                  HOST: 127.0.0.1
+                  PORT: 4444
+                  APP_DOMAIN: http://127.0.0.1:4444
                   GUNICORN_WORKERS: 1
                   MCPGATEWAY_UI_ENABLED: true
                   MCPGATEWAY_ADMIN_API_ENABLED: true
@@ -120,11 +123,11 @@ jobs:
                   make venv
                   make install
                   make stop-serve
-                  make serve > gateway.log 2>&1 &
+                  ./run-gunicorn.sh > gateway.log 2>&1 &
 
                   echo "Waiting for gateway to start..."
                   for i in {1..60}; do
-                    if curl -s http://localhost:4444 >/dev/null 2>&1; then
+                    if curl -s http://127.0.0.1:4444 >/dev/null 2>&1; then
                       echo "Gateway is up!"
                       break
                     fi
@@ -132,8 +135,9 @@ jobs:
                     sleep 4
                   done
 
-                  if ! curl -s http://localhost:4444 >/dev/null 2>&1; then
+                  if ! curl -s http://127.0.0.1:4444 >/dev/null 2>&1; then
                     echo "ERROR: gateway failed to start"
+                    tail -n 250 gateway.log || true
                     exit 1
                   fi
 
@@ -149,13 +153,13 @@ jobs:
 
             - name: Verify gateway is responding
               run: |
-                  curl -sf -X GET http://localhost:4444/version \
+                  curl -sf -X GET http://127.0.0.1:4444/version \
                     -H "Authorization: Bearer ${{ steps.generate_jwt.outputs.token }}" \
                     -H "Content-Type: application/json"
 
             - name: Verify plugins is responding
               run: |
-                  curl -sf -X GET http://localhost:4444/admin/plugins/stats \
+                  curl -sf -X GET http://127.0.0.1:4444/admin/plugins/stats \
                     -H "Authorization: Bearer ${{ steps.generate_jwt.outputs.token }}" \
                     -H "Content-Type: application/json" | yq
 
