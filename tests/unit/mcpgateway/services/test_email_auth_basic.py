@@ -2717,6 +2717,7 @@ class TestEmailAuthServiceUserDeletion:
             mock_teams_result,
             mock_no_owners,  # No other owners
             mock_single_member,  # Just the user as member
+            mock_empty,  # Delete team member history records
             mock_empty,  # Delete team members
             mock_empty,  # Delete auth events
             mock_empty,  # Delete user team members

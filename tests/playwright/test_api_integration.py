@@ -177,6 +177,11 @@ class TestAPIIntegration:
             # Tool IDs are UUID strings, not integers - pass as quoted string
             import json
 
+            # HTMX pushes the search query into the URL via hx-push-url; Playwright
+            # treats that pushState as an in-flight navigation.  Waiting for
+            # domcontentloaded ensures the navigation event has settled before we
+            # evaluate JS, preventing "execution context was destroyed" errors.
+            page.wait_for_load_state("domcontentloaded", timeout=5000)
             page.evaluate(f"Admin.testTool({json.dumps(tool_id)})")
         else:
             # Fallback if data attribute is missing

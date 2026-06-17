@@ -2077,10 +2077,16 @@ class EmailAuthService:
 
                         if len(all_members) == 1 and all_members[0].user_email == email:
                             # This is a single-user personal team - cascade delete it
-                            logger.info("Deleting personal team '%s' (single member: %s)", SecurityValidator.sanitize_log_message(team.name), SecurityValidator.sanitize_log_message(email))
-                            # Delete team members first (should be just the owner)
-                            delete_team_members_stmt = delete(EmailTeamMember).where(EmailTeamMember.team_id == team.id)
-                            self.db.execute(delete_team_members_stmt)
+                            logger.info(f"Deleting personal team '{SecurityValidator.sanitize_log_message(team.name)}' (single member: {SecurityValidator.sanitize_log_message(email)})")
+                            # Delete history records first: team_id FK has no ON DELETE CASCADE,
+                            # so history must be removed before the team is deleted.
+                            self.db.execute(delete(EmailTeamMemberHistory).where(EmailTeamMemberHistory.team_id == team.id))
+                            # Delete team members via raw SQL.
+                            self.db.execute(delete(EmailTeamMember).where(EmailTeamMember.team_id == team.id))
+                            # Expire the members collection so the ORM cascade re-queries the DB
+                            # (finding nothing) instead of re-deleting already-gone objects,
+                            # which would raise StaleDataError at commit time.
+                            self.db.expire(team, ["members"])
                             # Delete the team
                             self.db.delete(team)
                         else:

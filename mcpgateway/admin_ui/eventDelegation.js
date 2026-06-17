@@ -116,6 +116,17 @@ function executeAction(action, args, event, eventFirst = false) {
  * @param {Event} event - The click event
  */
 function handleDelegatedClick(event) {
+  // Handle team selector item clicks (data-action="select-team" on buttons injected
+  // via innerHTML, where onclick attributes are stripped by the innerHTML guard).
+  const selectTeamTarget = event.target.closest('[data-action="select-team"]');
+  if (selectTeamTarget) {
+    event.preventDefault();
+    if (window.Admin && typeof window.Admin.selectTeamFromSelector === 'function') {
+      window.Admin.selectTeamFromSelector(selectTeamTarget);
+    }
+    return;
+  }
+
   const target = event.target.closest('[data-action-click]');
   if (!target) return;
 
