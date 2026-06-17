@@ -53,6 +53,8 @@
   "gateways.editServer.description": "Atualize os detalhes do servidor virtual e revise os servidores MCP conectados disponíveis como fontes.",
   "gateways.editServer.submit": "Enviar",
   "gateways.editServer.errorFallback": "Não foi possível atualizar o servidor. Tente novamente.",
+  "gateways.editServer.mcpServers": "Servidor MCP",
+  "gateways.editServer.noMCPServers": "Nenhum servidor MCP encontrado.",
   "gateways.editServer.connectedMCPServers": "Servidores MCP conectados",
   "gateways.editServer.noConnectedMCPServers": "Nenhum servidor MCP conectado encontrado.",
   "gateways.editServer.availableMCPServers": "Servidores MCP disponíveis",

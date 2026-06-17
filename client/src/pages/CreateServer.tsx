@@ -270,8 +270,7 @@ function EditMCPServersSection({
   onSelectedAvailableSourceIdsChange: (sourceIds: string[]) => void;
 }) {
   const intl = useIntl();
-  const connectedHeadingId = useId();
-  const availableHeadingId = useId();
+  const headingId = useId();
   const {
     data: mcpServersData,
     error: mcpServersError,
@@ -287,30 +286,33 @@ function EditMCPServersSection({
     [selectedAvailableSourceIds],
   );
   const connectedSourceIdSet = useMemo(() => new Set(connectedSourceIds), [connectedSourceIds]);
-  const connectedMCPServers = useMemo(
-    () => mcpServers.filter((server) => connectedSourceIdSet.has(server.id)),
-    [connectedSourceIdSet, mcpServers],
-  );
-  const availableMCPServers = useMemo(
-    () => mcpServers.filter((server) => !connectedSourceIdSet.has(server.id)),
+  const sortedMCPServers = useMemo(
+    () =>
+      [...mcpServers].sort((first, second) => {
+        const firstConnected = connectedSourceIdSet.has(first.id);
+        const secondConnected = connectedSourceIdSet.has(second.id);
+        if (firstConnected === secondConnected) return 0;
+        return firstConnected ? -1 : 1;
+      }),
     [connectedSourceIdSet, mcpServers],
   );
 
-  const toggleConnectedMCPServerSelection = (serverId: string, checked: boolean) => {
+  const toggleMCPServerSelection = (serverId: string, checked: boolean) => {
+    if (!connectedSourceIdSet.has(serverId)) {
+      const nextSelected = new Set(selectedAvailableSourceIdSet);
+      if (checked) nextSelected.add(serverId);
+      else nextSelected.delete(serverId);
+      onSelectedAvailableSourceIdsChange(Array.from(nextSelected));
+      return;
+    }
+
     const next = new Set(removedConnectedSourceIdSet);
     if (checked) next.delete(serverId);
     else next.add(serverId);
     onRemovedConnectedSourceIdsChange(Array.from(next));
   };
 
-  const toggleAvailableMCPServerSelection = (serverId: string, checked: boolean) => {
-    const next = new Set(selectedAvailableSourceIdSet);
-    if (checked) next.add(serverId);
-    else next.delete(serverId);
-    onSelectedAvailableSourceIdsChange(Array.from(next));
-  };
-
-  const renderServerRows = (servers: ListedMCPServer[], listType: "connected" | "available") => (
+  const renderServerRows = (servers: ListedMCPServer[]) => (
     <div className="mt-5 overflow-hidden rounded-md border border-border/60">
       <Table>
         <TableHeader>
@@ -335,10 +337,10 @@ function EditMCPServersSection({
           {servers.map((server) => {
             const status = getStatusConfig(getServerStatus(server));
             const StatusIcon = status.Icon;
-            const isSelected =
-              listType === "connected"
-                ? !removedConnectedSourceIdSet.has(server.id)
-                : selectedAvailableSourceIdSet.has(server.id);
+            const isConnected = connectedSourceIdSet.has(server.id);
+            const isSelected = isConnected
+              ? !removedConnectedSourceIdSet.has(server.id)
+              : selectedAvailableSourceIdSet.has(server.id);
 
             return (
               <TableRow
@@ -350,11 +352,7 @@ function EditMCPServersSection({
                   <Checkbox
                     checked={isSelected}
                     onCheckedChange={(checked) => {
-                      if (listType === "connected") {
-                        toggleConnectedMCPServerSelection(server.id, checked === true);
-                        return;
-                      }
-                      toggleAvailableMCPServerSelection(server.id, checked === true);
+                      toggleMCPServerSelection(server.id, checked === true);
                     }}
                     aria-label={intl.formatMessage(
                       { id: "gateways.source.selectSource" },
@@ -430,15 +428,15 @@ function EditMCPServersSection({
 
   return (
     <section
-      aria-labelledby={connectedHeadingId}
+      aria-labelledby={headingId}
       className="border-t border-border pt-7 dark:border-[#2b2b2f]"
     >
       <div className="flex items-center gap-3">
         <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-foreground dark:bg-[#252529]">
           <MCPIcon className="size-5 [&_path]:fill-current" />
         </span>
-        <h2 id={connectedHeadingId} className="text-sm font-semibold text-foreground">
-          {intl.formatMessage({ id: "gateways.editServer.connectedMCPServers" })}
+        <h2 id={headingId} className="text-sm font-semibold text-foreground">
+          {intl.formatMessage({ id: "gateways.editServer.mcpServers" })}
         </h2>
       </div>
 
@@ -453,40 +451,16 @@ function EditMCPServersSection({
         </p>
       )}
 
-      {!isLoadingSources && !mcpServersError && connectedMCPServers.length === 0 && (
+      {!isLoadingSources && !mcpServersError && sortedMCPServers.length === 0 && (
         <p className="py-10 text-center text-sm text-muted-foreground">
-          {intl.formatMessage({ id: "gateways.editServer.noConnectedMCPServers" })}
+          {intl.formatMessage({ id: "gateways.editServer.noMCPServers" })}
         </p>
       )}
 
       {!isLoadingSources &&
         !mcpServersError &&
-        connectedMCPServers.length > 0 &&
-        renderServerRows(connectedMCPServers, "connected")}
-
-      {!isLoadingSources && !mcpServersError && (
-        <section aria-labelledby={availableHeadingId} className="mt-8 border-t border-border pt-5">
-          <h3 id={availableHeadingId} className="text-sm font-semibold text-foreground">
-            {intl.formatMessage({ id: "gateways.editServer.availableMCPServers" })}
-          </h3>
-
-          {availableMCPServers.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">
-              {intl.formatMessage({ id: "gateways.editServer.noAvailableMCPServers" })}
-            </p>
-          ) : (
-            renderServerRows(availableMCPServers, "available")
-          )}
-          {selectedAvailableSourceIds.length > 0 && (
-            <p className="mt-3 text-sm text-muted-foreground">
-              {intl.formatMessage(
-                { id: "gateways.editServer.selectedMCPServers" },
-                { count: selectedAvailableSourceIds.length },
-              )}
-            </p>
-          )}
-        </section>
-      )}
+        sortedMCPServers.length > 0 &&
+        renderServerRows(sortedMCPServers)}
     </section>
   );
 }

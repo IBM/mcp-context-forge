@@ -241,21 +241,28 @@ describe("CreateServer", () => {
     expect(screen.getByLabelText("Virtual server description")).toHaveValue("Test server");
     expect(screen.getByRole("button", { name: "Submit" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
-    const connectedServersSection = screen
-      .getByRole("heading", { name: "Connected MCP servers" })
-      .closest("section");
-    expect(connectedServersSection).not.toBeNull();
-    await within(connectedServersSection as HTMLElement).findByText("connected-source");
-    expect(screen.getByRole("heading", { name: "Available MCP servers" })).toBeInTheDocument();
-    expect(screen.getByText("available-source")).toBeInTheDocument();
+    const mcpServersSection = screen.getByRole("region", { name: "MCP server" });
+    await within(mcpServersSection).findByText("connected-source");
+    expect(within(mcpServersSection).getByText("available-source")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Connected MCP servers" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Available MCP servers" }),
+    ).not.toBeInTheDocument();
 
     const connectedSourceCheckbox = screen.getByRole("checkbox", {
       name: "Select connected-source",
     });
+    const availableSourceCheckbox = screen.getByRole("checkbox", {
+      name: "Select available-source",
+    });
     expect(connectedSourceCheckbox).toBeChecked();
+    expect(availableSourceCheckbox).not.toBeChecked();
     await user.click(connectedSourceCheckbox);
     expect(connectedSourceCheckbox).not.toBeChecked();
-    await user.click(screen.getByRole("checkbox", { name: "Select available-source" }));
+    await user.click(availableSourceCheckbox);
+    expect(availableSourceCheckbox).toBeChecked();
 
     const nameInput = screen.getByLabelText(/Name/);
     await user.clear(nameInput);
