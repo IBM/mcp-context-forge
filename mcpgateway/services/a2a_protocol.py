@@ -357,6 +357,7 @@ def prepare_a2a_invocation(
     auth_query_params: Optional[Dict[str, str]] = None,
     base_headers: Optional[Mapping[str, str]] = None,
     correlation_id: Optional[str] = None,
+    streaming: bool = False,
 ) -> PreparedA2AInvocation:
     """Prepare endpoint, headers, and request body for an outbound A2A invocation."""
     headers = {str(key): str(value) for key, value in dict(base_headers or {}).items()}
@@ -418,7 +419,11 @@ def prepare_a2a_invocation(
     protocol_version_header = normalize_a2a_version_header(protocol_version)
     if uses_jsonrpc:
         headers[_A2A_VERSION_HEADER] = protocol_version_header
-        headers.setdefault("Accept", "application/json, text/event-stream")
+        # Set Accept header based on whether this is a streaming request
+        if streaming:
+            headers.setdefault("Accept", "text/event-stream")
+        else:
+            headers.setdefault("Accept", "application/json")
         request_data = build_a2a_jsonrpc_request(parameters or {}, protocol_version)
     else:
         request_data = {

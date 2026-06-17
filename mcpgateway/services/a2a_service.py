@@ -2798,6 +2798,7 @@ class A2AAgentService(BaseService):
                 auth_value=agent_auth_value,
                 auth_query_params=agent_auth_query_params,
                 correlation_id=correlation_id,
+                streaming=True,  # This is the streaming endpoint
             )
         except Exception as e:
             if agent_auth_type in ("basic", "bearer", "authheaders") and agent_auth_value:
