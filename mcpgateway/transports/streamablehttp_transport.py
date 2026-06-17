@@ -1998,8 +1998,16 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
     s_id = server_id_var.get()
 
     # Check if context vars are populated with real data (not defaults)
-    if s_id != "default_server_id":
-        return s_id, request_headers_var.get(), user_context_var.get()
+    # Fast path requires BOTH a valid server_id AND a session ID (for stateful sessions)
+    req_headers = request_headers_var.get()
+    req_headers_lower = {k.lower(): v for k, v in req_headers.items()}
+    has_session_id = bool(req_headers_lower.get("x-mcp-session-id") or req_headers_lower.get("mcp-session-id"))
+
+    if s_id != "default_server_id" and has_session_id:
+        return s_id, req_headers, user_context_var.get()
+
+    if s_id != "default_server_id" and not has_session_id:
+        logger.debug("[CONTEXT_RESOLUTION] Path 1 skipped (no session ID)")
 
     # 2. Try ASGI scope context injected by handle_streamable_http()
     ctx = None
