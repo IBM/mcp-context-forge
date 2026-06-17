@@ -33,6 +33,8 @@ opentelemetry-proto = "2026-06-08T10:56:34Z"
 opentelemetry-semantic-conventions = "2026-06-08T10:56:34Z"
 prometheus-fastapi-instrumentator = "2026-06-08T10:56:34Z"
 aiohttp = "2026-06-08T10:56:34Z"
+cryptography = "2026-06-17T23:59:59Z"
+starlette = "2026-06-17T23:59:59Z"
 
 
 [tool.uv.sources]
@@ -84,7 +86,7 @@ dependencies = [
     "brotli>=1.2.0",
     "click>=8.4.1", # Transitive pin
     "cpex>=0.1.1",
-    "cryptography>=48.0.0",
+    "cryptography>=48.0.1",
     "fastapi>=0.136.3",
     "filelock>=3.29.0",
     "gunicorn>=26.0.0",
@@ -114,7 +116,7 @@ dependencies = [
     "requests-oauthlib>=2.0.0",
     "sqlalchemy>=2.0.50",
     "sse-starlette>=3.4.4",
-    "starlette>=1.2.0",
+    "starlette>=1.3.1",
     "starlette-compress>=1.7.1",
     "typer>=0.25.1",
     "urllib3>=2.7.0", # Transitive pin (requests); dependabot/76
