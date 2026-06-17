@@ -3,7 +3,7 @@
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 
-Unit tests for mcpgateway/tools/builder/build_hooks.py.
+Unit tests for build_hooks.py.
 """
 
 # Standard
@@ -17,8 +17,8 @@ from unittest.mock import MagicMock, patch
 # Third-Party
 import pytest
 
-import mcpgateway.tools.builder.build_hooks as bh_module
-from mcpgateway.tools.builder.build_hooks import BuildPyWithUI
+import build_hooks as bh_module
+from build_hooks import BuildPyWithUI
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -65,23 +65,23 @@ def anchored(project, monkeypatch):
 class TestBuildUIAssetsFlag:
     def test_skips_when_flag_unset(self, hook, monkeypatch):
         monkeypatch.delenv("BUILD_UI_ASSETS", raising=False)
-        with patch("mcpgateway.tools.builder.build_hooks.build_py.run") as super_run:
+        with patch("build_hooks.build_py.run") as super_run:
             hook.run()
         super_run.assert_called_once()
 
     @pytest.mark.parametrize("value", ["1", "0", "false", "FALSE", "yes", ""])
     def test_skips_for_non_true_values(self, hook, monkeypatch, value):
         monkeypatch.setenv("BUILD_UI_ASSETS", value)
-        with patch("mcpgateway.tools.builder.build_hooks.build_py.run") as super_run:
+        with patch("build_hooks.build_py.run") as super_run:
             hook.run()
         super_run.assert_called_once()
 
     @pytest.mark.parametrize("value", ["true", "True", "TRUE"])
     def test_proceeds_for_true_values(self, hook, anchored, monkeypatch, value):
         monkeypatch.setenv("BUILD_UI_ASSETS", value)
-        with patch("mcpgateway.tools.builder.build_hooks.subprocess.run") as mock_run:
+        with patch("build_hooks.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
-            with patch("mcpgateway.tools.builder.build_hooks.build_py.run"):
+            with patch("build_hooks.build_py.run"):
                 hook.run()
         assert mock_run.called
 
@@ -124,9 +124,9 @@ class TestProjectRootDiscovery:
 
     def test_finds_root_within_depth_limit(self, hook, anchored, monkeypatch):
         monkeypatch.setenv("BUILD_UI_ASSETS", "true")
-        with patch("mcpgateway.tools.builder.build_hooks.subprocess.run") as mock_run:
+        with patch("build_hooks.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
-            with patch("mcpgateway.tools.builder.build_hooks.build_py.run"):
+            with patch("build_hooks.build_py.run"):
                 hook.run()  # must not sys.exit
         assert mock_run.called
 
@@ -145,7 +145,7 @@ class TestStaticDirValidation:
         monkeypatch.setattr(bh_module, "__file__", str(fake_file))
         monkeypatch.setenv("BUILD_UI_ASSETS", "true")
 
-        with patch("mcpgateway.tools.builder.build_hooks.subprocess.run"):
+        with patch("build_hooks.subprocess.run"):
             with pytest.raises(SystemExit) as exc_info:
                 hook.run()
         assert exc_info.value.code == 1
@@ -158,9 +158,9 @@ class TestStaticDirValidation:
         b2.write_text("old")
 
         monkeypatch.setenv("BUILD_UI_ASSETS", "true")
-        with patch("mcpgateway.tools.builder.build_hooks.subprocess.run") as mock_run:
+        with patch("build_hooks.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
-            with patch("mcpgateway.tools.builder.build_hooks.build_py.run"):
+            with patch("build_hooks.build_py.run"):
                 hook.run()
 
         assert not b1.exists()
@@ -172,9 +172,9 @@ class TestStaticDirValidation:
         keeper.write_text("keep me")
 
         monkeypatch.setenv("BUILD_UI_ASSETS", "true")
-        with patch("mcpgateway.tools.builder.build_hooks.subprocess.run") as mock_run:
+        with patch("build_hooks.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
-            with patch("mcpgateway.tools.builder.build_hooks.build_py.run"):
+            with patch("build_hooks.build_py.run"):
                 hook.run()
 
         assert keeper.exists()
@@ -188,7 +188,7 @@ class TestStaticDirValidation:
 class TestNpmChecks:
     def test_exits_when_npm_not_found(self, hook, anchored, monkeypatch):
         monkeypatch.setenv("BUILD_UI_ASSETS", "true")
-        with patch("mcpgateway.tools.builder.build_hooks.subprocess.run", side_effect=FileNotFoundError):
+        with patch("build_hooks.subprocess.run", side_effect=FileNotFoundError):
             with pytest.raises(SystemExit) as exc_info:
                 hook.run()
         assert exc_info.value.code == 1
@@ -196,7 +196,7 @@ class TestNpmChecks:
     def test_exits_when_npm_version_check_fails(self, hook, anchored, monkeypatch):
         monkeypatch.setenv("BUILD_UI_ASSETS", "true")
         with patch(
-            "mcpgateway.tools.builder.build_hooks.subprocess.run",
+            "build_hooks.subprocess.run",
             side_effect=subprocess.CalledProcessError(1, "npm"),
         ):
             with pytest.raises(SystemExit) as exc_info:
@@ -211,9 +211,9 @@ class TestNpmChecks:
         monkeypatch.setattr(bh_module, "__file__", str(fake_file))
         monkeypatch.setenv("BUILD_UI_ASSETS", "true")
 
-        with patch("mcpgateway.tools.builder.build_hooks.subprocess.run") as mock_run:
+        with patch("build_hooks.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
-            with patch("mcpgateway.tools.builder.build_hooks.build_py.run"):
+            with patch("build_hooks.build_py.run"):
                 hook.run()
 
         calls = [c.args[0] for c in mock_run.call_args_list]
@@ -221,9 +221,9 @@ class TestNpmChecks:
 
     def test_skips_npm_install_when_node_modules_present(self, hook, anchored, monkeypatch):
         monkeypatch.setenv("BUILD_UI_ASSETS", "true")
-        with patch("mcpgateway.tools.builder.build_hooks.subprocess.run") as mock_run:
+        with patch("build_hooks.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
-            with patch("mcpgateway.tools.builder.build_hooks.build_py.run"):
+            with patch("build_hooks.build_py.run"):
                 hook.run()
 
         calls = [c.args[0] for c in mock_run.call_args_list]
@@ -244,7 +244,7 @@ class TestNpmChecks:
                 raise subprocess.CalledProcessError(1, "npm install")
             return MagicMock(returncode=0)
 
-        with patch("mcpgateway.tools.builder.build_hooks.subprocess.run", side_effect=_side_effect):
+        with patch("build_hooks.subprocess.run", side_effect=_side_effect):
             with pytest.raises(SystemExit) as exc_info:
                 hook.run()
         assert exc_info.value.code == 1
@@ -264,7 +264,7 @@ class TestBuildSteps:
                 raise subprocess.CalledProcessError(1, "vite:build")
             return MagicMock(returncode=0)
 
-        with patch("mcpgateway.tools.builder.build_hooks.subprocess.run", side_effect=_side_effect):
+        with patch("build_hooks.subprocess.run", side_effect=_side_effect):
             with pytest.raises(SystemExit) as exc_info:
                 hook.run()
         assert exc_info.value.code == 1
@@ -277,7 +277,7 @@ class TestBuildSteps:
                 raise subprocess.CalledProcessError(1, "build:css")
             return MagicMock(returncode=0)
 
-        with patch("mcpgateway.tools.builder.build_hooks.subprocess.run", side_effect=_side_effect):
+        with patch("build_hooks.subprocess.run", side_effect=_side_effect):
             with pytest.raises(SystemExit) as exc_info:
                 hook.run()
         assert exc_info.value.code == 1
@@ -285,9 +285,9 @@ class TestBuildSteps:
     def test_happy_path_runs_all_npm_commands_and_calls_super(self, hook, anchored, monkeypatch):
         monkeypatch.setenv("BUILD_UI_ASSETS", "true")
 
-        with patch("mcpgateway.tools.builder.build_hooks.subprocess.run") as mock_run:
+        with patch("build_hooks.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
-            with patch("mcpgateway.tools.builder.build_hooks.build_py.run") as super_run:
+            with patch("build_hooks.build_py.run") as super_run:
                 hook.run()
 
         calls = [c.args[0] for c in mock_run.call_args_list]
@@ -299,9 +299,9 @@ class TestBuildSteps:
     def test_happy_path_npm_commands_use_project_root_as_cwd(self, hook, anchored, monkeypatch):
         monkeypatch.setenv("BUILD_UI_ASSETS", "true")
 
-        with patch("mcpgateway.tools.builder.build_hooks.subprocess.run") as mock_run:
+        with patch("build_hooks.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
-            with patch("mcpgateway.tools.builder.build_hooks.build_py.run"):
+            with patch("build_hooks.build_py.run"):
                 hook.run()
 
         cwd_values = {tuple(c.args[0]): c.kwargs.get("cwd") or c.args[1] if len(c.args) > 1 else c.kwargs.get("cwd") for c in mock_run.call_args_list if c.args[0] != ["npm", "--version"]}

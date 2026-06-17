@@ -255,8 +255,13 @@ RUN if [ "$(uname -m)" = "s390x" ] || [ "$(uname -m)" = "ppc64le" ]; then \
 #   2. Native extension wheels from rust-builder (consumed by venv install)
 # Everything else (rust binaries, frontend static, app code) is copied AFTER
 # the heavy venv install so those changes don't invalidate the dep layer.
+#
+# build_hooks.py is the setuptools build_py cmdclass referenced by
+# pyproject.toml; it must be importable during `uv pip install` even though the
+# mcpgateway source tree is copied later, so it is staged here alongside
+# pyproject.toml.
 # ----------------------------------------------------------------------------
-COPY pyproject.toml /app/
+COPY pyproject.toml build_hooks.py /app/
 COPY --from=rust-builder /build/native-extension-wheels/ /tmp/local-native-extension-wheels/
 COPY --from=s390x-wheels /wheels /tmp/s390x-wheels
 COPY --chmod=0755 scripts/verify-native-extensions.py /tmp/verify-native-extensions.py

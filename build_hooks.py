@@ -1,9 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Location: ./mcpgateway/tools/builder/build_hooks.py
+"""Location: ./build_hooks.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 
 Custom setuptools build hook to generate UI assets before packaging.
+
+Kept as a top-level module (not inside the ``mcpgateway`` package) so that
+setuptools can import it during ``uv pip install``/``python -m build`` without
+requiring the ``mcpgateway`` source tree to be present. The container build
+installs dependencies with only ``pyproject.toml`` (and this file) copied in,
+ahead of the application source, to preserve dependency-layer caching.
 
 This hook runs during `python -m build` to ensure bundle-*.js and tailwind.min.css
 are generated and included in the wheel/sdist, without requiring them to be committed to git.
