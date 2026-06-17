@@ -146,6 +146,7 @@ function AddToolsCard({ onAddTool }: { onAddTool: () => void }) {
 
 export function Tools() {
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [editingTool, setEditingTool] = useState<Tool | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<ToolGroup | null>(null);
   const [isDetailsPanelOpen, setIsDetailsPanelOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -154,12 +155,25 @@ export function Tools() {
 
   const { data: toolsData, error, isLoading, refetch } = useQuery<Tool[]>("/tools?limit=0");
 
+  const { data: editedToolData } = useQuery<Tool>(`/tools/${editingTool?.id}`, {
+    enabled: Boolean(editingTool?.id),
+  });
+
+  const toolForForm = editedToolData?.id === editingTool?.id ? editedToolData : editingTool;
+
   const groups = useMemo(() => buildGroups(toolsData ?? []), [toolsData]);
 
   const handleFormSuccess = () => {
     setIsFormOpen(false);
+    setEditingTool(null);
     refetch();
   };
+
+  const handleEditTool = useCallback((tool: Tool) => {
+    setEditingTool(tool);
+    setIsDetailsPanelOpen(false);
+    setIsFormOpen(true);
+  }, []);
 
   const handleViewGroup = (group: ToolGroup) => {
     setSelectedGroup(group);
@@ -212,8 +226,12 @@ export function Tools() {
       {isFormOpen ? (
         <ToolForm
           isOpen={isFormOpen}
-          onToggle={() => setIsFormOpen(false)}
+          onToggle={() => {
+            setIsFormOpen(false);
+            setEditingTool(null);
+          }}
           onSuccess={handleFormSuccess}
+          tool={toolForForm ?? undefined}
         />
       ) : (
         <>
@@ -262,6 +280,7 @@ export function Tools() {
               open={isDetailsPanelOpen}
               onClose={handleCloseDetails}
               onDeleteTool={handleDelete}
+              onEditTool={handleEditTool}
             />
           )}
 
