@@ -1484,9 +1484,7 @@ mcpFastTimeServer:
   enabled: true            # switch to true to deploy
   replicaCount: 2
   image:
-    # Local-build image name for the Rust fast-time server. This image is not
-    # published by the chart; build/load it into the cluster or override it.
-    repository: mcpgateway/fast-time-server
+    repository: ghcr.io/ibm/fast-time-server
     tag: "latest"
     pullPolicy: IfNotPresent
   port: 8080

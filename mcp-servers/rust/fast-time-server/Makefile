@@ -120,7 +120,7 @@ run-port: build
 CONTAINER_RT := $(or $(CONTAINER_RUNTIME),$(shell command -v docker 2>/dev/null || command -v podman 2>/dev/null))
 CONTAINER_RT_NAME := $(notdir $(CONTAINER_RT))
 
-IMAGE_NAME ?= mcpgateway/fast-time-server
+IMAGE_NAME ?= ghcr.io/ibm/fast-time-server
 IMAGE_TAG ?= $(VERSION)
 IMAGE ?= $(IMAGE_NAME):$(IMAGE_TAG)
 

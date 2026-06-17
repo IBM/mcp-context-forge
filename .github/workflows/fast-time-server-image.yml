@@ -1,0 +1,105 @@
+# ===============================================================
+# Rust Fast Time Server Image
+# ===============================================================
+#
+# Builds the Rust fast-time-server image on PRs and publishes it to GHCR
+# from main, tags, or manual dispatch.
+#
+# ===============================================================
+
+name: Fast Time Server Image
+
+on:
+  push:
+    branches: ["main"]
+    tags: ["v*"]
+    paths:
+      - 'mcp-servers/rust/fast-time-server/**'
+      - '.github/workflows/fast-time-server-image.yml'
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    branches: ["main"]
+    paths:
+      - 'mcp-servers/rust/fast-time-server/**'
+      - '.github/workflows/fast-time-server-image.yml'
+  merge_group:
+    branches: ["main"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ibm/fast-time-server
+
+jobs:
+  build:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: Build Rust fast-time image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Set platforms
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" || "${GITHUB_EVENT_NAME}" == "merge_group" ]]; then
+            echo "FAST_TIME_PLATFORMS=linux/amd64" >> "${GITHUB_ENV}"
+          else
+            echo "FAST_TIME_PLATFORMS=linux/amd64,linux/arm64" >> "${GITHUB_ENV}"
+          fi
+
+      - name: Set up QEMU
+        if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
+            type=sha,format=long
+            type=ref,event=tag
+            type=ref,event=pr
+
+      - name: Build and publish
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: mcp-servers/rust/fast-time-server
+          file: mcp-servers/rust/fast-time-server/Containerfile
+          platforms: ${{ env.FAST_TIME_PLATFORMS }}
+          push: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+          load: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=fast-time-server
+          cache-to: type=gha,mode=max,scope=fast-time-server
+          provenance: false

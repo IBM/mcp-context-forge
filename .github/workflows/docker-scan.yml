@@ -30,6 +30,7 @@ on:
       - 'Containerfile.scratch'
       - 'infra/nginx/**'
       - 'a2a-agents/rust/a2a-echo-agent/**'
+      - 'mcp-servers/rust/fast-time-server/Containerfile'
       - 'mcp-servers/python/python_sandbox_server/**'
       - 'mcpgateway/**'
       - 'plugins/**'
@@ -80,6 +81,7 @@ jobs:
             Containerfile
             Containerfile.scratch
             infra/nginx/Dockerfile
+            mcp-servers/rust/fast-time-server/Containerfile
             mcp-servers/python/python_sandbox_server/Containerfile
             mcp-servers/python/python_sandbox_server/docker/Dockerfile.sandbox
           )

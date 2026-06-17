@@ -200,11 +200,8 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 ??? example "End-to-end demo (register a local MCP server)"
 
     ```bash
-    # 1️⃣  Spin up the sample GO MCP time server using mcpgateway.translate & docker
-    python3 -m mcpgateway.translate \
-         --stdio "docker run --rm -i ghcr.io/ibm/fast-time-server:latest -transport=stdio" \
-         --expose-sse \
-         --port 8003
+    # 1️⃣  Spin up the sample Rust MCP time server
+    docker run -d --rm --name fast-time-server -p 9080:9080 ghcr.io/ibm/fast-time-server:latest
 
     # Or using the official mcp-server-git using uvx:
     pip install uv # to install uvx, if not already installed
@@ -221,7 +218,7 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
     # 2️⃣  Register it with the gateway
     curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
          -H "Content-Type: application/json" \
-         -d '{"name":"fast_time","url":"http://localhost:8003/sse"}' \
+         -d '{"name":"fast_time","url":"http://localhost:9080/mcp"}' \
          http://localhost:4444/gateways
 
     # 3️⃣  Verify tool catalog

@@ -1527,11 +1527,11 @@ services:
 
   ###############################################################################
   # Fast Time Server - High-performance Rust time/timezone service for MCP
-  # Uses a local Rust build by default. Override FAST_TIME_IMAGE to use a registry image.
-  #   FAST_TIME_IMAGE=mcpgateway/fast-time-server:local docker compose build fast_time_server
+  # Uses the published Rust image by default. Override FAST_TIME_IMAGE for local tags.
+  #   FAST_TIME_IMAGE=ghcr.io/ibm/fast-time-server:local docker compose build fast_time_server
   ###############################################################################
   fast_time_server:
-    image: ${FAST_TIME_IMAGE:-mcpgateway/fast-time-server:latest}
+    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/fast-time-server:latest}
     build:
       context: ./mcp-servers/rust/fast-time-server
       dockerfile: Containerfile

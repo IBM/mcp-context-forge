@@ -2287,7 +2287,7 @@
             "repository": {
               "type": "string",
               "description": "Image repository",
-              "default": "mcpgateway/fast-time-server"
+              "default": "ghcr.io/ibm/fast-time-server"
             },
             "tag": {
               "type": "string",

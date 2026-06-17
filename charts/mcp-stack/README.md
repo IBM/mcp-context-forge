@@ -1212,7 +1212,7 @@ When `RATELIMITER_REDIS_URL` is not set during start time, the gateway automatic
 | minio.resources.requests.memory | string | `"256Mi"` |  |
 | mcpFastTimeServer.enabled | bool | `true` |  |
 | mcpFastTimeServer.replicaCount | int | `2` |  |
-| mcpFastTimeServer.image.repository | string | `"mcpgateway/fast-time-server"` |  |
+| mcpFastTimeServer.image.repository | string | `"ghcr.io/ibm/fast-time-server"` |  |
 | mcpFastTimeServer.image.tag | string | `"latest"` |  |
 | mcpFastTimeServer.image.pullPolicy | string | `"IfNotPresent"` |  |
 | mcpFastTimeServer.port | int | `8080` |  |

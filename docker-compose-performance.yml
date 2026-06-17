@@ -1149,7 +1149,7 @@ services:
   # Fast Time Server - High-performance Rust time/timezone service for MCP
   ###############################################################################
   fast_time_server:
-    image: ${FAST_TIME_IMAGE:-mcpgateway/fast-time-server:latest}
+    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/fast-time-server:latest}
     build:
       context: ./mcp-servers/rust/fast-time-server
       dockerfile: Containerfile
