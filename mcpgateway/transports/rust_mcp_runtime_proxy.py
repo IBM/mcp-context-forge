@@ -24,6 +24,7 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 import orjson
 from sqlalchemy import exists as sa_exists
+from sqlalchemy import select as sa_select
 from starlette.types import Receive, Scope, Send
 
 # First-Party
@@ -127,7 +128,7 @@ async def _validate_server_id(match: re.Match[str] | None, path: str, scope: Sco
         # to prevent unauthorized access via invalid server IDs.
         try:
             with fresh_db_session() as db:
-                exists = db.execute(sa_exists().where(DbServer.id == server_id)).scalar()
+                exists = db.execute(sa_select(sa_exists().where(DbServer.id == server_id))).scalar()
                 if not exists:
                     logger.warning("Invalid server ID in Rust proxy MCP request path: %s", server_id)
                     response = ORJSONResponse({"detail": "Server not found"}, status_code=404, headers=_deprecation_response_headers())

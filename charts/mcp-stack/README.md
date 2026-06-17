@@ -1244,10 +1244,10 @@ When `RATELIMITER_REDIS_URL` is not set during start time, the gateway automatic
 | mcpFastTimeServer.probes.liveness.timeoutSeconds | int | `2` |  |
 | mcpFastTimeServer.probes.liveness.successThreshold | int | `1` |  |
 | mcpFastTimeServer.probes.liveness.failureThreshold | int | `3` |  |
-| mcpFastTimeServer.resources.limits.cpu | string | `"2"` |  |
-| mcpFastTimeServer.resources.limits.memory | string | `"1Gi"` |  |
-| mcpFastTimeServer.resources.requests.cpu | string | `"500m"` |  |
-| mcpFastTimeServer.resources.requests.memory | string | `"128Mi"` |  |
+| mcpFastTimeServer.resources.limits.cpu | string | `"50m"` |  |
+| mcpFastTimeServer.resources.limits.memory | string | `"64Mi"` |  |
+| mcpFastTimeServer.resources.requests.cpu | string | `"25m"` |  |
+| mcpFastTimeServer.resources.requests.memory | string | `"10Mi"` |  |
 | nginxProxy.enabled | bool | `false` |  |
 | nginxProxy.image.repository | string | `"mcpgateway/nginx-cache"` |  |
 | nginxProxy.image.tag | string | `"latest"` |  |

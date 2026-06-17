@@ -2181,7 +2181,10 @@ fn derive_backend_initialize_url(backend_rpc_url: &str) -> String {
     derive_backend_url(backend_rpc_url, "initialize")
 }
 fn derive_backend_transport_url(backend_rpc_url: &str) -> String {
-    derive_backend_url(backend_rpc_url, "transport")
+    format!(
+        "{}/",
+        derive_backend_url(backend_rpc_url, "transport").trim_end_matches('/')
+    )
 }
 fn derive_backend_session_delete_url(backend_rpc_url: &str) -> String {
     derive_backend_url(backend_rpc_url, "session")
@@ -3060,7 +3063,9 @@ async fn handle_initialize_with_session_core(
     request: &JsonRpcRequest,
 ) -> Response {
     let auth_context = decode_internal_auth_context_from_headers_optional(&incoming_headers);
-    let session_id = requested_initialize_session_id(&incoming_headers, &uri, request)
+    let requested_session_id = requested_initialize_session_id(&incoming_headers, &uri, request);
+    let session_id = requested_session_id
+        .clone()
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     let request_id = request.id.clone();
     let request_params = request.params.clone();
@@ -3102,7 +3107,9 @@ async fn handle_initialize_with_session_core(
             );
         }
 
-        inject_session_header(&mut incoming_headers, &session_id);
+        if requested_session_id.is_some() {
+            inject_session_header(&mut incoming_headers, &session_id);
+        }
         if let Some(server_id) = extract_server_id_header(&incoming_headers) {
             inject_server_id_header(&mut incoming_headers, &server_id);
         }
@@ -10576,7 +10583,7 @@ mod unit_tests {
         );
         assert_eq!(
             state.backend_transport_url(),
-            "http://127.0.0.1:4444/_internal/mcp/transport"
+            "http://127.0.0.1:4444/_internal/mcp/transport/"
         );
         assert_eq!(
             state.backend_tools_list_url(),
@@ -10952,7 +10959,7 @@ mod unit_tests {
                 derive_backend_logging_set_level_url,
             ),
             ("_internal/mcp/initialize", derive_backend_initialize_url),
-            ("_internal/mcp/transport", derive_backend_transport_url),
+            ("_internal/mcp/transport/", derive_backend_transport_url),
             ("_internal/mcp/session", derive_backend_session_delete_url),
             (
                 "_internal/mcp/notifications/initialized",
@@ -11422,7 +11429,7 @@ mod unit_tests {
             let get_calls = calls.clone();
             let delete_calls = calls.clone();
             Router::new().route(
-                "/_internal/mcp/transport",
+                "/_internal/mcp/transport/",
                 get(move |headers: HeaderMap| {
                     let calls = get_calls.clone();
                     async move {
@@ -13620,7 +13627,7 @@ mod unit_tests {
     #[tokio::test]
     async fn forward_transport_request_get_forwards_to_backend_and_sets_session_hint_headers() {
         let backend = Router::new().route(
-            "/_internal/mcp/transport",
+            "/_internal/mcp/transport/",
             axum::routing::get(|| async { Json(json!({"ok": true, "path": "transport"})) }),
         );
         let backend_url = spawn_router(backend).await;
@@ -13911,7 +13918,7 @@ mod unit_tests {
         // backend that returns a valid SSE response so handle_live_stream
         // streams it back.
         let backend = Router::new().route(
-            "/_internal/mcp/transport",
+            "/_internal/mcp/transport/",
             axum::routing::get(|| async {
                 (
                     StatusCode::OK,
@@ -13998,7 +14005,7 @@ mod unit_tests {
         // (mirrors runtime_session_id_from_request which checks both header
         // and `session_id` query param).
         let backend = Router::new().route(
-            "/_internal/mcp/transport",
+            "/_internal/mcp/transport/",
             axum::routing::get(|| async { Json(json!({"ok": true})) }),
         );
         let backend_url = spawn_router(backend).await;
@@ -14049,7 +14056,7 @@ mod unit_tests {
         // `x-mcp-session-id`. Rust must do the same so clients aren't
         // accepted by one runtime and 405'd by the other.
         let backend = Router::new().route(
-            "/_internal/mcp/transport",
+            "/_internal/mcp/transport/",
             axum::routing::get(|| async { Json(json!({"ok": true})) }),
         );
         let backend_url = spawn_router(backend).await;

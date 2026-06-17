@@ -467,7 +467,7 @@ async fn public_session_reuses_authenticated_context_when_flag_enabled() {
                 }),
             )
             .route(
-                "/_internal/mcp/transport",
+                "/_internal/mcp/transport/",
                 post(|| async move {
                     Json(json!({
                         "jsonrpc": "2.0",
@@ -578,7 +578,7 @@ async fn public_session_denies_when_auth_binding_changes() {
                 }),
             )
             .route(
-                "/_internal/mcp/transport",
+                "/_internal/mcp/transport/",
                 post(|| async move {
                     Json(json!({
                         "jsonrpc": "2.0",
@@ -679,7 +679,7 @@ async fn public_session_reauthenticates_after_auth_reuse_ttl_expires() {
                 }),
             )
             .route(
-                "/_internal/mcp/transport",
+                "/_internal/mcp/transport/",
                 post(|| async move {
                     Json(json!({
                         "jsonrpc": "2.0",
@@ -773,7 +773,7 @@ async fn get_and_delete_mcp_routes_forward_to_internal_transport_bridge() {
         let get_transport_calls = transport_calls.clone();
         let delete_transport_calls = transport_calls.clone();
         Router::new().route(
-            "/_internal/mcp/transport",
+            "/_internal/mcp/transport/",
             get(move |headers: HeaderMap, uri: Uri| {
                 let transport_calls = get_transport_calls.clone();
                 async move {
@@ -915,7 +915,7 @@ async fn session_core_initialize_tracks_session_and_reuses_server_scope_for_tran
         let delete_calls = transport_calls.clone();
         Router::new()
             .route(
-                "/_internal/mcp/transport",
+                "/_internal/mcp/transport/",
                 post(move |headers: HeaderMap, uri: Uri, Json(body): Json<Value>| {
                     let transport_calls = post_calls.clone();
                     async move {
@@ -1086,8 +1086,9 @@ async fn session_core_initialize_tracks_session_and_reuses_server_scope_for_tran
     );
 
     let calls = transport_calls.lock().expect("lock");
+    assert_eq!(calls.len(), 3);
     assert_eq!(calls[0].0, "POST".to_string());
-    assert!(calls[0].1.is_some());
+    assert_eq!(calls[0].1, None);
     assert_eq!(calls[0].2.as_deref(), Some("server-123"));
     assert_eq!(calls[0].3, None);
     assert_eq!(calls[0].4, None);
@@ -1161,7 +1162,7 @@ async fn affinity_core_preserves_owner_access_across_workers_and_denies_peer_reu
             }),
         )
         .route(
-            "/_internal/mcp/transport",
+            "/_internal/mcp/transport/",
             post(move || {
                 let initialize_session_id = initialize_session_id.clone();
                 async move {
@@ -1490,7 +1491,7 @@ async fn session_core_transport_denies_non_owner_before_backend_dispatch() {
         let post_calls = transport_calls.clone();
         let get_calls = transport_calls.clone();
         Router::new().route(
-            "/_internal/mcp/transport",
+            "/_internal/mcp/transport/",
             post(move |headers: HeaderMap, Json(body): Json<Value>| {
                 let transport_calls = post_calls.clone();
                 async move {
@@ -1603,7 +1604,7 @@ async fn session_core_transport_denies_same_email_with_different_auth_binding() 
     let backend = {
         let post_calls = transport_calls.clone();
         Router::new().route(
-            "/_internal/mcp/transport",
+            "/_internal/mcp/transport/",
             post(move |headers: HeaderMap, Json(body): Json<Value>| {
                 let transport_calls = post_calls.clone();
                 async move {
@@ -1711,7 +1712,7 @@ async fn session_core_redis_shares_sessions_across_runtime_instances() {
         let post_calls = transport_calls.clone();
         let get_calls = transport_calls.clone();
         Router::new().route(
-            "/_internal/mcp/transport",
+            "/_internal/mcp/transport/",
             post(move |headers: HeaderMap, Json(body): Json<Value>| {
                 let transport_calls = post_calls.clone();
                 async move {
@@ -1873,7 +1874,7 @@ async fn affinity_core_forwards_session_post_to_owner_worker_channel() {
     let initialize_session_id = session_id.clone();
     let backend = Router::new()
         .route(
-            "/_internal/mcp/transport",
+            "/_internal/mcp/transport/",
             post(move || {
                 let backend_calls = backend_calls_clone.clone();
                 let initialize_session_id = initialize_session_id.clone();
@@ -2235,7 +2236,7 @@ async fn resume_core_replays_public_get_from_rust_event_store() {
         let post_transport_calls = transport_calls.clone();
         let get_transport_calls = transport_calls.clone();
         Router::new().route(
-            "/_internal/mcp/transport",
+            "/_internal/mcp/transport/",
             post(move |headers: HeaderMap, Json(_body): Json<Value>| {
                 let transport_calls = post_transport_calls.clone();
                 async move {
@@ -2414,7 +2415,7 @@ async fn resume_core_disabled_falls_back_to_python_transport_get() {
         let post_calls = transport_calls.clone();
         let get_calls = transport_calls.clone();
         Router::new().route(
-            "/_internal/mcp/transport",
+            "/_internal/mcp/transport/",
             post(move || {
                 let transport_calls = post_calls.clone();
                 async move {
@@ -2503,7 +2504,7 @@ async fn live_stream_core_restreams_public_get_from_rust_edge() {
         let post_calls = transport_calls.clone();
         let get_calls = transport_calls.clone();
         Router::new().route(
-            "/_internal/mcp/transport",
+            "/_internal/mcp/transport/",
             post(move || {
                 let transport_calls = post_calls.clone();
                 async move {
@@ -2608,7 +2609,7 @@ async fn live_stream_core_returns_headers_without_waiting_for_backend_sse() {
         let post_calls = transport_calls.clone();
         let get_calls = transport_calls.clone();
         Router::new().route(
-            "/_internal/mcp/transport",
+            "/_internal/mcp/transport/",
             post(move || {
                 let transport_calls = post_calls.clone();
                 async move {
@@ -2708,7 +2709,7 @@ async fn live_stream_core_disabled_falls_back_to_python_transport_get() {
     let backend = {
         let transport_calls = transport_calls.clone();
         Router::new().route(
-            "/_internal/mcp/transport",
+            "/_internal/mcp/transport/",
             get(move || {
                 let transport_calls = transport_calls.clone();
                 async move {

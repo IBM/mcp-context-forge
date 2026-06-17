@@ -481,32 +481,33 @@ def _mcp_initialize_only(access_token: str, server_url: str = BASE_URL) -> bool:
     return _run_async(_async_mcp_initialize(access_token, server_url))
 
 
+def _registered_tool_name(access_token: str, suffix: str, server_url: str = BASE_URL) -> str:
+    tools = _mcp_tools_list(access_token, server_url)
+    names = [t.name for t in tools]
+    matches = [name for name in names if suffix in name]
+    assert matches, f"Expected a registered {suffix} tool, got: {names}"
+    return matches[0]
+
+
+def _has_registered_fast_time_tool(tool_names: list[str]) -> bool:
+    return any("get-system-time" in name for name in tool_names)
+
+
 # ---------------------------------------------------------------------------
 # Test: REST API server visibility
 # ---------------------------------------------------------------------------
 class TestServerVisibilityViaAPI:
     """Verify server visibility via REST API before MCP protocol tests."""
 
-    def test_admin_sees_public_and_team_via_http(self, admin_api: APIRequestContext, visibility_servers: dict) -> None:
-        """Admin via HTTP sees public + team servers but NOT private — even own-private (PR #4341).
-
-        ``admin_api`` carries a JWT with ``is_admin=true`` and ``teams=null``. After
-        PR #4341 cycle-2 S3-b, ``get_scoped_resource_access_context`` deliberately
-        collapses this shape to ``(None, None)`` so HTTP cannot be a stealthy
-        escalation surface; the service layer then applies the anonymous-bypass
-        rule (public + team only, never private). Admins who need to read their
-        own private rows directly should use a ``team``-scoped token or operate
-        via owner-match workflows. The pre-#4341 ``test_admin_sees_all_servers``
-        assertion encoded the old "admin sees everything" semantics and is
-        superseded by this test plus the explicit not-in assertion below.
-        """
+    def test_admin_sees_public_team_and_private_via_http(self, admin_api: APIRequestContext, visibility_servers: dict) -> None:
+        """Platform-admin JWTs use the documented admin-bypass token scope."""
         resp = admin_api.get("/servers")
         assert resp.status == 200
         server_ids = {s["id"] for s in resp.json()}
         assert visibility_servers["public"]["id"] in server_ids, "Admin should see public server"
         assert visibility_servers["team"]["id"] in server_ids, "Admin should see team server"
-        assert visibility_servers["private"]["id"] not in server_ids, "PR #4341: admin via HTTP must NOT see private server (own-private collapsed by get_scoped_resource_access_context)"
-        print("    -> Admin sees public + team servers; private denied via HTTP collapse")
+        assert visibility_servers["private"]["id"] in server_ids, "Admin bypass should see private server"
+        print("    -> Admin sees public + team + private servers")
 
     def test_team_member_sees_public_and_team(self, test_users: dict, playwright: Playwright, visibility_servers: dict) -> None:
         token = test_users["developer"]["access_token"]
@@ -580,8 +581,8 @@ class TestMcpToolsVisibilityByRole:
         tools = _mcp_tools_list(test_users["developer"]["access_token"])
         assert len(tools) > 0, "Developer should see at least public tools"
         tool_names = [t.name for t in tools]
-        # Developer should see fast-time-* (public Streamable HTTP) tools
-        has_public_tools = any("fast-time" in n for n in tool_names)
+        # Rust fast-time tools are prefixed with the gateway name after registration.
+        has_public_tools = _has_registered_fast_time_tool(tool_names)
         assert has_public_tools, f"Developer should see public fast-time tools, got: {tool_names}"
         print(f"    -> Developer sees {len(tools)} tools")
 
@@ -589,15 +590,15 @@ class TestMcpToolsVisibilityByRole:
         tools = _mcp_tools_list(test_users["viewer"]["access_token"])
         assert len(tools) > 0, "Viewer should see at least public tools"
         tool_names = [t.name for t in tools]
-        has_public_tools = any("fast-time" in n for n in tool_names)
+        has_public_tools = _has_registered_fast_time_tool(tool_names)
         assert has_public_tools, f"Viewer should see public fast-time tools, got: {tool_names}"
         print(f"    -> Viewer sees {len(tools)} tools")
 
     def test_outsider_sees_only_public_tools(self, outsider_user: dict) -> None:
         tools = _mcp_tools_list(outsider_user["access_token"])
         tool_names = [t.name for t in tools]
-        # Outsider should see public tools (fast-time-*) but not team-only
-        has_public_tools = any("fast-time" in n for n in tool_names)
+        # Outsider should see public Rust fast-time tools but not team-only tools.
+        has_public_tools = _has_registered_fast_time_tool(tool_names)
         assert has_public_tools, f"Outsider should see public fast-time tools, got: {tool_names}"
         print(f"    -> Outsider sees {len(tools)} public tools")
 
@@ -647,28 +648,32 @@ class TestMcpToolCallByRole:
     """
 
     def test_admin_calls_tool_success(self, test_users: dict) -> None:
-        result = _mcp_tool_call(test_users["admin"]["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
+        tool_name = _registered_tool_name(test_users["admin"]["access_token"], "get-system-time")
+        result = _mcp_tool_call(test_users["admin"]["access_token"], tool_name, {"timezone": "UTC"})
         assert not result.is_error, f"Admin tool call should succeed: {result}"
         text = result.content[0].text
         assert len(text) > 0
-        print(f"    -> Admin call fast-time-get-system-time = {text}")
+        print(f"    -> Admin call {tool_name} = {text}")
 
     def test_developer_can_execute_on_default_endpoint(self, test_users: dict) -> None:
         """Developer has team-scoped tools.execute; check_any_team=True allows it on /mcp."""
-        result = _mcp_tool_call(test_users["developer"]["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
+        tool_name = _registered_tool_name(test_users["developer"]["access_token"], "get-system-time")
+        result = _mcp_tool_call(test_users["developer"]["access_token"], tool_name, {"timezone": "UTC"})
         assert not result.is_error, f"Developer tool call should succeed (check_any_team): {result}"
         print(f"    -> Developer call succeeded: {result.content[0].text}")
 
     def test_team_admin_can_execute_on_default_endpoint(self, test_users: dict) -> None:
         """Team admin has team-scoped tools.execute; check_any_team=True allows it on /mcp."""
-        result = _mcp_tool_call(test_users["team_admin"]["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
+        tool_name = _registered_tool_name(test_users["team_admin"]["access_token"], "get-system-time")
+        result = _mcp_tool_call(test_users["team_admin"]["access_token"], tool_name, {"timezone": "UTC"})
         assert not result.is_error, f"Team admin tool call should succeed (check_any_team): {result}"
         print(f"    -> Team admin call succeeded: {result.content[0].text}")
 
     def test_outsider_denied_tools_execute(self, outsider_user: dict) -> None:
         """Outsider has no team membership, so no tools.execute anywhere — denied."""
         try:
-            result = _mcp_tool_call(outsider_user["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
+            tool_name = _registered_tool_name(outsider_user["access_token"], "get-system-time")
+            result = _mcp_tool_call(outsider_user["access_token"], tool_name, {"timezone": "UTC"})
             assert result.is_error, f"Outsider should be denied tools.execute, got: {result}"
         except Exception:
             pass  # McpError or connection error — both valid denials
@@ -684,7 +689,8 @@ class TestMcpToolCallByRole:
 
     def test_viewer_can_execute_on_default_endpoint(self, test_users: dict) -> None:
         """Viewer has team-scoped tools.execute; check_any_team=True allows it on /mcp."""
-        result = _mcp_tool_call(test_users["viewer"]["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
+        tool_name = _registered_tool_name(test_users["viewer"]["access_token"], "get-system-time")
+        result = _mcp_tool_call(test_users["viewer"]["access_token"], tool_name, {"timezone": "UTC"})
         assert not result.is_error, f"Viewer tool call should succeed (check_any_team): {result}"
         print(f"    -> Viewer call succeeded: {result.content[0].text}")
 
@@ -721,7 +727,8 @@ class TestMcpScopedTokenPermissions:
 
     def test_unscoped_admin_token_can_call_tools(self, test_users: dict) -> None:
         """Admin token without custom scope (empty permissions = pass-through) can call tools."""
-        result = _mcp_tool_call(test_users["admin"]["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
+        tool_name = _registered_tool_name(test_users["admin"]["access_token"], "get-system-time")
+        result = _mcp_tool_call(test_users["admin"]["access_token"], tool_name, {"timezone": "UTC"})
         assert not result.is_error, f"Unscoped admin token should succeed: {result}"
         text = result.content[0].text
         assert len(text) > 0

@@ -69,6 +69,8 @@ jobs:
 
       - name: Set up Helm
         uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4
+        with:
+          version: v4.1.0
 
       - name: Verify SRI hashes
         run: make sri-verify

@@ -3831,6 +3831,10 @@ LINT_HELM_ROOT ?= $(LINT_TMP_ROOT)/helm
 LINT_NODE_ROOT ?= $(LINT_TMP_ROOT)/node
 LINT_PY_VENV ?= $(LINT_TMP_ROOT)/py-venv
 LINT_GO_TOOLCHAIN ?= go1.26.4
+LINT_ACTIONLINT_VERSION ?= 1.7.7
+LINT_ACTIONLINT_ROOT ?= $(LINT_TMP_ROOT)/actionlint
+LINT_CT_VERSION ?= 3.14.0
+LINT_CT_ROOT ?= $(LINT_TMP_ROOT)/chart-testing
 
 # Tool target defaults
 LINT_ZIZMOR_TARGET ?= .github/workflows
@@ -3858,13 +3862,25 @@ linting-python-env:
 .PHONY: linting-workflow-actionlint
 linting-workflow-actionlint:         ## 🧭  GitHub Actions workflow linting
 	@echo "🧭 actionlint ($(LINT_ZIZMOR_TARGET); shellcheck integration disabled)..."
-	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
-	@/bin/bash -c "set -euo pipefail; \
-		export GOPATH='$(LINT_GO_ROOT)/gopath'; \
-		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
-		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
-		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache'; \
-		go run github.com/rhysd/actionlint/cmd/actionlint@latest -shellcheck="
+	@/bin/bash -c 'set -euo pipefail; \
+		if command -v actionlint >/dev/null 2>&1; then \
+			actionlint -shellcheck=; \
+			exit 0; \
+		fi; \
+		bin="$(LINT_ACTIONLINT_ROOT)/actionlint"; \
+		if [ ! -x "$$bin" ]; then \
+			os=$$(uname -s | tr "[:upper:]" "[:lower:]"); \
+			arch=$$(uname -m); \
+			case "$$arch" in \
+				x86_64|amd64) arch=amd64 ;; \
+				aarch64|arm64) arch=arm64 ;; \
+				*) echo "❌ unsupported actionlint architecture: $$arch"; exit 1 ;; \
+			esac; \
+			mkdir -p "$(LINT_ACTIONLINT_ROOT)"; \
+			url="https://github.com/rhysd/actionlint/releases/download/v$(LINT_ACTIONLINT_VERSION)/actionlint_$(LINT_ACTIONLINT_VERSION)_$${os}_$${arch}.tar.gz"; \
+			curl -fsSL "$$url" | tar -xz -C "$(LINT_ACTIONLINT_ROOT)" actionlint; \
+		fi; \
+		"$$bin" -shellcheck='
 
 .PHONY: linting-workflow-zizmor
 linting-workflow-zizmor:             ## 🔐  GitHub Actions security linting
@@ -3946,18 +3962,35 @@ linting-helm-lint:                   ## ⎈  Helm lint wrapper
 .PHONY: linting-helm-chart-testing
 linting-helm-chart-testing:          ## ⎈  chart-testing lint (relaxed local defaults)
 	@echo "⎈ chart-testing lint..."
-	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
-	@/bin/bash -c "set -euo pipefail; \
-		export GOPATH='$(LINT_GO_ROOT)/gopath'; \
-		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
-		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
-		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache'; \
-		go run github.com/helm/chart-testing/v3/ct@latest lint \
+	@/bin/bash -c 'set -euo pipefail; \
+		if command -v ct >/dev/null 2>&1; then \
+			ct lint \
+				--charts $(CHART_DIR) \
+				--validate-chart-schema=false \
+				--validate-yaml=false \
+				--validate-maintainers=false \
+				--check-version-increment=false; \
+			exit 0; \
+		fi; \
+		bin="$(LINT_CT_ROOT)/ct"; \
+		if [ ! -x "$$bin" ]; then \
+			os=$$(uname -s | tr "[:upper:]" "[:lower:]"); \
+			arch=$$(uname -m); \
+			case "$$arch" in \
+				x86_64|amd64) arch=amd64 ;; \
+				aarch64|arm64) arch=arm64 ;; \
+				*) echo "❌ unsupported chart-testing architecture: $$arch"; exit 1 ;; \
+			esac; \
+			mkdir -p "$(LINT_CT_ROOT)"; \
+			url="https://github.com/helm/chart-testing/releases/download/v$(LINT_CT_VERSION)/chart-testing_$(LINT_CT_VERSION)_$${os}_$${arch}.tar.gz"; \
+			curl -fsSL "$$url" | tar -xz -C "$(LINT_CT_ROOT)" ct; \
+		fi; \
+		"$$bin" lint \
 			--charts $(CHART_DIR) \
 			--validate-chart-schema=false \
 			--validate-yaml=false \
 			--validate-maintainers=false \
-			--check-version-increment=false"
+			--check-version-increment=false'
 
 .PHONY: linting-helm-unittest
 linting-helm-unittest:               ## 🧪  Helm template unit tests

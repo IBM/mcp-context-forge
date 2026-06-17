@@ -161,7 +161,7 @@ def _cleanup_user(admin_client: httpx.Client, user_info: dict[str, Any]) -> None
 
 def _mcp_url(server_id: str) -> str:
     """Return the server-scoped MCP endpoint path."""
-    return f"/servers/{server_id}/mcp/"
+    return f"/servers/{server_id}/mcp"
 
 
 def _mcp_headers(token: str, *, session_id: str | None = None, accept: str = "application/json, text/event-stream") -> dict[str, str]:
@@ -345,16 +345,38 @@ def _wait_for_session_denial(
     raise AssertionError("Session remained usable beyond the bounded auth-reuse TTL contract: " f"status={getattr(last_response, 'status_code', None)} " f"body={getattr(last_response, 'text', None)}")
 
 
-def _revoke_team_role(admin_client: httpx.Client, user_info: dict[str, Any]) -> None:
-    """Revoke a team-scoped RBAC role from a test user."""
-    role_id = user_info.get("role_id")
+def _role_grants_permission(role: dict[str, Any] | None, permission: str) -> bool:
+    """Return whether a role grants the requested permission."""
+    if not role:
+        return False
+    permissions = role.get("effective_permissions") or role.get("permissions") or []
+    return "*" in permissions or permission in permissions
+
+
+def _revoke_team_execute_roles(admin_client: httpx.Client, user_info: dict[str, Any]) -> None:
+    """Revoke active team-scoped RBAC roles that can execute tools."""
     team_id = user_info.get("team_id")
-    assert role_id and team_id, f"User is missing role assignment details: {user_info}"
-    response = admin_client.delete(
-        f"/rbac/users/{user_info['email']}/roles/{role_id}",
-        params={"scope": "team", "scope_id": team_id},
-    )
-    assert response.status_code == 200, response.text
+    assert team_id, f"User is missing team assignment details: {user_info}"
+
+    roles = _request_json(admin_client, "GET", "/rbac/roles")
+    roles_by_id = {role["id"]: role for role in roles}
+    assignments = _request_json(admin_client, "GET", f"/rbac/users/{user_info['email']}/roles", params={"scope": "team"})
+
+    revoked = 0
+    for assignment in assignments:
+        role_id = assignment.get("role_id")
+        if assignment.get("scope") != "team" or assignment.get("scope_id") != team_id or not assignment.get("is_active", True):
+            continue
+        if not isinstance(role_id, str) or not _role_grants_permission(roles_by_id.get(role_id), "tools.execute"):
+            continue
+        response = admin_client.delete(
+            f"/rbac/users/{user_info['email']}/roles/{role_id}",
+            params={"scope": "team", "scope_id": team_id},
+        )
+        assert response.status_code == 200, response.text
+        revoked += 1
+
+    assert revoked > 0, f"No executable team roles found to revoke: {assignments}"
 
 
 def _extract_text_result(response: httpx.Response) -> str:
@@ -728,7 +750,7 @@ class TestMcpSessionIsolation:
             tool_names = _extract_tool_names(_mcp_post(user["access_token"], server_id, method="tools/list", session_id=session_id, request_id=10))
             time_tool = _find_tool_name(tool_names, "get-system-time")
 
-            _revoke_team_role(admin_client, user)
+            _revoke_team_execute_roles(admin_client, user)
 
             denied = _wait_for_session_denial(
                 user["access_token"],
