@@ -39,6 +39,17 @@ spec:
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
       automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- if gt (int .Values.mcpContextForge.replicaCount) 1 }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: {{ include "mcp-stack.fullname" . }}-mcpgateway
+                topologyKey: kubernetes.io/hostname
+      {{- end }}
       securityContext:
         {{- toYaml .Values.mcpContextForge.podSecurityContext | nindent 8 }}
         seccompProfile:
