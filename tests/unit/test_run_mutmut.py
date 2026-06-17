@@ -189,8 +189,18 @@ class TestCleanupOldResultsSQL:
         assert _run_cleanup(_db_conn) == 0
 
     def test_boundary_record_is_preserved(self, _db_conn):
-        """A record at exactly days_old is NOT deleted (strict less-than)."""
-        _insert_aged_row(_db_conn, "boundary-30", 30)
+        """A record just under days_old is NOT deleted (strict less-than).
+
+        Inserting at '-30 days' races with datetime('now') advancing a second
+        between INSERT and DELETE, so use '+2 seconds' to stay definitively
+        inside the keep window.
+        """
+        _db_conn.execute(
+            "INSERT INTO evaluation_results (results_id, created_at) "
+            "VALUES (?, datetime('now', '-30 days', '+2 seconds'))",
+            ("boundary-30",),
+        )
+        _db_conn.commit()
         _insert_aged_row(_db_conn, "over-31", 31)
 
         deleted = _run_cleanup(_db_conn, days_old=30)
