@@ -4,6 +4,8 @@ FROM docker.io/library/rust:1.86-slim AS builder
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY mcp-servers/rust/benchmark-server ./mcp-servers/rust/benchmark-server
+COPY mcp-servers/rust/slow-time-server ./mcp-servers/rust/slow-time-server
 COPY a2a-agents/rust/a2a-echo-agent ./a2a-agents/rust/a2a-echo-agent
 RUN cargo build --release -p a2a-echo-agent
 
