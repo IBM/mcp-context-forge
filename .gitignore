@@ -383,29 +383,3 @@ tools_rust/mcp_runtime/perf.data*
 
 # Git worktrees
 .worktrees/
-
-
-# Temp venvs
-.venv_temp/
-.venv_temp
-ds_venv/
-ds_venv
-
-# Temp scripts
-add_tests.py
-audit_secrets_script.py
-fix_baseline_auto.py
-fix_baseline_precise.py
-run_scan.py
-scan_specific.py
-
-# Patch files
-*.patch
-
-# Log files  
-ci_log*.txt
-pre_commit_log.txt
-pytest_log.txt
-pre-commit-out.txt
-pylint-out.txt
-pylint_output.txt
