@@ -695,10 +695,11 @@ describe("Tools", () => {
         ).toBeInTheDocument();
       });
 
-      // All tools should be visible in the table (checking for original names)
-      expect(screen.getByText("tool_1")).toBeInTheDocument();
-      expect(screen.getByText("tool_2")).toBeInTheDocument();
-      expect(screen.getByText("tool_3")).toBeInTheDocument();
+      // All tools should be visible in the table (Name column shows customName || originalName)
+      const panel = screen.getByRole("region", { name: /Tools for multi-tool-gateway/i });
+      expect(within(panel).getAllByText("Tool 1").length).toBeGreaterThan(0);
+      expect(within(panel).getAllByText("Tool 2").length).toBeGreaterThan(0);
+      expect(within(panel).getAllByText("Tool 3").length).toBeGreaterThan(0);
     });
 
     it("shows correct integration type in details panel", async () => {
@@ -771,6 +772,141 @@ describe("Tools", () => {
       await waitFor(() => {
         expect(screen.getByRole("region", { name: /Tools for gateway-b/i })).toBeInTheDocument();
       });
+    });
+  });
+
+  describe("Edit Tool", () => {
+    // Helper: load tools, open the details panel, and return userEvent
+    async function openDetailsPanel(gatewaySlug: string) {
+      const user = userEvent.setup();
+      await user.click(screen.getByLabelText(`More options for ${gatewaySlug}`));
+      await user.click(await screen.findByText("View Details"));
+      await waitFor(() => {
+        expect(
+          screen.getByRole("region", { name: new RegExp(`Tools for ${gatewaySlug}`, "i") }),
+        ).toBeInTheDocument();
+      });
+      return user;
+    }
+
+    it("shows Edit option in the tool row dropdown when panel is open", async () => {
+      const mockTools: Tool[] = [createMockTool(1, "test-gateway", true, true)];
+      server.use(
+        http.get("/tools", () => HttpResponse.json(mockTools)),
+        http.get("/tools/tool-1", () => HttpResponse.json(mockTools[0])),
+      );
+      renderWithRouter(<Tools />);
+      await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
+
+      const user = await openDetailsPanel("test-gateway");
+      await user.click(screen.getByLabelText("More options"));
+
+      expect(await screen.findByText("Edit")).toBeInTheDocument();
+    });
+
+    it("opens the edit form when Edit is clicked", async () => {
+      const mockTools: Tool[] = [createMockTool(1, "test-gateway")];
+      server.use(
+        http.get("/tools", () => HttpResponse.json(mockTools)),
+        http.get("/tools/tool-1", () => HttpResponse.json(mockTools[0])),
+      );
+      renderWithRouter(<Tools />);
+      await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
+
+      const user = await openDetailsPanel("test-gateway");
+      await user.click(screen.getByLabelText("More options"));
+      await user.click(await screen.findByText("Edit"));
+
+      await waitFor(() => {
+        expect(screen.getByRole("heading", { name: "Edit tool" })).toBeInTheDocument();
+      });
+    });
+
+    it("pre-populates the form with the tool's URL", async () => {
+      const mockTool = createMockTool(1, "test-gateway");
+      server.use(
+        http.get("/tools", () => HttpResponse.json([mockTool])),
+        http.get("/tools/tool-1", () => HttpResponse.json(mockTool)),
+      );
+      renderWithRouter(<Tools />);
+      await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
+
+      const user = await openDetailsPanel("test-gateway");
+      await user.click(screen.getByLabelText("More options"));
+      await user.click(await screen.findByText("Edit"));
+
+      await waitFor(() => {
+        expect(screen.getByRole("heading", { name: "Edit tool" })).toBeInTheDocument();
+      });
+
+      expect(screen.getByLabelText(/URL/)).toHaveValue(mockTool.url);
+    });
+
+    it("sends PUT request with updated data, closes the form, and shows refreshed list", async () => {
+      const originalTool: Tool = {
+        ...createMockTool(1, "test-gateway"),
+        integrationType: "REST",
+        requestType: "POST",
+        url: "https://api.example.com/v1",
+        name: "tool-original",
+      };
+      const updatedTool: Tool = { ...originalTool, name: "tool-updated" };
+
+      let putCalled = false;
+      server.use(
+        http.get("/tools", () => HttpResponse.json([putCalled ? updatedTool : originalTool])),
+        http.get("/tools/tool-1", () => HttpResponse.json(originalTool)),
+        http.put("/tools/tool-1", () => {
+          putCalled = true;
+          return HttpResponse.json(updatedTool);
+        }),
+      );
+
+      renderWithRouter(<Tools />);
+      await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
+
+      const user = await openDetailsPanel("test-gateway");
+      await user.click(screen.getByLabelText("More options"));
+      await user.click(await screen.findByText("Edit"));
+
+      await waitFor(() => {
+        expect(screen.getByRole("heading", { name: "Edit tool" })).toBeInTheDocument();
+      });
+
+      // Update the URL field so the form is dirty and valid
+      const urlInput = screen.getByLabelText(/URL/);
+      await user.clear(urlInput);
+      await user.type(urlInput, "https://api.example.com/v2");
+
+      await user.click(screen.getByRole("button", { name: "Update tool" }));
+
+      // Form closes
+      await waitFor(() => {
+        expect(screen.queryByRole("heading", { name: "Edit tool" })).not.toBeInTheDocument();
+      });
+
+      // List refreshes — updated tool name is now shown in the card badge
+      await waitFor(() => {
+        expect(screen.getByText("tool-updated")).toBeInTheDocument();
+      });
+      expect(screen.queryByText("tool-original")).not.toBeInTheDocument();
+    });
+
+    it("shows Edit above Delete in the dropdown when both are available", async () => {
+      const mockTools: Tool[] = [createMockTool(1, "test-gateway")];
+      server.use(
+        http.get("/tools", () => HttpResponse.json(mockTools)),
+        http.get("/tools/tool-1", () => HttpResponse.json(mockTools[0])),
+      );
+      renderWithRouter(<Tools />);
+      await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
+
+      const user = await openDetailsPanel("test-gateway");
+      await user.click(screen.getByLabelText("More options"));
+
+      const items = await screen.findAllByRole("menuitem");
+      const labels = items.map((el) => el.textContent);
+      expect(labels.indexOf("Edit")).toBeLessThan(labels.indexOf("Delete"));
     });
   });
 
