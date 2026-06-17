@@ -381,3 +381,34 @@ def test_is_expired_returns_false_when_no_timestamp(monkeypatch):
     monkeypatch.setattr(ssl_context_cache, "_SSL_CONTEXT_CACHE_TTL", 60)
     result = ssl_context_cache._is_expired("nonexistent-key")
     assert result is False
+
+
+def test_cache_hit_moves_timestamp_to_end_for_lru(monkeypatch):
+    """Test that cache hit moves both cache entry and timestamp to end (LRU)."""
+    monkeypatch.setattr(ssl_context_cache, "_SSL_CONTEXT_CACHE_TTL", 3600)
+
+    with patch("mcpgateway.utils.ssl_context_cache.ssl.create_default_context") as mock_create:
+        ctx1 = Mock()
+        ctx2 = Mock()
+        mock_create.side_effect = [ctx1, ctx2]
+
+        # Create two cache entries
+        ssl_context_cache.get_cached_ssl_context("CERT1")
+        ssl_context_cache.get_cached_ssl_context("CERT2")
+
+        # Get keys in order
+        keys_before = list(ssl_context_cache._ssl_context_cache.keys())  # noqa: SLF001
+        timestamp_keys_before = list(ssl_context_cache._ssl_context_cache_timestamps.keys())  # noqa: SLF001
+        first_key = keys_before[0]
+
+        # Hit the first entry again - should move it to the end
+        result = ssl_context_cache.get_cached_ssl_context("CERT1")
+        assert result is ctx1  # Same context, from cache
+
+        # Verify the first key moved to the end in both dicts
+        keys_after = list(ssl_context_cache._ssl_context_cache.keys())  # noqa: SLF001
+        timestamp_keys_after = list(ssl_context_cache._ssl_context_cache_timestamps.keys())  # noqa: SLF001
+
+        assert keys_after[-1] == first_key  # Moved to end
+        assert timestamp_keys_after[-1] == first_key  # Timestamp also moved to end
+        assert mock_create.call_count == 2  # No new context created
