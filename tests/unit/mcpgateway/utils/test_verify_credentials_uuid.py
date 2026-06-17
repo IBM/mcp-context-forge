@@ -729,7 +729,7 @@ async def test_enforce_revocation_user_lookup_exception_returns(monkeypatch):
 @pytest.mark.asyncio
 async def test_build_metadata_urls():
     """Lines 1536-1550: _build_metadata_urls function."""
-    from mcpgateway.utils import verify_credentials as vc
+    from mcpgateway.utils import oidc_discovery as vc
 
     # Test with issuer without path
     urls = vc._build_metadata_urls("https://auth.example.com")
@@ -747,7 +747,7 @@ async def test_build_metadata_urls():
 @pytest.mark.asyncio
 async def test_discover_oidc_metadata_success(monkeypatch):
     """Lines 1574-1645: _discover_oidc_metadata success path."""
-    from mcpgateway.utils import verify_credentials as vc
+    from mcpgateway.utils import oidc_discovery as vc
     from unittest.mock import AsyncMock
 
     # Mock HTTP client
@@ -764,9 +764,9 @@ async def test_discover_oidc_metadata_success(monkeypatch):
     monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
 
     # Clear cache
-    vc._oauth_oidc_metadata_cache.clear()
+    vc._oidc_metadata_cache.clear()
 
-    result = await vc._discover_oidc_metadata("https://auth.example.com")
+    result = await vc.discover_oidc_metadata("https://auth.example.com")
 
     assert result is not None
     assert result["issuer"] == "https://auth.example.com"
@@ -776,7 +776,7 @@ async def test_discover_oidc_metadata_success(monkeypatch):
 @pytest.mark.asyncio
 async def test_discover_oidc_metadata_http_error(monkeypatch):
     """Lines 1574-1645: _discover_oidc_metadata with HTTP error."""
-    from mcpgateway.utils import verify_credentials as vc
+    from mcpgateway.utils import oidc_discovery as vc
     from unittest.mock import AsyncMock
 
     # Mock HTTP client with 404 response
@@ -792,9 +792,9 @@ async def test_discover_oidc_metadata_http_error(monkeypatch):
     monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
 
     # Clear cache
-    vc._oauth_oidc_metadata_cache.clear()
+    vc._oidc_metadata_cache.clear()
 
-    result = await vc._discover_oidc_metadata("https://auth.example.com")
+    result = await vc.discover_oidc_metadata("https://auth.example.com")
 
     assert result is None
 
@@ -802,7 +802,7 @@ async def test_discover_oidc_metadata_http_error(monkeypatch):
 @pytest.mark.asyncio
 async def test_discover_oidc_metadata_network_error(monkeypatch):
     """Lines 1574-1645: _discover_oidc_metadata with network error."""
-    from mcpgateway.utils import verify_credentials as vc
+    from mcpgateway.utils import oidc_discovery as vc
     from unittest.mock import AsyncMock
 
     # Mock HTTP client that raises exception
@@ -815,9 +815,9 @@ async def test_discover_oidc_metadata_network_error(monkeypatch):
     monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
 
     # Clear cache
-    vc._oauth_oidc_metadata_cache.clear()
+    vc._oidc_metadata_cache.clear()
 
-    result = await vc._discover_oidc_metadata("https://auth.example.com")
+    result = await vc.discover_oidc_metadata("https://auth.example.com")
 
     assert result is None
 

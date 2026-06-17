@@ -56,7 +56,7 @@ import asyncio
 from base64 import b64decode
 import binascii
 from typing import Any, Optional, Union
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit
 import uuid
 
 # Third-Party
