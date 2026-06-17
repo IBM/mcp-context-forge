@@ -25,7 +25,6 @@ export interface CreateVirtualServerPayload {
 export interface UpdateVirtualServerPayload {
   name: string;
   description: string;
-  icon?: string;
   tags: string[];
   associated_tools?: string[];
   associated_resources?: string[];
@@ -33,7 +32,6 @@ export interface UpdateVirtualServerPayload {
   team_id?: string;
   visibility: CreateServerDetails["visibility"];
   oauth_enabled: boolean;
-  oauth_config?: Record<string, unknown> | null;
 }
 
 export function buildCreateVirtualServerPayload(
@@ -72,19 +70,28 @@ export function deleteVirtualServer(id: string): Promise<void> {
 export function buildUpdateVirtualServerPayload(
   details: CreateServerDetails,
 ): UpdateVirtualServerPayload {
-  return {
+  const payload: UpdateVirtualServerPayload = {
     name: details.name,
     description: details.description ?? "",
-    icon: "",
     tags: details.tags ?? [],
-    associated_tools: details.associatedTools,
-    associated_resources: details.associatedResources,
-    associated_prompts: details.associatedPrompts,
-    team_id: details.visibility === "team" && details.teamId ? details.teamId : undefined,
     visibility: details.visibility,
     oauth_enabled: details.oauthEnabled,
-    oauth_config: details.oauthEnabled ? {} : null,
   };
+
+  if (details.associatedTools !== undefined) {
+    payload.associated_tools = details.associatedTools;
+  }
+  if (details.associatedResources !== undefined) {
+    payload.associated_resources = details.associatedResources;
+  }
+  if (details.associatedPrompts !== undefined) {
+    payload.associated_prompts = details.associatedPrompts;
+  }
+  if (details.visibility === "team" && details.teamId) {
+    payload.team_id = details.teamId;
+  }
+
+  return payload;
 }
 
 export function updateVirtualServer(

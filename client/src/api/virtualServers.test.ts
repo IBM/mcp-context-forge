@@ -238,45 +238,46 @@ describe("virtualServers API", () => {
   });
 
   it("builds the update payload expected by PUT /servers/{id}", () => {
-    expect(
-      buildUpdateVirtualServerPayload({
-        name: "Updated research server",
-        description: "",
-        tags: [],
-        visibility: "public",
-        oauthEnabled: false,
-      }),
-    ).toEqual({
+    const payload = buildUpdateVirtualServerPayload({
       name: "Updated research server",
       description: "",
-      icon: "",
       tags: [],
-      associated_tools: undefined,
-      associated_resources: undefined,
-      associated_prompts: undefined,
-      team_id: undefined,
+      visibility: "public",
+      oauthEnabled: false,
+    });
+
+    expect(payload).toEqual({
+      name: "Updated research server",
+      description: "",
+      tags: [],
       visibility: "public",
       oauth_enabled: false,
-      oauth_config: null,
     });
+    expect(payload).not.toHaveProperty("icon");
+    expect(payload).not.toHaveProperty("oauth_config");
+    expect(payload).not.toHaveProperty("associated_tools");
+    expect(payload).not.toHaveProperty("associated_resources");
+    expect(payload).not.toHaveProperty("associated_prompts");
+    expect(payload).not.toHaveProperty("team_id");
   });
 
   it("includes associated components in update payloads when provided", () => {
-    expect(
-      buildUpdateVirtualServerPayload({
-        name: "Updated component server",
-        visibility: "team",
-        teamId: "team-abc-123",
-        oauthEnabled: false,
-        associatedTools: ["existing-tool", "new-tool"],
-        associatedResources: ["existing-resource"],
-        associatedPrompts: ["new-prompt"],
-      }),
-    ).toMatchObject({
+    const payload = buildUpdateVirtualServerPayload({
+      name: "Updated component server",
+      visibility: "team",
+      teamId: "team-abc-123",
+      oauthEnabled: false,
+      associatedTools: ["existing-tool", "new-tool"],
+      associatedResources: ["existing-resource"],
+      associatedPrompts: ["new-prompt"],
+    });
+
+    expect(payload).toMatchObject({
       associated_tools: ["existing-tool", "new-tool"],
       associated_resources: ["existing-resource"],
       associated_prompts: ["new-prompt"],
       team_id: "team-abc-123",
     });
+    expect(payload).not.toHaveProperty("oauth_config");
   });
 });

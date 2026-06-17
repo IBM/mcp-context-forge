@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { useIntl } from "react-intl";
 import {
   Activity,
@@ -270,6 +270,8 @@ function EditMCPServersSection({
   onSelectedAvailableSourceIdsChange: (sourceIds: string[]) => void;
 }) {
   const intl = useIntl();
+  const connectedHeadingId = useId();
+  const availableHeadingId = useId();
   const {
     data: mcpServersData,
     error: mcpServersError,
@@ -372,23 +374,41 @@ function EditMCPServersSection({
                 </TableCell>
                 <TableCell className="min-w-44 px-3 py-2">
                   <div className="flex min-w-0 items-center gap-3 text-muted-foreground">
-                    <span className="flex items-center gap-1.5">
+                    <span
+                      className="flex items-center gap-1.5"
+                      aria-label={intl.formatMessage(
+                        { id: "gateways.card.toolCount" },
+                        { count: getToolCount(server) },
+                      )}
+                    >
                       <Wrench className="size-3.5" aria-hidden="true" />
-                      {getToolCount(server)}
+                      <span aria-hidden="true">{getToolCount(server)}</span>
                     </span>
                     <span className="text-border" aria-hidden="true">
                       •
                     </span>
-                    <span className="flex items-center gap-1.5">
+                    <span
+                      className="flex items-center gap-1.5"
+                      aria-label={intl.formatMessage(
+                        { id: "gateways.card.resourceCount" },
+                        { count: getResourceCount(server) },
+                      )}
+                    >
                       <Box className="size-3.5" aria-hidden="true" />
-                      {getResourceCount(server)}
+                      <span aria-hidden="true">{getResourceCount(server)}</span>
                     </span>
                     <span className="text-border" aria-hidden="true">
                       •
                     </span>
-                    <span className="flex items-center gap-1.5">
+                    <span
+                      className="flex items-center gap-1.5"
+                      aria-label={intl.formatMessage(
+                        { id: "gateways.card.promptCount" },
+                        { count: getPromptCount(server) },
+                      )}
+                    >
                       <MessageSquareCode className="size-3.5" aria-hidden="true" />
-                      {getPromptCount(server)}
+                      <span aria-hidden="true">{getPromptCount(server)}</span>
                     </span>
                   </div>
                 </TableCell>
@@ -410,14 +430,14 @@ function EditMCPServersSection({
 
   return (
     <section
-      aria-labelledby="connected-mcp-servers-heading"
+      aria-labelledby={connectedHeadingId}
       className="border-t border-border pt-7 dark:border-[#2b2b2f]"
     >
       <div className="flex items-center gap-3">
         <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-foreground dark:bg-[#252529]">
           <MCPIcon className="size-5 [&_path]:fill-current" />
         </span>
-        <h2 id="connected-mcp-servers-heading" className="text-sm font-semibold text-foreground">
+        <h2 id={connectedHeadingId} className="text-sm font-semibold text-foreground">
           {intl.formatMessage({ id: "gateways.editServer.connectedMCPServers" })}
         </h2>
       </div>
@@ -445,8 +465,8 @@ function EditMCPServersSection({
         renderServerRows(connectedMCPServers, "connected")}
 
       {!isLoadingSources && !mcpServersError && (
-        <div className="mt-8 border-t border-border pt-5">
-          <h3 className="text-sm font-semibold text-foreground">
+        <section aria-labelledby={availableHeadingId} className="mt-8 border-t border-border pt-5">
+          <h3 id={availableHeadingId} className="text-sm font-semibold text-foreground">
             {intl.formatMessage({ id: "gateways.editServer.availableMCPServers" })}
           </h3>
 
@@ -465,7 +485,7 @@ function EditMCPServersSection({
               )}
             </p>
           )}
-        </div>
+        </section>
       )}
     </section>
   );
