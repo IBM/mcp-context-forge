@@ -17,7 +17,7 @@ function createMockTool(id: number, overrides?: Partial<Tool>): Tool {
     displayName: `Display Name ${id}`,
     gatewayId: `gateway-id`,
     gatewaySlug: "test-gateway",
-    customName: `Tool ${id}`,
+    customName: "",
     customNameSlug: `tool-${id}`,
     enabled: true,
     reachable: true,
@@ -382,6 +382,74 @@ describe("ToolsTable", () => {
       await user.click(screen.getByLabelText("More options"));
 
       expect(screen.queryByText("Delete")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("edit dropdown (onEditTool provided)", () => {
+    it("shows Edit item in dropdown when onEditTool is provided", async () => {
+      const user = userEvent.setup();
+      const tools = [createMockTool(1)];
+      render(<ToolsTable tools={tools} onSelectTool={mockOnSelectTool} onEditTool={vi.fn()} />);
+
+      await user.click(screen.getByLabelText("More options"));
+
+      expect(await screen.findByText("Edit")).toBeInTheDocument();
+    });
+
+    it("calls onEditTool with the full tool object when Edit is clicked", async () => {
+      const user = userEvent.setup();
+      const mockOnEditTool = vi.fn();
+      const tool = createMockTool(1, { id: "tool-abc" });
+      render(
+        <ToolsTable tools={[tool]} onSelectTool={mockOnSelectTool} onEditTool={mockOnEditTool} />,
+      );
+
+      await user.click(screen.getByLabelText("More options"));
+      await user.click(await screen.findByText("Edit"));
+
+      expect(mockOnEditTool).toHaveBeenCalledOnce();
+      expect(mockOnEditTool).toHaveBeenCalledWith(tool);
+    });
+
+    it("renders Edit above Delete when both callbacks are provided", async () => {
+      const user = userEvent.setup();
+      const tools = [createMockTool(1)];
+      render(
+        <ToolsTable
+          tools={tools}
+          onSelectTool={mockOnSelectTool}
+          onEditTool={vi.fn()}
+          onDeleteTool={vi.fn()}
+        />,
+      );
+
+      await user.click(screen.getByLabelText("More options"));
+
+      const items = await screen.findAllByRole("menuitem");
+      const labels = items.map((el) => el.textContent);
+      expect(labels.indexOf("Edit")).toBeLessThan(labels.indexOf("Delete"));
+    });
+
+    it("opens dropdown when only onEditTool is provided", async () => {
+      const user = userEvent.setup();
+      const tools = [createMockTool(1)];
+      render(<ToolsTable tools={tools} onSelectTool={mockOnSelectTool} onEditTool={vi.fn()} />);
+
+      await user.click(screen.getByLabelText("More options"));
+
+      expect(await screen.findByText("Edit")).toBeInTheDocument();
+      expect(screen.queryByText("Delete")).not.toBeInTheDocument();
+    });
+
+    it("does not call onSelectTool when Edit is clicked", async () => {
+      const user = userEvent.setup();
+      const tools = [createMockTool(1)];
+      render(<ToolsTable tools={tools} onSelectTool={mockOnSelectTool} onEditTool={vi.fn()} />);
+
+      await user.click(screen.getByLabelText("More options"));
+      await user.click(await screen.findByText("Edit"));
+
+      expect(mockOnSelectTool).not.toHaveBeenCalled();
     });
   });
 

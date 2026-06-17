@@ -31,7 +31,7 @@ function SchemaSection({
     <div className="space-y-2">
       <h3 className="text-sm font-medium text-foreground">{title}</h3>
       <div className="relative">
-        <pre className="max-h-[280px] overflow-auto rounded-md bg-neutral-900 p-4 text-xs leading-relaxed text-neutral-100 whitespace-pre-wrap break-words">
+        <pre className="max-h-[280px] overflow-auto rounded-md border border-neutral-700 bg-neutral-900 p-4 text-xs leading-relaxed text-neutral-100 whitespace-pre-wrap break-words">
           <code className="break-words">
             <JsonHighlighter text={schemaText} />
           </code>

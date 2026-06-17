@@ -16,7 +16,7 @@ function createMockTool(id: number, overrides?: Partial<Tool>): Tool {
     displayName: `Display Name ${id}`,
     gatewayId: `gateway-id`,
     gatewaySlug: "test-gateway",
-    customName: `Tool ${id}`,
+    customName: "",
     customNameSlug: `tool-${id}`,
     enabled: true,
     reachable: true,
