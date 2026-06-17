@@ -59,6 +59,7 @@ It runs as a fully compliant MCP server, deployable via PyPI or Docker, and scal
 | **[Getting Help](https://github.com/IBM/mcp-context-forge/issues/2504)** | Support options, FAQ, community channels |
 | **[Issue Guide](https://github.com/IBM/mcp-context-forge/issues/2502)** | How to file bugs, request features, contribute |
 | **[Full Documentation](https://ibm.github.io/mcp-context-forge/)** | Complete guides, tutorials, API reference |
+| **[Deprecations](https://ibm.github.io/mcp-context-forge/deprecations/)** | Deprecated runtime paths and migration guidance |
 
 ---
 

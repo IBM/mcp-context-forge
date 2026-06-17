@@ -39,7 +39,7 @@ impl CachedAllowlist {
 
 #[derive(Debug, Clone, Parser)]
 #[command(name = "contextforge-a2a-runtime")]
-#[command(about = "Experimental Rust A2A runtime sidecar for ContextForge")]
+#[command(about = "Deprecated experimental Rust A2A runtime sidecar for ContextForge")]
 pub struct RuntimeConfig {
     #[arg(long, env = "A2A_RUST_LISTEN_HTTP", default_value = "127.0.0.1:8788")]
     pub listen_http: String,
@@ -357,6 +357,7 @@ impl RuntimeConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
     use std::path::PathBuf;
 
     /// Returns a RuntimeConfig with sensible defaults for unit testing.
@@ -565,5 +566,14 @@ mod tests {
         );
         // The original must keep its cached value undisturbed.
         assert_eq!(config.uaid_allowed_domains_list(), ["original.example.com"]);
+    }
+
+    #[test]
+    fn cli_about_marks_runtime_deprecated() {
+        let command = RuntimeConfig::command();
+        assert_eq!(
+            command.get_about().map(|about| about.to_string()),
+            Some("Deprecated experimental Rust A2A runtime sidecar for ContextForge".to_string())
+        );
     }
 }
