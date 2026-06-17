@@ -498,6 +498,14 @@ class AuthenticationValues(BaseModelWithConfigDict):
     auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, authheaders or None")
     auth_value: Optional[str] = Field(None, description="Encoded Authentication values")
 
+    @field_validator("auth_type")
+    @classmethod
+    def reject_oauth_auth_type(cls, v: Optional[str]) -> Optional[str]:
+        """Reject oauth as a tool auth_type — OAuth must be configured on the gateway."""
+        if v is not None and v.lower() == "oauth":
+            raise ValueError("auth_type 'oauth' is not supported on tools; configure OAuth on the gateway instead")
+        return v
+
     # Only For tool read and view tool
     username: Optional[str] = Field("", description="Username for basic authentication")
     password: Optional[str] = Field("", description="Password for basic authentication")
