@@ -54,7 +54,7 @@ class HeaderSizeMiddleware(BaseHTTPMiddleware):
         self.max_header_count = getattr(settings, "max_header_count", 100)
 
         if self.enabled:
-            logger.info(f"HeaderSizeMiddleware initialized: max_total={self.max_total_size}B, " f"max_field={self.max_field_size}B, max_count={self.max_header_count}")
+            logger.info(f"HeaderSizeMiddleware initialized: max_total={self.max_total_size}B, max_field={self.max_field_size}B, max_count={self.max_header_count}")
 
     async def dispatch(self, request: Request, call_next):
         """Validate header sizes before processing request.
@@ -72,7 +72,7 @@ class HeaderSizeMiddleware(BaseHTTPMiddleware):
         # Check header count
         header_count = len(request.headers)
         if header_count > self.max_header_count:
-            logger.warning(f"Request rejected: too many headers ({header_count} > {self.max_header_count}) " f"from {self._get_client_ip(request)}")
+            logger.warning(f"Request rejected: too many headers ({header_count} > {self.max_header_count}) from {self._get_client_ip(request)}")
             return self._create_431_response(f"Too many header fields ({header_count} > {self.max_header_count})", "header_count")
 
         # Calculate total header size and check individual field sizes
@@ -83,12 +83,12 @@ class HeaderSizeMiddleware(BaseHTTPMiddleware):
             total_size += field_size
 
             if field_size > self.max_field_size:
-                logger.warning(f"Request rejected: header field '{name}' too large ({field_size}B > {self.max_field_size}B) " f"from {self._get_client_ip(request)}")
+                logger.warning(f"Request rejected: header field '{name}' too large ({field_size}B > {self.max_field_size}B) from {self._get_client_ip(request)}")
                 return self._create_431_response(f"Header field '{name}' exceeds maximum size ({field_size} > {self.max_field_size} bytes)", "field_size", field_name=name)
 
         # Check total header size
         if total_size > self.max_total_size:
-            logger.warning(f"Request rejected: total header size too large ({total_size}B > {self.max_total_size}B) " f"from {self._get_client_ip(request)}")
+            logger.warning(f"Request rejected: total header size too large ({total_size}B > {self.max_total_size}B) from {self._get_client_ip(request)}")
             return self._create_431_response(f"Total header size exceeds maximum ({total_size} > {self.max_total_size} bytes)", "total_size")
 
         return await call_next(request)

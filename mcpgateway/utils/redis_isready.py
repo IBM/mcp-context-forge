@@ -222,7 +222,7 @@ def wait_for_redis_ready(
                 log.info(f"Redis ready (attempt {attempt})")
                 return
             except ssl.SSLError as exc:
-                log.error(f"TLS handshake failed connecting to Redis: {exc} — " "check REDIS_SSL_CA_CERTS / REDIS_SSL_CERTFILE / REDIS_SSL_KEYFILE")
+                log.error(f"TLS handshake failed connecting to Redis: {exc} — check REDIS_SSL_CA_CERTS / REDIS_SSL_CERTFILE / REDIS_SSL_KEYFILE")
                 raise RuntimeError(f"Redis TLS handshake failed: {exc}") from exc
             except Exception as exc:
                 if attempt < max_retries:  # Don't sleep on the last attempt

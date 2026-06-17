@@ -234,7 +234,7 @@ def _get_async_parser_class(parser_setting: str) -> tuple[Any, str]:
     if parser_setting == "hiredis":
         # Require hiredis - fail if not available
         if not _is_hiredis_available():
-            raise ImportError("REDIS_PARSER=hiredis requires hiredis to be installed. " "Install with: pip install 'redis[hiredis]'")
+            raise ImportError("REDIS_PARSER=hiredis requires hiredis to be installed. Install with: pip install 'redis[hiredis]'")
         # Don't set parser_class explicitly - let redis-py auto-detect for async
         # Setting _AsyncHiredisParser explicitly can cause issues
         return None, "AsyncHiredisParser (C extension)"
@@ -314,7 +314,7 @@ async def get_redis_client() -> Optional[Any]:
         # Warn when URL scheme implies TLS but REDIS_SSL flag is off — our ssl
         # settings (CA cert, hostname check) would be silently skipped.
         if settings.redis_url and settings.redis_url.startswith("rediss://") and not settings.redis_ssl:
-            logger.warning("REDIS_URL uses rediss:// scheme but REDIS_SSL=false — " "TLS certificate settings (REDIS_SSL_CA_CERTS, REDIS_SSL_CHECK_HOSTNAME) will not be applied")
+            logger.warning("REDIS_URL uses rediss:// scheme but REDIS_SSL=false — TLS certificate settings (REDIS_SSL_CA_CERTS, REDIS_SSL_CHECK_HOSTNAME) will not be applied")
 
         # Inject TLS kwargs when REDIS_SSL=true (production).
         # Local dev: returns {} → no ssl kwarg → plain TCP connection.

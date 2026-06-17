@@ -122,12 +122,7 @@ async def test_resource_post_hook(plugin_manager: PluginManager):
         plugin_manager: The plugin manager instance.
     """
     # Customize payload for testing
-    content = ResourceContent(
-        type="resource",
-        uri="test://resource",
-        text="test://test_resource.com",
-        id="1"
-    )
+    content = ResourceContent(type="resource", uri="test://resource", text="test://test_resource.com", id="1")
     payload = ResourcePostFetchPayload(uri="https://example.com", content=content)
     global_context = GlobalContext(request_id="1", server_id="2")
     result, _ = await plugin_manager.invoke_hook(ResourceHookType.RESOURCE_POST_FETCH, payload, global_context)

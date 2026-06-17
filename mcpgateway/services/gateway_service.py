@@ -373,7 +373,7 @@ class GatewayDuplicateConflictError(GatewayError):
         status = "active" if self.enabled else "inactive"
 
         # Construct error message
-        message = f"The Server already exists in {scope_desc} " f"(Name: {self.name}, Status: {status})"
+        message = f"The Server already exists in {scope_desc} (Name: {self.name}, Status: {status})"
 
         # Add helpful hint for inactive gateways
         if not self.enabled:
@@ -1092,7 +1092,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             # Case 2: Both have auth_value (need to decrypt and compare)
             elif auth_value and existing.auth_value:
-
                 try:
                     # Decrypt existing auth_value
                     if isinstance(existing.auth_value, str):
@@ -1555,7 +1554,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             binary_content=(
                                 r.content.encode()
                                 if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str)
-                                else r.content if isinstance(r.content, bytes) else None
+                                else r.content
+                                if isinstance(r.content, bytes)
+                                else None
                             ),
                             size=len(r.content) if r.content else 0,
                             tags=getattr(r, "tags", []) or [],
@@ -1772,7 +1773,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             gateway_read = self.convert_gateway_to_read(db_gateway)
             gateway_read.skipped_tools = validation_errors
             if validation_errors:
-                logger.warning("Gateway '%s' registered successfully but %s tool(s) were skipped due to validation errors: %s", db_gateway.name, len(validation_errors), validation_errors)
+                logger.warning(f"Gateway '{db_gateway.name}' registered successfully but {len(validation_errors)} tool(s) were skipped due to validation errors: {validation_errors}")
             return gateway_read
         except* GatewayConnectionError as ge:  # pragma: no mutate
             if TYPE_CHECKING:
@@ -1960,7 +1961,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             blocking = token_validation.blocking_errors
             if blocking:
                 detail = "; ".join(blocking)
-                raise GatewayConnectionError(f"Refusing to forward OAuth token for gateway '{gateway.name}': " f"{detail}. " f"Fix oauth_config (resource/scopes/issuer) or the IdP token request.")
+                raise GatewayConnectionError(f"Refusing to forward OAuth token for gateway '{gateway.name}': {detail}. Fix oauth_config (resource/scopes/issuer) or the IdP token request.")
 
             # Now connect to MCP server with the access token
             authentication = {"Authorization": f"Bearer {access_token}"}
@@ -1978,9 +1979,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         diagnostics = "; ".join(token_validation.warnings)
                         sanitized_url = sanitize_url_for_logging(gateway.url)
                         raise GatewayConnectionError(
-                            f"MCP server rejected OAuth token at {sanitized_url} (HTTP {type(streamable_err).__name__}). "
-                            f"Possible causes: {diagnostics}. "
-                            f"Check oauth_config audience and scopes."
+                            f"MCP server rejected OAuth token at {sanitized_url} (HTTP {type(streamable_err).__name__}). Possible causes: {diagnostics}. Check oauth_config audience and scopes."
                         )
                     raise
             else:
@@ -4410,7 +4409,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             try:
                                 should_auto_refresh = await self._classification_service.should_poll_server(gateway_base_url, "tool_discovery", gateway_id=str(gateway_id))
                                 if not should_auto_refresh:
-                                    logger.debug("Skipping auto-refresh for %s: not yet due based on hot/cold classification", SecurityValidator.sanitize_log_message(gateway_name))
+                                    logger.debug(f"Skipping auto-refresh for {SecurityValidator.sanitize_log_message(gateway_name)}: not yet due based on hot/cold classification")
                             except Exception as e:
                                 # Fail open: proceed with auto-refresh if classification check fails
                                 logger.warning("Classification check failed for %s, proceeding with auto-refresh (fail-open): %s", SecurityValidator.sanitize_log_message(gateway_name), e)
@@ -4715,7 +4714,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             return capabilities, tools, resources, prompts, validation_errors
         except Exception as e:
-
             # MCP SDK uses TaskGroup which wraps exceptions in ExceptionGroup
             root_cause = e
             if isinstance(e, BaseExceptionGroup):
@@ -6141,7 +6139,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 validation_errors.append(error_msg)
             except ValueError as e:
                 if "JSON structure exceeds maximum depth" in str(e):
-                    error_msg = f"Tool '{tool_name}' schema too deeply nested. " f"Current depth limit: {settings.validation_max_json_depth}"
+                    error_msg = f"Tool '{tool_name}' schema too deeply nested. Current depth limit: {settings.validation_max_json_depth}"
                     logger.error(error_msg)
                     logger.warning("Consider increasing VALIDATION_MAX_JSON_DEPTH environment variable")
                 else:
@@ -6154,14 +6152,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 validation_errors.append(error_msg)
 
         if validation_errors:
-            logger.warning("Tool validation completed with %s error(s). Successfully validated %s tool(s).", len(validation_errors), len(valid_tools))
+            logger.warning(f"Tool validation completed with {len(validation_errors)} error(s). Successfully validated {len(valid_tools)} tool(s).")
             for err in validation_errors[:3]:
                 logger.debug("Validation error: %s", err)
 
         if not valid_tools and validation_errors:
             if context == "oauth":
-                raise OAuthToolValidationError(f"OAuth tool fetch failed: all {len(tools)} tools failed validation. " f"First error: {validation_errors[0][:200]}")
-            raise GatewayConnectionError(f"Failed to fetch tools: All {len(tools)} tools failed validation. " f"First error: {validation_errors[0][:200]}")
+                raise OAuthToolValidationError(f"OAuth tool fetch failed: all {len(tools)} tools failed validation. First error: {validation_errors[0][:200]}")
+            raise GatewayConnectionError(f"Failed to fetch tools: All {len(tools)} tools failed validation. First error: {validation_errors[0][:200]}")
 
         return valid_tools, validation_errors
 
@@ -6296,9 +6294,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             error_str = str(e).lower()
             if validation_warnings and ("401" in error_str or "403" in error_str or "unauthorized" in error_str or "forbidden" in error_str):
                 diagnostics = "; ".join(validation_warnings)
-                raise GatewayConnectionError(
-                    f"MCP server rejected OAuth token at {sanitized_url} (HTTP {type(e).__name__}). " f"Possible causes: {diagnostics}. " f"Check oauth_config audience and scopes."
-                )
+                raise GatewayConnectionError(f"MCP server rejected OAuth token at {sanitized_url} (HTTP {type(e).__name__}). Possible causes: {diagnostics}. Check oauth_config audience and scopes.")
             raise GatewayConnectionError(f"Failed to connect to SSE server at {sanitized_url}: {sanitized_error}")
 
     async def connect_to_sse_server(

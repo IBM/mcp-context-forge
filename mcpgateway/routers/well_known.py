@@ -226,9 +226,9 @@ async def get_oauth_protected_resource(
     if not settings.well_known_enabled:
         raise HTTPException(status_code=404, detail="Not found")
 
-    logger.warning("Deprecated query-param OAuth metadata endpoint called. " "Use RFC 9728 compliant path-based endpoint: " "/.well-known/oauth-protected-resource/servers/{server_id}/mcp")
+    logger.warning("Deprecated query-param OAuth metadata endpoint called. Use RFC 9728 compliant path-based endpoint: /.well-known/oauth-protected-resource/servers/{server_id}/mcp")
     raise HTTPException(
-        status_code=404, detail=("This endpoint is deprecated and non-compliant with RFC 9728. " "Use the path-based endpoint: " "/.well-known/oauth-protected-resource/servers/{server_id}/mcp")
+        status_code=404, detail=("This endpoint is deprecated and non-compliant with RFC 9728. Use the path-based endpoint: /.well-known/oauth-protected-resource/servers/{server_id}/mcp")
     )
 
 

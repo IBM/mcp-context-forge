@@ -552,9 +552,7 @@ def get_top_entities_combined(
         .outerjoin(current_subq, entity_model.id == current_subq.c.entity_id)
         .where(
             # Only include entities that have metrics in any source
-            (rollup_subq.c.total.isnot(None))
-            | (raw_subq.c.total.isnot(None))
-            | (current_subq.c.total.isnot(None))
+            (rollup_subq.c.total.isnot(None)) | (raw_subq.c.total.isnot(None)) | (current_subq.c.total.isnot(None))
         )
     )
 
@@ -573,8 +571,7 @@ def get_top_entities_combined(
             literal(True).label("is_deleted"),
         ).where(
             # Include entities with NULL id (deleted via SET NULL) OR entities not in entity table
-            (rollup_subq.c.entity_id.is_(None))
-            | (rollup_subq.c.entity_id.notin_(existing_ids_select))
+            (rollup_subq.c.entity_id.is_(None)) | (rollup_subq.c.entity_id.notin_(existing_ids_select))
         )
 
         # Combine existing and deleted entities

@@ -144,7 +144,7 @@ class LogAggregator:
                 db=db,
             )
 
-            logger.info("Aggregated performance metrics for %s.%s: %s requests, %.2fms avg, %.2f%% error rate", component, operation_type, count, avg_duration, error_rate * 100)
+            logger.info(f"Aggregated performance metrics for {component}.{operation_type}: {count} requests, {avg_duration:.2f}ms avg, {error_rate:.2%} error rate")
 
             if should_close:
                 db.commit()  # Commit transaction on success
