@@ -1,0 +1,18 @@
+ignore:
+  # CVE-2024-12254 (asyncio writelines() high-water-mark DoS): Red Hat's CVE
+  # database explicitly lists RHEL 10 python3.12 as "Affected" with no errata
+  # (https://access.redhat.com/security/cve/CVE-2024-12254) - this is not a
+  # missing/uncovered entry, it's Red Hat's stated position that RHEL 10 is
+  # vulnerable. We override that position here based on binary evidence: the
+  # upstream fix landed in CPython 3.12.9, predating the python3.12.13-2.el10_2
+  # build shipped in our UBI10 base image. Verified by inspecting the shipped
+  # binary directly - asyncio.selector_events._SelectorSocketTransport
+  # .writelines() already calls self._maybe_pause_protocol() after a partial
+  # write, the exact patched code path. Remove once Red Hat ships a RHEL 10
+  # erratum for this CVE (tracked via the CVE page above).
+  - vulnerability: CVE-2024-12254
+    package:
+      name: python3
+  - vulnerability: CVE-2024-12254
+    package:
+      name: python3-libs

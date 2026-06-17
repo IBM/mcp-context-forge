@@ -252,11 +252,19 @@ RUN if [ "$(uname -m)" = "s390x" ] || [ "$(uname -m)" = "ppc64le" ]; then \
 # Order is top-to-bottom from least-frequently-changing to most:
 #   1. pyproject.toml (dependency manifest — plugins come from the [plugins]
 #      extra, resolved from PyPI)
-#   2. Native extension wheels from rust-builder (consumed by venv install)
+#   2. The setuptools build_py hook module (pyproject.toml's
+#      [tool.setuptools.cmdclass] points at mcpgateway.tools.builder.build_hooks,
+#      so setuptools must be able to import it while resolving "."'s build
+#      metadata below — copy just this module's import chain, not the rest of
+#      mcpgateway/, to keep the dep layer cache intact for normal source edits)
+#   3. Native extension wheels from rust-builder (consumed by venv install)
 # Everything else (rust binaries, frontend static, app code) is copied AFTER
 # the heavy venv install so those changes don't invalidate the dep layer.
 # ----------------------------------------------------------------------------
 COPY pyproject.toml /app/
+COPY mcpgateway/__init__.py /app/mcpgateway/__init__.py
+COPY mcpgateway/tools/builder/__init__.py /app/mcpgateway/tools/builder/__init__.py
+COPY mcpgateway/tools/builder/build_hooks.py /app/mcpgateway/tools/builder/build_hooks.py
 COPY --from=rust-builder /build/native-extension-wheels/ /tmp/local-native-extension-wheels/
 COPY --from=s390x-wheels /wheels /tmp/s390x-wheels
 COPY --chmod=0755 scripts/verify-native-extensions.py /tmp/verify-native-extensions.py
@@ -311,9 +319,9 @@ RUN set -euo pipefail \
     fi \
     && /app/.venv/bin/pip uninstall --yes uv pip setuptools wheel \
     && rm -rf /root/.cache /var/cache/dnf \
-    && find /app/.venv -name "*.dist-info" -type d \
+    && (find /app/.venv -name "*.dist-info" -type d \
         \( -name "pip-*" -o -name "setuptools-*" -o -name "wheel-*" -o -name "uv-*" \) \
-        -exec rm -rf {} + 2>/dev/null || true \
+        -exec rm -rf {} + 2>/dev/null || true) \
     && rm -rf /app/.venv/share/python-wheels \
     && rm -rf "/app/"*.egg-info /app/build /app/dist /app/.eggs
 
