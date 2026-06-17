@@ -225,9 +225,12 @@ class TestToolsAddForm:
 
         auth_type = tools_page.add_tool_form.locator('[name="auth_type"]')
 
-        # None (empty value), Basic, Bearer Token, Custom Headers, OAuth 2.0
-        for value in ["", "basic", "bearer", "authheaders", "oauth"]:
+        # None (empty value), Basic, Bearer Token, Custom Headers
+        for value in ["", "basic", "bearer", "authheaders"]:
             expect(auth_type.locator(f'option[value="{value}"]')).to_be_attached()
+
+        # OAuth must NOT appear — tool auth_type=oauth is unsupported (configure OAuth on the gateway)
+        expect(auth_type.locator('option[value="oauth"]')).not_to_be_attached()
 
     def test_visibility_radios_present(self, tools_page: ToolsPage):
         """Test that visibility radio buttons (public/team/private) are present."""

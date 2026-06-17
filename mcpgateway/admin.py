@@ -4839,7 +4839,7 @@ async def _admin_logout(request: Request) -> Response:
                 # Match if referer host matches request host and path contains /admin or /oauth/callback
                 if referer_parsed.netloc == request_host and ("/admin" in referer_parsed.path or "/oauth/callback" in referer_parsed.path):
                     is_same_origin_referer = True
-            except Exception: # nosec B110
+            except Exception:  # nosec B110
                 pass  # Invalid referer URL, treat as not same-origin
 
         is_browser_request = "text/html" in accept_header or is_htmx or is_same_origin_referer
@@ -11651,6 +11651,8 @@ def _build_auth_obj_from_form(form: Any) -> Optional[dict[str, Any]]:
             auth_headers = []
 
     auth_type = form.get("auth_type", "")
+    if auth_type and auth_type.lower() == "oauth":
+        raise HTTPException(status_code=422, detail="auth_type 'oauth' is not supported on tools; configure OAuth on the gateway instead")
     auth_obj: Optional[dict[str, Any]] = None
     if auth_type:
         if auth_type == "basic":
@@ -16929,12 +16931,7 @@ async def get_resources_section(
         LOGGER.debug(f"User {user_email} requesting resources section with team_id={team_id}, token_teams={token_teams}")
 
         # Get all resources with token_teams for proper scoping
-        resources_result = await local_resource_service.list_resources(
-            db,
-            include_inactive=True,
-            user_email=user_email,
-            token_teams=token_teams
-        )
+        resources_result = await local_resource_service.list_resources(db, include_inactive=True, user_email=user_email, token_teams=token_teams)
         if isinstance(resources_result, tuple):
             resources_list = resources_result[0]
         else:
@@ -16995,12 +16992,7 @@ async def get_prompts_section(
         LOGGER.debug(f"User {user_email} requesting prompts section with team_id={team_id}, token_teams={token_teams}")
 
         # Get all prompts with token_teams for proper scoping
-        prompts_result = await local_prompt_service.list_prompts(
-            db,
-            include_inactive=True,
-            user_email=user_email,
-            token_teams=token_teams
-        )
+        prompts_result = await local_prompt_service.list_prompts(db, include_inactive=True, user_email=user_email, token_teams=token_teams)
         if isinstance(prompts_result, tuple):
             prompts_list = prompts_result[0]
         else:
