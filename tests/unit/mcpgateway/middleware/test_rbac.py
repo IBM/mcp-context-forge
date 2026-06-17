@@ -55,6 +55,14 @@ def _restore_real_rbac_decorators():
     rbac.get_permission_service = saved_get_ps
 
 
+@pytest.fixture
+def no_cookie_request():
+    """Mock Request with cookies={} for proxy/anonymous path tests."""
+    req = MagicMock(spec=Request)
+    req.cookies = {}
+    return req
+
+
 @pytest.mark.asyncio
 async def test_get_db_yields_and_closes():
     mock_session = MagicMock()
@@ -154,11 +162,7 @@ async def test_cookie_auth_allowed_with_oauth_callback_referer():
     """
     mock_request = MagicMock(spec=Request)
     mock_request.cookies = {"jwt_token": "token123"}
-    mock_request.headers = {
-        "accept": "application/json",
-        "referer": "http://localhost:4444/oauth/callback?code=abc&state=xyz",
-        "host": "localhost:4444"
-    }
+    mock_request.headers = {"accept": "application/json", "referer": "http://localhost:4444/oauth/callback?code=abc&state=xyz", "host": "localhost:4444"}
     mock_request.client = MagicMock()
     mock_request.client.host = "127.0.0.1"
     mock_request.state = MagicMock(auth_method="jwt", request_id="req-oauth-fetch", token_teams=["team-1"])
@@ -184,6 +188,7 @@ async def test_cookie_auth_rejected_with_cross_origin_oauth_referer():
     assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
     assert "Cookie authentication not allowed" in exc.value.detail
 
+
 @pytest.mark.asyncio
 async def test_cookie_auth_rejected_with_invalid_referer_url():
     """Invalid referer URL that causes urlparse exception should be treated as not same-origin and reject cookie auth."""
@@ -191,11 +196,7 @@ async def test_cookie_auth_rejected_with_invalid_referer_url():
 
     mock_request = MagicMock(spec=Request)
     mock_request.cookies = {"jwt_token": "token123"}
-    mock_request.headers = {
-        "accept": "application/json",
-        "referer": "http://example.com/admin",  # Valid URL but will be mocked to raise exception
-        "host": "localhost:4444"
-    }
+    mock_request.headers = {"accept": "application/json", "referer": "http://example.com/admin", "host": "localhost:4444"}  # Valid URL but will be mocked to raise exception
     mock_request.client = MagicMock()
     mock_request.client.host = "127.0.0.1"
     mock_request.state = MagicMock(auth_method="jwt", request_id="req-invalid")
@@ -206,7 +207,6 @@ async def test_cookie_auth_rejected_with_invalid_referer_url():
             await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
         assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
         assert "Cookie authentication not allowed" in exc.value.detail
-
 
 
 @pytest.mark.asyncio
@@ -882,9 +882,9 @@ async def test_get_db_invalidate_fails_silently():
 
 
 @pytest.mark.asyncio
-async def test_proxy_user_db_lookup_exception_continues():
+async def test_proxy_user_db_lookup_exception_continues(no_cookie_request):
     """Proxy user DB lookup failure continues with is_admin=False (lines 151-152)."""
-    mock_request = MagicMock(spec=Request)
+    mock_request = no_cookie_request
     mock_request.headers = {"x-forwarded-user": "user@test.com", "user-agent": "test"}
     mock_request.client = MagicMock(host="127.0.0.1")
     mock_request.state = SimpleNamespace(
@@ -914,9 +914,9 @@ async def test_proxy_user_db_lookup_exception_continues():
 
 
 @pytest.mark.asyncio
-async def test_no_proxy_no_trust_auth_required_html_redirect():
+async def test_no_proxy_no_trust_auth_required_html_redirect(no_cookie_request):
     """mcp_client_auth disabled, no proxy trust, auth_required -> 302 for HTML (lines 205-212)."""
-    mock_request = MagicMock(spec=Request)
+    mock_request = no_cookie_request
     mock_request.headers = {"accept": "text/html", "user-agent": "browser"}
     mock_request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None)
 
@@ -933,9 +933,9 @@ async def test_no_proxy_no_trust_auth_required_html_redirect():
 
 
 @pytest.mark.asyncio
-async def test_no_proxy_no_trust_auth_required_api_401():
+async def test_no_proxy_no_trust_auth_required_api_401(no_cookie_request):
     """mcp_client_auth disabled, no proxy trust, auth_required -> 401 for API (lines 213-216)."""
-    mock_request = MagicMock(spec=Request)
+    mock_request = no_cookie_request
     mock_request.headers = {"accept": "application/json", "user-agent": "api-client"}
     mock_request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None)
 
@@ -943,12 +943,17 @@ async def test_no_proxy_no_trust_auth_required_api_401():
     mock_settings.mcp_client_auth_enabled = False
     mock_settings.trust_proxy_auth = False
     mock_settings.auth_required = True
+    mock_settings.app_root_path = ""
 
-    with patch("mcpgateway.middleware.rbac.settings", mock_settings):
+    # Create proper HTTPAuthorizationCredentials mock with None credentials
+    mock_credentials = MagicMock()
+    mock_credentials.credentials = None
+
+    with patch("mcpgateway.middleware.rbac.settings", mock_settings), patch("mcpgateway.middleware.rbac.is_proxy_auth_trust_active", return_value=False):
         with pytest.raises(HTTPException) as exc:
-            await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+            await rbac.get_current_user_with_permissions(mock_request, credentials=mock_credentials, jwt_token=None)
     assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
-    assert "no auth method configured" in exc.value.detail
+    assert "Authentication required but no auth method configured" in exc.value.detail
 
 
 # --- Plugin hook grant/deny (lines 416-457) ---
@@ -1298,9 +1303,9 @@ async def test_permission_checker_require_permission_denied(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_proxy_user_is_platform_admin():
+async def test_proxy_user_is_platform_admin(no_cookie_request):
     """Proxy user matching platform_admin_email gets is_admin=True (lines 134-135)."""
-    mock_request = MagicMock(spec=Request)
+    mock_request = no_cookie_request
     mock_request.headers = {"x-forwarded-user": "admin@platform.com", "user-agent": "test"}
     mock_request.client = MagicMock(host="127.0.0.1")
     mock_request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None, request_id="req1", team_id=None)
@@ -1321,9 +1326,9 @@ async def test_proxy_user_is_platform_admin():
 
 
 @pytest.mark.asyncio
-async def test_proxy_user_db_lookup_succeeds():
+async def test_proxy_user_db_lookup_succeeds(no_cookie_request):
     """Proxy user DB lookup returns user with is_admin and full_name (lines 147-150)."""
-    mock_request = MagicMock(spec=Request)
+    mock_request = no_cookie_request
     mock_request.headers = {"x-forwarded-user": "user@test.com", "user-agent": "test"}
     mock_request.client = MagicMock(host="127.0.0.1")
     mock_request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None, request_id="req1", team_id=None)
@@ -1348,9 +1353,9 @@ async def test_proxy_user_db_lookup_succeeds():
 
 
 @pytest.mark.asyncio
-async def test_trust_proxy_no_header_auth_required_html():
+async def test_trust_proxy_no_header_auth_required_html(no_cookie_request):
     """Trust proxy auth, no proxy header, auth_required, HTML → 302 (lines 171-179)."""
-    mock_request = MagicMock(spec=Request)
+    mock_request = no_cookie_request
     mock_request.headers = {"accept": "text/html", "user-agent": "browser"}
     mock_request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None)
 
@@ -1369,9 +1374,9 @@ async def test_trust_proxy_no_header_auth_required_html():
 
 
 @pytest.mark.asyncio
-async def test_trust_proxy_no_header_auth_required_api():
+async def test_trust_proxy_no_header_auth_required_api(no_cookie_request):
     """Trust proxy auth, no proxy header, auth_required, API → 401 (lines 180-183)."""
-    mock_request = MagicMock(spec=Request)
+    mock_request = no_cookie_request
     mock_request.headers = {"accept": "application/json", "user-agent": "api"}
     mock_request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None)
 
@@ -1389,9 +1394,9 @@ async def test_trust_proxy_no_header_auth_required_api():
 
 
 @pytest.mark.asyncio
-async def test_trust_proxy_no_header_anonymous():
+async def test_trust_proxy_no_header_anonymous(no_cookie_request):
     """Trust proxy auth, no proxy header, auth_required=False → anonymous (lines 187-199)."""
-    mock_request = MagicMock(spec=Request)
+    mock_request = no_cookie_request
     mock_request.headers = {"user-agent": "test"}
     mock_request.client = MagicMock(host="127.0.0.1")
     mock_request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None, request_id="req1", team_id=None)
@@ -1411,9 +1416,9 @@ async def test_trust_proxy_no_header_anonymous():
 
 
 @pytest.mark.asyncio
-async def test_no_proxy_no_trust_anonymous():
+async def test_no_proxy_no_trust_anonymous(no_cookie_request):
     """No proxy trust, auth_required=False → anonymous (lines 218-230)."""
-    mock_request = MagicMock(spec=Request)
+    mock_request = no_cookie_request
     mock_request.headers = {"user-agent": "test"}
     mock_request.client = MagicMock(host="127.0.0.1")
     mock_request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None, request_id="req1", team_id=None)
@@ -1448,8 +1453,11 @@ async def test_bearer_token_from_credentials():
     mock_credentials = MagicMock()
     mock_credentials.credentials = "valid-token"  # pragma: allowlist secret
 
+    mock_settings = MagicMock()
+    mock_settings.mcp_client_auth_enabled = True
+
     mock_user = MagicMock(email="api@test.com", full_name="API User", is_admin=False)
-    with patch("mcpgateway.auth.validate_token_user", return_value=mock_user):
+    with patch("mcpgateway.middleware.rbac.settings", mock_settings), patch("mcpgateway.auth.validate_token_user", AsyncMock(return_value=mock_user)):
         result = await rbac.get_current_user_with_permissions(mock_request, credentials=mock_credentials, jwt_token=None)
 
     assert result["email"] == "api@test.com"
@@ -1642,26 +1650,36 @@ async def test_require_any_permission_no_user_context():
 
 @pytest.mark.asyncio
 async def test_no_token_auth_required_api_401():
-    """No token, auth required, non-browser → 401 (line 289)."""
+    """No token, auth required, non-browser → 401 (line 313)."""
     mock_request = MagicMock(spec=Request)
     mock_request.cookies = {}
     mock_request.headers = {"accept": "application/json", "user-agent": "api"}
-    mock_request.state = MagicMock()
+    mock_request.state = MagicMock(plugin_context_table=None, plugin_global_context=None)
     mock_request.client = MagicMock(host="127.0.0.1")
 
     mock_credentials = MagicMock()
     mock_credentials.credentials = None
 
-    with pytest.raises(HTTPException) as exc:
-        await rbac.get_current_user_with_permissions(mock_request, credentials=mock_credentials, jwt_token=None)
+    # Mock settings to trigger line 313 path:
+    # - MCP client auth disabled (proxy auth path)
+    # - Proxy trust NOT active
+    # - Auth required
+    mock_settings = MagicMock()
+    mock_settings.mcp_client_auth_enabled = False
+    mock_settings.trust_proxy_auth = False
+    mock_settings.auth_required = True
+
+    with patch("mcpgateway.middleware.rbac.settings", mock_settings), patch("mcpgateway.middleware.rbac.is_proxy_auth_trust_active", return_value=False):
+        with pytest.raises(HTTPException) as exc:
+            await rbac.get_current_user_with_permissions(mock_request, credentials=mock_credentials, jwt_token=None)
     assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
-    assert "Authorization token required" in exc.value.detail
+    assert "Authentication required but no auth method configured" in exc.value.detail
 
 
 @pytest.mark.asyncio
-async def test_proxy_user_db_lookup_not_found():
+async def test_proxy_user_db_lookup_not_found(no_cookie_request):
     """Proxy user DB lookup returns None, keeps defaults (branch 148->155)."""
-    mock_request = MagicMock(spec=Request)
+    mock_request = no_cookie_request
     mock_request.headers = {"x-forwarded-user": "unknown@test.com", "user-agent": "test"}
     mock_request.client = MagicMock(host="127.0.0.1")
     mock_request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None, request_id="req1", team_id=None)
@@ -2701,3 +2719,127 @@ def test_rbac_get_db_backwards_compatibility():
                 pass
 
             mock_session.commit.assert_called_once()
+
+
+# --- MCP_CLIENT_AUTH_ENABLED=false + cookie JWT redirect-loop fix ---
+
+
+@pytest.mark.asyncio
+async def test_mcp_client_auth_disabled_cookie_jwt_bypasses_proxy_block():
+    """When mcp_client_auth_enabled=False but a jwt_token cookie is present,
+    the proxy/anonymous early-return block is skipped and standard JWT validation runs.
+    Regression: previously the dependency always redirected browser requests to
+    /admin/login even for authenticated sessions, causing an infinite redirect loop."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.cookies = {"jwt_token": "valid-jwt-cookie"}
+    mock_request.headers = {"accept": "text/html", "user-agent": "browser"}
+    mock_request.client = MagicMock(host="127.0.0.1")
+    mock_request.state = MagicMock()
+
+    mock_user = MagicMock()
+    mock_user.email = "admin@example.com"
+    mock_user.full_name = "Admin"
+    mock_user.is_admin = True
+
+    mock_settings = MagicMock()
+    mock_settings.mcp_client_auth_enabled = False
+    mock_settings.trust_proxy_auth = False
+    mock_settings.auth_required = True
+    mock_settings.secure_cookies = False
+
+    with patch("mcpgateway.middleware.rbac.settings", mock_settings), patch("mcpgateway.auth.validate_token_user", AsyncMock(return_value=mock_user)):
+        result = await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+
+    assert result["email"] == "admin@example.com"
+    assert result["is_admin"] is True
+    assert result["auth_method"] != "proxy"
+
+
+@pytest.mark.asyncio
+async def test_mcp_client_auth_disabled_access_token_cookie_bypasses_proxy_block():
+    """Same redirect-loop fix, but using the access_token cookie name."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.cookies = {"access_token": "valid-access-token"}
+    mock_request.headers = {"accept": "text/html", "user-agent": "browser"}
+    mock_request.client = MagicMock(host="127.0.0.1")
+    mock_request.state = MagicMock()
+
+    mock_user = MagicMock()
+    mock_user.email = "user@example.com"
+    mock_user.full_name = "User"
+    mock_user.is_admin = False
+
+    mock_settings = MagicMock()
+    mock_settings.mcp_client_auth_enabled = False
+    mock_settings.trust_proxy_auth = False
+    mock_settings.auth_required = True
+    mock_settings.secure_cookies = False
+
+    with patch("mcpgateway.middleware.rbac.settings", mock_settings), patch("mcpgateway.auth.validate_token_user", AsyncMock(return_value=mock_user)):
+        result = await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+
+    assert result["email"] == "user@example.com"
+
+
+@pytest.mark.asyncio
+async def test_mcp_client_auth_disabled_no_cookie_still_redirects(no_cookie_request):
+    """When mcp_client_auth_enabled=False and NO cookie is present, proxy block still applies —
+    existing redirect-to-login behavior for unauthenticated browser requests is preserved."""
+    mock_request = no_cookie_request
+    mock_request.headers = {"accept": "text/html", "user-agent": "browser"}
+    mock_request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None)
+
+    mock_settings = MagicMock()
+    mock_settings.mcp_client_auth_enabled = False
+    mock_settings.trust_proxy_auth = False
+    mock_settings.auth_required = True
+    mock_settings.app_root_path = ""
+
+    with patch("mcpgateway.middleware.rbac.settings", mock_settings):
+        with pytest.raises(HTTPException) as exc:
+            await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+    assert exc.value.status_code == status.HTTP_302_FOUND
+
+
+@pytest.mark.asyncio
+async def test_proxy_trust_valid_header_stale_cookie_uses_proxy_identity():
+    """Proxy trust active + valid proxy header + stale cookie → proxy identity wins, not cookie."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.cookies = {"jwt_token": "stale-or-invalid-cookie"}
+    mock_request.headers = {"x-forwarded-user": "proxy-user@example.com", "user-agent": "browser"}
+    mock_request.client = MagicMock(host="10.0.0.1")
+    mock_request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None, request_id="req1", team_id=None)
+
+    mock_settings = MagicMock()
+    mock_settings.mcp_client_auth_enabled = False
+    mock_settings.trust_proxy_auth = True
+    mock_settings.trust_proxy_auth_dangerously = True
+    mock_settings.proxy_user_header = "x-forwarded-user"
+    mock_settings.platform_admin_email = "admin@platform.com"
+
+    with patch("mcpgateway.middleware.rbac.settings", mock_settings):
+        result = await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+
+    assert result["email"] == "proxy-user@example.com"
+    assert result["auth_method"] == "proxy"
+
+
+@pytest.mark.asyncio
+async def test_proxy_trust_missing_header_valid_cookie_rejects():
+    """Proxy trust active + missing proxy header + valid cookie → 401, not authenticated via cookie."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.cookies = {"jwt_token": "valid-jwt-cookie"}
+    mock_request.headers = {"accept": "application/json", "user-agent": "api"}
+    mock_request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None)
+
+    mock_settings = MagicMock()
+    mock_settings.mcp_client_auth_enabled = False
+    mock_settings.trust_proxy_auth = True
+    mock_settings.trust_proxy_auth_dangerously = True
+    mock_settings.proxy_user_header = "x-forwarded-user"
+    mock_settings.auth_required = True
+
+    with patch("mcpgateway.middleware.rbac.settings", mock_settings):
+        with pytest.raises(HTTPException) as exc:
+            await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED

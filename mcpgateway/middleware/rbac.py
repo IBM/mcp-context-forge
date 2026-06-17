@@ -183,8 +183,10 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         elif is_admin:
             set_trace_team_scope("admin")
 
-    # Check for proxy authentication first (if MCP client auth is disabled)
-    if not settings.mcp_client_auth_enabled:
+    # When proxy trust is active proxy header wins regardless of cookies; otherwise
+    # cookie JWTs bypass this block so a valid session doesn't loop to /admin/login.
+    _has_cookie_jwt = bool(request.cookies.get("jwt_token") or request.cookies.get("access_token") or jwt_token)  # Cookie() dependency value
+    if not settings.mcp_client_auth_enabled and (not _has_cookie_jwt or is_proxy_auth_trust_active(settings)):
         # Read plugin context from request.state for cross-hook context sharing
         # (set by HttpAuthMiddleware for passing contexts between different hook types)
         plugin_context_table = getattr(request.state, "plugin_context_table", None)
@@ -364,7 +366,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
             # Match if referer host matches request host and path contains /admin or /oauth/callback
             if referer_parsed.netloc == request_host and ("/admin" in referer_parsed.path or "/oauth/callback" in referer_parsed.path):
                 is_same_origin_referer = True
-        except Exception: # noqa: BLE001  # nosec B110
+        except Exception:  # noqa: BLE001  # nosec B110
             pass  # Invalid referer URL, treat as not same-origin
 
     is_browser_request = "text/html" in accept_header or is_htmx or is_same_origin_referer
