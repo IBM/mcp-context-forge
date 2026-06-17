@@ -1562,10 +1562,10 @@ async def get_current_user(
 
         logger.debug("JWT token validated successfully")
         # Extract user identifier (support both new and legacy token formats)
-        email = payload.get("sub")
+        email = payload.get("email")
         if email is None:
             # Try legacy format
-            email = payload.get("email")
+            email = payload.get("sub")
 
         if email is None:
             logger.debug("No email/sub found in JWT payload")

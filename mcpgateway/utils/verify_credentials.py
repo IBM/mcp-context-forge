@@ -510,7 +510,7 @@ async def _enforce_revocation_and_active_user(payload: dict) -> None:
         except Exception as exc:
             logger.warning("Token revocation check failed for JTI %s: %s", jti, exc)
 
-    username = payload.get("sub") or payload.get("email") or payload.get("username")
+    username = payload.get("email") or payload.get("sub") or payload.get("username")
     if not username:
         return
 
@@ -1400,7 +1400,7 @@ async def require_admin_auth(
                     # Decode and verify JWT token (use cached version for performance)
                     payload = await verify_jwt_token_cached(token, request)
                     await _enforce_revocation_and_active_user(payload)
-                    username = payload.get("sub") or payload.get("username")  # Support both new and legacy formats
+                    username = payload.get("email") or payload.get("sub") or payload.get("username")  # Support both new and legacy formats
 
                     if username:
                         # Get user from database
