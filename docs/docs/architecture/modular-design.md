@@ -2,6 +2,11 @@
 
 **Status:** Proposed target architecture and implementation entry point
 
+!!! warning "Deprecated implemented precedent"
+    The Rust MCP runtime sidecar used as current precedent in this document is
+    deprecated as of 2026-06-11 and sunsets on 2026-07-07. Treat it as historical implementation context,
+    not guidance for new deployments. See [Deprecations](../deprecations.md).
+
 This document defines the target-state modular runtime architecture for
 ContextForge.
 
@@ -99,6 +104,10 @@ Use the documents in this order:
 | Incremental migration | The architecture is adopted by refactoring the current system in phases, not by rewrite | [ADR-047](adr/047-incremental-migration-over-rewrite.md) |
 
 ## Current Implemented Precedent
+
+!!! warning "Deprecated Rust MCP runtime sidecar"
+    The Rust MCP runtime sidecar remains described here because it informed the
+    modular architecture, but it is deprecated for deployment use.
 
 ContextForge today is primarily a monolithic Python application, but two
 existing patterns already prove the modular direction:

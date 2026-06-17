@@ -353,6 +353,7 @@ print_mcp_runtime_mode() {
     fi
 
     if [[ "${EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED}" = "true" ]]; then
+        echo "WARNING: The Rust MCP runtime sidecar is deprecated as of 2026-06-11 and will sunset on 2026-07-07. Use the default Python MCP transport path. See https://ibm.github.io/mcp-context-forge/deprecations/."
         if [[ "${EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED}" = "true" ]]; then
             runtime_mode="rust-managed"
             echo "MCP runtime mode: ${runtime_mode} (sidecar managed in this container, upstream client: ${upstream_client_mode}, session core: ${session_core_mode}, event store: ${event_store_mode}, resume core: ${resume_core_mode}, live stream core: ${live_stream_core_mode}, affinity core: ${affinity_core_mode}, session auth reuse: ${session_auth_reuse_mode})"
@@ -389,6 +390,7 @@ print_a2a_runtime_mode() {
     fi
 
     if [[ "${EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED}" = "true" ]]; then
+        echo "WARNING: The Rust A2A runtime sidecar is deprecated as of 2026-06-11 and will sunset on 2026-07-07. Use the default Python A2A invocation path. See https://ibm.github.io/mcp-context-forge/deprecations/."
         if [[ "${EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED}" = "true" ]]; then
             runtime_mode="rust-managed"
             echo "A2A runtime mode: ${runtime_mode} (sidecar managed in this container, invoke path: ${invoke_mode})"

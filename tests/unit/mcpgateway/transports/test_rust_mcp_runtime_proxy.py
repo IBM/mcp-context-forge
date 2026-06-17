@@ -37,7 +37,7 @@ def _make_receive(body: bytes):
 
 
 @pytest.mark.asyncio
-async def test_post_requests_proxy_to_rust_runtime_and_forward_internal_server_header(monkeypatch):
+async def test_post_requests_proxy_to_rust_runtime_and_forward_internal_server_header(caplog, monkeypatch):
     """POST MCP traffic should be proxied to Rust with server scope carried via an internal header."""
     captured = {}
 
@@ -106,6 +106,8 @@ async def test_post_requests_proxy_to_rust_runtime_and_forward_internal_server_h
     )
     monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy._validate_server_id", mock_validate_server_id)
     monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.get_http_client", AsyncMock(return_value=FakeClient()))
+    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy._RUST_MCP_RUNTIME_DEPRECATION_LOGGED", False)
+    caplog.set_level("WARNING", logger="mcpgateway.transports.rust_mcp_runtime_proxy")
 
     fallback = AsyncMock()
     proxy = RustMCPRuntimeProxy(fallback)
@@ -170,6 +172,9 @@ async def test_post_requests_proxy_to_rust_runtime_and_forward_internal_server_h
     assert events[0]["status"] == 200
     assert (b"mcp-session-id", b"session-1") in events[0]["headers"]
     assert (b"x-contextforge-mcp-runtime", b"rust") in events[0]["headers"]
+    assert (b"deprecation", b"@1781136000") in events[0]["headers"]
+    assert (b"sunset", b"Tue, 07 Jul 2026 00:00:00 GMT") in events[0]["headers"]
+    assert (b"link", b'<https://ibm.github.io/mcp-context-forge/deprecations/>; rel="deprecation"; type="text/html"') in events[0]["headers"]
     assert events[1]["type"] == "http.response.body"
     assert events[1]["more_body"] is True
     assert events[2]["type"] == "http.response.body"
@@ -177,6 +182,7 @@ async def test_post_requests_proxy_to_rust_runtime_and_forward_internal_server_h
     assert events[3] == {"type": "http.response.body", "body": b"", "more_body": False}
     streamed_body = b"".join(event["body"] for event in events[1:3])
     assert json.loads(streamed_body.decode()) == {"jsonrpc": "2.0", "id": 1, "result": {"ok": True}}
+    assert any("The Rust MCP runtime sidecar is deprecated" in rec.message for rec in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -715,6 +721,9 @@ async def test_runtime_failure_returns_jsonrpc_bad_gateway(monkeypatch):
 
     fallback.assert_not_awaited()
     assert events[0]["status"] == 502
+    assert (b"deprecation", b"@1781136000") in events[0]["headers"]
+    assert (b"sunset", b"Tue, 07 Jul 2026 00:00:00 GMT") in events[0]["headers"]
+    assert (b"link", b'<https://ibm.github.io/mcp-context-forge/deprecations/>; rel="deprecation"; type="text/html"') in events[0]["headers"]
     body = json.loads(events[1]["body"].decode())
     assert body["error"]["code"] == -32000
     assert body["error"]["message"] == "Experimental Rust MCP runtime unavailable"
@@ -776,6 +785,9 @@ async def test_validate_server_id_returns_404_when_server_not_found(monkeypatch)
     assert len(events) == 2
     assert events[0]["type"] == "http.response.start"
     assert events[0]["status"] == 404
+    assert (b"deprecation", b"@1781136000") in events[0]["headers"]
+    assert (b"sunset", b"Tue, 07 Jul 2026 00:00:00 GMT") in events[0]["headers"]
+    assert (b"link", b'<https://ibm.github.io/mcp-context-forge/deprecations/>; rel="deprecation"; type="text/html"') in events[0]["headers"]
     assert b"Server not found" in events[1]["body"]
 
 
@@ -806,6 +818,9 @@ async def test_validate_server_id_returns_503_on_database_error(monkeypatch):
     assert len(events) == 2
     assert events[0]["type"] == "http.response.start"
     assert events[0]["status"] == 503
+    assert (b"deprecation", b"@1781136000") in events[0]["headers"]
+    assert (b"sunset", b"Tue, 07 Jul 2026 00:00:00 GMT") in events[0]["headers"]
+    assert (b"link", b'<https://ibm.github.io/mcp-context-forge/deprecations/>; rel="deprecation"; type="text/html"') in events[0]["headers"]
     assert b"Service unavailable" in events[1]["body"]
 
 
@@ -827,6 +842,9 @@ async def test_validate_server_id_rejects_malformed_server_scoped_paths(monkeypa
     assert len(events) == 2
     assert events[0]["type"] == "http.response.start"
     assert events[0]["status"] == 404
+    assert (b"deprecation", b"@1781136000") in events[0]["headers"]
+    assert (b"sunset", b"Tue, 07 Jul 2026 00:00:00 GMT") in events[0]["headers"]
+    assert (b"link", b'<https://ibm.github.io/mcp-context-forge/deprecations/>; rel="deprecation"; type="text/html"') in events[0]["headers"]
     assert b"Invalid server identifier" in events[1]["body"]
 
 

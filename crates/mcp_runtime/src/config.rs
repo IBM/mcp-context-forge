@@ -15,7 +15,7 @@ pub const DEFAULT_MAX_REQUEST_BODY_SIZE_BYTES: usize = 10_485_760;
 
 #[derive(Debug, Clone, Parser)]
 #[command(name = "contextforge-mcp-runtime")]
-#[command(about = "Experimental Rust MCP runtime edge for ContextForge")]
+#[command(about = "Deprecated experimental Rust MCP runtime edge for ContextForge")]
 /// Runtime configuration parsed from CLI flags and environment variables.
 ///
 /// These options are intentionally low-level. In normal compose/test workflows,
@@ -294,7 +294,7 @@ impl RuntimeConfig {
 #[cfg(test)]
 mod tests {
     use super::{ListenTarget, RuntimeConfig};
-    use clap::Parser;
+    use clap::{CommandFactory, Parser};
     use std::path::{Path, PathBuf};
 
     fn config_from<I, T>(args: I) -> RuntimeConfig
@@ -433,5 +433,14 @@ mod tests {
         let config = config_from(["contextforge-mcp-runtime", "--exit-after-startup-ms", "25"]);
 
         assert_eq!(config.exit_after_startup_ms, Some(25));
+    }
+
+    #[test]
+    fn cli_about_marks_runtime_deprecated() {
+        let command = RuntimeConfig::command();
+        assert_eq!(
+            command.get_about().map(|about| about.to_string()),
+            Some("Deprecated experimental Rust MCP runtime edge for ContextForge".to_string())
+        );
     }
 }

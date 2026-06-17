@@ -1,5 +1,10 @@
 # Rust MCP Session/Auth Isolation Testing Design
 
+> Deprecated as of 2026-06-11; sunsets on 2026-07-07. This testing design is historical implementation
+> context for the Rust MCP runtime sidecar. Use the default Python MCP
+> transport path for new deployments. See
+> [Deprecations](../../docs/docs/deprecations.md).
+
 Last updated: March 14, 2026
 
 ## Goal

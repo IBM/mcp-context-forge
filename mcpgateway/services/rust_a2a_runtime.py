@@ -21,10 +21,12 @@ import httpx
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.deprecations import RUST_A2A_RUNTIME_DEPRECATION_MESSAGE
 from mcpgateway.services.a2a_protocol import PreparedA2AInvocation
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 
 logger = logging.getLogger(__name__)
+_RUST_A2A_RUNTIME_DEPRECATION_LOGGED = False
 
 
 class RustA2ARuntimeError(RuntimeError):
@@ -57,6 +59,10 @@ class RustA2ARuntimeClient:
         Raises:
             RustA2ARuntimeError: On non-200 response, invalid JSON, or non-object payload.
         """
+        global _RUST_A2A_RUNTIME_DEPRECATION_LOGGED  # pylint: disable=global-statement
+        if not _RUST_A2A_RUNTIME_DEPRECATION_LOGGED:
+            logger.warning(RUST_A2A_RUNTIME_DEPRECATION_MESSAGE)
+            _RUST_A2A_RUNTIME_DEPRECATION_LOGGED = True
         client = await self._get_runtime_client()
         target_url = _build_runtime_invoke_url()
         request_timeout = timeout_seconds or float(settings.experimental_rust_a2a_runtime_timeout_seconds)

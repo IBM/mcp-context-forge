@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Experimental Rust MCP runtime edge for ContextForge"
+description = "Deprecated experimental Rust MCP runtime edge for ContextForge"
 
 [features]
 default = []

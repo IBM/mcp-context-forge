@@ -4,6 +4,8 @@
 
 //! Rust MCP runtime sidecar for `ContextForge`.
 //!
+//! Deprecated as of 2026-06-11; sunsets on 2026-07-07. Use the default Python MCP transport path.
+//!
 //! This crate owns the Rust-backed public MCP HTTP edge and, in `full` mode,
 //! can also own MCP session/event-store/resume/live-stream/affinity cores while
 //! still delegating authentication and RBAC authority to Python.
@@ -17,7 +19,11 @@ use axum::{
     body::{Body, Bytes},
     extract::{ConnectInfo, DefaultBodyLimit, FromRequestParts, Path as AxumPath, State},
     http::request::Parts,
-    http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header::CONTENT_TYPE},
+    http::{
+        HeaderMap, HeaderName, HeaderValue, StatusCode,
+        header::{CONTENT_TYPE, LINK},
+    },
+    middleware,
     response::{
         IntoResponse, Response,
         sse::{Event, KeepAlive, Sse},
@@ -87,6 +93,9 @@ use crate::observability::{
 const JSONRPC_VERSION: &str = "2.0";
 const RUNTIME_HEADER: &str = "x-contextforge-mcp-runtime";
 const RUNTIME_NAME: &str = "rust";
+const DEPRECATION_HEADER_DATE: &str = "@1781136000";
+const SUNSET_HEADER_DATE: &str = "Tue, 07 Jul 2026 00:00:00 GMT";
+const DEPRECATION_LINK_VALUE: &str = "<https://ibm.github.io/mcp-context-forge/deprecations/>; rel=\"deprecation\"; type=\"text/html\"";
 const INTERNAL_RUNTIME_AUTH_HEADER: &str = "x-contextforge-mcp-runtime-auth";
 const INTERNAL_RUNTIME_AUTH_CONTEXT: &str = "contextforge-internal-mcp-runtime-v1";
 const UPSTREAM_CLIENT_HEADER: &str = "x-contextforge-mcp-upstream-client";
@@ -1369,6 +1378,20 @@ pub fn build_router(state: AppState) -> Router {
         .with_state(state)
 }
 
+async fn append_deprecation_headers(mut response: Response) -> Response {
+    let headers = response.headers_mut();
+    headers.insert(
+        HeaderName::from_static("deprecation"),
+        HeaderValue::from_static(DEPRECATION_HEADER_DATE),
+    );
+    headers.insert(
+        HeaderName::from_static("sunset"),
+        HeaderValue::from_static(SUNSET_HEADER_DATE),
+    );
+    headers.insert(LINK, HeaderValue::from_static(DEPRECATION_LINK_VALUE));
+    response
+}
+
 fn build_public_router(state: AppState) -> Router {
     let max_body_size = state.max_request_body_size_bytes;
     Router::new()
@@ -1397,6 +1420,7 @@ fn build_public_router(state: AppState) -> Router {
                 .post(rpc_server_scoped),
         )
         .layer(DefaultBodyLimit::max(max_body_size))
+        .route_layer(middleware::map_response(append_deprecation_headers))
         .with_state(state)
 }
 
@@ -1407,6 +1431,9 @@ fn build_public_router(state: AppState) -> Router {
 /// Returns an error when configuration parsing fails, listener startup fails, or a listener
 /// exits with an application-level runtime error.
 pub async fn run(config: RuntimeConfig) -> Result<(), RuntimeError> {
+    warn!(
+        "The Rust MCP runtime sidecar is deprecated as of 2026-06-11 and will sunset on 2026-07-07. Use the default Python MCP transport path. See https://ibm.github.io/mcp-context-forge/deprecations/."
+    );
     let state = AppState::new(&config)?;
     spawn_local_cache_sweeper(state.clone());
     let app = build_router(state.clone());
@@ -10283,21 +10310,22 @@ mod unit_tests {
 
     use super::{
         AffinityForwardResponse, AppState, Body, Bytes, CLIENT_ERROR_DETAIL,
-        DirectExecutionAuthorization, EventStoreReplayRequest, EventStoreStoreRequest,
-        INTERNAL_RUNTIME_AUTH_HEADER, InternalAuthContext, InternalAuthenticateRequest,
-        JsonRpcRequest, RUNTIME_HEADER, RUNTIME_NAME, RuntimeConfig, RuntimeError,
-        RuntimeSessionRecord, SessionAuthReuseMissReason, TrustedPeerAddr, URL_SAFE_NO_PAD,
-        accepts_sse, active_runtime_session_count, affinity_forward_error_response,
-        auth_binding_fingerprint, authenticate_public_request_if_needed,
-        authorize_server_method_via_backend, batch_rejected_response, build_forwarded_sse_event,
-        build_public_router, build_router, can_reuse_session_auth, can_use_direct_prompts_get,
-        can_use_direct_resources_read, decode_request, decode_upstream_json_payload_bytes,
-        derive_backend_authenticate_url, derive_backend_completion_complete_url,
-        derive_backend_initialize_url, derive_backend_logging_set_level_url,
-        derive_backend_notifications_cancelled_url, derive_backend_notifications_initialized_url,
-        derive_backend_notifications_message_url, derive_backend_prompts_get_authz_url,
-        derive_backend_prompts_get_url, derive_backend_prompts_list_authz_url,
-        derive_backend_prompts_list_url, derive_backend_resource_templates_list_authz_url,
+        DEPRECATION_HEADER_DATE, DEPRECATION_LINK_VALUE, DirectExecutionAuthorization,
+        EventStoreReplayRequest, EventStoreStoreRequest, INTERNAL_RUNTIME_AUTH_HEADER,
+        InternalAuthContext, InternalAuthenticateRequest, JsonRpcRequest, RUNTIME_HEADER,
+        RUNTIME_NAME, RuntimeConfig, RuntimeError, RuntimeSessionRecord, SUNSET_HEADER_DATE,
+        SessionAuthReuseMissReason, TrustedPeerAddr, URL_SAFE_NO_PAD, accepts_sse,
+        active_runtime_session_count, affinity_forward_error_response, auth_binding_fingerprint,
+        authenticate_public_request_if_needed, authorize_server_method_via_backend,
+        batch_rejected_response, build_forwarded_sse_event, build_public_router, build_router,
+        can_reuse_session_auth, can_use_direct_prompts_get, can_use_direct_resources_read,
+        decode_request, decode_upstream_json_payload_bytes, derive_backend_authenticate_url,
+        derive_backend_completion_complete_url, derive_backend_initialize_url,
+        derive_backend_logging_set_level_url, derive_backend_notifications_cancelled_url,
+        derive_backend_notifications_initialized_url, derive_backend_notifications_message_url,
+        derive_backend_prompts_get_authz_url, derive_backend_prompts_get_url,
+        derive_backend_prompts_list_authz_url, derive_backend_prompts_list_url,
+        derive_backend_resource_templates_list_authz_url,
         derive_backend_resource_templates_list_url, derive_backend_resources_list_authz_url,
         derive_backend_resources_list_url, derive_backend_resources_read_authz_url,
         derive_backend_resources_read_url, derive_backend_resources_subscribe_url,
@@ -10330,7 +10358,7 @@ mod unit_tests {
         Json, Router,
         body::to_bytes,
         extract::{Path as AxumPath, State},
-        http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Uri},
+        http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode, Uri},
         response::{IntoResponse, Response, sse::Sse},
         routing::{get, post},
     };
@@ -10482,6 +10510,42 @@ mod unit_tests {
             max_request_body_size_bytes: crate::config::DEFAULT_MAX_REQUEST_BODY_SIZE_BYTES,
             exit_after_startup_ms: None,
         }
+    }
+
+    #[tokio::test]
+    async fn public_router_adds_deprecation_and_sunset_headers() {
+        let state = AppState::new(&test_config()).expect("state");
+        let response = build_public_router(state)
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(
+            response
+                .headers()
+                .get("deprecation")
+                .and_then(|value| value.to_str().ok()),
+            Some(DEPRECATION_HEADER_DATE)
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("sunset")
+                .and_then(|value| value.to_str().ok()),
+            Some(SUNSET_HEADER_DATE)
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("link")
+                .and_then(|value| value.to_str().ok()),
+            Some(DEPRECATION_LINK_VALUE)
+        );
     }
 
     #[tokio::test]

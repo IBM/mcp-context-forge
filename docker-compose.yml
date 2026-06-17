@@ -159,6 +159,7 @@ services:
       # Transport: sse, streamablehttp, http, or all (default: all)
       - TRANSPORT_TYPE=streamablehttp
       # High-level Rust MCP UX:
+      # Deprecated as of 2026-06-11; sunsets on 2026-07-07. Prefer RUST_MCP_MODE=off and the Python MCP transport.
       #   RUST_MCP_MODE=off    -> Python MCP transport
       #   RUST_MCP_MODE=shadow -> Rust sidecar is present, but public /mcp stays on Python for safe fallback
       #   RUST_MCP_MODE=edge   -> direct public /mcp on Rust with managed UDS sidecar defaults
@@ -221,7 +222,7 @@ services:
       - MCP_RUST_TOOLS_CALL_PLAN_TTL_SECONDS=${MCP_RUST_TOOLS_CALL_PLAN_TTL_SECONDS:-30}
       - MCP_RUST_UPSTREAM_SESSION_TTL_SECONDS=${MCP_RUST_UPSTREAM_SESSION_TTL_SECONDS:-300}
       - MCP_RUST_USE_RMCP_UPSTREAM_CLIENT=${MCP_RUST_USE_RMCP_UPSTREAM_CLIENT:-}
-      # High-level Rust A2A UX:
+      # High-level Rust A2A UX (deprecated as of 2026-06-11 and sunsets on 2026-07-07; prefer RUST_A2A_MODE=off):
       #   RUST_A2A_MODE=off    -> Python A2A client path
       #   RUST_A2A_MODE=shadow -> Rust sidecar is present, but A2A invoke stays on Python
       #   RUST_A2A_MODE=edge   -> A2A invoke delegates to the Rust sidecar
@@ -521,8 +522,8 @@ services:
       # NOTE: Keep compression enabled when running without nginx that already has compression
       # Disabling causes throughput drop due to larger payloads
       - COMPRESSION_ENABLED=false
-      # Disable optional middlewares for maximum throughput
-      - VALIDATION_MIDDLEWARE_ENABLED=true
+      # Disable deprecated optional middleware for maximum throughput
+      - VALIDATION_MIDDLEWARE_ENABLED=false
       - JSON_SCHEMA_VALIDATION_STRICT=true
       - TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED=${TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED:-true}
       - TOOL_DESCRIPTION_FORBIDDEN_PATTERNS=${TOOL_DESCRIPTION_FORBIDDEN_PATTERNS:-["&&", ";", "||", "$(", "> ", "< "]}
