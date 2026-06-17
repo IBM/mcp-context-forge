@@ -12103,7 +12103,6 @@ app.include_router(metrics_router)
 app.include_router(tag_router)
 app.include_router(export_import_router)
 app.include_router(openapi_schema_router)
-logger.info("OpenAPI schema generation router included")
 
 # Compliance report router (admin API)
 if settings.mcpgateway_admin_api_enabled:
@@ -12344,8 +12343,9 @@ if ADMIN_API_ENABLED:
     # Lazy import: mcpgateway.admin is a large module (~19k lines, ~120ms cold).
     # Only load it when the admin API is actually mounted.
     # First-Party
-    from mcpgateway.admin import admin_router, enforce_admin_csrf, validate_section_permissions  # pylint: disable=import-outside-toplevel
+    from mcpgateway.admin import admin_router, enforce_admin_csrf, set_logging_service, validate_section_permissions  # pylint: disable=import-outside-toplevel
 
+    set_logging_service(logging_service)
     app.include_router(admin_router)  # Admin routes imported from admin.py
 
     # Validate section-to-permission mapping consistency at startup
