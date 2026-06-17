@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useId, useMemo, useState } from "react";
 import { useIntl } from "react-intl";
 import {
   Activity,
@@ -8,26 +8,22 @@ import {
   CircleSlash,
   Code,
   MessageSquareCode,
-  Server,
   TriangleAlert,
   Wrench,
 } from "lucide-react";
 import { createVirtualServer, updateVirtualServer } from "@/api/virtualServers";
-import { api } from "@/api/client";
 import { MCPIcon } from "@/components/icons/MCPIcon";
 import { CreateServerForm } from "@/components/gateways/CreateServerForm";
 import { SourceSelection } from "@/components/gateways/SourceSelection";
 import type { ActionCard, CreateServerDetails } from "@/components/gateways/types";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Loading } from "@/components/ui/loading";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { ApiError } from "@/api/client";
 import { useQuery } from "@/hooks/useQuery";
 import { useRouter } from "@/router";
@@ -68,20 +64,34 @@ interface GatewayPrompt {
   gateway_id?: string;
 }
 
-interface MCPServerComponents {
-  tools: GatewayTool[];
-  resources: GatewayResource[];
-  prompts: GatewayPrompt[];
-}
-
 interface MCPServersResponse {
   gateways?: ListedMCPServer[];
   nextCursor?: string | null;
 }
 
-function getResponseItems<T>(data: T[] | Record<string, T[]> | undefined, key: string): T[] {
+type ComponentKind = "tools" | "resources" | "prompts";
+
+interface ComponentSelection {
+  tools: string[];
+  resources: string[];
+  prompts: string[];
+}
+
+type SelectableComponent = (GatewayTool | GatewayResource | GatewayPrompt) & {
+  kind: ComponentKind;
+};
+
+function getResponseItems<T>(data: T[] | Record<string, unknown> | undefined, key: string): T[] {
   if (Array.isArray(data)) return data;
-  return data?.[key] ?? [];
+
+  const keyedItems = data?.[key];
+  if (Array.isArray(keyedItems)) return keyedItems as T[];
+
+  const paginatedItems = data?.items;
+  if (Array.isArray(paginatedItems)) return paginatedItems as T[];
+
+  const dataItems = data?.data;
+  return Array.isArray(dataItems) ? (dataItems as T[]) : [];
 }
 
 function getMCPServers(data: MCPServersResponse | ListedMCPServer[] | undefined) {
@@ -141,56 +151,12 @@ function getTagValue(tag: string | VirtualServerTag): string | null {
   return tag.label ?? tag.name ?? tag.value ?? null;
 }
 
-function getComponentGatewayId(component: GatewayTool | GatewayResource | GatewayPrompt) {
-  return component.gatewayId ?? component.gateway_id;
-}
-
 function uniqueStrings(values: Array<string | null | undefined>) {
   return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
 }
 
-function getRetainedComponentIds<T extends GatewayTool | GatewayResource | GatewayPrompt>(
-  components: T[],
-  fallbackIds: string[] | undefined,
-  removedSourceIds: Set<string>,
-  removedComponentIds: Set<string> = new Set(),
-) {
-  const fetchedIds = new Set(components.map((component) => component.id));
-  return uniqueStrings([
-    ...components
-      .filter((component) => {
-        const gatewayId = getComponentGatewayId(component);
-        if (removedComponentIds.has(component.id)) return false;
-        return !gatewayId || !removedSourceIds.has(gatewayId);
-      })
-      .map((component) => component.id),
-    ...(fallbackIds ?? []).filter((id) => !fetchedIds.has(id) && !removedComponentIds.has(id)),
-  ]);
-}
-
-async function fetchComponentsForMCPServer(serverId: string): Promise<MCPServerComponents> {
-  const encodedServerId = encodeURIComponent(serverId);
-  const [toolsResult, resourcesResult, promptsResult] = await Promise.allSettled([
-    api.get<GatewayTool[] | { tools: GatewayTool[] }>(
-      `/tools?limit=1000&gateway_id=${encodedServerId}`,
-    ),
-    api.get<GatewayResource[] | { resources: GatewayResource[] }>(
-      `/resources?limit=1000&gateway_id=${encodedServerId}`,
-    ),
-    api.get<GatewayPrompt[] | { prompts: GatewayPrompt[] }>(
-      `/prompts?limit=1000&gateway_id=${encodedServerId}`,
-    ),
-  ]);
-
-  return {
-    tools: toolsResult.status === "fulfilled" ? getResponseItems(toolsResult.value, "tools") : [],
-    resources:
-      resourcesResult.status === "fulfilled"
-        ? getResponseItems(resourcesResult.value, "resources")
-        : [],
-    prompts:
-      promptsResult.status === "fulfilled" ? getResponseItems(promptsResult.value, "prompts") : [],
-  };
+function getComponentName(component: GatewayTool | GatewayResource | GatewayPrompt) {
+  return component.name || ("uri" in component ? component.uri : undefined) || component.id;
 }
 
 function getEditServerInitialValues(server: VirtualServer): CreateServerDetails {
@@ -256,239 +222,286 @@ function SourcesLoadingStatus({ message }: { message: string }) {
   );
 }
 
-function EditMCPServersSection({
-  connectedSourceIds,
-  associatedToolIds,
-  associatedResourceIds,
-  associatedPromptIds,
-  shouldResolveConnectedSources,
-  removedConnectedSourceIds,
-  selectedAvailableSourceIds,
-  onRemovedConnectedSourceIdsChange,
-  onSelectedAvailableSourceIdsChange,
+function ComponentCount({
+  icon: Icon,
+  label,
+  count,
 }: {
-  connectedSourceIds: string[];
-  associatedToolIds: string[];
-  associatedResourceIds: string[];
-  associatedPromptIds: string[];
-  shouldResolveConnectedSources: boolean;
-  removedConnectedSourceIds: string[];
-  selectedAvailableSourceIds: string[];
-  onRemovedConnectedSourceIdsChange: (sourceIds: string[]) => void;
-  onSelectedAvailableSourceIdsChange: (sourceIds: string[]) => void;
+  icon: typeof Wrench;
+  label: string;
+  count: number;
+}) {
+  return (
+    <span className="flex items-center gap-1.5 text-muted-foreground" aria-label={label}>
+      <Icon className="size-3.5" aria-hidden="true" />
+      <span aria-hidden="true">{count}</span>
+    </span>
+  );
+}
+
+function ComponentCheckboxRow({
+  component,
+  checked,
+  onComponentSelectionChange,
+}: {
+  component: SelectableComponent;
+  checked: boolean;
+  onComponentSelectionChange: (kind: ComponentKind, componentId: string, checked: boolean) => void;
+}) {
+  const label = getComponentName(component);
+
+  return (
+    <label className="flex min-w-0 cursor-pointer items-center gap-3 rounded-sm px-2 py-2 hover:bg-muted/40">
+      <Checkbox
+        checked={checked}
+        onCheckedChange={(nextChecked) =>
+          onComponentSelectionChange(component.kind, component.id, nextChecked === true)
+        }
+        aria-label={`Select ${label}`}
+      />
+      <span className="min-w-0 flex-1 truncate text-sm text-foreground">{label}</span>
+    </label>
+  );
+}
+
+function ComponentGroup({
+  title,
+  components,
+  selectedIds,
+  onComponentSelectionChange,
+}: {
+  title: string;
+  components: SelectableComponent[];
+  selectedIds: Set<string>;
+  onComponentSelectionChange: (kind: ComponentKind, componentId: string, checked: boolean) => void;
+}) {
+  if (components.length === 0) return null;
+
+  return (
+    <div className="space-y-2">
+      <h3 className="text-xs font-medium uppercase tracking-normal text-muted-foreground">
+        {title}
+      </h3>
+      <div className="divide-y divide-border/60 rounded-md border border-border/60">
+        {components.map((component) => (
+          <ComponentCheckboxRow
+            key={`${component.kind}-${component.id}`}
+            component={component}
+            checked={selectedIds.has(component.id)}
+            onComponentSelectionChange={onComponentSelectionChange}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const MCPServerAccordionItem = memo(function MCPServerAccordionItem({
+  server,
+  isOpen,
+  selectedToolIds,
+  selectedResourceIds,
+  selectedPromptIds,
+  onComponentSelectionChange,
+}: {
+  server: ListedMCPServer;
+  isOpen: boolean;
+  selectedToolIds: Set<string>;
+  selectedResourceIds: Set<string>;
+  selectedPromptIds: Set<string>;
+  onComponentSelectionChange: (kind: ComponentKind, componentId: string, checked: boolean) => void;
+}) {
+  const intl = useIntl();
+  const {
+    data: toolsData,
+    error: toolsError,
+    isLoading: toolsLoading,
+  } = useQuery<GatewayTool[] | { tools: GatewayTool[] }>(
+    `/tools?limit=1000&include_inactive=true&gateway_id=${encodeURIComponent(server.id)}`,
+    { enabled: isOpen },
+  );
+  const {
+    data: resourcesData,
+    error: resourcesError,
+    isLoading: resourcesLoading,
+  } = useQuery<GatewayResource[] | { resources: GatewayResource[] }>(
+    `/resources?limit=1000&include_inactive=true&gateway_id=${encodeURIComponent(server.id)}`,
+    { enabled: isOpen },
+  );
+  const {
+    data: promptsData,
+    error: promptsError,
+    isLoading: promptsLoading,
+  } = useQuery<GatewayPrompt[] | { prompts: GatewayPrompt[] }>(
+    `/prompts?limit=1000&include_inactive=true&gateway_id=${encodeURIComponent(server.id)}`,
+    { enabled: isOpen },
+  );
+
+  const status = getStatusConfig(getServerStatus(server));
+  const StatusIcon = status.Icon;
+  const tools = useMemo(
+    () =>
+      getResponseItems(toolsData, "tools").map(
+        (tool): SelectableComponent => ({ ...tool, kind: "tools" }),
+      ),
+    [toolsData],
+  );
+  const resources = useMemo(
+    () =>
+      getResponseItems(resourcesData, "resources").map(
+        (resource): SelectableComponent => ({ ...resource, kind: "resources" }),
+      ),
+    [resourcesData],
+  );
+  const prompts = useMemo(
+    () =>
+      getResponseItems(promptsData, "prompts").map(
+        (prompt): SelectableComponent => ({ ...prompt, kind: "prompts" }),
+      ),
+    [promptsData],
+  );
+  const isLoadingComponents = toolsLoading || resourcesLoading || promptsLoading;
+  const componentError = toolsError ?? resourcesError ?? promptsError;
+  const hasComponents = tools.length + resources.length + prompts.length > 0;
+
+  return (
+    <AccordionItem value={server.id} className="rounded-md border border-border/60 px-3">
+      <AccordionTrigger className="gap-3 py-3 text-left hover:no-underline">
+        <span className="flex min-w-0 flex-1 items-center gap-3">
+          <span className="flex size-7 shrink-0 items-center justify-center rounded-sm bg-primary text-primary-foreground">
+            <MCPIcon className="size-4 [&_path]:fill-current" />
+          </span>
+          <span className="min-w-0 flex-1 truncate font-medium text-foreground">{server.name}</span>
+          <span className="hidden shrink-0 items-center gap-3 sm:flex">
+            <ComponentCount
+              icon={Wrench}
+              label={intl.formatMessage(
+                { id: "gateways.card.toolCount" },
+                { count: getToolCount(server) },
+              )}
+              count={getToolCount(server)}
+            />
+            <ComponentCount
+              icon={Box}
+              label={intl.formatMessage(
+                { id: "gateways.card.resourceCount" },
+                { count: getResourceCount(server) },
+              )}
+              count={getResourceCount(server)}
+            />
+            <ComponentCount
+              icon={MessageSquareCode}
+              label={intl.formatMessage(
+                { id: "gateways.card.promptCount" },
+                { count: getPromptCount(server) },
+              )}
+              count={getPromptCount(server)}
+            />
+          </span>
+          <span className="hidden shrink-0 items-center gap-2 text-muted-foreground md:flex">
+            <StatusIcon className={`size-3.5 ${status.className}`} aria-hidden="true" />
+            {intl.formatMessage({ id: status.labelId })}
+          </span>
+        </span>
+      </AccordionTrigger>
+      <AccordionContent className="space-y-4">
+        <div className="flex flex-wrap items-center gap-3 text-xs sm:hidden">
+          <ComponentCount
+            icon={Wrench}
+            label={intl.formatMessage(
+              { id: "gateways.card.toolCount" },
+              { count: getToolCount(server) },
+            )}
+            count={getToolCount(server)}
+          />
+          <ComponentCount
+            icon={Box}
+            label={intl.formatMessage(
+              { id: "gateways.card.resourceCount" },
+              { count: getResourceCount(server) },
+            )}
+            count={getResourceCount(server)}
+          />
+          <ComponentCount
+            icon={MessageSquareCode}
+            label={intl.formatMessage(
+              { id: "gateways.card.promptCount" },
+              { count: getPromptCount(server) },
+            )}
+            count={getPromptCount(server)}
+          />
+        </div>
+
+        {isLoadingComponents && (
+          <SourcesLoadingStatus message={intl.formatMessage({ id: "common.loading" })} />
+        )}
+
+        {!isLoadingComponents && componentError && (
+          <p
+            role="alert"
+            className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+          >
+            {componentError.message}
+          </p>
+        )}
+
+        {!isLoadingComponents && !componentError && !hasComponents && (
+          <p className="rounded-md border border-border/60 px-3 py-6 text-center text-sm text-muted-foreground">
+            {intl.formatMessage({ id: "gateways.details.noComponentsFound" })}
+          </p>
+        )}
+
+        {!isLoadingComponents && !componentError && hasComponents && (
+          <div className="grid gap-4">
+            <ComponentGroup
+              title={intl.formatMessage({ id: "gateways.details.filter.tools" })}
+              components={tools}
+              selectedIds={selectedToolIds}
+              onComponentSelectionChange={onComponentSelectionChange}
+            />
+            <ComponentGroup
+              title={intl.formatMessage({ id: "gateways.details.filter.resources" })}
+              components={resources}
+              selectedIds={selectedResourceIds}
+              onComponentSelectionChange={onComponentSelectionChange}
+            />
+            <ComponentGroup
+              title={intl.formatMessage({ id: "gateways.details.filter.prompts" })}
+              components={prompts}
+              selectedIds={selectedPromptIds}
+              onComponentSelectionChange={onComponentSelectionChange}
+            />
+          </div>
+        )}
+      </AccordionContent>
+    </AccordionItem>
+  );
+});
+
+function EditMCPServersSection({
+  selectedToolIds,
+  selectedResourceIds,
+  selectedPromptIds,
+  onComponentSelectionChange,
+}: {
+  selectedToolIds: string[];
+  selectedResourceIds: string[];
+  selectedPromptIds: string[];
+  onComponentSelectionChange: (kind: ComponentKind, componentId: string, checked: boolean) => void;
 }) {
   const intl = useIntl();
   const headingId = useId();
+  const [openServerIds, setOpenServerIds] = useState<string[]>([]);
   const {
     data: mcpServersData,
     error: mcpServersError,
     isLoading: mcpServersLoading,
   } = useQuery<MCPServersResponse | ListedMCPServer[]>(MCP_SERVERS_QUERY_PATH);
   const mcpServers = useMemo(() => getMCPServers(mcpServersData), [mcpServersData]);
-  const removedConnectedSourceIdSet = useMemo(
-    () => new Set(removedConnectedSourceIds),
-    [removedConnectedSourceIds],
-  );
-  const selectedAvailableSourceIdSet = useMemo(
-    () => new Set(selectedAvailableSourceIds),
-    [selectedAvailableSourceIds],
-  );
-  const connectedSourceIdSet = useMemo(() => new Set(connectedSourceIds), [connectedSourceIds]);
-  const [resolvedConnectedSourceIds, setResolvedConnectedSourceIds] = useState<string[]>([]);
-  const associatedToolIdSet = useMemo(() => new Set(associatedToolIds), [associatedToolIds]);
-  const associatedResourceIdSet = useMemo(
-    () => new Set(associatedResourceIds),
-    [associatedResourceIds],
-  );
-  const associatedPromptIdSet = useMemo(() => new Set(associatedPromptIds), [associatedPromptIds]);
-  const effectiveConnectedSourceIdSet = useMemo(
-    () => new Set([...connectedSourceIds, ...resolvedConnectedSourceIds]),
-    [connectedSourceIds, resolvedConnectedSourceIds],
-  );
-
-  useEffect(() => {
-    let cancelled = false;
-
-    if (!shouldResolveConnectedSources || mcpServers.length === 0) {
-      setResolvedConnectedSourceIds([]);
-      return;
-    }
-
-    const candidateServers = mcpServers.filter((server) => !connectedSourceIdSet.has(server.id));
-    if (candidateServers.length === 0) {
-      setResolvedConnectedSourceIds([]);
-      return;
-    }
-
-    async function resolveConnectedSources() {
-      const matchedSourceIds = await Promise.all(
-        candidateServers.map(async (server) => {
-          const components = await fetchComponentsForMCPServer(server.id);
-          const hasConnectedComponent =
-            components.tools.some((tool) => associatedToolIdSet.has(tool.id)) ||
-            components.resources.some((resource) => associatedResourceIdSet.has(resource.id)) ||
-            components.prompts.some((prompt) => associatedPromptIdSet.has(prompt.id));
-
-          return hasConnectedComponent ? server.id : null;
-        }),
-      );
-
-      if (!cancelled) {
-        setResolvedConnectedSourceIds(uniqueStrings(matchedSourceIds));
-      }
-    }
-
-    void resolveConnectedSources();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    associatedPromptIdSet,
-    associatedResourceIdSet,
-    associatedToolIdSet,
-    connectedSourceIdSet,
-    mcpServers,
-    shouldResolveConnectedSources,
-  ]);
-
-  const sortedMCPServers = useMemo(
-    () =>
-      [...mcpServers].sort((first, second) => {
-        const firstConnected = effectiveConnectedSourceIdSet.has(first.id);
-        const secondConnected = effectiveConnectedSourceIdSet.has(second.id);
-        if (firstConnected === secondConnected) return 0;
-        return firstConnected ? -1 : 1;
-      }),
-    [effectiveConnectedSourceIdSet, mcpServers],
-  );
-
-  const toggleMCPServerSelection = (serverId: string, checked: boolean) => {
-    if (!effectiveConnectedSourceIdSet.has(serverId)) {
-      const nextSelected = new Set(selectedAvailableSourceIdSet);
-      if (checked) nextSelected.add(serverId);
-      else nextSelected.delete(serverId);
-      onSelectedAvailableSourceIdsChange(Array.from(nextSelected));
-      return;
-    }
-
-    const next = new Set(removedConnectedSourceIdSet);
-    if (checked) next.delete(serverId);
-    else next.add(serverId);
-    onRemovedConnectedSourceIdsChange(Array.from(next));
-  };
-
-  const renderServerRows = (servers: ListedMCPServer[]) => (
-    <div className="mt-5 overflow-hidden rounded-md border border-border/60">
-      <Table>
-        <TableHeader>
-          <TableRow className="hover:bg-transparent">
-            <TableHead className="h-9 w-10 px-3">
-              <span className="sr-only">
-                {intl.formatMessage({ id: "gateways.source.selectColumn" })}
-              </span>
-            </TableHead>
-            <TableHead className="h-9 px-3 text-xs font-medium">
-              {intl.formatMessage({ id: "common.name" })}
-            </TableHead>
-            <TableHead className="h-9 px-3 text-xs font-medium">
-              {intl.formatMessage({ id: "navigation.components" })}
-            </TableHead>
-            <TableHead className="h-9 w-28 px-3 text-xs font-medium">
-              {intl.formatMessage({ id: "gateways.details.status" })}
-            </TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {servers.map((server) => {
-            const status = getStatusConfig(getServerStatus(server));
-            const StatusIcon = status.Icon;
-            const isConnected = effectiveConnectedSourceIdSet.has(server.id);
-            const isSelected = isConnected
-              ? !removedConnectedSourceIdSet.has(server.id)
-              : selectedAvailableSourceIdSet.has(server.id);
-
-            return (
-              <TableRow
-                key={server.id}
-                className="min-h-12 hover:bg-muted/30 data-[state=selected]:bg-muted/30"
-                data-state={isSelected ? "selected" : undefined}
-              >
-                <TableCell className="w-10 px-3 py-2">
-                  <Checkbox
-                    checked={isSelected}
-                    onCheckedChange={(checked) => {
-                      toggleMCPServerSelection(server.id, checked === true);
-                    }}
-                    aria-label={intl.formatMessage(
-                      { id: "gateways.source.selectSource" },
-                      { name: server.name },
-                    )}
-                  />
-                </TableCell>
-                <TableCell className="min-w-52 px-3 py-2">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <span className="flex size-6 shrink-0 items-center justify-center rounded-sm bg-primary text-primary-foreground">
-                      <Server className="size-4" aria-hidden="true" />
-                    </span>
-                    <span className="min-w-0 truncate font-medium text-foreground">
-                      {server.name}
-                    </span>
-                  </div>
-                </TableCell>
-                <TableCell className="min-w-44 px-3 py-2">
-                  <div className="flex min-w-0 items-center gap-3 text-muted-foreground">
-                    <span
-                      className="flex items-center gap-1.5"
-                      aria-label={intl.formatMessage(
-                        { id: "gateways.card.toolCount" },
-                        { count: getToolCount(server) },
-                      )}
-                    >
-                      <Wrench className="size-3.5" aria-hidden="true" />
-                      <span aria-hidden="true">{getToolCount(server)}</span>
-                    </span>
-                    <span className="text-border" aria-hidden="true">
-                      •
-                    </span>
-                    <span
-                      className="flex items-center gap-1.5"
-                      aria-label={intl.formatMessage(
-                        { id: "gateways.card.resourceCount" },
-                        { count: getResourceCount(server) },
-                      )}
-                    >
-                      <Box className="size-3.5" aria-hidden="true" />
-                      <span aria-hidden="true">{getResourceCount(server)}</span>
-                    </span>
-                    <span className="text-border" aria-hidden="true">
-                      •
-                    </span>
-                    <span
-                      className="flex items-center gap-1.5"
-                      aria-label={intl.formatMessage(
-                        { id: "gateways.card.promptCount" },
-                        { count: getPromptCount(server) },
-                      )}
-                    >
-                      <MessageSquareCode className="size-3.5" aria-hidden="true" />
-                      <span aria-hidden="true">{getPromptCount(server)}</span>
-                    </span>
-                  </div>
-                </TableCell>
-                <TableCell className="w-28 px-3 py-2">
-                  <span className="flex min-w-0 items-center gap-2 text-muted-foreground">
-                    <StatusIcon className={`size-3.5 ${status.className}`} aria-hidden="true" />
-                    {intl.formatMessage({ id: status.labelId })}
-                  </span>
-                </TableCell>
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
-    </div>
-  );
+  const openServerIdSet = useMemo(() => new Set(openServerIds), [openServerIds]);
+  const selectedToolIdSet = useMemo(() => new Set(selectedToolIds), [selectedToolIds]);
+  const selectedResourceIdSet = useMemo(() => new Set(selectedResourceIds), [selectedResourceIds]);
+  const selectedPromptIdSet = useMemo(() => new Set(selectedPromptIds), [selectedPromptIds]);
   const isLoadingSources = mcpServersLoading;
   const loadingSourcesMessage = intl.formatMessage({ id: "gateways.source.loadingSources" });
 
@@ -517,16 +530,32 @@ function EditMCPServersSection({
         </p>
       )}
 
-      {!isLoadingSources && !mcpServersError && sortedMCPServers.length === 0 && (
+      {!isLoadingSources && !mcpServersError && mcpServers.length === 0 && (
         <p className="py-10 text-center text-sm text-muted-foreground">
           {intl.formatMessage({ id: "gateways.editServer.noMCPServers" })}
         </p>
       )}
 
-      {!isLoadingSources &&
-        !mcpServersError &&
-        sortedMCPServers.length > 0 &&
-        renderServerRows(sortedMCPServers)}
+      {!isLoadingSources && !mcpServersError && mcpServers.length > 0 && (
+        <Accordion
+          type="multiple"
+          value={openServerIds}
+          onValueChange={setOpenServerIds}
+          className="mt-5 space-y-3"
+        >
+          {mcpServers.map((server) => (
+            <MCPServerAccordionItem
+              key={server.id}
+              server={server}
+              isOpen={openServerIdSet.has(server.id)}
+              selectedToolIds={selectedToolIdSet}
+              selectedResourceIds={selectedResourceIdSet}
+              selectedPromptIds={selectedPromptIdSet}
+              onComponentSelectionChange={onComponentSelectionChange}
+            />
+          ))}
+        </Accordion>
+      )}
     </section>
   );
 }
@@ -538,8 +567,11 @@ export function CreateServer() {
   const [step, setStep] = useState<CreateServerStep>("details");
   const [serverDetails, setServerDetails] = useState<CreateServerDetails | null>(null);
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
-  const [removedConnectedSourceIds, setRemovedConnectedSourceIds] = useState<string[]>([]);
-  const [selectedAvailableSourceIds, setSelectedAvailableSourceIds] = useState<string[]>([]);
+  const [selectedComponents, setSelectedComponents] = useState<ComponentSelection>({
+    tools: [],
+    resources: [],
+    prompts: [],
+  });
   const [isCreating, setIsCreating] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -553,79 +585,16 @@ export function CreateServer() {
   } = useQuery<VirtualServer>(`/servers/${encodedEditServerId}`, {
     enabled: isEditMode,
   });
-  const editComponentsEnabled = isEditMode && Boolean(editingServer?.id);
-  const { data: editToolsData } = useQuery<GatewayTool[] | { tools: GatewayTool[] }>(
-    `/servers/${encodedEditServerId}/tools?include_inactive=true`,
-    { enabled: editComponentsEnabled },
-  );
-  const { data: editResourcesData } = useQuery<
-    GatewayResource[] | { resources: GatewayResource[] }
-  >(`/servers/${encodedEditServerId}/resources?include_inactive=true`, {
-    enabled: editComponentsEnabled,
-  });
-  const { data: editPromptsData } = useQuery<GatewayPrompt[] | { prompts: GatewayPrompt[] }>(
-    `/servers/${encodedEditServerId}/prompts?include_inactive=true`,
-    { enabled: editComponentsEnabled },
-  );
-  const existingTools = useMemo(() => getResponseItems(editToolsData, "tools"), [editToolsData]);
-  const existingResources = useMemo(
-    () => getResponseItems(editResourcesData, "resources"),
-    [editResourcesData],
-  );
-  const existingPrompts = useMemo(
-    () => getResponseItems(editPromptsData, "prompts"),
-    [editPromptsData],
-  );
-  const hasComponentsWithoutSourceId = useMemo(
-    () =>
-      [...existingTools, ...existingResources, ...existingPrompts].some(
-        (component) => !getComponentGatewayId(component),
-      ),
-    [existingPrompts, existingResources, existingTools],
-  );
-  const connectedSourceIds = useMemo(
-    () =>
-      uniqueStrings([
-        ...existingTools.map(getComponentGatewayId),
-        ...existingResources.map(getComponentGatewayId),
-        ...existingPrompts.map(getComponentGatewayId),
-      ]),
-    [existingPrompts, existingResources, existingTools],
-  );
-  const existingToolIds = useMemo(
-    () =>
-      uniqueStrings([
-        ...existingTools.map((tool) => tool.id),
-        ...(editingServer?.associatedToolIds ?? []),
-      ]),
-    [editingServer?.associatedToolIds, existingTools],
-  );
-  const existingResourceIds = useMemo(
-    () =>
-      uniqueStrings([
-        ...existingResources.map((resource) => resource.id),
-        ...(editingServer?.associatedResources ?? []),
-      ]),
-    [editingServer?.associatedResources, existingResources],
-  );
-  const existingPromptIds = useMemo(
-    () =>
-      uniqueStrings([
-        ...existingPrompts.map((prompt) => prompt.id),
-        ...(editingServer?.associatedPrompts ?? []),
-      ]),
-    [editingServer?.associatedPrompts, existingPrompts],
-  );
-  const shouldResolveConnectedSources = useMemo(
-    () =>
-      existingToolIds.length + existingResourceIds.length + existingPromptIds.length > 0 &&
-      (connectedSourceIds.length === 0 || hasComponentsWithoutSourceId),
+  const initialComponentSelection = useMemo(
+    (): ComponentSelection => ({
+      tools: uniqueStrings(editingServer?.associatedToolIds ?? []),
+      resources: uniqueStrings(editingServer?.associatedResources ?? []),
+      prompts: uniqueStrings(editingServer?.associatedPrompts ?? []),
+    }),
     [
-      connectedSourceIds.length,
-      existingPromptIds.length,
-      existingResourceIds.length,
-      existingToolIds.length,
-      hasComponentsWithoutSourceId,
+      editingServer?.associatedPrompts,
+      editingServer?.associatedResources,
+      editingServer?.associatedToolIds,
     ],
   );
 
@@ -637,6 +606,26 @@ export function CreateServer() {
       // Ignore storage cleanup failures; the edit id has already been read.
     }
   }, [editServerId]);
+
+  useEffect(() => {
+    if (!editingServer?.id) return;
+    setSelectedComponents(initialComponentSelection);
+  }, [editingServer?.id, initialComponentSelection]);
+
+  const handleComponentSelectionChange = useCallback(
+    (kind: ComponentKind, componentId: string, checked: boolean) => {
+      setSelectedComponents((current) => {
+        const nextIds = new Set(current[kind]);
+        if (checked) nextIds.add(componentId);
+        else nextIds.delete(componentId);
+        return {
+          ...current,
+          [kind]: Array.from(nextIds),
+        };
+      });
+    },
+    [],
+  );
 
   const actionCards: ActionCard[] = useMemo(
     () => [
@@ -709,69 +698,12 @@ export function CreateServer() {
     setIsUpdating(true);
     setUpdateError(null);
     try {
-      let selectedTools: GatewayTool[] = [];
-      let selectedResources: GatewayResource[] = [];
-      let selectedPrompts: GatewayPrompt[] = [];
-
-      if (selectedAvailableSourceIds.length > 0) {
-        const selectedComponents = await Promise.all(
-          selectedAvailableSourceIds.map((sourceId) => fetchComponentsForMCPServer(sourceId)),
-        );
-        selectedTools = selectedComponents.flatMap((components) => components.tools);
-        selectedResources = selectedComponents.flatMap((components) => components.resources);
-        selectedPrompts = selectedComponents.flatMap((components) => components.prompts);
-      }
-      const removedComponents =
-        removedConnectedSourceIds.length > 0
-          ? await Promise.all(
-              removedConnectedSourceIds.map((sourceId) => fetchComponentsForMCPServer(sourceId)),
-            )
-          : [];
-      const removedToolIds = new Set(
-        removedComponents.flatMap((components) => components.tools.map((tool) => tool.id)),
-      );
-      const removedResourceIds = new Set(
-        removedComponents.flatMap((components) =>
-          components.resources.map((resource) => resource.id),
-        ),
-      );
-      const removedPromptIds = new Set(
-        removedComponents.flatMap((components) => components.prompts.map((prompt) => prompt.id)),
-      );
-      const removedSourceIdSet = new Set(removedConnectedSourceIds);
-      const detailsForUpdate =
-        selectedAvailableSourceIds.length > 0 || removedConnectedSourceIds.length > 0
-          ? {
-              ...details,
-              associatedTools: uniqueStrings([
-                ...getRetainedComponentIds(
-                  existingTools,
-                  existingToolIds,
-                  removedSourceIdSet,
-                  removedToolIds,
-                ),
-                ...selectedTools.map((tool) => tool.id),
-              ]),
-              associatedResources: uniqueStrings([
-                ...getRetainedComponentIds(
-                  existingResources,
-                  existingResourceIds,
-                  removedSourceIdSet,
-                  removedResourceIds,
-                ),
-                ...selectedResources.map((resource) => resource.id),
-              ]),
-              associatedPrompts: uniqueStrings([
-                ...getRetainedComponentIds(
-                  existingPrompts,
-                  existingPromptIds,
-                  removedSourceIdSet,
-                  removedPromptIds,
-                ),
-                ...selectedPrompts.map((prompt) => prompt.id),
-              ]),
-            }
-          : details;
+      const detailsForUpdate = {
+        ...details,
+        associatedTools: selectedComponents.tools,
+        associatedResources: selectedComponents.resources,
+        associatedPrompts: selectedComponents.prompts,
+      };
 
       await updateVirtualServer(editingServer.id, detailsForUpdate);
       navigate("/app/gateways");
@@ -865,15 +797,10 @@ export function CreateServer() {
         >
           {isEditMode && (
             <EditMCPServersSection
-              connectedSourceIds={connectedSourceIds}
-              associatedToolIds={existingToolIds}
-              associatedResourceIds={existingResourceIds}
-              associatedPromptIds={existingPromptIds}
-              shouldResolveConnectedSources={shouldResolveConnectedSources}
-              removedConnectedSourceIds={removedConnectedSourceIds}
-              selectedAvailableSourceIds={selectedAvailableSourceIds}
-              onRemovedConnectedSourceIdsChange={setRemovedConnectedSourceIds}
-              onSelectedAvailableSourceIdsChange={setSelectedAvailableSourceIds}
+              selectedToolIds={selectedComponents.tools}
+              selectedResourceIds={selectedComponents.resources}
+              selectedPromptIds={selectedComponents.prompts}
+              onComponentSelectionChange={handleComponentSelectionChange}
             />
           )}
         </CreateServerForm>

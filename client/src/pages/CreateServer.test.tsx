@@ -248,18 +248,39 @@ describe("CreateServer", () => {
       screen.queryByRole("heading", { name: "Available MCP servers" }),
     ).not.toBeInTheDocument();
 
-    const connectedSourceCheckbox = screen.getByRole("checkbox", {
-      name: "Select connected-source",
+    await user.click(screen.getByRole("button", { name: /connected-source/ }));
+    const existingToolCheckbox = await screen.findByRole("checkbox", {
+      name: "Select existing-tool",
     });
-    const availableSourceCheckbox = screen.getByRole("checkbox", {
-      name: "Select available-source",
+    const existingResourceCheckbox = await screen.findByRole("checkbox", {
+      name: "Select existing-resource",
     });
-    await waitFor(() => expect(connectedSourceCheckbox).toBeChecked());
-    expect(availableSourceCheckbox).not.toBeChecked();
-    await user.click(connectedSourceCheckbox);
-    expect(connectedSourceCheckbox).not.toBeChecked();
-    await user.click(availableSourceCheckbox);
-    expect(availableSourceCheckbox).toBeChecked();
+    const existingPromptCheckbox = await screen.findByRole("checkbox", {
+      name: "Select existing-prompt",
+    });
+    expect(existingToolCheckbox).toBeChecked();
+    expect(existingResourceCheckbox).toBeChecked();
+    expect(existingPromptCheckbox).toBeChecked();
+    await user.click(existingToolCheckbox);
+    await user.click(existingResourceCheckbox);
+    await user.click(existingPromptCheckbox);
+
+    await user.click(screen.getByRole("button", { name: /available-source/ }));
+    const availableToolCheckbox = await screen.findByRole("checkbox", {
+      name: "Select available-tool",
+    });
+    const availableResourceCheckbox = await screen.findByRole("checkbox", {
+      name: "Select available-resource",
+    });
+    const availablePromptCheckbox = await screen.findByRole("checkbox", {
+      name: "Select available-prompt",
+    });
+    expect(availableToolCheckbox).not.toBeChecked();
+    expect(availableResourceCheckbox).not.toBeChecked();
+    expect(availablePromptCheckbox).not.toBeChecked();
+    await user.click(availableToolCheckbox);
+    await user.click(availableResourceCheckbox);
+    await user.click(availablePromptCheckbox);
 
     const nameInput = screen.getByLabelText(/Name/);
     await user.clear(nameInput);
