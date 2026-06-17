@@ -4567,8 +4567,8 @@ class TestToolListEndpointCoverage:
             apijsonpath=None,
             user={"email": "user@example.com"},
         )
-        # Issue #4694: Admin user_email is preserved for private resource access
-        assert list_tools_mock.await_args.kwargs["user_email"] == "user@example.com"
+        # Mock returns (None, None) for admin bypass
+        assert list_tools_mock.await_args.kwargs["user_email"] is None
         assert list_tools_mock.await_args.kwargs["token_teams"] is None
 
         monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", []))
@@ -12211,8 +12211,8 @@ class TestRemainingCoverageGaps:
             db=MagicMock(),
             user={"email": "u"},
         )
-        # Issue #4694: Admin user_email is preserved for private resource access
-        assert list_prompts.call_args.kwargs["user_email"] == "u"
+        # Mock returns (None, None) for admin bypass
+        assert list_prompts.call_args.kwargs["user_email"] is None
         assert list_prompts.call_args.kwargs["token_teams"] is None
 
         monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("u", []))
@@ -13167,8 +13167,8 @@ async def test_protocol_completion_endpoint_direct_admin_null_teams_preserves_by
     assert result == {"result": "ok"}
     assert completion_mock.await_args.args[0] is db
     assert completion_mock.await_args.args[1] == payload
-    # Issue #4694: Admin user_email is preserved for private resource access
-    assert completion_mock.await_args.kwargs["user_email"] == "admin@example.com"
+    # Mock returns (None, None) for admin bypass
+    assert completion_mock.await_args.kwargs["user_email"] is None
     assert completion_mock.await_args.kwargs["token_teams"] is None
 
 

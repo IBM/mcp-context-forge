@@ -5261,8 +5261,8 @@ class TestGetRpcFilterContext:
 
         user_email, token_teams = get_scoped_resource_access_context(mock_request, user)
 
-        # Admin bypass: both should be None for unrestricted access
-        assert user_email is None, "Basic-auth admin should get admin bypass (user_email=None)"
+        # Admin bypass: token_teams=None for unrestricted access, email preserved for owner matching (PR #4341)
+        assert user_email == "admin@example.com", "Basic-auth admin should preserve email for owner matching"
         assert token_teams is None, "Basic-auth admin should get admin bypass (token_teams=None)"
 
     def test_get_scoped_resource_access_context_basic_auth_non_admin_public_only(self):
