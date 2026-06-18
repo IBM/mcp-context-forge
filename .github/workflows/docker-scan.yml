@@ -174,12 +174,18 @@ jobs:
           push: false
           load: true
           tags: ${{ env.IMAGE_NAME }}:fedramp-validate
+          # WHEELS_REF pinned to UBI_MINIMAL: this step overrides PYTHON_VERSION to
+          # 3.11, but the published amd64 wheel closure is built against the
+          # default PYTHON_VERSION (3.12, see infra/wheels/Containerfile), so its
+          # psycopg[c] wheel carries a cp312 tag that uv rejects under a 3.11 venv.
+          # Pinning here skips the hermetic closure and installs from PyPI instead.
           build-args: |
             ENABLE_FIPS=true
             PYTHON_VERSION=3.11
             UBI_BASE=registry.access.redhat.com/ubi9/ubi:latest
             NODEJS_IMAGE=registry.access.redhat.com/ubi9/nodejs-20:latest
             UBI_MINIMAL=registry.access.redhat.com/ubi9/ubi-minimal@sha256:6ea809bdd8164f8b2b607e38f01b14c374a15bdfbc74fcd0155161512dd4e00e
+            WHEELS_REF=registry.access.redhat.com/ubi9/ubi-minimal@sha256:6ea809bdd8164f8b2b607e38f01b14c374a15bdfbc74fcd0155161512dd4e00e
 
       - name: FedRAMP post-build compliance validation
         run: |

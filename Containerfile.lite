@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.12
 
 ###############################################################################
 # ContextForge (lite) - OCI-compliant multi-stage container build
@@ -50,8 +50,22 @@ ARG ENABLE_PROFILING=false
 ARG UBI_BASE=registry.access.redhat.com/ubi10:1780550950
 ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:1780432202
 ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:1780550884
-# s390x wheels stage - pulls pre-built wheels from GHCR
-FROM --platform=linux/s390x ghcr.io/ibm/mcp-context-forge-s390x-wheels:latest AS s390x-wheels
+# Wheel closure stage - pulls the prebuilt dependency closure for the target
+# arch from GHCR (built by the `wheels` job in docker-multiplatform.yml from
+# infra/wheels/Containerfile, for all four arches). The default below is
+# arch-aware so a plain `docker build` with no --build-arg pulls the real
+# closure on every arch - TARGETARCH (amd64/arm64/s390x/ppc64le) matches the
+# wheels job's tag suffix exactly. The pipeline (docker-multiplatform.yml)
+# never relies on this default: its "Compute wheel image ref" step resolves
+# an explicit WHEELS_REF for every arch (lock-hash tag, else `latest` tag,
+# else an explicit UBI_MINIMAL override for the cold-start case before any
+# wheel image has been published), so CI never depends on this GHCR tag
+# existing. This default only matters for local builds with no flags. These
+# wheel images are public, no registry auth needed.
+ARG TARGETARCH
+ARG WHEELS_REF=ghcr.io/ibm/mcp-context-forge-wheels:${TARGETARCH}-latest
+FROM ${WHEELS_REF} AS wheels
+RUN mkdir -p /wheels
 
 ###############################################################################
 # Rust builder stage - builds Rust MCP runtime and local native extensions
@@ -266,7 +280,7 @@ COPY mcpgateway/__init__.py /app/mcpgateway/__init__.py
 COPY mcpgateway/tools/builder/__init__.py /app/mcpgateway/tools/builder/__init__.py
 COPY mcpgateway/tools/builder/build_hooks.py /app/mcpgateway/tools/builder/build_hooks.py
 COPY --from=rust-builder /build/native-extension-wheels/ /tmp/local-native-extension-wheels/
-COPY --from=s390x-wheels /wheels /tmp/s390x-wheels
+COPY --from=wheels /wheels /tmp/wheels
 COPY --chmod=0755 scripts/verify-native-extensions.py /tmp/verify-native-extensions.py
 
 # ----------------------------------------------------------------------------
@@ -287,17 +301,9 @@ RUN set -euo pipefail \
     && . /etc/profile.d/use-openssl.sh \
     && python3 -m venv /app/.venv \
     && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel uv \
-    && if [ "$(uname -m)" = "s390x" ]; then \
-        echo "📦 Installing dependencies for s390x architecture..."; \
-        if [ -d "/tmp/s390x-wheels" ] && [ "$(ls -A /tmp/s390x-wheels/*.whl 2>/dev/null | wc -l)" -gt 0 ]; then \
-            echo "✅ Using pre-built wheels from /tmp/s390x-wheels"; \
-            /app/.venv/bin/uv pip install --no-index --find-links=/tmp/s390x-wheels ".[redis,observability,granian,plugins,llmchat]" \
-            && /app/.venv/bin/uv pip install --no-index --find-links=/tmp/s390x-wheels "psycopg[c]>=3.3.3"; \
-        else \
-            echo "⚠️  Pre-built wheels not found, falling back to building from source (this may take longer)..."; \
-            /app/.venv/bin/uv pip install ".[redis,observability,granian,plugins,llmchat]" \
-            && /app/.venv/bin/uv pip install "psycopg[c]>=3.3.3"; \
-        fi; \
+    && if [ -n "$(ls -A /tmp/wheels/*.whl 2>/dev/null)" ]; then \
+        echo "📦 Hermetic install from prebuilt wheel closure"; \
+        /app/.venv/bin/uv pip install --no-index --find-links=/tmp/wheels ".[redis,observability,granian,plugins,llmchat]" "psycopg[c]>=3.3.3"; \
     else \
         /app/.venv/bin/uv pip install ".[redis,postgres,observability,granian,plugins,llmchat]"; \
     fi \
@@ -309,7 +315,7 @@ RUN set -euo pipefail \
     else \
         echo "⏭️  No local native extensions discovered"; \
     fi \
-    && rm -rf /tmp/local-native-extension-wheels /tmp/s390x-wheels \
+    && rm -rf /tmp/local-native-extension-wheels /tmp/wheels \
     && if [ "$ENABLE_PROFILING" = "true" ]; then \
         echo "📊 Installing profiling tools (memray, py-spy)..."; \
         /app/.venv/bin/uv pip install --no-cache-dir "memray>=1.17.0" && \

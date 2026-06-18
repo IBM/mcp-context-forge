@@ -1,0 +1,75 @@
+###############################################################################
+# Multiplatform wheel builder (s390x + ppc64le)
+#
+# Builds the FULL pinned dependency closure (derived from uv.lock) for
+# architectures lacking PyPI manylinux wheels, so the main Containerfile.lite
+# build can stay hermetic (--no-index --find-links) without missing
+# pure-Python packages like alembic/tiktoken.
+#
+# The resulting wheels are stored under /wheels and consumed downstream via:
+#
+#   COPY --from=wheels /wheels /tmp/wheels
+#   uv pip install --no-index --find-links=/tmp/wheels <package>
+#
+# Build (buildx supplies the target platform; context is repo root since
+# uv.lock/pyproject.toml live there):
+#   docker buildx build --platform linux/s390x   -t wheels:s390x   -f infra/wheels/Containerfile .
+#   docker buildx build --platform linux/ppc64le -t wheels:ppc64le -f infra/wheels/Containerfile .
+###############################################################################
+
+ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:10.1-1772441549
+FROM ${UBI_MINIMAL}
+
+ARG PYTHON_VERSION=3.12
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# Build toolchain: compilers, OpenSSL, autotools, and Rust (tiktoken,
+# pydantic-core, cryptography, etc. all need a Rust toolchain to build from
+# source on these architectures).
+# hadolint ignore=DL3041,DL3013
+RUN microdnf update -y && \
+    microdnf install -y \
+        python${PYTHON_VERSION} \
+        python${PYTHON_VERSION}-devel \
+        gcc \
+        gcc-c++ \
+        make \
+        cmake \
+        openssl-devel \
+        libffi-devel \
+        postgresql-devel \
+        jq \
+        tar \
+        findutils && \
+    microdnf clean all && \
+    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 && \
+    python3 -m pip install --no-cache-dir --upgrade pip uv && \
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o ./rustup.sh && \
+    bash ./rustup.sh -y
+
+ENV PATH="/root/.cargo/bin:$PATH"
+
+# s390x/ppc64le do not support BoringSSL — force grpcio to build against OpenSSL.
+ENV GRPC_PYTHON_BUILD_SYSTEM_OPENSSL=True
+
+WORKDIR /build
+
+# Only the lockfile + manifest are needed: `uv export` resolves the closure
+# from these two alone (the wheel builder never installs the project itself).
+COPY uv.lock pyproject.toml /build/
+
+# Generate the full pinned runtime closure from uv.lock (--no-default-groups
+# excludes the dev group — bandit/black/mypy/pylint/pytest/ruff, ~364 pkgs
+# that would otherwise be source-compiled here for no reason), build every
+# wheel, then add psycopg[c] (pinned to the uv.lock version, since
+# Containerfile.lite's extras don't include `postgres`) and the
+# setuptools/wheel pair the main build needs for PEP 517 isolation.
+RUN uv export --frozen --no-emit-project --no-default-groups \
+        --extra redis --extra observability --extra granian \
+        --extra plugins --extra llmchat \
+        --format requirements-txt > /tmp/reqs.txt \
+    && python3 -m pip wheel -r /tmp/reqs.txt --wheel-dir /wheels \
+    && PSY=$(grep -A1 '^name = "psycopg-c"' uv.lock | grep version | sed 's/.*"\(.*\)".*/\1/') \
+    && python3 -m pip wheel "psycopg[c]==${PSY}" --wheel-dir /wheels \
+    && python3 -m pip wheel setuptools wheel --wheel-dir /wheels
