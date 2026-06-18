@@ -233,7 +233,7 @@ async def test_authheaders_auth_value_stored_as_dict(monkeypatch):
     assert decode_auth(captured_tool_auth_values[0]) == {"X-Custom-Auth-Header": "my-token", "X-Custom-User-ID": "user-123"}
 
 
-def test_update_or_create_tools_authheaders_no_spurious_update():
+async def test_update_or_create_tools_authheaders_no_spurious_update():
     """Verify _update_or_create_tools does NOT trigger a spurious update when the
     gateway's auth_value dict matches the existing tool's encoded auth_value.
 
@@ -289,10 +289,11 @@ def test_update_or_create_tools_authheaders_no_spurious_update():
     gateway.auth_value = auth_dict  # JSON column — plain dict
     gateway.visibility = "public"
 
-    result = service._update_or_create_tools(db, [tool], gateway, "update")
+    tools_to_add, restored_tool_names = await service._update_or_create_tools(db, [tool], gateway, "update")
 
     # No new tools returned
-    assert result == []
+    assert tools_to_add == []
+    assert restored_tool_names == []
     # auth_value must be the EXACT same string — no spurious re-encryption
     assert existing.auth_value is original_encoded, f"auth_value was spuriously rewritten: {existing.auth_value!r} != {original_encoded!r}"
     assert decode_auth(existing.auth_value) == auth_dict
