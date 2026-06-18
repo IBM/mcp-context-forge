@@ -305,7 +305,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "benchmark-server"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "anyhow",
  "axum",
@@ -569,7 +569,7 @@ checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 
 [[package]]
 name = "contextforge_a2a_runtime"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -598,7 +598,7 @@ dependencies = [
 
 [[package]]
 name = "contextforge_mcp_runtime"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "async-stream",
  "axum",
@@ -1715,7 +1715,7 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "mcp_stdio_wrapper"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "actson",
  "arc-swap",
@@ -2561,7 +2561,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "request_logging_masking_native_extension"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "pyo3",
  "serde_json",
@@ -3020,7 +3020,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "slow-time-server"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "anyhow",
  "axum",
