@@ -25,21 +25,23 @@ import pytest
 from mcpgateway.config import Settings
 from mcpgateway.utils.header_filtering import filter_sensitive_headers
 
+# Import shared test constants
+from .conftest import SAFE_HEADERS, SENSITIVE_HEADERS
+
 
 class TestHeaderFilteringWithFeatureFlag:
     """Test header filtering behavior with ENABLE_SENSITIVE_HEADER_PASSTHROUGH flag."""
 
     def test_filter_sensitive_headers_baseline(self):
         """Baseline test: verify filter_sensitive_headers removes credentials."""
-        headers = {
-            "authorization": "Bearer token",
-            "x-api-key": "secret",
-            "content-type": "application/json",
-        }
+        headers = {**SENSITIVE_HEADERS, **SAFE_HEADERS}
         result = filter_sensitive_headers(headers)
-        assert "authorization" not in result
-        assert "x-api-key" not in result
-        assert "content-type" in result
+        # Sensitive headers should be filtered
+        for header_name in SENSITIVE_HEADERS:
+            assert header_name not in result
+        # Safe headers should pass through
+        for header_name in SAFE_HEADERS:
+            assert header_name in result
 
     @patch("mcpgateway.config.settings")
     def test_main_invoke_a2a_agent_flag_off(self, mock_settings):

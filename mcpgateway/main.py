@@ -5036,8 +5036,7 @@ def _prepare_request_headers(request_headers: Dict[str, str]) -> Dict[str, str]:
     """
     if settings.enable_sensitive_header_passthrough:
         return {k.lower(): v for k, v in request_headers.items()}
-    else:
-        return _filter_sensitive_headers({k.lower(): v for k, v in request_headers.items()})
+    return _filter_sensitive_headers({k.lower(): v for k, v in request_headers.items()})
 
 
 @a2a_router.post("/{agent_name}/invoke", response_model=Dict[str, Any])
