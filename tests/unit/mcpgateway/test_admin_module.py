@@ -61,6 +61,12 @@ def _allow_permissions(monkeypatch):
     monkeypatch.setattr(PermissionService, "check_permission", _ok)
 
 
+def _gateway_payload_request() -> MagicMock:
+    request = _make_request()
+    request.headers = {"content-type": "application/json"}
+    return request
+
+
 def _configure_admin_ui_test_dependencies(monkeypatch):
     monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
     monkeypatch.setattr(admin.settings, "mcpgateway_a2a_enabled", False)
@@ -110,6 +116,14 @@ def _configure_admin_ui_test_dependencies(monkeypatch):
     monkeypatch.setattr(admin.root_service, "list_roots", list_roots)
 
 
+class _GatewayPayloadTeamService:
+    def __init__(self, db):
+        self.db = db
+
+    async def verify_team_for_user(self, _user_email, team_id):
+        return team_id
+
+
 def _unwrap(func):
     target = func
     seen = set()
@@ -133,6 +147,62 @@ def _unwrap(func):
             return target
         seen.add(target)
         target = inner
+
+
+@pytest.mark.asyncio
+async def test_admin_add_gateway_includes_gateway_payload(monkeypatch):
+    request = _gateway_payload_request()
+    db = MagicMock()
+    user = {"email": "admin@example.com"}
+    result = {"id": "gw-1", "status": "pending", "name": "gw"}
+    monkeypatch.setattr(admin, "_parse_gateway_data_from_request", AsyncMock(return_value={"name": "gw", "url": "http://example.com", "transport": "SSE"}))
+    monkeypatch.setattr(admin, "TeamManagementService", _GatewayPayloadTeamService)
+    monkeypatch.setattr(admin.MetadataCapture, "extract_creation_metadata", MagicMock(return_value={"created_by": "admin@example.com", "created_from_ip": "127.0.0.1", "created_via": "test", "created_user_agent": "pytest"}))
+    monkeypatch.setattr(admin.gateway_service, "register_gateway", AsyncMock(return_value=result))
+
+    response = await _unwrap(admin.admin_add_gateway)(request, db, user)
+    payload = json.loads(response.body)
+
+    assert response.status_code == 202
+    assert payload["gateway"] == result
+
+
+@pytest.mark.asyncio
+async def test_admin_update_gateway_rest_includes_gateway_payload(monkeypatch):
+    request = _gateway_payload_request()
+    db = MagicMock()
+    db.get.return_value = SimpleNamespace(owner_email="admin@example.com", team_id="team-1")
+    user = {"email": "admin@example.com"}
+    result = {"id": "gw-1", "status": "pending", "name": "gw"}
+    monkeypatch.setattr(admin, "_parse_gateway_data_from_request", AsyncMock(return_value={"name": "gw", "url": "http://example.com", "transport": "SSE"}))
+    monkeypatch.setattr(admin, "TeamManagementService", _GatewayPayloadTeamService)
+    monkeypatch.setattr(admin.MetadataCapture, "extract_modification_metadata", MagicMock(return_value={"modified_by": "admin@example.com", "modified_from_ip": "127.0.0.1", "modified_via": "test", "modified_user_agent": "pytest"}))
+    monkeypatch.setattr(admin.gateway_service, "update_gateway", AsyncMock(return_value=result))
+
+    response = await _unwrap(admin.admin_update_gateway_rest)("gw-1", request, db, user)
+    payload = json.loads(response.body)
+
+    assert response.status_code == 202
+    assert payload["gateway"] == result
+
+
+@pytest.mark.asyncio
+async def test_admin_edit_gateway_includes_gateway_payload(monkeypatch):
+    request = _make_request()
+    request.form = AsyncMock(return_value={"name": "gw", "url": "http://example.com", "transport": "SSE", "visibility": "public"})
+    db = MagicMock()
+    db.get.return_value = SimpleNamespace(owner_email="admin@example.com", team_id="team-1")
+    user = {"email": "admin@example.com"}
+    result = {"id": "gw-1", "status": "pending", "name": "gw"}
+    monkeypatch.setattr(admin, "TeamManagementService", _GatewayPayloadTeamService)
+    monkeypatch.setattr(admin.MetadataCapture, "extract_modification_metadata", MagicMock(return_value={"modified_by": "admin@example.com", "modified_from_ip": "127.0.0.1", "modified_via": "test", "modified_user_agent": "pytest"}))
+    monkeypatch.setattr(admin.gateway_service, "update_gateway", AsyncMock(return_value=result))
+
+    response = await _unwrap(admin.admin_edit_gateway)("gw-1", request, db, user)
+    payload = json.loads(response.body)
+
+    assert response.status_code == 202
+    assert payload["gateway"] == result
 
 
 class _StubTeamService:

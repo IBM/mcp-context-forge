@@ -50,7 +50,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.security import HTTPAuthorizationCredentials
 import httpx
 import orjson
-from pydantic import SecretStr, ValidationError
+from pydantic import BaseModel, SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
 from sqlalchemy import and_, bindparam, case, cast, desc, false, func, or_, select, String, text
 from sqlalchemy.exc import DataError, IntegrityError, InvalidRequestError, OperationalError, SQLAlchemyError
@@ -156,7 +156,7 @@ from mcpgateway.services.content_security import ContentSizeError, ContentTypeEr
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, PasswordValidationError
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.export_service import ExportError, ExportService
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayNameConflictError, GatewayNotFoundError, GatewayService
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayLookupConflictError, GatewayNameConflictError, GatewayNotFoundError, GatewayService
 from mcpgateway.services.import_service import ConflictStrategy
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
@@ -985,13 +985,42 @@ async def _parse_gateway_data_from_request(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=415, detail=f"Unsupported content type: {content_type}. Use application/json or multipart/form-data")
 
 
-def _build_admin_redirect(root_path: str, fragment: str, *, error: Optional[str] = None, include_inactive: bool = False, team_id: Optional[str] = None) -> str:
+def _gateway_result_status(result: Any) -> Optional[str]:
+    """Return lifecycle status from a gateway service result when present."""
+    if isinstance(result, dict):
+        status_value = result.get("status")
+        return status_value if isinstance(status_value, str) else None
+    if isinstance(result, BaseModel):
+        status_value = getattr(result, "status", None)
+        return status_value if isinstance(status_value, str) else None
+    return None
+
+
+def _gateway_result_payload(result: Any) -> Optional[dict[str, Any]]:
+    """Serialize concrete gateway results while tolerating mocked return values."""
+    if isinstance(result, dict):
+        return result
+    if isinstance(result, BaseModel):
+        return result.model_dump(mode="json", by_alias=True)
+    return None
+
+
+def _build_admin_redirect(
+    root_path: str,
+    fragment: str,
+    *,
+    error: Optional[str] = None,
+    message: Optional[str] = None,
+    include_inactive: bool = False,
+    team_id: Optional[str] = None,
+) -> str:
     """Build an admin redirect URL preserving query parameters.
 
     Args:
         root_path: The root path prefix for the application.
         fragment: The URL fragment/hash (e.g. "tools", "catalog").
         error: Optional error message to include as a query parameter.
+        message: Optional success/info message to include as a query parameter.
         include_inactive: Whether the include_inactive flag was set.
         team_id: Optional team ID to preserve in the redirect.
 
@@ -1001,6 +1030,8 @@ def _build_admin_redirect(root_path: str, fragment: str, *, error: Optional[str]
     params: dict[str, str] = {}
     if error:
         params["error"] = error
+    if message:
+        params["message"] = message
     if include_inactive:
         params["include_inactive"] = "true"
     if team_id:
@@ -12252,6 +12283,8 @@ async def admin_get_gateway(gateway_id: str, request: Request, db: Session = Dep
         auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
         gateway = await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
         return gateway.model_dump(by_alias=True)
+    except GatewayLookupConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except GatewayNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -12490,7 +12523,8 @@ async def admin_add_gateway(
         )
 
         # Provide specific guidance for OAuth Authorization Code flow
-        message = "Gateway registered successfully!"
+        is_pending = _gateway_result_status(result) == "pending"
+        message = "Gateway registration accepted and pending initialization." if is_pending else "Gateway registered successfully!"
         if oauth_config and isinstance(oauth_config, dict) and oauth_config.get("grant_type") == "authorization_code":
             message = (
                 "Gateway registered successfully! 🎉\n\n"
@@ -12503,10 +12537,13 @@ async def admin_add_gateway(
                 "Tools will not work until OAuth authorization is completed."
             )
         skipped_tools = result.skipped_tools if isinstance(getattr(result, "skipped_tools", None), list) else []
-        return ORJSONResponse(
-            content={"message": message, "success": True, "skipped_tools": skipped_tools},
-            status_code=200,
-        )
+        # `message` is for accepted/success lifecycle state. Failure responses use
+        # `error` so admin UI can style async progress separately from errors.
+        content: dict[str, Any] = {"message": message, "success": True, "skipped_tools": skipped_tools}
+        gateway_payload = _gateway_result_payload(result)
+        if gateway_payload is not None:
+            content["gateway"] = gateway_payload
+        return ORJSONResponse(content=content, status_code=202 if is_pending else 200)
 
     except GatewayConnectionError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
@@ -12621,7 +12658,7 @@ async def admin_update_gateway_rest(
         gateway = GatewayUpdate(**data)
 
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
-        await gateway_service.update_gateway(
+        result = await gateway_service.update_gateway(
             db,
             gateway_id,
             gateway,
@@ -12631,10 +12668,16 @@ async def admin_update_gateway_rest(
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
         )
-        return ORJSONResponse(
-            content={"message": "Gateway updated successfully!", "success": True},
-            status_code=200,
-        )
+        is_pending = _gateway_result_status(result) == "pending"
+        # Keep accepted/success text in `message`; reserve `error` for failures.
+        content: dict[str, Any] = {
+            "message": "Gateway update accepted and pending initialization." if is_pending else "Gateway updated successfully!",
+            "success": True,
+        }
+        gateway_payload = _gateway_result_payload(result)
+        if gateway_payload is not None:
+            content["gateway"] = gateway_payload
+        return ORJSONResponse(content=content, status_code=202 if is_pending else 200)
     except PermissionError as e:
         LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
         return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
@@ -12690,7 +12733,16 @@ async def admin_delete_gateway_rest(
     LOGGER.debug(f"User {user_email} is deleting gateway ID {gateway_id}")
 
     try:
-        await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
+        result = await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
+        if getattr(result, "status", None) == "deleting":
+            return ORJSONResponse(
+                content={
+                    "message": "Gateway deletion accepted and pending cleanup.",
+                    "success": True,
+                    "gateway": result.model_dump(mode="json", by_alias=True),
+                },
+                status_code=202,
+            )
         return Response(status_code=204)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting gateway {gateway_id}: {e}")
@@ -12886,7 +12938,7 @@ async def admin_edit_gateway(
         )
 
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
-        await gateway_service.update_gateway(
+        result = await gateway_service.update_gateway(
             db,
             gateway_id,
             gateway,
@@ -12896,10 +12948,16 @@ async def admin_edit_gateway(
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
         )
-        return ORJSONResponse(
-            content={"message": "Gateway updated successfully!", "success": True},
-            status_code=200,
-        )
+        is_pending = _gateway_result_status(result) == "pending"
+        # Keep accepted/success text in `message`; reserve `error` for failures.
+        content: dict[str, Any] = {
+            "message": "Gateway update accepted and pending initialization." if is_pending else "Gateway updated successfully!",
+            "success": True,
+        }
+        gateway_payload = _gateway_result_payload(result)
+        if gateway_payload is not None:
+            content["gateway"] = gateway_payload
+        return ORJSONResponse(content=content, status_code=202 if is_pending else 200)
     except PermissionError as e:
         LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
         return ORJSONResponse(
@@ -12953,8 +13011,11 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} is deleting gateway ID {gateway_id}")
     error_message = None
+    accepted_message = None
     try:
-        await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
+        result = await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
+        if getattr(result, "status", None) == "deleting":
+            accepted_message = "Gateway deletion accepted and pending cleanup."
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting gateway {gateway_id}: {e}")
         error_message = str(e)
@@ -12966,7 +13027,14 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     root_path = _resolve_root_path(request)
     team_id = str(form.get("team_id", "") or "")
-    redirect_url = _build_admin_redirect(root_path, "gateways", error=error_message, include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+    redirect_url = _build_admin_redirect(
+        root_path,
+        "gateways",
+        error=error_message,
+        message=accepted_message,
+        include_inactive=is_inactive_checked.lower() == "true",
+        team_id=team_id,
+    )
     return RedirectResponse(redirect_url, status_code=303)
 
 

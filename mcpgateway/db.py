@@ -4631,6 +4631,14 @@ class Gateway(Base):
     capabilities: Mapped[Dict[str, Any]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    status_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    registration_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_retry_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    lifecycle_claimed_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    lifecycle_claimed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    lifecycle_claim_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     enabled: Mapped[bool] = mapped_column(default=True)
     reachable: Mapped[bool] = mapped_column(default=True)
     last_seen: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -4741,6 +4749,8 @@ class Gateway(Base):
     __table_args__ = (
         UniqueConstraint("team_id", "owner_email", "slug", name="uq_team_owner_slug_gateway"),
         Index("idx_gateways_created_at_id", "created_at", "id"),
+        Index("idx_gateways_status_next_retry_at", "status", "next_retry_at"),
+        Index("idx_gateways_lifecycle_claim", "status", "next_retry_at", "lifecycle_claim_expires_at"),
     )
 
 

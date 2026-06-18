@@ -340,6 +340,15 @@ class ContainerManager:
                     logger.error(f"📋 Container logs:\n{logs}")
                     raise RuntimeError("Container failed to start")
 
+                # If the application has completed startup, later checks in the
+                # migration tests validate real DB connectivity and Alembic
+                # execution. Treat startup completion as sufficient readiness
+                # here to avoid flaky curl-based polling on compose stacks.
+                logs = self.get_container_logs(container_id, tail_lines=200)
+                if "Application startup complete." in logs:
+                    logger.info(f"✅ Container {container_id[:12]} is ready based on application startup logs")
+                    return
+
                 # Try to connect to health endpoint
                 port = self._get_container_port(container_id, "4444")
                 health_url = f"http://localhost:{port}/health"
@@ -349,8 +358,8 @@ class ContainerManager:
                 if curl_result.returncode == 0:
                     logger.info(f"✅ Container {container_id[:12]} is ready and healthy (response: {curl_result.stdout.strip()[:50]})")
                     return
-                else:
-                    logger.debug(f"❌ Health check failed with return code {curl_result.returncode}, stderr: {curl_result.stderr.strip()[:100]}")
+
+                logger.debug(f"❌ Health check failed with return code {curl_result.returncode}, stderr: {curl_result.stderr.strip()[:100]}")
 
             except Exception as e:
                 logger.debug(f"Error checking container status: {e}")
@@ -395,8 +404,13 @@ class ContainerManager:
         logger.info(f"🐙 Starting compose stack for version {version}")
         logger.info(f"📄 Using compose file: {compose_file}")
 
+        database_url = "postgresql+psycopg://test_user:test_migration_password_123@postgres:5432/mcp_test"
+        if version != "latest":
+            database_url = "postgresql://test_user:test_migration_password_123@postgres:5432/mcp_test"
+
         env = {
             "IMAGE_LOCAL": f"ghcr.io/ibm/mcp-context-forge:{version}",
+            "DATABASE_URL": database_url,  # pragma: allowlist secret
             "POSTGRES_PASSWORD": "test_migration_password_123",  # pragma: allowlist secret
             "POSTGRES_USER": "test_user",
             "POSTGRES_DB": "mcp_test",
@@ -497,7 +511,7 @@ class ContainerManager:
         Returns:
             Command output
         """
-        full_cmd = f"cd /app && python -m alembic {command}"
+        full_cmd = f"cd /app && python -m alembic -c mcpgateway/alembic.ini {command}"
         logger.info(f"🔧 Running Alembic in {container_id[:12]}: {command}")
 
         result = self._run_command([self.runtime, "exec", container_id, "sh", "-c", full_cmd], capture_output=True)

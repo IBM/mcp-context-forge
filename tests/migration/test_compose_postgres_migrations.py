@@ -510,10 +510,8 @@ class TestPostgreSQLMigrations:
     def _check_gateway_db_connection(self, container_manager, gateway_container):
         """Check if gateway can connect to database."""
         try:
-            # Try to run alembic current, which requires DB connection
-            result = container_manager._run_command([container_manager.runtime, "exec", gateway_container, "python", "-m", "alembic", "current"], capture_output=True, check=False)
-
-            return result.returncode == 0 and "ERROR" not in result.stdout
+            output = container_manager.exec_alembic_command(gateway_container, "current")
+            return "ERROR" not in output and "Traceback" not in output
         except Exception:
             return False
 

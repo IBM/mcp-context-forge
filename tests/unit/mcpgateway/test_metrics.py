@@ -18,9 +18,8 @@ Tests:
 - test_metrics_disabled: Ensures disabling metrics hides the endpoint
 """
 
-import os
-import time
-import re
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
@@ -80,11 +79,168 @@ def test_metrics_contains_standard_metrics(client):
     assert len(text) > 0, "Metrics response should not be empty"
 
 
+def test_metrics_contains_gateway_lifecycle_status_counts(client, monkeypatch):
+    """Gateway lifecycle gauge exposes pending, active, deleting counts."""
+
+    class DummyQuery:
+        def all(self):
+            return [
+                ("pending", "gw-1", 0, None),
+                ("pending", "gw-2", 0, None),
+                ("active", "gw-3", 0, None),
+                ("deleting", "gw-4", 0, None),
+            ]
+
+    class DummySession:
+        def query(self, *_args, **_kwargs):
+            return DummyQuery()
+
+    class DummyContext:
+        def __enter__(self):
+            return DummySession()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("mcpgateway.db.fresh_db_session", DummyContext)
+
+    response = client.get("/metrics/prometheus")
+    text = response.text
+
+    assert 'gateway_lifecycle_status{status="pending"} 2.0' in text
+    assert 'gateway_lifecycle_status{status="active"} 1.0' in text
+    assert 'gateway_lifecycle_status{status="deleting"} 1.0' in text
+
+
+def test_metrics_gateway_lifecycle_status_zero_fills_missing_states(client, monkeypatch):
+    """Missing lifecycle states are exported as zero for stable dashboards."""
+
+    class DummyQuery:
+        def all(self):
+            return [("active", "gw-1", 0, None)]
+
+    class DummySession:
+        def query(self, *_args, **_kwargs):
+            return DummyQuery()
+
+    class DummyContext:
+        def __enter__(self):
+            return DummySession()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("mcpgateway.db.fresh_db_session", DummyContext)
+
+    response = client.get("/metrics/prometheus")
+    text = response.text
+
+    assert 'gateway_lifecycle_status{status="pending"} 0.0' in text
+    assert 'gateway_lifecycle_status{status="active"} 1.0' in text
+    assert 'gateway_lifecycle_status{status="deleting"} 0.0' in text
+
+
+def test_metrics_gateway_lifecycle_pending_alert_inputs(client, monkeypatch):
+    """Pending retry gauges expose stuck-pending and failure-rate alert inputs."""
+    now = datetime.now(timezone.utc)
+
+    class DummyQuery:
+        def all(self):
+            return [
+                ("pending", "gw-1", 2, None),
+                ("pending", "gw-2", 3, now - timedelta(seconds=1)),
+                ("pending", "gw-3", 5, now + timedelta(minutes=5)),
+                ("active", "gw-4", 7, None),
+            ]
+
+    class DummySession:
+        def query(self, *_args, **_kwargs):
+            return DummyQuery()
+
+    class DummyContext:
+        def __enter__(self):
+            return DummySession()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("mcpgateway.db.fresh_db_session", DummyContext)
+
+    response = client.get("/metrics/prometheus")
+    text = response.text
+
+    assert "gateway_lifecycle_pending_due 2.0" in text
+    assert "gateway_lifecycle_pending_registration_attempts 10.0" in text
+
+
+def test_metrics_gateway_lifecycle_pending_alert_inputs_handles_naive_retry(monkeypatch):
+    """Pending due calculation treats naive DB datetimes as UTC."""
+    from mcpgateway.services.metrics import _collect_gateway_lifecycle_metrics
+
+    naive_due = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=1)
+
+    class DummyQuery:
+        def all(self):
+            return [("pending", "gw-1", 1, naive_due)]
+
+    class DummySession:
+        def query(self, *_args, **_kwargs):
+            return DummyQuery()
+
+    class DummyContext:
+        def __enter__(self):
+            return DummySession()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("mcpgateway.db.fresh_db_session", DummyContext)
+
+    lifecycle_counts, pending_due_count, pending_registration_attempts = _collect_gateway_lifecycle_metrics()
+
+    assert lifecycle_counts["pending"] == 1
+    assert pending_due_count == 1
+    assert pending_registration_attempts == 1
+
+
+def test_gateway_lifecycle_status_gauge_recovers_after_duplicate_registration(monkeypatch):
+    from mcpgateway.services import metrics as metrics_module
+
+    sentinel = object()
+    monkeypatch.setattr(metrics_module, "_get_registry_collector", MagicMock(side_effect=[None, sentinel]))
+    monkeypatch.setattr(metrics_module, "Gauge", MagicMock(side_effect=ValueError("duplicate")))
+
+    assert metrics_module._get_gateway_lifecycle_status_gauge() is sentinel
+
+
+def test_gateway_lifecycle_gauge_getters_return_existing_collectors(monkeypatch):
+    from mcpgateway.services import metrics as metrics_module
+
+    sentinel = object()
+    monkeypatch.setattr(metrics_module, "_get_registry_collector", MagicMock(return_value=sentinel))
+
+    assert metrics_module._get_gateway_lifecycle_status_gauge() is sentinel
+    assert metrics_module._get_gateway_lifecycle_pending_due_gauge() is sentinel
+    assert metrics_module._get_gateway_lifecycle_pending_registration_attempts_gauge() is sentinel
+
+
+def test_gateway_lifecycle_pending_gauge_getters_recover_after_duplicate_registration(monkeypatch):
+    from mcpgateway.services import metrics as metrics_module
+
+    due_sentinel = object()
+    attempts_sentinel = object()
+    monkeypatch.setattr(metrics_module, "_get_registry_collector", MagicMock(side_effect=[None, due_sentinel, None, attempts_sentinel]))
+    monkeypatch.setattr(metrics_module, "Gauge", MagicMock(side_effect=ValueError("duplicate")))
+
+    assert metrics_module._get_gateway_lifecycle_pending_due_gauge() is due_sentinel
+    assert metrics_module._get_gateway_lifecycle_pending_registration_attempts_gauge() is attempts_sentinel
+
+
 def test_metrics_counters_increment(client):
     """✅ Counters increment after a request."""
     # Initial scrape
     resp1 = client.get("/metrics/prometheus")
-    before_lines = len(resp1.text.splitlines())
+    len(resp1.text.splitlines())
 
     # Trigger another request
     client.get("/health")

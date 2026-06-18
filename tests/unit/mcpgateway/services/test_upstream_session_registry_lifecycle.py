@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import pytest
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.services import upstream_session_registry as registry_module
 
 
@@ -29,6 +30,12 @@ def _reset_singleton():
     registry_module._registry = None
     yield
     registry_module._registry = None
+
+
+@pytest.fixture(autouse=True)
+def _default_sync_gateway_lifecycle(monkeypatch):
+    """Keep registry lifecycle tests on sync gateway lifecycle unless opted in."""
+    monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", False)
 
 
 @pytest.mark.asyncio

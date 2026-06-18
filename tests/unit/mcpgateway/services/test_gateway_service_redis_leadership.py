@@ -176,6 +176,30 @@ class TestRunFollowerElection:
         assert service._leader_heartbeat_task is not None  # pylint: disable=protected-access
 
     @pytest.mark.asyncio
+    async def test_acquires_leadership_cancels_stale_heartbeat_task(self):
+        """Leadership handoff cancels a stale heartbeat task before starting a new one."""
+        redis_mock = AsyncMock()
+        redis_mock.set = AsyncMock(return_value=True)
+        stale_health_task = MagicMock()
+        stale_health_task.done.return_value = False
+        stale_heartbeat_task = MagicMock()
+        stale_heartbeat_task.done.return_value = False
+        service = _make_service(
+            redis_client=redis_mock,
+            health_check_task=stale_health_task,
+            leader_heartbeat_task=stale_heartbeat_task,
+        )
+
+        with patch.object(service, "_run_health_checks", new_callable=AsyncMock):
+            with patch.object(service, "_run_leader_heartbeat", new_callable=AsyncMock):
+                with patch("asyncio.sleep", new_callable=AsyncMock):
+                    await service._run_follower_election("test@example.com")  # pylint: disable=protected-access
+
+        stale_health_task.cancel.assert_called_once()
+        stale_heartbeat_task.cancel.assert_called_once()
+        assert service._leader_heartbeat_task is not stale_heartbeat_task  # pylint: disable=protected-access
+
+    @pytest.mark.asyncio
     async def test_retries_until_leadership_acquired(self):
         """Follower retries polling Redis until leadership is acquired."""
         redis_mock = AsyncMock()
@@ -331,6 +355,64 @@ class TestShutdownFollowerElection:
 
         # Follower must be cancelled before health check
         assert cancel_order == ["follower", "health"]
+
+    @pytest.mark.asyncio
+    async def test_cancel_gateway_task_responsive_path(self):
+        """Bounded task cancellation completes for responsive tasks."""
+        service = GatewayService()
+
+        async def responsive_task():
+            await asyncio.sleep(100)
+
+        task = asyncio.create_task(responsive_task())
+        await asyncio.sleep(0)
+
+        await service._cancel_gateway_task(task, "responsive-test")  # pylint: disable=protected-access
+
+        assert task.cancelled()
+
+    @pytest.mark.asyncio
+    async def test_cancel_gateway_task_timeout_logs_warning(self, monkeypatch):
+        """Bounded task cancellation logs and returns on timeout."""
+        service = GatewayService()
+        warning_log = MagicMock()
+
+        async def stubborn_task():
+            await asyncio.sleep(100)
+
+        async def fake_wait_for(task, timeout):
+            raise asyncio.TimeoutError()
+
+        task = asyncio.create_task(stubborn_task())
+        await asyncio.sleep(0)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.asyncio.wait_for", fake_wait_for)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.logger.warning", warning_log)
+
+        await service._cancel_gateway_task(task, "stubborn-test")  # pylint: disable=protected-access
+
+        warning_log.assert_called_once_with("Timed out waiting for %s shutdown", "stubborn-test")
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    @pytest.mark.asyncio
+    async def test_shutdown_cancels_lifecycle_task(self):
+        """shutdown() cancels async lifecycle loop task when present."""
+        service = GatewayService()
+        service._redis_client = AsyncMock()  # pylint: disable=protected-access
+        service._event_service = AsyncMock()  # pylint: disable=protected-access
+        service._http_client = AsyncMock()  # pylint: disable=protected-access
+        service._leader_key = "test:leader"  # pylint: disable=protected-access
+        service._instance_id = "test-instance"  # pylint: disable=protected-access
+
+        async def dummy_task():
+            await asyncio.sleep(100)
+
+        service._lifecycle_task = asyncio.create_task(dummy_task())  # pylint: disable=protected-access
+
+        await service.shutdown()
+
+        assert service._lifecycle_task.cancelled()  # pylint: disable=protected-access
 
 
 class TestFollowerElectionCancelsStale:
