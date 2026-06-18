@@ -3,7 +3,12 @@
 // Copyright 2025
 // SPDX-License-Identifier: Apache-2.0
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    fast_time_server::run().await
-}
+mod app;
+mod config;
+mod delay;
+mod mcp;
+mod rest;
+mod time;
+mod transports;
+
+pub use app::run;
