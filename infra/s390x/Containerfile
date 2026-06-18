@@ -12,7 +12,7 @@
 #   podman build --platform linux/s390x -t s390x-wheels infra/s390x/
 ###############################################################################
 
-FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1772441549
+FROM registry.access.redhat.com/ubi10/ubi-minimal:1780550884
 
 ARG PYTHON_VERSION=3.12
 
