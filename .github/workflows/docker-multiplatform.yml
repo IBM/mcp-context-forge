@@ -139,19 +139,14 @@ jobs:
   # Build each platform in parallel
   # ---------------------------------------------------------------
   build:
-    # `needs: wheels` blocks every arch (including amd64/arm64, which don't
-    # consume wheel images) until `wheels` finishes. Tried decoupling this
-    # (probe-and-fall-back-to-latest, no `needs`) but reverted: verified via
-    # workflow_dispatch that the live-PyPI fallback Containerfile.lite uses
-    # when no wheel image exists is NOT actually viable for s390x/ppc64le -
-    # psycopg-binary has no s390x wheels on PyPI at all, and tiktoken needs a
-    # Rust compiler to build from sdist that this builder stage doesn't have.
-    # So on a cold lock-hash there's nothing to gracefully fall back to;
-    # blocking on `wheels` is required. In steady state the wait is short
-    # (~2-3 min) since `wheels` skips the rebuild via `docker manifest
-    # inspect` when the lock hash is unchanged - only a real dependency
-    # change pays the full build time. `always() && needs.wheels.result !=
-    # 'failure'` tolerates `wheels` being skipped entirely on PR events.
+    # Waits on `wheels`: s390x/ppc64le have no live-PyPI fallback (psycopg-binary
+    # has no s390x wheels, tiktoken needs a Rust compiler the builder stage lacks
+    # to build from sdist on ppc64le), so the matching wheel image must exist
+    # before building against it. `wheels` skips the rebuild via `docker manifest
+    # inspect` when the lock hash is unchanged, so the wait is ~2-3 min in steady
+    # state; only a real dependency change pays the full build time. `always() &&
+    # needs.wheels.result != 'failure'` tolerates `wheels` being skipped entirely
+    # on PR events.
     if: always() && needs.wheels.result != 'failure' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     needs: wheels
     name: Build ${{ matrix.suffix }}
