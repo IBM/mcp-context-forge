@@ -50,6 +50,14 @@ describe("useQuery", () => {
       expect(result.current.isLoading).toBe(false);
       expect(result.current.data).toBeUndefined();
     });
+
+    it("supports a null path for conditional queries", () => {
+      const { result } = renderHook(() => useQuery(null));
+
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.data).toBeUndefined();
+      expect(result.current.error).toBeNull();
+    });
   });
 
   describe("manual execute (POST with enabled: false)", () => {
