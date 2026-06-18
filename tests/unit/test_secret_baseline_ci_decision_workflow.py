@@ -1,4 +1,11 @@
-"""Regression tests for the secrets-baseline-only CI decision workflow."""
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/test_secret_baseline_ci_decision_workflow.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Regression tests for the secrets-baseline-only CI decision workflow.
+"""
 
 from __future__ import annotations
 
