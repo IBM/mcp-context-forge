@@ -14,13 +14,13 @@
 # =============================================================================
 
 # =============================================================================
-# 🏗️  STAGE 1 - BUILD STATIC BINARY (Go 1.23, CGO disabled)
+# 🏗️  STAGE 1 - BUILD STATIC BINARY (Go 1.26, CGO disabled)
 # Using Red Hat UBI 9 Go Toolset for enterprise-grade security and IBM alignment
 # =============================================================================
 FROM registry.access.redhat.com/ubi9/go-toolset:1.26 AS builder
 USER root
 RUN dnf install -y git tzdata ca-certificates && dnf clean all
-ENV GOTOOLCHAIN=go1.26.3
+ENV GOTOOLCHAIN=go1.26.4
 
 # Accept target architecture from buildx for cross-compilation
 ARG TARGETARCH
