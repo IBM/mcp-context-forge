@@ -130,6 +130,41 @@ class TestAutoRefreshGatewayToolsResourcesPrompts:
         }
 
     @pytest.mark.asyncio
+    async def test_refresh_returns_error_when_gateway_disappears_before_update(self, gateway_service):
+        """Test refresh returns a failure result if gateway vanishes before DB update phase."""
+        initial_gateway = _make_mock_gateway(enabled=True, reachable=True)
+        initial_gateway.oauth_config = None
+        initial_gateway.auth_query_params = None
+        initial_gateway.client_cert = None
+        initial_gateway.client_key = None
+        initial_gateway.ca_certificate = None
+
+        fetch_session = MagicMock()
+        fetch_session.execute.return_value.scalar_one_or_none.return_value = initial_gateway
+        update_session = MagicMock()
+        update_session.execute.return_value.scalar_one_or_none.return_value = None
+
+        fresh_contexts = [fetch_session, update_session]
+
+        class _FreshSessionContext:
+            def __init__(self, session):
+                self._session = session
+
+            def __enter__(self):
+                return self._session
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        with patch("mcpgateway.services.gateway_service.fresh_db_session", side_effect=[_FreshSessionContext(s) for s in fresh_contexts]):
+            gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], []))
+
+            result = await gateway_service._refresh_gateway_tools_resources_prompts("gw-404")
+
+        assert result["success"] is False
+        assert result["error"] == "Gateway gw-404 not found during refresh"
+
+    @pytest.mark.asyncio
     async def test_refresh_skips_disabled_gateway(self, gateway_service):
         """Test that refresh skips disabled gateways."""
         mock_gateway = _make_mock_gateway(enabled=False, reachable=True)

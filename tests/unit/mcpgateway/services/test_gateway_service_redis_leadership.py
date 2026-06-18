@@ -176,6 +176,30 @@ class TestRunFollowerElection:
         assert service._leader_heartbeat_task is not None  # pylint: disable=protected-access
 
     @pytest.mark.asyncio
+    async def test_acquires_leadership_cancels_stale_heartbeat_task(self):
+        """Leadership handoff cancels a stale heartbeat task before starting a new one."""
+        redis_mock = AsyncMock()
+        redis_mock.set = AsyncMock(return_value=True)
+        stale_health_task = MagicMock()
+        stale_health_task.done.return_value = False
+        stale_heartbeat_task = MagicMock()
+        stale_heartbeat_task.done.return_value = False
+        service = _make_service(
+            redis_client=redis_mock,
+            health_check_task=stale_health_task,
+            leader_heartbeat_task=stale_heartbeat_task,
+        )
+
+        with patch.object(service, "_run_health_checks", new_callable=AsyncMock):
+            with patch.object(service, "_run_leader_heartbeat", new_callable=AsyncMock):
+                with patch("asyncio.sleep", new_callable=AsyncMock):
+                    await service._run_follower_election("test@example.com")  # pylint: disable=protected-access
+
+        stale_health_task.cancel.assert_called_once()
+        stale_heartbeat_task.cancel.assert_called_once()
+        assert service._leader_heartbeat_task is not stale_heartbeat_task  # pylint: disable=protected-access
+
+    @pytest.mark.asyncio
     async def test_retries_until_leadership_acquired(self):
         """Follower retries polling Redis until leadership is acquired."""
         redis_mock = AsyncMock()

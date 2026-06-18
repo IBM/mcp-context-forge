@@ -12537,6 +12537,8 @@ async def admin_add_gateway(
                 "Tools will not work until OAuth authorization is completed."
             )
         skipped_tools = result.skipped_tools if isinstance(getattr(result, "skipped_tools", None), list) else []
+        # `message` is for accepted/success lifecycle state. Failure responses use
+        # `error` so admin UI can style async progress separately from errors.
         content: dict[str, Any] = {"message": message, "success": True, "skipped_tools": skipped_tools}
         gateway_payload = _gateway_result_payload(result)
         if gateway_payload is not None:
@@ -12667,6 +12669,7 @@ async def admin_update_gateway_rest(
             user_email=user_email,
         )
         is_pending = _gateway_result_status(result) == "pending"
+        # Keep accepted/success text in `message`; reserve `error` for failures.
         content: dict[str, Any] = {
             "message": "Gateway update accepted and pending initialization." if is_pending else "Gateway updated successfully!",
             "success": True,
@@ -12946,6 +12949,7 @@ async def admin_edit_gateway(
             user_email=user_email,
         )
         is_pending = _gateway_result_status(result) == "pending"
+        # Keep accepted/success text in `message`; reserve `error` for failures.
         content: dict[str, Any] = {
             "message": "Gateway update accepted and pending initialization." if is_pending else "Gateway updated successfully!",
             "success": True,

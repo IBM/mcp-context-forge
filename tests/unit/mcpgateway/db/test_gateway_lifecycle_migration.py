@@ -10,6 +10,8 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 import sqlalchemy as sa
 
+from mcpgateway.db import Gateway as DbGateway
+
 MODULE_NAME = "mcpgateway.alembic.versions.6c0e5f8a9b1d_add_gateway_lifecycle_fields"
 REVISION = "6c0e5f8a9b1d"  # pragma: allowlist secret
 DOWN_REVISION = "0a089912b5f0"  # pragma: allowlist secret
@@ -79,6 +81,11 @@ class TestGatewayLifecycleMigrationStructure:
         module = importlib.import_module(MODULE_NAME)
         assert len(pyinspect.signature(module.upgrade).parameters) == 0
         assert len(pyinspect.signature(module.downgrade).parameters) == 0
+
+    def test_gateway_orm_metadata_includes_claim_index(self):
+        """ORM table metadata matches claim index created by migration."""
+        index_columns = {index.name: tuple(column.name for column in index.columns) for index in DbGateway.__table__.indexes}
+        assert index_columns[CLAIM_INDEX] == ("status", "next_retry_at", "lifecycle_claim_expires_at")
 
 
 class TestGatewayLifecycleMigrationDefaults:

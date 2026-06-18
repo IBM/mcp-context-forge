@@ -4750,6 +4750,7 @@ class Gateway(Base):
         UniqueConstraint("team_id", "owner_email", "slug", name="uq_team_owner_slug_gateway"),
         Index("idx_gateways_created_at_id", "created_at", "id"),
         Index("idx_gateways_status_next_retry_at", "status", "next_retry_at"),
+        Index("idx_gateways_lifecycle_claim", "status", "next_retry_at", "lifecycle_claim_expires_at"),
     )
 
 

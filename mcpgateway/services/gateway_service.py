@@ -482,7 +482,11 @@ async def _evict_upstream_sessions_for_gateway(gateway_id: str) -> int:
 
 @dataclass(frozen=True)
 class GatewayConnectionMaterial:
-    """Gateway connection inputs prepared for initialization."""
+    """Gateway init inputs split for persistence-safe reuse.
+
+    Encrypted query params remain available for persistence paths. Decrypted
+    query params plus mTLS material are for outbound initialization only.
+    """
 
     url: str
     auth_query_params_encrypted: Optional[Dict[str, str]]
@@ -3850,6 +3854,51 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         claimed_by = db.execute(select(DbGateway.lifecycle_claimed_by).where(DbGateway.id == gateway_id)).scalar_one_or_none()
         return claimed_by == self._instance_id
 
+    def _finalize_pending_gateway_success(self, db: Session, gateway: DbGateway, capabilities: Dict[str, Any]) -> bool:
+        """Persist pending->active only if row is still pending and claimed here."""
+        result = db.execute(
+            update(DbGateway)
+            .where(DbGateway.id == gateway.id)
+            .where(DbGateway.status == "pending")
+            .where(DbGateway.lifecycle_claimed_by == self._instance_id)
+            .values(
+                capabilities=capabilities,
+                status="active",
+                status_message=None,
+                registration_attempts=0,
+                next_retry_at=None,
+                last_error=None,
+                lifecycle_claimed_by=None,
+                lifecycle_claimed_at=None,
+                lifecycle_claim_expires_at=None,
+                reachable=True,
+                last_seen=datetime.now(timezone.utc),
+            )
+        )
+        return bool(result.rowcount)
+
+    def _finalize_pending_gateway_failure(self, db: Session, gateway: DbGateway, sanitized_error: str, registration_attempts: int) -> bool:
+        """Persist pending retry metadata only if row is still pending and claimed here."""
+        retry_delay_seconds = self._calculate_gateway_retry_backoff(registration_attempts)
+        result = db.execute(
+            update(DbGateway)
+            .where(DbGateway.id == gateway.id)
+            .where(DbGateway.status == "pending")
+            .where(DbGateway.lifecycle_claimed_by == self._instance_id)
+            .values(
+                status="pending",
+                reachable=False,
+                registration_attempts=registration_attempts,
+                next_retry_at=datetime.now(timezone.utc) + timedelta(seconds=retry_delay_seconds),
+                last_error=sanitized_error,
+                status_message=sanitized_error,
+                lifecycle_claimed_by=None,
+                lifecycle_claimed_at=None,
+                lifecycle_claim_expires_at=None,
+            )
+        )
+        return bool(result.rowcount)
+
     async def _process_pending_gateway(self, db: Session, gateway: DbGateway) -> None:
         """Initialize one claimed pending gateway and finalize with claim check.
 
@@ -3898,20 +3947,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 log_context="gateway lifecycle worker",
             )
 
-            current_status = db.execute(select(DbGateway.status).where(DbGateway.id == gateway.id)).scalar_one_or_none()
-            if current_status in {None, "deleting"} or not self._owns_lifecycle_claim(db, str(gateway.id)):
+            if not self._finalize_pending_gateway_success(db, gateway, capabilities):
                 db.rollback()
                 return
-
-            gateway.capabilities = capabilities
-            gateway.status = "active"
-            gateway.status_message = None
-            gateway.registration_attempts = 0
-            gateway.next_retry_at = None
-            gateway.last_error = None
-            self._clear_lifecycle_claim(gateway)
-            gateway.reachable = True
-            gateway.last_seen = datetime.now(timezone.utc)
 
             register_gateway_capabilities_for_notifications(gateway.id, capabilities)
 
@@ -3933,20 +3971,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             await admin_stats_cache.invalidate_tags()
         except Exception as exc:
-            current_status = db.execute(select(DbGateway.status).where(DbGateway.id == gateway.id)).scalar_one_or_none()
-            if current_status in {None, "deleting"} or not self._owns_lifecycle_claim(db, str(gateway.id)):
+            sanitized_error = sanitize_exception_message(str(exc), gateway.auth_query_params)
+            next_attempt = (gateway.registration_attempts or 0) + 1
+            if not self._finalize_pending_gateway_failure(db, gateway, sanitized_error, next_attempt):
                 db.rollback()
                 return
 
-            gateway.status = "pending"
-            gateway.reachable = False
-            gateway.registration_attempts = (gateway.registration_attempts or 0) + 1
-            retry_delay_seconds = self._calculate_gateway_retry_backoff(gateway.registration_attempts)
-            gateway.next_retry_at = datetime.now(timezone.utc) + timedelta(seconds=retry_delay_seconds)
-            sanitized_error = sanitize_exception_message(str(exc), gateway.auth_query_params)
-            gateway.last_error = sanitized_error
-            gateway.status_message = sanitized_error
-            self._clear_lifecycle_claim(gateway)
             db.commit()
             db.refresh(gateway)
 

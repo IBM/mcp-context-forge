@@ -298,6 +298,8 @@ curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/gateways/$GATEWAY_ID | jq '.
 
 When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=true`, this same `GET /gateways/{gateway_id}` route is the status polling endpoint for async gateway create, update, and delete. The identifier can be the gateway ID, exact name, or exact slug. If name and slug resolution would be ambiguous across visible gateways, the API returns `409 Conflict`.
 
+One ambiguity example: one visible gateway has `name="team-alpha"` while another visible gateway has `slug="team-alpha"`. Prefer polling by the gateway `id` returned from create/update responses, or keep names and slugs unique within the caller's visible scope.
+
 ### Register a New Gateway
 
 ```bash
@@ -352,12 +354,16 @@ Status values:
 Retry metadata is returned while a gateway is `pending`:
 
 - `registrationAttempts` / `registration_attempts` - Number of failed initialization attempts so far
+- `statusMessage` / `status_message` - Pending acceptance text before first failure, or the latest sanitized lifecycle detail while pending/deleting
 - `nextRetryAt` / `next_retry_at` - Next scheduled retry time, or `null` before first failure
 - `lastError` / `last_error` - Most recent sanitized failure detail, or `null` before first failure
+- `lifecycleClaimedBy`, `lifecycleClaimedAt`, `lifecycleClaimExpiresAt` - Internal worker lease metadata that may appear in admin/API payloads for troubleshooting; clients should not depend on them for business logic
 
 Gateway name is the natural deduplication key for async lifecycle retries. With async lifecycle enabled, retrying `POST /gateways` with the same name while the existing gateway is `pending` returns the current pending record with `202 Accepted`; retrying while the existing gateway is `active` returns `409 Conflict`. Retrying an update while the gateway is already `pending` returns the current pending record with `202 Accepted`. A client-side transport timeout or lost response does not prove server-side failure: poll `GET /gateways/{id|name|slug}` before retrying or deleting.
 
-Pending gateway retries continue with exponential backoff until initialization succeeds or the client sends DELETE. DELETE changes `pending` or `active` gateways to `deleting`; the worker then stops pending retries, performs cleanup, and removes the row. Once deleted, polling returns `404 Not Found`.
+Pending gateway retries continue with exponential backoff until initialization succeeds or the client sends DELETE. After each failed initialization attempt, the next delay is `min(2 ** (registrationAttempts - 1), 300)` seconds. `nextRetryAt` is the source of truth for when the worker may retry next.
+
+DELETE changes `pending` or `active` gateways to `deleting`; the worker then stops pending retries, performs cleanup, and removes the row. Retrying DELETE while the gateway is already `deleting` is safe: clients should treat the resource as still being removed and keep polling until `404 Not Found`. Once deleted, polling returns `404 Not Found`.
 
 **Pending retry response example (`200 OK`):**
 

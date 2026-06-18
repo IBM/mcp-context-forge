@@ -60,6 +60,8 @@ def upgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
 
+    # Fresh databases may already have model-created columns/indexes before this
+    # migration runs, so every schema step stays existence-checked and idempotent.
     if not _table_exists(inspector, GATEWAY_TABLE):
         return
 
@@ -105,6 +107,8 @@ def downgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
 
+    # Keep downgrade resilient for partial/manual states by dropping only objects
+    # that still exist on the current database.
     if not _table_exists(inspector, GATEWAY_TABLE):
         return
 

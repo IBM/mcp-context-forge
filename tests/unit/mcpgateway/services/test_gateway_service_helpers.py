@@ -370,17 +370,15 @@ async def test_process_pending_gateway_uses_dedicated_async_attempt_timeout(monk
         raise RuntimeError("init failed")
 
     db = MagicMock()
-    db.execute.side_effect = [
-        SimpleNamespace(scalar_one_or_none=lambda: "pending"),
-        SimpleNamespace(scalar_one_or_none=lambda: service._instance_id),
-    ]
+    db.execute.return_value = SimpleNamespace(rowcount=1)
     service._initialize_gateway_with_timeout = fake_initialize_gateway_with_timeout
 
     await service._process_pending_gateway(db, gateway)
 
     assert observed_timeout == 120
-    assert gateway.registration_attempts == 1
-    assert gateway.lifecycle_claimed_by is None
+    compiled_params = db.execute.call_args.args[0].compile().params
+    assert compiled_params["registration_attempts"] == 1
+    assert compiled_params["lifecycle_claimed_by"] is None
 
 
 @pytest.mark.asyncio
@@ -510,10 +508,7 @@ async def test_process_pending_gateway_marks_gateway_active(monkeypatch):
     db = MagicMock()
     db.commit = Mock()
     db.refresh = Mock()
-    db.execute.side_effect = [
-        SimpleNamespace(scalar_one_or_none=lambda: "pending"),
-        SimpleNamespace(scalar_one_or_none=lambda: service._instance_id),
-    ]
+    db.execute.return_value = SimpleNamespace(rowcount=1)
 
     registry_cache = SimpleNamespace(
         invalidate_gateways=AsyncMock(),
@@ -540,13 +535,7 @@ async def test_process_pending_gateway_marks_gateway_active(monkeypatch):
 
     await service._process_pending_gateway(db, gateway)
 
-    assert gateway.status == "active"
-    assert gateway.status_message is None
-    assert gateway.registration_attempts == 0
-    assert gateway.next_retry_at is None
-    assert gateway.last_error is None
-    assert gateway.reachable is True
-    assert gateway.capabilities == {"tools": {"listChanged": True}}
+    assert db.execute.call_count == 1
     assert "http://example.com" in service._active_gateways
     db.commit.assert_called_once()
     db.refresh.assert_called_once_with(gateway)
@@ -610,10 +599,7 @@ async def test_process_pending_gateway_records_retry_metadata_on_failure():
     db = MagicMock()
     db.commit = Mock()
     db.refresh = Mock()
-    db.execute.side_effect = [
-        SimpleNamespace(scalar_one_or_none=lambda: "pending"),
-        SimpleNamespace(scalar_one_or_none=lambda: service._instance_id),
-    ]
+    db.execute.return_value = SimpleNamespace(rowcount=1)
 
     connection_material = SimpleNamespace(
         url="http://example.com",
@@ -630,20 +616,19 @@ async def test_process_pending_gateway_records_retry_metadata_on_failure():
     await service._process_pending_gateway(db, gateway)
     after = datetime.now(timezone.utc)
 
-    assert gateway.status == "pending"
-    assert gateway.reachable is False
-    assert gateway.registration_attempts == 3
-    assert gateway.last_error == "dial tcp refused"
-    assert gateway.status_message == "dial tcp refused"
-    assert gateway.next_retry_at is not None
     expected_delay = service._calculate_gateway_retry_backoff(3)
-    lower_bound = before.timestamp() + expected_delay
-    upper_bound = after.timestamp() + expected_delay
-    assert lower_bound <= gateway.next_retry_at.timestamp() <= upper_bound
     db.commit.assert_called_once()
     db.refresh.assert_called_once_with(gateway)
     service._sync_gateway_catalog.assert_not_called()
     service._reconcile_gateway_catalog.assert_not_called()
+    compiled_params = db.execute.call_args.args[0].compile().params
+    assert compiled_params["registration_attempts"] == 3
+    assert compiled_params["last_error"] == "dial tcp refused"
+    assert compiled_params["status_message"] == "dial tcp refused"
+    assert compiled_params["reachable"] is False
+    lower_bound = before.timestamp() + expected_delay
+    upper_bound = after.timestamp() + expected_delay
+    assert lower_bound <= compiled_params["next_retry_at"].timestamp() <= upper_bound
 
 
 @pytest.mark.asyncio
@@ -676,10 +661,7 @@ async def test_process_pending_gateway_timeout_records_retry_metadata():
     db = MagicMock()
     db.commit = Mock()
     db.refresh = Mock()
-    db.execute.side_effect = [
-        SimpleNamespace(scalar_one_or_none=lambda: "pending"),
-        SimpleNamespace(scalar_one_or_none=lambda: service._instance_id),
-    ]
+    db.execute.return_value = SimpleNamespace(rowcount=1)
 
     connection_material = SimpleNamespace(
         url="http://example.com",
@@ -694,11 +676,11 @@ async def test_process_pending_gateway_timeout_records_retry_metadata():
 
     await service._process_pending_gateway(db, gateway)
 
-    assert gateway.status == "pending"
-    assert gateway.registration_attempts == 1
-    assert gateway.last_error == "Gateway initialization timed out after 30s for http://example.com"
-    assert gateway.status_message == "Gateway initialization timed out after 30s for http://example.com"
-    assert gateway.next_retry_at is not None
+    compiled_params = db.execute.call_args.args[0].compile().params
+    assert compiled_params["registration_attempts"] == 1
+    assert compiled_params["last_error"] == "Gateway initialization timed out after 30s for http://example.com"
+    assert compiled_params["status_message"] == "Gateway initialization timed out after 30s for http://example.com"
+    assert compiled_params["next_retry_at"] is not None
 
 
 @pytest.mark.asyncio
@@ -733,7 +715,7 @@ async def test_process_pending_gateway_does_not_overwrite_deleting_status(monkey
     db.commit = Mock()
     db.refresh = Mock()
     db.rollback = Mock()
-    db.execute.return_value = SimpleNamespace(scalar_one_or_none=lambda: "deleting")
+    db.execute.return_value = SimpleNamespace(rowcount=0)
 
     registry_cache = SimpleNamespace(
         invalidate_gateways=AsyncMock(),
@@ -760,7 +742,6 @@ async def test_process_pending_gateway_does_not_overwrite_deleting_status(monkey
 
     await service._process_pending_gateway(db, gateway)
 
-    assert gateway.status == "pending"
     db.rollback.assert_called_once()
     db.commit.assert_not_called()
     db.refresh.assert_not_called()
@@ -815,7 +796,7 @@ async def test_process_pending_gateway_failure_skips_retry_when_deleted():
     db.commit = Mock()
     db.refresh = Mock()
     db.rollback = Mock()
-    db.execute.return_value = SimpleNamespace(scalar_one_or_none=lambda: "deleting")
+    db.execute.return_value = SimpleNamespace(rowcount=0)
 
     connection_material = SimpleNamespace(
         url="http://example.com",
@@ -832,6 +813,47 @@ async def test_process_pending_gateway_failure_skips_retry_when_deleted():
     db.commit.assert_not_called()
     db.refresh.assert_not_called()
     assert gateway.registration_attempts == 0
+
+
+def test_finalize_pending_gateway_success_requires_matching_pending_claim():
+    service = GatewayService()
+    gateway = SimpleNamespace(id="gw-1")
+    db = MagicMock()
+    db.execute.return_value = SimpleNamespace(rowcount=1)
+
+    claimed = service._finalize_pending_gateway_success(db, gateway, {"tools": {"listChanged": True}})
+
+    assert claimed is True
+    stmt = db.execute.call_args.args[0]
+    compiled_params = stmt.compile().params
+    assert compiled_params["status"] == "active"
+    assert compiled_params["lifecycle_claimed_by"] is None
+
+
+def test_finalize_pending_gateway_failure_requires_matching_pending_claim():
+    service = GatewayService()
+    gateway = SimpleNamespace(id="gw-1")
+    db = MagicMock()
+    db.execute.return_value = SimpleNamespace(rowcount=0)
+
+    claimed = service._finalize_pending_gateway_failure(db, gateway, "boom", 4)
+
+    assert claimed is False
+
+
+def test_clear_lifecycle_claim_clears_all_claim_fields():
+    service = GatewayService()
+    gateway = SimpleNamespace(
+        lifecycle_claimed_by="worker-1",
+        lifecycle_claimed_at="claimed-at",
+        lifecycle_claim_expires_at="expires-at",
+    )
+
+    service._clear_lifecycle_claim(gateway)
+
+    assert gateway.lifecycle_claimed_by is None
+    assert gateway.lifecycle_claimed_at is None
+    assert gateway.lifecycle_claim_expires_at is None
 
 
 @pytest.mark.asyncio
