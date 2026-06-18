@@ -27,20 +27,7 @@ cpex-pii-filter = "2026-06-18T23:59:59Z"
 cpex-retry-with-backoff = "2026-06-18T23:59:59Z"
 cpex-secrets-detection = "2026-06-18T23:59:59Z"
 granian = "2026-06-18T23:59:59Z"
-# grpcio = "2026-06-18T23:59:59Z"
-# langchain-core = "2026-06-08T10:56:34Z"
-# langsmith = "2026-06-08T10:56:34Z"
-# opentelemetry-api = "2026-06-08T10:56:34Z"
-# opentelemetry-sdk = "2026-06-08T10:56:34Z"
-# opentelemetry-exporter-otlp-proto-grpc = "2026-06-08T10:56:34Z"
-# opentelemetry-exporter-otlp-proto-http = "2026-06-08T10:56:34Z"
-# opentelemetry-exporter-otlp-proto-common = "2026-06-08T10:56:34Z"
-# opentelemetry-proto = "2026-06-08T10:56:34Z"
-# opentelemetry-semantic-conventions = "2026-06-08T10:56:34Z"
-# prometheus-fastapi-instrumentator = "2026-06-08T10:56:34Z"
-# aiohttp = "2026-06-08T10:56:34Z"
-# cryptography = 2026-06-18T23:59:59Z
-
+tornado = "2026-06-10T23:59:59Z"
 
 
 [tool.uv.sources]
