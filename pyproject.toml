@@ -123,7 +123,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "a2a-sdk[http-server]",
-    "aiohttp==3.14.0",
+    "aiohttp==3.14.1",
     "argparse-manpage>=4.7",
     "authlib>=1.7.0", # Transitive pin via fastmcp (dev-only test client); 1.7.0 ships security fixes — see tool.uv.exclude-newer-package override
     "autoflake>=2.3.1",
@@ -189,7 +189,7 @@ dev = [
     "uv>=0.11.6",
     "websockets>=15.0.1",
     "pyasn1>=0.6.3", # a2a-sdk; https://github.com/IBM/mcp-context-forge/security/dependabot/73
-    "tornado>=6.5.5",  # transitive via jupyter; CVE-2026-31958
+    "tornado>=6.5.7",  # transitive via jupyter; CVE-2026-31958
     # gRPC plugin framework testing (optional at runtime, required for test coverage)
     "grpcio>=1.76.0",
     "grpcio-reflection>=1.76.0",
