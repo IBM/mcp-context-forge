@@ -8,7 +8,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-06-08T14:16:27.556452401Z"
+exclude-newer = "2026-06-08T10:41:11.677033Z"
 exclude-newer-span = "P10D"
 
 [options.exclude-newer-package]
@@ -3042,7 +3042,7 @@ wheels = [
 
 [[package]]
 name = "mcp-contextforge-gateway"
-version = "1.0.3"
+version = "1.0.4"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
