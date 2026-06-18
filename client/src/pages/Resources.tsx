@@ -1,4 +1,5 @@
 import { useState, useMemo, memo } from "react";
+import { useIntl } from "react-intl";
 import { Plus, MoreHorizontal, FileText } from "lucide-react";
 import { useQuery } from "@/hooks/useQuery";
 import type { ResourceGroup, ResourcesResponse } from "@/types/resource";
@@ -28,6 +29,7 @@ const ResourceGroupCard = memo(function ResourceGroupCard({
   group: ResourceGroup;
   onViewGroup: (group: ResourceGroup) => void;
 }) {
+  const intl = useIntl();
   const MAX_VISIBLE_RESOURCES = 8;
   const visibleResources = group.resources.slice(0, MAX_VISIBLE_RESOURCES);
   const remainingCount = group.resources.length - MAX_VISIBLE_RESOURCES;
@@ -49,7 +51,10 @@ const ResourceGroupCard = memo(function ResourceGroupCard({
               {group.gatewaySlug}
             </span>
             <span className="whitespace-nowrap text-sm font-semibold text-neutral-900 dark:text-white">
-              {group.resources.length} {group.resources.length === 1 ? "resource" : "resources"}
+              {intl.formatMessage(
+                { id: "resources.card.resourceCount" },
+                { count: group.resources.length },
+              )}
             </span>
             <span
               className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${group.isActive ? "bg-tool-status-active" : "bg-tool-status-inactive"}`}
@@ -62,14 +67,19 @@ const ResourceGroupCard = memo(function ResourceGroupCard({
                 type="button"
                 variant="ghost"
                 size="sm"
-                aria-label={`More options for ${group.gatewaySlug}`}
+                aria-label={intl.formatMessage(
+                  { id: "resources.card.moreOptions" },
+                  { gatewaySlug: group.gatewaySlug },
+                )}
                 className="h-7 w-7 p-0"
               >
                 <MoreHorizontal className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={handleView}>View Details</DropdownMenuItem>
+              <DropdownMenuItem onClick={handleView}>
+                {intl.formatMessage({ id: "resources.card.viewDetails" })}
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -89,7 +99,10 @@ const ResourceGroupCard = memo(function ResourceGroupCard({
           {remainingCount > 0 && (
             <span
               className="inline-flex items-center rounded bg-tool-badge-bg px-1.5 py-1 text-[10px] font-medium leading-none text-white"
-              title={`${remainingCount} more ${remainingCount === 1 ? "resource" : "resources"}`}
+              title={intl.formatMessage(
+                { id: "resources.card.moreResources" },
+                { count: remainingCount },
+              )}
             >
               +{remainingCount}
             </span>
@@ -107,6 +120,8 @@ const ResourceGroupCard = memo(function ResourceGroupCard({
  * @param onAddResource - Callback when user clicks to add resources
  */
 function AddResourcesCard({ onAddResource }: { onAddResource: () => void }) {
+  const intl = useIntl();
+
   return (
     <Card
       size="sm"
@@ -127,14 +142,13 @@ function AddResourcesCard({ onAddResource }: { onAddResource: () => void }) {
             <Plus className="h-3.5 w-3.5 text-tool-add-icon-fg" />
           </div>
           <span className="text-sm font-semibold text-neutral-900 dark:text-white">
-            Add resources
+            {intl.formatMessage({ id: "resources.addResources.title" })}
           </span>
         </div>
       </CardHeader>
       <CardContent>
         <p className="text-sm leading-relaxed text-neutral-500 dark:text-neutral-400">
-          Resources will appear automatically when you connect a MCP server. Or, register a
-          standalone resource endpoint.
+          {intl.formatMessage({ id: "resources.addResources.description" })}
         </p>
       </CardContent>
     </Card>
@@ -153,6 +167,7 @@ function AddResourcesCard({ onAddResource }: { onAddResource: () => void }) {
  * - Placeholder form for future resource creation
  */
 export function Resources() {
+  const intl = useIntl();
   const [showForm, setShowForm] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<ResourceGroup | null>(null);
 
@@ -194,7 +209,7 @@ export function Resources() {
       ) : (
         <>
           <h1 className="mb-6 text-base font-semibold text-neutral-900 dark:text-white">
-            Resources
+            {intl.formatMessage({ id: "resources.title" })}
           </h1>
 
           {isLoading && (
@@ -204,7 +219,7 @@ export function Resources() {
               aria-busy="true"
               className="flex items-center justify-center p-12"
             >
-              <span className="sr-only">Loading resources, please wait...</span>
+              <span className="sr-only">{intl.formatMessage({ id: "resources.loading" })}</span>
               <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-blue-600 dark:border-gray-700 dark:border-t-blue-400" />
             </div>
           )}
@@ -215,7 +230,9 @@ export function Resources() {
               role="alert"
               aria-live="assertive"
             >
-              <h3 className="mb-1 font-semibold">Error loading resources</h3>
+              <h3 className="mb-1 font-semibold">
+                {intl.formatMessage({ id: "resources.errorLoading" })}
+              </h3>
               <p className="text-red-800 dark:text-red-200">{error.message}</p>
             </div>
           )}
