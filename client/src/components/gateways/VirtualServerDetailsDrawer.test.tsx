@@ -18,7 +18,7 @@ describe("VirtualServerDetailsDrawer", () => {
     updatedAt: "2024-01-02T00:00:00Z",
     associatedTools: ["tool1"],
     associatedToolIds: ["t1"],
-  } as any;
+  } as unknown as VirtualServer;
 
   const inactiveServer: VirtualServer = {
     id: "inactive-1",
@@ -27,7 +27,7 @@ describe("VirtualServerDetailsDrawer", () => {
     visibility: "private",
     tags: [],
     associatedTools: [],
-  } as any;
+  } as unknown as VirtualServer;
 
   const renderWithI18n = (ui: React.ReactElement) => {
     return render(<I18nProvider>{ui}</I18nProvider>);

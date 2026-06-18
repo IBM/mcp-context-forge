@@ -28,14 +28,14 @@ describe("Login", () => {
     vi.clearAllMocks();
     vi.mocked(useRouter).mockReturnValue({
       navigate: mockNavigate,
-    } as any);
+    } as unknown as ReturnType<typeof useRouter>);
   });
 
   it("redirects to /app/ if already authenticated", () => {
     vi.mocked(useAuth).mockReturnValue({
       isAuthenticated: true,
       login: mockLogin,
-    } as any);
+    } as unknown as ReturnType<typeof useAuth>);
 
     renderWithI18n(<Login />);
 
@@ -46,7 +46,7 @@ describe("Login", () => {
     vi.mocked(useAuth).mockReturnValue({
       isAuthenticated: false,
       login: mockLogin,
-    } as any);
+    } as unknown as ReturnType<typeof useAuth>);
 
     renderWithI18n(<Login />);
 
@@ -59,7 +59,7 @@ describe("Login", () => {
     vi.mocked(useAuth).mockReturnValue({
       isAuthenticated: false,
       login: mockLogin.mockResolvedValue(undefined),
-    } as any);
+    } as unknown as ReturnType<typeof useAuth>);
 
     renderWithI18n(<Login />);
 
@@ -76,13 +76,13 @@ describe("Login", () => {
   });
 
   it("displays invalid credentials error on 401 ApiError", async () => {
-    const error = new ApiError("ApiError");
-    (error as any).status = 401;
+    const error = new ApiError("ApiError") as ApiError & { status?: number };
+    error.status = 401;
 
     vi.mocked(useAuth).mockReturnValue({
       isAuthenticated: false,
       login: mockLogin.mockRejectedValue(error),
-    } as any);
+    } as unknown as ReturnType<typeof useAuth>);
 
     renderWithI18n(<Login />);
 
@@ -96,13 +96,13 @@ describe("Login", () => {
   });
 
   it("displays generic failed error on non-401 ApiError", async () => {
-    const error = new ApiError("ApiError");
-    (error as any).status = 500;
+    const error = new ApiError("ApiError") as ApiError & { status?: number };
+    error.status = 500;
 
     vi.mocked(useAuth).mockReturnValue({
       isAuthenticated: false,
       login: mockLogin.mockRejectedValue(error),
-    } as any);
+    } as unknown as ReturnType<typeof useAuth>);
 
     renderWithI18n(<Login />);
 
@@ -119,7 +119,7 @@ describe("Login", () => {
     vi.mocked(useAuth).mockReturnValue({
       isAuthenticated: false,
       login: mockLogin.mockRejectedValue(new Error("Generic network error")),
-    } as any);
+    } as unknown as ReturnType<typeof useAuth>);
 
     renderWithI18n(<Login />);
 
@@ -136,7 +136,7 @@ describe("Login", () => {
     vi.mocked(useAuth).mockReturnValue({
       isAuthenticated: false,
       login: mockLogin,
-    } as any);
+    } as unknown as ReturnType<typeof useAuth>);
 
     renderWithI18n(<Login />);
 

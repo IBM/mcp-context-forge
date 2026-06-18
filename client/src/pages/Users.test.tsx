@@ -335,7 +335,7 @@ describe("Users", () => {
   it("renders Plus icon for Create User button", async () => {
     vi.mocked(api.get).mockResolvedValueOnce({ users: [], nextCursor: null });
 
-    const { container } = renderWithRouter(<Users />);
+    renderWithRouter(<Users />);
 
     await waitFor(() => {
       const button = screen.getByRole("button", { name: /Create User/i });
