@@ -576,6 +576,164 @@ describe("useToolForm", () => {
       await waitFor(() => expect(putSpy).toHaveBeenCalledOnce());
     });
 
+    it("sends a nested auth object with empty strings to clear credentials when auth type is none", async () => {
+      let capturedBody: Record<string, unknown> | undefined;
+      server.use(
+        http.put("*/tools/tool-1", async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({ id: "tool-1" }, { status: 200 });
+        }),
+      );
+
+      const { result } = renderHook(() =>
+        useToolForm({
+          toolId: "tool-1",
+          initialValues: {
+            name: "my-tool",
+            url: "https://api.example.com",
+            integrationType: "REST",
+            requestType: "POST",
+            authType: "basic",
+            authUsername: "admin",
+            authPassword: "*****", // pragma: allowlist secret
+          },
+        }),
+      );
+
+      // User switches auth off
+      act(() => {
+        result.current.setAuthType("none");
+      });
+
+      await act(async () => {
+        await result.current.handleSubmit({
+          preventDefault: vi.fn(),
+        } as unknown as FormEvent<HTMLFormElement>);
+      });
+
+      await waitFor(() => expect(capturedBody).toBeDefined());
+      // Nested auth object with EMPTY STRINGS (not null) clears the stored credential
+      expect(capturedBody?.auth).toEqual({ authType: "", authValue: "" });
+      // No flat auth_* fields that would trigger the assemble_auth path
+      expect(capturedBody?.auth_type).toBeUndefined();
+      expect(capturedBody?.auth_password).toBeUndefined();
+    });
+
+    it("omits auth fields on update when the secret is still masked (unchanged)", async () => {
+      let capturedBody: Record<string, unknown> | undefined;
+      server.use(
+        http.put("*/tools/tool-1", async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({ id: "tool-1" }, { status: 200 });
+        }),
+      );
+
+      const { result } = renderHook(() =>
+        useToolForm({
+          toolId: "tool-1",
+          initialValues: {
+            name: "my-tool",
+            url: "https://api.example.com",
+            integrationType: "REST",
+            requestType: "POST",
+            authType: "basic",
+            authUsername: "admin",
+            authPassword: "*****", // masked value from the server // pragma: allowlist secret
+          },
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleSubmit({
+          preventDefault: vi.fn(),
+        } as unknown as FormEvent<HTMLFormElement>);
+      });
+
+      await waitFor(() => expect(capturedBody).toBeDefined());
+      // Masked secret must not be round-tripped — no auth fields at all
+      expect(capturedBody?.auth_type).toBeUndefined();
+      expect(capturedBody?.auth_password).toBeUndefined();
+      expect(capturedBody?.auth_username).toBeUndefined();
+    });
+
+    it("sends auth fields on update when the user enters a new basic password", async () => {
+      let capturedBody: Record<string, unknown> | undefined;
+      server.use(
+        http.put("*/tools/tool-1", async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({ id: "tool-1" }, { status: 200 });
+        }),
+      );
+
+      const { result } = renderHook(() =>
+        useToolForm({
+          toolId: "tool-1",
+          initialValues: {
+            name: "my-tool",
+            url: "https://api.example.com",
+            integrationType: "REST",
+            requestType: "POST",
+            authType: "basic",
+            authUsername: "admin",
+            authPassword: "*****", // pragma: allowlist secret
+          },
+        }),
+      );
+
+      act(() => {
+        result.current.setAuthPassword("new-secret"); // pragma: allowlist secret
+      });
+
+      await act(async () => {
+        await result.current.handleSubmit({
+          preventDefault: vi.fn(),
+        } as unknown as FormEvent<HTMLFormElement>);
+      });
+
+      await waitFor(() => expect(capturedBody).toBeDefined());
+      expect(capturedBody?.auth_type).toBe("basic");
+      expect(capturedBody?.auth_password).toBe("new-secret"); // pragma: allowlist secret
+      expect(capturedBody?.auth_username).toBe("admin");
+    });
+
+    it("sends auth fields on update when the user enters a new bearer token", async () => {
+      let capturedBody: Record<string, unknown> | undefined;
+      server.use(
+        http.put("*/tools/tool-1", async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({ id: "tool-1" }, { status: 200 });
+        }),
+      );
+
+      const { result } = renderHook(() =>
+        useToolForm({
+          toolId: "tool-1",
+          initialValues: {
+            name: "my-tool",
+            url: "https://api.example.com",
+            integrationType: "REST",
+            requestType: "POST",
+            authType: "bearer",
+            bearerToken: "*****", // pragma: allowlist secret
+          },
+        }),
+      );
+
+      act(() => {
+        result.current.setBearerToken("fresh-token"); // pragma: allowlist secret
+      });
+
+      await act(async () => {
+        await result.current.handleSubmit({
+          preventDefault: vi.fn(),
+        } as unknown as FormEvent<HTMLFormElement>);
+      });
+
+      await waitFor(() => expect(capturedBody).toBeDefined());
+      expect(capturedBody?.auth_type).toBe("bearer");
+      expect(capturedBody?.auth_token).toBe("fresh-token"); // pragma: allowlist secret
+    });
+
     it("does not send POST request when toolId is provided", async () => {
       const postSpy = vi.fn(() => HttpResponse.json({ id: "tool-1" }, { status: 201 }));
       const putSpy = vi.fn(() => HttpResponse.json({ id: "tool-1" }, { status: 200 }));

@@ -9,6 +9,11 @@ export type RequestType = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 export type AuthType = "none" | "basic" | "bearer" | "custom";
 export type SchemaMode = "none" | "generated" | "manual";
 
+// Mirrors the backend `settings.masked_auth_value`: secrets are returned masked
+// in tool reads, so the edit form must never round-trip this placeholder back
+// (doing so would re-encode the mask over the real stored credential).
+const MASKED_AUTH_VALUE = "*****"; // pragma: allowlist secret
+
 export interface CustomHeader {
   id: string;
   key: string;
@@ -595,6 +600,46 @@ export function useToolForm({
           if (toolId) {
             const { request_type } = formData.tool;
             const REST_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"];
+
+            // Secrets come back masked ("*****") in tool reads. Only send auth
+            // fields when the user entered a real (non-masked, non-empty) secret,
+            // otherwise omit them entirely so the backend leaves the stored
+            // credential untouched — a plain URL/description edit must not clobber it.
+            const isRealSecret = (value?: string) => Boolean(value && value !== MASKED_AUTH_VALUE);
+            let authFields: Record<string, unknown> = {};
+
+            if (authType === "none") {
+              // Explicitly clear any stored credential. This must be the nested
+              // `auth` object with EMPTY STRINGS (not null): update_tool only
+              // writes auth_type/auth_value when the incoming value `is not None`,
+              // and the nested form bypasses the flat assemble_auth path (which
+              // ignores empty/none auth types and would otherwise leave auth as-is).
+              authFields = { auth: { authType: "", authValue: "" } };
+            } else {
+              let authChanged = false;
+              if (formData.tool.auth_type === "basic") {
+                authChanged = isRealSecret(formData.tool.auth_password);
+              } else if (formData.tool.auth_type === "bearer") {
+                authChanged = isRealSecret(formData.tool.auth_token);
+              } else if (formData.tool.auth_type === "authheaders") {
+                authChanged =
+                  isRealSecret(formData.tool.auth_header_value) ||
+                  (formData.tool.auth_headers ?? []).some((h) => isRealSecret(h.value));
+              }
+
+              if (authChanged) {
+                authFields = {
+                  auth_type: formData.tool.auth_type,
+                  auth_username: formData.tool.auth_username,
+                  auth_password: formData.tool.auth_password, // pragma: allowlist secret
+                  auth_token: formData.tool.auth_token,
+                  auth_header_key: formData.tool.auth_header_key,
+                  auth_header_value: formData.tool.auth_header_value,
+                  auth_headers: formData.tool.auth_headers,
+                };
+              }
+            }
+
             const updatePayload = {
               name: formData.tool.name,
               url: formData.tool.url,
@@ -604,14 +649,8 @@ export function useToolForm({
               jsonpath_filter: formData.tool.jsonpath_filter,
               tags: formData.tool.tags,
               visibility: formData.tool.visibility,
-              auth_type: formData.tool.auth_type,
-              auth_username: formData.tool.auth_username,
-              auth_password: formData.tool.auth_password, // pragma: allowlist secret
-              auth_token: formData.tool.auth_token,
-              auth_header_key: formData.tool.auth_header_key,
-              auth_header_value: formData.tool.auth_header_value,
-              auth_headers: formData.tool.auth_headers,
               customName: formData.tool.name,
+              ...authFields,
               ...(REST_METHODS.includes(request_type)
                 ? { requestType: request_type, integrationType: "REST" }
                 : {}),
@@ -665,7 +704,7 @@ export function useToolForm({
         }
       }
     },
-    [validateForm, getFormData, createTool, updateTool, resetForm, toolId],
+    [validateForm, getFormData, createTool, updateTool, resetForm, toolId, authType],
   );
 
   const isValid = useMemo(() => {
