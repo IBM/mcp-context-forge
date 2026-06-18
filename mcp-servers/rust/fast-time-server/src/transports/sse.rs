@@ -1,4 +1,4 @@
-// Copyright 2025
+// Copyright 2026
 // SPDX-License-Identifier: Apache-2.0
 
 use axum::extract::Query;
@@ -171,10 +171,7 @@ mod tests {
             .expect("initialize response should be sent as SSE data");
         let body: serde_json::Value =
             serde_json::from_str(&message).expect("SSE message should be JSON-RPC");
-        assert_eq!(
-            body["result"]["protocolVersion"],
-            crate::config::MCP_PROTOCOL_VERSION
-        );
+        assert_eq!(body["result"]["protocolVersion"], "2024-11-05");
         assert_eq!(
             body["result"]["serverInfo"]["name"],
             crate::config::APP_NAME

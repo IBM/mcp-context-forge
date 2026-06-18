@@ -1,6 +1,6 @@
 // fast-time-server - Ultra-fast MCP server for performance testing
 //
-// Copyright 2025
+// Copyright 2026
 // SPDX-License-Identifier: Apache-2.0
 
 mod app;

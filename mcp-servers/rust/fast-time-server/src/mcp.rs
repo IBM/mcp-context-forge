@@ -1,4 +1,4 @@
-// Copyright 2025
+// Copyright 2026
 // SPDX-License-Identifier: Apache-2.0
 
 use axum::body;
@@ -8,7 +8,7 @@ use chrono::Utc;
 use serde_json::json;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::config::{APP_NAME, APP_VERSION, MCP_PROTOCOL_VERSION};
+use crate::config::{APP_NAME, APP_VERSION, MCP_PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS};
 use crate::delay::{compute_delay, validate_delay};
 use crate::time::{parse_time_in_timezone, parse_timezone};
 
@@ -23,14 +23,28 @@ pub(crate) fn id_json(id: Option<&serde_json::Value>) -> String {
         .unwrap_or_else(|| "null".to_string())
 }
 
-pub(crate) fn initialize_body(id: Option<&serde_json::Value>) -> String {
+pub(crate) fn initialize_body(id: Option<&serde_json::Value>, protocol_version: &str) -> String {
     format!(
         r#"{{"jsonrpc":"2.0","id":{},"result":{{"protocolVersion":"{}","capabilities":{{"tools":{{}}}},"serverInfo":{{"name":"{}","version":"{}"}},"instructions":"Ultra-fast MCP test server."}}}}"#,
         id_json(id),
-        MCP_PROTOCOL_VERSION,
+        protocol_version,
         APP_NAME,
         APP_VERSION
     )
+}
+
+/// Echo back the client's requested protocol version when supported, otherwise
+/// advertise the latest version this server speaks.
+pub(crate) fn negotiate_protocol_version(req: &serde_json::Value) -> &'static str {
+    let requested = req
+        .get("params")
+        .and_then(|params| params.get("protocolVersion"))
+        .and_then(serde_json::Value::as_str);
+    SUPPORTED_PROTOCOL_VERSIONS
+        .iter()
+        .copied()
+        .find(|&supported| Some(supported) == requested)
+        .unwrap_or(MCP_PROTOCOL_VERSION)
 }
 
 pub(crate) fn tools_list_response(id: Option<&serde_json::Value>) -> Response {
@@ -113,7 +127,7 @@ pub(crate) async fn tools_call_response(
             )
         }),
         "get_stats" => {
-            let count = DIRECT_REQUEST_COUNT.load(Ordering::Relaxed);
+            let count = DIRECT_REQUEST_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
             text_result_response(
                 id,
                 &format!(
@@ -173,7 +187,7 @@ pub(crate) async fn sse_message_response(req: &serde_json::Value) -> Option<Stri
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
     let response = match method {
-        "initialize" => json_response(initialize_body(id)),
+        "initialize" => json_response(initialize_body(id, negotiate_protocol_version(req))),
         "ping" => empty_result_response(id),
         "tools/list" => tools_list_response(id),
         "tools/call" => tools_call_response(id, req).await,
