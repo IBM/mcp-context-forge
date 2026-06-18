@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { api, ApiError, getToken, setToken, clearToken } from "./client";
 import { server } from "@/test/mocks/server";
@@ -288,8 +288,8 @@ describe("api client", () => {
     it("redirects to login on 401 response", async () => {
       const originalLocation = window.location;
       const mockReplace = vi.fn();
-      delete (window as any).location;
-      window.location = { ...originalLocation, replace: mockReplace } as any;
+      delete (window as unknown as { location?: unknown }).location;
+      window.location = { ...originalLocation, replace: mockReplace } as unknown as Location;
 
       server.use(http.get("*/api/protected", () => new HttpResponse(null, { status: 401 })));
 
@@ -307,8 +307,8 @@ describe("api client", () => {
     it("does not redirect to login on 401 for /app/auth/me", async () => {
       const originalLocation = window.location;
       const mockReplace = vi.fn();
-      delete (window as any).location;
-      window.location = { ...originalLocation, replace: mockReplace } as any;
+      delete (window as unknown as { location?: unknown }).location;
+      window.location = { ...originalLocation, replace: mockReplace } as unknown as Location;
 
       server.use(http.get("*/app/auth/me", () => new HttpResponse(null, { status: 401 })));
 

@@ -1,4 +1,4 @@
-﻿import { render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { IntlProvider } from "react-intl";
 import { UsersTable } from "./UsersTable";
@@ -124,7 +124,7 @@ describe("UsersTable", () => {
   });
 
   it("handles empty date strings", () => {
-    const user: User = { ...baseUser, created_at: "", last_login: null as any };
+    const user: User = { ...baseUser, created_at: "", last_login: null as unknown as string };
     renderWithIntl(
       <UsersTable users={[user]} onDeleteClick={mockOnDeleteClick} onEditClick={mockOnEditClick} />,
     );
@@ -144,7 +144,7 @@ describe("UsersTable", () => {
     const originalDate = global.Date;
     const mockDate = vi.fn(() => {
       throw new Error("Date error");
-    }) as any;
+    }) as unknown as typeof global.Date;
     mockDate.now = originalDate.now;
     global.Date = mockDate;
     const user: User = { ...baseUser, created_at: "error-date" };
