@@ -1991,6 +1991,17 @@ class TestGatewayEndpoints:
         assert response.status_code == 200
         mock_update.assert_called_once()
 
+    @patch("mcpgateway.main.gateway_service.update_gateway")
+    def test_update_gateway_endpoint_secondary_returns_202_for_pending(self, mock_update, test_client, auth_headers):
+        """Async gateway update should return 202 when service reports pending."""
+        mock_update.return_value = {**MOCK_GATEWAY_READ, "status": "pending", "status_message": "Gateway update accepted and pending initialization", "reachable": False}
+        req = {"description": "Updated description"}
+        response = test_client.put("/gateways/1", json=req, headers=auth_headers)
+        assert response.status_code == 202
+        assert response.json()["status"] == "pending"
+        assert response.headers["Retry-After"] == "5"
+        mock_update.assert_called_once()
+
     @patch("mcpgateway.main.gateway_service.delete_gateway")
     @patch("mcpgateway.main.gateway_service.get_gateway")
     def test_delete_gateway_endpoint_no_resources(self, mock_get, mock_delete, test_client, auth_headers):
@@ -2000,6 +2011,18 @@ class TestGatewayEndpoints:
         response = test_client.delete("/gateways/1", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
+        mock_delete.assert_called_once()
+
+    @patch("mcpgateway.main.gateway_service.delete_gateway")
+    @patch("mcpgateway.main.gateway_service.get_gateway")
+    def test_delete_gateway_endpoint_no_resources_returns_202_for_deleting(self, mock_get, mock_delete, test_client, auth_headers):
+        """Async gateway delete should return 202 when service reports deleting."""
+        mock_get.return_value = MagicMock(capabilities={})
+        mock_delete.return_value = {**MOCK_GATEWAY_READ, "status": "deleting", "status_message": "Gateway deletion accepted and pending cleanup", "reachable": False}
+        response = test_client.delete("/gateways/1", headers=auth_headers)
+        assert response.status_code == 202
+        assert response.json()["status"] == "deleting"
+        assert response.headers["Retry-After"] == "5"
         mock_delete.assert_called_once()
 
     @patch("mcpgateway.main.gateway_service.delete_gateway")
@@ -2069,6 +2092,17 @@ class TestGatewayEndpoints:
         mock_create.assert_called_once()
 
     @patch("mcpgateway.main.gateway_service.register_gateway")
+    def test_create_gateway_endpoint_returns_202_for_pending_registration(self, mock_create, test_client, auth_headers):
+        """Async gateway registration should return 202 when service reports pending."""
+        mock_create.return_value = {**MOCK_GATEWAY_READ, "status": "pending", "status_message": "Gateway registration accepted and pending initialization", "reachable": False}
+        req = {"name": "test_gateway", "url": "http://example.com"}
+        response = test_client.post("/gateways/", json=req, headers=auth_headers)
+        assert response.status_code == 202
+        assert response.json()["status"] == "pending"
+        assert response.headers["Retry-After"] == "5"
+        mock_create.assert_called_once()
+
+    @patch("mcpgateway.main.gateway_service.register_gateway")
     def test_create_gateway_endpoint_skipped_tools_in_response(self, mock_create, test_client, auth_headers):
         """POST /gateways/ must include skipped_tools in the response body when tools are skipped (issue #136 Bug C)."""
         skipped = [
@@ -2103,6 +2137,18 @@ class TestGatewayEndpoints:
         assert response.status_code == 404
         mock_get.assert_called_once()
 
+    @patch("mcpgateway.main.gateway_service.get_gateway")
+    def test_get_gateway_endpoint_returns_409_for_ambiguous_identifier(self, mock_get, test_client, auth_headers):
+        """GET /gateways/{id} returns 409 when visible name/slug lookup is ambiguous."""
+        # First-Party
+        from mcpgateway.services.gateway_service import GatewayLookupConflictError
+
+        mock_get.side_effect = GatewayLookupConflictError("shared-name")
+        response = test_client.get("/gateways/shared-name", headers=auth_headers)
+        assert response.status_code == 409
+        assert "ambiguous" in response.json()["detail"]
+        mock_get.assert_called_once()
+
     @patch("mcpgateway.main.gateway_service.update_gateway")
     def test_update_gateway_endpoint(self, mock_update, test_client, auth_headers):
         """Test updating an existing gateway."""
@@ -2110,6 +2156,17 @@ class TestGatewayEndpoints:
         req = {"description": "Updated description"}
         response = test_client.put("/gateways/1", json=req, headers=auth_headers)
         assert response.status_code == 200
+        mock_update.assert_called_once()
+
+    @patch("mcpgateway.main.gateway_service.update_gateway")
+    def test_update_gateway_endpoint_returns_202_for_pending(self, mock_update, test_client, auth_headers):
+        """Async gateway update should return 202 when service reports pending."""
+        mock_update.return_value = {**MOCK_GATEWAY_READ, "status": "pending", "status_message": "Gateway update accepted and pending initialization", "reachable": False}
+        req = {"description": "Updated description"}
+        response = test_client.put("/gateways/1", json=req, headers=auth_headers)
+        assert response.status_code == 202
+        assert response.json()["status"] == "pending"
+        assert response.headers["Retry-After"] == "5"
         mock_update.assert_called_once()
 
     @patch("mcpgateway.main.gateway_service.delete_gateway")
@@ -2121,6 +2178,17 @@ class TestGatewayEndpoints:
         response = test_client.delete("/gateways/1", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
+
+    @patch("mcpgateway.main.gateway_service.delete_gateway")
+    @patch("mcpgateway.main.gateway_service.get_gateway")
+    def test_delete_gateway_endpoint_returns_202_for_deleting(self, mock_get, mock_delete, test_client, auth_headers):
+        """Async gateway delete should return 202 when service reports deleting."""
+        mock_get.return_value = MagicMock(capabilities={})
+        mock_delete.return_value = {**MOCK_GATEWAY_READ, "status": "deleting", "status_message": "Gateway deletion accepted and pending cleanup", "reachable": False}
+        response = test_client.delete("/gateways/1", headers=auth_headers)
+        assert response.status_code == 202
+        assert response.json()["status"] == "deleting"
+        assert response.headers["Retry-After"] == "5"
 
     @patch("mcpgateway.main.gateway_service.set_gateway_state")
     def test_set_gateway_state(self, mock_toggle, test_client, auth_headers):

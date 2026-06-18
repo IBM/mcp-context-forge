@@ -35,6 +35,7 @@ from functools import lru_cache
 import html
 import json
 import logging
+import math
 import multiprocessing
 import os
 import re
@@ -171,7 +172,7 @@ from mcpgateway.services.content_security import ContentPatternError, ContentSiz
 from mcpgateway.services.dataplane_publisher import DataplanePublisherService
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.export_service import ExportError, ExportService
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayNameConflictError, GatewayNotFoundError
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayLookupConflictError, GatewayNameConflictError, GatewayNotFoundError
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
@@ -6935,6 +6936,7 @@ async def list_gateways(
 async def register_gateway(
     gateway: GatewayCreate,
     request: Request,
+    response: Response = None,  # type: ignore[assignment]
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[GatewayRead, JSONResponse]:
@@ -6944,6 +6946,7 @@ async def register_gateway(
     Args:
         gateway: Gateway creation data.
         request: The FastAPI request object for metadata extraction.
+        response: Outgoing response used to set `202 Accepted` for async lifecycle.
         db: Database session.
         user: Authenticated user.
 
@@ -6986,7 +6989,7 @@ async def register_gateway(
 
         logger.debug(f"User {SecurityValidator.sanitize_log_message(user_email)} is creating a new gateway for team {team_id}")
 
-        return await gateway_service.register_gateway(
+        result = await gateway_service.register_gateway(
             db,
             gateway,
             created_by=metadata["created_by"],
@@ -6997,6 +7000,13 @@ async def register_gateway(
             owner_email=user_email,
             visibility=visibility,
         )
+        result_status = getattr(result, "status", None)
+        if result_status is None and isinstance(result, dict):
+            result_status = result.get("status")
+        if result_status == "pending" and response is not None:
+            response.status_code = status.HTTP_202_ACCEPTED
+            response.headers["Retry-After"] = str(max(1, math.ceil(settings.gateway_async_lifecycle_poll_interval)))
+        return result
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_502_BAD_GATEWAY)
@@ -7041,6 +7051,8 @@ async def get_gateway(gateway_id: str, request: Request, db: Session = Depends(g
         gateway = await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
         _enforce_scoped_resource_access(request, db, user, f"/gateways/{gateway_id}")
         return gateway
+    except GatewayLookupConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except GatewayNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -7051,6 +7063,7 @@ async def update_gateway(
     gateway_id: str,
     gateway: GatewayUpdate,
     request: Request,
+    response: Response = None,  # type: ignore[assignment]
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[GatewayRead, JSONResponse]:
@@ -7061,6 +7074,7 @@ async def update_gateway(
         gateway_id: Gateway ID.
         gateway: Gateway update data.
         request (Request): The FastAPI request object for metadata extraction.
+        response: Outgoing response used to set `202 Accepted` for async lifecycle.
         db: Database session.
         user: Authenticated user.
 
@@ -7083,6 +7097,12 @@ async def update_gateway(
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
         )
+        result_status = getattr(result, "status", None)
+        if result_status is None and isinstance(result, dict):
+            result_status = result.get("status")
+        if result_status == "pending" and response is not None:
+            response.status_code = status.HTTP_202_ACCEPTED
+            response.headers["Retry-After"] = str(max(1, math.ceil(settings.gateway_async_lifecycle_poll_interval)))
         db.commit()
         db.close()
         return result
@@ -7110,13 +7130,20 @@ async def update_gateway(
 
 @gateway_router.delete("/{gateway_id}")
 @require_permission("gateways.delete")
-async def delete_gateway(gateway_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_gateway(
+    gateway_id: str,
+    request: Request,
+    response: Response = None,  # type: ignore[assignment]
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Union[Dict[str, str], GatewayRead]:
     """
     Delete a gateway by ID.
 
     Args:
         gateway_id: ID of the gateway.
         request: Incoming FastAPI request (for visibility scope resolution).
+        response: Outgoing response used to set `202 Accepted` for async lifecycle.
         db: Database session.
         user: Authenticated user.
 
@@ -7132,7 +7159,7 @@ async def delete_gateway(gateway_id: str, request: Request, db: Session = Depend
         auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
         current = await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
         has_resources = bool(current.capabilities.get("resources"))
-        await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
+        result = await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
 
         # If the gateway had resources and was successfully deleted, invalidate
         # the whole resource cache. This is needed since the cache holds both
@@ -7143,6 +7170,14 @@ async def delete_gateway(gateway_id: str, request: Request, db: Session = Depend
 
         db.commit()
         db.close()
+        result_status = getattr(result, "status", None)
+        if result_status is None and isinstance(result, dict):
+            result_status = result.get("status")
+        if result_status == "deleting":
+            if response is not None:
+                response.status_code = status.HTTP_202_ACCEPTED
+                response.headers["Retry-After"] = str(max(1, math.ceil(settings.gateway_async_lifecycle_poll_interval)))
+            return result
         return {"status": "success", "message": f"Gateway {gateway_id} deleted"}
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
