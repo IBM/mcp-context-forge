@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { render } from "@testing-library/react";
-import React from "react";
 import { Badge, badgeVariants } from "./badge";
 
 describe("Badge", () => {
@@ -51,7 +50,8 @@ describe("Badge", () => {
 
       for (const [variant, token] of Object.entries(expectations)) {
         const classes = badgeVariants({
-          variant: variant as Parameters<typeof badgeVariants>[0]["variant"],
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          variant: variant as any,
         });
         expect(classes).toContain(token);
       }
@@ -142,7 +142,7 @@ describe("Badge", () => {
   describe("Export & displayName", () => {
     it("should export Badge and have displayName or function name", () => {
       expect(Badge).toBeDefined();
-      expect(Badge.displayName ?? Badge.name).toBe("Badge");
+      expect((Badge as any).displayName ?? Badge.name).toBe("Badge");
       expect(typeof Badge).toBe("function");
     });
   });

@@ -58,7 +58,8 @@ describe("Gateways Utils", () => {
       expect(getVirtualServerEndpoint("test-id")).toBe("/servers/test-id/mcp");
 
       // Restore window.location
-      window.location = originalLocation;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      window.location = originalLocation as any;
     });
 
     it("returns absolute URL if window.location.origin is available", () => {
@@ -86,7 +87,6 @@ describe("Gateways Utils", () => {
 
       expect(() => copyToClipboard("test")).not.toThrow();
 
-      // @ts-expect-error - invalid url
 
       // @ts-expect-error - invalid url - restoring clipboard
       navigator.clipboard = originalClipboard;

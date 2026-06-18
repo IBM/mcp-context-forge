@@ -274,7 +274,7 @@ describe("Users", () => {
     const loadMoreButton = screen.getByRole("button", { name: /load more users/i });
 
     // Create a pending promise to simulate loading
-    let resolveLoadMore: (() => void) | null = null;
+    let resolveLoadMore: ((value: unknown) => void) | null = null;
     const pendingLoadMore = new Promise<unknown>((resolve) => {
       resolveLoadMore = resolve;
     });
@@ -285,7 +285,7 @@ describe("Users", () => {
 
     // Resolve the promise
     if (resolveLoadMore) {
-      resolveLoadMore({
+      (resolveLoadMore as any)({
         users: createMockUsers(10, 5),
         nextCursor: null,
       });
@@ -499,7 +499,7 @@ describe("Users", () => {
     const loadMoreButton = screen.getByRole("button", { name: /load more users/i });
 
     // Mock load more with a delayed response
-    let resolveLoadMore: (value: unknown) => void;
+    let resolveLoadMore: ((value: unknown) => void) | null = null;
     const delayedPromise = new Promise((resolve) => {
       resolveLoadMore = resolve;
     });
@@ -511,7 +511,7 @@ describe("Users", () => {
     await user.click(loadMoreButton);
 
     // Resolve the promise
-    resolveLoadMore({ users: createMockUsers(10, 5), nextCursor: null });
+    if (resolveLoadMore) (resolveLoadMore as any)({ users: createMockUsers(10, 5), nextCursor: null });
 
     // Wait for resolution
     await waitFor(() => {

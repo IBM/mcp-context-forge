@@ -17,6 +17,9 @@ let mockUser: User | null = {
   auth_provider: "local",
   email_verified: true,
   password_change_required: false,
+      created_at: new Date().toISOString(),
+      failed_login_attempts: 0,
+      is_locked: false,
 };
 
 vi.mock("@/auth/useAuth", () => ({
@@ -125,6 +128,9 @@ describe("HeaderProfileMenu", () => {
       auth_provider: "local",
       email_verified: true,
       password_change_required: false,
+      created_at: new Date().toISOString(),
+      failed_login_attempts: 0,
+      is_locked: false,
     };
   });
 });
