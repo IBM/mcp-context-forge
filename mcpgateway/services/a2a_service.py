@@ -48,6 +48,7 @@ from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.admin_check import is_user_admin
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filter_sensitive_headers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
@@ -1929,6 +1930,43 @@ class A2AAgentService(BaseService):
                 db.rollback()
                 raise
 
+    @staticmethod
+    def _prepare_header_flows(
+        request_headers: Optional[Dict[str, str]],
+        agent_passthrough_headers: Optional[List[str]],
+    ) -> tuple[Dict[str, str], Dict[str, str]]:
+        """
+        Prepare header flows for plugin hooks vs downstream agent invocation.
+
+        SECURITY: Plugin hooks ALWAYS receive sanitized headers (prevents credential leaks).
+        Downstream headers respect the ENABLE_SENSITIVE_HEADER_PASSTHROUGH flag.
+
+        Args:
+            request_headers: Inbound request headers (already lowercased)
+            agent_passthrough_headers: Whitelist of header names to forward
+
+        Returns:
+            Tuple of (plugin_headers, downstream_headers)
+        """
+        if not request_headers or not agent_passthrough_headers:
+            return {}, {}
+
+        whitelist_lower = {h.lower() for h in agent_passthrough_headers}
+        whitelisted_headers = {k: v for k, v in request_headers.items() if k in whitelist_lower}
+
+        # Plugin hooks ALWAYS get sanitized headers (no sensitive headers ever)
+        plugin_headers = _filter_sensitive_headers(whitelisted_headers)
+
+        # Downstream headers respect the feature flag
+        # Phase 1 (Issue #3621): When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=false (default),
+        # filter out sensitive headers even if whitelisted (backward compatible)
+        if not settings.enable_sensitive_header_passthrough:
+            downstream_headers = plugin_headers  # Same as plugins when flag OFF
+        else:
+            downstream_headers = whitelisted_headers  # Include sensitive when flag ON
+
+        return plugin_headers, downstream_headers
+
     async def invoke_agent(
         self,
         db: Session,
@@ -2086,43 +2124,20 @@ class A2AAgentService(BaseService):
         agent_oauth_config = getattr(agent, "oauth_config", None)
         agent_passthrough_headers = getattr(agent, "passthrough_headers", None)
 
-        # Import filter function (used for both plugin and downstream filtering)
-        # First-Party
-        from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filter_sensitive_headers
-
         # SECURITY: Split header flows for plugin hooks vs downstream agent
         # Plugin hooks ALWAYS receive sanitized headers (prevents credential leaks)
         # Downstream headers respect the ENABLE_SENSITIVE_HEADER_PASSTHROUGH flag
-        if request_headers and agent_passthrough_headers:
-            whitelist_lower = {h.lower() for h in agent_passthrough_headers}
-            whitelisted_headers = {k: v for k, v in request_headers.items() if k in whitelist_lower}
+        plugin_headers, downstream_headers = self._prepare_header_flows(request_headers, agent_passthrough_headers)
 
-            # Plugin hooks ALWAYS get sanitized headers (no sensitive headers ever)
-            plugin_headers = _filter_sensitive_headers(whitelisted_headers)
-
-            # Downstream headers respect the feature flag
-            # Phase 1 (Issue #3621): When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=false (default),
-            # filter out sensitive headers even if whitelisted (backward compatible)
-            if not settings.enable_sensitive_header_passthrough:
-                downstream_headers = plugin_headers  # Same as plugins when flag OFF
-            else:
-                downstream_headers = whitelisted_headers  # Include sensitive when flag ON
-
-            # SECURITY AUDIT: Log headers forwarded to downstream agent for compliance
-            if downstream_headers:
-                logger.info(
-                    "A2A passthrough headers forwarded to downstream agent '%s': %s (user: %s, agent_id: %s)",
-                    agent_name,
-                    list(downstream_headers.keys()),
-                    user_email or "anonymous",
-                    agent_id,
-                )
-        elif request_headers:
-            plugin_headers = {}  # No whitelist = no headers reach plugins
-            downstream_headers = {}
-        else:
-            plugin_headers = {}
-            downstream_headers = {}
+        # SECURITY AUDIT: Log headers forwarded to downstream agent for compliance
+        if downstream_headers:
+            logger.info(
+                "A2A passthrough headers forwarded to downstream agent '%s': %s (user: %s, agent_id: %s)",
+                agent_name,
+                list(downstream_headers.keys()),
+                user_email or "anonymous",
+                agent_id,
+            )
 
         # ═══════════════════════════════════════════════════════════════════════════
         # SECURITY: Validate UAID endpoint domain before invocation

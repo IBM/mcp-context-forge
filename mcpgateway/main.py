@@ -198,6 +198,7 @@ from mcpgateway.utils import uaid as uaid_utils
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
 from mcpgateway.utils.error_formatter import ErrorFormatter, sanitize_validation_error_for_log, should_expose_error_details
+from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filter_sensitive_headers
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -5020,8 +5021,23 @@ async def delete_a2a_agent(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-# Moved to mcpgateway.utils.header_filtering to avoid circular imports
-from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filter_sensitive_headers  # noqa: E402
+def _prepare_request_headers(request_headers: Dict[str, str]) -> Dict[str, str]:
+    """
+    Prepare request headers for A2A agent invocation based on security configuration.
+
+    Phase 1 (Issue #3621): When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true, pass all headers.
+    Filtering happens in a2a_service after checking whitelist.
+
+    Args:
+        request_headers: Raw request headers dictionary
+
+    Returns:
+        Dict[str, str]: Prepared headers (either all headers or filtered headers)
+    """
+    if settings.enable_sensitive_header_passthrough:
+        return {k.lower(): v for k, v in request_headers.items()}
+    else:
+        return _filter_sensitive_headers({k.lower(): v for k, v in request_headers.items()})
 
 
 @a2a_router.post("/{agent_name}/invoke", response_model=Dict[str, Any])
@@ -5106,12 +5122,7 @@ async def invoke_a2a_agent(
         # Extract inbound request metadata for plugin context
         # Strip sensitive/credential headers before passing to plugins.
         content_type = request.headers.get("content-type")
-        # Phase 1 (Issue #3621): When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true, pass all headers
-        # Filtering happens in a2a_service after checking whitelist
-        if settings.enable_sensitive_header_passthrough:
-            request_headers = {k.lower(): v for k, v in request.headers.items()}
-        else:
-            request_headers = _filter_sensitive_headers({k.lower(): v for k, v in request.headers.items()})
+        request_headers = _prepare_request_headers(request.headers)
 
         return await a2a_service.invoke_agent(
             db,
@@ -5203,12 +5214,7 @@ async def invoke_a2a_agent_by_id(
         # Extract inbound request metadata for plugin context
         # Strip sensitive/credential headers before passing to plugins.
         content_type = request.headers.get("content-type")
-        # Phase 1 (Issue #3621): When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true, pass all headers
-        # Filtering happens in a2a_service after checking whitelist
-        if settings.enable_sensitive_header_passthrough:
-            request_headers = {k.lower(): v for k, v in request.headers.items()}
-        else:
-            request_headers = _filter_sensitive_headers({k.lower(): v for k, v in request.headers.items()})
+        request_headers = _prepare_request_headers(request.headers)
 
         return await a2a_service.invoke_agent(
             db,
