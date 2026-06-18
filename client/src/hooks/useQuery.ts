@@ -97,15 +97,15 @@ async function executeRequest<TData, TBody>(
 }
 
 export function useQuery<TData, TBody = unknown>(
-  path: string,
+  path: string | null,
   options: UseQueryOptions<TData, TBody> = {},
 ): UseQueryResult<TData, TBody> {
   // Validate inputs
-  if (!path || typeof path !== "string") {
-    throw new Error("useQuery: path must be a non-empty string");
+  if (path !== null && (!path || typeof path !== "string")) {
+    throw new Error("useQuery: path must be a non-empty string or null");
   }
 
-  if (path.startsWith("//")) {
+  if (path?.startsWith("//")) {
     throw new Error("useQuery: path must be relative (no protocol)");
   }
 
@@ -123,7 +123,7 @@ export function useQuery<TData, TBody = unknown>(
   const [data, setData] = useState<TData | undefined>(initialData);
   const [error, setError] = useState<QueryError | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(
-    enabled && shouldFetchImmediately && initialData === undefined,
+    path !== null && enabled && shouldFetchImmediately && initialData === undefined,
   );
 
   const headersKey = useMemo(() => createHeadersKey(headers), [headers]);
@@ -131,6 +131,10 @@ export function useQuery<TData, TBody = unknown>(
 
   const execute = useCallback(
     async (overrideBody?: TBody): Promise<TData> => {
+      if (path === null) {
+        throw new Error("useQuery: cannot execute a query without a path");
+      }
+
       setIsLoading(true);
       setError(null);
 
@@ -159,7 +163,7 @@ export function useQuery<TData, TBody = unknown>(
   );
 
   useEffect(() => {
-    if (!enabled || !shouldFetchImmediately) {
+    if (path === null || !enabled || !shouldFetchImmediately) {
       setIsLoading(false);
       return;
     }

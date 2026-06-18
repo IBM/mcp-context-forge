@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "./client";
-import { buildCreateVirtualServerPayload, deleteVirtualServer } from "./virtualServers";
+import {
+  buildCreateVirtualServerPayload,
+  buildUpdateVirtualServerPayload,
+  deleteVirtualServer,
+} from "./virtualServers";
 
 vi.mock("./client", () => ({
   api: {
@@ -231,5 +235,49 @@ describe("virtualServers API", () => {
     await deleteVirtualServer("gateway/1?mode=delete");
 
     expect(api.delete).toHaveBeenCalledWith("/servers/gateway%2F1%3Fmode%3Ddelete");
+  });
+
+  it("builds the update payload expected by PUT /servers/{id}", () => {
+    const payload = buildUpdateVirtualServerPayload({
+      name: "Updated research server",
+      description: "",
+      tags: [],
+      visibility: "public",
+      oauthEnabled: false,
+    });
+
+    expect(payload).toEqual({
+      name: "Updated research server",
+      description: "",
+      tags: [],
+      visibility: "public",
+      oauth_enabled: false,
+    });
+    expect(payload).not.toHaveProperty("icon");
+    expect(payload).not.toHaveProperty("oauth_config");
+    expect(payload).not.toHaveProperty("associated_tools");
+    expect(payload).not.toHaveProperty("associated_resources");
+    expect(payload).not.toHaveProperty("associated_prompts");
+    expect(payload).not.toHaveProperty("team_id");
+  });
+
+  it("includes associated components in update payloads when provided", () => {
+    const payload = buildUpdateVirtualServerPayload({
+      name: "Updated component server",
+      visibility: "team",
+      teamId: "team-abc-123",
+      oauthEnabled: false,
+      associatedTools: ["existing-tool", "new-tool"],
+      associatedResources: ["existing-resource"],
+      associatedPrompts: ["new-prompt"],
+    });
+
+    expect(payload).toMatchObject({
+      associated_tools: ["existing-tool", "new-tool"],
+      associated_resources: ["existing-resource"],
+      associated_prompts: ["new-prompt"],
+      team_id: "team-abc-123",
+    });
+    expect(payload).not.toHaveProperty("oauth_config");
   });
 });

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useIntl } from "react-intl";
 import { ChevronRight, CircleAlert, Server } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -34,13 +34,27 @@ export function CreateServerForm({
   initialValues,
   onCancel,
   onSuccess,
+  title,
+  description: formDescription,
+  submitLabel,
+  isSubmitting = false,
+  submitError,
+  children,
 }: {
   initialValues?: CreateServerFormInitialValues;
   onCancel: () => void;
   onSuccess: (details: CreateServerDetails) => void;
+  title?: string;
+  description?: string;
+  submitLabel?: string;
+  isSubmitting?: boolean;
+  submitError?: string | null;
+  children?: ReactNode;
 }) {
   const intl = useIntl();
-  const [optionalOpen, setOptionalOpen] = useState(false);
+  const [optionalOpen, setOptionalOpen] = useState(
+    Boolean(initialValues?.tags?.length || initialValues?.description),
+  );
   const {
     name,
     visibility,
@@ -56,6 +70,12 @@ export function CreateServerForm({
     validateField,
     handleSubmit,
   } = useCreateServerForm(initialValues);
+  const resolvedTitle = title ?? intl.formatMessage({ id: "gateways.createServer.title" });
+  const resolvedDescription =
+    formDescription ?? intl.formatMessage({ id: "gateways.createServer.description" });
+  const resolvedSubmitLabel =
+    submitLabel ?? intl.formatMessage({ id: "gateways.createServer.continue" });
+  const displayedSubmitError = submitError ?? errors.submit;
 
   const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     handleSubmit(event, onSuccess);
@@ -71,25 +91,23 @@ export function CreateServerForm({
         <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-[#f554ff] text-black">
           <Server className="size-5" aria-hidden="true" />
         </span>
-        <h1 className="text-xl font-semibold tracking-tight text-foreground">
-          {intl.formatMessage({ id: "gateways.createServer.title" })}
-        </h1>
+        <h1 className="text-xl font-semibold tracking-tight text-foreground">{resolvedTitle}</h1>
       </div>
 
       <div className="mt-5">
         <p className="max-w-[48rem] text-sm leading-5 text-muted-foreground">
-          {intl.formatMessage({ id: "gateways.createServer.description" })}
+          {resolvedDescription}
         </p>
       </div>
 
-      {errors.submit && (
+      {displayedSubmitError && (
         <div
           className="mt-6 flex gap-3 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
           role="alert"
           aria-live="assertive"
         >
           <CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-          <p>{errors.submit}</p>
+          <p>{displayedSubmitError}</p>
         </div>
       )}
 
@@ -257,15 +275,18 @@ export function CreateServerForm({
         )}
       </div>
 
+      {children && <div className="mt-7">{children}</div>}
+
       <div className="mt-8 flex items-center justify-end gap-5">
         <Button type="button" variant="ghost" onClick={onCancel} className="h-8 px-2 text-sm">
           {intl.formatMessage({ id: "common.button.cancel" })}
         </Button>
         <Button
           type="submit"
+          disabled={isSubmitting}
           className="h-8 rounded-md bg-white px-3 text-sm font-medium text-black hover:bg-white/90"
         >
-          {intl.formatMessage({ id: "gateways.createServer.continue" })}
+          {resolvedSubmitLabel}
         </Button>
       </div>
     </form>
