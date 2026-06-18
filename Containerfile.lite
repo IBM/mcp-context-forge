@@ -51,24 +51,19 @@ ARG UBI_BASE=registry.access.redhat.com/ubi10:1780550950
 ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:1780432202
 ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:1780550884
 # Wheel closure stage - pulls the prebuilt dependency closure for the target
-# arch from GHCR (s390x/ppc64le; built by the `wheels` job in
-# docker-multiplatform.yml from infra/wheels/Containerfile). The default
-# below is UBI_MINIMAL deliberately, not a GHCR wheel tag: Dockerfile ARG
-# defaults are plain string interpolation with no per-arch conditionals (no
-# nested ${VAR_${TARGETARCH}} indirection - confirmed unsupported), so a
-# single default can't safely differ between "amd64/arm64, which must stay
-# self-sufficient" and "s390x/ppc64le, which want the latest wheel image".
-# UBI_MINIMAL has no /wheels content, which is harmless since the install
-# step further down gates on whether it found any *.whl files - this keeps
-# amd64/arm64 (the PR-gating builds) free of any GHCR dependency. For a
-# local s390x/ppc64le build that wants the prebuilt closure without
-# resolving a lock-hash tag, pass it explicitly:
-#   --build-arg WHEELS_REF=ghcr.io/ibm/mcp-context-forge-wheels:s390x-latest
-# Pipeline overrides pass a specific lock-hash or `latest` wheel image via
-# --build-arg WHEELS_REF=...; the default lives on this ARG line rather than
-# as a shell-style fallback on the FROM line so it stays visible to
-# `docker build --help` and any override fully replaces it.
-ARG WHEELS_REF=${UBI_MINIMAL}
+# arch from GHCR (built by the `wheels` job in docker-multiplatform.yml from
+# infra/wheels/Containerfile, for all four arches). The default below is
+# arch-aware so a plain `docker build` with no --build-arg pulls the real
+# closure on every arch - TARGETARCH (amd64/arm64/s390x/ppc64le) matches the
+# wheels job's tag suffix exactly. The pipeline (docker-multiplatform.yml)
+# never relies on this default: its "Compute wheel image ref" step resolves
+# an explicit WHEELS_REF for every arch (lock-hash tag, else `latest` tag,
+# else an explicit UBI_MINIMAL override for the cold-start case before any
+# wheel image has been published), so CI never depends on this GHCR tag
+# existing. This default only matters for local builds with no flags. These
+# wheel images are public, no registry auth needed.
+ARG TARGETARCH
+ARG WHEELS_REF=ghcr.io/ibm/mcp-context-forge-wheels:${TARGETARCH}-latest
 FROM ${WHEELS_REF} AS wheels
 RUN mkdir -p /wheels
 
