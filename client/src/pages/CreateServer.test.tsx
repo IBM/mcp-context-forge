@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
-import { screen, waitFor, fireEvent, act } from "@testing-library/react";
+import { screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/mocks/server";
@@ -9,35 +8,45 @@ import { createVirtualServer } from "@/api/virtualServers";
 import { ApiError } from "@/api/client";
 import { CreateServer } from "./CreateServer";
 
+interface MockCreateServerFormProps {
+  onSuccess: (details: Record<string, unknown> | null) => void;
+}
+
+interface MockSourceSelectionProps {
+  createServerActions: {
+    onSkip: () => Promise<void>;
+  };
+}
+
 let mockForm = false;
-let capturedProps: any = null;
+let capturedProps: MockCreateServerFormProps | null = null;
 let mockSourceSelection = false;
-let capturedSourceSelectionProps: any = null;
+let capturedSourceSelectionProps: MockSourceSelectionProps | null = null;
 
 vi.mock("@/components/gateways/CreateServerForm", async (importOriginal) => {
-  const actual = (await importOriginal()) as any;
+  const actual = (await importOriginal()) as Record<string, unknown>;
   return {
     ...actual,
-    CreateServerForm: (props: any) => {
+    CreateServerForm: (props: MockCreateServerFormProps) => {
       if (mockForm) {
         capturedProps = props;
         return <div data-testid="mock-create-server-form" />;
       }
-      return actual.CreateServerForm(props);
+      return (actual.CreateServerForm as React.ComponentType<MockCreateServerFormProps>)(props);
     },
   };
 });
 
 vi.mock("@/components/gateways/SourceSelection", async (importOriginal) => {
-  const actual = (await importOriginal()) as any;
+  const actual = (await importOriginal()) as Record<string, unknown>;
   return {
     ...actual,
-    SourceSelection: (props: any) => {
+    SourceSelection: (props: MockSourceSelectionProps) => {
       if (mockSourceSelection) {
         capturedSourceSelectionProps = props;
         return <div data-testid="mock-source-selection" />;
       }
-      return actual.SourceSelection(props);
+      return (actual.SourceSelection as React.ComponentType<MockSourceSelectionProps>)(props);
     },
   };
 });
@@ -320,7 +329,7 @@ describe("CreateServer", () => {
 
       // Step 1: Trigger success on the form with null details
       act(() => {
-        capturedProps.onSuccess(null);
+        capturedProps?.onSuccess(null);
       });
 
       // Now step should be sources, and SourceSelection should render
@@ -328,7 +337,7 @@ describe("CreateServer", () => {
 
       // Step 2: Trigger onSkip from SourceSelection
       await act(async () => {
-        capturedSourceSelectionProps.createServerActions.onSkip();
+        await capturedSourceSelectionProps?.createServerActions.onSkip();
       });
 
       // Step should set back to details, rendering CreateServerForm again

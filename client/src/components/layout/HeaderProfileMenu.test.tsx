@@ -3,12 +3,13 @@ import userEvent from "@testing-library/user-event";
 import { ThemeProvider } from "@/hooks/useTheme";
 import { I18nProvider } from "@/i18n";
 import { render, screen } from "@testing-library/react";
+import type { User } from "../../types/user";
 import { HeaderProfileMenu } from "./HeaderProfileMenu";
 
 const mockLogout = vi.fn();
 const mockNavigate = vi.fn();
 
-let mockUser: any = {
+let mockUser: User | null = {
   email: "bobo@cf.com",
   full_name: "Bobo Example",
   is_admin: false,

@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import React from "react";
 import { RadioGroup, RadioGroupItem } from "./radio-group";
 
 describe("RadioGroup", () => {
@@ -41,7 +42,7 @@ describe("RadioGroup", () => {
     });
 
     it("should support ref forwarding", () => {
-      const ref = { current: null } as any;
+      const ref = React.createRef<HTMLDivElement>();
       render(
         <RadioGroup ref={ref}>
           <RadioGroupItem value="option1" id="option1" />
@@ -52,7 +53,7 @@ describe("RadioGroup", () => {
     });
 
     it("should forward custom props", () => {
-      const { container } = render(
+      render(
         <RadioGroup data-testid="group" id="my-group">
           <RadioGroupItem value="option1" id="option1" />
         </RadioGroup>,
@@ -108,7 +109,7 @@ describe("RadioGroup", () => {
     });
 
     it("should support ref forwarding on item", () => {
-      const ref = { current: null } as any;
+      const ref = React.createRef<HTMLButtonElement>();
       render(
         <RadioGroup>
           <RadioGroupItem ref={ref} value="option1" id="option1" />
