@@ -254,9 +254,10 @@ export function useUserForm(options?: UseUserFormOptions): UseUserFormReturn {
   const validationTimeouts = useRef<Map<keyof FormErrors, NodeJS.Timeout>>(new Map());
 
   useEffect(() => {
+    const timeouts = validationTimeouts.current;
     return () => {
-      validationTimeouts.current.forEach((timeout) => clearTimeout(timeout));
-      validationTimeouts.current.clear();
+      timeouts.forEach((timeout) => clearTimeout(timeout));
+      timeouts.clear();
     };
   }, []);
 
