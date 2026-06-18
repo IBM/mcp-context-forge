@@ -8,29 +8,18 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-06-07T13:04:32.122933434Z"
+exclude-newer = "2026-06-08T10:43:27.886159Z"
 exclude-newer-span = "P10D"
 
 [options.exclude-newer-package]
-opentelemetry-exporter-otlp-proto-common = "2026-06-08T10:56:34Z"
-opentelemetry-api = "2026-06-08T10:56:34Z"
-langchain-core = "2026-06-08T10:56:34Z"
 cpex = "2026-06-08T10:56:34Z"
 cpex-retry-with-backoff = "2026-06-08T10:56:34Z"
-opentelemetry-exporter-otlp-proto-http = "2026-06-08T10:56:34Z"
 cpex-pii-filter = "2026-06-08T10:56:34Z"
 cpex-url-reputation = "2026-06-08T10:56:34Z"
 cpex-rate-limiter = "2026-06-16T23:59:59Z"
-opentelemetry-semantic-conventions = "2026-06-08T10:56:34Z"
-aiohttp = "2026-06-08T10:56:34Z"
+cpex-secrets-detection = "2026-06-08T10:56:34Z"
 cryptography = "2026-06-17T23:59:59Z"
 starlette = "2026-06-17T23:59:59Z"
-opentelemetry-sdk = "2026-06-08T10:56:34Z"
-langsmith = "2026-06-08T10:56:34Z"
-prometheus-fastapi-instrumentator = "2026-06-08T10:56:34Z"
-opentelemetry-proto = "2026-06-08T10:56:34Z"
-opentelemetry-exporter-otlp-proto-grpc = "2026-06-08T10:56:34Z"
-cpex-secrets-detection = "2026-06-08T10:56:34Z"
 cpex-encoded-exfil-detection = "2026-06-08T10:56:34Z"
 
 [[package]]
@@ -3042,7 +3031,7 @@ wheels = [
 
 [[package]]
 name = "mcp-contextforge-gateway"
-version = "1.0.3"
+version = "1.0.4"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
