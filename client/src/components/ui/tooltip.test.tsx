@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { render, screen } from "@testing-library/react";
 import React from "react";
 import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from "./tooltip";
 
@@ -11,7 +10,7 @@ describe("Tooltip Components", () => {
 
   describe("TooltipProvider", () => {
     it("should render TooltipProvider with default delayDuration", () => {
-      const { container } = render(
+      render(
         <TooltipProvider>
           <div data-testid="child">Content</div>
         </TooltipProvider>,
@@ -22,7 +21,7 @@ describe("Tooltip Components", () => {
     });
 
     it("should render TooltipProvider with custom delayDuration", () => {
-      const { container } = render(
+      render(
         <TooltipProvider delayDuration={300}>
           <div data-testid="child">Content</div>
         </TooltipProvider>,
@@ -46,7 +45,7 @@ describe("Tooltip Components", () => {
 
   describe("Tooltip & TooltipTrigger", () => {
     it("should render Tooltip root with correct data-slot", () => {
-      const { container } = render(
+      render(
         <TooltipProvider>
           <Tooltip open={true}>
             <TooltipTrigger asChild>
@@ -61,7 +60,7 @@ describe("Tooltip Components", () => {
     });
 
     it("should render TooltipTrigger with correct data-slot", () => {
-      const { container } = render(
+      render(
         <TooltipProvider>
           <Tooltip open={true}>
             <TooltipTrigger asChild>
@@ -94,7 +93,7 @@ describe("Tooltip Components", () => {
 
   describe("TooltipContent", () => {
     it("should render TooltipContent without crashing", () => {
-      const { container } = render(
+      render(
         <TooltipProvider>
           <Tooltip open={true}>
             <TooltipTrigger asChild>
@@ -129,7 +128,7 @@ describe("Tooltip Components", () => {
     });
 
     it("should render TooltipContent with custom sideOffset", () => {
-      const { container } = render(
+      render(
         <TooltipProvider>
           <Tooltip open={true}>
             <TooltipTrigger asChild>
@@ -145,7 +144,7 @@ describe("Tooltip Components", () => {
     });
 
     it("should apply custom className to TooltipContent", () => {
-      const { container } = render(
+      render(
         <TooltipProvider>
           <Tooltip open={true}>
             <TooltipTrigger asChild>
@@ -161,7 +160,7 @@ describe("Tooltip Components", () => {
     });
 
     it("should render arrow inside TooltipContent", () => {
-      const { container } = render(
+      render(
         <TooltipProvider>
           <Tooltip open={true}>
             <TooltipTrigger asChild>
@@ -200,7 +199,7 @@ describe("Tooltip Components", () => {
     });
 
     it("should have z-index class for proper stacking", () => {
-      const { container } = render(
+      render(
         <TooltipProvider>
           <Tooltip open={true}>
             <TooltipTrigger asChild>
@@ -216,7 +215,7 @@ describe("Tooltip Components", () => {
     });
 
     it("should apply animation classes", () => {
-      const { container } = render(
+      render(
         <TooltipProvider>
           <Tooltip open={true}>
             <TooltipTrigger asChild>
@@ -236,7 +235,7 @@ describe("Tooltip Components", () => {
 
   describe("Full Tooltip Integration", () => {
     it("should render complete tooltip structure", () => {
-      const { container } = render(
+      render(
         <TooltipProvider>
           <Tooltip open={true}>
             <TooltipTrigger asChild>
@@ -280,7 +279,7 @@ describe("Tooltip Components", () => {
     });
 
     it("should render with Portal", () => {
-      const { container } = render(
+      render(
         <TooltipProvider>
           <Tooltip open={true}>
             <TooltipTrigger asChild>

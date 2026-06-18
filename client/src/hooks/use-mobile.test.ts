@@ -3,12 +3,12 @@ import { renderHook, act } from "@testing-library/react";
 import { useIsMobile } from "./use-mobile";
 
 describe("useIsMobile", () => {
-  let addEventListenerMock: any;
-  let removeEventListenerMock: any;
-  let changeHandler: any;
+  let addEventListenerMock: ReturnType<typeof vi.fn>;
+  let removeEventListenerMock: ReturnType<typeof vi.fn>;
+  let changeHandler: (() => void) | null = null;
 
   beforeEach(() => {
-    addEventListenerMock = vi.fn((event, handler) => {
+    addEventListenerMock = vi.fn((event: string, handler: () => void) => {
       if (event === "change") {
         changeHandler = handler;
       }
