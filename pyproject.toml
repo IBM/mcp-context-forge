@@ -16,12 +16,12 @@ exclude-newer = "10 days"
 
 [tool.uv.exclude-newer-package]
 cpex = "2026-06-08T10:56:34Z"
-cpex-url-reputation = "2026-06-08T10:56:34Z"
-cpex-rate-limiter = "2026-06-16T23:59:59Z"
-cpex-encoded-exfil-detection = "2026-06-08T10:56:34Z"
-cpex-pii-filter = "2026-06-08T10:56:34Z"
-cpex-retry-with-backoff = "2026-06-08T10:56:34Z"
-cpex-secrets-detection = "2026-06-08T10:56:34Z"
+cpex-url-reputation = "2026-06-18T23:59:59Z"
+cpex-rate-limiter = "2026-06-18T23:59:59Z"
+cpex-encoded-exfil-detection = "2026-06-18T23:59:59Z"
+cpex-pii-filter = "2026-06-18T23:59:59Z"
+cpex-retry-with-backoff = "2026-06-18T23:59:59Z"
+cpex-secrets-detection = "2026-06-18T23:59:59Z"
 cryptography = "2026-06-17T23:59:59Z"
 starlette = "2026-06-17T23:59:59Z"
 
@@ -274,12 +274,12 @@ templating = [
 # External plugin packages (optional)
 # Install with: pip install mcp-contextforge-gateway[plugins]
 plugins = [
-    "cpex-encoded-exfil-detection>=0.3.3",
-    "cpex-pii-filter>=0.3.3",
-    "cpex-rate-limiter>=0.1.4",
-    "cpex-retry-with-backoff>=0.3.3",
-    "cpex-secrets-detection>=0.3.4",
-    "cpex-url-reputation>=0.3.2",
+    "cpex-encoded-exfil-detection>=0.3.4",
+    "cpex-pii-filter>=0.3.4",
+    "cpex-rate-limiter>=0.1.5",
+    "cpex-retry-with-backoff>=0.3.4",
+    "cpex-secrets-detection>=0.3.5",
+    "cpex-url-reputation>=0.3.3",
 ]
 
 # gRPC Support (EXPERIMENTAL - optional, disabled by default)
