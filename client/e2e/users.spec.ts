@@ -35,7 +35,7 @@ const MOCK_USER_2: User = {
 };
 
 // encodeURIComponent("john@example.com") = "john%40example.com"
-const MOCK_USER_ROUTE = `**/auth/email/admin/users/john%40example.com`;
+const MOCK_USER_ROUTE = `**/auth/email/admin/users/${encodeURIComponent(MOCK_USER.email)}`;
 
 test.describe("Users page", () => {
   test.beforeEach(async ({ page, apiMock }) => {
