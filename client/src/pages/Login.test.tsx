@@ -76,7 +76,7 @@ describe("Login", () => {
   });
 
   it("displays invalid credentials error on 401 ApiError", async () => {
-    const error = new ApiError("ApiError") as ApiError & { status?: number };
+    const error = new ApiError(401, "ApiError", "") as ApiError & { status?: number };
     error.status = 401;
 
     vi.mocked(useAuth).mockReturnValue({
@@ -96,7 +96,7 @@ describe("Login", () => {
   });
 
   it("displays generic failed error on non-401 ApiError", async () => {
-    const error = new ApiError("ApiError") as ApiError & { status?: number };
+    const error = new ApiError(500, "ApiError", "") as ApiError & { status?: number };
     error.status = 500;
 
     vi.mocked(useAuth).mockReturnValue({
