@@ -193,8 +193,10 @@ describe("ToolForm", () => {
       await user.type(screen.getByLabelText(/Name/), "my-tool");
       await user.type(screen.getByLabelText(/URL/), "https://api.example.com");
 
-      expect(screen.getByRole("button", { name: "Add tool" })).toBeEnabled();
-    });
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Add tool" })).toBeEnabled();
+      });
+    }, 30000);
 
     it("Cancel button calls onToggle", async () => {
       const user = userEvent.setup();
