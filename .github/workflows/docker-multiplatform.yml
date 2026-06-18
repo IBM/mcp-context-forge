@@ -59,11 +59,15 @@ env:
 
 jobs:
   # ---------------------------------------------------------------
-  # Build the full dependency-closure wheel image for architectures
-  # without PyPI manylinux wheels (s390x, ppc64le). Content-addressed by
-  # sha256(uv.lock) and pull-or-build idempotent, so unchanged deps are a
-  # cache hit. Rides the same non-PR events as the s390x/ppc64le platform
-  # builds below (push/merge_group/workflow_dispatch).
+  # Build the full dependency-closure wheel image for every arch.
+  # amd64/arm64 have full PyPI manylinux coverage and don't need this for
+  # Containerfile.lite's own install, but building it for all four lets
+  # Containerfile.lite's `ARG WHEELS_REF` default to a single arch-aware
+  # GHCR tag (${TARGETARCH}-latest) that always resolves, so a plain
+  # `docker build` with no flags works on every arch without a fallback to
+  # UBI_MINIMAL. Content-addressed by sha256(uv.lock) and pull-or-build
+  # idempotent, so unchanged deps are a cache hit. Rides the same non-PR
+  # events as the platform builds below (push/merge_group/workflow_dispatch).
   # ---------------------------------------------------------------
   wheels:
     if: github.event_name != 'pull_request'
@@ -72,6 +76,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+            suffix: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            suffix: arm64
           - platform: linux/s390x
             runner: ubuntu-24.04-s390x
             suffix: s390x

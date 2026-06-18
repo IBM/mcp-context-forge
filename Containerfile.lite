@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.12
 
 ###############################################################################
 # ContextForge (lite) - OCI-compliant multi-stage container build
@@ -51,16 +51,16 @@ ARG UBI_BASE=registry.access.redhat.com/ubi10:1780550950
 ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:1780432202
 ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:1780550884
 # Wheel closure stage - pulls the prebuilt dependency closure for the target
-# arch from GHCR (s390x/ppc64le; built by the `wheels` job in
-# docker-multiplatform.yml from infra/wheels/Containerfile). The default
-# below is the fallback for amd64/arm64 (and any local build that doesn't
-# override it) - UBI_MINIMAL has no /wheels content, which is harmless since
-# the install step further down gates on whether it found any *.whl files.
-# Pipeline/local overrides pass a specific lock-hash or `latest` wheel image
-# via --build-arg WHEELS_REF=...; the default lives on this ARG line rather
-# than as a shell-style fallback on the FROM line so it stays visible to
-# `docker build --help` and any local override fully replaces it.
-ARG WHEELS_REF=${UBI_MINIMAL}
+# arch from GHCR (built by the `wheels` job in docker-multiplatform.yml from
+# infra/wheels/Containerfile, for all four arches). The default below is
+# arch-aware so a plain `docker build` with no --build-arg "just works" -
+# TARGETARCH (amd64/arm64/s390x/ppc64le) matches the wheels job's tag suffix
+# exactly. The pipeline overrides this explicitly with a lock-hash-matched
+# tag when available (see docker-multiplatform.yml); the default only
+# matters for local builds and the rare case where the pipeline leaves
+# WHEELS_REF unset. These wheel images are public, no registry auth needed.
+ARG TARGETARCH
+ARG WHEELS_REF=ghcr.io/ibm/mcp-context-forge-wheels:${TARGETARCH}-latest
 FROM ${WHEELS_REF} AS wheels
 RUN mkdir -p /wheels
 
