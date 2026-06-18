@@ -268,8 +268,13 @@ jobs:
           context: .
           file: Containerfile.lite
           platforms: ${{ matrix.platform }}
+          # Omit the build-arg entirely when WHEELS_REF is unset (amd64/arm64,
+          # or s390x/ppc64le with no wheel image published yet) so
+          # Containerfile.lite's own `ARG WHEELS_REF=${UBI_MINIMAL}` default
+          # applies. Passing `WHEELS_REF=` explicitly (even empty) would
+          # override that default with a blank value and break the build.
           build-args: |
-            WHEELS_REF=${{ env.WHEELS_REF }}
+            ${{ env.WHEELS_REF && format('WHEELS_REF={0}', env.WHEELS_REF) || '' }}
 
           push: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
           load: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
