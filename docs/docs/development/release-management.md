@@ -225,7 +225,7 @@ After any Rust dependency update, run cargo-vet before release freeze:
 make rust-vet
 ```
 
-This runs `cargo vet check` against `supply-chain/config.toml`, `supply-chain/audits.toml`, and the trusted audit imports recorded in `supply-chain/imports.lock`. Release CI treats this as a blocking gate for Rust wheels and source distributions.
+The `make rust-vet` target runs `cargo vet check` against `supply-chain/config.toml`, `supply-chain/audits.toml`, and the trusted audit imports recorded in `supply-chain/imports.lock`. Release CI treats this as a blocking gate for Rust wheels and source distributions.
 
 If vetting fails, use the [cargo-vet audit workflow](https://mozilla.github.io/cargo-vet/performing-audits.html) to handle each unvetted crate before tagging:
 
@@ -240,6 +240,12 @@ If vetting fails, use the [cargo-vet audit workflow](https://mozilla.github.io/c
 Audits and exemptions should be reviewed by Rust maintainers or security reviewers who understand the affected crate and the `safe-to-deploy` / `safe-to-run` criteria. Prefer diff audits over exemptions. Exemptions are allowed, but each one reduces the value of the vetting gate and should be revisited with `cargo vet suggest`.
 
 When ContextForge and `cpex-plugins` share Rust dependency changes, apply the same decision in both repositories: run each repo's cargo-vet check, update each repo's `supply-chain/` metadata, or explicitly defer the update in the repo where the audit cannot be completed.
+
+At the end of Rust supply-chain vetting, prune stale cargo-vet exemptions:
+
+```bash
+cargo vet prune
+```
 
 ### 3.3 Go dependencies
 
