@@ -96,6 +96,7 @@ jobs:
           WHEELS_IMAGE_LC=$(echo "${{ env.IMAGE_NAME }}-wheels" | tr '[:upper:]' '[:lower:]')
           LOCK_HASH=$(sha256sum uv.lock | cut -c1-16)
           echo "image=${{ env.REGISTRY }}/${WHEELS_IMAGE_LC}:${{ matrix.suffix }}-${LOCK_HASH}" >> "${GITHUB_OUTPUT}"
+          echo "latest=${{ env.REGISTRY }}/${WHEELS_IMAGE_LC}:${{ matrix.suffix }}-latest" >> "${GITHUB_OUTPUT}"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
@@ -117,6 +118,9 @@ jobs:
             echo "exists=false" >> "${GITHUB_OUTPUT}"
           fi
 
+      # Push both the lock-hash tag (exact reproducible reference) and a
+      # `latest` tag per arch (fallback for local builds and for `build`
+      # below when the lock-hash image isn't published yet).
       - name: Build and push wheel image
         if: steps.check.outputs.exists != 'true'
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
@@ -125,7 +129,9 @@ jobs:
           file: infra/wheels/Containerfile
           platforms: ${{ matrix.platform }}
           push: true
-          tags: ${{ steps.ref.outputs.image }}
+          tags: |
+            ${{ steps.ref.outputs.image }}
+            ${{ steps.ref.outputs.latest }}
           cache-from: type=gha,scope=wheels-${{ matrix.suffix }}
           cache-to: type=gha,mode=max,scope=wheels-${{ matrix.suffix }}
 
@@ -133,13 +139,15 @@ jobs:
   # Build each platform in parallel
   # ---------------------------------------------------------------
   build:
-    # `needs: wheels` would otherwise force this job (all matrix entries,
-    # including amd64) to skip whenever `wheels` itself skips (e.g. on PR
-    # events) — GitHub's default `needs` gate requires success, and treats
-    # skipped the same as failed. `always() && needs.wheels.result != 'failure'`
-    # tolerates a skipped wheels job while still failing fast if it errored.
-    if: always() && needs.wheels.result != 'failure' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
-    needs: wheels
+    # Deliberately NOT `needs: wheels`. A `needs` dependency would block
+    # every arch (including amd64/arm64, which don't even consume wheel
+    # images) until `wheels` finishes — up to its 120-minute timeout on a
+    # cold lock-hash. Instead, `build` probes the registry directly for the
+    # lock-matched wheel image and falls back to the per-arch `latest` wheel
+    # image if it isn't published yet (see "Compute wheel image ref" below).
+    # `wheels` keeps running independently on the same trigger to publish
+    # fresh images for subsequent builds.
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: Build ${{ matrix.suffix }}
     strategy:
       fail-fast: false
@@ -205,24 +213,43 @@ jobs:
         if: github.event_name != 'pull_request' || matrix.build_on_pr
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-      # s390x/ppc64le lack PyPI manylinux wheels for the full dep closure, so
-      # they install from the wheel image built by the `wheels` job above.
-      # amd64/arm64 leave WHEELS_REF empty, which falls through to the PyPI
-      # install branch in Containerfile.lite.
-      - name: Compute wheel image ref
-        if: (github.event_name != 'pull_request' || matrix.build_on_pr) && (matrix.suffix == 's390x' || matrix.suffix == 'ppc64le')
-        run: |
-          WHEELS_IMAGE_LC=$(echo "${{ env.IMAGE_NAME }}-wheels" | tr '[:upper:]' '[:lower:]')
-          LOCK_HASH=$(sha256sum uv.lock | cut -c1-16)
-          echo "WHEELS_REF=${{ env.REGISTRY }}/${WHEELS_IMAGE_LC}:${{ matrix.suffix }}-${LOCK_HASH}" >> "${GITHUB_ENV}"
-
+      # Login is needed both for pushing the final image (push/workflow_dispatch)
+      # and for probing the wheel-image registry below (s390x/ppc64le, any
+      # non-PR event or PR builds that opt in via build_on_pr).
       - name: Log in to GHCR
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || ((github.event_name != 'pull_request' || matrix.build_on_pr) && (matrix.suffix == 's390x' || matrix.suffix == 'ppc64le'))
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # s390x/ppc64le lack PyPI manylinux wheels for the full dep closure, so
+      # they install from a wheel image built by the `wheels` job. Prefer the
+      # lock-matched tag (exact reproducible closure); if it isn't published
+      # yet (cold lock-hash, `wheels` job still running), fall back to the
+      # per-arch `latest` wheel image instead of blocking on `wheels` to
+      # finish. If neither exists (first-ever run), leave WHEELS_REF empty -
+      # Containerfile.lite's install step then falls through to a live PyPI
+      # install, compiling anything missing itself.
+      # amd64/arm64 leave WHEELS_REF empty unconditionally, which falls
+      # through to the same PyPI install branch in Containerfile.lite.
+      - name: Compute wheel image ref
+        if: (github.event_name != 'pull_request' || matrix.build_on_pr) && (matrix.suffix == 's390x' || matrix.suffix == 'ppc64le')
+        run: |
+          WHEELS_IMAGE_LC=$(echo "${{ env.IMAGE_NAME }}-wheels" | tr '[:upper:]' '[:lower:]')
+          LOCK_HASH=$(sha256sum uv.lock | cut -c1-16)
+          LOCK_TAG="${{ env.REGISTRY }}/${WHEELS_IMAGE_LC}:${{ matrix.suffix }}-${LOCK_HASH}"
+          LATEST_TAG="${{ env.REGISTRY }}/${WHEELS_IMAGE_LC}:${{ matrix.suffix }}-latest"
+          if docker manifest inspect "${LOCK_TAG}" >/dev/null 2>&1; then
+            echo "Using lock-matched wheel image: ${LOCK_TAG}"
+            echo "WHEELS_REF=${LOCK_TAG}" >> "${GITHUB_ENV}"
+          elif docker manifest inspect "${LATEST_TAG}" >/dev/null 2>&1; then
+            echo "Lock-matched wheel image not published yet; falling back to ${LATEST_TAG}"
+            echo "WHEELS_REF=${LATEST_TAG}" >> "${GITHUB_ENV}"
+          else
+            echo "No wheel image available yet for ${{ matrix.suffix }}; Containerfile.lite will install from PyPI"
+          fi
 
       - name: Extract metadata
         if: github.event_name != 'pull_request' || matrix.build_on_pr

@@ -25,6 +25,8 @@ on:
       - 'mcpgateway/**'
       - 'plugins/**'
       - 'pyproject.toml'
+      - 'uv.lock'
+      - 'infra/wheels/**'
       - '.github/workflows/docker-multiplatform.yml'
 
 permissions:
