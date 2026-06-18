@@ -2475,6 +2475,9 @@ class Settings(BaseSettings):
     # Async gateway lifecycle processing
     gateway_async_lifecycle_enabled: bool = Field(default=False, description="Enable asynchronous gateway create/update/delete lifecycle processing with 202 Accepted responses")
     gateway_async_lifecycle_poll_interval: float = Field(default=5.0, gt=0, description="Polling interval in seconds for asynchronous gateway lifecycle background processing")
+    gateway_async_lifecycle_attempt_timeout: float = Field(default=30.0, gt=0, description="Timeout in seconds for one asynchronous gateway lifecycle initialization attempt")
+    gateway_async_lifecycle_lease_seconds: float = Field(default=90.0, gt=0, description="Lease TTL in seconds for DB-backed asynchronous gateway lifecycle claims")
+    gateway_async_lifecycle_shutdown_timeout: float = Field(default=5.0, gt=0, description="Bounded shutdown wait in seconds for gateway maintenance tasks")
 
     # Hot/Cold Server Classification
     # Classify servers by usage (hot = active sessions, cold = inactive) for optimized polling

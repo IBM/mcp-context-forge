@@ -3638,6 +3638,9 @@ class GatewayRead(BaseModelWithConfigDict):
     registration_attempts: int = Field(default=0, description="Number of async lifecycle registration attempts")
     next_retry_at: Optional[datetime] = Field(default=None, description="Next async lifecycle retry timestamp")
     last_error: Optional[str] = Field(default=None, description="Most recent async lifecycle error detail")
+    lifecycle_claimed_by: Optional[str] = Field(default=None, description="Worker instance currently claiming async lifecycle work")
+    lifecycle_claimed_at: Optional[datetime] = Field(default=None, description="Timestamp when async lifecycle claim was acquired")
+    lifecycle_claim_expires_at: Optional[datetime] = Field(default=None, description="Timestamp when async lifecycle claim expires")
     enabled: bool = Field(default=True, description="Is the gateway enabled?")
     reachable: bool = Field(default=True, description="Is the gateway reachable/online?")
 

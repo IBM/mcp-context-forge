@@ -5214,6 +5214,12 @@ class TestUpdateOrCreatePrompts:
         result = gateway_service._update_or_create_prompts(MagicMock(), [], mock_gateway, "test")
         assert result == []
 
+    def test_all_none_prompts_returns_empty(self, gateway_service, mock_gateway):
+        db = MagicMock()
+        result = gateway_service._update_or_create_prompts(db, [None], mock_gateway, "test")
+        assert result == []
+        db.execute.assert_not_called()
+
     def test_new_prompt_created(self, gateway_service):
         db = MagicMock()
         db.execute.return_value.scalars.return_value.all.return_value = []
@@ -6548,6 +6554,32 @@ class TestRefreshGatewayToolsResourcesPrompts:
         call_args = gateway_service._initialize_gateway.call_args
         assert "secret" in call_args.kwargs.get("url", call_args[1].get("url", ""))
 
+    @pytest.mark.asyncio
+    async def test_query_param_auth_decryption_failure_continues_for_refresh(self, gateway_service, monkeypatch):
+        """Refresh logs bad query-param auth values and continues without mutating URL."""
+        gw = SimpleNamespace(
+            enabled=True,
+            reachable=True,
+            name="qp-gw",
+            url="http://example.com",
+            transport="sse",
+            auth_type="query_param",
+            auth_value=None,
+            oauth_config=None,
+            ca_certificate=None,
+            auth_query_params={"key": "bad_encrypted"},  # pragma: allowlist secret
+            client_cert=None,
+            client_key=None,
+        )
+        monkeypatch.setattr("mcpgateway.services.gateway_service.decode_auth", MagicMock(side_effect=RuntimeError("bad cipher")))
+        gateway_service._initialize_gateway = AsyncMock(side_effect=Exception("fail"))
+
+        result = await gateway_service._refresh_gateway_tools_resources_prompts("gw-1", gateway=gw)
+
+        assert result["success"] is False
+        call_args = gateway_service._initialize_gateway.call_args
+        assert call_args.kwargs["url"] == "http://example.com"
+
 
 # ---------------------------------------------------------------------------
 # get_first_gateway_by_url tests
@@ -7801,6 +7833,34 @@ class TestSetGatewayStateActivation:
         assert mock_gateway.enabled is True
 
     @pytest.mark.asyncio
+    async def test_activate_client_key_decrypt_failure_continues_with_raw_key(self, gateway_service, mock_gateway, monkeypatch):
+        """Activation keeps raw client_key when decrypt helper raises."""
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(scalar=mock_gateway)
+        mock_gateway.enabled = False
+        mock_gateway.reachable = False
+        mock_gateway.auth_type = None
+        mock_gateway.auth_query_params = None
+        mock_gateway.oauth_config = None
+        mock_gateway.version = 1
+        mock_gateway.tools = []
+        mock_gateway.resources = []
+        mock_gateway.prompts = []
+        mock_gateway.client_cert = "/tmp/cert.pem"
+        mock_gateway.client_key = "raw-key"
+
+        monkeypatch.setattr("mcpgateway.services.gateway_service.get_encryption_service", MagicMock(side_effect=RuntimeError("decrypt unavailable")))
+        monkeypatch.setattr(gateway_service, "_initialize_gateway", AsyncMock(return_value=({"tools": {}}, [], [], [], [])))
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: MagicMock(invalidate_gateways=AsyncMock()))
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: MagicMock(invalidate_gateway=AsyncMock()))
+        monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", MagicMock(invalidate_tags=AsyncMock()))
+        monkeypatch.setattr("mcpgateway.services.gateway_service.register_gateway_capabilities_for_notifications", MagicMock())
+
+        await gateway_service.set_gateway_state(db, mock_gateway.id, activate=True, reachable=True)
+
+        assert gateway_service._initialize_gateway.call_args.kwargs["client_key"] == "raw-key"
+
+    @pytest.mark.asyncio
     async def test_activate_with_new_resources_and_prompts(self, gateway_service, mock_gateway, monkeypatch):
         """Activating gateway adds new tools, resources, and prompts."""
         db = MagicMock()
@@ -8017,6 +8077,106 @@ class TestUpdateGatewayQueryParam:
 
         result = await gateway_service.update_gateway(db, mock_gateway.id, update_data)
         assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_existing_queryparam_reused_when_update_does_not_touch_url_or_creds(self, gateway_service, mock_gateway, monkeypatch):
+        """Existing query_param gateway decrypts for re-init even when auth and URL are unchanged."""
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(scalar=mock_gateway)
+        mock_gateway.auth_type = "query_param"
+        mock_gateway.auth_value = None
+        mock_gateway.auth_query_params = {"api_key": "encrypted_val"}  # pragma: allowlist secret
+        mock_gateway.url = "http://example.com/gateway"
+        mock_gateway.version = 1
+        mock_gateway.tags = []
+        mock_gateway.oauth_config = None
+        mock_gateway.ca_certificate = None
+        mock_gateway.client_cert = None
+        mock_gateway.client_key = None
+
+        update_data = _make_gateway(
+            auth_type=None,
+            auth_value=None,
+            url=None,
+            passthrough_headers=None,
+            visibility=None,
+            oauth_config=None,
+        )
+        update_data.auth_token = "*****"
+        update_data.auth_password = None
+        update_data.auth_header_value = None
+        update_data.auth_query_param_key = None
+        update_data.auth_query_param_value = None
+
+        query_material = SimpleNamespace(
+            auth_query_params_encrypted=None,
+            auth_query_params_decrypted={"api_key": "decrypted_val"},  # pragma: allowlist secret
+            url="http://example.com/gateway?api_key=decrypted_val",
+            client_cert=None,
+            client_key=None,
+        )
+        reinit_material = SimpleNamespace(
+            url="http://example.com/gateway?api_key=decrypted_val",
+            auth_query_params_encrypted=None,
+            auth_query_params_decrypted=None,
+            client_cert=None,
+            client_key=None,
+        )
+
+        monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", MagicMock(side_effect=[mock_gateway, None]))
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: MagicMock(invalidate_gateways=AsyncMock()))
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: MagicMock(invalidate_gateway=AsyncMock()))
+        monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", MagicMock(invalidate_tags=AsyncMock()))
+        monkeypatch.setattr(gateway_service, "_prepare_gateway_connection_material", AsyncMock(side_effect=[query_material, reinit_material]))
+        monkeypatch.setattr(gateway_service, "_initialize_gateway", AsyncMock(return_value=({"tools": {}}, [], [], [], [])))
+
+        result = await gateway_service.update_gateway(db, mock_gateway.id, update_data)
+
+        assert result is not None
+        gateway_service._initialize_gateway.assert_awaited_once()
+        assert gateway_service._initialize_gateway.call_args.kwargs["auth_query_params"] == {"api_key": "decrypted_val"}
+
+    @pytest.mark.asyncio
+    async def test_update_one_time_auth_clears_persistent_auth_after_reinit(self, gateway_service, mock_gateway, monkeypatch):
+        """one_time_auth update clears stored auth material after successful re-init."""
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(scalar=mock_gateway)
+        mock_gateway.auth_type = "bearer"
+        mock_gateway.auth_value = {"Authorization": "Bearer secret"}
+        mock_gateway.auth_query_params = None
+        mock_gateway.oauth_config = {"client_id": "abc"}
+        mock_gateway.version = 1
+        mock_gateway.tags = []
+        mock_gateway.ca_certificate = None
+        mock_gateway.client_cert = None
+        mock_gateway.client_key = None
+
+        update_data = _make_gateway(
+            auth_type=None,
+            auth_value=None,
+            url="http://example.com/gateway",
+            passthrough_headers=None,
+            visibility=None,
+            oauth_config=None,
+            one_time_auth=True,
+        )
+        update_data.auth_token = None
+        update_data.auth_password = None
+        update_data.auth_header_value = None
+        update_data.auth_query_param_key = None
+        update_data.auth_query_param_value = None
+
+        monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", MagicMock(side_effect=[mock_gateway, None]))
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: MagicMock(invalidate_gateways=AsyncMock()))
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: MagicMock(invalidate_gateway=AsyncMock()))
+        monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", MagicMock(invalidate_tags=AsyncMock()))
+        monkeypatch.setattr(gateway_service, "_initialize_gateway", AsyncMock(return_value=({"tools": {}}, [], [], [], [])))
+
+        await gateway_service.update_gateway(db, mock_gateway.id, update_data)
+
+        assert mock_gateway.auth_type == "one_time_auth"
+        assert mock_gateway.auth_value is None
+        assert mock_gateway.oauth_config is None
 
 
 # ---------------------------------------------------------------------------

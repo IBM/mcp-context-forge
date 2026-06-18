@@ -22,6 +22,12 @@ LIFECYCLE_COLUMNS = {
     "last_error",
 }
 LIFECYCLE_INDEX = "idx_gateways_status_next_retry_at"
+CLAIM_COLUMNS = {
+    "lifecycle_claimed_by",
+    "lifecycle_claimed_at",
+    "lifecycle_claim_expires_at",
+}
+CLAIM_INDEX = "idx_gateways_lifecycle_claim"
 
 
 def _migration_context(conn):
@@ -96,10 +102,16 @@ class TestGatewayLifecycleMigrationDefaults:
                     module.upgrade()
 
                 assert LIFECYCLE_COLUMNS <= _column_names(conn)
+                assert CLAIM_COLUMNS <= _column_names(conn)
                 assert LIFECYCLE_INDEX in _index_names(conn)
+                assert CLAIM_INDEX in _index_names(conn)
 
                 existing = conn.execute(sa.text("SELECT status, status_message, registration_attempts, next_retry_at, last_error FROM gateways WHERE id = 'gw-existing'")).one()
                 assert existing == ("active", None, 0, None, None)
+                existing_claim = conn.execute(
+                    sa.text("SELECT lifecycle_claimed_by, lifecycle_claimed_at, lifecycle_claim_expires_at FROM gateways WHERE id = 'gw-existing'")
+                ).one()
+                assert existing_claim == (None, None, None)
 
                 conn.execute(
                     sa.text("INSERT INTO gateways (id, name, slug, url) VALUES (:id, :name, :slug, :url)"),
@@ -107,6 +119,58 @@ class TestGatewayLifecycleMigrationDefaults:
                 )
                 inserted = conn.execute(sa.text("SELECT status, registration_attempts FROM gateways WHERE id = 'gw-new'")).one()
                 assert inserted == ("active", 0)
+        finally:
+            engine.dispose()
+
+
+class TestGatewayLifecycleClaimMigrationDefaults:
+    """Verify lifecycle claim default/backfill behavior."""
+
+    def test_upgrade_adds_nullable_claim_columns_and_index(self):
+        """Existing gateways backfill with no active lifecycle claim from same migration."""
+        engine = sa.create_engine("sqlite:///:memory:")
+        try:
+            with engine.connect() as conn:
+                _create_gateway_table(conn)
+                conn.execute(sa.text("ALTER TABLE gateways ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'active'"))
+                conn.execute(sa.text("ALTER TABLE gateways ADD COLUMN next_retry_at DATETIME"))
+                conn.execute(
+                    sa.text("INSERT INTO gateways (id, name, slug, url) VALUES (:id, :name, :slug, :url)"),
+                    {"id": "gw-existing", "name": "Existing", "slug": "existing", "url": "https://example.com"},
+                )
+                conn.commit()
+
+                ctx = _migration_context(conn)
+                with Operations.context(ctx):
+                    module = importlib.import_module(MODULE_NAME)
+                    module.upgrade()
+
+                assert CLAIM_COLUMNS <= _column_names(conn)
+                assert CLAIM_INDEX in _index_names(conn)
+                existing = conn.execute(
+                    sa.text("SELECT lifecycle_claimed_by, lifecycle_claimed_at, lifecycle_claim_expires_at FROM gateways WHERE id = 'gw-existing'")
+                ).one()
+                assert existing == (None, None, None)
+        finally:
+            engine.dispose()
+
+    def test_claim_downgrade_removes_columns_and_index(self):
+        """downgrade() removes lifecycle claim fields and index from same migration."""
+        engine = sa.create_engine("sqlite:///:memory:")
+        try:
+            with engine.connect() as conn:
+                _create_gateway_table(conn)
+                conn.execute(sa.text("ALTER TABLE gateways ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'active'"))
+                conn.execute(sa.text("ALTER TABLE gateways ADD COLUMN next_retry_at DATETIME"))
+                conn.commit()
+                ctx = _migration_context(conn)
+                with Operations.context(ctx):
+                    module = importlib.import_module(MODULE_NAME)
+                    module.upgrade()
+                    module.downgrade()
+
+                assert CLAIM_COLUMNS.isdisjoint(_column_names(conn))
+                assert CLAIM_INDEX not in _index_names(conn)
         finally:
             engine.dispose()
 
@@ -121,6 +185,9 @@ class TestGatewayLifecycleMigrationDefaults:
                 conn.execute(sa.text("ALTER TABLE gateways ADD COLUMN registration_attempts INTEGER NOT NULL DEFAULT 0"))
                 conn.execute(sa.text("ALTER TABLE gateways ADD COLUMN next_retry_at DATETIME"))
                 conn.execute(sa.text("ALTER TABLE gateways ADD COLUMN last_error TEXT"))
+                conn.execute(sa.text("ALTER TABLE gateways ADD COLUMN lifecycle_claimed_by VARCHAR(64)"))
+                conn.execute(sa.text("ALTER TABLE gateways ADD COLUMN lifecycle_claimed_at DATETIME"))
+                conn.execute(sa.text("ALTER TABLE gateways ADD COLUMN lifecycle_claim_expires_at DATETIME"))
                 conn.commit()
 
                 ctx = _migration_context(conn)
@@ -129,7 +196,9 @@ class TestGatewayLifecycleMigrationDefaults:
                     module.upgrade()
 
                 assert LIFECYCLE_COLUMNS <= _column_names(conn)
+                assert CLAIM_COLUMNS <= _column_names(conn)
                 assert LIFECYCLE_INDEX in _index_names(conn)
+                assert CLAIM_INDEX in _index_names(conn)
         finally:
             engine.dispose()
 
@@ -146,6 +215,8 @@ class TestGatewayLifecycleMigrationDefaults:
                     module.downgrade()
 
                 assert LIFECYCLE_COLUMNS.isdisjoint(_column_names(conn))
+                assert CLAIM_COLUMNS.isdisjoint(_column_names(conn))
                 assert LIFECYCLE_INDEX not in _index_names(conn)
+                assert CLAIM_INDEX not in _index_names(conn)
         finally:
             engine.dispose()

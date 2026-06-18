@@ -16,9 +16,12 @@ from unittest.mock import AsyncMock, call, MagicMock, Mock
 
 # Third-Party
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.db import Base, Gateway as DbGateway
 from mcpgateway.schemas import GatewayRead
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNameConflictError, GatewayNotFoundError, GatewayService, OAuthToolValidationError
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
@@ -227,6 +230,20 @@ async def test_process_gateway_lifecycle_once_returns_false_when_missing():
     assert handled is False
 
 
+@pytest.mark.asyncio
+async def test_process_gateway_lifecycle_once_skips_foreign_claim():
+    service = GatewayService()
+    gateway = SimpleNamespace(id="gw-1", status="pending", lifecycle_claimed_by="other-instance")
+    db = MagicMock()
+    db.execute.return_value = SimpleNamespace(scalar_one_or_none=lambda: gateway)
+    service._process_pending_gateway = AsyncMock()
+
+    handled = await service._process_gateway_lifecycle_once(db, "gw-1")
+
+    assert handled is False
+    service._process_pending_gateway.assert_not_called()
+
+
 def test_get_due_gateway_lifecycle_ids_includes_deleting_and_due_pending(monkeypatch):
     service = GatewayService()
     fake_db = MagicMock()
@@ -259,10 +276,135 @@ def test_split_gateway_lifecycle_ids_preserves_delete_priority():
     assert pending_ids == ["gw-pending-now", "gw-pending-retry"]
 
 
+def test_claim_due_gateway_lifecycle_ids_claims_due_unclaimed_rows(monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, expire_on_commit=False, bind=engine)
+    Base.metadata.create_all(bind=engine)
+    try:
+        with TestingSessionLocal() as db:
+            db.add(
+                DbGateway(
+                    id="gw-pending",
+                    name="Pending Gateway",
+                    slug="pending-gateway",
+                    url="https://example.com/mcp",
+                    transport="SSE",
+                    capabilities={},
+                    status="pending",
+                )
+            )
+            db.commit()
+
+        service = GatewayService()
+        monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", TestingSessionLocal)
+        monkeypatch.setattr(settings, "gateway_async_lifecycle_lease_seconds", 90)
+
+        claimed_ids = service._claim_due_gateway_lifecycle_ids({"pending"})
+
+        assert claimed_ids == ["gw-pending"]
+        with TestingSessionLocal() as db:
+            gateway = db.get(DbGateway, "gw-pending")
+            assert gateway.lifecycle_claimed_by == service._instance_id
+            assert gateway.lifecycle_claimed_at is not None
+            assert gateway.lifecycle_claim_expires_at is not None
+    finally:
+        engine.dispose()
+
+
+def test_claim_due_gateway_lifecycle_ids_returns_empty_for_no_statuses():
+    service = GatewayService()
+
+    assert service._claim_due_gateway_lifecycle_ids(set()) == []
+
+
+def test_claim_due_gateway_lifecycle_ids_uses_postgres_skip_locked(monkeypatch):
+    service = GatewayService()
+    fake_query = MagicMock()
+    fake_query.where.return_value = fake_query
+    fake_query.with_for_update.return_value = fake_query
+    fake_db = MagicMock()
+    fake_db.bind = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+    fake_db.execute.return_value = SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
+
+    class FakeSessionFactory:
+        def __call__(self):
+            return self
+
+        def __enter__(self):
+            return fake_db
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", FakeSessionFactory())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.select", MagicMock(return_value=fake_query))
+
+    assert service._claim_due_gateway_lifecycle_ids({"deleting"}) == []
+    fake_query.with_for_update.assert_called_once_with(skip_locked=True)
+
+
+@pytest.mark.asyncio
+async def test_process_pending_gateway_uses_dedicated_async_attempt_timeout(monkeypatch):
+    service = GatewayService()
+    monkeypatch.setattr(settings, "gateway_async_lifecycle_attempt_timeout", 120)
+    observed_timeout = None
+
+    gateway = SimpleNamespace(
+        id="gw-pending",
+        url="https://example.com/mcp",
+        auth_type=None,
+        auth_query_params=None,
+        client_cert=None,
+        client_key=None,
+        auth_value=None,
+        transport="SSE",
+        oauth_config=None,
+        ca_certificate=None,
+        lifecycle_claimed_by=service._instance_id,
+        registration_attempts=0,
+    )
+
+    async def fake_initialize_gateway_with_timeout(**kwargs):
+        nonlocal observed_timeout
+        observed_timeout = kwargs["initialize_timeout"]
+        raise RuntimeError("init failed")
+
+    db = MagicMock()
+    db.execute.side_effect = [
+        SimpleNamespace(scalar_one_or_none=lambda: "pending"),
+        SimpleNamespace(scalar_one_or_none=lambda: service._instance_id),
+    ]
+    service._initialize_gateway_with_timeout = fake_initialize_gateway_with_timeout
+
+    await service._process_pending_gateway(db, gateway)
+
+    assert observed_timeout == 120
+    assert gateway.registration_attempts == 1
+    assert gateway.lifecycle_claimed_by is None
+
+
+@pytest.mark.asyncio
+async def test_run_gateway_lifecycle_loop_logs_and_continues(monkeypatch):
+    service = GatewayService()
+    warning_log = Mock()
+    service._run_gateway_lifecycle_pass = AsyncMock(side_effect=RuntimeError("boom"))
+    monkeypatch.setattr("mcpgateway.services.gateway_service.logger.warning", warning_log)
+
+    async def fake_sleep(_delay):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr("mcpgateway.services.gateway_service.asyncio.sleep", fake_sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        await service._run_gateway_lifecycle_loop()
+
+    warning_log.assert_called_once()
+
+
 @pytest.mark.asyncio
 async def test_run_gateway_lifecycle_pass_processes_due_gateways(monkeypatch):
     service = GatewayService()
-    service._get_due_gateway_lifecycle_ids = Mock(return_value=["gw-delete", "pending:gw-pending"])
+    service._claim_due_gateway_lifecycle_ids = Mock(side_effect=[["gw-delete"], ["gw-pending"]])
     service._process_gateway_lifecycle_batch = AsyncMock()
     monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", True)
 
@@ -279,18 +421,18 @@ async def test_run_gateway_lifecycle_pass_processes_due_gateways(monkeypatch):
 @pytest.mark.asyncio
 async def test_run_gateway_lifecycle_pass_returns_early_when_disabled(monkeypatch):
     service = GatewayService()
-    service._get_due_gateway_lifecycle_ids = Mock()
+    service._claim_due_gateway_lifecycle_ids = Mock()
     monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", False)
 
     await service._run_gateway_lifecycle_pass()
 
-    service._get_due_gateway_lifecycle_ids.assert_not_called()
+    service._claim_due_gateway_lifecycle_ids.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_run_gateway_lifecycle_pass_logs_and_continues_on_error(monkeypatch):
     service = GatewayService()
-    service._get_due_gateway_lifecycle_ids = Mock(return_value=["gw-1"])
+    service._claim_due_gateway_lifecycle_ids = Mock(side_effect=[["gw-1"], []])
     service._process_gateway_lifecycle_once = AsyncMock(side_effect=RuntimeError("boom"))
     warning_log = Mock()
     monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", True)
@@ -363,10 +505,15 @@ async def test_process_pending_gateway_marks_gateway_active(monkeypatch):
         reachable=False,
         capabilities={},
         last_seen=None,
+        lifecycle_claimed_by=service._instance_id,
     )
     db = MagicMock()
     db.commit = Mock()
     db.refresh = Mock()
+    db.execute.side_effect = [
+        SimpleNamespace(scalar_one_or_none=lambda: "pending"),
+        SimpleNamespace(scalar_one_or_none=lambda: service._instance_id),
+    ]
 
     registry_cache = SimpleNamespace(
         invalidate_gateways=AsyncMock(),
@@ -418,7 +565,7 @@ async def test_process_pending_gateway_marks_gateway_active(monkeypatch):
         auth_query_params=None,
         client_cert=None,
         client_key=None,
-        initialize_timeout=settings.httpx_admin_read_timeout,
+        initialize_timeout=settings.gateway_async_lifecycle_attempt_timeout,
     )
 
 
@@ -458,10 +605,15 @@ async def test_process_pending_gateway_records_retry_metadata_on_failure():
         reachable=True,
         capabilities={},
         last_seen=None,
+        lifecycle_claimed_by=service._instance_id,
     )
     db = MagicMock()
     db.commit = Mock()
     db.refresh = Mock()
+    db.execute.side_effect = [
+        SimpleNamespace(scalar_one_or_none=lambda: "pending"),
+        SimpleNamespace(scalar_one_or_none=lambda: service._instance_id),
+    ]
 
     connection_material = SimpleNamespace(
         url="http://example.com",
@@ -519,11 +671,15 @@ async def test_process_pending_gateway_timeout_records_retry_metadata():
         reachable=True,
         capabilities={},
         last_seen=None,
+        lifecycle_claimed_by=service._instance_id,
     )
     db = MagicMock()
     db.commit = Mock()
     db.refresh = Mock()
-    db.execute.return_value = SimpleNamespace(scalar_one_or_none=lambda: "pending")
+    db.execute.side_effect = [
+        SimpleNamespace(scalar_one_or_none=lambda: "pending"),
+        SimpleNamespace(scalar_one_or_none=lambda: service._instance_id),
+    ]
 
     connection_material = SimpleNamespace(
         url="http://example.com",
@@ -571,6 +727,7 @@ async def test_process_pending_gateway_does_not_overwrite_deleting_status(monkey
         reachable=False,
         capabilities={},
         last_seen=None,
+        lifecycle_claimed_by=service._instance_id,
     )
     db = MagicMock()
     db.commit = Mock()
@@ -616,6 +773,18 @@ async def test_process_pending_gateway_does_not_overwrite_deleting_status(monkey
 
 
 @pytest.mark.asyncio
+async def test_process_pending_gateway_skips_foreign_claim():
+    service = GatewayService()
+    gateway = SimpleNamespace(lifecycle_claimed_by="other-instance")
+    db = MagicMock()
+    service._prepare_gateway_connection_material = AsyncMock()
+
+    await service._process_pending_gateway(db, gateway)
+
+    service._prepare_gateway_connection_material.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_process_pending_gateway_failure_skips_retry_when_deleted():
     service = GatewayService()
     gateway = SimpleNamespace(
@@ -640,6 +809,7 @@ async def test_process_pending_gateway_failure_skips_retry_when_deleted():
         reachable=True,
         capabilities={},
         last_seen=None,
+        lifecycle_claimed_by=service._instance_id,
     )
     db = MagicMock()
     db.commit = Mock()
@@ -675,9 +845,11 @@ async def test_process_deleting_gateway_hard_deletes_and_finalizes():
         tools=[],
         resources=[],
         prompts=[],
+        lifecycle_claimed_by=service._instance_id,
     )
     db = MagicMock()
     db.commit = Mock()
+    db.execute.return_value = SimpleNamespace(scalar_one_or_none=lambda: service._instance_id)
     service._hard_delete_gateway = Mock()
     service._finalize_gateway_deletion = AsyncMock()
 
@@ -694,6 +866,32 @@ async def test_process_deleting_gateway_hard_deletes_and_finalizes():
         gateway_url="http://example.com",
         user_email=None,
     )
+
+
+@pytest.mark.asyncio
+async def test_process_deleting_gateway_skips_foreign_claim():
+    service = GatewayService()
+    gateway = SimpleNamespace(lifecycle_claimed_by="other-instance")
+    db = MagicMock()
+    service._hard_delete_gateway = Mock()
+
+    await service._process_deleting_gateway(db, gateway)
+
+    service._hard_delete_gateway.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_process_deleting_gateway_rolls_back_when_claim_lost():
+    service = GatewayService()
+    gateway = SimpleNamespace(id="gw-1", name="gw-name", url="http://example.com", team_id="team-1", lifecycle_claimed_by=service._instance_id)
+    db = MagicMock()
+    db.execute.return_value = SimpleNamespace(scalar_one_or_none=lambda: "other-instance")
+    service._hard_delete_gateway = Mock()
+
+    await service._process_deleting_gateway(db, gateway)
+
+    db.rollback.assert_called_once()
+    service._hard_delete_gateway.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -757,39 +955,24 @@ async def test_run_health_checks_skips_lifecycle_pass_when_disabled(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_run_gateway_maintenance_cycle_uses_independent_lifecycle_interval(monkeypatch):
+async def test_run_gateway_lifecycle_loop_uses_independent_lifecycle_interval(monkeypatch):
     service = GatewayService()
-    service._health_check_interval = 60
-    service._get_gateways = Mock(return_value=[])
-    service.check_health_of_gateways = AsyncMock()
     service._run_gateway_lifecycle_pass = AsyncMock()
-    monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", True)
     monkeypatch.setattr(settings, "gateway_async_lifecycle_poll_interval", 5.0)
 
-    monotonic_values = iter([0.0, 0.0, 5.0, 5.0, 5.0, 10.0, 10.0, 10.0, 10.0])
     sleep_calls: list[float] = []
-
-    def fake_monotonic():
-        return next(monotonic_values, 10.0)
 
     async def fake_sleep(delay):
         sleep_calls.append(delay)
-        if len(sleep_calls) >= 2:
-            raise asyncio.CancelledError()
+        raise asyncio.CancelledError()
 
-    async def fake_to_thread(func, *args, **kwargs):
-        return func(*args, **kwargs)
-
-    monkeypatch.setattr("mcpgateway.services.gateway_service.time.monotonic", fake_monotonic)
     monkeypatch.setattr("mcpgateway.services.gateway_service.asyncio.sleep", fake_sleep)
-    monkeypatch.setattr("mcpgateway.services.gateway_service.asyncio.to_thread", fake_to_thread)
 
     with pytest.raises(asyncio.CancelledError):
-        await service._run_gateway_maintenance_cycle("admin@example.com")
+        await service._run_gateway_lifecycle_loop()
 
-    service.check_health_of_gateways.assert_not_called()
     assert service._run_gateway_lifecycle_pass.await_count == 1
-    assert sleep_calls[0] == 5.0
+    assert sleep_calls == [5.0]
 
 
 @pytest.mark.asyncio

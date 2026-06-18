@@ -594,6 +594,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         self._http_client = ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify})
         self._health_check_interval = GW_HEALTH_CHECK_INTERVAL
         self._health_check_task: Optional[asyncio.Task] = None
+        self._lifecycle_task: Optional[asyncio.Task] = None
         self._active_gateways: Set[str] = set()  # Track active gateway URLs
         self._stream_response = None
         self._pending_responses = {}
@@ -642,13 +643,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         # For health checks, we determine the leader instance.
         self.redis_url = settings.redis_url if settings.cache_type == "redis" else None
+        self._instance_id = str(uuid.uuid4())  # Unique ID for this process and DB lifecycle claims
 
         # Initialize optional Redis client holder (set in initialize())
         self._redis_client: Optional[Any] = None
 
         # Leader election settings from config
         if self.redis_url and REDIS_AVAILABLE:
-            self._instance_id = str(uuid.uuid4())  # Unique ID for this process
             self._leader_key = settings.redis_leader_key
             self._leader_ttl = settings.redis_leader_ttl
             self._leader_heartbeat_interval = settings.redis_leader_heartbeat_interval
@@ -808,7 +809,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         decrypt_client_key: bool = False,
         log_context: str = "gateway connection",
     ) -> GatewayConnectionMaterial:
-        """Prepare URL auth material and mTLS inputs for gateway initialization."""
+        """Prepare init-only URL auth and mTLS material without DB writes.
+
+        Caller owns persistence. Decrypted query/client-key values are only for
+        outbound MCP initialization; encrypted query values can be saved later.
+        """
         auth_query_params_encrypted: Optional[Dict[str, str]] = None
         auth_query_params_decrypted: Optional[Dict[str, str]] = None
         init_url = url
@@ -862,7 +867,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         client_key: Optional[str] = None,
         initialize_timeout: Optional[float] = None,
     ) -> tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate], List[str]]:
-        """Initialize a gateway, optionally bounding initialization time."""
+        """Initialize a gateway and optionally bound remote MCP work.
+
+        Caller owns DB transaction scope. Timeout cancellation raises sanitized
+        ``GatewayConnectionError`` with credentials removed from log-facing text.
+        """
         initialize_task = self._initialize_gateway(
             url,
             authentication,
@@ -937,6 +946,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # No Redis available - always create the health check task in filelock mode
             self._health_check_task = asyncio.create_task(self._run_health_checks(user_email))
 
+        if settings.gateway_async_lifecycle_enabled:
+            self._lifecycle_task = asyncio.create_task(self._run_gateway_lifecycle_loop())
+
         # Initialize hot/cold classification service (if enabled)
         if settings.hot_cold_classification_enabled:
             # First-Party
@@ -965,21 +977,16 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         # Cancel follower election FIRST to prevent it from spawning new
         # health-check / heartbeat tasks while we are tearing down.
         if getattr(self, "_follower_election_task", None):
-            self._follower_election_task.cancel()
-            try:
-                await self._follower_election_task
-            except asyncio.CancelledError:
-                pass
+            await self._cancel_gateway_task(self._follower_election_task, "gateway follower election")
 
         # Now safe to cancel health-check and heartbeat (handles may have been
         # overwritten by follower election just before cancellation — that is fine,
         # we always cancel whichever task the attribute currently points to).
         if self._health_check_task:
-            self._health_check_task.cancel()
-            try:
-                await self._health_check_task
-            except asyncio.CancelledError:
-                pass
+            await self._cancel_gateway_task(self._health_check_task, "gateway health maintenance")
+
+        if self._lifecycle_task:
+            await self._cancel_gateway_task(self._lifecycle_task, "gateway async lifecycle")
 
         # Stop classification service
         if self._classification_service:
@@ -988,11 +995,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         # Cancel leader heartbeat task if running
         if getattr(self, "_leader_heartbeat_task", None):
-            self._leader_heartbeat_task.cancel()
-            try:
-                await self._leader_heartbeat_task
-            except asyncio.CancelledError:
-                pass
+            await self._cancel_gateway_task(self._leader_heartbeat_task, "gateway leader heartbeat")
 
         # Release Redis leadership atomically if we hold it
         if self._redis_client:
@@ -1015,6 +1018,16 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         await self._event_service.shutdown()
         self._active_gateways.clear()
         logger.info("Gateway service shutdown complete")
+
+    async def _cancel_gateway_task(self, task: asyncio.Task, task_name: str) -> None:
+        """Cancel one gateway background task with bounded shutdown wait."""
+        task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=settings.gateway_async_lifecycle_shutdown_timeout)
+        except asyncio.CancelledError:
+            pass
+        except asyncio.TimeoutError:
+            logger.warning("Timed out waiting for %s shutdown", task_name)
 
     def _check_gateway_uniqueness(
         self,
@@ -3705,11 +3718,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
     async def _process_gateway_lifecycle_once(self, db: Session, gateway_id: str) -> bool:
         """Process one async lifecycle step for a single gateway.
 
-        Returns ``True`` when a supported lifecycle state was dispatched,
-        otherwise ``False``.
+        ``db`` belongs to one worker item. Dispatched helpers perform remote
+        work and verify this instance still owns the claim before final writes.
+        Returns ``True`` when a supported lifecycle state was dispatched.
         """
         gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
         if not gateway:
+            return False
+        if getattr(gateway, "lifecycle_claimed_by", self._instance_id) not in {None, self._instance_id}:
             return False
 
         if gateway.status == "pending":
@@ -3726,28 +3742,71 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         """Return deleting gateways plus pending gateways whose retry window is due."""
         now = datetime.now(timezone.utc)
         with cast(Any, SessionLocal)() as db:
-            deleting_ids = db.execute(select(DbGateway.id).where(DbGateway.status == "deleting")).scalars().all()
+            claim_filter = or_(DbGateway.lifecycle_claim_expires_at.is_(None), DbGateway.lifecycle_claim_expires_at <= now)
+            deleting_ids = db.execute(select(DbGateway.id).where(DbGateway.status == "deleting").where(claim_filter)).scalars().all()
             pending_ids = (
                 db.execute(
                     select(DbGateway.id)
                     .where(DbGateway.status == "pending")
                     .where(or_(DbGateway.next_retry_at.is_(None), DbGateway.next_retry_at <= now))
+                    .where(claim_filter)
                 )
                 .scalars()
                 .all()
             )
         return [*deleting_ids, *(f"pending:{gateway_id}" for gateway_id in pending_ids)]
 
+    def _claim_due_gateway_lifecycle_ids(self, statuses: Set[str]) -> List[str]:
+        """Claim due lifecycle rows and return owned gateway IDs."""
+        if not statuses:
+            return []
+
+        now = datetime.now(timezone.utc)
+        claim_expires_at = now + timedelta(seconds=settings.gateway_async_lifecycle_lease_seconds)
+        with cast(Any, SessionLocal)() as db:
+            due_filter = or_(DbGateway.lifecycle_claim_expires_at.is_(None), DbGateway.lifecycle_claim_expires_at <= now)
+            query = select(DbGateway.id).where(DbGateway.status.in_(statuses)).where(due_filter)
+            if "pending" in statuses:
+                query = query.where(or_(DbGateway.status != "pending", DbGateway.next_retry_at.is_(None), DbGateway.next_retry_at <= now))
+            if db.bind and db.bind.dialect.name == "postgresql":
+                query = query.with_for_update(skip_locked=True)
+
+            gateway_ids = [str(gateway_id) for gateway_id in db.execute(query).scalars().all()]
+            if not gateway_ids:
+                return []
+
+            db.execute(
+                update(DbGateway)
+                .where(DbGateway.id.in_(gateway_ids))
+                .where(or_(DbGateway.lifecycle_claim_expires_at.is_(None), DbGateway.lifecycle_claim_expires_at <= now))
+                .values(
+                    lifecycle_claimed_by=self._instance_id,
+                    lifecycle_claimed_at=now,
+                    lifecycle_claim_expires_at=claim_expires_at,
+                )
+            )
+            db.commit()
+            return gateway_ids
+
     async def _run_gateway_lifecycle_pass(self) -> None:
-        """Process all due async lifecycle gateways for the current polling tick."""
+        """Claim and process due async lifecycle rows for one polling tick."""
         if getattr(settings, "gateway_async_lifecycle_enabled", False) is not True:
             return
 
-        gateway_ids = await asyncio.to_thread(self._get_due_gateway_lifecycle_ids)
-        deleting_ids, pending_ids = self._split_gateway_lifecycle_ids(gateway_ids)
+        deleting_ids = await asyncio.to_thread(self._claim_due_gateway_lifecycle_ids, {"deleting"})
+        pending_ids = await asyncio.to_thread(self._claim_due_gateway_lifecycle_ids, {"pending"})
 
         await self._process_gateway_lifecycle_batch(deleting_ids)
         await self._process_gateway_lifecycle_batch(pending_ids)
+
+    async def _run_gateway_lifecycle_loop(self) -> None:
+        """Poll lifecycle work on every instance using DB claim leases."""
+        while True:
+            try:
+                await self._run_gateway_lifecycle_pass()
+            except Exception as exc:
+                logger.warning("Gateway async lifecycle pass failed: %s", exc, exc_info=True)
+            await asyncio.sleep(max(settings.gateway_async_lifecycle_poll_interval, 0))
 
     @staticmethod
     def _split_gateway_lifecycle_ids(gateway_ids: List[str]) -> tuple[List[str], List[str]]:
@@ -3762,7 +3821,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         return deleting_ids, pending_ids
 
     async def _process_gateway_lifecycle_batch(self, gateway_ids: List[str]) -> None:
-        """Process a lifecycle batch with bounded per-gateway concurrency."""
+        """Process already-claimed lifecycle rows with bounded concurrency."""
         if not gateway_ids:
             return
 
@@ -3780,8 +3839,25 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         await asyncio.gather(*(process_one(str(gateway_id)) for gateway_id in gateway_ids))
 
+    def _clear_lifecycle_claim(self, gateway: DbGateway) -> None:
+        """Clear current lifecycle claim fields on a gateway row."""
+        gateway.lifecycle_claimed_by = None
+        gateway.lifecycle_claimed_at = None
+        gateway.lifecycle_claim_expires_at = None
+
+    def _owns_lifecycle_claim(self, db: Session, gateway_id: str) -> bool:
+        """Return whether current instance still owns gateway lifecycle claim."""
+        claimed_by = db.execute(select(DbGateway.lifecycle_claimed_by).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+        return claimed_by == self._instance_id
+
     async def _process_pending_gateway(self, db: Session, gateway: DbGateway) -> None:
-        """Handle one worker pass for a pending gateway."""
+        """Initialize one claimed pending gateway and finalize with claim check.
+
+        Remote MCP init runs before final writes. Success/failure clears the
+        claim only if this instance still owns it; delete-wins races roll back.
+        """
+        if getattr(gateway, "lifecycle_claimed_by", self._instance_id) not in {None, self._instance_id}:
+            return
         try:
             connection_material = await self._prepare_gateway_connection_material(
                 gateway.url,
@@ -3803,7 +3879,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 auth_query_params=connection_material.auth_query_params_decrypted,
                 client_cert=connection_material.client_cert,
                 client_key=connection_material.client_key,
-                initialize_timeout=settings.httpx_admin_read_timeout,
+                initialize_timeout=settings.gateway_async_lifecycle_attempt_timeout,
             )
 
             created_via = "update" if gateway.tools or gateway.resources or gateway.prompts else "federation"
@@ -3823,7 +3899,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             )
 
             current_status = db.execute(select(DbGateway.status).where(DbGateway.id == gateway.id)).scalar_one_or_none()
-            if current_status in {None, "deleting"}:
+            if current_status in {None, "deleting"} or not self._owns_lifecycle_claim(db, str(gateway.id)):
                 db.rollback()
                 return
 
@@ -3833,6 +3909,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             gateway.registration_attempts = 0
             gateway.next_retry_at = None
             gateway.last_error = None
+            self._clear_lifecycle_claim(gateway)
             gateway.reachable = True
             gateway.last_seen = datetime.now(timezone.utc)
 
@@ -3857,7 +3934,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             await admin_stats_cache.invalidate_tags()
         except Exception as exc:
             current_status = db.execute(select(DbGateway.status).where(DbGateway.id == gateway.id)).scalar_one_or_none()
-            if current_status in {None, "deleting"}:
+            if current_status in {None, "deleting"} or not self._owns_lifecycle_claim(db, str(gateway.id)):
                 db.rollback()
                 return
 
@@ -3869,6 +3946,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             sanitized_error = sanitize_exception_message(str(exc), gateway.auth_query_params)
             gateway.last_error = sanitized_error
             gateway.status_message = sanitized_error
+            self._clear_lifecycle_claim(gateway)
             db.commit()
             db.refresh(gateway)
 
@@ -3879,11 +3957,17 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         return min(2 ** (normalized_attempt - 1), 300)
 
     async def _process_deleting_gateway(self, db: Session, gateway: DbGateway) -> None:
-        """Handle one worker pass for a deleting gateway."""
+        """Hard-delete one claimed deleting gateway with ownership check."""
+        if getattr(gateway, "lifecycle_claimed_by", self._instance_id) not in {None, self._instance_id}:
+            return
         gateway_info = {"id": gateway.id, "name": gateway.name, "url": gateway.url}
         gateway_name = gateway.name
         gateway_team_id = gateway.team_id
         gateway_url = gateway.url
+
+        if not self._owns_lifecycle_claim(db, str(gateway.id)):
+            db.rollback()
+            return
 
         self._hard_delete_gateway(db, gateway)
         db.commit()
@@ -4766,9 +4850,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         *,
         require_leader: Optional[Callable[[], Awaitable[bool]]] = None,
     ) -> None:
-        """Run health checks and async lifecycle passes on independent schedules."""
+        """Run health checks on the current leader schedule."""
         next_health_check_at = time.monotonic()
-        next_lifecycle_pass_at = time.monotonic()
 
         while True:
             if require_leader is not None and not await require_leader():
@@ -4776,8 +4859,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             now = time.monotonic()
             health_due = now >= next_health_check_at
-            lifecycle_enabled = getattr(settings, "gateway_async_lifecycle_enabled", False) is True
-            lifecycle_due = lifecycle_enabled and now >= next_lifecycle_pass_at
 
             if health_due:
                 gateways = await asyncio.to_thread(self._get_gateways)
@@ -4785,17 +4866,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     await self.check_health_of_gateways(gateways, user_email)
                 next_health_check_at = now + max(self._health_check_interval, 0)
 
-            if lifecycle_due:
-                await self._run_gateway_lifecycle_pass()
-                next_lifecycle_pass_at = now + max(settings.gateway_async_lifecycle_poll_interval, 0)
-
             if require_leader is not None and not await require_leader():
                 return
 
             now = time.monotonic()
             sleep_for = max(next_health_check_at - now, 0)
-            if lifecycle_enabled:
-                sleep_for = min(sleep_for, max(next_lifecycle_pass_at - now, 0))
             await asyncio.sleep(sleep_for)
 
     async def _run_health_checks(self, user_email: str) -> None:
@@ -5420,7 +5495,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         include_resources: bool = True,
         include_prompts: bool = True,
     ) -> GatewayCatalogSyncResult:
-        """Build fetched-name sets and update/create ORM rows for gateway catalog items."""
+        """Update/create fetched catalog rows inside caller transaction."""
         return GatewayCatalogSyncResult(
             new_tool_names=[tool.name for tool in tools],
             new_resource_uris=[resource.uri for resource in resources] if include_resources else None,
@@ -5440,7 +5515,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         stale_created_via_values: Optional[Set[str]] = None,
         skip_stale_cleanup: bool = False,
     ) -> GatewayCatalogReconcileResult:
-        """Apply synced gateway catalog changes: prune stale rows, add new rows, update relationships."""
+        """Prune stale rows and attach new catalog rows in caller transaction."""
 
         if catalog_sync.items_added > 0:
             if catalog_sync.tools_to_add:

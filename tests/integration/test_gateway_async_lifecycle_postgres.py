@@ -12,6 +12,7 @@ from pydantic import SecretStr
 import pytest
 import pytest_asyncio
 from sqlalchemy import create_engine
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 # First-Party
@@ -321,3 +322,48 @@ async def test_postgres_async_gateway_lifecycle_happy_path(lifecycle_client):
 
     deleted_response = await client.get("/admin/gateways/pg-counter-three", headers=test_auth_header)
     assert deleted_response.status_code == 404
+
+
+@pytest.mark.asyncio
+@SKIP_IF_NOT_EXTERNAL_POSTGRES
+async def test_postgres_gateway_lifecycle_claims_prevent_duplicate_pickup(lifecycle_client):
+    client, live_gateway_service, test_auth_header = lifecycle_client
+
+    create_response = await client.post(
+        "/gateways",
+        json={"name": "pg-claim-one", "url": "http://example.com/mcp", "transport": "SSE"},
+        headers=test_auth_header,
+    )
+    assert create_response.status_code == 202
+    gateway_id = create_response.json()["id"]
+
+    from mcpgateway.db import Gateway as DbGateway, SessionLocal
+
+    first_claim = live_gateway_service._claim_due_gateway_lifecycle_ids({"pending"})
+    second_service = type(live_gateway_service)()
+    second_claim = second_service._claim_due_gateway_lifecycle_ids({"pending"})
+    await second_service._http_client.aclose()
+
+    assert first_claim == [gateway_id]
+    assert second_claim == []
+
+    with SessionLocal() as db:
+        claimed_by = db.execute(select(DbGateway.lifecycle_claimed_by).where(DbGateway.id == gateway_id)).scalar_one()
+    assert claimed_by == live_gateway_service._instance_id
+
+    live_gateway_service._initialize_gateway = AsyncMock(
+        return_value=(
+            {"tools": {"listChanged": True}},
+            [_make_tool("claim_tool", "Claim tool")],
+            [],
+            [],
+            [],
+        )
+    )
+    await live_gateway_service._process_gateway_lifecycle_batch(first_claim)
+
+    with SessionLocal() as db:
+        status, claimed_by = db.execute(select(DbGateway.status, DbGateway.lifecycle_claimed_by).where(DbGateway.id == gateway_id)).one()
+
+    assert status == "active"
+    assert claimed_by is None

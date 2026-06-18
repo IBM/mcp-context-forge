@@ -27,12 +27,16 @@ depends_on: Union[str, Sequence[str], None] = None
 
 GATEWAY_TABLE = "gateways"
 LIFECYCLE_INDEX = "idx_gateways_status_next_retry_at"
+CLAIM_INDEX = "idx_gateways_lifecycle_claim"
 LIFECYCLE_COLUMNS = (
     "status",
     "status_message",
     "registration_attempts",
     "next_retry_at",
     "last_error",
+    "lifecycle_claimed_by",
+    "lifecycle_claimed_at",
+    "lifecycle_claim_expires_at",
 )
 
 
@@ -52,7 +56,7 @@ def _index_exists(inspector: sa.Inspector, table_name: str, index_name: str) -> 
 
 
 def upgrade() -> None:
-    """Add lifecycle state and retry metadata to gateways."""
+    """Add lifecycle state, retry metadata, and claim lease fields to gateways."""
     bind = op.get_bind()
     inspector = sa.inspect(bind)
 
@@ -76,14 +80,28 @@ def upgrade() -> None:
     if "last_error" not in columns:
         op.add_column(GATEWAY_TABLE, sa.Column("last_error", sa.Text(), nullable=True))
 
+    if "lifecycle_claimed_by" not in columns:
+        op.add_column(GATEWAY_TABLE, sa.Column("lifecycle_claimed_by", sa.String(length=64), nullable=True))
+
+    if "lifecycle_claimed_at" not in columns:
+        op.add_column(GATEWAY_TABLE, sa.Column("lifecycle_claimed_at", sa.DateTime(timezone=True), nullable=True))
+
+    if "lifecycle_claim_expires_at" not in columns:
+        op.add_column(GATEWAY_TABLE, sa.Column("lifecycle_claim_expires_at", sa.DateTime(timezone=True), nullable=True))
+
     inspector = sa.inspect(bind)
     columns = _column_names(inspector, GATEWAY_TABLE)
     if {"status", "next_retry_at"}.issubset(columns) and not _index_exists(inspector, GATEWAY_TABLE, LIFECYCLE_INDEX):
         op.create_index(LIFECYCLE_INDEX, GATEWAY_TABLE, ["status", "next_retry_at"], unique=False)
 
+    inspector = sa.inspect(bind)
+    columns = _column_names(inspector, GATEWAY_TABLE)
+    if {"status", "next_retry_at", "lifecycle_claim_expires_at"}.issubset(columns) and not _index_exists(inspector, GATEWAY_TABLE, CLAIM_INDEX):
+        op.create_index(CLAIM_INDEX, GATEWAY_TABLE, ["status", "next_retry_at", "lifecycle_claim_expires_at"], unique=False)
+
 
 def downgrade() -> None:
-    """Remove lifecycle state and retry metadata from gateways."""
+    """Remove lifecycle state, retry metadata, and claim lease fields from gateways."""
     bind = op.get_bind()
     inspector = sa.inspect(bind)
 
@@ -92,6 +110,9 @@ def downgrade() -> None:
 
     if _index_exists(inspector, GATEWAY_TABLE, LIFECYCLE_INDEX):
         op.drop_index(LIFECYCLE_INDEX, table_name=GATEWAY_TABLE)
+
+    if _index_exists(inspector, GATEWAY_TABLE, CLAIM_INDEX):
+        op.drop_index(CLAIM_INDEX, table_name=GATEWAY_TABLE)
 
     inspector = sa.inspect(bind)
     columns = _column_names(inspector, GATEWAY_TABLE)

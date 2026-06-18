@@ -173,6 +173,36 @@ def test_metrics_gateway_lifecycle_pending_alert_inputs(client, monkeypatch):
     assert "gateway_lifecycle_pending_registration_attempts 10.0" in text
 
 
+def test_metrics_gateway_lifecycle_pending_alert_inputs_handles_naive_retry(monkeypatch):
+    """Pending due calculation treats naive DB datetimes as UTC."""
+    from mcpgateway.services.metrics import _collect_gateway_lifecycle_metrics
+
+    naive_due = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=1)
+
+    class DummyQuery:
+        def all(self):
+            return [("pending", "gw-1", 1, naive_due)]
+
+    class DummySession:
+        def query(self, *_args, **_kwargs):
+            return DummyQuery()
+
+    class DummyContext:
+        def __enter__(self):
+            return DummySession()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("mcpgateway.db.fresh_db_session", DummyContext)
+
+    lifecycle_counts, pending_due_count, pending_registration_attempts = _collect_gateway_lifecycle_metrics()
+
+    assert lifecycle_counts["pending"] == 1
+    assert pending_due_count == 1
+    assert pending_registration_attempts == 1
+
+
 def test_gateway_lifecycle_status_gauge_recovers_after_duplicate_registration(monkeypatch):
     from mcpgateway.services import metrics as metrics_module
 
@@ -181,6 +211,29 @@ def test_gateway_lifecycle_status_gauge_recovers_after_duplicate_registration(mo
     monkeypatch.setattr(metrics_module, "Gauge", MagicMock(side_effect=ValueError("duplicate")))
 
     assert metrics_module._get_gateway_lifecycle_status_gauge() is sentinel
+
+
+def test_gateway_lifecycle_gauge_getters_return_existing_collectors(monkeypatch):
+    from mcpgateway.services import metrics as metrics_module
+
+    sentinel = object()
+    monkeypatch.setattr(metrics_module, "_get_registry_collector", MagicMock(return_value=sentinel))
+
+    assert metrics_module._get_gateway_lifecycle_status_gauge() is sentinel
+    assert metrics_module._get_gateway_lifecycle_pending_due_gauge() is sentinel
+    assert metrics_module._get_gateway_lifecycle_pending_registration_attempts_gauge() is sentinel
+
+
+def test_gateway_lifecycle_pending_gauge_getters_recover_after_duplicate_registration(monkeypatch):
+    from mcpgateway.services import metrics as metrics_module
+
+    due_sentinel = object()
+    attempts_sentinel = object()
+    monkeypatch.setattr(metrics_module, "_get_registry_collector", MagicMock(side_effect=[None, due_sentinel, None, attempts_sentinel]))
+    monkeypatch.setattr(metrics_module, "Gauge", MagicMock(side_effect=ValueError("duplicate")))
+
+    assert metrics_module._get_gateway_lifecycle_pending_due_gauge() is due_sentinel
+    assert metrics_module._get_gateway_lifecycle_pending_registration_attempts_gauge() is attempts_sentinel
 
 
 def test_metrics_counters_increment(client):
