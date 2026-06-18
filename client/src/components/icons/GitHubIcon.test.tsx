@@ -68,7 +68,7 @@ describe("GitHubIcon", () => {
     const { container } = render(<GitHubIcon />);
     const svg = container.querySelector("svg");
     const hasSemanticProps = svg?.hasAttribute("aria-hidden") || svg?.hasAttribute("role");
-    expect(svg).toBeInTheDocument();
+    expect(hasSemanticProps).toBeTruthy();
   });
 
   it("renders consistently across multiple renders", () => {

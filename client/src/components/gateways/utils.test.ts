@@ -10,7 +10,7 @@ import {
   hasVirtualServerComponents,
   buildComponentItems,
 } from "./utils";
-import type { VirtualServer } from "@/types/server";
+import type { VirtualServer, VirtualServerTag } from "@/types/server";
 
 describe("Gateways Utils", () => {
   describe("formatServerTimestamp", () => {
@@ -99,26 +99,26 @@ describe("Gateways Utils", () => {
     });
 
     it("handles object tags with label", () => {
-      expect(getTagDisplay({ label: "tag-label" } as any, 1)).toEqual({
+      expect(getTagDisplay({ label: "tag-label" } as unknown as VirtualServerTag, 1)).toEqual({
         key: "tag-label-1",
         label: "tag-label",
       });
     });
 
     it("handles object tags with various fallbacks", () => {
-      expect(getTagDisplay({ name: "tag-name" } as any, 2)).toEqual({
+      expect(getTagDisplay({ name: "tag-name" } as unknown as VirtualServerTag, 2)).toEqual({
         key: "tag-name-2",
         label: "tag-name",
       });
-      expect(getTagDisplay({ value: "tag-value" } as any, 3)).toEqual({
+      expect(getTagDisplay({ value: "tag-value" } as unknown as VirtualServerTag, 3)).toEqual({
         key: "tag-value-3",
         label: "tag-value",
       });
-      expect(getTagDisplay({ id: "tag-id" } as any, 4)).toEqual({
+      expect(getTagDisplay({ id: "tag-id" } as unknown as VirtualServerTag, 4)).toEqual({
         key: "tag-id-4",
         label: "tag-id",
       });
-      expect(getTagDisplay({} as any, 5, "Fallback")).toEqual({
+      expect(getTagDisplay({} as unknown as VirtualServerTag, 5, "Fallback")).toEqual({
         key: "Fallback-5",
         label: "Fallback",
       });
@@ -134,13 +134,13 @@ describe("Gateways Utils", () => {
       associatedToolIds: ["id1", "id2"],
       associatedResources: ["res1"],
       associatedPrompts: ["prompt1"],
-    } as any;
+    } as unknown as VirtualServer;
 
     const serverWithoutTools: VirtualServer = {
       id: "2",
       name: "empty",
       target_type: "mcp",
-    } as any;
+    } as unknown as VirtualServer;
 
     it("getVirtualServerComponentCounts", () => {
       expect(getVirtualServerComponentCounts(serverWithTools)).toEqual({
@@ -163,7 +163,7 @@ describe("Gateways Utils", () => {
         name: "test",
         target_type: "mcp",
         associatedTools: ["tool1", "tool2"],
-      } as any;
+      } as unknown as VirtualServer;
       expect(getVirtualServerComponentCounts(serverToolsOnly).toolCount).toBe(2);
     });
 
@@ -190,7 +190,7 @@ describe("Gateways Utils", () => {
       // Test when toolIds is empty but toolNames is populated
       const serverNamesOnly = {
         associatedTools: ["toolA"],
-      } as any;
+      } as unknown as VirtualServer;
       const itemsNames = buildComponentItems(serverNamesOnly);
       expect(itemsNames[0]).toEqual({
         id: "tool-toolA-0",

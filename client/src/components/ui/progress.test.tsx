@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render } from "@testing-library/react";
+import React from "react";
 import { Progress } from "./progress";
 
 describe("Progress", () => {
@@ -370,7 +371,7 @@ describe("Progress", () => {
     });
 
     it("should work with ref forwarding", () => {
-      const ref = { current: null } as any;
+      const ref = React.createRef<HTMLDivElement>();
       render(<Progress value={50} ref={ref} />);
 
       // The ref should be forwarded to the root element

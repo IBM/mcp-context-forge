@@ -3,7 +3,6 @@ import { screen, render, waitFor } from "@testing-library/react";
 import { AuthProvider, useAuthContext, ApiError } from "./AuthContext";
 import { useAuth } from "./useAuth";
 import { api } from "../api/client";
-import { useEffect } from "react";
 
 // Mock the API client
 vi.mock("../api/client", () => {
@@ -52,8 +51,8 @@ describe("AuthContext", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Mock window.location
-    delete (window as any).location;
-    window.location = { href: "" } as any;
+    delete (window as unknown as { location?: unknown }).location;
+    window.location = { href: "" } as unknown as Location;
   });
 
   afterEach(() => {

@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import React from "react";
 import {
   Dialog,
@@ -22,7 +21,7 @@ describe("Dialog Components", () => {
 
   describe("Dialog Root", () => {
     it("should render Dialog root component", () => {
-      const { container } = render(
+      render(
         <Dialog open>
           <div data-testid="dialog-child">Content</div>
         </Dialog>,
@@ -63,7 +62,7 @@ describe("Dialog Components", () => {
     });
 
     it("should render DialogTrigger as button element", () => {
-      const { container } = render(
+      render(
         <Dialog open={true}>
           <DialogTrigger data-testid="trigger">Open</DialogTrigger>
         </Dialog>,
@@ -86,7 +85,7 @@ describe("Dialog Components", () => {
 
   describe("DialogOverlay", () => {
     it("should render DialogOverlay", () => {
-      const { container } = render(
+      render(
         <Dialog open={true}>
           <DialogContent>
             <DialogTitle>Test</DialogTitle>
@@ -100,7 +99,7 @@ describe("Dialog Components", () => {
     });
 
     it("should have fixed positioning classes", () => {
-      const { container } = render(
+      render(
         <Dialog open={true}>
           <DialogContent>
             <DialogTitle>Test</DialogTitle>
@@ -116,7 +115,7 @@ describe("Dialog Components", () => {
     });
 
     it("should have semi-transparent background color", () => {
-      const { container } = render(
+      render(
         <Dialog open={true}>
           <DialogContent>
             <DialogTitle>Test</DialogTitle>
@@ -130,7 +129,7 @@ describe("Dialog Components", () => {
     });
 
     it("should accept custom className", () => {
-      const { container } = render(
+      render(
         <Dialog open={true}>
           <DialogContent>
             <DialogTitle>Test</DialogTitle>
@@ -160,7 +159,7 @@ describe("Dialog Components", () => {
 
   describe("DialogContent", () => {
     it("should render DialogContent without crashing", () => {
-      const { container } = render(
+      render(
         <Dialog open={true}>
           <DialogContent>
             <DialogTitle>Test</DialogTitle>
@@ -186,7 +185,7 @@ describe("Dialog Components", () => {
     });
 
     it("should have fixed positioning classes", () => {
-      const { container } = render(
+      render(
         <Dialog open={true}>
           <DialogContent data-testid="content">
             <DialogTitle>Test</DialogTitle>
@@ -203,7 +202,7 @@ describe("Dialog Components", () => {
     });
 
     it("should include close button", () => {
-      const { container } = render(
+      render(
         <Dialog open={true}>
           <DialogContent>
             <DialogTitle>Test</DialogTitle>
@@ -218,7 +217,7 @@ describe("Dialog Components", () => {
     });
 
     it("should render X icon for close button", () => {
-      const { container } = render(
+      render(
         <Dialog open={true}>
           <DialogContent>
             <DialogTitle>Test</DialogTitle>
@@ -233,7 +232,7 @@ describe("Dialog Components", () => {
     });
 
     it("should render accessibility label for close button", () => {
-      const { container } = render(
+      render(
         <Dialog open={true}>
           <DialogContent>Content</DialogContent>
         </Dialog>,
@@ -273,7 +272,7 @@ describe("Dialog Components", () => {
     });
 
     it("should render overlay inside content", () => {
-      const { container } = render(
+      render(
         <Dialog open={true}>
           <DialogContent>
             <DialogTitle>Test</DialogTitle>
@@ -290,7 +289,7 @@ describe("Dialog Components", () => {
 
   describe("DialogHeader", () => {
     it("should render DialogHeader", () => {
-      const { container } = render(
+      render(
         <DialogHeader data-testid="header">
           <span>Header content</span>
         </DialogHeader>,
@@ -301,7 +300,7 @@ describe("Dialog Components", () => {
     });
 
     it("should render as div element", () => {
-      const { container } = render(<DialogHeader data-testid="header">Content</DialogHeader>);
+      render(<DialogHeader data-testid="header">Content</DialogHeader>);
 
       const header = screen.getByTestId("header");
       expect(header.tagName).toBe("DIV");
@@ -333,7 +332,7 @@ describe("Dialog Components", () => {
 
   describe("DialogFooter", () => {
     it("should render DialogFooter", () => {
-      const { container } = render(
+      render(
         <DialogFooter data-testid="footer">
           <button>Action</button>
         </DialogFooter>,
@@ -343,7 +342,7 @@ describe("Dialog Components", () => {
     });
 
     it("should render as div element", () => {
-      const { container } = render(<DialogFooter data-testid="footer">Content</DialogFooter>);
+      render(<DialogFooter data-testid="footer">Content</DialogFooter>);
 
       const footer = screen.getByTestId("footer");
       expect(footer.tagName).toBe("DIV");
@@ -403,7 +402,7 @@ describe("Dialog Components", () => {
     });
 
     it("should render as h2 element", () => {
-      const { container } = render(
+      render(
         <Dialog open={true}>
           <DialogContent>
             <DialogTitle data-testid="title">Title</DialogTitle>
@@ -477,7 +476,7 @@ describe("Dialog Components", () => {
     });
 
     it("should render as paragraph element", () => {
-      const { container } = render(
+      render(
         <Dialog open={true}>
           <DialogContent>
             <DialogDescription data-testid="desc">Description</DialogDescription>
@@ -551,7 +550,7 @@ describe("Dialog Components", () => {
     });
 
     it("should render as button element", () => {
-      const { container } = render(
+      render(
         <Dialog open={true}>
           <DialogContent>
             <DialogClose data-testid="close-btn">Close</DialogClose>
@@ -580,7 +579,7 @@ describe("Dialog Components", () => {
 
   describe("Full Dialog Integration", () => {
     it("should render complete dialog structure", () => {
-      const { container } = render(
+      render(
         <Dialog open={true}>
           <DialogTrigger>Open</DialogTrigger>
           <DialogContent>
@@ -605,7 +604,7 @@ describe("Dialog Components", () => {
     });
 
     it("should render multiple dialogs independently", () => {
-      const { container } = render(
+      render(
         <div>
           <Dialog open={true}>
             <DialogContent>
