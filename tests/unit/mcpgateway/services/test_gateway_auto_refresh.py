@@ -320,7 +320,7 @@ class TestCacheInvalidationPerType:
         with (
             patch("mcpgateway.services.gateway_service.fresh_db_session") as mock_fresh,
             patch.object(gateway_service, "_initialize_gateway", new_callable=AsyncMock) as mock_init,
-            patch.object(gateway_service, "_update_or_create_tools", new_callable=AsyncMock, return_value=[new_tool]),
+            patch.object(gateway_service, "_update_or_create_tools", new_callable=AsyncMock, return_value=([new_tool], [])),  # Returns (tools_to_add, restored_tool_names)
             patch.object(gateway_service, "_update_or_create_resources", return_value=[]),
             patch.object(gateway_service, "_update_or_create_prompts", return_value=[]),
             patch("mcpgateway.services.gateway_service._get_registry_cache") as get_cache,

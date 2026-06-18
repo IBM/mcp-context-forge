@@ -1695,7 +1695,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 raise ValueError(f"Unsupported transport type: {gateway.transport}")
 
             # Handle tools, resources, and prompts using helper methods
-            tools_to_add = await self._update_or_create_tools(db, tools, gateway, "oauth")
+            tools_to_add, restored_tool_names = await self._update_or_create_tools(db, tools, gateway, "oauth")
             resources_to_add = self._update_or_create_resources(db, resources, gateway, "oauth")
             prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, "oauth")
 
@@ -1809,6 +1809,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             await cache.invalidate_prompts()
             tool_lookup_cache = _get_tool_lookup_cache()
             await tool_lookup_cache.invalidate_gateway(str(gateway.id))
+
+            # Invalidate negative cache entries for restored tools (Bug #4915 fix)
+            # Must happen AFTER commit to prevent race where concurrent lookups
+            # see pre-commit state and repopulate stale negative entries
+            if restored_tool_names:
+                for tool_name in restored_tool_names:
+                    await tool_lookup_cache.invalidate(tool_name, gateway_id=str(gateway.id))
+                logger.debug("Invalidated cache for %s restored tools: %s", len(restored_tool_names), restored_tool_names)
+
             # Also invalidate tags cache since tool/resource tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
@@ -2100,6 +2109,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             ValidationError: If validation fails
         """
         try:  # pylint: disable=too-many-nested-blocks
+            # Initialize restored_tool_names for cache invalidation tracking
+            restored_tool_names = []
+
             # Acquire row lock and eager-load relationships while locked so
             # concurrent updates are serialized on Postgres.
             gateway = get_for_update(
@@ -2476,7 +2488,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     # Update tools using helper method — only propagate visibility
                     # when the user explicitly changed it in this request
                     _vis_changed = gateway_update.visibility is not None
-                    tools_to_add = await self._update_or_create_tools(db, tools, gateway, "update", update_visibility=_vis_changed)
+                    tools_to_add, restored_tool_names = await self._update_or_create_tools(db, tools, gateway, "update", update_visibility=_vis_changed)
 
                     # Update resources using helper method
                     resources_to_add = self._update_or_create_resources(db, resources, gateway, "update", update_visibility=_vis_changed)
@@ -2639,6 +2651,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 await cache.invalidate_gateways()
                 tool_lookup_cache = _get_tool_lookup_cache()
                 await tool_lookup_cache.invalidate_gateway(str(gateway.id))
+
+                # Invalidate negative cache entries for restored tools (Bug #4915 fix)
+                # Must happen AFTER commit to prevent race where concurrent lookups
+                # see pre-commit state and repopulate stale negative entries
+                if restored_tool_names:
+                    for tool_name in restored_tool_names:
+                        await tool_lookup_cache.invalidate(tool_name, gateway_id=str(gateway.id))
+                    logger.debug("Invalidated cache for %s restored tools: %s", len(restored_tool_names), restored_tool_names)
+
                 # Also invalidate tags cache since gateway tags may have changed
                 # First-Party
                 from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
@@ -2974,6 +2995,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             PermissionError: If user doesn't own the agent.
         """
         try:
+            # Initialize restored_tool_names for cache invalidation tracking
+            restored_tool_names = []
+
             # Eager-load collections for the gateway. Note: we don't use FOR UPDATE
             # here because _initialize_gateway does network I/O, and holding a row
             # lock during network calls would block other operations and risk timeouts.
@@ -3011,6 +3035,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     tools_to_add = []
                     resources_to_add = []
                     prompts_to_add = []
+                    restored_tool_names = []  # Track restored tools for cache invalidation
 
                     # Try to initialize if activating
                     try:
@@ -3053,7 +3078,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         new_prompt_names = [prompt.name for prompt in prompts]
 
                         # Update tools, resources, and prompts using helper methods
-                        tools_to_add = await self._update_or_create_tools(db, tools, gateway, "rediscovery")
+                        tools_to_add, restored_tool_names = await self._update_or_create_tools(db, tools, gateway, "rediscovery")
                         resources_to_add = self._update_or_create_resources(db, resources, gateway, "rediscovery")
                         prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, "rediscovery")
 
@@ -3179,9 +3204,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         .where(or_(DbTool.enabled != activate, DbTool.reachable != reachable))
                         .values(enabled=activate, reachable=reachable, updated_at=now)
                     )
-                tools_updated = tools_result.rowcount
+                # In the rediscovery path, _update_or_create_tools may have already set
+                # existing_tool.reachable=True in the ORM session, which auto-flushes before
+                # the bulk UPDATE. Use restored_tool_names to determine if invalidation is needed.
+                tools_updated = tools_result.rowcount if not restored_tool_names else len(restored_tool_names)
 
                 # Commit gateway and tool updates together atomically
+                # Note: "atomic" applies to gateway + tools only; prompts/resources
+                # are updated in separate commits below for backward compatibility
                 db.commit()
                 db.refresh(gateway)
 
@@ -3205,6 +3235,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     await cache.invalidate_tools()
                     tool_lookup_cache = _get_tool_lookup_cache()
                     await tool_lookup_cache.invalidate_gateway(str(gateway.id))
+
+                # Invalidate negative cache entries for restored tools (Bug #4915 fix)
+                # Must happen AFTER commit to prevent race where concurrent lookups
+                # see pre-commit state and repopulate stale negative entries
+                if restored_tool_names:
+                    tool_lookup_cache = _get_tool_lookup_cache()
+                    for tool_name in restored_tool_names:
+                        await tool_lookup_cache.invalidate(tool_name, gateway_id=str(gateway.id))
+                    logger.debug("Invalidated cache for %s restored tools: %s", len(restored_tool_names), restored_tool_names)
 
                 # Bulk update prompts when gateway is deactivated/activated (skip for reachability-only updates)
                 prompts_updated = 0
@@ -4693,7 +4732,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             visibility=getattr(tool, "visibility", None) or gateway.visibility,
         )
 
-    async def _update_or_create_tools(self, db: Session, tools: List[Any], gateway: DbGateway, created_via: str, update_visibility: bool = False) -> List[DbTool]:
+    async def _update_or_create_tools(self, db: Session, tools: List[Any], gateway: DbGateway, created_via: str, update_visibility: bool = False) -> tuple[List[DbTool], List[str]]:
         """Helper to handle update-or-create logic for tools from MCP server.
 
         Args:
@@ -4704,10 +4743,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             update_visibility: Whether to propagate gateway visibility to existing tools
 
         Returns:
-            List of new tools to be added to the database
+            Tuple of (tools_to_add, restored_tool_names):
+                - tools_to_add: List of new tools to be added to the database
+                - restored_tool_names: List of tool names that were restored from unreachable to reachable
         """
         if not tools:
-            return []
+            return [], []
 
         tools_to_add = []
         # Track tools that were restored from unreachable to reachable for cache invalidation
@@ -4716,7 +4757,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         # Batch fetch all existing tools for this gateway
         tool_names = [tool.name for tool in tools if tool is not None]
         if not tool_names:
-            return []
+            return [], []
 
         existing_tools_query = select(DbTool).where(DbTool.gateway_id == gateway.id, DbTool.original_name.in_(tool_names))
         existing_tools = db.execute(existing_tools_query).scalars().all()
@@ -4820,17 +4861,16 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 logger.warning("Failed to process tool %s: %s", getattr(tool, "name", "unknown"), e)
                 continue
 
-        # Invalidate negative cache entries for restored tools (Bug #4915 fix)
-        if restored_tool_names:
-            tool_lookup_cache = _get_tool_lookup_cache()
-            for tool_name in restored_tool_names:
-                await tool_lookup_cache.invalidate(tool_name, gateway_id=str(gateway.id))
-            logger.debug(f"Invalidated cache for {len(restored_tool_names)} restored tools: {restored_tool_names}")
-
-        return tools_to_add
+        # Return both new tools and restored tool names for cache invalidation
+        # Cache invalidation must happen AFTER commit in the caller to prevent
+        # race conditions where concurrent lookups repopulate stale cache entries
+        return tools_to_add, restored_tool_names
 
     def _update_or_create_resources(self, db: Session, resources: List[Any], gateway: DbGateway, created_via: str, update_visibility: bool = False) -> List[DbResource]:
         """Helper to handle update-or-create logic for resources from MCP server.
+
+        NOTE: This method remains synchronous (unlike _update_or_create_tools) because
+        resources do not require cache invalidation logic. The asymmetry is intentional.
 
         Args:
             db: Database session
@@ -4940,6 +4980,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
     def _update_or_create_prompts(self, db: Session, prompts: List[Any], gateway: DbGateway, created_via: str, update_visibility: bool = False) -> List[DbPrompt]:
         """Helper to handle update-or-create logic for prompts from MCP server.
+
+        NOTE: This method remains synchronous (unlike _update_or_create_tools) because
+        prompts do not require cache invalidation logic. The asymmetry is intentional.
 
         Args:
             db: Database session
@@ -5253,7 +5296,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             pending_prompts_before = {obj for obj in db.dirty if isinstance(obj, DbPrompt)}
 
             # Update/create tools, resources, and prompts
-            tools_to_add = await self._update_or_create_tools(db, tools, gateway, created_via)
+            tools_to_add, restored_tool_names = await self._update_or_create_tools(db, tools, gateway, created_via)
             resources_to_add = self._update_or_create_resources(db, resources, gateway, created_via) if include_resources else []
             prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, created_via) if include_prompts else []
 
@@ -5372,6 +5415,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # Invalidate tool lookup cache for this gateway
                 tool_lookup_cache = _get_tool_lookup_cache()
                 await tool_lookup_cache.invalidate_gateway(str(gateway_id))
+
+                # Invalidate negative cache entries for restored tools (Bug #4915 fix)
+                # Must happen AFTER commit to prevent race where concurrent lookups
+                # see pre-commit state and repopulate stale negative entries
+                if restored_tool_names:
+                    for tool_name in restored_tool_names:
+                        await tool_lookup_cache.invalidate(tool_name, gateway_id=str(gateway_id))
+                    logger.debug("Invalidated cache for %s restored tools: %s", len(restored_tool_names), restored_tool_names)
             else:
                 db.commit()
                 logger.debug("No changes detected during refresh of gateway %s", gateway_name)

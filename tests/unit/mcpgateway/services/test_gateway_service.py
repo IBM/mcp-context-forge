@@ -1913,7 +1913,7 @@ class TestGatewayService:
 
         gateway_service._notify_gateway_activated = AsyncMock()
         gateway_service._initialize_gateway = AsyncMock(return_value=({}, [new_tool], [], [], []))
-        gateway_service._update_or_create_tools = AsyncMock(return_value=[])
+        gateway_service._update_or_create_tools = AsyncMock(return_value=([], []))  # Returns (tools_to_add, restored_tool_names)
         gateway_service._update_or_create_resources = Mock(return_value=[])
         gateway_service._update_or_create_prompts = Mock(return_value=[])
 
@@ -2739,7 +2739,7 @@ class TestGatewayRefresh:
             gateway_service._initialize_gateway = AsyncMock(return_value=({}, new_tools, new_resources, new_prompts, []))  # capabilities
 
             # Mock update/create helpers
-            gateway_service._update_or_create_tools = AsyncMock(return_value=[MagicMock()])
+            gateway_service._update_or_create_tools = AsyncMock(return_value=([MagicMock()], []))  # Returns (tools_to_add, restored_tool_names)
             gateway_service._update_or_create_resources = Mock(return_value=[MagicMock()])
             gateway_service._update_or_create_prompts = Mock(return_value=[MagicMock()])
 
@@ -2766,7 +2766,7 @@ class TestGatewayRefresh:
             gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], []))
 
             # Mock update methods to avoid real execution errors
-            gateway_service._update_or_create_tools = AsyncMock(return_value=[])
+            gateway_service._update_or_create_tools = AsyncMock(return_value=([], []))  # Returns (tools_to_add, restored_tool_names)
             gateway_service._update_or_create_resources = Mock(return_value=[])
             gateway_service._update_or_create_prompts = Mock(return_value=[])
 
@@ -4300,7 +4300,7 @@ async def test_fetch_tools_after_oauth_streamablehttp(gateway_service, monkeypat
 
     monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", DummyTokenStorage)
     gateway_service.connect_to_streamablehttp_server = AsyncMock(return_value=({"tools": {}}, [], [], [], []))
-    gateway_service._update_or_create_tools = AsyncMock(return_value=[])
+    gateway_service._update_or_create_tools = AsyncMock(return_value=([], []))  # Returns (tools_to_add, restored_tool_names)
     gateway_service._update_or_create_resources = MagicMock(return_value=[])
     gateway_service._update_or_create_prompts = MagicMock(return_value=[])
 
@@ -4353,7 +4353,7 @@ async def test_fetch_tools_after_oauth_cleanup_and_adds_items(gateway_service, m
     gateway_service._connect_to_sse_server_without_validation = AsyncMock(
         return_value=({"resources": True, "prompts": True}, [SimpleNamespace(name="keep-tool")], [SimpleNamespace(uri="keep://res")], [SimpleNamespace(name="keep-prompt")], [])
     )
-    gateway_service._update_or_create_tools = AsyncMock(return_value=[MagicMock()])
+    gateway_service._update_or_create_tools = AsyncMock(return_value=([MagicMock()], []))  # Returns (tools_to_add, restored_tool_names)
     gateway_service._update_or_create_resources = MagicMock(return_value=[MagicMock()])
     gateway_service._update_or_create_prompts = MagicMock(return_value=[MagicMock()])
 
@@ -4374,6 +4374,61 @@ async def test_fetch_tools_after_oauth_cleanup_and_adds_items(gateway_service, m
     assert len(gateway.tools) == 1
     assert len(gateway.resources) == 1
     assert len(gateway.prompts) == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_tools_after_oauth_invalidates_cache_for_restored_tools(gateway_service, monkeypatch):
+    """Test that fetch_tools_after_oauth invalidates tool lookup cache when tools are restored.
+
+    Covers lines 1816-1819 in gateway_service.py (cache invalidation for restored tools).
+    """
+    gateway = MagicMock(spec=DbGateway)
+    gateway.id = "gw-1"
+    gateway.name = "gw"
+    gateway.oauth_config = {"grant_type": "authorization_code"}
+    gateway.transport = "sse"
+    gateway.tools = []
+    gateway.resources = []
+    gateway.prompts = []
+    gateway.capabilities = {}
+    gateway.last_seen = None
+
+    db = MagicMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = gateway
+    db.execute.return_value = result
+    db.add_all = Mock()
+    db.flush = Mock()
+    db.commit = Mock()
+    db.expire = Mock()
+
+    class DummyTokenStorage:
+        def __init__(self, _db):
+            self.db = _db
+
+        async def get_user_token(self, _gateway_id, _email):
+            return "Z0FBQUFBQmTOKEN"
+
+    monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", DummyTokenStorage)
+    gateway_service._connect_to_sse_server_without_validation = AsyncMock(return_value=({}, [MagicMock(name="restored-tool")], [], [], []))
+
+    # Mock _update_or_create_tools to return restored tool names
+    gateway_service._update_or_create_tools = AsyncMock(return_value=([], ["restored-tool"]))
+    gateway_service._update_or_create_resources = MagicMock(return_value=[])
+    gateway_service._update_or_create_prompts = MagicMock(return_value=[])
+
+    registry_cache = AsyncMock()
+    tool_lookup_cache = AsyncMock()
+
+    monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: registry_cache)
+    monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: tool_lookup_cache)
+    monkeypatch.setattr("mcpgateway.services.gateway_service.register_gateway_capabilities_for_notifications", MagicMock())
+    monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", AsyncMock(invalidate_tags=AsyncMock()))
+
+    await gateway_service.fetch_tools_after_oauth(db, "gw-1", "user@example.com")
+
+    # Verify tool lookup cache was invalidated for the restored tool
+    tool_lookup_cache.invalidate.assert_called_once_with("restored-tool", gateway_id="gw-1")
 
 
 # ---------------------------------------------------------------------------
@@ -4676,8 +4731,19 @@ class TestUpdateOrCreateTools:
 
     @pytest.mark.asyncio
     async def test_empty_tools_returns_empty(self, gateway_service, mock_gateway):
-        result = await gateway_service._update_or_create_tools(MagicMock(), [], mock_gateway, "test")
-        assert result == []
+        tools_to_add, restored_tool_names = await gateway_service._update_or_create_tools(MagicMock(), [], mock_gateway, "test")
+        assert tools_to_add == []
+        assert restored_tool_names == []
+
+    @pytest.mark.asyncio
+    async def test_none_tools_returns_empty(self, gateway_service, mock_gateway):
+        """Test that _update_or_create_tools returns empty when all tools are None.
+
+        Covers line 4760 in gateway_service.py (early return for None tools).
+        """
+        tools_to_add, restored_tool_names = await gateway_service._update_or_create_tools(MagicMock(), [None, None], mock_gateway, "test")
+        assert tools_to_add == []
+        assert restored_tool_names == []
 
     @pytest.mark.asyncio
     async def test_new_tool_created(self, gateway_service, mock_gateway):
@@ -4701,8 +4767,9 @@ class TestUpdateOrCreateTools:
         mock_gateway.owner_email = None
         fake_db_tool = MagicMock()
         gateway_service._create_db_tool = MagicMock(return_value=fake_db_tool)
-        result = await gateway_service._update_or_create_tools(db, [tool], mock_gateway, "test")
-        assert len(result) == 1
+        tools_to_add, restored_tool_names = await gateway_service._update_or_create_tools(db, [tool], mock_gateway, "test")
+        assert len(tools_to_add) == 1
+        assert restored_tool_names == []
         gateway_service._create_db_tool.assert_called_once()
 
     @pytest.mark.asyncio
@@ -4741,8 +4808,9 @@ class TestUpdateOrCreateTools:
         mock_gateway.auth_type = None
         mock_gateway.auth_value = None
         mock_gateway.visibility = "public"
-        result = await gateway_service._update_or_create_tools(db, [tool], mock_gateway, "update")
-        assert result == []  # updated in-place, no new tools
+        tools_to_add, restored_tool_names = await gateway_service._update_or_create_tools(db, [tool], mock_gateway, "update")
+        assert tools_to_add == []  # updated in-place, no new tools
+        assert restored_tool_names == []
         assert existing.url == "http://new-url.com"
         assert existing.description == "new desc"
         assert existing.title == "new title"
@@ -4768,8 +4836,9 @@ class TestUpdateOrCreateTools:
         mock_gateway.team_id = None
         mock_gateway.owner_email = None
         gateway_service._create_db_tool = MagicMock(return_value=MagicMock())
-        result = await gateway_service._update_or_create_tools(db, [None, tool], mock_gateway, "test")
-        assert len(result) == 1
+        tools_to_add, restored_tool_names = await gateway_service._update_or_create_tools(db, [None, tool], mock_gateway, "test")
+        assert len(tools_to_add) == 1
+        assert restored_tool_names == []
 
     @pytest.mark.asyncio
     async def test_tool_exception_continues(self, gateway_service, mock_gateway):
@@ -4802,8 +4871,9 @@ class TestUpdateOrCreateTools:
             return MagicMock()
 
         gateway_service._create_db_tool = MagicMock(side_effect=_create_db_tool_side_effect)
-        result = await gateway_service._update_or_create_tools(db, [bad_tool, good_tool], mock_gateway, "test")
-        assert len(result) == 1
+        tools_to_add, restored_tool_names = await gateway_service._update_or_create_tools(db, [bad_tool, good_tool], mock_gateway, "test")
+        assert len(tools_to_add) == 1
+        assert restored_tool_names == []
 
 
 # ---------------------------------------------------------------------------
@@ -5411,6 +5481,60 @@ class TestUpdateGateway:
         update = GatewayUpdate(name="updated")
         result = await gateway_service.update_gateway(db, "gw-1", update, include_inactive=False)
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_invalidates_cache_for_restored_tools(self, gateway_service):
+        """Test that update_gateway invalidates tool lookup cache when tools are restored.
+
+        Covers lines 2658-2661 in gateway_service.py (cache invalidation for restored tools).
+        """
+        gateway = MagicMock(spec=DbGateway)
+        gateway.id = "gw-1"
+        gateway.name = "test-gateway"
+        gateway.url = "http://example.com"
+        gateway.auth_type = "bearer"
+        gateway.auth_value = {"token": "test"}
+        gateway.enabled = True
+        gateway.reachable = True
+        gateway.oauth_config = None
+        gateway.transport = "SSE"
+        gateway.visibility = "public"
+        gateway.tools = []
+        gateway.resources = []
+        gateway.prompts = []
+
+        db = MagicMock()
+        db.dirty = set()
+        db.execute.return_value.scalar_one_or_none.return_value = gateway
+        db.execute.return_value.scalars.return_value.all.return_value = []
+        db.commit = MagicMock()
+
+        # Mock _initialize_gateway to return a tool
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [MagicMock(name="restored-tool")], [], [], []))
+
+        # Mock _update_or_create_tools to return restored tool
+        gateway_service._update_or_create_tools = AsyncMock(return_value=([], ["restored-tool"]))
+
+        # Mock resource and prompt helpers
+        gateway_service._update_or_create_resources = MagicMock(return_value=[])
+        gateway_service._update_or_create_prompts = MagicMock(return_value=[])
+
+        # Mock caches
+        mock_registry_cache = AsyncMock()
+        mock_tool_cache = AsyncMock()
+
+        with (
+            patch("mcpgateway.services.gateway_service._get_registry_cache", return_value=mock_registry_cache),
+            patch("mcpgateway.services.gateway_service._get_tool_lookup_cache", return_value=mock_tool_cache),
+            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache", AsyncMock(invalidate_tags=AsyncMock())),
+        ):
+            from mcpgateway.schemas import GatewayUpdate
+
+            update = GatewayUpdate(url="http://example.com")
+            await gateway_service.update_gateway(db, "gw-1", update)
+
+        # Verify tool lookup cache was invalidated for the restored tool
+        mock_tool_cache.invalidate.assert_called_once_with("restored-tool", gateway_id="gw-1")
 
 
 # ---------------------------------------------------------------------------
@@ -7970,13 +8094,15 @@ class TestToolReachabilityRestoration:
             )
 
             # Call _update_or_create_tools
-            tools_to_add = await gateway_service._update_or_create_tools(db=mock_db, tools=[fetched_tool], gateway=mock_gateway, created_via="health_check")
+            tools_to_add, restored_tool_names = await gateway_service._update_or_create_tools(db=mock_db, tools=[fetched_tool], gateway=mock_gateway, created_via="health_check")
 
             # Verify that the existing tool's reachable status was set to True
             assert mock_existing_tool.reachable is True, "Tool should be marked as reachable after successful fetch"
 
             # Verify no new tools were created (existing tool was updated)
             assert len(tools_to_add) == 0, "No new tools should be created when updating existing tool"
+            # Verify tool was tracked as restored
+            assert "test-tool" in restored_tool_names, "Tool should be tracked in restored_tool_names when marked reachable"
 
     def test_create_db_tool_sets_reachable_true(self, gateway_service):
         """Test that _create_db_tool sets reachable=True for new tools."""
@@ -8062,10 +8188,13 @@ class TestToolReachabilityRestoration:
         )
 
         # Call _update_or_create_tools
-        tools_to_add = await gateway_service._update_or_create_tools(db=mock_db, tools=[fetched_tool], gateway=mock_gateway, created_via="health_check")
+        tools_to_add, restored_tool_names = await gateway_service._update_or_create_tools(db=mock_db, tools=[fetched_tool], gateway=mock_gateway, created_via="health_check")
 
         # Verify that the tool remains reachable
         assert mock_existing_tool.reachable is True, "Tool should remain reachable"
+
+        # Verify tool was NOT tracked as restored (it was already reachable)
+        assert "test-tool" not in restored_tool_names, "Already reachable tool should NOT be in restored_tool_names"
 
         # Verify no new tools were created
         assert len(tools_to_add) == 0, "No new tools should be created"
@@ -8125,10 +8254,12 @@ class TestToolReachabilityRestoration:
             )
 
             # Call _update_or_create_tools
-            await gateway_service._update_or_create_tools(db=mock_db, tools=[fetched_tool], gateway=mock_gateway, created_via="health_check")
+            _, restored_tool_names = await gateway_service._update_or_create_tools(db=mock_db, tools=[fetched_tool], gateway=mock_gateway, created_via="health_check")
 
             # Verify reachable was flipped True (gateway is up so the tool is reachable)
             assert mock_existing_tool.reachable is True, "Tool should be marked reachable on successful fetch"
+            # Verify tool was tracked as restored
+            assert "test-tool" in restored_tool_names, "Tool should be tracked in restored_tool_names when marked reachable"
             # Critical security invariant: refresh must NOT re-enable admin-disabled tools
             assert mock_existing_tool.enabled is False, "Admin-disabled tool must remain disabled after refresh"
 
@@ -8297,18 +8428,16 @@ class TestNegativeCacheInvalidation:
             request_type="POST",
         )
 
-        # Patch the cache getter
-        with patch("mcpgateway.services.gateway_service._get_tool_lookup_cache", return_value=mock_tool_cache):
-            # Call _update_or_create_tools
-            tools_to_add = await gateway_service._update_or_create_tools(
-                db=mock_db, tools=[fetched_tool], gateway=mock_gateway, created_via="health_check"
-            )
+        # Call _update_or_create_tools (cache invalidation removed from helper)
+        tools_to_add, restored_tool_names = await gateway_service._update_or_create_tools(
+            db=mock_db, tools=[fetched_tool], gateway=mock_gateway, created_via="health_check"
+        )
 
         # Verify that the tool was marked as reachable
         assert mock_unreachable_tool.reachable is True, "Tool should be marked as reachable after successful fetch"
 
-        # Verify that the cache invalidation was called for the restored tool
-        mock_tool_cache.invalidate.assert_called_once_with("test-tool", gateway_id=str(mock_gateway.id))
+        # Verify that the restored tool name was returned for caller to invalidate
+        assert "test-tool" in restored_tool_names, "Restored tool name should be returned for cache invalidation"
 
         # Verify no new tools were created
         assert len(tools_to_add) == 0, "No new tools should be created when updating existing tool"
@@ -8365,10 +8494,6 @@ class TestNegativeCacheInvalidation:
         mock_result.scalars.return_value.all.return_value = [tool1, tool2]
         mock_db.execute.return_value = mock_result
 
-        # Mock the tool lookup cache
-        mock_tool_cache = AsyncMock()
-        mock_tool_cache.invalidate = AsyncMock()
-
         # Create tools from the gateway
         from mcpgateway.schemas import ToolCreate
 
@@ -8377,19 +8502,17 @@ class TestNegativeCacheInvalidation:
             ToolCreate(name="tool-2", description="Tool 2", input_schema={}, integration_type="REST", request_type="POST"),
         ]
 
-        # Patch the cache getter
-        with patch("mcpgateway.services.gateway_service._get_tool_lookup_cache", return_value=mock_tool_cache):
-            # Call _update_or_create_tools
-            await gateway_service._update_or_create_tools(db=mock_db, tools=fetched_tools, gateway=mock_gateway, created_via="health_check")
+        # Call _update_or_create_tools (cache invalidation moved to callers)
+        _, restored_tool_names = await gateway_service._update_or_create_tools(db=mock_db, tools=fetched_tools, gateway=mock_gateway, created_via="health_check")
 
         # Verify both tools were marked as reachable
         assert tool1.reachable is True
         assert tool2.reachable is True
 
-        # Verify cache invalidation was called for both tools
-        assert mock_tool_cache.invalidate.call_count == 2
-        mock_tool_cache.invalidate.assert_any_call("tool-1", gateway_id=str(mock_gateway.id))
-        mock_tool_cache.invalidate.assert_any_call("tool-2", gateway_id=str(mock_gateway.id))
+        # Verify both tool names were returned for cache invalidation by caller
+        assert len(restored_tool_names) == 2
+        assert "tool-1" in restored_tool_names
+        assert "tool-2" in restored_tool_names
 
     @pytest.mark.asyncio
     async def test_already_reachable_tool_no_cache_invalidation(self, gateway_service, mock_gateway):
@@ -8437,16 +8560,14 @@ class TestNegativeCacheInvalidation:
             request_type="POST",
         )
 
-        # Patch the cache getter
-        with patch("mcpgateway.services.gateway_service._get_tool_lookup_cache", return_value=mock_tool_cache):
-            # Call _update_or_create_tools
-            await gateway_service._update_or_create_tools(db=mock_db, tools=[fetched_tool], gateway=mock_gateway, created_via="health_check")
+        # Call _update_or_create_tools
+        _, restored_tool_names = await gateway_service._update_or_create_tools(db=mock_db, tools=[fetched_tool], gateway=mock_gateway, created_via="health_check")
 
         # Verify the tool remains reachable
         assert reachable_tool.reachable is True
 
-        # Verify cache invalidation was NOT called (tool was already reachable)
-        mock_tool_cache.invalidate.assert_not_called()
+        # Verify tool was NOT tracked as restored (it was already reachable)
+        assert "test-tool" not in restored_tool_names
 
 
 class TestGatewayToolConsistency:
@@ -8553,3 +8674,167 @@ class TestGatewayToolConsistency:
 
         # Verify tool cache invalidation was NOT called (no tools were updated)
         mock_tool_cache.invalidate_gateway.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_set_gateway_state_invalidates_cache_for_restored_tools(self, gateway_service):
+        """Test that set_gateway_state invalidates tool lookup cache when tools are restored.
+
+        Covers lines 3242-3246 in gateway_service.py (cache invalidation for restored tools).
+        """
+        # Create a mock gateway with an unreachable tool
+        mock_gateway = MagicMock(spec=DbGateway)
+        mock_gateway.id = "gateway-123"
+        mock_gateway.name = "test-gateway"
+        mock_gateway.url = "http://example.com"
+        mock_gateway.auth_type = "bearer"
+        mock_gateway.auth_value = {"token": "test"}
+        mock_gateway.enabled = False
+        mock_gateway.reachable = False
+        mock_gateway.oauth_config = None
+        mock_gateway.transport = "SSE"
+        mock_gateway.visibility = "public"
+
+        # Mock database session
+        mock_db = MagicMock()
+        mock_db.dirty = set()
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        mock_db.execute.return_value.rowcount = 0  # Simulate auto-flush making rowcount 0
+        mock_db.commit = MagicMock()
+
+        # Mock _initialize_gateway to return a tool
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [MagicMock(name="restored-tool")], [], [], []))
+
+        # Mock _update_or_create_tools to return restored tool
+        gateway_service._update_or_create_tools = AsyncMock(return_value=([], ["restored-tool"]))
+
+        # Mock resource and prompt helpers
+        gateway_service._update_or_create_resources = MagicMock(return_value=[])
+        gateway_service._update_or_create_prompts = MagicMock(return_value=[])
+
+        # Mock caches
+        mock_registry_cache = AsyncMock()
+        mock_tool_cache = AsyncMock()
+
+        with (
+            patch("mcpgateway.services.gateway_service._get_registry_cache", return_value=mock_registry_cache),
+            patch("mcpgateway.services.gateway_service._get_tool_lookup_cache", return_value=mock_tool_cache),
+            patch.object(gateway_service, "_notify_gateway_activated", new=AsyncMock()),
+        ):
+            await gateway_service.set_gateway_state(db=mock_db, gateway_id="gateway-123", activate=True, reachable=True)
+
+        # Verify tool lookup cache was invalidated for the restored tool
+        mock_tool_cache.invalidate.assert_called_once_with("restored-tool", gateway_id="gateway-123")
+
+    @pytest.mark.asyncio
+    async def test_set_gateway_state_chunks_large_resource_batch(self, gateway_service):
+        """Test that set_gateway_state uses chunked insertion for large resource batches.
+
+        Covers lines 3179, 3181 in gateway_service.py (chunked resource insertion).
+        """
+        # Gateway being reactivated with many resources (>1000 to trigger chunking)
+        mock_gateway = MagicMock(spec=DbGateway)
+        mock_gateway.id = "gateway-123"
+        mock_gateway.name = "test-gateway"
+        mock_gateway.url = "http://example.com"
+        mock_gateway.auth_type = None
+        mock_gateway.auth_value = None
+        mock_gateway.enabled = False
+        mock_gateway.reachable = False
+        mock_gateway.oauth_config = None
+        mock_gateway.transport = "SSE"
+        mock_gateway.visibility = "public"
+        mock_gateway.tools = []
+        mock_gateway.resources = []
+        mock_gateway.prompts = []
+
+        # Mock database session
+        mock_db = MagicMock()
+        mock_db.dirty = set()
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        mock_db.execute.return_value.rowcount = 0
+        mock_db.commit = MagicMock()
+        mock_db.flush = MagicMock()
+
+        # Create 1100 resource schemas to trigger chunking (chunk_size=1000)
+        large_resource_list = [
+            MagicMock(uri=f"resource://test-{i}", name=f"Resource {i}", mimeType="text/plain")
+            for i in range(1100)
+        ]
+
+        # Mock _initialize_gateway to return many resources
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], large_resource_list, [], []))
+        gateway_service._update_or_create_tools = AsyncMock(return_value=([], []))
+        gateway_service._update_or_create_resources = MagicMock(return_value=[MagicMock() for _ in range(1100)])
+        gateway_service._update_or_create_prompts = MagicMock(return_value=[])
+
+        # Mock caches
+        mock_registry_cache = AsyncMock()
+        mock_tool_cache = AsyncMock()
+
+        with (
+            patch("mcpgateway.services.gateway_service._get_registry_cache", return_value=mock_registry_cache),
+            patch("mcpgateway.services.gateway_service._get_tool_lookup_cache", return_value=mock_tool_cache),
+            patch.object(gateway_service, "_notify_gateway_activated", new=AsyncMock()),
+        ):
+            await gateway_service.set_gateway_state(db=mock_db, gateway_id="gateway-123", activate=True, reachable=True)
+
+        # Verify db.flush was called multiple times (chunked insertion)
+        # With 1100 items and chunk_size=1000, we expect at least 2 flush calls
+        assert mock_db.flush.call_count >= 2, f"Expected at least 2 flush calls for chunked insertion, got {mock_db.flush.call_count}"
+
+    @pytest.mark.asyncio
+    async def test_set_gateway_state_chunks_large_prompt_batch(self, gateway_service):
+        """Test that set_gateway_state uses chunked insertion for large prompt batches.
+
+        Covers line 3184 in gateway_service.py (chunked prompt insertion).
+        """
+        # Gateway being reactivated with many prompts (>1000 to trigger chunking)
+        mock_gateway = MagicMock(spec=DbGateway)
+        mock_gateway.id = "gateway-123"
+        mock_gateway.name = "test-gateway"
+        mock_gateway.url = "http://example.com"
+        mock_gateway.auth_type = None
+        mock_gateway.auth_value = None
+        mock_gateway.enabled = False
+        mock_gateway.reachable = False
+        mock_gateway.oauth_config = None
+        mock_gateway.transport = "SSE"
+        mock_gateway.visibility = "public"
+        mock_gateway.tools = []
+        mock_gateway.resources = []
+        mock_gateway.prompts = []
+
+        # Mock database session
+        mock_db = MagicMock()
+        mock_db.dirty = set()
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        mock_db.execute.return_value.rowcount = 0
+        mock_db.commit = MagicMock()
+        mock_db.flush = MagicMock()
+
+        # Create 1100 prompt schemas to trigger chunking (chunk_size=1000)
+        large_prompt_list = [
+            MagicMock(name=f"prompt-{i}", description=f"Prompt {i}", arguments=[])
+            for i in range(1100)
+        ]
+
+        # Mock _initialize_gateway to return many prompts
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], large_prompt_list, []))
+        gateway_service._update_or_create_tools = AsyncMock(return_value=([], []))
+        gateway_service._update_or_create_resources = MagicMock(return_value=[])
+        gateway_service._update_or_create_prompts = MagicMock(return_value=[MagicMock() for _ in range(1100)])
+
+        # Mock caches
+        mock_registry_cache = AsyncMock()
+        mock_tool_cache = AsyncMock()
+
+        with (
+            patch("mcpgateway.services.gateway_service._get_registry_cache", return_value=mock_registry_cache),
+            patch("mcpgateway.services.gateway_service._get_tool_lookup_cache", return_value=mock_tool_cache),
+            patch.object(gateway_service, "_notify_gateway_activated", new=AsyncMock()),
+        ):
+            await gateway_service.set_gateway_state(db=mock_db, gateway_id="gateway-123", activate=True, reachable=True)
+
+        # Verify db.flush was called multiple times (chunked insertion)
+        # With 1100 items and chunk_size=1000, we expect at least 2 flush calls
+        assert mock_db.flush.call_count >= 2, f"Expected at least 2 flush calls for chunked insertion, got {mock_db.flush.call_count}"

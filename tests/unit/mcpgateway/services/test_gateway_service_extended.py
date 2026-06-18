@@ -638,11 +638,12 @@ class TestGatewayServiceExtended:
         context = "test"
 
         # Call the helper method
-        result = await service._update_or_create_tools(mock_db, tools, mock_gateway, context)
+        tools_to_add, restored_tool_names = await service._update_or_create_tools(mock_db, tools, mock_gateway, context)
 
         # Should return one new tool
-        assert len(result) == 1
-        new_tool = result[0]
+        assert len(tools_to_add) == 1
+        assert restored_tool_names == []
+        new_tool = tools_to_add[0]
         assert new_tool.original_name == "test_tool"
         assert new_tool.custom_name == "test_tool"
         assert new_tool.description == "A test tool"
@@ -702,7 +703,7 @@ class TestGatewayServiceExtended:
         context = "update"
 
         # Call the helper method (with explicit visibility change)
-        result = await service._update_or_create_tools(mock_db, tools, mock_gateway, context, update_visibility=True)
+        result, restored_tool_names = await service._update_or_create_tools(mock_db, tools, mock_gateway, context, update_visibility=True)
 
         # Should return empty list (no new tools, existing one updated)
         assert len(result) == 0
@@ -760,7 +761,7 @@ class TestGatewayServiceExtended:
         mock_tool.annotations = {}
         mock_tool.jsonpath_filter = None
 
-        result = await service._update_or_create_tools(mock_db, [mock_tool], mock_gateway, "update")
+        result, restored_tool_names = await service._update_or_create_tools(mock_db, [mock_tool], mock_gateway, "update")
 
         assert len(result) == 0
         # Custom description should be preserved
@@ -1310,7 +1311,7 @@ class TestGatewayServiceExtended:
         context = "mixed_test"
 
         # Call the helper method
-        result = await service._update_or_create_tools(mock_db, tools, mock_gateway, context)
+        result, restored_tool_names = await service._update_or_create_tools(mock_db, tools, mock_gateway, context)
 
         # Should return one new tool (new_tool)
         assert len(result) == 1
@@ -1341,7 +1342,7 @@ class TestGatewayServiceExtended:
         mock_gateway.id = "test-gateway-id"
 
         # Test with empty lists
-        tools_result = await service._update_or_create_tools(mock_db, [], mock_gateway, "empty_test")
+        tools_result, restored_tool_names = await service._update_or_create_tools(mock_db, [], mock_gateway, "empty_test")
         resources_result = service._update_or_create_resources(mock_db, [], mock_gateway, "empty_test")
         prompts_result = service._update_or_create_prompts(mock_db, [], mock_gateway, "empty_test")
 
@@ -1400,7 +1401,7 @@ class TestGatewayServiceExtended:
         mock_prompt.visibility = None  # no override; gateway visibility ("team") should win
 
         # Call helper methods
-        tools_result = await service._update_or_create_tools(mock_db, [mock_tool], mock_gateway, "metadata_test")
+        tools_result, restored_tool_names = await service._update_or_create_tools(mock_db, [mock_tool], mock_gateway, "metadata_test")
         resources_result = service._update_or_create_resources(mock_db, [mock_resource], mock_gateway, "metadata_test")
         prompts_result = service._update_or_create_prompts(mock_db, [mock_prompt], mock_gateway, "metadata_test")
 
@@ -1463,7 +1464,7 @@ class TestGatewayServiceExtended:
         contexts = ["oauth", "update", "rediscovery", "test"]
 
         for context in contexts:
-            tools_result = await service._update_or_create_tools(mock_db, [mock_tool], mock_gateway, context)
+            tools_result, restored_tool_names = await service._update_or_create_tools(mock_db, [mock_tool], mock_gateway, context)
 
             # Verify the context is used in created_via field
             assert len(tools_result) == 1
@@ -1545,7 +1546,7 @@ class TestGatewayServiceExtended:
         context = "removal_test"
 
         # Call the helper method
-        result = await service._update_or_create_tools(mock_db, tools, mock_gateway, context)
+        result, restored_tool_names = await service._update_or_create_tools(mock_db, tools, mock_gateway, context)
 
         # Should return empty list (no new tools)
         assert len(result) == 0
@@ -1745,7 +1746,7 @@ class TestGatewayServiceExtended:
                     "_connect_to_sse_server_without_validation",
                     new=AsyncMock(return_value=({}, [], [], [prompt_from_server], [])),
                 ),
-                patch.object(service, "_update_or_create_tools", new_callable=AsyncMock, return_value=[]),
+                patch.object(service, "_update_or_create_tools", new_callable=AsyncMock, return_value=([], [])),  # Returns (tools_to_add, restored_tool_names)
                 patch.object(service, "_update_or_create_resources", return_value=[]),
                 patch.object(service, "_update_or_create_prompts", return_value=[]),
             ):
@@ -1792,7 +1793,7 @@ class TestGatewayServiceExtended:
         context = "complete_removal_test"
 
         # Call helper methods with empty lists
-        tools_result = await service._update_or_create_tools(mock_db, empty_tools, mock_gateway, context)
+        tools_result, restored_tool_names = await service._update_or_create_tools(mock_db, empty_tools, mock_gateway, context)
         resources_result = service._update_or_create_resources(mock_db, empty_resources, mock_gateway, context)
         prompts_result = service._update_or_create_prompts(mock_db, empty_prompts, mock_gateway, context)
 
@@ -2020,7 +2021,7 @@ class TestGatewayServiceExtended:
         tool_from_server.jsonpath_filter = None
         tool_from_server.visibility = "team"  # explicit upstream override
 
-        result = await service._update_or_create_tools(mock_db, [tool_from_server], mock_gateway, "update", update_visibility=True)
+        result, restored_tool_names = await service._update_or_create_tools(mock_db, [tool_from_server], mock_gateway, "update", update_visibility=True)
         assert len(result) == 0
         assert existing_tool.visibility == "team", "Explicit upstream tool visibility must be applied"
 
