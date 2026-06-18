@@ -339,3 +339,121 @@ class TestCacheInvalidationPerType:
         # Resources and prompts cache should NOT be invalidated (no changes)
         mock_cache.invalidate_resources.assert_not_called()
         mock_cache.invalidate_prompts.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_restored_tools_invalidate_lookup_cache(self, gateway_service):
+        """Test that restored tools (unreachable -> reachable) invalidate the lookup cache.
+
+        Covers lines 5422-5425 in gateway_service.py (Bug #4915 fix).
+        When a tool is restored (reachable changes from False to True), its negative
+        cache entry must be invalidated so it becomes invokable immediately.
+        """
+        mock_gateway = _make_mock_gateway()
+        mock_gateway.tools = []
+        mock_gateway.resources = []
+        mock_gateway.prompts = []
+
+        mock_session = MagicMock()
+        # Simulate one tool being updated (reachable status changed)
+        mock_updated_tool = MagicMock(spec=DbTool)
+        # Start with empty dirty set, add tool after _update_or_create_tools
+        mock_session.dirty = set()
+        mock_session.execute.return_value.scalar_one_or_none.side_effect = [mock_gateway, mock_gateway]
+
+        mock_tool_schema = MagicMock()
+        mock_tool_schema.name = "restored-tool"
+
+        mock_cache = AsyncMock()
+        mock_tool_lookup_cache = AsyncMock()
+
+        def mock_update_or_create_tools_side_effect(*args, **kwargs):
+            # Simulate tool being marked as dirty when updated
+            mock_session.dirty.add(mock_updated_tool)
+            return ([], ["restored-tool"])
+
+        with (
+            patch("mcpgateway.services.gateway_service.fresh_db_session") as mock_fresh,
+            patch.object(gateway_service, "_initialize_gateway", new_callable=AsyncMock) as mock_init,
+            # Return empty tools_to_add but include restored tool name (tool was updated, not added)
+            patch.object(gateway_service, "_update_or_create_tools", new_callable=AsyncMock, side_effect=mock_update_or_create_tools_side_effect),
+            patch.object(gateway_service, "_update_or_create_resources", return_value=[]),
+            patch.object(gateway_service, "_update_or_create_prompts", return_value=[]),
+            patch("mcpgateway.services.gateway_service._get_registry_cache") as get_cache,
+            patch("mcpgateway.services.gateway_service._get_tool_lookup_cache") as get_tool_cache,
+        ):
+            mock_fresh.return_value.__enter__.return_value = mock_session
+            mock_init.return_value = ({}, [mock_tool_schema], [], [], [])
+            get_cache.return_value = mock_cache
+            get_tool_cache.return_value = mock_tool_lookup_cache
+
+            result = await gateway_service._refresh_gateway_tools_resources_prompts("gw-123")
+
+        # Verify tool was marked as updated
+        assert result["tools_updated"] == 1
+
+        # Verify gateway-wide cache invalidation happened
+        mock_tool_lookup_cache.invalidate_gateway.assert_called_once_with("gw-123")
+
+        # Verify specific tool cache invalidation for restored tool (lines 5423-5424)
+        mock_tool_lookup_cache.invalidate.assert_called_once_with("restored-tool", gateway_id="gw-123")
+
+    @pytest.mark.asyncio
+    async def test_multiple_restored_tools_invalidate_lookup_cache(self, gateway_service):
+        """Test that multiple restored tools all have their cache entries invalidated.
+
+        Ensures lines 5423-5425 loop is fully covered with multiple iterations.
+        Tests the logger.debug statement at line 5425.
+        """
+        mock_gateway = _make_mock_gateway()
+        mock_gateway.tools = []
+        mock_gateway.resources = []
+        mock_gateway.prompts = []
+
+        mock_session = MagicMock()
+        # Start with empty dirty set
+        mock_session.dirty = set()
+        mock_session.execute.return_value.scalar_one_or_none.side_effect = [mock_gateway, mock_gateway]
+
+        mock_tool_schemas = [MagicMock(name=f"restored-tool-{i}") for i in range(3)]
+        for i, schema in enumerate(mock_tool_schemas):
+            schema.name = f"restored-tool-{i}"
+
+        mock_cache = AsyncMock()
+        mock_tool_lookup_cache = AsyncMock()
+
+        restored_names = ["restored-tool-0", "restored-tool-1", "restored-tool-2"]
+        mock_updated_tools = [MagicMock(spec=DbTool) for _ in range(3)]
+
+        def mock_update_or_create_tools_side_effect(*args, **kwargs):
+            # Simulate three tools being marked as dirty when updated
+            for tool in mock_updated_tools:
+                mock_session.dirty.add(tool)
+            return ([], restored_names)
+
+        with (
+            patch("mcpgateway.services.gateway_service.fresh_db_session") as mock_fresh,
+            patch.object(gateway_service, "_initialize_gateway", new_callable=AsyncMock) as mock_init,
+            # Return empty tools_to_add but include all restored tool names
+            patch.object(gateway_service, "_update_or_create_tools", new_callable=AsyncMock, side_effect=mock_update_or_create_tools_side_effect),
+            patch.object(gateway_service, "_update_or_create_resources", return_value=[]),
+            patch.object(gateway_service, "_update_or_create_prompts", return_value=[]),
+            patch("mcpgateway.services.gateway_service._get_registry_cache") as get_cache,
+            patch("mcpgateway.services.gateway_service._get_tool_lookup_cache") as get_tool_cache,
+        ):
+            mock_fresh.return_value.__enter__.return_value = mock_session
+            mock_init.return_value = ({}, mock_tool_schemas, [], [], [])
+            get_cache.return_value = mock_cache
+            get_tool_cache.return_value = mock_tool_lookup_cache
+
+            result = await gateway_service._refresh_gateway_tools_resources_prompts("gw-123")
+
+        # Verify tools were marked as updated
+        assert result["tools_updated"] == 3
+
+        # Verify gateway-wide cache invalidation happened
+        mock_tool_lookup_cache.invalidate_gateway.assert_called_once_with("gw-123")
+
+        # Verify each restored tool had its cache invalidated (lines 5423-5424 loop)
+        assert mock_tool_lookup_cache.invalidate.call_count == 3
+        for tool_name in restored_names:
+            mock_tool_lookup_cache.invalidate.assert_any_call(tool_name, gateway_id="gw-123")
