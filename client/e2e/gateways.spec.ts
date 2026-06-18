@@ -202,7 +202,9 @@ test.describe("Gateways page", () => {
     await expect(viewDetails).toBeVisible();
     await expect(viewDetails).not.toHaveAttribute("data-disabled", "");
 
-    await expect(page.getByRole("menuitem", { name: "Edit server" })).toHaveCount(0);
+    const editServer = page.getByRole("menuitem", { name: "Edit server" });
+    await expect(editServer).toBeVisible();
+    await expect(editServer).not.toHaveAttribute("data-disabled", "");
     await expect(page.getByRole("menuitem", { name: "Deactivate" })).toHaveCount(0);
     const deleteItem = page.getByRole("menuitem", { name: "Delete" });
     await expect(deleteItem).toBeVisible();
@@ -247,7 +249,9 @@ test.describe("Gateways page", () => {
 
     await expect.poll(() => deleteRequestCount).toBe(1);
     await expect.poll(() => listRequestCount).toBeGreaterThan(1);
-    await expect(page.getByText("testVS")).toHaveCount(0);
+    await expect(page.getByTestId("virtual-server-card").filter({ hasText: "testVS" })).toHaveCount(
+      0,
+    );
     await expect(page.getByRole("status")).toContainText("testVS deleted.");
   });
 
