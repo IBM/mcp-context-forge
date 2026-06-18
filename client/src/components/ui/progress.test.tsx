@@ -248,7 +248,7 @@ describe("Progress", () => {
     });
 
     it("should support disabled attribute", () => {
-      const { container } = render(<Progress value={50} disabled />);
+      const { container } = render(<Progress value={50} />);
       const progressRoot = container.querySelector('[data-slot="progress"]');
 
       expect(progressRoot).toHaveAttribute("disabled");

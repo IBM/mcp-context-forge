@@ -52,11 +52,13 @@ describe("AuthContext", () => {
     vi.clearAllMocks();
     // Mock window.location
     delete (window as unknown as { location?: unknown }).location;
-    window.location = { href: "" } as unknown as Location;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    window.location = { href: "" } as any;
   });
 
   afterEach(() => {
-    window.location = originalLocation;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    window.location = originalLocation as any;
   });
 
   it("throws error when useAuthContext is used outside AuthProvider", () => {
@@ -99,7 +101,7 @@ describe("AuthContext", () => {
   });
 
   it("handles failed initial authentication (401)", async () => {
-    const error = new ApiError(401, "Unauthorized");
+    const error = new ApiError(401, "Unauthorized", "");
     vi.mocked(api.get).mockRejectedValueOnce(error);
 
     render(
@@ -133,7 +135,7 @@ describe("AuthContext", () => {
   });
 
   it("handles successful login", async () => {
-    vi.mocked(api.get).mockRejectedValueOnce(new ApiError(401, "Unauthorized"));
+    vi.mocked(api.get).mockRejectedValueOnce(new ApiError(401, "Unauthorized", ""));
 
     render(
       <AuthProvider>

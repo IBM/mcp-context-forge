@@ -299,7 +299,7 @@ describe("RadioGroup", () => {
 
     it("should call onValueChange callback", async () => {
       const user = userEvent.setup();
-      const onChange = vi.fn<[string]>();
+      const onChange = vi.fn<(value: string) => void>();
 
       const { container } = render(
         <RadioGroup onValueChange={onChange}>
@@ -331,7 +331,7 @@ describe("RadioGroup", () => {
   describe("Keyboard Navigation", () => {
     it("should support arrow key navigation", async () => {
       const user = userEvent.setup();
-      const onChange = vi.fn<[string]>();
+      const onChange = vi.fn<(value: string) => void>();
 
       const { container } = render(
         <RadioGroup onValueChange={onChange}>
@@ -367,7 +367,7 @@ describe("RadioGroup", () => {
 
     it("should support space key selection", async () => {
       const user = userEvent.setup();
-      const onChange = vi.fn<[string]>();
+      const onChange = vi.fn<(value: string) => void>();
 
       const { container } = render(
         <RadioGroup onValueChange={onChange}>
@@ -400,7 +400,7 @@ describe("RadioGroup", () => {
 
     it("should prevent interaction on disabled items", async () => {
       const user = userEvent.setup();
-      const onChange = vi.fn<[string]>();
+      const onChange = vi.fn<(value: string) => void>();
 
       const { container } = render(
         <RadioGroup onValueChange={onChange}>
@@ -503,7 +503,7 @@ describe("RadioGroup", () => {
 
     it("should work in form context", async () => {
       const user = userEvent.setup();
-      const onChange = vi.fn<[string]>();
+      const onChange = vi.fn<(value: string) => void>();
 
       const { container } = render(
         <form>

@@ -4,23 +4,14 @@ import { ServerStatusBadge } from "./ServerStatusBadge";
 import type { MCPServer } from "../../types/server";
 
 describe("ServerStatusBadge", () => {
-  const baseServer: MCPServer = {
+  const baseServer = {
     id: "test-id",
     name: "test-server",
     enabled: true,
     reachable: true,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    is_deleted: false,
-    settings: {
-      command: "node",
-      args: ["test.js"],
-      env: {},
-    },
-    client_count: 0,
-    auth_type: "none",
-    status: "active",
-  };
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  } as MCPServer;
 
   it("renders Draft when not enabled", () => {
     render(<ServerStatusBadge server={{ ...baseServer, enabled: false }} />);
