@@ -9,10 +9,12 @@ import { I18nProvider } from "@/i18n";
 import { AuthProvider } from "@/auth/AuthContext";
 
 let mockHookActive = false;
-let mockHookReturnValue: any = null;
+let mockHookReturnValue: Record<string, unknown> | null = null;
 
 vi.mock("@/hooks/useMCPServerForm", async (importOriginal) => {
-  const actual = (await importOriginal()) as any;
+  const actual = (await importOriginal()) as {
+    useMCPServerForm: (serverId?: string) => Record<string, unknown>;
+  };
   return {
     ...actual,
     useMCPServerForm: (serverId?: string) => {

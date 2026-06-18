@@ -177,7 +177,6 @@ describe("Skeleton", () => {
       const ref = React.createRef<HTMLDivElement>();
       render(<Skeleton ref={ref} />);
 
-      const skeleton = ref.current?.querySelector('[data-slot="skeleton"]');
       // The ref itself is the skeleton element, not a container
       expect(ref.current?.getAttribute("data-slot")).toBe("skeleton");
     });

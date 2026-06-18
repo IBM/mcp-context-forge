@@ -27,7 +27,7 @@ describe("Header", () => {
   };
 
   it("renders without version when useQuery returns no data", () => {
-    (useQuery as any).mockReturnValue({ data: null });
+    vi.mocked(useQuery).mockReturnValue({ data: null } as unknown as ReturnType<typeof useQuery>);
     renderHeader();
 
     expect(screen.getByTestId("quick-nav")).toBeInTheDocument();
@@ -39,13 +39,13 @@ describe("Header", () => {
   });
 
   it("renders with version when useQuery returns version data", () => {
-    (useQuery as any).mockReturnValue({
+    vi.mocked(useQuery).mockReturnValue({
       data: {
         app: {
           version: "1.0.0",
         },
       },
-    });
+    } as unknown as ReturnType<typeof useQuery>);
     renderHeader();
 
     expect(screen.getByText("v1.0.0")).toBeInTheDocument();
