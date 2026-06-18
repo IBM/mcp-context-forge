@@ -11,6 +11,7 @@ repository.workspace = true
 [dependencies]
 # Async runtime
 tokio.workspace = true
+tokio-stream = "0.1.17"
 
 # Web framework
 axum.workspace = true

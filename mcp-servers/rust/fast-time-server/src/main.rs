@@ -11,7 +11,10 @@
 // Default: http://127.0.0.1:9080/mcp
 
 use axum::Router;
+use axum::body;
+use axum::extract::Query;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::serve::ListenerExt;
 #[cfg(test)]
@@ -21,10 +24,16 @@ use chrono_tz::Tz;
 use rand_distr::Distribution;
 use rand_distr::Normal;
 use serde_json::json;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::convert::Infallible;
 use std::env;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, RwLock};
+use std::task::{Context, Poll};
+use tokio::sync::mpsc;
+use tokio_stream::Stream;
+use tokio_stream::wrappers::ReceiverStream;
 use tracing::info;
 use tracing::trace;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -36,10 +45,13 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 const SESSION_HEADER: &str = "mcp-session-id";
 const MAX_ACTIVE_SESSIONS: usize = 10_000;
+const SSE_CHANNEL_CAPACITY: usize = 64;
 const MAX_DELAY_MS: u64 = 60_000;
 static DIRECT_REQUEST_COUNT: AtomicU64 = AtomicU64::new(0);
 static ACTIVE_SESSIONS: LazyLock<RwLock<HashSet<String>>> =
     LazyLock::new(|| RwLock::new(HashSet::new()));
+static SSE_SESSIONS: LazyLock<RwLock<HashMap<String, mpsc::Sender<String>>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
 
 // ============================================================================
 // Delay Helpers
@@ -208,7 +220,11 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/mcp",
             axum::routing::post(mcp_handler).delete(mcp_delete_handler),
-        );
+        )
+        // Legacy MCP SSE transport
+        .route("/sse", axum::routing::get(sse_handler))
+        .route("/messages", axum::routing::post(sse_message_handler))
+        .route("/message", axum::routing::post(sse_message_handler));
 
     // Bind and serve
     let tcp_listener = tokio::net::TcpListener::bind(&bind_address)
@@ -220,6 +236,7 @@ async fn main() -> anyhow::Result<()> {
         });
 
     info!("MCP endpoint:   http://{}/mcp", bind_address);
+    info!("MCP SSE:        http://{}/sse", bind_address);
     info!(
         "REST API:       http://{}/api/echo (POST), /api/time (GET)",
         bind_address
@@ -260,6 +277,151 @@ async fn version_handler() -> axum::Json<serde_json::Value> {
         "version": APP_VERSION,
         "mcp_version": MCP_PROTOCOL_VERSION
     }))
+}
+
+// ============================================================================
+// Legacy SSE MCP Handler
+// ============================================================================
+
+#[derive(Debug, serde::Deserialize)]
+struct SseMessageQuery {
+    #[serde(rename = "sessionId")]
+    session_id_camel: Option<String>,
+    session_id: Option<String>,
+}
+
+impl SseMessageQuery {
+    fn session_id(&self) -> Option<&str> {
+        self.session_id_camel
+            .as_deref()
+            .or(self.session_id.as_deref())
+    }
+}
+
+struct SseSessionStream {
+    session_id: String,
+    endpoint: Option<String>,
+    receiver: ReceiverStream<String>,
+}
+
+impl SseSessionStream {
+    fn new(session_id: String, receiver: mpsc::Receiver<String>) -> Self {
+        let endpoint = Some(format!("/messages?sessionId={session_id}"));
+        Self {
+            session_id,
+            endpoint,
+            receiver: ReceiverStream::new(receiver),
+        }
+    }
+}
+
+impl Stream for SseSessionStream {
+    type Item = Result<Event, Infallible>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if let Some(endpoint) = self.endpoint.take() {
+            return Poll::Ready(Some(Ok(Event::default().event("endpoint").data(endpoint))));
+        }
+
+        Pin::new(&mut self.receiver)
+            .poll_next(cx)
+            .map(|message| message.map(|data| Ok(Event::default().event("message").data(data))))
+    }
+}
+
+impl Drop for SseSessionStream {
+    fn drop(&mut self) {
+        remove_sse_session(&self.session_id);
+    }
+}
+
+async fn sse_handler() -> Response {
+    let session_id = Uuid::new_v4().to_string();
+    let (sender, receiver) = mpsc::channel(SSE_CHANNEL_CAPACITY);
+    if !remember_sse_session(session_id.clone(), sender) {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+
+    Sse::new(SseSessionStream::new(session_id, receiver))
+        .keep_alive(KeepAlive::default())
+        .into_response()
+}
+
+async fn sse_message_handler(
+    Query(query): Query<SseMessageQuery>,
+    axum::Json(req): axum::Json<serde_json::Value>,
+) -> Response {
+    let Some(session_id) = query.session_id() else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    let Some(sender) = sse_session_sender(session_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    if let Some(message) = mcp_sse_message_response(&req).await
+        && sender.send(message).await.is_err()
+    {
+        remove_sse_session(session_id);
+        return StatusCode::GONE.into_response();
+    }
+
+    StatusCode::ACCEPTED.into_response()
+}
+
+fn remember_sse_session(session_id: String, sender: mpsc::Sender<String>) -> bool {
+    if let Ok(mut sessions) = SSE_SESSIONS.write() {
+        if sessions.len() >= MAX_ACTIVE_SESSIONS {
+            return false;
+        }
+        sessions.insert(session_id, sender);
+        true
+    } else {
+        false
+    }
+}
+
+fn sse_session_sender(session_id: &str) -> Option<mpsc::Sender<String>> {
+    SSE_SESSIONS
+        .read()
+        .ok()
+        .and_then(|sessions| sessions.get(session_id).cloned())
+}
+
+fn remove_sse_session(session_id: &str) -> bool {
+    SSE_SESSIONS
+        .write()
+        .map(|mut sessions| sessions.remove(session_id).is_some())
+        .unwrap_or(false)
+}
+
+async fn mcp_sse_message_response(req: &serde_json::Value) -> Option<String> {
+    let id = Some(req.get("id")?);
+
+    let method = req
+        .get("method")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let response = match method {
+        "initialize" => mcp_sse_initialize_response(id),
+        "ping" => mcp_empty_result_response(id),
+        "tools/list" => mcp_tools_list_response(id),
+        "tools/call" => mcp_tools_call_response(id, req).await,
+        _ => mcp_error_response(id, -32601, "Method not found", None),
+    };
+
+    Some(response_body(response).await)
+}
+
+fn mcp_sse_initialize_response(id: Option<&serde_json::Value>) -> Response {
+    mcp_json_response(mcp_initialize_body(id))
+}
+
+async fn response_body(response: Response) -> String {
+    body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes.to_vec()).ok())
+        .unwrap_or_default()
 }
 
 // ============================================================================
@@ -337,17 +499,21 @@ fn mcp_initialize_response(id: Option<&serde_json::Value>) -> Response {
             Some(json!({ "max_sessions": MAX_ACTIVE_SESSIONS })),
         );
     }
-    let mut response = mcp_json_response(format!(
+    let mut response = mcp_json_response(mcp_initialize_body(id));
+    response
+        .headers_mut()
+        .insert(SESSION_HEADER, session_header);
+    response
+}
+
+fn mcp_initialize_body(id: Option<&serde_json::Value>) -> String {
+    format!(
         r#"{{"jsonrpc":"2.0","id":{},"result":{{"protocolVersion":"{}","capabilities":{{"tools":{{}}}},"serverInfo":{{"name":"{}","version":"{}"}},"instructions":"Ultra-fast MCP test server."}}}}"#,
         mcp_id_json(id),
         MCP_PROTOCOL_VERSION,
         APP_NAME,
         APP_VERSION
-    ));
-    response
-        .headers_mut()
-        .insert(SESSION_HEADER, session_header);
-    response
+    )
 }
 
 fn remember_session(session_id: String) -> bool {
@@ -856,6 +1022,94 @@ mod tests {
                 .clone(),
         );
         headers
+    }
+
+    #[tokio::test]
+    async fn test_sse_message_handler_sends_initialize_response() {
+        let session_id = Uuid::new_v4().to_string();
+        let (sender, mut receiver) = mpsc::channel(1);
+        assert!(remember_sse_session(session_id.clone(), sender));
+
+        let response = sse_message_handler(
+            Query(SseMessageQuery {
+                session_id_camel: Some(session_id.clone()),
+                session_id: None,
+            }),
+            axum::Json(json!({
+                "jsonrpc": "2.0",
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "sse-smoke",
+                        "version": "1.0"
+                    }
+                },
+                "id": 1
+            })),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let message = receiver
+            .recv()
+            .await
+            .expect("initialize response should be sent as SSE data");
+        let body: serde_json::Value =
+            serde_json::from_str(&message).expect("SSE message should be JSON-RPC");
+        assert_eq!(body["result"]["protocolVersion"], MCP_PROTOCOL_VERSION);
+        assert_eq!(body["result"]["serverInfo"]["name"], APP_NAME);
+        assert!(body["result"]["capabilities"]["tools"].is_object());
+        assert!(remove_sse_session(&session_id));
+    }
+
+    #[tokio::test]
+    async fn test_sse_message_handler_accepts_session_id_alias() {
+        let session_id = Uuid::new_v4().to_string();
+        let (sender, mut receiver) = mpsc::channel(1);
+        assert!(remember_sse_session(session_id.clone(), sender));
+
+        let response = sse_message_handler(
+            Query(SseMessageQuery {
+                session_id_camel: None,
+                session_id: Some(session_id.clone()),
+            }),
+            axum::Json(json!({
+                "jsonrpc": "2.0",
+                "method": "tools/list",
+                "id": 2
+            })),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let message = receiver
+            .recv()
+            .await
+            .expect("tools/list response should be sent as SSE data");
+        let body: serde_json::Value =
+            serde_json::from_str(&message).expect("SSE message should be JSON-RPC");
+        assert_eq!(body["result"]["tools"][0]["name"], "echo");
+        assert!(remove_sse_session(&session_id));
+    }
+
+    #[tokio::test]
+    async fn test_sse_message_handler_rejects_unknown_session() {
+        let response = sse_message_handler(
+            Query(SseMessageQuery {
+                session_id_camel: Some("missing-sse-session".to_string()),
+                session_id: None,
+            }),
+            axum::Json(json!({
+                "jsonrpc": "2.0",
+                "method": "tools/list",
+                "id": 3
+            })),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
