@@ -47,18 +47,12 @@ ARG ENABLE_PROFILING=false
 #     --build-arg NODEJS_IMAGE=<internal-registry>/ubi9/nodejs-20:latest \
 #     --build-arg UBI_MINIMAL=<internal-registry>/ubi9/ubi-minimal:latest \
 #     .
-ARG UBI_BASE=registry.access.redhat.com/ubi10:1780550950
-ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:1780432202
-ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:1780550884
-# Wheel closure stage — used only for s390x and ppc64le where PyPI manylinux
-# binary wheels are unavailable (tiktoken/psycopg/cryptography require native
-# compilation, and psycopg-binary has no s390x wheel at all).
-# For amd64/arm64, WHEELS_REF defaults to UBI_MINIMAL so /wheels is always
-# empty and the install step below always resolves via PyPI.
-# For s390x/ppc64le, the CI pipeline (docker-multiplatform.yml) passes an
-# explicit WHEELS_REF pointing to the lock-hash-tagged wheel image built by
-# the `wheels` job in infra/wheels/Containerfile.
-ARG WHEELS_REF=${UBI_MINIMAL}
+ARG UBI_BASE=registry.access.redhat.com/ubi10:1781510254
+ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:1781700998
+ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:1781509581
+# Wheel closure stage - pulls the prebuilt dependency closure for the target
+ARG TARGETARCH
+ARG WHEELS_REF=ghcr.io/ibm/mcp-context-forge-wheels:${TARGETARCH}-latest
 FROM ${WHEELS_REF} AS wheels
 RUN mkdir -p /wheels
 
