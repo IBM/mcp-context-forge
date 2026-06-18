@@ -31,10 +31,10 @@ import pytest
 # These reduce duplication across test files and ensure consistent test data
 
 # Sensitive headers that should be filtered by default
-SENSITIVE_HEADERS = {
-    "authorization": "Bearer token123",
-    "x-api-key": "secret-key-456",
-    "cookie": "session=abc123",
+SENSITIVE_HEADERS = {  # pragma: allowlist secret
+    "authorization": "Bearer token123",  # pragma: allowlist secret
+    "x-api-key": "secret-key-456",  # pragma: allowlist secret
+    "cookie": "session=abc123",  # pragma: allowlist secret
 }
 
 # Non-sensitive headers that should pass through
