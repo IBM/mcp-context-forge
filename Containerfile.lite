@@ -263,6 +263,7 @@ RUN if [ "$(uname -m)" = "s390x" ] || [ "$(uname -m)" = "ppc64le" ]; then \
 # ----------------------------------------------------------------------------
 COPY pyproject.toml /app/
 COPY mcpgateway/__init__.py /app/mcpgateway/__init__.py
+COPY mcpgateway/tools/__init__.py /app/mcpgateway/tools/__init__.py
 COPY mcpgateway/tools/builder/__init__.py /app/mcpgateway/tools/builder/__init__.py
 COPY mcpgateway/tools/builder/build_hooks.py /app/mcpgateway/tools/builder/build_hooks.py
 COPY --from=rust-builder /build/native-extension-wheels/ /tmp/local-native-extension-wheels/

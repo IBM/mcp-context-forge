@@ -101,7 +101,8 @@ RUN if [ "$(uname -m)" = "s390x" ] || [ "$(uname -m)" = "ppc64le" ]; then \
     fi
 RUN chmod 644 /etc/profile.d/use-openssl.sh
 
-# Copy project files into container
+# Copy project files into container (ensure tools package is complete)
+COPY mcpgateway/tools/__init__.py /app/mcpgateway/tools/__init__.py
 COPY . /app
 
 # Copy frontend build artifacts from frontend-builder stage
