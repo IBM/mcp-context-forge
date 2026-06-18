@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import React from "react";
 import { OAuth2Auth } from "./OAuth2Auth";
 
 describe("OAuth2Auth", () => {

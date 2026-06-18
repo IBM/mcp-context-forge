@@ -289,7 +289,8 @@ describe("api client", () => {
       const originalLocation = window.location;
       const mockReplace = vi.fn();
       delete (window as unknown as { location?: unknown }).location;
-      window.location = { ...originalLocation, replace: mockReplace } as unknown as Location;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      window.location = { ...originalLocation, replace: mockReplace } as any;
 
       server.use(http.get("*/api/protected", () => new HttpResponse(null, { status: 401 })));
 
@@ -301,14 +302,16 @@ describe("api client", () => {
 
       expect(mockReplace).toHaveBeenCalledWith("/app/login");
 
-      window.location = originalLocation;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      window.location = originalLocation as any;
     });
 
     it("does not redirect to login on 401 for /app/auth/me", async () => {
       const originalLocation = window.location;
       const mockReplace = vi.fn();
       delete (window as unknown as { location?: unknown }).location;
-      window.location = { ...originalLocation, replace: mockReplace } as unknown as Location;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      window.location = { ...originalLocation, replace: mockReplace } as any;
 
       server.use(http.get("*/app/auth/me", () => new HttpResponse(null, { status: 401 })));
 
@@ -320,13 +323,14 @@ describe("api client", () => {
 
       expect(mockReplace).not.toHaveBeenCalled();
 
-      window.location = originalLocation;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      window.location = originalLocation as any;
     });
 
     it("sends credentials same-origin for authenticated requests", async () => {
       let credentialsMode: RequestCredentials | undefined;
       const originalFetch = global.fetch;
-      global.fetch = vi.fn(async (url, options) => {
+      global.fetch = vi.fn(async (_url, options) => {
         credentialsMode = options?.credentials;
         return new Response(JSON.stringify({ ok: true }));
       });

@@ -49,6 +49,7 @@ const baseUser: User = {
   is_admin: false,
   is_active: true,
   is_locked: false,
+    failed_login_attempts: 0,
   password_change_required: false,
   email_verified: false,
   created_at: "2023-01-01T10:00:00Z",
