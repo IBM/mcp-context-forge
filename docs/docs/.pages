@@ -1,5 +1,6 @@
 nav:
   - "🏠 Home": index.md
+  - "⚠️ Deprecations": deprecations.md
   - "🧭 Overview": overview
   - "🧰 Use": using
   - "🚀 Deploy": deployment

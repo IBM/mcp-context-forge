@@ -35,6 +35,8 @@ from functools import lru_cache
 import html
 import json
 import logging
+import multiprocessing
+import os
 import re
 import signal
 import sys
@@ -96,6 +98,7 @@ from mcpgateway.db import A2APushNotificationConfig
 from mcpgateway.db import A2ATask as DbA2ATask
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.deprecations import RUST_MCP_RUNTIME_DEPRECATION_MESSAGE, VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE
 from mcpgateway.handlers.sampling import SamplingError, SamplingHandler
 from mcpgateway.middleware.client_disconnect import ClientDisconnectMiddleware
 from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
@@ -1627,6 +1630,25 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         logger.info("All services initialized successfully")
 
+        # Warn about per-worker database connection pool multiplication
+        if os.environ.get("GUNICORN_CMD_ARGS") or os.environ.get("GUNICORN_WORKERS"):
+            cpu_count = multiprocessing.cpu_count()
+            default_workers = min(2 * cpu_count + 1, 16)
+            workers = int(os.environ.get("GUNICORN_WORKERS", str(default_workers)))
+            total_pool = settings.db_pool_size + settings.db_max_overflow
+            total_connections = workers * total_pool
+            logger.warning(
+                "⚠️  DATABASE POOL: Running with %d gunicorn workers. "
+                "Total max DB connections = workers(%d) * (pool_size + max_overflow) = %d * %d = %d. "
+                "Ensure PostgreSQL max_connections >= %d. ",
+                workers,
+                workers,
+                workers,
+                total_pool,
+                total_connections,
+                total_connections,
+            )
+
         # Warn about unsafe UAID configuration if A2A is enabled
         if settings.mcpgateway_a2a_enabled:
             uaid_allowed_domains = getattr(settings, "uaid_allowed_domains", [])
@@ -3104,7 +3126,7 @@ if settings.rate_limiting_enabled:
 # Add validation middleware if explicitly enabled
 if settings.validation_middleware_enabled:
     app.add_middleware(ValidationMiddleware)
-    logger.info("🔒 Input validation and output sanitization middleware enabled")
+    logger.warning("🔒 Input validation and output sanitization middleware enabled. %s", VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE)
 else:
     logger.info("🔒 Input validation and output sanitization middleware disabled")
 
@@ -12434,7 +12456,8 @@ def _build_mcp_transport_app():
             )
 
         logger.warning(
-            "MCP runtime mode: %s (boot=%s). Public /mcp dispatches via MCPIngressMount; ingresses=%s; current=%s. Runtime override may flip via PATCH /admin/runtime/mcp-mode.",
+            "%s MCP runtime mode: %s (boot=%s). Public /mcp dispatches via MCPIngressMount; ingresses=%s; current=%s. Runtime override may flip via PATCH /admin/runtime/mcp-mode.",
+            RUST_MCP_RUNTIME_DEPRECATION_MESSAGE,
             _current_mcp_runtime_mode(),
             boot_mode,
             ingress.names(),
@@ -12448,7 +12471,8 @@ def _build_mcp_transport_app():
 
     if _should_mount_public_rust_transport():
         logger.warning(
-            "MCP runtime mode: %s. GET/POST/DELETE /mcp requests will be proxied to %s. MCP session core mode: %s. MCP replay/resume core mode: %s. MCP live stream core mode: %s. MCP affinity core mode: %s. MCP session auth reuse mode: %s.",
+            "%s MCP runtime mode: %s. GET/POST/DELETE /mcp requests will be proxied to %s. MCP session core mode: %s. MCP replay/resume core mode: %s. MCP live stream core mode: %s. MCP affinity core mode: %s. MCP session auth reuse mode: %s.",
+            RUST_MCP_RUNTIME_DEPRECATION_MESSAGE,
             _current_mcp_runtime_mode(),
             settings.experimental_rust_mcp_runtime_uds or settings.experimental_rust_mcp_runtime_url,
             _current_mcp_session_core_mode(),

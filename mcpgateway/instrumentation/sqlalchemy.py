@@ -43,6 +43,10 @@ _shutdown_event = threading.Event()
 def _write_span_to_db(span_data: dict) -> None:
     """Write a single span to the database.
 
+    Optimized to use a single session instead of 3 separate sessions.
+    Previously: start_span() + end_span() + duration update = 3 sessions.
+    Now: Single session for all operations = 1 session.
+
     Args:
         span_data: Dictionary containing span information
     """
@@ -56,36 +60,47 @@ def _write_span_to_db(span_data: dict) -> None:
         # pylint: enable=import-outside-toplevel
 
         service = ObservabilityService()
-        # start_span and end_span create their own independent sessions (issue #3883)
-        span_id = service.start_span(
-            trace_id=span_data["trace_id"],
-            name=span_data["name"],
-            kind=span_data["kind"],
-            resource_type=span_data["resource_type"],
-            resource_name=span_data["resource_name"],
-            attributes=span_data["start_attributes"],
-        )
 
-        # End span with measured duration in attributes
-        service.end_span(
-            span_id=span_id,
-            status=span_data["status"],
-            attributes=span_data["end_attributes"],
-        )
-
-        # Update the span duration to match what we actually measured
-        # Use independent session for this query (follows #3883 pattern)
+        # Use a single session for all operations
+        # This reduces 3 sessions per SQL query to 1 session
         db = SessionLocal()
         try:
+            # Create span with commit=False and pass obs_db to reuse session
+            span_id = service.start_span(
+                trace_id=span_data["trace_id"],
+                name=span_data["name"],
+                kind=span_data["kind"],
+                resource_type=span_data["resource_type"],
+                resource_name=span_data["resource_name"],
+                attributes=span_data["start_attributes"],
+                commit=False,  # Don't commit yet
+                obs_db=db,  # Reuse this session
+            )
+
+            # End span with commit=False and pass obs_db to reuse session
+            service.end_span(
+                span_id=span_id,
+                status=span_data["status"],
+                attributes=span_data["end_attributes"],
+                commit=False,  # Don't commit yet
+                obs_db=db,  # Reuse this session
+            )
+
+            # Update the span duration to match what we actually measured
             span = db.query(ObservabilitySpan).filter_by(span_id=span_id).first()
             if span:
                 span.duration_ms = span_data["duration_ms"]
-                db.commit()
+
+            # Single commit for all operations
+            db.commit()
 
             logger.debug(f"Created span for {span_data['resource_name']} query: " f"{span_data['duration_ms']:.2f}ms, {span_data.get('row_count')} rows")
 
+        except Exception as commit_error:
+            db.rollback()
+            raise commit_error
         finally:
-            db.close()  # Commit already done above
+            db.close()
 
     except Exception as e:  # pylint: disable=broad-except
         # Don't fail if span creation fails

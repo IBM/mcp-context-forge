@@ -241,7 +241,9 @@ class TestConfigurableTagLimits:
         assert TagValidator.validate(system_tag) is True
 
         # Very long descriptive tag (186 chars - adjusted)
-        long_tag = "machine-learning-natural-language-processing-transformer-based-sentiment-analysis-production-deployment-version-2-team-ai-research-department-engineering-organization-enterprise-customer"
+        long_tag = (
+            "machine-learning-natural-language-processing-transformer-based-sentiment-analysis-production-deployment-version-2-team-ai-research-department-engineering-organization-enterprise-customer"
+        )
         assert len(long_tag) == 186
         assert TagValidator.validate(long_tag) is True
 

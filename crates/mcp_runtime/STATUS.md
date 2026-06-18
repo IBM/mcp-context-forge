@@ -1,5 +1,10 @@
 # Rust MCP Runtime Status
 
+> Deprecated as of 2026-06-11; sunsets on 2026-07-07. This status file is historical implementation
+> context for the Rust MCP runtime sidecar. Use the default Python MCP
+> transport path for new deployments. See
+> [Deprecations](../../docs/docs/deprecations.md).
+
 Last updated: March 15, 2026
 
 ## Current snapshot

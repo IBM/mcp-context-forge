@@ -1911,9 +1911,10 @@ resilience-up:                             ## Start slow-time-server for resilie
 	@echo ""
 	@echo "   Slow Time Server: $(RESILIENCE_HOST)"
 	@echo "     REST API:       $(RESILIENCE_HOST)/api/v1/time?delay=5"
-	@echo "     MCP SSE:        $(RESILIENCE_HOST)/sse"
-	@echo "     MCP HTTP:       $(RESILIENCE_HOST)/http"
-	@echo "     API Docs:       $(RESILIENCE_HOST)/api/v1/docs"
+	@echo "     MCP HTTP:       $(RESILIENCE_HOST)/mcp"
+	@echo "     Config:         $(RESILIENCE_HOST)/api/v1/config"
+	@echo "     Stats:          $(RESILIENCE_HOST)/api/v1/stats"
+	@echo "     Version:        $(RESILIENCE_HOST)/version"
 	@echo "     Health:         $(RESILIENCE_HOST)/health"
 	@echo ""
 	@echo "   Run: make resilience-locust  or  make resilience-jmeter"
@@ -1977,7 +1978,7 @@ resilience-jmeter: jmeter-check            ## Run JMeter baseline test against s
 	@echo "Report: $(JMETER_RESULTS_DIR)/resilience_*/index.html"
 
 # =============================================================================
-# help: 🎯 BENCHMARK STACK (Go benchmark-server)
+# help: 🎯 BENCHMARK STACK (Rust benchmark-server)
 # help: benchmark-up           - Start benchmark stack (MCP servers + auto-registration)
 # help: benchmark-down         - Stop benchmark stack
 # help: benchmark-clean        - Stop and remove all benchmark data (volumes)
@@ -5083,7 +5084,7 @@ deps-update:
 
 dist: clean uv               ## Build wheel + sdist into ./dist (optionally includes Rust)
 	@echo "📦 Building Python package..."
-	@$(UV_BIN) build
+	@BUILD_UI_ASSETS=true $(UV_BIN) build
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust..."; \
 		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust"; exit 0; }; \
@@ -5099,7 +5100,7 @@ dist: clean uv               ## Build wheel + sdist into ./dist (optionally incl
 
 wheel: uv                    ## Build wheel only (Python + optionally Rust)
 	@echo "📦 Building Python wheel..."
-	@$(UV_BIN) build --wheel
+	@BUILD_UI_ASSETS=true $(UV_BIN) build --wheel
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust wheels..."; \
 		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust"; exit 0; }; \
@@ -8705,8 +8706,8 @@ upgrade-validate:                         ## Validate fresh + upgrade + roundtri
 # Intentional broad scan under crates/: workspace-owned crates live here and CI
 # should pick up new maturin crates automatically rather than curating a short list.
 RUST_MATURIN_CRATES := $(shell find crates -type d 2>/dev/null | while read d; do [ -f "$$d/Cargo.toml" ] && [ -f "$$d/pyproject.toml" ] && echo "$$d"; done | sort)
-# Keep rust server helpers discoverable without pulling mcp-servers/rust into the
-# shared workspace commands.
+# Keep rust server helpers discoverable even when samples are managed outside
+# the shared workspace commands.
 RUST_MCP_DIRS := $(shell find mcp-servers/rust -maxdepth 2 -name Cargo.toml -exec dirname {} \; 2>/dev/null | sort -u)
 
 rust-ensure-deps:                       ## Ensure Rust toolchain and maturin are available

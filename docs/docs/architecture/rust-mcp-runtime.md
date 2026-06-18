@@ -1,5 +1,10 @@
 # Rust MCP Runtime
 
+!!! warning "Deprecated as of 2026-06-11; sunsets on 2026-07-07"
+    The Rust MCP runtime sidecar and Rust A2A runtime sidecar are deprecated.
+    New deployments should use the default Python MCP transport and Python A2A
+    invocation paths. See [Deprecations](../deprecations.md).
+
 The Rust MCP runtime is an optional sidecar/runtime path for ContextForge's
 streamable HTTP MCP traffic. It is designed to move the public MCP hot path out
 of Python incrementally while keeping Python authoritative for authentication,
@@ -34,6 +39,10 @@ make testing-rebuild-rust-full
 ```
 
 ## Runtime Mode Override
+
+!!! warning "Deprecated runtime controls"
+    `RUST_MCP_MODE`, `RUST_A2A_MODE`, and the related runtime override APIs
+    control deprecated Rust sidecar paths. They remain for compatibility.
 
 The boot env vars `RUST_MCP_MODE` and `RUST_A2A_MODE` still pick the initial
 mode. When the boot mode is `edge` an authorized admin can flip the public

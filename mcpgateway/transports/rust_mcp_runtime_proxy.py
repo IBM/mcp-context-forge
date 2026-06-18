@@ -30,6 +30,7 @@ from starlette.types import Receive, Scope, Send
 from mcpgateway.config import settings
 from mcpgateway.db import fresh_db_session
 from mcpgateway.db import Server as DbServer
+from mcpgateway.deprecations import DEPRECATION_LINK_VALUE, DEPRECATION_RESPONSE_HEADERS, RUST_MCP_RUNTIME_DEPRECATION_MESSAGE
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 from mcpgateway.transports.streamablehttp_transport import get_streamable_http_auth_context
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -65,6 +66,43 @@ _RESPONSE_HOP_BY_HOP_HEADERS = frozenset({"connection", "transfer-encoding", "ke
 # Sentinel returned by _validate_server_id to signal that an error response
 # has already been sent and the caller should return immediately.
 _REJECT = object()
+_RUST_MCP_RUNTIME_DEPRECATION_LOGGED = False
+
+
+def _log_rust_mcp_runtime_deprecation_once() -> None:
+    """Log the Rust MCP runtime deprecation once per process."""
+    global _RUST_MCP_RUNTIME_DEPRECATION_LOGGED  # pylint: disable=global-statement
+    if not _RUST_MCP_RUNTIME_DEPRECATION_LOGGED:
+        logger.warning(RUST_MCP_RUNTIME_DEPRECATION_MESSAGE)
+        _RUST_MCP_RUNTIME_DEPRECATION_LOGGED = True
+
+
+def _append_deprecation_headers(headers: list[tuple[bytes, bytes]]) -> list[tuple[bytes, bytes]]:
+    """Append standard deprecation metadata for Rust MCP runtime responses."""
+    headers.append((b"deprecation", DEPRECATION_RESPONSE_HEADERS["Deprecation"].encode("ascii")))
+    headers.append((b"sunset", DEPRECATION_RESPONSE_HEADERS["Sunset"].encode("ascii")))
+    headers.append((b"link", DEPRECATION_LINK_VALUE.encode("ascii")))
+    return headers
+
+
+def _deprecation_response_headers() -> dict[str, str]:
+    """Return standard deprecation headers for generated Rust MCP proxy responses."""
+    return dict(DEPRECATION_RESPONSE_HEADERS)
+
+
+async def _send_rust_runtime_response(response: httpx.Response, send: Send) -> None:
+    """Send a streamed Rust runtime response back through ASGI."""
+    await send(
+        {
+            "type": "http.response.start",
+            "status": response.status_code,
+            "headers": _append_deprecation_headers([(name, value) for name, value in response.headers.raw if name.decode("latin-1").lower() not in _RESPONSE_HOP_BY_HOP_HEADERS]),
+        }
+    )
+    async for chunk in response.aiter_bytes():
+        if chunk:
+            await send({"type": "http.response.body", "body": chunk, "more_body": True})
+    await send({"type": "http.response.body", "body": b"", "more_body": False})
 
 
 async def _validate_server_id(match: re.Match[str] | None, path: str, scope: Scope, receive: Receive, send: Send) -> str | object | None:
@@ -92,12 +130,12 @@ async def _validate_server_id(match: re.Match[str] | None, path: str, scope: Sco
                 exists = db.execute(sa_exists().where(DbServer.id == server_id)).scalar()
                 if not exists:
                     logger.warning("Invalid server ID in Rust proxy MCP request path: %s", server_id)
-                    response = ORJSONResponse({"detail": "Server not found"}, status_code=404)
+                    response = ORJSONResponse({"detail": "Server not found"}, status_code=404, headers=_deprecation_response_headers())
                     await response(scope, receive, send)
                     return _REJECT
         except Exception as e:
             logger.error("Failed to validate server ID %s in Rust proxy: %s", server_id, e)
-            response = ORJSONResponse({"detail": "Service unavailable — unable to verify server"}, status_code=503)
+            response = ORJSONResponse({"detail": "Service unavailable — unable to verify server"}, status_code=503, headers=_deprecation_response_headers())
             await response(scope, receive, send)
             return _REJECT
         return server_id
@@ -108,7 +146,7 @@ async def _validate_server_id(match: re.Match[str] | None, path: str, scope: Sco
     # rather than falling through to unscoped global behaviour (#3891).
     if _SERVER_SCOPED_PATH_RE.search(path):
         logger.warning("Server-scoped MCP path with unparseable server ID rejected in Rust proxy: %s", path)
-        response = ORJSONResponse({"detail": "Invalid server identifier"}, status_code=404)
+        response = ORJSONResponse({"detail": "Invalid server identifier"}, status_code=404, headers=_deprecation_response_headers())
         await response(scope, receive, send)
         return _REJECT
 
@@ -141,6 +179,7 @@ class RustMCPRuntimeProxy:
             logger.debug("Rust MCP runtime deferring to Python fallback: scope type %r is not 'http'", scope.get("type"))
             await self.python_fallback_app(scope, receive, send)
             return
+        _log_rust_mcp_runtime_deprecation_once()
 
         method = str(scope.get("method", "GET")).upper()
         if method not in {"GET", "POST", "DELETE"}:
@@ -168,21 +207,12 @@ class RustMCPRuntimeProxy:
                 timeout=timeout,
                 follow_redirects=False,
             ) as response:
-                await send(
-                    {
-                        "type": "http.response.start",
-                        "status": response.status_code,
-                        "headers": [(name, value) for name, value in response.headers.raw if name.decode("latin-1").lower() not in _RESPONSE_HOP_BY_HOP_HEADERS],
-                    }
-                )
-                async for chunk in response.aiter_bytes():
-                    if chunk:
-                        await send({"type": "http.response.body", "body": chunk, "more_body": True})
-                await send({"type": "http.response.body", "body": b"", "more_body": False})
+                await _send_rust_runtime_response(response, send)
         except httpx.HTTPError as exc:
             logger.error("Experimental Rust MCP runtime request failed: %s", exc)
             error_response = ORJSONResponse(
                 status_code=502,
+                headers=_deprecation_response_headers(),
                 content={
                     "jsonrpc": "2.0",
                     "id": None,

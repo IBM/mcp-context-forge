@@ -59,6 +59,7 @@ It runs as a fully compliant MCP server, deployable via PyPI or Docker, and scal
 | **[Getting Help](https://github.com/IBM/mcp-context-forge/issues/2504)** | Support options, FAQ, community channels |
 | **[Issue Guide](https://github.com/IBM/mcp-context-forge/issues/2502)** | How to file bugs, request features, contribute |
 | **[Full Documentation](https://ibm.github.io/mcp-context-forge/)** | Complete guides, tutorials, API reference |
+| **[Deprecations](https://ibm.github.io/mcp-context-forge/deprecations/)** | Deprecated runtime paths and migration guidance |
 
 ---
 
@@ -661,7 +662,7 @@ make serve                 # gunicorn on :4444
 Rust workspace note:
 - Workspace-owned Rust crates live under `crates/` and are picked up by the root `Cargo.toml` via `crates/*`.
 - Run `cargo build`, `cargo test`, and `cargo check` from the repo root to cover the shared workspace.
-- `mcp-servers/rust/` stays outside the shared workspace on purpose and is managed separately.
+- Rust sample servers under `mcp-servers/rust/` are usually managed separately; workspace-owned ones are listed explicitly in the root `Cargo.toml`.
 - `make venv install-dev` creates the root `.venv`, which is also reused by the workspace's PyO3/maturin builds.
 
 <details>

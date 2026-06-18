@@ -702,7 +702,7 @@ mcpContextForge:
     # ─ Additional Settings (defaults from config.py) ─
     # Validation & sanitization
     EXPERIMENTAL_VALIDATE_IO: "false" # enable experimental input/output validation
-    VALIDATION_MIDDLEWARE_ENABLED: "false" # enable validation middleware for all requests
+    VALIDATION_MIDDLEWARE_ENABLED: "false" # deprecated; prefer endpoint-level and protocol-specific validation
     VALIDATION_STRICT: "true" # reject requests with validation failures
     JSON_SCHEMA_VALIDATION_STRICT: "true" # reject tool registrations with invalid JSON schemas
     SANITIZE_OUTPUT: "true" # strip control characters from responses
@@ -1531,7 +1531,7 @@ mcpFastTimeServer:
       successThreshold: 1
       failureThreshold: 8
 
-  # Tiny Go process: ~10 MB runtime footprint
+  # Tiny Go process with a small runtime footprint
   resources:
     limits:
       cpu: 50m           # ~5 % of a core

@@ -1951,3 +1951,27 @@ class TestAuthValidationErrors:
             )
 
         assert "either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided" in str(exc_info.value)
+
+    def test_authentication_values_rejects_oauth(self):
+        """AuthenticationValues raises ValidationError when auth_type is 'oauth'."""
+        from mcpgateway.schemas import AuthenticationValues
+
+        with pytest.raises(ValidationError) as exc_info:
+            AuthenticationValues(auth_type="oauth")
+        assert "oauth" in str(exc_info.value).lower()
+
+    def test_authentication_values_rejects_oauth_case_insensitive(self):
+        """AuthenticationValues rejects oauth regardless of case."""
+        from mcpgateway.schemas import AuthenticationValues
+
+        for value in ("OAuth", "OAUTH", "oAuth"):
+            with pytest.raises(ValidationError):
+                AuthenticationValues(auth_type=value)
+
+    def test_authentication_values_accepts_valid_auth_types(self):
+        """AuthenticationValues accepts basic, bearer, and authheaders."""
+        from mcpgateway.schemas import AuthenticationValues
+
+        for auth_type in ("basic", "bearer", "authheaders"):
+            obj = AuthenticationValues(auth_type=auth_type)
+            assert obj.auth_type == auth_type

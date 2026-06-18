@@ -62,11 +62,9 @@ include .snyk
 # Runtime data that lives *inside* the package at import time
 recursive-include mcpgateway/templates *.html
 recursive-include mcpgateway/static *.css *.js *.gif *.png *.svg
+recursive-include mcpgateway/admin_ui *.js
 exclude mcpgateway/static/iframe-test-harness.html
-exclude mcpgateway/static/css/tailwind.min.css # Generated Tailwind CSS (built during development or container build)
 
-# Vite build artifacts (gitignored; regenerated per build with hashed filenames)
-exclude mcpgateway/static/bundle-*.js
 recursive-exclude mcpgateway/static/.vite *
 recursive-include mcpgateway *.pyi py.typed
 recursive-include mcpgateway *.ico

@@ -18,7 +18,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 # First-Party
-from mcpgateway.middleware.validation_middleware import ValidationMiddleware, is_path_traversal
+from mcpgateway.middleware.validation_middleware import is_path_traversal, ValidationMiddleware
 
 
 class TestIsPathTraversal:
@@ -44,6 +44,18 @@ class TestIsPathTraversal:
 
 class TestValidationMiddleware:
     """Tests for ValidationMiddleware."""
+
+    def test_init_emits_deprecation_warning(self):
+        """ValidationMiddleware construction emits a developer-facing deprecation warning."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = False
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+
+            with pytest.warns(DeprecationWarning, match="ValidationMiddleware is deprecated"):
+                ValidationMiddleware(app=None)
 
     @pytest.fixture
     def middleware_enabled(self):
@@ -683,8 +695,11 @@ class TestValidationMiddleware:
             middleware = ValidationMiddleware(app=None)
 
             # Patch the import to raise ImportError - need to patch it during _validate_parameter call
+            # Standard
             import builtins
+
             real_import = builtins.__import__
+
             def mock_import(name, *args, **kwargs):
                 if name == "mcpgateway.utils.uaid":
                     raise ImportError("UAID validator not available")
