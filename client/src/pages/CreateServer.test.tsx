@@ -7,12 +7,15 @@ import { renderWithProviders } from "@/test/test-utils";
 import { createVirtualServer, updateVirtualServer } from "@/api/virtualServers";
 import { CreateServer } from "./CreateServer";
 
-const mockNavigate = vi.fn();
+const routerMock = vi.hoisted(() => ({
+  navigate: vi.fn(),
+  path: "/app/gateways/create-server",
+}));
 
 vi.mock("@/router", () => ({
   useRouter: () => ({
-    navigate: mockNavigate,
-    path: "/app/gateways/create-server",
+    navigate: routerMock.navigate,
+    path: routerMock.path,
     params: {},
   }),
 }));
@@ -24,11 +27,12 @@ vi.mock("@/api/virtualServers", () => ({
 
 const mockCreateVirtualServer = vi.mocked(createVirtualServer);
 const mockUpdateVirtualServer = vi.mocked(updateVirtualServer);
+const mockNavigate = routerMock.navigate;
 
 describe("CreateServer", () => {
   beforeEach(() => {
     mockNavigate.mockClear();
-    window.sessionStorage.clear();
+    routerMock.path = "/app/gateways/create-server";
     mockCreateVirtualServer.mockReset();
     mockUpdateVirtualServer.mockReset();
     mockCreateVirtualServer.mockResolvedValue({
@@ -228,7 +232,7 @@ describe("CreateServer", () => {
         ]);
       }),
     );
-    window.sessionStorage.setItem("gateways.editServer", "gateway-1");
+    routerMock.path = "/app/gateways/create-server?editServerId=gateway-1";
 
     renderWithProviders(<CreateServer />);
 

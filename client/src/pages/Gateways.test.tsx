@@ -42,7 +42,6 @@ describe("Gateways", () => {
     mockToastError.mockClear();
     mockDeleteVirtualServer.mockReset();
     mockDeleteVirtualServer.mockResolvedValue(undefined);
-    window.sessionStorage.clear();
     mockUseQuery.mockReturnValue({
       data: { servers: [] },
       error: null,
@@ -199,8 +198,7 @@ describe("Gateways", () => {
     await user.click(screen.getByRole("button", { name: "Actions for GH repo tasks" }));
     await user.click(await screen.findByRole("menuitem", { name: "Edit server" }));
 
-    expect(mockNavigate).toHaveBeenCalledWith("/app/gateways/create-server");
-    expect(window.sessionStorage.getItem("gateways.editServer")).toBe("gateway-1");
+    expect(mockNavigate).toHaveBeenCalledWith("/app/gateways/create-server?editServerId=gateway-1");
   });
 
   it("renders empty virtual servers as full-width add-components rows", () => {

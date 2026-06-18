@@ -30,7 +30,7 @@ import { useRouter } from "@/router";
 import type { MCPServer, ServerStatus, VirtualServer, VirtualServerTag } from "@/types/server";
 
 const SERVERS_FORM_PATH = "/app/servers?openForm=true";
-const EDIT_SERVER_STORAGE_KEY = "gateways.editServer";
+const EDIT_SERVER_ID_QUERY_PARAM = "editServerId";
 const MCP_SERVERS_QUERY_PATH = "/gateways?limit=100&include_inactive=true";
 
 type CreateServerStep = "details" | "sources";
@@ -170,19 +170,14 @@ function getEditServerInitialValues(server: VirtualServer): CreateServerDetails 
   };
 }
 
-function readStoredEditServerId(): string | null {
+function readEditServerIdFromPath(path: string): string | null {
+  const queryIndex = path.indexOf("?");
+  if (queryIndex === -1) return null;
+
   try {
-    const raw = window.sessionStorage.getItem(EDIT_SERVER_STORAGE_KEY);
-    if (!raw) return null;
-    const trimmed = raw.trim();
-    if (!trimmed) return null;
-
-    if (trimmed.startsWith("{")) {
-      const parsed = JSON.parse(trimmed) as Partial<VirtualServer>;
-      return parsed.id ?? null;
-    }
-
-    return trimmed;
+    const params = new URLSearchParams(path.slice(queryIndex + 1));
+    const editServerId = params.get(EDIT_SERVER_ID_QUERY_PARAM)?.trim();
+    return editServerId || null;
   } catch {
     return null;
   }
@@ -562,8 +557,8 @@ function EditMCPServersSection({
 
 export function CreateServer() {
   const intl = useIntl();
-  const { navigate } = useRouter();
-  const [editServerId] = useState<string | null>(() => readStoredEditServerId());
+  const { navigate, path } = useRouter();
+  const editServerId = useMemo(() => readEditServerIdFromPath(path), [path]);
   const [step, setStep] = useState<CreateServerStep>("details");
   const [serverDetails, setServerDetails] = useState<CreateServerDetails | null>(null);
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
@@ -577,13 +572,13 @@ export function CreateServer() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const isEditMode = Boolean(editServerId);
-  const encodedEditServerId = encodeURIComponent(editServerId ?? "__pending__");
+  const editServerPath = editServerId ? `/servers/${encodeURIComponent(editServerId)}` : null;
   const {
     data: editingServer,
     error: editServerError,
     isLoading: editServerLoading,
-  } = useQuery<VirtualServer>(`/servers/${encodedEditServerId}`, {
-    enabled: isEditMode,
+  } = useQuery<VirtualServer>(editServerPath, {
+    enabled: Boolean(editServerPath),
   });
   const initialComponentSelection = useMemo(
     (): ComponentSelection => ({
@@ -597,15 +592,6 @@ export function CreateServer() {
       editingServer?.associatedToolIds,
     ],
   );
-
-  useEffect(() => {
-    if (!editServerId) return;
-    try {
-      window.sessionStorage.removeItem(EDIT_SERVER_STORAGE_KEY);
-    } catch {
-      // Ignore storage cleanup failures; the edit id has already been read.
-    }
-  }, [editServerId]);
 
   useEffect(() => {
     if (!editingServer?.id) return;

@@ -21,7 +21,7 @@ import { sanitizeError } from "@/utils/errors";
 const DEFAULT_PAGE_SIZE = 12;
 const SERVERS_QUERY_PATH = `/servers?limit=${DEFAULT_PAGE_SIZE}&include_pagination=true`;
 const CREATE_SERVER_PATH = "/app/gateways/create-server";
-const EDIT_SERVER_STORAGE_KEY = "gateways.editServer";
+const EDIT_SERVER_ID_QUERY_PARAM = "editServerId";
 
 function sortServersForLayout(servers: VirtualServer[]): VirtualServer[] {
   return [...servers].sort(
@@ -124,12 +124,8 @@ export function Gateways() {
   };
 
   const openEditPanel = (server: VirtualServer) => {
-    try {
-      window.sessionStorage.setItem(EDIT_SERVER_STORAGE_KEY, server.id);
-    } catch {
-      // If session storage is unavailable, the create form still opens normally.
-    }
-    navigate(CREATE_SERVER_PATH);
+    const params = new URLSearchParams({ [EDIT_SERVER_ID_QUERY_PARAM]: server.id });
+    navigate(`${CREATE_SERVER_PATH}?${params.toString()}`);
   };
 
   const actionCards: ActionCard[] = useMemo(
