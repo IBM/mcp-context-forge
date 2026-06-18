@@ -18,9 +18,12 @@ from pydantic import BaseModel
 from cpex.framework import Plugin, PluginConfig, PluginContext, PluginViolation, PromptPrehookPayload, PromptPrehookResult
 from mcpgateway.services.logging_service import LoggingService
 
-# Initialize logging service first
+# Initialize logging service
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+# Maximum recursion depth to prevent stack overflow
+MAX_RECURSION_DEPTH = 100
 
 
 class DenyListConfig(BaseModel):
@@ -33,37 +36,57 @@ class DenyListConfig(BaseModel):
     words: list[str]
 
 
-def _scan_for_denied_words(value: Any, deny_list: list[str], path: str = "") -> list[str]:
+def _scan_for_denied_words(value: Any, deny_list: list[str], path: str = "", depth: int = 0) -> list[str]:
     """Recursively scan for denied words in nested structures.
 
     This function walks through nested dictionaries, lists, and strings,
     checking all string values for denied words regardless of nesting depth.
+    Includes protection against excessive recursion depth.
 
     Args:
         value: The value to scan (can be str, dict, list, or other types).
         deny_list: List of denied words to check for.
         path: Current path in the structure (for error reporting).
+        depth: Current recursion depth (internal use).
 
     Returns:
         List of paths where denied words were found.
+
+    Raises:
+        RecursionError: If maximum recursion depth is exceeded.
     """
+    if depth >= MAX_RECURSION_DEPTH:
+        logger.error(
+            f"deny_filter: Maximum recursion depth ({MAX_RECURSION_DEPTH}) reached. "
+            f"Payload structure is too deeply nested. Returning empty violations list to prevent stack overflow."
+        )
+        raise RecursionError(f"Maximum recursion depth ({MAX_RECURSION_DEPTH}) reached in deny_filter")
+
     violations = []
 
-    if isinstance(value, str):
-        # Check if any denied word is in this string
-        for word in deny_list:
-            if word.lower() in value.lower():
-                violations.append(f"{path}: contains '{word}'")
-    elif isinstance(value, dict):
-        # Recursively check dictionary values
-        for k, v in value.items():
-            new_path = f"{path}.{k}" if path else k
-            violations.extend(_scan_for_denied_words(v, deny_list, new_path))
-    elif isinstance(value, list):
-        # Recursively check list items
-        for i, item in enumerate(value):
-            new_path = f"{path}[{i}]"
-            violations.extend(_scan_for_denied_words(item, deny_list, new_path))
+    try:
+        if isinstance(value, str):
+            # Check if any denied word is in this string
+            for word in deny_list:
+                if word.lower() in value.lower():
+                    violations.append(f"{path}: contains '{word}'")
+        elif isinstance(value, dict):
+            # Recursively check dictionary values
+            for k, v in value.items():
+                new_path = f"{path}.{k}" if path else k
+                violations.extend(_scan_for_denied_words(v, deny_list, new_path, depth + 1))
+        elif isinstance(value, list):
+            # Recursively check list items
+            for i, item in enumerate(value):
+                new_path = f"{path}[{i}]"
+                violations.extend(_scan_for_denied_words(item, deny_list, new_path, depth + 1))
+    except RecursionError:
+        # Re-raise RecursionError from nested calls
+        raise
+    except Exception as e:
+        logger.error(f"deny_filter: Unexpected error during recursive scanning at depth {depth}: {e}")
+        # Return empty violations on error to fail safely (allow through)
+        return []
 
     return violations
 

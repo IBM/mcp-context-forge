@@ -26,7 +26,7 @@ from cpex.framework import (
     ToolPreInvokePayload,
 )
 from mcpgateway.common.models import Message, PromptResult, Role, TextContent
-from plugins.regex_filter.search_replace import SearchReplace, SearchReplaceConfig, SearchReplacePlugin, _scan_and_replace_recursive
+from plugins.regex_filter.search_replace import MAX_RECURSION_DEPTH, SearchReplace, SearchReplaceConfig, SearchReplacePlugin, _scan_and_replace_recursive
 
 
 class TestScanAndReplaceRecursive:
@@ -405,3 +405,72 @@ class TestSearchReplacePlugin:
         plugin = SearchReplacePlugin(config)
         # Should only have one valid pattern
         assert len(plugin._SearchReplacePlugin__patterns) == 1
+
+
+
+class TestDeepRecursion:
+    """Test deep recursion protection in regex_filter."""
+
+    def test_recursion_depth_limit_realistic_mcp_payload(self):
+        """Test recursion protection with realistic deeply nested MCP tool call payload."""
+        depth = MAX_RECURSION_DEPTH
+        nested = {"data": "test phone number 123-456-7890"}
+        for i in range(depth):
+            nested = {"tool_call": {"name": f"wrapper_{i}", "input": nested}}
+
+        patterns = [(re.compile(r"\d{3}-\d{3}-\d{4}"), "XXX-XXX-XXXX")]
+
+        with pytest.raises(RecursionError) as exc_info:
+            _scan_and_replace_recursive(nested, patterns)
+
+        assert f"Maximum recursion depth ({MAX_RECURSION_DEPTH})" in str(exc_info.value)
+        assert "regex_filter" in str(exc_info.value)
+
+    def test_realistic_mcp_payload_depth_3(self):
+        """Test standard MCP tool call structure (3-4 levels deep) with PII redaction."""
+        # This is the actual structure used by OpenAI, Anthropic, LangChain
+        payload = {
+            "tool_call": {
+                "name": "test_tool",
+                "input": {
+                    "params": {
+                        "text": "test data with phone 123-456-7890 and badword content"
+                    }
+                }
+            }
+        }
+
+        patterns = [
+            (re.compile(r"\d{3}-\d{3}-\d{4}"), "XXX-XXX-XXXX"),
+            (re.compile(r"badword"), "[REDACTED]")
+        ]
+
+        result = _scan_and_replace_recursive(payload, patterns)
+
+        # Verify both patterns were replaced at the deepest level
+        text = result["tool_call"]["input"]["params"]["text"]
+        assert "XXX-XXX-XXXX" in text
+        assert "[REDACTED]" in text
+        assert "123-456-7890" not in text
+        assert "badword" not in text
+
+    def test_wide_payload_many_tools(self):
+        """Test wide payload with many tool calls at same level (not deep)."""
+        # Simulate a batch of 100 tool calls at the same level
+        payload = {
+            f"tool_{i}": {
+                "name": f"query_{i}",
+                "input": {"phone": f"123-456-{i:04d}"}
+            }
+            for i in range(100)
+        }
+
+        patterns = [(re.compile(r"\d{3}-\d{3}-\d{4}"), "XXX-XXX-XXXX")]
+
+        # Should not raise - width doesn't affect recursion depth
+        result = _scan_and_replace_recursive(payload, patterns)
+        assert result is not None
+
+        # Verify all phone numbers were redacted
+        for i in range(100):
+            assert result[f"tool_{i}"]["input"]["phone"] == "XXX-XXX-XXXX"
