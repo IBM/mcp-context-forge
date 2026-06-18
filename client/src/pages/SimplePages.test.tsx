@@ -1,5 +1,4 @@
 import { describe, it, expect } from "vitest";
-import React from "react";
 import { renderWithProviders } from "@/test/test-utils";
 import { Agents } from "./Agents";
 import { ChangePassword } from "./ChangePassword";
