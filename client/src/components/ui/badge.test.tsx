@@ -50,7 +50,9 @@ describe("Badge", () => {
       };
 
       for (const [variant, token] of Object.entries(expectations)) {
-        const classes = badgeVariants({ variant: variant as any });
+        const classes = badgeVariants({
+          variant: variant as Parameters<typeof badgeVariants>[0]["variant"],
+        });
         expect(classes).toContain(token);
       }
     });

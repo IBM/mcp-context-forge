@@ -433,7 +433,7 @@ describe("Destination validation", () => {
   it("rejects non-string destinations", () => {
     const TestComponent = () => {
       const router = useRouter();
-      router.navigate(undefined as any);
+      router.navigate(undefined as unknown as string);
       return <div>path: {router.path}</div>;
     };
 
