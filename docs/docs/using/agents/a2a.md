@@ -66,13 +66,10 @@ curl -X POST "http://localhost:4444/a2a/hello_world_agent/invoke" \
   -H "Content-Type: application/json" \
   -d '{
     "parameters": {
-      "method": "message/send",
-      "params": {
-        "message": {
-          "messageId": "test-123",
-          "role": "user",
-          "parts": [{"type": "text", "text": "Hello!"}]
-        }
+      "message": {
+        "messageId": "test-123",
+        "role": "user",
+        "parts": [{"type": "text", "text": "Hello!"}]
       }
     },
     "interaction_type": "test"
@@ -119,7 +116,7 @@ ContextForge provides multiple ways to invoke A2A agents depending on your use c
 
 ### Method 1: Envelope Format (`/invoke`)
 
-The standard invocation endpoint accepts ContextForge's envelope format:
+The standard invocation endpoint accepts ContextForge's envelope format. The gateway converts your parameters to JSON-RPC when forwarding to the agent:
 
 ```bash
 curl -X POST "http://localhost:4444/a2a/{agent_name}/invoke" \
@@ -127,14 +124,24 @@ curl -X POST "http://localhost:4444/a2a/{agent_name}/invoke" \
   -H "Content-Type: application/json" \
   -d '{
     "parameters": {
-      "jsonrpc": "2.0",
-      "method": "SendMessage",
-      "params": {
-        "message": {
-          "messageId": "msg-123",
-          "role": "ROLE_USER",
-          "parts": [{"text": "Hello!"}]
-        }
+      "query": "Hello!"
+    },
+    "interaction_type": "query"
+  }'
+```
+
+For A2A protocol agents expecting message format:
+
+```bash
+curl -X POST "http://localhost:4444/a2a/{agent_name}/invoke" \
+  -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "parameters": {
+      "message": {
+        "messageId": "msg-123",
+        "role": "ROLE_USER",
+        "parts": [{"text": "Hello!"}]
       }
     },
     "interaction_type": "query"
@@ -145,6 +152,8 @@ curl -X POST "http://localhost:4444/a2a/{agent_name}/invoke" \
 - You need to specify interaction type explicitly
 - You're using ContextForge-specific features
 - Your client is already integrated with ContextForge
+
+**Note:** The `parameters` field contains agent-specific data, not JSON-RPC format. ContextForge handles the JSON-RPC conversion internally.
 
 ### Method 2: JSON-RPC Passthrough (`/jsonrpc`) ⭐ NEW
 
@@ -237,7 +246,7 @@ result = response.json()
 print(result["result"])
 ```
 
-**Note:** Standard A2A SDKs can point to the `/jsonrpc` endpoint directly. 
+**Note:** Standard A2A SDKs can point to the `/jsonrpc` endpoint directly.
 
 ### Method 3: MCP Tool Bridge
 
@@ -251,10 +260,16 @@ curl -X POST "http://localhost:4444/rpc" \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "a2a_my_agent",
+      "name": "a2a-working-a2a-agent1",
       "arguments": {
         "method": "SendMessage",
-        "params": {"message": {...}}
+        "params": {
+          "message": {
+            "messageId": "msg-001",
+            "role": "ROLE_USER",
+            "parts": [{"text": "What is the weather?"}]
+          }
+        }
       }
     },
     "id": 1
