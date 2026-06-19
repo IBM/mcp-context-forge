@@ -4697,6 +4697,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 capabilities, tools, resources, prompts, validation_errors = await self.connect_to_streamablehttp_server(
                     url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params, client_cert=client_cert, client_key=client_key
                 )
+            else:
+                sanitized_url = sanitize_url_for_logging(url, auth_query_params)
+                raise GatewayConnectionError(
+                    f"Unsupported transport '{transport}' for gateway at {sanitized_url}. "
+                    f"Supported transports: SSE, STREAMABLEHTTP"
+                )
 
             return capabilities, tools, resources, prompts, validation_errors
         except Exception as e:
