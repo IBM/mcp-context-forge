@@ -241,6 +241,9 @@ To include roles in JWT tokens:
 
 - Maps realm roles to `realm_access.roles` claim
 - Should be enabled by default
+- Open the mapper and ensure **Add to ID token** and **Add to userinfo** are both ON. The
+  gateway reads roles from the id_token and userinfo, not the access token, so a realm-role
+  to admin mapping (Step 6.7) silently fails if these are off.
 
 **client roles**:
 
@@ -415,6 +418,37 @@ SSO_KEYCLOAK_CLIENT_ID=mcp-gateway-prod
 | `SSO_KEYCLOAK_ROLE_MAPPINGS` | No | `{}` | JSON map of Keycloak roles/groups to Gateway RBAC roles |
 | `SSO_KEYCLOAK_DEFAULT_ROLE` | No | _unset_ | Fallback role when no mapping matches |
 | `SSO_KEYCLOAK_RESOLVE_TEAM_SCOPE_TO_PERSONAL_TEAM` | No | `false` | Resolve team-scoped mapped roles to the user's personal team |
+
+### 6.7 Grant Admin and RBAC Roles via Role Mappings
+
+`SSO_KEYCLOAK_MAP_REALM_ROLES=true` only **includes** Keycloak roles/groups in the user
+profile. It does not, by itself, make anyone an admin. The actual grant is driven by
+`SSO_KEYCLOAK_ROLE_MAPPINGS`, a JSON map from a Keycloak role/group name to a Gateway RBAC
+role. With no mapping (the `{}` default), every SSO user lands on the default role
+(typically viewer) regardless of their Keycloak roles.
+
+To map the `gateway-admin` realm role to the platform admin role:
+
+```bash
+SSO_KEYCLOAK_MAP_REALM_ROLES=true
+SSO_KEYCLOAK_ROLE_MAPPINGS={"gateway-admin":"platform_admin","gateway-developer":"developer","gateway-viewer":"viewer"}
+```
+
+!!! warning "The mapped name must actually reach the gateway"
+    The gateway derives roles from the **id_token** and the **userinfo** endpoint. It does
+    **not** read the access token. Keycloak puts realm roles in the access token by default,
+    so a realm-role mapping silently fails unless the `realm roles` mapper at
+    **Client scopes → roles → Mappers** has both **Add to ID token** and
+    **Add to userinfo** enabled (see Step 4.4). After enabling, confirm with the userinfo
+    check in Step 7.2: the response must contain `realm_access.roles`.
+
+    Group names are simpler: the **Group Membership** mapper (Step 3.2 / 5.3) already emits
+    the `groups` claim to the id_token and userinfo, so mapping a group works without any
+    extra token config:
+
+    ```bash
+    SSO_KEYCLOAK_ROLE_MAPPINGS={"Administrators":"platform_admin","Developers":"developer","Viewers":"viewer"}
+    ```
 
 ## Step 7: Restart and Verify Gateway
 
