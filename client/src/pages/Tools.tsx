@@ -1,4 +1,5 @@
 import { useMemo, useState, useCallback } from "react";
+import { useIntl } from "react-intl";
 import { Plus, MoreHorizontal, Wrench } from "lucide-react";
 import { toast } from "sonner";
 import { useQuery } from "@/hooks/useQuery";
@@ -18,10 +19,10 @@ import { ToolDetailsPanel } from "@/components/tools/ToolDetailsPanel";
 import { ToolForm } from "@/components/tools/ToolForm";
 import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
 
-function buildGroups(tools: Tool[]): ToolGroup[] {
+function buildGroups(tools: Tool[], restToolsLabel: string): ToolGroup[] {
   const map = new Map<string, ToolGroup>();
   for (const tool of tools) {
-    const slug = tool.gatewaySlug || "REST tools";
+    const slug = tool.gatewaySlug || restToolsLabel;
     if (!map.has(slug)) {
       map.set(slug, { gatewaySlug: slug, gatewayId: tool.gatewayId, tools: [], isActive: false });
     }
@@ -39,6 +40,7 @@ function ToolGroupCard({
   group: ToolGroup;
   onViewGroup: (group: ToolGroup) => void;
 }) {
+  const intl = useIntl();
   const MAX_VISIBLE_TOOLS = 8;
   const visibleTools = group.tools.slice(0, MAX_VISIBLE_TOOLS);
   const remainingCount = group.tools.length - MAX_VISIBLE_TOOLS;
@@ -60,7 +62,7 @@ function ToolGroupCard({
               {group.gatewaySlug}
             </span>
             <span className="whitespace-nowrap text-sm font-semibold text-neutral-900 dark:text-white">
-              {group.tools.length} {group.tools.length === 1 ? "tool" : "tools"}
+              {intl.formatMessage({ id: "tools.card.toolCount" }, { count: group.tools.length })}
             </span>
             <span
               className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${group.isActive ? "bg-tool-status-active" : "bg-tool-status-inactive"}`}
@@ -73,14 +75,19 @@ function ToolGroupCard({
                 type="button"
                 variant="ghost"
                 size="sm"
-                aria-label={`More options for ${group.gatewaySlug}`}
+                aria-label={intl.formatMessage(
+                  { id: "tools.card.moreOptionsFor" },
+                  { name: group.gatewaySlug },
+                )}
                 className="h-7 w-7 p-0"
               >
                 <MoreHorizontal className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={handleView}>View Details</DropdownMenuItem>
+              <DropdownMenuItem onClick={handleView}>
+                {intl.formatMessage({ id: "tools.card.viewDetails" })}
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -100,7 +107,10 @@ function ToolGroupCard({
           {remainingCount > 0 && (
             <span
               className="inline-flex items-center rounded bg-tool-badge-bg px-1.5 py-1 text-[10px] font-medium leading-none text-white"
-              title={`${remainingCount} more ${remainingCount === 1 ? "tool" : "tools"}`}
+              title={intl.formatMessage(
+                { id: "tools.card.moreToolsTitle" },
+                { count: remainingCount },
+              )}
             >
               +{remainingCount}
             </span>
@@ -112,6 +122,7 @@ function ToolGroupCard({
 }
 
 function AddToolsCard({ onAddTool }: { onAddTool: () => void }) {
+  const intl = useIntl();
   return (
     <Card
       size="sm"
@@ -131,13 +142,14 @@ function AddToolsCard({ onAddTool }: { onAddTool: () => void }) {
           <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded bg-tool-add-icon-bg shadow-sm">
             <Plus className="h-3.5 w-3.5 text-tool-add-icon-fg" />
           </div>
-          <span className="text-sm font-semibold text-neutral-900 dark:text-white">Add tools</span>
+          <span className="text-sm font-semibold text-neutral-900 dark:text-white">
+            {intl.formatMessage({ id: "tools.add.title" })}
+          </span>
         </div>
       </CardHeader>
       <CardContent>
         <p className="text-sm leading-relaxed text-neutral-500 dark:text-neutral-400">
-          Tools will appear automatically when you connect a MCP server. Or, register a REST
-          endpoint as a standalone tool.
+          {intl.formatMessage({ id: "tools.add.description" })}
         </p>
       </CardContent>
     </Card>
@@ -145,6 +157,7 @@ function AddToolsCard({ onAddTool }: { onAddTool: () => void }) {
 }
 
 export function Tools() {
+  const intl = useIntl();
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingTool, setEditingTool] = useState<Tool | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<ToolGroup | null>(null);
@@ -161,7 +174,11 @@ export function Tools() {
 
   const toolForForm = editedToolData?.id === editingTool?.id ? editedToolData : editingTool;
 
-  const groups = useMemo(() => buildGroups(toolsData ?? []), [toolsData]);
+  const restToolsLabel = intl.formatMessage({ id: "tools.restToolsGroup" });
+  const groups = useMemo(
+    () => buildGroups(toolsData ?? [], restToolsLabel),
+    [toolsData, restToolsLabel],
+  );
 
   const handleFormSuccess = () => {
     setIsFormOpen(false);
@@ -201,25 +218,35 @@ export function Tools() {
 
     try {
       await toolsApi.delete(selectedToolId);
-      toast.success(`Tool "${selectedToolName}" deleted successfully`);
+      toast.success(intl.formatMessage({ id: "tools.delete.success" }, { name: selectedToolName }));
       setSelectedToolId(null);
       setSelectedToolName(null);
       setIsDetailsPanelOpen(false);
       setSelectedGroup(null);
       await refetch();
     } catch (err) {
-      let errorMessage = "Failed to delete tool";
+      let errorMessage = intl.formatMessage({ id: "tools.delete.error" });
 
       if (err instanceof ApiError) {
         const detail = extractApiErrorDetail(err.body);
-        errorMessage = detail || `Failed to delete tool: ${err.message || "Unknown error"}`;
+        errorMessage =
+          detail ||
+          intl.formatMessage(
+            { id: "tools.delete.errorWithMessage" },
+            {
+              message: err.message || intl.formatMessage({ id: "tools.delete.errorUnknown" }),
+            },
+          );
       } else if (err instanceof Error) {
-        errorMessage = `Failed to delete tool: ${err.message}`;
+        errorMessage = intl.formatMessage(
+          { id: "tools.delete.errorWithMessage" },
+          { message: err.message },
+        );
       }
 
       toast.error(errorMessage);
     }
-  }, [selectedToolId, selectedToolName, refetch]);
+  }, [selectedToolId, selectedToolName, refetch, intl]);
 
   return (
     <div className="p-6">
@@ -235,7 +262,9 @@ export function Tools() {
         />
       ) : (
         <>
-          <h1 className="mb-6 text-base font-semibold text-neutral-900 dark:text-white">Tools</h1>
+          <h1 className="mb-6 text-base font-semibold text-neutral-900 dark:text-white">
+            {intl.formatMessage({ id: "tools.title" })}
+          </h1>
 
           {isLoading && (
             <div
@@ -244,7 +273,7 @@ export function Tools() {
               aria-busy="true"
               className="flex items-center justify-center p-12"
             >
-              <span className="sr-only">Loading tools, please wait...</span>
+              <span className="sr-only">{intl.formatMessage({ id: "tools.loading" })}</span>
               <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-blue-600 dark:border-gray-700 dark:border-t-blue-400" />
             </div>
           )}
@@ -255,7 +284,9 @@ export function Tools() {
               role="alert"
               aria-live="assertive"
             >
-              <h3 className="mb-1 font-semibold">Error loading tools</h3>
+              <h3 className="mb-1 font-semibold">
+                {intl.formatMessage({ id: "tools.error.loading" })}
+              </h3>
               <p className="text-red-800 dark:text-red-200">{error.message}</p>
             </div>
           )}
@@ -288,9 +319,12 @@ export function Tools() {
             open={deleteDialogOpen}
             onOpenChange={setDeleteDialogOpen}
             onConfirm={confirmDelete}
-            title="Delete tool"
-            description={`Are you sure you want to delete "${selectedToolName}"? This action cannot be undone.`}
-            confirmLabel="Delete"
+            title={intl.formatMessage({ id: "tools.delete.confirm.title" })}
+            description={intl.formatMessage(
+              { id: "tools.delete.confirm.description" },
+              { name: selectedToolName },
+            )}
+            confirmLabel={intl.formatMessage({ id: "tools.delete.confirm.button" })}
             variant="destructive"
           />
         </>
