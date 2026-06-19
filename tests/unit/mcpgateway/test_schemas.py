@@ -2078,6 +2078,14 @@ class TestGatewayTransportValidation:
         with pytest.raises(ValidationError, match="Invalid transport type"):
             GatewayCreate(name="gw", url="http://example.com", transport="")
 
+    def test_gateway_create_non_string_transport(self):
+        """GatewayCreate rejects non-string transport values."""
+        # First-Party
+        from mcpgateway.schemas import GatewayCreate
+
+        with pytest.raises(ValidationError, match="Transport must be a string"):
+            GatewayCreate(name="gw", url="http://example.com", transport=123)
+
     def test_gateway_update_valid_transport(self):
         """GatewayUpdate accepts valid transport values (case-insensitive)."""
         # First-Party
@@ -2115,3 +2123,11 @@ class TestGatewayTransportValidation:
 
         with pytest.raises(ValidationError, match="Invalid transport type"):
             GatewayUpdate(transport="")
+
+    def test_gateway_update_non_string_transport(self):
+        """GatewayUpdate rejects non-string transport values."""
+        # First-Party
+        from mcpgateway.schemas import GatewayUpdate
+
+        with pytest.raises(ValidationError, match="Transport must be a string"):
+            GatewayUpdate(transport=123)
