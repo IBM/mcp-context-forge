@@ -41,8 +41,8 @@ from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.gateway_service import (
     GatewayConnectionError,
     GatewayDuplicateConflictError,
-    GatewayLookupConflictError,
     GatewayError,
+    GatewayLookupConflictError,
     GatewayNameConflictError,
     GatewayNotFoundError,
     GatewayService,
@@ -3252,6 +3252,7 @@ class TestGatewayRefresh:
         chain runs against a tool whose name exceeds the 128-char limit. The exact error string
         produced by the validator is asserted end-to-end.
         """
+        # First-Party
         from mcpgateway.schemas import GatewayCreate
 
         gateway_data = GatewayCreate(
@@ -6374,6 +6375,54 @@ class TestInitializeGateway:
             await gateway_service._initialize_gateway(url="http://example.com", transport="SSE")
 
     @pytest.mark.asyncio
+    async def test_invalid_transport_raises_error(self, gateway_service, monkeypatch):
+        """Invalid transport raises GatewayConnectionError without attempting connection."""
+        monkeypatch.setattr("mcpgateway.services.gateway_service.sanitize_url_for_logging", lambda url, params=None: url)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.sanitize_exception_message", lambda msg, params=None: msg)
+        gateway_service.connect_to_sse_server = AsyncMock()
+        gateway_service.connect_to_streamablehttp_server = AsyncMock()
+        with pytest.raises(GatewayConnectionError, match="Unsupported transport 'INVALID'"):
+            await gateway_service._initialize_gateway(url="http://example.com", transport="INVALID")
+        gateway_service.connect_to_sse_server.assert_not_awaited()
+        gateway_service.connect_to_streamablehttp_server.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_empty_transport_raises_error(self, gateway_service, monkeypatch):
+        """Empty transport string raises GatewayConnectionError."""
+        monkeypatch.setattr("mcpgateway.services.gateway_service.sanitize_url_for_logging", lambda url, params=None: url)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.sanitize_exception_message", lambda msg, params=None: msg)
+        gateway_service.connect_to_sse_server = AsyncMock()
+        gateway_service.connect_to_streamablehttp_server = AsyncMock()
+        with pytest.raises(GatewayConnectionError, match="Unsupported transport ''"):
+            await gateway_service._initialize_gateway(url="http://example.com", transport="")
+        gateway_service.connect_to_sse_server.assert_not_awaited()
+        gateway_service.connect_to_streamablehttp_server.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_http_transport_raises_error(self, gateway_service, monkeypatch):
+        """HTTP transport (valid enum value) raises GatewayConnectionError at runtime."""
+        monkeypatch.setattr("mcpgateway.services.gateway_service.sanitize_url_for_logging", lambda url, params=None: url)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.sanitize_exception_message", lambda msg, params=None: msg)
+        gateway_service.connect_to_sse_server = AsyncMock()
+        gateway_service.connect_to_streamablehttp_server = AsyncMock()
+        with pytest.raises(GatewayConnectionError, match="Unsupported transport 'HTTP'"):
+            await gateway_service._initialize_gateway(url="http://example.com", transport="HTTP")
+        gateway_service.connect_to_sse_server.assert_not_awaited()
+        gateway_service.connect_to_streamablehttp_server.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_stdio_transport_raises_error(self, gateway_service, monkeypatch):
+        """STDIO transport (valid enum value) raises GatewayConnectionError at runtime."""
+        monkeypatch.setattr("mcpgateway.services.gateway_service.sanitize_url_for_logging", lambda url, params=None: url)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.sanitize_exception_message", lambda msg, params=None: msg)
+        gateway_service.connect_to_sse_server = AsyncMock()
+        gateway_service.connect_to_streamablehttp_server = AsyncMock()
+        with pytest.raises(GatewayConnectionError, match="Unsupported transport 'STDIO'"):
+            await gateway_service._initialize_gateway(url="http://example.com", transport="STDIO")
+        gateway_service.connect_to_sse_server.assert_not_awaited()
+        gateway_service.connect_to_streamablehttp_server.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_none_authentication_defaults_to_empty_dict(self, gateway_service):
         gateway_service.connect_to_sse_server = AsyncMock(return_value=({}, [], [], [], []))
         await gateway_service._initialize_gateway(url="http://example.com", authentication=None, transport="SSE")
@@ -8539,6 +8588,7 @@ class TestToolReachabilityRestoration:
         mock_db.execute.return_value = mock_result
 
         # Create a tool from the gateway (simulating successful fetch)
+        # First-Party
         from mcpgateway.schemas import ToolCreate
 
         fetched_tool = ToolCreate(
@@ -8572,6 +8622,7 @@ class TestToolReachabilityRestoration:
         mock_gateway.owner_email = None
 
         # Create a tool schema
+        # First-Party
         from mcpgateway.schemas import ToolCreate
 
         tool = ToolCreate(
@@ -8631,6 +8682,7 @@ class TestToolReachabilityRestoration:
         mock_db.execute.return_value = mock_result
 
         # Create a tool from the gateway (simulating successful fetch)
+        # First-Party
         from mcpgateway.schemas import ToolCreate
 
         fetched_tool = ToolCreate(
@@ -8692,6 +8744,7 @@ class TestToolReachabilityRestoration:
         mock_db.execute.return_value = mock_result
 
         # Create a tool from the gateway (simulating successful fetch)
+        # First-Party
         from mcpgateway.schemas import ToolCreate
 
         fetched_tool = ToolCreate(
