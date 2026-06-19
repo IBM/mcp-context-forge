@@ -32,6 +32,7 @@ vi.mock("@/components/gateways/CreateServerForm", async (importOriginal) => {
         capturedProps = props;
         return <div data-testid="mock-create-server-form" />;
       }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return (actual.CreateServerForm as any)(props);
     },
   };
@@ -46,6 +47,7 @@ vi.mock("@/components/gateways/SourceSelection", async (importOriginal) => {
         capturedSourceSelectionProps = props;
         return <div data-testid="mock-source-selection" />;
       }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return (actual.SourceSelection as any)(props);
     },
   };
@@ -257,11 +259,7 @@ describe("CreateServer", () => {
 
   it("shows ApiError message when body contains message", async () => {
     const user = userEvent.setup();
-    const apiError = new ApiError(
-      400,
-      { message: "Api message error" },
-      ""
-    );
+    const apiError = new ApiError(400, { message: "Api message error" }, "");
     mockCreateVirtualServer.mockRejectedValueOnce(apiError);
     renderWithProviders(<CreateServer />);
 
@@ -275,11 +273,7 @@ describe("CreateServer", () => {
 
   it("shows ApiError message when body contains detail as string", async () => {
     const user = userEvent.setup();
-    const apiError = new ApiError(
-      400,
-      { detail: "Api detail string error" },
-      ""
-    );
+    const apiError = new ApiError(400, { detail: "Api detail string error" }, "");
     mockCreateVirtualServer.mockRejectedValueOnce(apiError);
     renderWithProviders(<CreateServer />);
 
@@ -293,11 +287,7 @@ describe("CreateServer", () => {
 
   it("shows ApiError message when body contains detail as array of validation errors", async () => {
     const user = userEvent.setup();
-    const apiError = new ApiError(
-      400,
-      { detail: [{ msg: "Msg 1" }, "String msg 2"] },
-      ""
-    );
+    const apiError = new ApiError(400, { detail: [{ msg: "Msg 1" }, "String msg 2"] }, "");
     mockCreateVirtualServer.mockRejectedValueOnce(apiError);
     renderWithProviders(<CreateServer />);
 
