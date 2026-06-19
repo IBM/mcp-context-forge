@@ -29,7 +29,7 @@ export const resourcesApi = {
    * Create a new resource
    */
   create: (data: ResourceCreateRequest): Promise<void> => {
-    return api.post("/admin/resources", data);
+    return api.post("/resources", data);
   },
 
   /**
@@ -37,7 +37,7 @@ export const resourcesApi = {
    */
   update: (id: string, data: ResourceUpdateRequest): Promise<void> => {
     const validId = validateResourceId(id);
-    return api.post(`/admin/resources/${validId}/edit`, data);
+    return api.put(`/resources/${validId}`, data);
   },
 
   /**
@@ -45,6 +45,6 @@ export const resourcesApi = {
    */
   delete: (id: string): Promise<void> => {
     const validId = validateResourceId(id);
-    return api.delete(`/admin/resources/${validId}`);
+    return api.delete(`/resources/${validId}`);
   },
 };

@@ -192,7 +192,7 @@ test.describe("Resources page", () => {
       }
     });
 
-    await page.route("**/admin/resources", async (route) => {
+    await page.route("**/resources", async (route) => {
       if (route.request().method() === "POST") {
         createRequestCount += 1;
         await route.fulfill({
@@ -266,7 +266,7 @@ test.describe("Resources page", () => {
       });
     });
 
-    await page.route(`**/admin/resources/${MOCK_RESOURCE.id}`, async (route) => {
+    await page.route(`**/resources/${MOCK_RESOURCE.id}`, async (route) => {
       if (route.request().method() === "DELETE") {
         deleteRequestCount += 1;
         isDeleted = true;

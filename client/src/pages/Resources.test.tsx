@@ -30,6 +30,7 @@ function createMockResource(id: number, gatewaySlug: string, enabled = true): Re
     enabled,
     uri: `resource://example/${id}`,
     mimeType: "application/json",
+    tags: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -286,7 +287,6 @@ describe("Resources", () => {
     expect(gridContainer).toHaveClass("grid");
     expect(gridContainer).toHaveClass("grid-cols-1");
     expect(gridContainer).toHaveClass("lg:grid-cols-2");
-    expect(gridContainer).toHaveClass("xl:grid-cols-2");
     expect(gridContainer).toHaveClass("2xl:grid-cols-3");
   });
 
@@ -539,7 +539,7 @@ describe("Resources", () => {
         .getByText(/multi-resource-gateway Resources/i)
         .closest('[role="dialog"]');
       expect(panel).toBeInTheDocument();
-      expect(within(panel!).getAllByText(/Resource \d/)).toHaveLength(3);
+      expect(within(panel! as HTMLElement).getAllByText(/Resource \d/)).toHaveLength(3);
     });
   });
 

@@ -238,7 +238,7 @@ export function Resources() {
           )}
 
           {!isLoading && (
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-3">
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 2xl:grid-cols-3">
               <AddResourcesCard onAddResource={() => setShowForm(true)} />
               {resourceGroups.map((group) => (
                 <ResourceGroupCard
