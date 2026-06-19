@@ -113,6 +113,143 @@ curl -X POST "http://localhost:4444/rpc" \
   }'
 ```
 
+## A2A Invocation Methods
+
+ContextForge provides multiple ways to invoke A2A agents depending on your use case:
+
+### Method 1: Envelope Format (`/invoke`)
+
+The standard invocation endpoint accepts ContextForge's envelope format:
+
+```bash
+curl -X POST "http://localhost:4444/a2a/{agent_name}/invoke" \
+  -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "parameters": {
+      "jsonrpc": "2.0",
+      "method": "SendMessage",
+      "params": {
+        "message": {
+          "messageId": "msg-123",
+          "role": "ROLE_USER",
+          "parts": [{"text": "Hello!"}]
+        }
+      }
+    },
+    "interaction_type": "query"
+  }'
+```
+
+**Use when:**
+- You need to specify interaction type explicitly
+- You're using ContextForge-specific features
+- Your client is already integrated with ContextForge
+
+### Method 2: JSON-RPC Passthrough (`/jsonrpc`) ⭐ NEW
+
+The passthrough endpoint accepts **raw A2A JSON-RPC** requests without envelope wrapping. This enables standard A2A SDKs (like Google ADK `RemoteA2aAgent`) to work without custom adapters:
+
+```bash
+curl -X POST "http://localhost:4444/a2a/{agent_name}/jsonrpc" \
+  -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "SendMessage",
+    "params": {
+      "message": {
+        "messageId": "msg-123",
+        "role": "ROLE_USER",
+        "parts": [{"text": "Hello!"}]
+      }
+    },
+    "id": 1
+  }'
+```
+
+**Response format:**
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "id": "task-456",
+    "contextId": "ctx-789",
+    "status": {
+      "state": "TASK_STATE_WORKING",
+      "message": "Processing..."
+    }
+  },
+  "id": 1
+}
+```
+
+**Use when:**
+- Using standard A2A SDKs (Google ADK, etc.)
+- Building agent-to-agent federation
+- Need transparent proxy behavior
+- Want SDK compatibility without custom code
+
+**Supported A2A Methods:**
+- `SendMessage` - Send a message to the agent
+- `GetTask` - Retrieve task status
+- `ListTasks` - List all tasks
+- `CancelTask` - Cancel a running task
+- `SubscribeToTask` - Subscribe to task updates
+- `GetExtendedAgentCard` - Get agent capabilities
+
+**Features:**
+- ✅ Full RBAC and token scoping
+- ✅ Cross-gateway authentication forwarding
+- ✅ Observability (traces, metrics, logs)
+- ✅ Rate limiting and governance
+- ✅ UAID federation support
+- ✅ Plugin hooks (pre/post invoke)
+
+**Google ADK Example:**
+
+```python
+# Using Google ADK RemoteA2aAgent with ContextForge
+from google.generativeai import a2a
+
+# Point to ContextForge passthrough endpoint
+agent = a2a.RemoteA2aAgent(
+    base_url="http://localhost:4444/a2a/my-agent",
+    endpoint="/jsonrpc",  # Use passthrough endpoint
+    headers={"Authorization": "Bearer your-token"}
+)
+
+# Works with standard SDK methods
+response = agent.send_message("What is the weather?")
+```
+
+### Method 3: MCP Tool Bridge
+
+A2A agents are automatically exposed as MCP tools, allowing MCP clients to discover and invoke them:
+
+```bash
+curl -X POST "http://localhost:4444/rpc" \
+  -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "a2a_my_agent",
+      "arguments": {
+        "method": "SendMessage",
+        "params": {"message": {...}}
+      }
+    },
+    "id": 1
+  }'
+```
+
+**Use when:**
+- Integrating with MCP clients (Claude Desktop, Cline, etc.)
+- Need tool discovery via `tools/list`
+- Want unified interface for both MCP and A2A tools
+
 ## Agent Types
 
 ### Generic/JSONRPC Agents
