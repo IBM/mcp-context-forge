@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useIntl } from "react-intl";
 import { ChevronDown, Copy, RefreshCw, Wrench, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -58,6 +59,7 @@ interface ToolFormProps {
 }
 
 export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
+  const intl = useIntl();
   const [copiedInput, setCopiedInput] = useState(false);
   const [copiedOutput, setCopiedOutput] = useState(false);
 
@@ -171,12 +173,14 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
                 <Wrench className="h-4 w-4 text-black" />
               </div>
               <h2 className="text-lg font-semibold tracking-tight text-neutral-950 dark:text-neutral-50">
-                {isEditMode ? "Edit tool" : "Add tool"}
+                {isEditMode
+                  ? intl.formatMessage({ id: "tools.form.heading.edit" })
+                  : intl.formatMessage({ id: "tools.form.heading.add" })}
               </h2>
             </div>
 
             <p className="text-sm leading-6 text-neutral-600 dark:text-neutral-400">
-              Convert REST API to a tool and expose it for use
+              {intl.formatMessage({ id: "tools.form.description" })}
             </p>
           </div>
 
@@ -187,7 +191,7 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
                   id="request-type-label"
                   className="text-sm font-medium text-neutral-950 dark:text-white"
                 >
-                  Request type
+                  {intl.formatMessage({ id: "tools.form.requestType" })}
                 </label>
                 <div
                   role="radiogroup"
@@ -224,14 +228,15 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
                 htmlFor="tool-name"
                 className="inline-flex items-center gap-0.5 text-sm font-medium text-neutral-900 dark:text-neutral-100"
               >
-                Name<span className="text-red-500">*</span>
-                <span className="sr-only">(required)</span>
+                {intl.formatMessage({ id: "tools.form.name" })}
+                <span className="text-red-500">*</span>
+                <span className="sr-only">{intl.formatMessage({ id: "tools.form.required" })}</span>
               </label>
               <Input
                 id="tool-name"
                 value={name}
                 onChange={(event) => setName(event.target.value)}
-                placeholder="the-greatest-tool"
+                placeholder={intl.formatMessage({ id: "tools.form.name.placeholder" })}
                 className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
                 aria-invalid={!!errors.name}
                 aria-describedby={errors.name ? "name-error" : undefined}
@@ -248,14 +253,15 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
                 htmlFor="tool-url"
                 className="inline-flex items-center gap-0.5 text-sm font-medium text-neutral-900 dark:text-neutral-100"
               >
-                URL<span className="text-red-500">*</span>
-                <span className="sr-only">(required)</span>
+                {intl.formatMessage({ id: "tools.form.url" })}
+                <span className="text-red-500">*</span>
+                <span className="sr-only">{intl.formatMessage({ id: "tools.form.required" })}</span>
               </label>
               <Input
                 id="tool-url"
                 value={url}
                 onChange={(event) => setUrl(event.target.value)}
-                placeholder="https://api.example.com/v1/endpoint"
+                placeholder={intl.formatMessage({ id: "tools.form.url.placeholder" })}
                 className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
                 aria-invalid={!!errors.url}
                 aria-describedby={errors.url ? "url-error" : undefined}
@@ -270,11 +276,14 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
             <div className="flex flex-col gap-5 pt-2">
               <div className="space-y-3">
                 <label className="text-sm font-medium text-neutral-950 dark:text-white">
-                  Schema<span className="text-red-500">*</span>
-                  <span className="sr-only">(required)</span>
+                  {intl.formatMessage({ id: "tools.form.schema" })}
+                  <span className="text-red-500">*</span>
+                  <span className="sr-only">
+                    {intl.formatMessage({ id: "tools.form.required" })}
+                  </span>
                 </label>
                 <p className="text-sm text-neutral-600 dark:text-neutral-400">
-                  Autogenerate from OpenAPI spec or add schema manually
+                  {intl.formatMessage({ id: "tools.form.schema.description" })}
                 </p>
                 <div className="flex gap-3">
                   <Button
@@ -292,10 +301,10 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
                       <Zap className={`h-4 w-4 ${isGeneratingSchema ? "animate-pulse" : ""}`} />
                     )}
                     {isGeneratingSchema
-                      ? "Generating..."
+                      ? intl.formatMessage({ id: "tools.form.schema.generating" })
                       : schemaMode === "generated"
-                        ? "Regenerate"
-                        : "Generate"}
+                        ? intl.formatMessage({ id: "tools.form.schema.regenerate" })
+                        : intl.formatMessage({ id: "tools.form.schema.generate" })}
                   </Button>
                   <Button
                     type="button"
@@ -308,7 +317,7 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
                       }
                     }}
                   >
-                    + Add manually
+                    {intl.formatMessage({ id: "tools.form.schema.addManually" })}
                   </Button>
                 </div>
 
@@ -321,13 +330,15 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
                           htmlFor="openapi-spec-url"
                           className="text-xs font-medium text-neutral-600 dark:text-neutral-400"
                         >
-                          Or provide a direct OpenAPI spec URL
+                          {intl.formatMessage({ id: "tools.form.schema.specUrlLabel" })}
                         </label>
                         <Input
                           id="openapi-spec-url"
                           value={openApiSpecUrl}
                           onChange={(e) => setOpenApiSpecUrl(e.target.value)}
-                          placeholder="https://api.example.com/openapi.json"
+                          placeholder={intl.formatMessage({
+                            id: "tools.form.schema.specUrlPlaceholder",
+                          })}
                           className="h-8 rounded-md border-neutral-300 bg-white px-3 text-xs text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
                         />
                       </div>
@@ -342,8 +353,11 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
                         htmlFor="input-schema"
                         className="inline-flex items-center gap-0.5 text-sm font-medium text-neutral-900 dark:text-neutral-100"
                       >
-                        Input schema<span className="text-red-500">*</span>
-                        <span className="sr-only">(required)</span>
+                        {intl.formatMessage({ id: "tools.form.inputSchema" })}
+                        <span className="text-red-500">*</span>
+                        <span className="sr-only">
+                          {intl.formatMessage({ id: "tools.form.required" })}
+                        </span>
                       </label>
                       <div className="relative">
                         <Textarea
@@ -358,12 +372,16 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
                           type="button"
                           variant="ghost"
                           size="sm"
-                          aria-label="Copy input schema"
+                          aria-label={intl.formatMessage({ id: "tools.form.copyInputSchema" })}
                           className="absolute right-2 top-2 h-6 w-6 p-0 opacity-60 hover:opacity-100"
                           onClick={() => handleCopy(inputSchema, setCopiedInput)}
                         >
                           <Copy className="h-3.5 w-3.5" />
-                          {copiedInput && <span className="sr-only">Copied!</span>}
+                          {copiedInput && (
+                            <span className="sr-only">
+                              {intl.formatMessage({ id: "tools.form.copied" })}
+                            </span>
+                          )}
                         </Button>
                       </div>
                     </div>
@@ -373,7 +391,7 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
                         htmlFor="output-schema"
                         className="text-sm font-medium text-neutral-900 dark:text-neutral-100"
                       >
-                        Output schema
+                        {intl.formatMessage({ id: "tools.form.outputSchema" })}
                       </label>
                       <div className="relative">
                         <Textarea
@@ -388,12 +406,16 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
                           type="button"
                           variant="ghost"
                           size="sm"
-                          aria-label="Copy output schema"
+                          aria-label={intl.formatMessage({ id: "tools.form.copyOutputSchema" })}
                           className="absolute right-2 top-2 h-6 w-6 p-0 opacity-60 hover:opacity-100"
                           onClick={() => handleCopy(outputSchema, setCopiedOutput)}
                         >
                           <Copy className="h-3.5 w-3.5" />
-                          {copiedOutput && <span className="sr-only">Copied!</span>}
+                          {copiedOutput && (
+                            <span className="sr-only">
+                              {intl.formatMessage({ id: "tools.form.copied" })}
+                            </span>
+                          )}
                         </Button>
                       </div>
                     </div>
@@ -409,7 +431,7 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
                 aria-controls="advanced-settings-panel"
               >
                 <ChevronDown className={`h-4 w-4 transition ${advancedOpen ? "rotate-180" : ""}`} />
-                Advanced settings
+                {intl.formatMessage({ id: "tools.form.advancedSettings" })}
               </button>
 
               {advancedOpen && (
@@ -456,7 +478,7 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
                   onClick={() => handleCancel()}
                   className="h-10 rounded-md px-3 text-sm font-medium text-neutral-700 hover:bg-neutral-100 hover:text-neutral-950 dark:text-neutral-300 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
                 >
-                  Cancel
+                  {intl.formatMessage({ id: "tools.form.cancel" })}
                 </Button>
                 <Button
                   type="submit"
@@ -465,11 +487,11 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
                 >
                   {isSubmitting
                     ? isEditMode
-                      ? "Updating..."
-                      : "Adding..."
+                      ? intl.formatMessage({ id: "tools.form.button.updating" })
+                      : intl.formatMessage({ id: "tools.form.button.adding" })
                     : isEditMode
-                      ? "Update tool"
-                      : "Add tool"}
+                      ? intl.formatMessage({ id: "tools.form.button.update" })
+                      : intl.formatMessage({ id: "tools.form.button.add" })}
                 </Button>
               </div>
             </div>
