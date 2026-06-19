@@ -142,6 +142,7 @@ describe("Badge", () => {
   describe("Export & displayName", () => {
     it("should export Badge and have displayName or function name", () => {
       expect(Badge).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       expect((Badge as any).displayName ?? Badge.name).toBe("Badge");
       expect(typeof Badge).toBe("function");
     });
