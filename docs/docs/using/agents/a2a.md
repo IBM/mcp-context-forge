@@ -206,22 +206,38 @@ curl -X POST "http://localhost:4444/a2a/{agent_name}/jsonrpc" \
 - ✅ UAID federation support
 - ✅ Plugin hooks (pre/post invoke)
 
-**Google ADK Example:**
+**Python SDK Example:**
 
 ```python
-# Using Google ADK RemoteA2aAgent with ContextForge
-from google.generativeai import a2a
+# Generic Python example - works with any A2A SDK or direct HTTP calls
+import requests
 
-# Point to ContextForge passthrough endpoint
-agent = a2a.RemoteA2aAgent(
-    base_url="http://localhost:4444/a2a/my-agent",
-    endpoint="/jsonrpc",  # Use passthrough endpoint
-    headers={"Authorization": "Bearer your-token"}
+# Send message to agent via JSON-RPC passthrough
+response = requests.post(
+    "http://localhost:4444/a2a/my-agent/jsonrpc",
+    headers={
+        "Authorization": "Bearer your-token",
+        "Content-Type": "application/json"
+    },
+    json={
+        "jsonrpc": "2.0",
+        "method": "SendMessage",
+        "params": {
+            "message": {
+                "messageId": "msg-001",
+                "role": "ROLE_USER",
+                "parts": [{"text": "What is the weather?"}]
+            }
+        },
+        "id": 1
+    }
 )
 
-# Works with standard SDK methods
-response = agent.send_message("What is the weather?")
+result = response.json()
+print(result["result"])
 ```
+
+**Note:** Standard A2A SDKs can point to the `/jsonrpc` endpoint directly. 
 
 ### Method 3: MCP Tool Bridge
 
