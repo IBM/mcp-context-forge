@@ -6472,6 +6472,29 @@ class TestRefreshGatewayToolsResourcesPrompts:
         assert "connection refused" in result["error"]
 
     @pytest.mark.asyncio
+    async def test_validation_errors_propagated(self, gateway_service):
+        """Validation errors from _initialize_gateway populate result['validation_errors'] before early return."""
+        gw = SimpleNamespace(
+            enabled=True,
+            reachable=True,
+            name="val-gw",
+            url="http://example.com",
+            transport="sse",
+            auth_type="oauth",
+            auth_value=None,
+            oauth_config={"grant_type": "authorization_code"},
+            ca_certificate=None,
+            auth_query_params=None,
+        )
+        validation_errors = [
+            "bad_tool: Tool name exceeds MCP spec limit of 128 characters (got 129)",
+        ]
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], validation_errors))
+        result = await gateway_service._refresh_gateway_tools_resources_prompts("gw-1", gateway=gw)
+        assert result["validation_errors"] == validation_errors
+        assert result["success"] is True
+
+    @pytest.mark.asyncio
     async def test_auth_code_empty_response_returns_early(self, gateway_service):
         gw = SimpleNamespace(
             enabled=True,
