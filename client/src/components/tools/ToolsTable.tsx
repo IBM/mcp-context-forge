@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useIntl } from "react-intl";
 import { Copy, MoreHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,6 +33,7 @@ export function ToolsTable({
   onDeleteTool?: (toolId: string) => void;
   onEditTool?: (tool: Tool) => void;
 }) {
+  const intl = useIntl();
   const [schemaDialogTool, setSchemaDialogTool] = useState<Tool | null>(null);
   const [isSchemaDialogOpen, setIsSchemaDialogOpen] = useState(false);
 
@@ -45,10 +47,18 @@ export function ToolsTable({
       <Table>
         <TableHeader>
           <TableRow className="hover:bg-transparent">
-            <TableHead className="h-9 px-4 py-2.5 text-xs font-medium">Tool</TableHead>
-            <TableHead className="h-9 px-4 py-2.5 text-xs font-medium">Name</TableHead>
-            <TableHead className="h-9 px-4 py-2.5 text-xs font-medium">Tool ID</TableHead>
-            <TableHead className="h-9 w-[80px] px-4 py-2.5 text-xs font-medium">Schema</TableHead>
+            <TableHead className="h-9 px-4 py-2.5 text-xs font-medium">
+              {intl.formatMessage({ id: "tools.table.tool" })}
+            </TableHead>
+            <TableHead className="h-9 px-4 py-2.5 text-xs font-medium">
+              {intl.formatMessage({ id: "tools.table.name" })}
+            </TableHead>
+            <TableHead className="h-9 px-4 py-2.5 text-xs font-medium">
+              {intl.formatMessage({ id: "tools.table.toolId" })}
+            </TableHead>
+            <TableHead className="h-9 w-[80px] px-4 py-2.5 text-xs font-medium">
+              {intl.formatMessage({ id: "tools.table.schema" })}
+            </TableHead>
             <TableHead className="h-9 w-[40px] px-4 py-2.5" />
           </TableRow>
         </TableHeader>
@@ -73,7 +83,10 @@ export function ToolsTable({
                     type="button"
                     variant="ghost"
                     size="icon-xs"
-                    aria-label={`Copy ${tool.customName || tool.originalName}`}
+                    aria-label={intl.formatMessage(
+                      { id: "tools.table.copyName" },
+                      { name: tool.customName || tool.originalName },
+                    )}
                     className="ml-4 size-4 shrink-0 text-muted-foreground hover:text-foreground"
                     onClick={(e) => {
                       e.stopPropagation();
@@ -94,7 +107,7 @@ export function ToolsTable({
                     type="button"
                     variant="ghost"
                     size="icon-xs"
-                    aria-label="Copy tool ID"
+                    aria-label={intl.formatMessage({ id: "tools.table.copyToolId" })}
                     className="ml-4 size-4 shrink-0 text-muted-foreground hover:text-foreground"
                     onClick={(e) => {
                       e.stopPropagation();
@@ -111,7 +124,7 @@ export function ToolsTable({
                   type="button"
                   variant="ghost"
                   size="icon-xs"
-                  aria-label="View schema"
+                  aria-label={intl.formatMessage({ id: "tools.table.viewSchema" })}
                   className="size-5 text-muted-foreground hover:text-foreground"
                   onClick={(e) => {
                     e.stopPropagation();
@@ -137,7 +150,7 @@ export function ToolsTable({
                         type="button"
                         variant="ghost"
                         size="icon-xs"
-                        aria-label="More options"
+                        aria-label={intl.formatMessage({ id: "tools.table.moreOptions" })}
                         className="size-5 text-muted-foreground hover:text-foreground"
                         onClick={(e) => {
                           e.stopPropagation();
@@ -154,7 +167,7 @@ export function ToolsTable({
                             onEditTool(tool);
                           }}
                         >
-                          Edit
+                          {intl.formatMessage({ id: "tools.table.edit" })}
                         </DropdownMenuItem>
                       )}
                       {onDeleteTool && (
@@ -164,7 +177,7 @@ export function ToolsTable({
                             onDeleteTool(tool.id);
                           }}
                         >
-                          Delete
+                          {intl.formatMessage({ id: "tools.table.delete" })}
                         </DropdownMenuItem>
                       )}
                     </DropdownMenuContent>
