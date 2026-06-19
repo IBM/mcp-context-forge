@@ -673,3 +673,26 @@ def test_tool_update_authheaders_legacy_fallback():
     assert update.auth is not None
     decoded = decode_auth(update.auth.auth_value)
     assert decoded["X-API-Key"] == "legacy-secret"
+
+
+def test_tool_create_authheaders_array_all_empty_keys_gives_null_value():
+    """ToolCreate with a non-empty auth_headers list where every entry has an empty/missing key gives auth_value=None."""
+    tool = ToolCreate(
+        name="my_tool",
+        url="https://api.example.com/endpoint",
+        request_type="POST",
+        auth_type="authheaders",
+        auth_headers=[{"key": "", "value": "something"}, {"value": "no-key-field"}],
+    )
+    assert tool.auth is not None
+    assert tool.auth.auth_value is None
+
+
+def test_tool_update_authheaders_array_all_empty_keys_gives_null_value():
+    """ToolUpdate with a non-empty auth_headers list where every entry has an empty/missing key gives auth_value=None."""
+    update = ToolUpdate(
+        auth_type="authheaders",
+        auth_headers=[{"key": "", "value": "something"}, {"value": "no-key-field"}],
+    )
+    assert update.auth is not None
+    assert update.auth.auth_value is None
