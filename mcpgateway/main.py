@@ -5247,6 +5247,226 @@ async def invoke_a2a_agent_by_id(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@a2a_router.post("/{agent_name}/jsonrpc", response_model=Dict[str, Any])
+@require_permission("a2a.invoke")
+async def invoke_a2a_agent_jsonrpc(
+    agent_name: str,
+    request: Request,
+    body: Dict[str, Any] = Body(...),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """
+    Transparent A2A JSON-RPC proxy endpoint.
+
+    Accepts raw A2A JSON-RPC requests (no envelope wrapping), applies ContextForge
+    governance (auth, RBAC, rate limiting, observability), and returns raw JSON-RPC
+    responses. This enables standard A2A SDKs (e.g., Google ADK RemoteA2aAgent) to
+    work without custom adapters.
+
+    Expected request format:
+    ```json
+    {
+      "jsonrpc": "2.0",
+      "method": "SendMessage",
+      "params": {
+        "message": {
+          "messageId": "test-123",
+          "role": "ROLE_USER",
+          "parts": [{"text": "Hello!"}]
+        }
+      },
+      "id": 1
+    }
+    ```
+
+    Returns JSON-RPC response:
+    ```json
+    {
+      "jsonrpc": "2.0",
+      "result": {...},
+      "id": 1
+    }
+    ```
+
+    Args:
+        agent_name (str): The name of the agent to invoke.
+        request (Request): The FastAPI request object for team_id retrieval.
+        body (Dict[str, Any]): Raw JSON-RPC request body.
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        Dict[str, Any]: Raw JSON-RPC response from the A2A agent.
+
+    Raises:
+        HTTPException: If the JSON-RPC format is invalid, agent is not found,
+                      user lacks access, or there is an error during invocation.
+
+    Examples:
+        >>> # Validate JSON-RPC 2.0 version is required
+        >>> body = {"method": "SendMessage", "params": {}, "id": 1}
+        >>> body.get("jsonrpc") == "2.0"
+        False
+
+        >>> # Valid JSON-RPC request structure
+        >>> valid_body = {
+        ...     "jsonrpc": "2.0",
+        ...     "method": "SendMessage",
+        ...     "params": {"query": "Hello"},
+        ...     "id": 1
+        ... }
+        >>> valid_body.get("jsonrpc") == "2.0"
+        True
+        >>> isinstance(valid_body.get("method"), str)
+        True
+        >>> isinstance(valid_body.get("params"), dict)
+        True
+
+        >>> # Method field must be a string
+        >>> invalid_method = {"jsonrpc": "2.0", "method": 123, "id": 1}
+        >>> isinstance(invalid_method.get("method"), str)
+        False
+
+        >>> # Params can be null/missing (defaults to empty dict)
+        >>> notification = {"jsonrpc": "2.0", "method": "SendMessage"}
+        >>> notification.get("params", {})
+        {}
+
+        >>> # ID field is optional for notifications
+        >>> "id" in notification
+        False
+
+        >>> # Params must be dict or None, not array
+        >>> invalid_params = {"jsonrpc": "2.0", "method": "SendMessage", "params": ["invalid"]}
+        >>> params = invalid_params.get("params")
+        >>> params is None or isinstance(params, dict)
+        False
+
+        >>> # Extract user ID from various user formats
+        >>> user_dict = {"sub": "user@example.com", "email": "user@example.com"}
+        >>> user_id = str(user_dict.get("id") or user_dict.get("sub") or user_dict.get("email"))
+        >>> user_id
+        'user@example.com'
+
+        >>> # Token scoping: admin with no restrictions
+        >>> is_admin, token_teams = True, None
+        >>> token_teams if is_admin and token_teams is None else (token_teams or [])
+        >>> # Non-admin without teams = public-only
+        >>> is_admin, token_teams = False, None
+        >>> [] if token_teams is None else token_teams
+        []
+
+        >>> # Response format validation
+        >>> response = {"jsonrpc": "2.0", "result": {"taskId": "123"}, "id": 1}
+        >>> response.get("jsonrpc") == "2.0"
+        True
+        >>> "result" in response or "error" in response
+        True
+    """
+    try:
+        # Validate JSON-RPC format
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="Request body must be a JSON object")
+
+        jsonrpc_version = body.get("jsonrpc")
+        if jsonrpc_version != "2.0":
+            raise HTTPException(status_code=400, detail=f"Invalid or missing jsonrpc field. Expected '2.0', got '{jsonrpc_version}'")
+
+        method = body.get("method")
+        if not method or not isinstance(method, str):
+            raise HTTPException(status_code=400, detail="Missing or invalid 'method' field in JSON-RPC request")
+
+        # Extract params (can be null/missing for methods that don't require parameters)
+        params = body.get("params", {})
+        if params is not None and not isinstance(params, dict):
+            raise HTTPException(status_code=400, detail="JSON-RPC 'params' field must be an object or null")
+
+        # Extract request ID (optional in JSON-RPC 2.0 for notifications)
+        request_id = body.get("id")
+
+        logger.debug(f"User {safe_log_user(user)} invoking A2A agent '{agent_name}' " f"via JSON-RPC passthrough with method '{method}'")
+
+        if a2a_service is None:
+            raise HTTPException(status_code=503, detail="A2A service not available")
+
+        # Get filtering context from token (respects token scope) - same as /invoke endpoint
+        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
+
+        # Admin bypass - only when token has NO team restrictions
+        if is_admin and token_teams is None:
+            token_teams = None  # Admin unrestricted
+        elif token_teams is None:
+            token_teams = []  # Non-admin without teams = public-only
+
+        user_id = None
+        if isinstance(user, dict):
+            user_id = str(user.get("id") or user.get("sub") or user_email)
+        else:
+            user_id = str(user)
+
+        # Read federation hop counter - same as /invoke endpoint
+        hop_count = uaid_utils.read_hop_count(request.headers)
+
+        # Extract bearer token for cross-gateway forwarding - same as /invoke endpoint
+        bearer_token = getattr(request.state, "bearer_token", None)
+        if not bearer_token:
+            auth_header = request.headers.get("authorization", "")
+            if auth_header.lower().startswith("bearer "):
+                bearer_token = auth_header[7:]
+
+        # Only forward JWT-shaped tokens
+        if bearer_token and not _is_jwt_token(bearer_token):
+            logger.info("Non-JWT token detected, not forwarding for cross-gateway auth")
+            bearer_token = None
+
+        # Extract inbound request metadata for plugin context
+        content_type = request.headers.get("content-type")
+        request_headers = _filter_sensitive_headers({k.lower(): v for k, v in request.headers.items()})
+
+        # Wrap the JSON-RPC request in ContextForge's internal format
+        # The full JSON-RPC request becomes the parameters
+        parameters = body
+
+        # Invoke the agent using the existing service method
+        result = await a2a_service.invoke_agent(
+            db,
+            agent_name,
+            parameters,
+            interaction_type="query",  # Default for JSON-RPC requests
+            user_id=user_id,
+            user_email=user_email,
+            token_teams=token_teams,
+            hop_count=hop_count,
+            bearer_token=bearer_token,
+            content_type=content_type,
+            request_headers=request_headers,
+        )
+
+        # Return raw JSON-RPC response format
+        # The agent's response should already be in JSON-RPC format if it's A2A-compliant
+        # If the response is already JSON-RPC formatted, return it as-is
+        if isinstance(result, dict) and "jsonrpc" in result:
+            return result
+
+        # Otherwise, wrap the result in JSON-RPC response format
+        return {"jsonrpc": "2.0", "result": result, "id": request_id}
+
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentError as e:
+        # Return JSON-RPC error format for A2A errors
+        error_response = {"jsonrpc": "2.0", "error": {"code": -32603, "message": str(e)}, "id": body.get("id") if isinstance(body, dict) else None}  # Internal error
+        raise HTTPException(status_code=400, detail=orjson.dumps(error_response).decode())
+    except Exception as e:
+        logger.error(f"Unexpected error in JSON-RPC passthrough: {e}", exc_info=True)
+        error_response = {"jsonrpc": "2.0", "error": {"code": -32603, "message": "Internal server error"}, "id": body.get("id") if isinstance(body, dict) else None}  # Internal error
+        raise HTTPException(status_code=500, detail=orjson.dumps(error_response).decode())
+
+
 #############
 # Tool APIs #
 #############
