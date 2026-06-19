@@ -285,6 +285,7 @@ describe("Users", () => {
 
     // Resolve the promise
     if (resolveLoadMore) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (resolveLoadMore as any)({
         users: createMockUsers(10, 5),
         nextCursor: null,
@@ -511,7 +512,10 @@ describe("Users", () => {
     await user.click(loadMoreButton);
 
     // Resolve the promise
-    if (resolveLoadMore) (resolveLoadMore as any)({ users: createMockUsers(10, 5), nextCursor: null });
+    if (resolveLoadMore) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (resolveLoadMore as any)({ users: createMockUsers(10, 5), nextCursor: null });
+    }
 
     // Wait for resolution
     await waitFor(() => {

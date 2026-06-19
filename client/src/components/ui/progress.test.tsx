@@ -247,11 +247,11 @@ describe("Progress", () => {
       expect(progressRoot).toHaveAttribute("title", "Loading");
     });
 
-    it("should support disabled attribute", () => {
-      const { container } = render(<Progress value={50} />);
+    it("should support custom data attributes", () => {
+      const { container } = render(<Progress value={50} data-state="loading" />);
       const progressRoot = container.querySelector('[data-slot="progress"]');
 
-      expect(progressRoot).toHaveAttribute("disabled");
+      expect(progressRoot).toHaveAttribute("data-state", "loading");
     });
 
     it("should support className prop alongside other props", () => {

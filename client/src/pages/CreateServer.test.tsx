@@ -529,11 +529,7 @@ describe("CreateServer", () => {
 
   it("shows ApiError message when body contains message", async () => {
     const user = userEvent.setup();
-    const apiError = new ApiError(
-      400,
-      { message: "Api message error" },
-      ""
-    );
+    const apiError = new ApiError(400, { message: "Api message error" }, "");
     mockCreateVirtualServer.mockRejectedValueOnce(apiError);
     renderWithProviders(<CreateServer />);
 
@@ -547,11 +543,7 @@ describe("CreateServer", () => {
 
   it("shows ApiError message when body contains detail as string", async () => {
     const user = userEvent.setup();
-    const apiError = new ApiError(
-      400,
-      { detail: "Api detail string error" },
-      ""
-    );
+    const apiError = new ApiError(400, { detail: "Api detail string error" }, "");
     mockCreateVirtualServer.mockRejectedValueOnce(apiError);
     renderWithProviders(<CreateServer />);
 
@@ -565,11 +557,7 @@ describe("CreateServer", () => {
 
   it("shows ApiError message when body contains detail as array of validation errors", async () => {
     const user = userEvent.setup();
-    const apiError = new ApiError(
-      400,
-      { detail: [{ msg: "Msg 1" }, "String msg 2"] },
-      ""
-    );
+    const apiError = new ApiError(400, { detail: [{ msg: "Msg 1" }, "String msg 2"] }, "");
     mockCreateVirtualServer.mockRejectedValueOnce(apiError);
     renderWithProviders(<CreateServer />);
 
