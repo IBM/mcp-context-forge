@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo, type FormEvent } from "react";
+import { useIntl } from "react-intl";
 import { z } from "zod";
 import { api } from "@/api/client";
 import { useQuery } from "@/hooks/useQuery";
@@ -9,89 +10,124 @@ export type RequestType = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 export type AuthType = "none" | "basic" | "bearer" | "custom";
 export type SchemaMode = "none" | "generated" | "manual";
 
+// Mirrors the backend `settings.masked_auth_value`: secrets are returned masked
+// in tool reads, so the edit form must never round-trip this placeholder back
+// (doing so would re-encode the mask over the real stored credential).
+const MASKED_AUTH_VALUE = "*****"; // pragma: allowlist secret
+
 export interface CustomHeader {
   id: string;
   key: string;
   value: string;
 }
 
-// Zod schema for form validation with sanitization
-const toolFormObjectSchema = z.object({
-  name: z
-    .string()
-    .transform((val) => sanitizeString(val, 100))
-    .pipe(z.string().min(1, "Name is required").max(100, "Name must be less than 100 characters")),
-  url: z
-    .string()
-    .transform((val) => sanitizeUrl(val, 2000))
-    .pipe(
-      z
-        .string()
-        .min(1, "URL is required")
-        .refine(
-          (value) => {
-            try {
-              const url = new URL(value);
-              return url.protocol === "http:" || url.protocol === "https:";
-            } catch {
-              return false;
-            }
-          },
-          { message: "URL must start with http:// or https://" },
-        ),
-    ),
-  description: z
-    .string()
-    .transform((val) => sanitizeString(val, 500))
-    .pipe(z.string().max(500, "Description must be less than 500 characters"))
-    .optional(),
-  requestType: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
-  responseFilter: z
-    .string()
-    .transform((val) => sanitizeString(val, 500))
-    .optional(),
-  tags: z
-    .string()
-    .transform((val) => sanitizeString(val, 500))
-    .optional(),
-  inputSchema: z.record(z.unknown()).optional(),
-  outputSchema: z.record(z.unknown()).optional(),
-  authType: z.string().optional(),
-  authUsername: z
-    .string()
-    .transform((val) => sanitizeString(val, 200))
-    .optional(),
-  authPassword: z // pragma: allowlist secret
-    .string()
-    .transform((val) => sanitizePassword(val, 1000))
-    .optional(),
-  authToken: z
-    .string()
-    .transform((val) => sanitizeToken(val, 2000))
-    .optional(),
-  auth_headers: z.array(z.object({ key: z.string(), value: z.string() })).optional(),
-  visibility: z.enum(["public", "private", "team"]).optional(),
-  teamId: z.string().optional(),
-});
+// Zod schema factory that accepts intl for localized validation messages
+const createToolFormObjectSchema = (intl: ReturnType<typeof useIntl>) =>
+  z.object({
+    name: z
+      .string()
+      .transform((val) => sanitizeString(val, 100))
+      .pipe(
+        z
+          .string()
+          .min(1, intl.formatMessage({ id: "tools.form.error.nameRequired" }))
+          .max(100, intl.formatMessage({ id: "tools.form.error.nameMax" })),
+      ),
+    url: z
+      .string()
+      .transform((val) => sanitizeUrl(val, 2000))
+      .pipe(
+        z
+          .string()
+          .min(1, intl.formatMessage({ id: "tools.form.error.urlRequired" }))
+          .refine(
+            (value) => {
+              try {
+                const url = new URL(value);
+                return url.protocol === "http:" || url.protocol === "https:";
+              } catch {
+                return false;
+              }
+            },
+            { message: intl.formatMessage({ id: "tools.form.error.urlProtocol" }) },
+          ),
+      ),
+    description: z
+      .string()
+      .transform((val) => sanitizeString(val, 500))
+      .pipe(z.string().max(500, intl.formatMessage({ id: "tools.form.error.descriptionMax" })))
+      .optional(),
+    requestType: z
+      .enum(["GET", "POST", "PUT", "PATCH", "DELETE", "STREAMABLEHTTP", "SSE"])
+      .optional(),
+    integrationType: z.string().optional(),
+    responseFilter: z
+      .string()
+      .transform((val) => sanitizeString(val, 500))
+      .optional(),
+    tags: z
+      .string()
+      .transform((val) => sanitizeString(val, 500))
+      .optional(),
+    inputSchema: z.record(z.unknown()).optional(),
+    outputSchema: z.record(z.unknown()).optional(),
+    authType: z.string().optional(),
+    authUsername: z
+      .string()
+      .transform((val) => sanitizeString(val, 200))
+      .optional(),
+    authPassword: z // pragma: allowlist secret
+      .string()
+      .transform((val) => sanitizePassword(val, 1000))
+      .optional(),
+    authToken: z
+      .string()
+      .transform((val) => sanitizeToken(val, 2000))
+      .optional(),
+    auth_headers: z.array(z.object({ key: z.string(), value: z.string() })).optional(),
+    visibility: z.enum(["public", "private", "team"]).optional(),
+    teamId: z.string().optional(),
+  });
 
-const toolFormSchema = toolFormObjectSchema.superRefine((data, ctx) => {
-  // Require teamId when visibility is "team"
-  if (data.visibility === "team" && !data.teamId) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "Team selection is required when visibility is set to team",
-      path: ["teamId"],
-    });
-  }
-});
+const createToolFormSchema = (intl: ReturnType<typeof useIntl>) =>
+  createToolFormObjectSchema(intl).superRefine((data, ctx) => {
+    // Require teamId when visibility is "team"
+    if (data.visibility === "team" && !data.teamId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: intl.formatMessage({ id: "tools.form.error.teamRequired" }),
+        path: ["teamId"],
+      });
+    }
 
-export type ToolFormData = z.infer<typeof toolFormSchema>;
+    // Require requestType when integrationType is not "MCP"
+    if (data.integrationType !== "MCP" && !data.requestType) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: intl.formatMessage({ id: "tools.form.error.requestTypeRequired" }),
+        path: ["requestType"],
+      });
+    }
+  });
+
+export type ToolFormData = z.infer<ReturnType<typeof createToolFormSchema>>;
+
+export interface ApiToolAuth {
+  authType?: string;
+  username?: string;
+  password?: string; // pragma: allowlist secret
+  token?: string;
+  authHeaderKey?: string;
+  authHeaderValue?: string;
+  authHeaders?: Array<{ key: string; value: string }>;
+}
 
 export interface ApiToolPayload {
   tool: {
     name: string;
     url?: string;
     description?: string;
+    integration_type: string;
     request_type: string;
     inputSchema?: Record<string, unknown>;
     outputSchema?: Record<string, unknown>;
@@ -128,6 +164,7 @@ export interface UseToolFormReturn {
   url: string;
   description: string;
   requestType: RequestType;
+  integrationType: string;
   advancedOpen: boolean;
   visibility: Visibility;
   teamId: string;
@@ -198,27 +235,78 @@ const initialState = {
   outputSchema: "",
 };
 
+export interface ToolFormInitialValues {
+  name?: string;
+  url?: string;
+  description?: string;
+  requestType?: RequestType;
+  integrationType?: string;
+  schemaMode?: SchemaMode;
+  inputSchema?: string;
+  outputSchema?: string;
+  tags?: string;
+  visibility?: Visibility;
+  teamId?: string;
+  advancedOpen?: boolean;
+  authType?: AuthType;
+  authUsername?: string;
+  authPassword?: string; // pragma: allowlist secret
+  bearerToken?: string;
+  customHeaders?: CustomHeader[];
+}
+
 export function useToolForm({
   maxCustomHeaders,
-}: { maxCustomHeaders?: number } = {}): UseToolFormReturn {
-  const [name, setName] = useState(initialState.name);
-  const [url, setUrl] = useState(initialState.url);
-  const [description, setDescription] = useState(initialState.description);
-  const [requestType, setRequestType] = useState<RequestType>(initialState.requestType);
-  const [advancedOpen, setAdvancedOpen] = useState(initialState.advancedOpen);
-  const [visibility, setVisibility] = useState(initialState.visibility);
-  const [teamId, setTeamId] = useState(initialState.teamId);
-  const [authType, setAuthType] = useState<AuthType>(initialState.authType);
-  const [authUsername, setAuthUsername] = useState(initialState.authUsername);
-  const [authPassword, setAuthPassword] = useState(initialState.authPassword);
-  const [bearerToken, setBearerToken] = useState(initialState.bearerToken);
-  const [customHeaders, setCustomHeaders] = useState<CustomHeader[]>(initialState.customHeaders);
+  toolId,
+  initialValues,
+}: {
+  maxCustomHeaders?: number;
+  toolId?: string;
+  initialValues?: ToolFormInitialValues;
+} = {}): UseToolFormReturn {
+  const intl = useIntl();
+  const toolFormSchema = useMemo(() => createToolFormSchema(intl), [intl]);
+  const [name, setName] = useState(initialValues?.name ?? initialState.name);
+  const [url, setUrl] = useState(initialValues?.url ?? initialState.url);
+  const [description, setDescription] = useState(
+    initialValues?.description ?? initialState.description,
+  );
+  const [requestType, setRequestType] = useState<RequestType>(
+    (initialValues?.requestType as RequestType) ?? initialState.requestType,
+  );
+  const integrationType = initialValues?.integrationType ?? "REST";
+  const [advancedOpen, setAdvancedOpen] = useState(
+    initialValues?.advancedOpen ?? initialState.advancedOpen,
+  );
+  const [visibility, setVisibility] = useState<Visibility>(
+    (initialValues?.visibility as Visibility) ?? initialState.visibility,
+  );
+  const [teamId, setTeamId] = useState(initialValues?.teamId ?? initialState.teamId);
+  const [authType, setAuthType] = useState<AuthType>(
+    initialValues?.authType ?? initialState.authType,
+  );
+  const [authUsername, setAuthUsername] = useState(
+    initialValues?.authUsername ?? initialState.authUsername,
+  );
+  const [authPassword, setAuthPassword] = useState(
+    initialValues?.authPassword ?? initialState.authPassword,
+  ); // pragma: allowlist secret
+  const [bearerToken, setBearerToken] = useState(
+    initialValues?.bearerToken ?? initialState.bearerToken,
+  );
+  const [customHeaders, setCustomHeaders] = useState<CustomHeader[]>(
+    initialValues?.customHeaders ?? initialState.customHeaders,
+  );
   const [responseFilter, setResponseFilter] = useState(initialState.responseFilter);
-  const [tags, setTags] = useState(initialState.tags);
-  const [inputSchema, setInputSchema] = useState(initialState.inputSchema);
-  const [outputSchema, setOutputSchema] = useState(initialState.outputSchema);
+  const [tags, setTags] = useState(initialValues?.tags ?? initialState.tags);
+  const [inputSchema, setInputSchema] = useState(
+    initialValues?.inputSchema ?? initialState.inputSchema,
+  );
+  const [outputSchema, setOutputSchema] = useState(
+    initialValues?.outputSchema ?? initialState.outputSchema,
+  );
   const [isGeneratingSchema, setIsGeneratingSchema] = useState(false);
-  const [schemaMode, setSchemaMode] = useState<SchemaMode>("none");
+  const [schemaMode, setSchemaMode] = useState<SchemaMode>(initialValues?.schemaMode ?? "none");
   const [openApiSpecUrl, setOpenApiSpecUrl] = useState("");
   const [showSpecUrlInput, setShowSpecUrlInput] = useState(false);
   const [errors, setErrors] = useState<FormErrors>({});
@@ -232,7 +320,17 @@ export function useToolForm({
     },
   );
 
-  const isSubmitting = isCreating;
+  // handleSubmit guards against a missing toolId before calling updateTool,
+  // so this URL is only ever used when toolId is defined.
+  const { execute: updateTool, isLoading: isUpdating } = useQuery<unknown, Record<string, unknown>>(
+    `/tools/${toolId}`,
+    {
+      method: "PUT",
+      enabled: false,
+    },
+  );
+
+  const isSubmitting = isCreating || isUpdating;
 
   const generateSchema = useCallback(async () => {
     if (!url.trim()) return;
@@ -297,10 +395,14 @@ export function useToolForm({
         setOutputSchema(result.output_schema ? JSON.stringify(result.output_schema, null, 2) : "");
         setSchemaMode("generated");
       } else {
-        setErrors((prev) => ({ ...prev, schema: result.message || "Failed to generate schema" }));
+        setErrors((prev) => ({
+          ...prev,
+          schema:
+            result.message || intl.formatMessage({ id: "tools.form.error.generateSchemaFailed" }),
+        }));
       }
     } catch (error) {
-      let message = "Failed to generate schema. Check the URL and try again.";
+      let message = intl.formatMessage({ id: "tools.form.error.generateSchemaUrl" });
       let requiresAuth = false;
       if (error && typeof error === "object" && "body" in error) {
         const err = error as { body?: { message?: string; requires_auth?: boolean } };
@@ -329,6 +431,7 @@ export function useToolForm({
     customHeaders,
     openApiSpecUrl,
     maxCustomHeaders,
+    intl,
   ]);
 
   const getFormData = useCallback((): ApiToolPayload => {
@@ -352,6 +455,7 @@ export function useToolForm({
       name: sanitizeString(name, 100),
       url: sanitizeUrl(url, 2000),
       description: description ? sanitizeString(description, 500) : undefined,
+      integration_type: "REST",
       request_type: requestType,
       inputSchema: parseSchemaJson(inputSchema),
       outputSchema: parseSchemaJson(outputSchema),
@@ -419,14 +523,14 @@ export function useToolForm({
       try {
         JSON.parse(inputSchema);
       } catch {
-        schemaErrors.schema = "Input schema is not valid JSON";
+        schemaErrors.schema = intl.formatMessage({ id: "tools.form.error.inputSchemaInvalid" });
       }
     }
     if (!schemaErrors.schema && outputSchema.trim()) {
       try {
         JSON.parse(outputSchema);
       } catch {
-        schemaErrors.schema = "Output schema is not valid JSON";
+        schemaErrors.schema = intl.formatMessage({ id: "tools.form.error.outputSchemaInvalid" });
       }
     }
 
@@ -442,6 +546,7 @@ export function useToolForm({
         url,
         description: description || undefined,
         requestType,
+        integrationType,
         responseFilter: responseFilter || undefined,
         tags: tags || undefined,
         visibility: visibility || undefined,
@@ -465,12 +570,15 @@ export function useToolForm({
     url,
     description,
     requestType,
+    integrationType,
     responseFilter,
     tags,
     visibility,
     teamId,
     inputSchema,
     outputSchema,
+    intl,
+    toolFormSchema,
   ]);
 
   const resetForm = useCallback(() => {
@@ -505,7 +613,69 @@ export function useToolForm({
       if (formValid) {
         try {
           const formData = getFormData();
-          const response = await createTool(formData);
+          let response: unknown;
+          if (toolId) {
+            const { request_type } = formData.tool;
+            const REST_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"];
+
+            // Secrets come back masked ("*****") in tool reads. Only send auth
+            // fields when the user entered a real (non-masked, non-empty) secret,
+            // otherwise omit them entirely so the backend leaves the stored
+            // credential untouched — a plain URL/description edit must not clobber it.
+            const isRealSecret = (value?: string) => Boolean(value && value !== MASKED_AUTH_VALUE);
+            let authFields: Record<string, unknown> = {};
+
+            if (authType === "none") {
+              // Explicitly clear any stored credential. This must be the nested
+              // `auth` object with EMPTY STRINGS (not null): update_tool only
+              // writes auth_type/auth_value when the incoming value `is not None`,
+              // and the nested form bypasses the flat assemble_auth path (which
+              // ignores empty/none auth types and would otherwise leave auth as-is).
+              authFields = { auth: { authType: "", authValue: "" } };
+            } else {
+              let authChanged = false;
+              if (formData.tool.auth_type === "basic") {
+                authChanged = isRealSecret(formData.tool.auth_password);
+              } else if (formData.tool.auth_type === "bearer") {
+                authChanged = isRealSecret(formData.tool.auth_token);
+              } else if (formData.tool.auth_type === "authheaders") {
+                authChanged =
+                  isRealSecret(formData.tool.auth_header_value) ||
+                  (formData.tool.auth_headers ?? []).some((h) => isRealSecret(h.value));
+              }
+
+              if (authChanged) {
+                authFields = {
+                  auth_type: formData.tool.auth_type,
+                  auth_username: formData.tool.auth_username,
+                  auth_password: formData.tool.auth_password, // pragma: allowlist secret
+                  auth_token: formData.tool.auth_token,
+                  auth_header_key: formData.tool.auth_header_key,
+                  auth_header_value: formData.tool.auth_header_value,
+                  auth_headers: formData.tool.auth_headers,
+                };
+              }
+            }
+
+            const updatePayload = {
+              name: formData.tool.name,
+              url: formData.tool.url,
+              description: formData.tool.description,
+              inputSchema: formData.tool.inputSchema,
+              outputSchema: formData.tool.outputSchema,
+              jsonpath_filter: formData.tool.jsonpath_filter,
+              tags: formData.tool.tags,
+              visibility: formData.tool.visibility,
+              customName: formData.tool.name,
+              ...authFields,
+              ...(REST_METHODS.includes(request_type)
+                ? { requestType: request_type, integrationType: "REST" }
+                : {}),
+            };
+            response = await updateTool(updatePayload);
+          } else {
+            response = await createTool(formData);
+          }
 
           // Call success callback if provided
           if (onSuccess) {
@@ -515,8 +685,9 @@ export function useToolForm({
           // Reset form after successful submission
           resetForm();
         } catch (error) {
-          // Handle API errors from useQuery
-          let errorMessage = "Failed to create tool. Please try again.";
+          let errorMessage = toolId
+            ? intl.formatMessage({ id: "tools.form.error.updateFailed" })
+            : intl.formatMessage({ id: "tools.form.error.createFailed" });
 
           if (error && typeof error === "object" && "body" in error) {
             const errorWithBody = error as {
@@ -539,7 +710,8 @@ export function useToolForm({
               errorMessage = detail
                 .map((err) => {
                   const field = err.loc && err.loc.length > 1 ? err.loc[err.loc.length - 1] : "";
-                  const msg = err.msg || "Invalid value";
+                  const msg =
+                    err.msg || intl.formatMessage({ id: "tools.form.error.invalidValue" });
                   return field ? `${field}: ${msg}` : msg;
                 })
                 .join("; ");
@@ -550,7 +722,7 @@ export function useToolForm({
         }
       }
     },
-    [validateForm, getFormData, createTool, resetForm],
+    [validateForm, getFormData, createTool, updateTool, resetForm, toolId, authType, intl],
   );
 
   const isValid = useMemo(() => {
@@ -573,6 +745,7 @@ export function useToolForm({
       url,
       description: description || undefined,
       requestType,
+      integrationType,
       responseFilter: responseFilter || undefined,
       tags: tags || undefined,
       visibility: visibility || undefined,
@@ -583,12 +756,14 @@ export function useToolForm({
     url,
     description,
     requestType,
+    integrationType,
     responseFilter,
     tags,
     visibility,
     teamId,
     inputSchema,
     outputSchema,
+    toolFormSchema,
   ]);
 
   return {
@@ -597,6 +772,7 @@ export function useToolForm({
     url,
     description,
     requestType,
+    integrationType,
     advancedOpen,
     visibility,
     teamId,

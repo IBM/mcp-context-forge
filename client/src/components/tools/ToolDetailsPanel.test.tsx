@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { renderWithProviders as render } from "@/test/test-utils";
 import { ToolDetailsPanel } from "./ToolDetailsPanel";
 import type { Tool } from "@/types/tool";
 
@@ -16,7 +17,7 @@ function createMockTool(id: number, overrides?: Partial<Tool>): Tool {
     displayName: `Display Name ${id}`,
     gatewayId: `gateway-id`,
     gatewaySlug: "test-gateway",
-    customName: `Tool ${id}`,
+    customName: "",
     customNameSlug: `tool-${id}`,
     enabled: true,
     reachable: true,
