@@ -1,9 +1,22 @@
 import { describe, it, expect, vi } from "vitest";
-import { renderHook, act, waitFor } from "@testing-library/react";
-import type { FormEvent } from "react";
+import { renderHook as rtlRenderHook, act, waitFor } from "@testing-library/react";
+import { createElement, type FormEvent, type ReactNode } from "react";
+import { IntlProvider } from "react-intl";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/mocks/server";
+import enMessages from "@/i18n/locales/en-US";
 import { useToolForm } from "./useToolForm";
+
+// Wrap hooks in IntlProvider so react-intl's useIntl() resolves localized strings.
+const wrapper = ({ children }: { children: ReactNode }) =>
+  createElement(
+    IntlProvider,
+    { locale: "en", defaultLocale: "en", messages: enMessages },
+    children,
+  );
+
+const renderHook = <Result, Props>(render: (initialProps: Props) => Result) =>
+  rtlRenderHook(render, { wrapper });
 
 describe("useToolForm", () => {
   describe("Initial State", () => {
