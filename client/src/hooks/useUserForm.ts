@@ -201,7 +201,9 @@ export function useUserForm(options?: UseUserFormOptions): UseUserFormReturn {
 
   // Use useQuery for PATCH request to update user (edit mode only)
   const { execute: updateUser, isLoading: isUpdating } = useQuery<User, UpdateUserRequest>(
-    initialUser ? `/auth/email/admin/users/${encodeURIComponent(initialUser.email)}` : "",
+    initialUser
+      ? `/auth/email/admin/users/${encodeURIComponent(initialUser.email)}`
+      : "/auth/email/admin/users/_placeholder",
     {
       method: "PATCH",
       enabled: false, // Don't execute immediately

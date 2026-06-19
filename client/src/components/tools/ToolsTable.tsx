@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useIntl } from "react-intl";
 import { Copy, MoreHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,12 +25,15 @@ export function ToolsTable({
   selectedToolId,
   onSelectTool,
   onDeleteTool,
+  onEditTool,
 }: {
   tools: Tool[];
   selectedToolId?: string | null;
   onSelectTool: (tool: Tool) => void;
   onDeleteTool?: (toolId: string) => void;
+  onEditTool?: (tool: Tool) => void;
 }) {
+  const intl = useIntl();
   const [schemaDialogTool, setSchemaDialogTool] = useState<Tool | null>(null);
   const [isSchemaDialogOpen, setIsSchemaDialogOpen] = useState(false);
 
@@ -43,10 +47,18 @@ export function ToolsTable({
       <Table>
         <TableHeader>
           <TableRow className="hover:bg-transparent">
-            <TableHead className="h-9 px-4 py-2.5 text-xs font-medium">Tool</TableHead>
-            <TableHead className="h-9 px-4 py-2.5 text-xs font-medium">Name</TableHead>
-            <TableHead className="h-9 px-4 py-2.5 text-xs font-medium">Tool ID</TableHead>
-            <TableHead className="h-9 w-[80px] px-4 py-2.5 text-xs font-medium">Schema</TableHead>
+            <TableHead className="h-9 px-4 py-2.5 text-xs font-medium">
+              {intl.formatMessage({ id: "tools.table.tool" })}
+            </TableHead>
+            <TableHead className="h-9 px-4 py-2.5 text-xs font-medium">
+              {intl.formatMessage({ id: "tools.table.name" })}
+            </TableHead>
+            <TableHead className="h-9 px-4 py-2.5 text-xs font-medium">
+              {intl.formatMessage({ id: "tools.table.toolId" })}
+            </TableHead>
+            <TableHead className="h-9 w-[80px] px-4 py-2.5 text-xs font-medium">
+              {intl.formatMessage({ id: "tools.table.schema" })}
+            </TableHead>
             <TableHead className="h-9 w-[40px] px-4 py-2.5" />
           </TableRow>
         </TableHeader>
@@ -65,17 +77,20 @@ export function ToolsTable({
               <TableCell className="px-4 py-3">
                 <div className="flex min-w-0 items-center">
                   <span className="min-w-0 truncate font-mono text-xs text-muted-foreground">
-                    {tool.originalName}
+                    {tool.customName || tool.originalName}
                   </span>
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon-xs"
-                    aria-label={`Copy ${tool.originalName}`}
+                    aria-label={intl.formatMessage(
+                      { id: "tools.table.copyName" },
+                      { name: tool.customName || tool.originalName },
+                    )}
                     className="ml-4 size-4 shrink-0 text-muted-foreground hover:text-foreground"
                     onClick={(e) => {
                       e.stopPropagation();
-                      copyToClipboard(tool.originalName);
+                      copyToClipboard(tool.customName || tool.originalName);
                     }}
                   >
                     <Copy className="size-3" />
@@ -92,7 +107,7 @@ export function ToolsTable({
                     type="button"
                     variant="ghost"
                     size="icon-xs"
-                    aria-label="Copy tool ID"
+                    aria-label={intl.formatMessage({ id: "tools.table.copyToolId" })}
                     className="ml-4 size-4 shrink-0 text-muted-foreground hover:text-foreground"
                     onClick={(e) => {
                       e.stopPropagation();
@@ -109,7 +124,7 @@ export function ToolsTable({
                   type="button"
                   variant="ghost"
                   size="icon-xs"
-                  aria-label="View schema"
+                  aria-label={intl.formatMessage({ id: "tools.table.viewSchema" })}
                   className="size-5 text-muted-foreground hover:text-foreground"
                   onClick={(e) => {
                     e.stopPropagation();
@@ -128,14 +143,14 @@ export function ToolsTable({
               </TableCell>
 
               <TableCell className="px-4 py-3 text-center">
-                {onDeleteTool ? (
+                {onEditTool || onDeleteTool ? (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button
                         type="button"
                         variant="ghost"
                         size="icon-xs"
-                        aria-label="More options"
+                        aria-label={intl.formatMessage({ id: "tools.table.moreOptions" })}
                         className="size-5 text-muted-foreground hover:text-foreground"
                         onClick={(e) => {
                           e.stopPropagation();
@@ -145,14 +160,26 @@ export function ToolsTable({
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      <DropdownMenuItem
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDeleteTool(tool.id);
-                        }}
-                      >
-                        Delete
-                      </DropdownMenuItem>
+                      {onEditTool && (
+                        <DropdownMenuItem
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onEditTool(tool);
+                          }}
+                        >
+                          {intl.formatMessage({ id: "tools.table.edit" })}
+                        </DropdownMenuItem>
+                      )}
+                      {onDeleteTool && (
+                        <DropdownMenuItem
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteTool(tool.id);
+                          }}
+                        >
+                          {intl.formatMessage({ id: "tools.table.delete" })}
+                        </DropdownMenuItem>
+                      )}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 ) : (

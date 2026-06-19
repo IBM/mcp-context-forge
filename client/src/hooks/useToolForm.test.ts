@@ -1,9 +1,22 @@
 import { describe, it, expect, vi } from "vitest";
-import { renderHook, act, waitFor } from "@testing-library/react";
-import type { FormEvent } from "react";
+import { renderHook as rtlRenderHook, act, waitFor } from "@testing-library/react";
+import { createElement, type FormEvent, type ReactNode } from "react";
+import { IntlProvider } from "react-intl";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/mocks/server";
+import enMessages from "@/i18n/locales/en-US";
 import { useToolForm } from "./useToolForm";
+
+// Wrap hooks in IntlProvider so react-intl's useIntl() resolves localized strings.
+const wrapper = ({ children }: { children: ReactNode }) =>
+  createElement(
+    IntlProvider,
+    { locale: "en", defaultLocale: "en", messages: enMessages },
+    children,
+  );
+
+const renderHook = <Result, Props>(render: (initialProps: Props) => Result) =>
+  rtlRenderHook(render, { wrapper });
 
 describe("useToolForm", () => {
   describe("Initial State", () => {
@@ -294,7 +307,7 @@ describe("useToolForm", () => {
       expect(headers[0].value).toBe("valuewithnull");
     });
 
-    it("sends auth_header_key and auth_header_value when maxCustomHeaders is 1", () => {
+    it("sends authHeaderKey and authHeaderValue when maxCustomHeaders is 1", () => {
       const { result } = renderHook(() => useToolForm({ maxCustomHeaders: 1 }));
 
       act(() => {
@@ -524,6 +537,282 @@ describe("useToolForm", () => {
 
       expect(isValid!).toBe(true);
       expect(result.current.errors).toEqual({});
+    });
+  });
+
+  describe("Edit mode (toolId provided)", () => {
+    it("initializes form state from initialValues", () => {
+      const { result } = renderHook(() =>
+        useToolForm({
+          toolId: "tool-1",
+          initialValues: {
+            name: "existing-tool",
+            url: "https://api.example.com",
+            requestType: "GET",
+            visibility: "private",
+            authType: "bearer",
+            bearerToken: "my-token",
+          },
+        }),
+      );
+
+      expect(result.current.name).toBe("existing-tool");
+      expect(result.current.url).toBe("https://api.example.com");
+      expect(result.current.requestType).toBe("GET");
+      expect(result.current.visibility).toBe("private");
+      expect(result.current.authType).toBe("bearer");
+      expect(result.current.bearerToken).toBe("my-token");
+    });
+
+    it("sends PUT request when toolId is provided", async () => {
+      const putSpy = vi.fn(() => HttpResponse.json({ id: "tool-1" }, { status: 200 }));
+      server.use(http.put("*/tools/tool-1", putSpy));
+
+      const { result } = renderHook(() =>
+        useToolForm({
+          toolId: "tool-1",
+          initialValues: {
+            name: "my-tool",
+            url: "https://api.example.com",
+            integrationType: "REST",
+            requestType: "POST",
+          },
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleSubmit({
+          preventDefault: vi.fn(),
+        } as unknown as FormEvent<HTMLFormElement>);
+      });
+
+      await waitFor(() => expect(putSpy).toHaveBeenCalledOnce());
+    });
+
+    it("sends a nested auth object with empty strings to clear credentials when auth type is none", async () => {
+      let capturedBody: Record<string, unknown> | undefined;
+      server.use(
+        http.put("*/tools/tool-1", async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({ id: "tool-1" }, { status: 200 });
+        }),
+      );
+
+      const { result } = renderHook(() =>
+        useToolForm({
+          toolId: "tool-1",
+          initialValues: {
+            name: "my-tool",
+            url: "https://api.example.com",
+            integrationType: "REST",
+            requestType: "POST",
+            authType: "basic",
+            authUsername: "admin",
+            authPassword: "*****", // pragma: allowlist secret
+          },
+        }),
+      );
+
+      // User switches auth off
+      act(() => {
+        result.current.setAuthType("none");
+      });
+
+      await act(async () => {
+        await result.current.handleSubmit({
+          preventDefault: vi.fn(),
+        } as unknown as FormEvent<HTMLFormElement>);
+      });
+
+      await waitFor(() => expect(capturedBody).toBeDefined());
+      // Nested auth object with EMPTY STRINGS (not null) clears the stored credential
+      expect(capturedBody?.auth).toEqual({ authType: "", authValue: "" });
+      // No flat auth_* fields that would trigger the assemble_auth path
+      expect(capturedBody?.auth_type).toBeUndefined();
+      expect(capturedBody?.auth_password).toBeUndefined();
+    });
+
+    it("omits auth fields on update when the secret is still masked (unchanged)", async () => {
+      let capturedBody: Record<string, unknown> | undefined;
+      server.use(
+        http.put("*/tools/tool-1", async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({ id: "tool-1" }, { status: 200 });
+        }),
+      );
+
+      const { result } = renderHook(() =>
+        useToolForm({
+          toolId: "tool-1",
+          initialValues: {
+            name: "my-tool",
+            url: "https://api.example.com",
+            integrationType: "REST",
+            requestType: "POST",
+            authType: "basic",
+            authUsername: "admin",
+            authPassword: "*****", // masked value from the server // pragma: allowlist secret
+          },
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleSubmit({
+          preventDefault: vi.fn(),
+        } as unknown as FormEvent<HTMLFormElement>);
+      });
+
+      await waitFor(() => expect(capturedBody).toBeDefined());
+      // Masked secret must not be round-tripped — no auth fields at all
+      expect(capturedBody?.auth_type).toBeUndefined();
+      expect(capturedBody?.auth_password).toBeUndefined();
+      expect(capturedBody?.auth_username).toBeUndefined();
+    });
+
+    it("sends auth fields on update when the user enters a new basic password", async () => {
+      let capturedBody: Record<string, unknown> | undefined;
+      server.use(
+        http.put("*/tools/tool-1", async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({ id: "tool-1" }, { status: 200 });
+        }),
+      );
+
+      const { result } = renderHook(() =>
+        useToolForm({
+          toolId: "tool-1",
+          initialValues: {
+            name: "my-tool",
+            url: "https://api.example.com",
+            integrationType: "REST",
+            requestType: "POST",
+            authType: "basic",
+            authUsername: "admin",
+            authPassword: "*****", // pragma: allowlist secret
+          },
+        }),
+      );
+
+      act(() => {
+        result.current.setAuthPassword("new-secret"); // pragma: allowlist secret
+      });
+
+      await act(async () => {
+        await result.current.handleSubmit({
+          preventDefault: vi.fn(),
+        } as unknown as FormEvent<HTMLFormElement>);
+      });
+
+      await waitFor(() => expect(capturedBody).toBeDefined());
+      expect(capturedBody?.auth_type).toBe("basic");
+      expect(capturedBody?.auth_password).toBe("new-secret"); // pragma: allowlist secret
+      expect(capturedBody?.auth_username).toBe("admin");
+    });
+
+    it("sends auth fields on update when the user enters a new bearer token", async () => {
+      let capturedBody: Record<string, unknown> | undefined;
+      server.use(
+        http.put("*/tools/tool-1", async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({ id: "tool-1" }, { status: 200 });
+        }),
+      );
+
+      const { result } = renderHook(() =>
+        useToolForm({
+          toolId: "tool-1",
+          initialValues: {
+            name: "my-tool",
+            url: "https://api.example.com",
+            integrationType: "REST",
+            requestType: "POST",
+            authType: "bearer",
+            bearerToken: "*****", // pragma: allowlist secret
+          },
+        }),
+      );
+
+      act(() => {
+        result.current.setBearerToken("fresh-token"); // pragma: allowlist secret
+      });
+
+      await act(async () => {
+        await result.current.handleSubmit({
+          preventDefault: vi.fn(),
+        } as unknown as FormEvent<HTMLFormElement>);
+      });
+
+      await waitFor(() => expect(capturedBody).toBeDefined());
+      expect(capturedBody?.auth_type).toBe("bearer");
+      expect(capturedBody?.auth_token).toBe("fresh-token"); // pragma: allowlist secret
+    });
+
+    it("does not send POST request when toolId is provided", async () => {
+      const postSpy = vi.fn(() => HttpResponse.json({ id: "tool-1" }, { status: 201 }));
+      const putSpy = vi.fn(() => HttpResponse.json({ id: "tool-1" }, { status: 200 }));
+      server.use(http.post("*/tools", postSpy));
+      server.use(http.put("*/tools/tool-1", putSpy));
+
+      const { result } = renderHook(() =>
+        useToolForm({
+          toolId: "tool-1",
+          initialValues: {
+            name: "my-tool",
+            url: "https://api.example.com",
+            integrationType: "REST",
+            requestType: "POST",
+          },
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleSubmit({
+          preventDefault: vi.fn(),
+        } as unknown as FormEvent<HTMLFormElement>);
+      });
+
+      await waitFor(() => expect(putSpy).toHaveBeenCalledOnce());
+      expect(postSpy).not.toHaveBeenCalled();
+    });
+
+    it("sends POST request when no toolId (create mode)", async () => {
+      const postSpy = vi.fn(() => HttpResponse.json({ id: "tool-new" }, { status: 201 }));
+      server.use(http.post("*/tools", postSpy));
+
+      const { result } = renderHook(() => useToolForm());
+
+      act(() => {
+        result.current.setName("new-tool");
+        result.current.setUrl("https://api.example.com");
+      });
+
+      await act(async () => {
+        await result.current.handleSubmit({
+          preventDefault: vi.fn(),
+        } as unknown as FormEvent<HTMLFormElement>);
+      });
+
+      await waitFor(() => expect(postSpy).toHaveBeenCalledOnce());
+    });
+
+    it("initializes customHeaders from initialValues", () => {
+      const headers = [
+        { id: "1", key: "X-Api-Key", value: "secret" },
+        { id: "2", key: "X-Tenant", value: "acme" },
+      ];
+      const { result } = renderHook(() =>
+        useToolForm({ toolId: "tool-1", initialValues: { customHeaders: headers } }),
+      );
+
+      expect(result.current.customHeaders).toEqual(headers);
+    });
+
+    it("opens advanced settings when initialValues.advancedOpen is true", () => {
+      const { result } = renderHook(() =>
+        useToolForm({ toolId: "tool-1", initialValues: { advancedOpen: true } }),
+      );
+
+      expect(result.current.advancedOpen).toBe(true);
     });
   });
 

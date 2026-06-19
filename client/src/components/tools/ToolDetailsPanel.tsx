@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { useIntl } from "react-intl";
 import { Activity, Copy, Globe, PanelRightClose, Plus, Wrench } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,6 +27,7 @@ function DetailRow({
 }
 
 function CopyValue({ label, value }: { label: string; value: string }) {
+  const intl = useIntl();
   return (
     <div className="flex min-w-0 items-center gap-2">
       <span className="min-w-0 flex-1 truncate font-mono text-[12px]">{truncateMiddle(value)}</span>
@@ -34,7 +36,7 @@ function CopyValue({ label, value }: { label: string; value: string }) {
         variant="ghost"
         size="icon-xs"
         className="size-5 text-muted-foreground"
-        aria-label={`Copy ${label}`}
+        aria-label={intl.formatMessage({ id: "tools.details.copyValue" }, { label })}
         onClick={() => copyToClipboard(value)}
       >
         <Copy className="size-3.5" />
@@ -55,13 +57,16 @@ export function ToolDetailsPanel({
   open,
   onClose,
   onDeleteTool,
+  onEditTool,
 }: {
   tools: Tool[];
   gatewaySlug: string;
   open: boolean;
   onClose: () => void;
   onDeleteTool?: (toolId: string) => void;
+  onEditTool?: (tool: Tool) => void;
 }) {
+  const intl = useIntl();
   const [selectedTool, setSelectedTool] = useState<Tool | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
@@ -102,19 +107,26 @@ export function ToolDetailsPanel({
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  const getVisibilityLabel = useCallback((value?: string) => {
-    if (value === "team") return "Team";
-    if (value === "public") return "Public";
-    if (value === "private") return "Private";
-    return "Not available";
-  }, []);
+  const getVisibilityLabel = useCallback(
+    (value?: string) => {
+      if (value === "team") return intl.formatMessage({ id: "tools.details.visibility.team" });
+      if (value === "public") return intl.formatMessage({ id: "tools.details.visibility.public" });
+      if (value === "private")
+        return intl.formatMessage({ id: "tools.details.visibility.private" });
+      return intl.formatMessage({ id: "tools.details.notAvailable" });
+    },
+    [intl],
+  );
 
-  const getIntegrationTypeLabel = useCallback((type?: string) => {
-    if (type === "MCP") return "MCP Server";
-    if (type === "REST") return "REST API tools";
-    if (type === "GRPC") return "gRPC Service";
-    return type ?? "Not available";
-  }, []);
+  const getIntegrationTypeLabel = useCallback(
+    (type?: string) => {
+      if (type === "MCP") return intl.formatMessage({ id: "tools.details.integrationType.mcp" });
+      if (type === "REST") return intl.formatMessage({ id: "tools.details.integrationType.rest" });
+      if (type === "GRPC") return intl.formatMessage({ id: "tools.details.integrationType.grpc" });
+      return type ?? intl.formatMessage({ id: "tools.details.notAvailable" });
+    },
+    [intl],
+  );
 
   return (
     <>
@@ -144,7 +156,7 @@ export function ToolDetailsPanel({
           <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[minmax(0,1fr)_320px]">
             <div className="min-w-0 overflow-y-auto bg-background px-6 py-8 lg:px-12 dark:bg-neutral-900">
               <h2 id={headingId} className="sr-only">
-                Tools for {gatewaySlug}
+                {intl.formatMessage({ id: "tools.details.toolsFor" }, { name: gatewaySlug })}
               </h2>
 
               {/* Header with icon and title */}
@@ -168,6 +180,7 @@ export function ToolDetailsPanel({
                 selectedToolId={selectedTool?.id}
                 onSelectTool={setSelectedTool}
                 onDeleteTool={onDeleteTool}
+                onEditTool={onEditTool}
               />
             </div>
 
@@ -177,7 +190,7 @@ export function ToolDetailsPanel({
                 type="button"
                 variant="ghost"
                 size="icon-xs"
-                aria-label="Close tool details"
+                aria-label={intl.formatMessage({ id: "tools.details.close" })}
                 className="absolute right-3 top-3 text-muted-foreground"
                 onClick={onClose}
               >
@@ -188,11 +201,11 @@ export function ToolDetailsPanel({
                 <>
                   <div className="border-b border-border p-4 pt-8">
                     <h3 className="mb-7 text-sm font-semibold text-foreground">
-                      Component details
+                      {intl.formatMessage({ id: "tools.details.componentDetails" })}
                     </h3>
 
                     <dl className="space-y-4">
-                      <DetailRow label="Status">
+                      <DetailRow label={intl.formatMessage({ id: "tools.details.label.status" })}>
                         <span className="flex items-center gap-2">
                           <Activity
                             className={`size-3.5 ${
@@ -203,46 +216,59 @@ export function ToolDetailsPanel({
                           />
                           {selectedTool.enabled
                             ? selectedTool.reachable
-                              ? "Active"
-                              : "Unreachable"
-                            : "Inactive"}
+                              ? intl.formatMessage({ id: "tools.details.status.active" })
+                              : intl.formatMessage({ id: "tools.details.status.unreachable" })
+                            : intl.formatMessage({ id: "tools.details.status.inactive" })}
                         </span>
                       </DetailRow>
-                      <DetailRow label="Visibility">
+                      <DetailRow
+                        label={intl.formatMessage({ id: "tools.details.label.visibility" })}
+                      >
                         <span className="flex items-center gap-2">
                           <Globe className="size-3.5 text-muted-foreground" />
                           {getVisibilityLabel(selectedTool.visibility)}
                         </span>
                       </DetailRow>
-                      <DetailRow label="Type">
+                      <DetailRow label={intl.formatMessage({ id: "tools.details.label.type" })}>
                         <span className="text-foreground">
                           {getIntegrationTypeLabel(selectedTool.integrationType)}
                         </span>
                       </DetailRow>
-                      <DetailRow label="Version">
+                      <DetailRow label={intl.formatMessage({ id: "tools.details.label.version" })}>
                         <span className="text-foreground">{selectedTool.version ?? 1}</span>
                       </DetailRow>
-                      <DetailRow label="Request type">
+                      <DetailRow
+                        label={intl.formatMessage({ id: "tools.details.label.requestType" })}
+                      >
                         <span className="text-foreground">{selectedTool.requestType}</span>
                       </DetailRow>
                       {selectedTool.url && (
-                        <DetailRow label="URL">
-                          <CopyValue label="URL" value={selectedTool.url} />
+                        <DetailRow label={intl.formatMessage({ id: "tools.details.label.url" })}>
+                          <CopyValue
+                            label={intl.formatMessage({ id: "tools.details.label.url" })}
+                            value={selectedTool.url}
+                          />
                         </DetailRow>
                       )}
-                      <DetailRow label="Tags" className="items-center">
+                      <DetailRow
+                        label={intl.formatMessage({ id: "tools.details.label.tags" })}
+                        className="items-center"
+                      >
                         <div className="flex min-w-0 flex-wrap items-center gap-2">
                           {(selectedTool.tags || []).length > 0 ? (
                             <>
-                              {(selectedTool.tags || []).map((tag, index) => (
-                                <Badge
-                                  key={`${tag}-${index}`}
-                                  variant="outline"
-                                  className="rounded-full px-2 py-0 text-[11px] font-medium text-muted-foreground"
-                                >
-                                  {tag}
-                                </Badge>
-                              ))}
+                              {(selectedTool.tags || []).map((tag, index) => {
+                                const label = typeof tag === "string" ? tag : tag.label;
+                                return (
+                                  <Badge
+                                    key={`${label}-${index}`}
+                                    variant="outline"
+                                    className="rounded-full px-2 py-0 text-[11px] font-medium text-muted-foreground"
+                                  >
+                                    {label}
+                                  </Badge>
+                                );
+                              })}
                               <button
                                 type="button"
                                 tabIndex={-1}
@@ -250,7 +276,7 @@ export function ToolDetailsPanel({
                                 className="flex items-center gap-1 text-[12px] text-muted-foreground hover:text-foreground"
                               >
                                 <Plus className="size-3" aria-hidden="true" />
-                                add
+                                {intl.formatMessage({ id: "tools.details.addTag" })}
                               </button>
                             </>
                           ) : (
@@ -261,7 +287,7 @@ export function ToolDetailsPanel({
                               className="flex items-center gap-1 text-[12px] text-muted-foreground hover:text-foreground"
                             >
                               <Plus className="size-3" aria-hidden="true" />
-                              add
+                              {intl.formatMessage({ id: "tools.details.addTag" })}
                             </button>
                           )}
                         </div>
@@ -270,13 +296,23 @@ export function ToolDetailsPanel({
                   </div>
 
                   <div className="p-4">
-                    <h3 className="mb-7 text-sm font-semibold text-foreground">Activity</h3>
+                    <h3 className="mb-7 text-sm font-semibold text-foreground">
+                      {intl.formatMessage({ id: "tools.details.activity" })}
+                    </h3>
                     <dl className="space-y-4">
-                      <DetailRow label="Created">
-                        {formatDateTime(selectedTool.createdAt)}
+                      <DetailRow label={intl.formatMessage({ id: "tools.details.label.created" })}>
+                        {formatDateTime(
+                          selectedTool.createdAt,
+                          intl.formatMessage({ id: "tools.details.notAvailable" }),
+                        )}
                       </DetailRow>
-                      <DetailRow label="Last modified">
-                        {formatDateTime(selectedTool.updatedAt)}
+                      <DetailRow
+                        label={intl.formatMessage({ id: "tools.details.label.lastModified" })}
+                      >
+                        {formatDateTime(
+                          selectedTool.updatedAt,
+                          intl.formatMessage({ id: "tools.details.notAvailable" }),
+                        )}
                       </DetailRow>
                     </dl>
                   </div>

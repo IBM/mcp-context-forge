@@ -7,6 +7,28 @@ import { server } from "@/test/mocks/server";
 import { I18nProvider } from "@/i18n";
 import { AuthProvider } from "@/auth/AuthContext";
 import { ToolForm } from "./ToolForm";
+import type { Tool } from "@/types/tool";
+
+function createMockTool(overrides: Partial<Tool> = {}): Tool {
+  return {
+    id: "tool-1",
+    name: "my-tool",
+    originalName: "my-tool",
+    customName: "my-tool",
+    customNameSlug: "my-tool",
+    gatewaySlug: "",
+    integrationType: "REST",
+    requestType: "POST",
+    enabled: true,
+    reachable: true,
+    tags: [],
+    createdAt: "2026-01-01T00:00:00",
+    updatedAt: "2026-01-02T00:00:00",
+    url: "https://api.example.com/endpoint",
+    visibility: "public",
+    ...overrides,
+  };
+}
 
 function renderForm(props: Partial<React.ComponentProps<typeof ToolForm>> = {}) {
   return render(
@@ -231,6 +253,84 @@ describe("ToolForm", () => {
       await waitFor(() => {
         expect(onSuccess).toHaveBeenCalledOnce();
       });
+    });
+  });
+
+  describe("Edit mode (tool prop provided)", () => {
+    beforeEach(() => {
+      server.use(
+        http.put("*/tools/:id", () =>
+          HttpResponse.json({ id: "tool-1", name: "my-tool" }, { status: 200 }),
+        ),
+      );
+    });
+
+    it("shows 'Edit tool' heading instead of 'Add tool'", () => {
+      renderForm({ tool: createMockTool() });
+      expect(screen.getByRole("heading", { name: "Edit tool" })).toBeInTheDocument();
+    });
+
+    it("shows 'Update tool' submit button instead of 'Add tool'", () => {
+      renderForm({ tool: createMockTool() });
+      expect(screen.getByRole("button", { name: "Update tool" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Add tool" })).not.toBeInTheDocument();
+    });
+
+    it("pre-populates name from tool.customName", () => {
+      renderForm({ tool: createMockTool({ customName: "my-custom-tool" }) });
+      expect(screen.getByLabelText(/Name/)).toHaveValue("my-custom-tool");
+    });
+
+    it("pre-populates URL from tool", () => {
+      renderForm({ tool: createMockTool({ url: "https://api.example.com/v2" }) });
+      expect(screen.getByLabelText(/URL/)).toHaveValue("https://api.example.com/v2");
+    });
+
+    it("hides request type radio group for MCP tools", () => {
+      renderForm({
+        tool: createMockTool({ integrationType: "MCP", requestType: "STREAMABLEHTTP" }),
+      });
+      expect(screen.queryByRole("radiogroup", { name: "Request type" })).not.toBeInTheDocument();
+    });
+
+    it("shows request type radio group for REST tools", () => {
+      renderForm({ tool: createMockTool({ integrationType: "REST", requestType: "POST" }) });
+      expect(screen.getByRole("radiogroup", { name: "Request type" })).toBeInTheDocument();
+    });
+
+    it("calls onSuccess after successful tool update", async () => {
+      const user = userEvent.setup();
+      const onSuccess = vi.fn();
+      renderForm({ tool: createMockTool(), onSuccess });
+
+      await user.click(screen.getByRole("button", { name: "Update tool" }));
+
+      await waitFor(() => {
+        expect(onSuccess).toHaveBeenCalledOnce();
+      });
+    });
+
+    it("opens advanced settings automatically when tool has auth configured", () => {
+      renderForm({
+        tool: createMockTool({
+          auth: {
+            authType: "bearer",
+            token: "tok",
+            username: "",
+            password: "",
+            authHeaderKey: "",
+            authHeaderValue: "",
+          },
+        }),
+      });
+      const btn = screen.getByRole("button", { name: /Advanced settings/i });
+      expect(btn).toHaveAttribute("aria-expanded", "true");
+    });
+
+    it("does not open advanced settings when tool has no auth", () => {
+      renderForm({ tool: createMockTool({ auth: undefined }) });
+      const btn = screen.getByRole("button", { name: /Advanced settings/i });
+      expect(btn).toHaveAttribute("aria-expanded", "false");
     });
   });
 });
