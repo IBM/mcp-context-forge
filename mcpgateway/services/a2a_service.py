@@ -37,6 +37,7 @@ from mcpgateway.db import fresh_db_session, get_for_update
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
 from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
+from mcpgateway.schemas_a2a_native import AgentCapabilities, AgentCard, AgentSkill, SupportedInterface
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
@@ -801,6 +802,153 @@ class A2AAgentService(BaseService):
             raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
 
         return agent
+
+    async def synthesize_agent_card(
+        self,
+        db: Session,
+        agent_name: str,
+        public_base_url: str,
+        server_id: Optional[str] = None,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> Optional[AgentCard]:
+        """Synthesize a fresh A2A 1.0.0 :py:class:`AgentCard` from the DB row.
+
+        Plan T2 / D12: builds the v1 wire shape DIRECTLY from the
+        :py:class:`mcpgateway.db.A2AAgent` row. Does NOT reuse the legacy
+        :py:meth:`get_agent_card` dict (which still emits the v0.3-shaped
+        top-level ``url`` + top-level ``protocolVersion`` +
+        ``supportsAuthenticatedExtendedCard`` fields kept for the internal
+        trusted endpoint at ``main.py:9372-9405``).
+
+        **URL rewriting** (plan D7): the ``url`` field in the supported
+        interface points at the gateway's public dispatch endpoint for
+        the agent, NOT the upstream's ``endpoint_url``. The gateway is
+        the source of truth for the address callers should use.
+
+        **V-server membership check** (plan F1 + D11 + Oracle v3 #2 —
+        closes a security hole): when ``server_id`` is provided, the
+        synthesizer MUST verify the agent is bound to that server BEFORE
+        building the card. A foreign agent at ``/servers/{X}/a2a/foreign``
+        returns ``None`` (becomes HTTP 404 at the route layer per D14)
+        instead of serving a forged card with a fake ``/servers/{X}/...``
+        URL.
+
+        **Visibility check** (plan D11 / Oracle v2 #3): returns ``None`` on
+        miss (NOT raises) — calling routes translate to HTTP 404, same
+        outcome as name-not-found. Prevents existence-leak side channels.
+
+        Args:
+            db: Database session.
+            agent_name: Agent name from the URL path.
+            public_base_url: Gateway's public base URL (e.g.
+                ``"https://gw.example.com"``). Caller resolves via
+                ``getattr(settings, "a2a_public_base_url", None) or
+                str(settings.app_domain).rstrip("/")`` per plan F15.
+            server_id: Optional virtual server ID. When provided, the
+                agent MUST be bound to that server. The card's ``url``
+                field carries the ``/servers/{server_id}/...`` prefix.
+            user_email: Caller's email for visibility scoping. ``None``
+                for anonymous basic-card discovery paths.
+            token_teams: Caller's team scope per ``_check_agent_access``
+                semantics: ``None`` + anonymous user → admin bypass;
+                ``[]`` → public-only (used for anonymous basic-card per
+                D11); ``[team_id, ...]`` → team-scoped.
+
+        Returns:
+            The :py:class:`AgentCard` model when the caller can see it
+            and (when ``server_id`` is set) the agent is bound to that
+            server. Returns ``None`` on agent-not-found OR visibility
+            miss OR membership miss. Route handlers translate ``None``
+            to HTTP 404 per D14.
+
+        Examples:
+            >>> # The synthesizer collapses all 4xx-shaped outcomes to
+            >>> # ``None`` so route handlers translate uniformly to 404.
+            >>> # See tests/unit/mcpgateway/services/test_a2a_service_native.py
+            >>> # for the full unit coverage (T2 acceptance: 8 cases).
+            >>> import inspect
+            >>> from mcpgateway.services.a2a_service import A2AAgentService
+            >>> sig = inspect.signature(A2AAgentService.synthesize_agent_card)
+            >>> list(sig.parameters)[:4]
+            ['self', 'db', 'agent_name', 'public_base_url']
+        """
+        # Look up the agent (only enabled agents are served via native
+        # passthrough; disabled agents return None just like missing ones).
+        query = select(DbA2AAgent).where(
+            DbA2AAgent.name == agent_name,  # pylint: disable=comparison-with-callable
+            DbA2AAgent.enabled.is_(True),
+        )
+        agent = db.execute(query).scalar_one_or_none()
+        if not agent:
+            return None
+
+        # V-server membership FIRST so we don't leak agent existence at
+        # ``/servers/{X}/a2a/foreign-agent`` (foreign agent exists but is
+        # not in X). Caller perspective is identical to name-not-found.
+        if server_id is not None:
+            if not await self.check_server_a2a_membership(db, server_id, agent.id):
+                return None
+
+        # Layer-1 visibility (plan D11 / Oracle v2 #3) — None on miss, not raise.
+        if not await self._check_agent_access(db, agent, user_email, token_teams):
+            return None
+
+        # Build the URL the gateway advertises for this agent (D7 —
+        # gateway is source of truth, NOT upstream's endpoint_url).
+        if server_id is not None:
+            url = f"{public_base_url}/servers/{server_id}/a2a/{agent_name}"
+        else:
+            url = f"{public_base_url}/a2a/{agent_name}"
+
+        # Build the capabilities block from the agent's stored capabilities
+        # JSON. The ``extended_agent_card`` flag drives the -32007 trigger
+        # in the dispatcher (T12 step 8 ``GetExtendedAgentCard`` branch).
+        caps_dict = agent.capabilities or {}
+        capabilities = AgentCapabilities(  # type: ignore[call-arg]
+            streaming=bool(caps_dict.get("streaming", False)),
+            push_notifications=bool(caps_dict.get("pushNotifications", False)),
+            state_transition_history=bool(caps_dict.get("stateTransitionHistory", False)),
+            extended_agent_card=bool(caps_dict.get("extendedAgentCard", False)),
+        )
+
+        # Build the skills list. Each stored skill should be a dict
+        # conforming to :py:class:`AgentSkill`. If a skill is malformed
+        # (legacy data drift), skip it with a warning rather than failing
+        # the whole synthesis — the card stays usable with fewer skills.
+        skills: List[AgentSkill] = []
+        for raw_skill in caps_dict.get("skills", []) or []:
+            if not isinstance(raw_skill, dict):
+                continue
+            try:
+                skills.append(AgentSkill.model_validate(raw_skill))
+            except ValidationError as exc:
+                logger.warning(
+                    "Skipping malformed skill on agent %s during card synthesis: %s",
+                    agent_name,
+                    exc,
+                )
+
+        # Construct the v1 SupportedInterface entry. ``protocolVersion``
+        # comes from the AGENT's stored ``protocol_version`` (Oracle v3 #21 —
+        # NOT hardcoded). ``protocolBinding`` is ``JSONRPC`` per plan Q13
+        # (phase-1 JSON-RPC only).
+        interface = SupportedInterface(  # type: ignore[call-arg]
+            url=url,
+            protocol_binding="JSONRPC",
+            protocol_version=agent.protocol_version,
+        )
+
+        return AgentCard(  # type: ignore[call-arg]
+            name=agent.name,
+            description=agent.description or "",
+            supported_interfaces=[interface],
+            version=str(agent.version),
+            capabilities=capabilities,
+            default_input_modes=["text"],
+            default_output_modes=["text"],
+            skills=skills,
+        )
 
     async def register_agent(
         self,

@@ -31,6 +31,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # First-Party
+from mcpgateway.schemas_a2a_native import AgentCard
 from mcpgateway.services.a2a_service import (
     A2AAgentNotFoundError,
     A2AAgentService,
@@ -185,3 +186,196 @@ class TestResolveAgentForDispatch:
             result = await service.resolve_agent_for_dispatch(db, "echo", server_id=None, user_email=None, token_teams=None)
             assert result is agent
             membership_check.assert_not_called()
+
+
+def _mock_agent_for_synth(
+    agent_id: str = "agt-1",
+    name: str = "echo",
+    visibility: str = "public",
+    protocol_version: str = "1.0.0",
+    capabilities: dict | None = None,
+    description: str = "Reference echo agent",
+    version: str = "1.0.0",
+) -> MagicMock:
+    """Build a MagicMock DbA2AAgent stub for ``synthesize_agent_card`` tests."""
+    agent = MagicMock()
+    agent.id = agent_id
+    agent.name = name
+    agent.visibility = visibility
+    agent.team_id = None
+    agent.owner_email = None
+    agent.enabled = True
+    agent.description = description
+    agent.endpoint_url = "http://127.0.0.1:9100"  # NOT used by synth (D7)
+    agent.protocol_version = protocol_version
+    agent.version = version
+    agent.capabilities = capabilities if capabilities is not None else {"streaming": True}
+    return agent
+
+
+class TestSynthesizeAgentCard:
+    """Plan T2 (8 acceptance cases + spec field-name + skill robustness)."""
+
+    @pytest.mark.asyncio
+    async def test_missing_agent_returns_none(self, service: A2AAgentService) -> None:
+        """Agent name not in DB -> ``None`` (route handler maps to 404)."""
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+        result = await service.synthesize_agent_card(db, "missing", "https://gw.example.com")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_url_absent_server(self, service: A2AAgentService) -> None:
+        """No ``server_id`` -> URL is ``{public_base}/a2a/{name}``."""
+        agent = _mock_agent_for_synth()
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        card = await service.synthesize_agent_card(db, "echo", "https://gw.example.com")
+        assert card is not None
+        assert card.supported_interfaces[0].url == "https://gw.example.com/a2a/echo"
+
+    @pytest.mark.asyncio
+    async def test_url_with_server(self, service: A2AAgentService) -> None:
+        """``server_id`` set -> URL is ``{public_base}/servers/{id}/a2a/{name}``."""
+        agent = _mock_agent_for_synth()
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        with patch.object(service, "check_server_a2a_membership", new=AsyncMock(return_value=True)):
+            card = await service.synthesize_agent_card(db, "echo", "https://gw.example.com", server_id="srv-X")
+            assert card is not None
+            assert card.supported_interfaces[0].url == "https://gw.example.com/servers/srv-X/a2a/echo"
+
+    @pytest.mark.asyncio
+    async def test_protocol_binding_jsonrpc(self, service: A2AAgentService) -> None:
+        """``protocolBinding`` is always ``JSONRPC`` (plan Q13 phase-1)."""
+        agent = _mock_agent_for_synth()
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        card = await service.synthesize_agent_card(db, "echo", "https://gw.example.com")
+        assert card is not None
+        assert card.supported_interfaces[0].protocol_binding == "JSONRPC"
+
+    @pytest.mark.asyncio
+    async def test_protocol_version_from_agent_row(self, service: A2AAgentService) -> None:
+        """``protocolVersion`` uses ``agent.protocol_version`` (Oracle v3 #21 NOT hardcoded)."""
+        agent = _mock_agent_for_synth(protocol_version="1.0.5")
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        card = await service.synthesize_agent_card(db, "echo", "https://gw.example.com")
+        assert card is not None
+        assert card.supported_interfaces[0].protocol_version == "1.0.5"
+
+    @pytest.mark.asyncio
+    async def test_visibility_deny_returns_none(self, service: A2AAgentService) -> None:
+        """Visibility miss -> ``None`` (NOT raise; same wire outcome as not-found)."""
+        agent = _mock_agent_for_synth(visibility="team")
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        result = await service.synthesize_agent_card(db, "echo", "https://gw.example.com", user_email=None, token_teams=[])
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_model_validates_clean_round_trip(self, service: A2AAgentService) -> None:
+        """Synthesized card round-trips through ``AgentCard.model_validate``."""
+        agent = _mock_agent_for_synth()
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        card = await service.synthesize_agent_card(db, "echo", "https://gw.example.com")
+        assert card is not None
+        wire = card.model_dump(by_alias=True, exclude_none=True)
+        assert "protocolBinding" in wire["supportedInterfaces"][0]
+        assert "protocolVersion" in wire["supportedInterfaces"][0]
+        assert "protocolVersion" not in wire  # NEVER top-level
+        re_parsed = AgentCard.model_validate(wire)
+        assert re_parsed.name == agent.name
+
+    @pytest.mark.asyncio
+    async def test_v_server_membership_miss_returns_none(self, service: A2AAgentService) -> None:
+        """``server_id`` set + agent NOT in server -> ``None`` (foreign-agent forge prevention)."""
+        agent = _mock_agent_for_synth()
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        with patch.object(service, "check_server_a2a_membership", new=AsyncMock(return_value=False)):
+            result = await service.synthesize_agent_card(db, "echo", "https://gw.example.com", server_id="srv-X")
+            assert result is None
+
+    @pytest.mark.asyncio
+    async def test_disabled_agent_returns_none(self, service: A2AAgentService) -> None:
+        """Disabled agents are not served via native passthrough.
+
+        Query filters on ``enabled.is_(True)`` so disabled agents look
+        like missing ones (consistent with the legacy ``get_agent_card``
+        at ``a2a_service.py:1370``).
+        """
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+        result = await service.synthesize_agent_card(db, "disabled-agent", "https://gw.example.com")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_skill_extraction_from_capabilities(self, service: A2AAgentService) -> None:
+        """Skills come from ``agent.capabilities.skills`` (validated per-item)."""
+        agent = _mock_agent_for_synth(
+            capabilities={
+                "streaming": True,
+                "skills": [
+                    {"id": "echo", "name": "Echo", "description": "Echo back", "tags": [], "examples": []},
+                    {"id": "ping", "name": "Ping", "description": "Reachability probe", "tags": [], "examples": []},
+                ],
+            }
+        )
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        card = await service.synthesize_agent_card(db, "echo", "https://gw.example.com")
+        assert card is not None
+        assert len(card.skills) == 2
+        assert card.skills[0].id == "echo"
+        assert card.skills[1].id == "ping"
+
+    @pytest.mark.asyncio
+    async def test_malformed_skill_is_skipped(self, service: A2AAgentService) -> None:
+        """A skill dict missing required fields is skipped, not raised."""
+        agent = _mock_agent_for_synth(
+            capabilities={
+                "skills": [
+                    {"id": "echo", "name": "Echo", "description": "Echo back"},
+                    {"name": "broken", "description": "no id"},  # missing required id
+                ],
+            }
+        )
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        card = await service.synthesize_agent_card(db, "echo", "https://gw.example.com")
+        assert card is not None
+        assert len(card.skills) == 1
+        assert card.skills[0].id == "echo"
+
+    @pytest.mark.asyncio
+    async def test_capabilities_extended_agent_card_flag(self, service: A2AAgentService) -> None:
+        """``extendedAgentCard`` from agent.capabilities drives the -32007 trigger."""
+        agent = _mock_agent_for_synth(capabilities={"streaming": True, "extendedAgentCard": True})
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        card = await service.synthesize_agent_card(db, "echo", "https://gw.example.com")
+        assert card is not None
+        assert card.capabilities.extended_agent_card is True
+
+    @pytest.mark.asyncio
+    async def test_capabilities_extended_agent_card_defaults_false(self, service: A2AAgentService) -> None:
+        """Absent ``extendedAgentCard`` defaults to False (triggers -32007 in T12)."""
+        agent = _mock_agent_for_synth(capabilities={"streaming": True})
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        card = await service.synthesize_agent_card(db, "echo", "https://gw.example.com")
+        assert card is not None
+        assert card.capabilities.extended_agent_card is False
+
+    @pytest.mark.asyncio
+    async def test_description_none_falls_back_to_empty_string(self, service: A2AAgentService) -> None:
+        """A2AAgent.description is nullable; ``None`` becomes ``""`` (required field)."""
+        agent = _mock_agent_for_synth(description=None)
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        card = await service.synthesize_agent_card(db, "echo", "https://gw.example.com")
+        assert card is not None
+        assert card.description == ""
