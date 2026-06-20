@@ -413,7 +413,7 @@ async def handle_sso_callback(
         user_email = user_info.get("email")
 
     # Determine redirect URL
-    redirect_url = f"{root_path}/admin"
+    redirect_url = f"{root_path}/admin/"
 
     # For non-admin users, try to redirect to their first team's admin view
     if not is_admin and user_email:
@@ -425,7 +425,7 @@ async def handle_sso_callback(
                 # Redirect to first team's admin view
                 # Use first team in list (arbitrary selection - user can switch teams in UI)
                 first_team_id = user_teams[0].id
-                redirect_url = f"{root_path}/admin?team_id={first_team_id}"
+                redirect_url = f"{root_path}/admin/?team_id={first_team_id}"
                 logger.info(f"Redirecting non-admin SSO user {sanitize_for_log(user_email)} to team-scoped admin: {first_team_id}")
             else:
                 # User has no teams - redirect to admin gateways view
@@ -435,8 +435,8 @@ async def handle_sso_callback(
                 redirect_url = f"{root_path}/admin/#gateways"
                 logger.info(f"Redirecting non-admin SSO user {sanitize_for_log(user_email)} with no teams to admin gateways view")
         except Exception as e:
-            logger.warning(f"Failed to retrieve teams for SSO user {sanitize_for_log(user_email)}: {e}. Redirecting to /admin")
-            # Fall back to /admin - middleware will handle permission check
+            logger.warning(f"Failed to retrieve teams for SSO user {sanitize_for_log(user_email)}: {e}. Redirecting to /admin/")
+            # Fall back to /admin/ - middleware will handle permission check
 
     # Create redirect response
     redirect_response = RedirectResponse(url=redirect_url, status_code=302)
