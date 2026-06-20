@@ -34,6 +34,7 @@ import pytest
 from mcpgateway.schemas_a2a_native import AgentCard
 from mcpgateway.services import a2a_service as a2a_service_module
 from mcpgateway.services.a2a_service import (
+    A2AAgentError,
     A2AAgentNotFoundError,
     A2AAgentService,
     AgentNotInServerError,
@@ -44,6 +45,7 @@ from mcpgateway.services.a2a_service import (
     INVALID_PARAMS,
     INVALID_REQUEST,
     LEGACY_V03_METHOD_ALIASES,
+    LEGACY_V03_METHOD_MAP,
     METHOD_NOT_FOUND,
     MULTIPLE_PUSH_NOT_SUPPORTED,
     PARSE_ERROR,
@@ -598,3 +600,144 @@ class TestOutboundA2AVersion:
             agent = MagicMock()
             agent.protocol_version = version
             assert outbound_a2a_version(agent) == version
+
+
+class TestDispatchA2AJsonrpcUnary:
+    """Plan T4: envelope validation + alias mapping + invoke_agent delegation."""
+
+    @pytest.fixture
+    def agent_stub(self) -> MagicMock:
+        """Build a minimal agent stub with id + name."""
+        agent = MagicMock()
+        agent.id = "agt-1"
+        agent.name = "echo"
+        return agent
+
+    @pytest.mark.asyncio
+    async def test_invalid_jsonrpc_version_returns_error_tuple(self, service: A2AAgentService, agent_stub: MagicMock) -> None:
+        """``jsonrpc != "2.0"`` -> INVALID_REQUEST tuple per D6."""
+        result = await service.dispatch_a2a_jsonrpc_unary(MagicMock(), agent_stub, {"jsonrpc": "1.0", "method": "SendMessage"})
+        assert isinstance(result, tuple)
+        assert result[0] == INVALID_REQUEST
+
+    @pytest.mark.asyncio
+    async def test_missing_method_returns_error_tuple(self, service: A2AAgentService, agent_stub: MagicMock) -> None:
+        """Missing method field -> INVALID_REQUEST tuple."""
+        result = await service.dispatch_a2a_jsonrpc_unary(MagicMock(), agent_stub, {"jsonrpc": "2.0"})
+        assert isinstance(result, tuple)
+        assert result[0] == INVALID_REQUEST
+
+    @pytest.mark.asyncio
+    async def test_empty_method_returns_error_tuple(self, service: A2AAgentService, agent_stub: MagicMock) -> None:
+        """Empty method string -> INVALID_REQUEST tuple."""
+        result = await service.dispatch_a2a_jsonrpc_unary(MagicMock(), agent_stub, {"jsonrpc": "2.0", "method": ""})
+        assert isinstance(result, tuple)
+        assert result[0] == INVALID_REQUEST
+
+    @pytest.mark.asyncio
+    async def test_non_string_method_returns_error_tuple(self, service: A2AAgentService, agent_stub: MagicMock) -> None:
+        """Non-string method -> INVALID_REQUEST tuple."""
+        result = await service.dispatch_a2a_jsonrpc_unary(MagicMock(), agent_stub, {"jsonrpc": "2.0", "method": 123})
+        assert isinstance(result, tuple)
+        assert result[0] == INVALID_REQUEST
+
+    @pytest.mark.asyncio
+    async def test_non_dict_params_returns_error_tuple(self, service: A2AAgentService, agent_stub: MagicMock) -> None:
+        """``params`` that isn't dict-or-null -> INVALID_PARAMS tuple."""
+        result = await service.dispatch_a2a_jsonrpc_unary(MagicMock(), agent_stub, {"jsonrpc": "2.0", "method": "SendMessage", "params": "not-a-dict"})
+        assert isinstance(result, tuple)
+        assert result[0] == INVALID_PARAMS
+
+    @pytest.mark.asyncio
+    async def test_null_params_accepted(self, service: A2AAgentService, agent_stub: MagicMock) -> None:
+        """``params: null`` is valid per JSON-RPC 2.0; dispatch proceeds."""
+        with patch.object(service, "invoke_agent", new=AsyncMock(return_value={"result": "ok"})):
+            result = await service.dispatch_a2a_jsonrpc_unary(MagicMock(), agent_stub, {"jsonrpc": "2.0", "method": "SendMessage", "params": None})
+            assert result == {"result": "ok"}
+
+    @pytest.mark.parametrize("v03_method,v1_method", sorted(LEGACY_V03_METHOD_MAP.items()))
+    @pytest.mark.asyncio
+    async def test_legacy_alias_mapped(self, service: A2AAgentService, agent_stub: MagicMock, v03_method: str, v1_method: str) -> None:
+        """All 10 legacy v0.3 aliases are mapped to their v1 names before forwarding."""
+        invoke_mock = AsyncMock(return_value={"result": "ok"})
+        with patch.object(service, "invoke_agent", new=invoke_mock):
+            await service.dispatch_a2a_jsonrpc_unary(MagicMock(), agent_stub, {"jsonrpc": "2.0", "method": v03_method, "params": {}, "id": 1})
+        # The 3rd positional arg `parameters` is the rebuilt envelope.
+        call_kwargs = invoke_mock.call_args.kwargs
+        assert call_kwargs["parameters"]["method"] == v1_method
+
+    @pytest.mark.asyncio
+    async def test_tasks_list_not_mapped(self, service: A2AAgentService, agent_stub: MagicMock) -> None:
+        """``tasks/list`` is NEW in v1.0 (Oracle v3 #22) — NOT a legacy alias, passes verbatim."""
+        invoke_mock = AsyncMock(return_value={"result": "ok"})
+        with patch.object(service, "invoke_agent", new=invoke_mock):
+            await service.dispatch_a2a_jsonrpc_unary(MagicMock(), agent_stub, {"jsonrpc": "2.0", "method": "tasks/list", "params": {}, "id": 1})
+        # Verify the method is forwarded verbatim, NOT mapped to anything.
+        assert invoke_mock.call_args.kwargs["parameters"]["method"] == "tasks/list"
+        # And confirm tasks/list is NOT a key in the mapping (defense in depth).
+        assert "tasks/list" not in LEGACY_V03_METHOD_MAP
+
+    @pytest.mark.asyncio
+    async def test_unknown_method_passes_through(self, service: A2AAgentService, agent_stub: MagicMock) -> None:
+        """Unknown methods pass through verbatim; upstream decides whether to honor."""
+        invoke_mock = AsyncMock(return_value={"result": "ok"})
+        with patch.object(service, "invoke_agent", new=invoke_mock):
+            await service.dispatch_a2a_jsonrpc_unary(MagicMock(), agent_stub, {"jsonrpc": "2.0", "method": "MyCustomMethod", "params": {}, "id": 1})
+        assert invoke_mock.call_args.kwargs["parameters"]["method"] == "MyCustomMethod"
+
+    @pytest.mark.asyncio
+    async def test_invoke_agent_called_with_t12_kwargs(self, service: A2AAgentService, agent_stub: MagicMock) -> None:
+        """T12 calls dispatch_a2a_jsonrpc_unary with bearer_token/hop_count/request_headers — verify forwarding (Oracle v3 #2)."""
+        invoke_mock = AsyncMock(return_value={"result": "ok"})
+        with patch.object(service, "invoke_agent", new=invoke_mock):
+            await service.dispatch_a2a_jsonrpc_unary(
+                MagicMock(),
+                agent_stub,
+                {"jsonrpc": "2.0", "method": "SendMessage", "params": {}, "id": 1},
+                bearer_token="ey.token.here",
+                hop_count=2,
+                request_headers={"content-type": "application/json", "x-trace": "abc"},
+            )
+        kwargs = invoke_mock.call_args.kwargs
+        assert kwargs["bearer_token"] == "ey.token.here"
+        assert kwargs["hop_count"] == 2
+        assert kwargs["request_headers"] == {"content-type": "application/json", "x-trace": "abc"}
+        assert kwargs["content_type"] == "application/json"  # extracted from request_headers
+        assert kwargs["agent_id"] == "agt-1"  # T3 already resolved; skip re-resolution
+
+    @pytest.mark.asyncio
+    async def test_envelope_preserved_to_upstream(self, service: A2AAgentService, agent_stub: MagicMock) -> None:
+        """The upstream sees a complete jsonrpc+method+params+id envelope, not a wrapped legacy v0.3 shape."""
+        invoke_mock = AsyncMock(return_value={"result": "ok"})
+        with patch.object(service, "invoke_agent", new=invoke_mock):
+            await service.dispatch_a2a_jsonrpc_unary(MagicMock(), agent_stub, {"jsonrpc": "2.0", "method": "SendMessage", "params": {"foo": "bar"}, "id": 42})
+        upstream_body = invoke_mock.call_args.kwargs["parameters"]
+        assert upstream_body["jsonrpc"] == "2.0"
+        assert upstream_body["method"] == "SendMessage"
+        assert upstream_body["params"] == {"foo": "bar"}
+        assert upstream_body["id"] == 42
+
+    @pytest.mark.asyncio
+    async def test_invoke_agent_not_found_error_translated_to_tuple(self, service: A2AAgentService, agent_stub: MagicMock) -> None:
+        """A2AAgentNotFoundError -> METHOD_NOT_FOUND tuple (defense-in-depth per D14)."""
+        with patch.object(service, "invoke_agent", new=AsyncMock(side_effect=A2AAgentNotFoundError("not found"))):
+            result = await service.dispatch_a2a_jsonrpc_unary(MagicMock(), agent_stub, {"jsonrpc": "2.0", "method": "SendMessage", "params": {}, "id": 1})
+        assert isinstance(result, tuple)
+        assert result[0] == METHOD_NOT_FOUND
+
+    @pytest.mark.asyncio
+    async def test_a2a_agent_error_translated_to_internal_error_tuple(self, service: A2AAgentService, agent_stub: MagicMock) -> None:
+        """A2AAgentError (non-not-found) -> INTERNAL_ERROR tuple per D6."""
+        with patch.object(service, "invoke_agent", new=AsyncMock(side_effect=A2AAgentError("upstream blew up"))):
+            result = await service.dispatch_a2a_jsonrpc_unary(MagicMock(), agent_stub, {"jsonrpc": "2.0", "method": "SendMessage", "params": {}, "id": 1})
+        assert isinstance(result, tuple)
+        assert result[0] == INTERNAL_ERROR
+        assert "upstream blew up" in result[1]
+
+    @pytest.mark.asyncio
+    async def test_successful_dispatch_returns_dict(self, service: A2AAgentService, agent_stub: MagicMock) -> None:
+        """Successful invoke_agent return value is returned verbatim as a dict (not a tuple)."""
+        with patch.object(service, "invoke_agent", new=AsyncMock(return_value={"jsonrpc": "2.0", "result": {"ok": True}, "id": 1})):
+            result = await service.dispatch_a2a_jsonrpc_unary(MagicMock(), agent_stub, {"jsonrpc": "2.0", "method": "SendMessage", "params": {}, "id": 1})
+        assert isinstance(result, dict)
+        assert result["result"] == {"ok": True}

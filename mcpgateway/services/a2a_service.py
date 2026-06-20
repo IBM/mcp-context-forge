@@ -580,6 +580,29 @@ LEGACY_V03_METHOD_ALIASES = frozenset(
 _ACCEPTED_A2A_VERSIONS = frozenset({"1.0", "1.0.0"})
 
 
+# Legacy v0.3 -> v1.0 method name mapping (plan F8 + Oracle v3 #22).
+#
+# Used by :py:func:`dispatch_a2a_jsonrpc_unary` (T4) and the streaming
+# dispatcher (T5) to translate inbound v0.3 method names to their v1.0
+# equivalents before forwarding to upstream.
+#
+# **NOT mapped**: ``tasks/list`` (Oracle v3 #22 — it is NEW in v1.0, NOT
+# a legacy v0.3 alias). A client sending ``tasks/list`` is sending a v1
+# method name and the gateway forwards it verbatim.
+LEGACY_V03_METHOD_MAP: Dict[str, str] = {
+    "message/send": "SendMessage",
+    "message/stream": "SendStreamingMessage",
+    "tasks/get": "GetTask",
+    "tasks/cancel": "CancelTask",
+    "tasks/resubscribe": "SubscribeToTask",
+    "tasks/pushNotificationConfig/set": "CreateTaskPushNotificationConfig",
+    "tasks/pushNotificationConfig/get": "GetTaskPushNotificationConfig",
+    "tasks/pushNotificationConfig/list": "ListTaskPushNotificationConfigs",
+    "tasks/pushNotificationConfig/delete": "DeleteTaskPushNotificationConfig",
+    "agent/getAuthenticatedExtendedCard": "GetExtendedAgentCard",
+}
+
+
 def validate_a2a_version(header_value: Optional[str], method: Optional[str] = None) -> str:
     """Validate and normalize the inbound ``A2A-Version`` header.
 
@@ -1205,6 +1228,105 @@ class A2AAgentService(BaseService):
             default_output_modes=["text"],
             skills=skills,
         )
+
+    async def dispatch_a2a_jsonrpc_unary(
+        self,
+        db: Session,
+        agent: DbA2AAgent,
+        body: Dict[str, Any],
+        *,
+        bearer_token: Optional[str] = None,
+        hop_count: int = 0,
+        request_headers: Optional[Dict[str, str]] = None,
+    ) -> Union[Dict[str, Any], tuple]:
+        """Dispatch a v1 JSON-RPC envelope through the existing invoke_agent pipeline.
+
+        Plan T4 + D5 + D6 + Oracle v3 #22 + Oracle v4 CRITICAL #2 (signature
+        alignment with T12's call shape).
+
+        Validates the envelope, maps legacy v0.3 method aliases (EXCLUDING
+        ``tasks/list`` — NEW in v1.0, NOT a legacy alias per Oracle v3 #22),
+        then delegates to :py:meth:`invoke_agent` so per-agent auth, UAID
+        federation, hop-count loop guards, and plugin context are all
+        preserved per D5.
+
+        Args:
+            db: Database session.
+            agent: Already-resolved A2A agent (resolved by T3 in the route).
+            body: Parsed JSON-RPC request body.
+            bearer_token: JWT for cross-gateway forwarding. ``None`` is
+                used when the inbound token is opaque (filtered by
+                ``_is_jwt_token`` in the route).
+            hop_count: Federation hop counter; ``invoke_agent`` enforces
+                ``settings.uaid_max_federation_hops``.
+            request_headers: Filtered inbound headers for plugin context
+                (passed through to ``invoke_agent``'s plugin pipeline).
+
+        Returns:
+            On success: the upstream's response dict (already JSON-RPC
+            envelope-shaped from the existing pipeline).
+            On envelope error: ``(code, message, data)`` 3-tuple that T12
+            maps to a JSON-RPC error envelope via :py:func:`make_jsonrpc_error`.
+
+        Examples:
+            >>> import inspect
+            >>> sig = inspect.signature(A2AAgentService.dispatch_a2a_jsonrpc_unary)
+            >>> "bearer_token" in sig.parameters
+            True
+            >>> "hop_count" in sig.parameters
+            True
+            >>> "request_headers" in sig.parameters
+            True
+        """
+        # Envelope validation: jsonrpc=="2.0", non-empty method string,
+        # params dict-or-null per JSON-RPC 2.0 / A2A 1.0.0 spec.
+        if body.get("jsonrpc") != "2.0":
+            return (INVALID_REQUEST, "Request must have jsonrpc='2.0'", None)
+        method = body.get("method")
+        if not isinstance(method, str) or not method:
+            return (INVALID_REQUEST, "Method must be a non-empty string", None)
+        params = body.get("params")
+        if params is not None and not isinstance(params, dict):
+            return (INVALID_PARAMS, "params must be a JSON object or null", None)
+
+        # Map legacy v0.3 method aliases to v1.0 names. EXCLUDES ``tasks/list``
+        # (Oracle v3 #22 — new in v1.0, NOT a legacy alias). Unknown methods
+        # pass through to upstream which decides whether to honor them.
+        mapped_method = LEGACY_V03_METHOD_MAP.get(method, method)
+
+        # Construct the upstream JSON-RPC request body. The existing
+        # pipeline at services/a2a_protocol.py:309-317 recognizes a
+        # jsonrpc+method envelope in ``parameters`` and preserves it
+        # verbatim (does NOT wrap it in the legacy v0.3 envelope shape).
+        upstream_body = {
+            "jsonrpc": "2.0",
+            "method": mapped_method,
+            "params": params or {},
+            "id": body.get("id"),
+        }
+
+        content_type = (request_headers or {}).get("content-type")
+
+        try:
+            result = await self.invoke_agent(
+                db,
+                agent.name,
+                parameters=upstream_body,
+                interaction_type="query",
+                agent_id=agent.id,  # T3 already resolved; skip re-resolution.
+                hop_count=hop_count,
+                bearer_token=bearer_token,
+                content_type=content_type,
+                request_headers=request_headers,
+            )
+            return result
+        except A2AAgentNotFoundError as exc:
+            # Should not normally happen — T3 already resolved the agent
+            # for the route — but defend-in-depth maps to METHOD_NOT_FOUND
+            # at the JSON-RPC layer per plan D14.
+            return (METHOD_NOT_FOUND, str(exc), None)
+        except A2AAgentError as exc:
+            return (INTERNAL_ERROR, str(exc), None)
 
     async def register_agent(
         self,
