@@ -23,7 +23,7 @@ from urllib.parse import urlparse
 # Third-Party
 import httpx
 from pydantic import ValidationError
-from sqlalchemy import and_, delete, desc, or_, select, update
+from sqlalchemy import and_, delete, desc, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, A2ATask, EmailTeam
+from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, A2ATask, EmailTeam, server_a2a_association
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
 from mcpgateway.db import fresh_db_session, get_for_update
 from mcpgateway.db import Tool as DbTool
@@ -388,6 +388,45 @@ class A2AAgentNameConflictError(A2AAgentError):
         super().__init__(message)
 
 
+class AgentNotInServerError(A2AAgentError):
+    """Raised when an A2A agent is not bound to the requested virtual server.
+
+    Used by the native A2A passthrough surface (plan T3) when a dispatcher
+    receives a request at ``/servers/{server_id}/a2a/{agent_name}`` but the
+    agent identified by ``agent_name`` is not present in the server's
+    ``associated_a2a_agents`` (i.e. no row in ``server_a2a_association``
+    for that ``(server_id, agent_id)`` pair).
+
+    Route handlers translate this to HTTP 404 per plan D14 — the resource
+    at that path does not exist for this caller, which is also what a
+    foreign-agent lookup outside any v-server should look like.
+
+    Examples:
+        >>> err = AgentNotInServerError("echo", "srv-abc")
+        >>> err.agent_name
+        'echo'
+        >>> err.server_id
+        'srv-abc'
+        >>> "echo" in str(err)
+        True
+        >>> "srv-abc" in str(err)
+        True
+        >>> isinstance(err, A2AAgentError)
+        True
+    """
+
+    def __init__(self, agent_name: str, server_id: str):
+        """Initialize an AgentNotInServerError exception.
+
+        Args:
+            agent_name: Name of the agent the caller addressed.
+            server_id: ID of the virtual server the caller addressed.
+        """
+        self.agent_name = agent_name
+        self.server_id = server_id
+        super().__init__(f"A2A agent '{agent_name}' is not bound to virtual server '{server_id}'")
+
+
 def _validate_a2a_team_assignment(db: Session, user_email: Optional[str], target_team_id: Optional[str]) -> None:
     """Validate team assignment for A2A agent updates.
 
@@ -613,6 +652,155 @@ class A2AAgentService(BaseService):
         if agent is None:
             return False
         return await self._check_agent_access(db, agent, user_email, token_teams)
+
+    async def check_server_a2a_membership(
+        self,
+        db: Session,
+        server_id: str,
+        agent_id: str,
+    ) -> bool:
+        """Check whether an A2A agent is bound to a virtual server.
+
+        Pure query against the ``server_a2a_association`` table
+        (``db.py:2490``). Used by :py:meth:`resolve_agent_for_dispatch`
+        and the card synthesizer (plan T2) to enforce virtual-server
+        scoping per plan F1+D11 — a foreign agent's card or dispatch URL
+        at ``/servers/{X}/a2a/{foreign}`` must NOT resolve to that agent
+        even when the agent itself is visible to the caller.
+
+        Direct join query (NOT ORM ``Server.a2a_agents`` relationship
+        traversal) keeps the control plane stateless and trivially
+        mockable per plan P1.
+
+        Args:
+            db: Database session.
+            server_id: Virtual server ID (UUID).
+            agent_id: A2A agent ID (UUID).
+
+        Returns:
+            ``True`` if the ``(server_id, agent_id)`` row exists in
+            ``server_a2a_association``, ``False`` otherwise.
+
+        Examples:
+            >>> import asyncio
+            >>> from unittest.mock import MagicMock
+            >>> from mcpgateway.services.a2a_service import A2AAgentService
+            >>> service = A2AAgentService()
+            >>> db = MagicMock()
+            >>> db.execute.return_value.scalar.return_value = 1
+            >>> asyncio.run(service.check_server_a2a_membership(db, "srv-1", "agt-1"))
+            True
+            >>> db.execute.return_value.scalar.return_value = 0
+            >>> asyncio.run(service.check_server_a2a_membership(db, "srv-1", "agt-2"))
+            False
+        """
+        stmt = (
+            select(func.count())
+            .select_from(server_a2a_association)
+            .where(
+                server_a2a_association.c.server_id == server_id,
+                server_a2a_association.c.a2a_agent_id == agent_id,
+            )
+        )
+        count = db.execute(stmt).scalar()
+        return bool(count and count > 0)
+
+    async def resolve_agent_for_dispatch(
+        self,
+        db: Session,
+        agent_name: str,
+        server_id: Optional[str] = None,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> DbA2AAgent:
+        """Resolve an A2A agent for native dispatch with visibility + membership enforcement.
+
+        Combines name lookup, virtual-server membership check, and Layer-1
+        visibility enforcement into a single helper used by:
+
+        - T11 per-agent card endpoint
+        - T12 per-agent dispatch route
+        - T17/T18 virtual-server-scoped routes (via middleware-set
+          ``a2a_server_id``)
+
+        Plan invariants (D11, D14, Oracle v2 #3):
+
+        - **Case-sensitive name match** — consistent with the existing
+          :py:meth:`get_agent_by_name` at line 1321 of this module. Plan
+          T3 mentioned case-insensitive but the existing codebase pattern
+          wins for behavioral consistency with ``/invoke``.
+        - **V-server membership FIRST**, then visibility — so we don't
+          leak agent existence at ``/servers/{X}/a2a/foreign-agent``
+          (agent exists, not in X). Foreign-agent miss looks like
+          name-not-found to the caller.
+        - **Visibility miss surfaces as** :py:class:`A2AAgentNotFoundError`
+          — NOT a separate permission error. The caller sees the same
+          outcome as name-not-found, preventing existence-leak side
+          channels.
+
+        Args:
+            db: Database session.
+            agent_name: Agent name from the URL path.
+            server_id: Optional virtual server ID from the
+                ``A2APathRewriteMiddleware``-set scope. When provided,
+                the agent MUST be bound to that server via
+                ``server_a2a_association``.
+            user_email: Caller's email for visibility scoping. ``None``
+                for anonymous paths (basic card discovery).
+            token_teams: Caller's team scope per ``_check_agent_access``
+                semantics: ``None`` means unrestricted (admin) when
+                ``user_email`` is also ``None``; ``[]`` means public-only;
+                ``[team_id, ...]`` means team-scoped.
+
+        Returns:
+            The :py:class:`mcpgateway.db.A2AAgent` row when the caller
+            can see it and (when ``server_id`` is set) the agent is bound
+            to that server.
+
+        Raises:
+            A2AAgentNotFoundError: When the name does not match OR the
+                caller cannot see the agent.
+            AgentNotInServerError: When the caller addresses
+                ``/servers/{X}/a2a/{name}`` but the agent is not bound
+                to server ``X``.
+
+        Examples:
+            >>> import asyncio
+            >>> from unittest.mock import MagicMock
+            >>> from mcpgateway.services.a2a_service import (
+            ...     A2AAgentService,
+            ...     A2AAgentNotFoundError,
+            ... )
+            >>> service = A2AAgentService()
+            >>> db = MagicMock()
+            >>> db.execute.return_value.scalar_one_or_none.return_value = None
+            >>> try:
+            ...     asyncio.run(service.resolve_agent_for_dispatch(db, "missing"))
+            ... except A2AAgentNotFoundError:
+            ...     print("not found")
+            not found
+        """
+        query = select(DbA2AAgent).where(DbA2AAgent.name == agent_name)  # pylint: disable=comparison-with-callable
+        agent = db.execute(query).scalar_one_or_none()
+        if not agent:
+            raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
+
+        # V-server membership check FIRST so we don't leak agent existence
+        # at ``/servers/{X}/a2a/foreign-agent`` (where the agent exists but
+        # isn't in X). Foreign-agent miss looks like name-not-found from
+        # the caller's perspective per plan D14.
+        if server_id is not None:
+            is_member = await self.check_server_a2a_membership(db, server_id, agent.id)
+            if not is_member:
+                raise AgentNotInServerError(agent_name, server_id)
+
+        # Layer-1 visibility (per plan D11 / Oracle v2 #3): visibility miss
+        # surfaces as A2AAgentNotFoundError, NOT a separate permission
+        # error. Prevents existence-leak side channels.
+        if not await self._check_agent_access(db, agent, user_email, token_teams):
+            raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
+
+        return agent
 
     async def register_agent(
         self,
