@@ -1,0 +1,172 @@
+Phase A — Centralized A2A access-decision policy module (Plan T16 follow-up)
+============================================================================
+
+Plan ref: .omo/plans/a2a-native-passthrough.md T16 (Phase A architectural
+amendment, per user direction during this session)
+Wave: 4 (virtual-server-scoped data plane)
+Commit: pending
+
+User-driven architectural changes captured here
+------------------------------------------------
+During Wave 4 implementation the user clarified three architectural
+requirements that drove this work:
+
+1. **Three-level conjunctive access in v-server context**: visibility
+   of an agent at ``/servers/{id}/a2a/{name}`` requires ALL three of:
+
+   - Server-level visibility (user can see the virtual server)
+   - Agent-level visibility (user can see the agent — its own Layer-1
+     scope still applies; server membership does NOT bypass it)
+   - Agent-in-server membership (the binding is configured)
+
+   None substitute for the others. This was a REVISION of an earlier
+   interpretation in this session where membership was the source of
+   truth and agent visibility was bypassed in v-server context.
+
+2. **Per-virtual-server agent membership configuration**: the
+   ``server_a2a_association`` table IS the per-server configuration
+   for which agents are visible on that server. This is already the
+   plan; the user's clarification mostly reinforced it.
+
+3. **Centralized RBAC/ABAC decisions for rules-engine readiness**: the
+   visibility decisions for both URL families MUST be co-located in a
+   single module so they can be refactored into Cedar (or another
+   rules engine) without touching every call site. The user
+   specifically asked about ``cedarpy`` integration timing —
+   recommended deferring Cedar adoption to a focused follow-up wave
+   but landing the policy-module shape NOW so the migration is a
+   no-op at call sites.
+
+4. **CRUD authorization for server-agent associations**: only users
+   with proper access to a virtual server should be allowed to add
+   an agent to the server. The user must also be able to see the
+   agent they are adding.
+
+Files added / modified
+----------------------
+mcpgateway/services/a2a_access_policy.py — NEW
+  Centralized A2A access-decision policy module. Three async functions:
+  - can_view_a2a_agent_directly(...)
+    Single-level (agent visibility only) for /a2a/{name}.
+  - can_view_a2a_agent_in_server_context(...)
+    Three-level conjunctive for /servers/{id}/a2a/{name}. Check order:
+      1. Server visibility (sync, no DB)
+      2. Membership (single SELECT)
+      3. Agent visibility (async, may touch DB)
+    Cheap-first ordering minimizes timing side-channels: expensive
+    team-membership queries are skipped on early denial. All denial
+    paths return the same False (no leak about WHICH layer denied).
+  - can_associate_a2a_agent_with_server(...)
+    CRUD authorization for Wave 5 T20:
+      1. Server visibility (caller can see the server they are mutating)
+      2. Agent visibility (caller can see the agent they are adding)
+    NO membership check — the call IS what creates the membership row.
+
+  Type-only import of A2AAgentService avoids circular import at
+  module-load time. The a2a_service parameter is a delegation shim
+  that disappears when the rules-engine migration moves the
+  primitives into this module.
+
+mcpgateway/services/a2a_service.py — MODIFIED
+  - Replaced the inline visibility logic in
+    resolve_agent_for_dispatch (Wave 1 T3) and synthesize_agent_card
+    (Wave 1 T2) with calls into the new policy module.
+  - Added import of Server as DbServer + policy helpers
+    (can_view_a2a_agent_directly, can_view_a2a_agent_in_server_context).
+  - Removed inline server-visibility / agent-visibility / membership
+    sequencing from the service layer — those decisions now live
+    EXCLUSIVELY in a2a_access_policy.py.
+  - All denial paths preserve the existing wire contract:
+    A2AAgentNotFoundError (direct path) / AgentNotInServerError
+    (v-server path) / None (synthesize); HTTP 404 at the route
+    layer per D14.
+
+mcpgateway/middleware/a2a_path_rewrite.py — MODIFIED
+  - Tightened typing on T16 middleware to use proper ASGI types
+    from starlette.types: ASGIApp, Scope, Receive, Send.
+  - Replaces the looser `dict` / `Callable` annotations with the
+    canonical ASGI primitives.
+  - User explicitly requested stronger typing throughout — this is the
+    first response to that directive; the same discipline applies to
+    all new code going forward.
+
+tests/unit/mcpgateway/services/test_a2a_access_policy.py — NEW
+  11 tests across 3 classes:
+  - TestCanViewAgentDirectly (2): delegates to agent-visibility
+    primitive; returns True/False accordingly.
+  - TestCanViewAgentInServerContext (5):
+      - all three pass → True
+      - server-visibility denial short-circuits membership AND agent
+        (no DB queries downstream)
+      - membership denial short-circuits agent visibility (timing
+        side-channel guard + mirrors the existing
+        test_membership_checked_before_visibility unit test)
+      - agent visibility denial returns False even when server +
+        membership pass (the gap the user direction explicitly
+        forbids: server membership does NOT bypass agent visibility)
+      - all denial paths collapse to the same False (no leak about
+        WHICH layer denied — D14 wire contract at the policy level)
+  - TestCanAssociateAgentWithServer (4):
+      - user can see both → True
+      - server hidden → False (short-circuits agent check)
+      - agent hidden → False
+      - membership check NOT consulted (CRUD creates the membership;
+        pre-checking would be a logic error)
+
+Verification
+------------
+1. Existing Wave 1 / Wave 3 unit tests continue to pass:
+   $ uv run pytest tests/unit/mcpgateway/services/test_a2a_service_native.py
+   120 passed (was 120 before refactor — no regressions)
+
+   One test (test_membership_checked_before_visibility) was implicitly
+   re-verified by the policy reordering: membership is now checked
+   BEFORE agent visibility in v-server context, mirroring the
+   pre-refactor behaviour.
+
+2. Full unit suite:
+   $ uv run pytest tests/unit
+   18728 passed, 120 skipped, 2 xfailed, 0 failed
+   (Wave 3 18717 + 11 new policy tests = 18728)
+
+3. Integration tests (T11/T12/T13):
+   $ uv run pytest tests/integration/test_a2a_native_routes.py \\
+                   tests/integration/test_a2a_route_ordering.py \\
+                   --with-integration
+   29 passed (was 29 before refactor — no regressions)
+
+Cedar / rules-engine future migration
+-------------------------------------
+The user asked about cedarpy timing. Deferred to a focused follow-up
+wave but the policy module is already the right shape for the
+migration. When Cedar lands:
+
+- can_view_a2a_agent_directly's body becomes cedar_engine.is_authorized
+  for action ViewAgent on principal User, resource Agent.
+- can_view_a2a_agent_in_server_context's body becomes a Cedar policy
+  expressing the three-level conjunction (or three separate policies
+  unified via a Cedar policy set).
+- can_associate_a2a_agent_with_server's body becomes a Cedar policy for
+  the AssociateAgentWithServer action.
+- All function signatures stay identical — call sites do not change.
+- The a2a_service delegation shim parameter can be dropped at that
+  point because Cedar can call the primitives directly (or the
+  primitives also migrate into the policy layer).
+
+Remaining Wave 4 work
+---------------------
+- T17 (v-server card integration test): assert the three-level check
+  fires end-to-end via the path-rewrite middleware + T11 handler.
+- T18 (v-server dispatch integration test): same for T12 handler.
+- T19 (v-server composition test): server-with-A2A-agents end-to-end
+  through admin API.
+
+Phase B work (deferred; tracked separately)
+-------------------------------------------
+- Per-virtual-server agent name aliasing. Requires schema migration
+  (alias_name column on server_a2a_association + uniqueness
+  enforcement), service-layer name resolution, T11/T12 card URL
+  rewriting, Admin UI affordance.
+- CRUD authorization (can_associate_a2a_agent_with_server) is
+  authored here but NOT YET wired into ServerService.create_server
+  or update_server — that wiring is T20 work (Wave 5).

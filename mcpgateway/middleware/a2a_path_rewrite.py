@@ -40,7 +40,8 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Callable
+
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
 
@@ -69,15 +70,15 @@ class A2APathRewriteMiddleware:
     ``/servers/{id}/mcp`` MCP transport URLs) pass through unchanged.
     """
 
-    def __init__(self, application: Callable[..., Any]) -> None:
+    def __init__(self, application: ASGIApp) -> None:
         """Wrap an ASGI ``application`` with the v-server path rewrite.
 
         Args:
             application: The next ASGI app in the middleware chain.
         """
-        self.application = application
+        self.application: ASGIApp = application
 
-    async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Intercept HTTP requests and rewrite v-server-scoped A2A paths.
 
         Args:

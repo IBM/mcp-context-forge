@@ -31,10 +31,15 @@ from sqlalchemy.orm import Session
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, A2ATask, EmailTeam, server_a2a_association
+from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, A2ATask, EmailTeam
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
-from mcpgateway.db import fresh_db_session, get_for_update
+from mcpgateway.db import fresh_db_session, get_for_update, server_a2a_association
+from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.services.a2a_access_policy import (
+    can_view_a2a_agent_directly,
+    can_view_a2a_agent_in_server_context,
+)
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
 from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
 from mcpgateway.schemas_a2a_native import AgentCapabilities, AgentCard, AgentSkill, SupportedInterface
@@ -1065,19 +1070,50 @@ class A2AAgentService(BaseService):
         if not agent:
             raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
 
-        # V-server membership check FIRST so we don't leak agent existence
-        # at ``/servers/{X}/a2a/foreign-agent`` (where the agent exists but
-        # isn't in X). Foreign-agent miss looks like name-not-found from
-        # the caller's perspective per plan D14.
         if server_id is not None:
-            is_member = await self.check_server_a2a_membership(db, server_id, agent.id)
-            if not is_member:
+            # V-server context — delegate the three-check decision to
+            # the centralized policy module
+            # (:mod:`mcpgateway.services.a2a_access_policy`). When the
+            # rules engine is adopted, the policy body changes; this
+            # call site does not.
+            #
+            # All denials collapse to ``AgentNotInServerError`` (same
+            # wire outcome as agent-not-found per D14, prevents
+            # existence-leak side channels at all three layers).
+
+            # Server must exist (this lookup stays local because we need
+            # the row for the policy call AND for any future caller that
+            # needs to use the server in error messages or logging).
+            server_query = select(DbServer).where(DbServer.id == server_id)  # pylint: disable=comparison-with-callable
+            server = db.execute(server_query).scalar_one_or_none()
+            if not server:
                 raise AgentNotInServerError(agent_name, server_id)
 
-        # Layer-1 visibility (per plan D11 / Oracle v2 #3): visibility miss
-        # surfaces as A2AAgentNotFoundError, NOT a separate permission
-        # error. Prevents existence-leak side channels.
-        if not await self._check_agent_access(db, agent, user_email, token_teams):
+            allowed = await can_view_a2a_agent_in_server_context(
+                db,
+                agent=agent,
+                server=server,
+                user_email=user_email,
+                token_teams=token_teams,
+                a2a_service=self,
+            )
+            if not allowed:
+                raise AgentNotInServerError(agent_name, server_id)
+
+            return agent
+
+        # Direct /a2a/{name} path — delegate the single-level decision
+        # to the centralized policy module. Visibility miss surfaces as
+        # A2AAgentNotFoundError per plan D11 / Oracle v2 #3 to prevent
+        # existence-leak side channels.
+        allowed_direct = await can_view_a2a_agent_directly(
+            db,
+            agent=agent,
+            user_email=user_email,
+            token_teams=token_teams,
+            a2a_service=self,
+        )
+        if not allowed_direct:
             raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
 
         return agent
@@ -1162,16 +1198,39 @@ class A2AAgentService(BaseService):
         if not agent:
             return None
 
-        # V-server membership FIRST so we don't leak agent existence at
-        # ``/servers/{X}/a2a/foreign-agent`` (foreign agent exists but is
-        # not in X). Caller perspective is identical to name-not-found.
         if server_id is not None:
-            if not await self.check_server_a2a_membership(db, server_id, agent.id):
+            # V-server context — delegate to the centralized policy
+            # module (see resolve_agent_for_dispatch above for the same
+            # pattern). All denials collapse to ``None`` so the caller
+            # cannot distinguish between the three layer-checks — same
+            # wire outcome (HTTP 404) per D14.
+            server_query = select(DbServer).where(DbServer.id == server_id)  # pylint: disable=comparison-with-callable
+            server = db.execute(server_query).scalar_one_or_none()
+            if not server:
                 return None
 
-        # Layer-1 visibility (plan D11 / Oracle v2 #3) — None on miss, not raise.
-        if not await self._check_agent_access(db, agent, user_email, token_teams):
-            return None
+            allowed = await can_view_a2a_agent_in_server_context(
+                db,
+                agent=agent,
+                server=server,
+                user_email=user_email,
+                token_teams=token_teams,
+                a2a_service=self,
+            )
+            if not allowed:
+                return None
+        else:
+            # Direct /a2a/{name} path — delegate to the centralized
+            # policy module for the single-level decision.
+            allowed_direct = await can_view_a2a_agent_directly(
+                db,
+                agent=agent,
+                user_email=user_email,
+                token_teams=token_teams,
+                a2a_service=self,
+            )
+            if not allowed_direct:
+                return None
 
         # Build the URL the gateway advertises for this agent (D7 —
         # gateway is source of truth, NOT upstream's endpoint_url).
@@ -1447,6 +1506,7 @@ class A2AAgentService(BaseService):
 
         # Lazy import matches the existing pattern at a2a_service.py:3190,
         # :3530 (inline import to avoid circular dependency).
+        # First-Party
         from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
 
         client = await get_http_client()
