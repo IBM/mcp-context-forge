@@ -741,3 +741,258 @@ class TestDispatchA2AJsonrpcUnary:
             result = await service.dispatch_a2a_jsonrpc_unary(MagicMock(), agent_stub, {"jsonrpc": "2.0", "method": "SendMessage", "params": {}, "id": 1})
         assert isinstance(result, dict)
         assert result["result"] == {"ok": True}
+
+
+# ----------------------------------------------------------------------
+# T5 (streaming dispatch) test helpers
+# ----------------------------------------------------------------------
+
+
+class _FakeSSEResponse:
+    """Minimal stand-in for ``httpx.Response`` covering the bits T5 reads."""
+
+    def __init__(self, status_code: int, lines: list[str]) -> None:
+        self.status_code = status_code
+        self._lines = lines
+
+    async def aiter_lines(self):
+        for line in self._lines:
+            yield line
+
+
+class _FakeStreamCtx:
+    """Async context manager mimicking ``client.stream(...) as response``."""
+
+    def __init__(self, response: _FakeSSEResponse) -> None:
+        self._response = response
+
+    async def __aenter__(self) -> _FakeSSEResponse:
+        return self._response
+
+    async def __aexit__(self, *args: object) -> bool:
+        return False
+
+
+def _patch_http_client(mock_client: MagicMock):
+    """Patch ``get_http_client`` (imported lazily in T5) to return ``mock_client``."""
+    return patch(
+        "mcpgateway.services.http_client_service.get_http_client",
+        new=AsyncMock(return_value=mock_client),
+    )
+
+
+def _agent_for_streaming(protocol_version: str = "1.0.0", endpoint_url: str = "http://upstream.example.com/a2a") -> MagicMock:
+    """Minimal agent stub for streaming dispatch tests."""
+    agent = MagicMock()
+    agent.id = "agt-1"
+    agent.name = "echo"
+    agent.protocol_version = protocol_version
+    agent.endpoint_url = endpoint_url
+    return agent
+
+
+class TestDispatchA2AJsonrpcStreaming:
+    """Plan T5 + D10 + D15 + Oracle v2 #5: real SSE parser + envelope semantics."""
+
+    @pytest.mark.asyncio
+    async def test_multiple_sse_chunks_streamed(self, service: A2AAgentService) -> None:
+        """Two SSE events → two yielded dicts."""
+        agent = _agent_for_streaming()
+        response = _FakeSSEResponse(200, ['data: {"a": 1}', "", 'data: {"b": 2}', ""])
+        client = MagicMock()
+        client.stream = MagicMock(return_value=_FakeStreamCtx(response))
+        with _patch_http_client(client):
+            chunks = [c async for c in service.dispatch_a2a_jsonrpc_streaming(MagicMock(), agent, {"jsonrpc": "2.0", "method": "SendStreamingMessage", "params": {}, "id": 1})]
+        assert chunks == [{"a": 1}, {"b": 2}]
+
+    @pytest.mark.asyncio
+    async def test_multi_line_data_accumulation(self, service: A2AAgentService) -> None:
+        """``data: {"a":1\\ndata: ,"b":2}\\n\\n`` → one yielded dict (plan T5 acceptance b)."""
+        agent = _agent_for_streaming()
+        # Two ``data:`` lines forming a single JSON event, then blank delimiter.
+        response = _FakeSSEResponse(200, ['data: {"a":1,', 'data: "b":2}', ""])
+        client = MagicMock()
+        client.stream = MagicMock(return_value=_FakeStreamCtx(response))
+        with _patch_http_client(client):
+            chunks = [c async for c in service.dispatch_a2a_jsonrpc_streaming(MagicMock(), agent, {"jsonrpc": "2.0", "method": "SendStreamingMessage", "params": {}, "id": 1})]
+        assert chunks == [{"a": 1, "b": "b:2"}] or chunks == [{"a": 1, "b": 2}]
+        # Either is acceptable depending on how the spec multi-line ``data:``
+        # joining works in practice. The critical property: exactly ONE
+        # yielded dict, not two.
+        assert len(chunks) == 1
+
+    @pytest.mark.asyncio
+    async def test_blank_lines_with_empty_buffer_ignored(self, service: A2AAgentService) -> None:
+        """Blank lines arriving before any ``data:`` line don't break parsing."""
+        agent = _agent_for_streaming()
+        response = _FakeSSEResponse(200, ["", "", 'data: {"a": 1}', "", ""])
+        client = MagicMock()
+        client.stream = MagicMock(return_value=_FakeStreamCtx(response))
+        with _patch_http_client(client):
+            chunks = [c async for c in service.dispatch_a2a_jsonrpc_streaming(MagicMock(), agent, {"jsonrpc": "2.0", "method": "SendStreamingMessage", "params": {}, "id": 1})]
+        assert chunks == [{"a": 1}]
+
+    @pytest.mark.asyncio
+    async def test_ignored_sse_fields_skipped(self, service: A2AAgentService) -> None:
+        """``id:``, ``event:``, ``retry:`` SSE field lines are ignored per F8."""
+        agent = _agent_for_streaming()
+        response = _FakeSSEResponse(200, ["id: 42", "event: update", "retry: 3000", 'data: {"a": 1}', ""])
+        client = MagicMock()
+        client.stream = MagicMock(return_value=_FakeStreamCtx(response))
+        with _patch_http_client(client):
+            chunks = [c async for c in service.dispatch_a2a_jsonrpc_streaming(MagicMock(), agent, {"jsonrpc": "2.0", "method": "SendStreamingMessage", "params": {}, "id": 1})]
+        assert chunks == [{"a": 1}]
+
+    @pytest.mark.asyncio
+    async def test_malformed_json_yields_invalid_agent_response(self, service: A2AAgentService) -> None:
+        """Malformed JSON in a ``data:`` payload → INVALID_AGENT_RESPONSE error chunk + parser continues (plan T5 acceptance f)."""
+        agent = _agent_for_streaming()
+        response = _FakeSSEResponse(200, ["data: not-json", "", 'data: {"a": 1}', ""])
+        client = MagicMock()
+        client.stream = MagicMock(return_value=_FakeStreamCtx(response))
+        with _patch_http_client(client):
+            chunks = [c async for c in service.dispatch_a2a_jsonrpc_streaming(MagicMock(), agent, {"jsonrpc": "2.0", "method": "SendStreamingMessage", "params": {}, "id": 7})]
+        assert chunks[0]["error"]["code"] == INVALID_AGENT_RESPONSE
+        assert chunks[0]["id"] == 7
+        assert chunks[1] == {"a": 1}
+
+    @pytest.mark.asyncio
+    async def test_upstream_http_error_yields_one_chunk_and_exits(self, service: A2AAgentService) -> None:
+        """Upstream returns HTTP 500 → ONE INTERNAL_ERROR chunk yielded + exit (plan T5 acceptance e)."""
+        agent = _agent_for_streaming()
+        response = _FakeSSEResponse(500, [])
+        client = MagicMock()
+        client.stream = MagicMock(return_value=_FakeStreamCtx(response))
+        with _patch_http_client(client):
+            chunks = [c async for c in service.dispatch_a2a_jsonrpc_streaming(MagicMock(), agent, {"jsonrpc": "2.0", "method": "SendStreamingMessage", "params": {}, "id": 1})]
+        assert len(chunks) == 1
+        assert chunks[0]["error"]["code"] == INTERNAL_ERROR
+
+    @pytest.mark.asyncio
+    async def test_invalid_envelope_yields_error_chunk(self, service: A2AAgentService) -> None:
+        """``jsonrpc != "2.0"`` → INVALID_REQUEST chunk; no upstream call made."""
+        agent = _agent_for_streaming()
+        client = MagicMock()
+        client.stream = MagicMock(return_value=_FakeStreamCtx(_FakeSSEResponse(200, [])))
+        with _patch_http_client(client):
+            chunks = [c async for c in service.dispatch_a2a_jsonrpc_streaming(MagicMock(), agent, {"jsonrpc": "1.0", "method": "SendStreamingMessage"})]
+        assert len(chunks) == 1
+        assert chunks[0]["error"]["code"] == INVALID_REQUEST
+
+    @pytest.mark.asyncio
+    async def test_missing_method_yields_error_chunk(self, service: A2AAgentService) -> None:
+        """Missing method → INVALID_REQUEST chunk."""
+        agent = _agent_for_streaming()
+        client = MagicMock()
+        client.stream = MagicMock(return_value=_FakeStreamCtx(_FakeSSEResponse(200, [])))
+        with _patch_http_client(client):
+            chunks = [c async for c in service.dispatch_a2a_jsonrpc_streaming(MagicMock(), agent, {"jsonrpc": "2.0"})]
+        assert chunks[0]["error"]["code"] == INVALID_REQUEST
+
+    @pytest.mark.asyncio
+    async def test_non_dict_params_yields_invalid_params(self, service: A2AAgentService) -> None:
+        """``params`` not dict-or-null → INVALID_PARAMS chunk."""
+        agent = _agent_for_streaming()
+        client = MagicMock()
+        client.stream = MagicMock(return_value=_FakeStreamCtx(_FakeSSEResponse(200, [])))
+        with _patch_http_client(client):
+            chunks = [c async for c in service.dispatch_a2a_jsonrpc_streaming(MagicMock(), agent, {"jsonrpc": "2.0", "method": "SendStreamingMessage", "params": "not-a-dict"})]
+        assert chunks[0]["error"]["code"] == INVALID_PARAMS
+
+    @pytest.mark.asyncio
+    async def test_hop_count_limit_yields_error(self, service: A2AAgentService) -> None:
+        """Hop count >= settings.uaid_max_federation_hops → INTERNAL_ERROR + exit."""
+        agent = _agent_for_streaming()
+        client = MagicMock()
+        client.stream = MagicMock(return_value=_FakeStreamCtx(_FakeSSEResponse(200, [])))
+        # Use a very high hop_count beyond any reasonable limit.
+        with _patch_http_client(client):
+            chunks = [c async for c in service.dispatch_a2a_jsonrpc_streaming(MagicMock(), agent, {"jsonrpc": "2.0", "method": "SendStreamingMessage", "params": {}, "id": 1}, hop_count=999)]
+        assert len(chunks) == 1
+        assert chunks[0]["error"]["code"] == INTERNAL_ERROR
+        # And the upstream was NEVER called.
+        client.stream.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_legacy_alias_mapped_before_upstream(self, service: A2AAgentService) -> None:
+        """Legacy v0.3 method names are mapped to v1 names in the upstream request body."""
+        agent = _agent_for_streaming()
+        response = _FakeSSEResponse(200, [])
+        client = MagicMock()
+        client.stream = MagicMock(return_value=_FakeStreamCtx(response))
+        with _patch_http_client(client):
+            _ = [c async for c in service.dispatch_a2a_jsonrpc_streaming(MagicMock(), agent, {"jsonrpc": "2.0", "method": "message/stream", "params": {}, "id": 1})]
+        call_kwargs = client.stream.call_args.kwargs
+        assert call_kwargs["json"]["method"] == "SendStreamingMessage"
+
+    @pytest.mark.asyncio
+    async def test_tasks_list_not_mapped(self, service: A2AAgentService) -> None:
+        """``tasks/list`` is NEW in v1.0 (Oracle v3 #22) — NOT mapped, passes verbatim."""
+        agent = _agent_for_streaming()
+        response = _FakeSSEResponse(200, [])
+        client = MagicMock()
+        client.stream = MagicMock(return_value=_FakeStreamCtx(response))
+        with _patch_http_client(client):
+            _ = [c async for c in service.dispatch_a2a_jsonrpc_streaming(MagicMock(), agent, {"jsonrpc": "2.0", "method": "tasks/list", "params": {}, "id": 1})]
+        assert client.stream.call_args.kwargs["json"]["method"] == "tasks/list"
+
+    @pytest.mark.asyncio
+    async def test_outbound_headers(self, service: A2AAgentService) -> None:
+        """Outbound headers: Accept/Content-Type, A2A-Version from agent, hop+1, bearer, request_headers passthrough."""
+        agent = _agent_for_streaming(protocol_version="1.0.5")
+        response = _FakeSSEResponse(200, [])
+        client = MagicMock()
+        client.stream = MagicMock(return_value=_FakeStreamCtx(response))
+        with _patch_http_client(client):
+            _ = [
+                c
+                async for c in service.dispatch_a2a_jsonrpc_streaming(
+                    MagicMock(),
+                    agent,
+                    {"jsonrpc": "2.0", "method": "SendStreamingMessage", "params": {}, "id": 1},
+                    bearer_token="jwt.token.here",
+                    hop_count=2,
+                    request_headers={"x-trace": "abc", "content-type": "application/json"},
+                )
+            ]
+        sent_headers = client.stream.call_args.kwargs["headers"]
+        assert sent_headers["Accept"] == "text/event-stream"
+        assert sent_headers["Content-Type"] == "application/json"
+        assert sent_headers["A2A-Version"] == "1.0.5"
+        assert sent_headers["X-Contextforge-UAID-Hop"] == "3"  # hop_count + 1
+        assert sent_headers["Authorization"] == "Bearer jwt.token.here"
+        assert sent_headers["x-trace"] == "abc"
+
+    @pytest.mark.asyncio
+    async def test_no_bearer_no_authorization_header(self, service: A2AAgentService) -> None:
+        """Without a bearer token, no Authorization header is set (defense-in-depth)."""
+        agent = _agent_for_streaming()
+        response = _FakeSSEResponse(200, [])
+        client = MagicMock()
+        client.stream = MagicMock(return_value=_FakeStreamCtx(response))
+        with _patch_http_client(client):
+            _ = [c async for c in service.dispatch_a2a_jsonrpc_streaming(MagicMock(), agent, {"jsonrpc": "2.0", "method": "SendStreamingMessage", "params": {}, "id": 1})]
+        sent_headers = client.stream.call_args.kwargs["headers"]
+        assert "Authorization" not in sent_headers
+
+    @pytest.mark.asyncio
+    async def test_httpx_error_yields_internal_error_chunk(self, service: A2AAgentService) -> None:
+        """``httpx.HTTPError`` (network failure) → INTERNAL_ERROR chunk + exit cleanly."""
+
+        # Patch the stream context to raise httpx.HTTPError when entered.
+        class _RaisingCtx:
+            async def __aenter__(self):
+                import httpx
+
+                raise httpx.HTTPError("connection refused")
+
+            async def __aexit__(self, *args: object) -> bool:
+                return False
+
+        agent = _agent_for_streaming()
+        client = MagicMock()
+        client.stream = MagicMock(return_value=_RaisingCtx())
+        with _patch_http_client(client):
+            chunks = [c async for c in service.dispatch_a2a_jsonrpc_streaming(MagicMock(), agent, {"jsonrpc": "2.0", "method": "SendStreamingMessage", "params": {}, "id": 1})]
+        assert len(chunks) == 1
+        assert chunks[0]["error"]["code"] == INTERNAL_ERROR

@@ -1328,6 +1328,170 @@ class A2AAgentService(BaseService):
         except A2AAgentError as exc:
             return (INTERNAL_ERROR, str(exc), None)
 
+    async def dispatch_a2a_jsonrpc_streaming(
+        self,
+        db: Session,
+        agent: DbA2AAgent,
+        body: Dict[str, Any],
+        *,
+        bearer_token: Optional[str] = None,
+        hop_count: int = 0,
+        request_headers: Optional[Dict[str, str]] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Streaming JSON-RPC dispatch with REAL SSE parser per plan T5 + D10 + D15.
+
+        SEPARATE codepath from :py:meth:`dispatch_a2a_jsonrpc_unary` (Oracle
+        v2 #5 + v3 #5). The unary helper buffers the upstream response;
+        this helper streams it through ``async with client.stream(...)``
+        and parses the SSE framing in real time, yielding one parsed
+        JSON-RPC dict per upstream event.
+
+        SSE parse algorithm (plan T5 — real parser, NOT
+        ``aiter_lines() + json.loads`` per line):
+
+        - For each line from ``response.aiter_lines()``:
+
+          - If the line starts with ``"data: "``, append the remainder to
+            an accumulating buffer.
+          - If the line is empty (blank line, SSE event delimiter) AND
+            the buffer is non-empty, join the buffer with ``"\\n"``,
+            parse as JSON, yield the parsed dict. Reset the buffer.
+          - Other SSE field lines (``id:``, ``event:``, ``retry:``) are
+            ignored — A2A 1.0.0 uses only the ``data:`` field per F8.
+
+        - On malformed JSON inside a ``data:`` payload, yield ONE
+          :py:func:`make_jsonrpc_error` chunk with
+          :py:data:`INVALID_AGENT_RESPONSE` and continue parsing.
+        - On HTTP error before stream starts, yield ONE
+          :py:func:`make_jsonrpc_error` chunk with
+          :py:data:`INTERNAL_ERROR` and exit.
+        - On generator cancellation (downstream consumer disconnects),
+          the ``async with client.stream(...)`` context exits and the
+          upstream connection is closed cleanly (httpx handles cleanup).
+
+        Args:
+            db: Database session (currently unused for streaming but
+                kept in the signature so the call shape matches T4's;
+                future federation/observability work may need it).
+            agent: Already-resolved A2A agent (resolved by T3 in the route).
+            body: Parsed JSON-RPC request body.
+            bearer_token: JWT for cross-gateway forwarding. ``None`` is
+                used when the inbound token is opaque.
+            hop_count: Federation hop counter (stamped into outbound
+                headers; ``settings.uaid_max_federation_hops`` guard is
+                applied like ``invoke_agent`` does).
+            request_headers: Filtered inbound headers passed through to
+                the upstream.
+
+        Yields:
+            Each parsed JSON-RPC response dict from the upstream SSE
+            stream. T14 (the SSE response wiring in T12) re-wraps each
+            yielded dict as ``"data: " + json.dumps(...) + "\\n\\n"``
+            for the downstream client.
+
+        Examples:
+            >>> import inspect
+            >>> sig = inspect.signature(A2AAgentService.dispatch_a2a_jsonrpc_streaming)
+            >>> "bearer_token" in sig.parameters
+            True
+            >>> "request_headers" in sig.parameters
+            True
+        """
+        # Hop-count guard — mirror invoke_agent's federation loop guard
+        # (a2a_service.py:2587-2595) to break A->B->A streaming loops.
+        if hop_count >= settings.uaid_max_federation_hops:
+            yield make_jsonrpc_error(
+                INTERNAL_ERROR,
+                "Federation hop limit reached",
+                body.get("id"),
+            )
+            return
+
+        # Envelope validation + alias mapping (mirror T4's logic).
+        if body.get("jsonrpc") != "2.0":
+            yield make_jsonrpc_error(INVALID_REQUEST, "Request must have jsonrpc='2.0'", body.get("id"))
+            return
+        method = body.get("method")
+        if not isinstance(method, str) or not method:
+            yield make_jsonrpc_error(INVALID_REQUEST, "Method must be a non-empty string", body.get("id"))
+            return
+        params = body.get("params")
+        if params is not None and not isinstance(params, dict):
+            yield make_jsonrpc_error(INVALID_PARAMS, "params must be a JSON object or null", body.get("id"))
+            return
+        mapped_method = LEGACY_V03_METHOD_MAP.get(method, method)
+
+        upstream_body = {
+            "jsonrpc": "2.0",
+            "method": mapped_method,
+            "params": params or {},
+            "id": body.get("id"),
+        }
+
+        # Build outbound headers. Drop None values to avoid httpx errors.
+        outbound_headers: Dict[str, str] = {
+            "Accept": "text/event-stream",
+            "Content-Type": "application/json",
+            "A2A-Version": agent.protocol_version,
+            "X-Contextforge-UAID-Hop": str(hop_count + 1),
+        }
+        if request_headers:
+            for key, value in request_headers.items():
+                # Caller (T12) already filtered sensitive headers via
+                # _filter_sensitive_headers; forward what's left except
+                # the headers we already set above (avoid double-stamp).
+                if key.lower() not in {"accept", "content-type", "a2a-version", "host", "content-length"}:
+                    outbound_headers[key] = value
+        if bearer_token:
+            outbound_headers["Authorization"] = f"Bearer {bearer_token}"
+
+        # Lazy import matches the existing pattern at a2a_service.py:3190,
+        # :3530 (inline import to avoid circular dependency).
+        from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
+
+        client = await get_http_client()
+        try:
+            async with client.stream(
+                "POST",
+                agent.endpoint_url,
+                json=upstream_body,
+                headers=outbound_headers,
+                timeout=httpx.Timeout(settings.federation_timeout),
+            ) as response:
+                # On upstream HTTP error before stream begins, yield one
+                # error chunk and exit cleanly.
+                if response.status_code >= 400:
+                    yield make_jsonrpc_error(
+                        INTERNAL_ERROR,
+                        f"Upstream returned HTTP {response.status_code}",
+                        body.get("id"),
+                    )
+                    return
+
+                # REAL SSE parser (plan T5 / Oracle v2 #5): accumulate
+                # ``data:`` lines until blank, parse the assembled payload
+                # as JSON, yield. Ignore other SSE fields (id:, event:,
+                # retry:) — A2A 1.0.0 only uses the data: field per F8.
+                data_buffer: List[str] = []
+                async for line in response.aiter_lines():
+                    if line.startswith("data: "):
+                        data_buffer.append(line[6:])
+                    elif line == "" and data_buffer:
+                        payload = "\n".join(data_buffer)
+                        data_buffer.clear()
+                        try:
+                            yield json.loads(payload)
+                        except json.JSONDecodeError:
+                            yield make_jsonrpc_error(
+                                INVALID_AGENT_RESPONSE,
+                                "Upstream sent malformed SSE payload",
+                                body.get("id"),
+                            )
+                    # else: blank line with empty buffer, OR other SSE
+                    # field (id:, event:, retry:) — ignored per spec.
+        except httpx.HTTPError as exc:
+            yield make_jsonrpc_error(INTERNAL_ERROR, f"Upstream connection error: {exc}", body.get("id"))
+
     async def register_agent(
         self,
         db: Session,
