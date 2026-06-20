@@ -109,7 +109,7 @@ from mcpgateway.middleware.header_size_middleware import HeaderSizeMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware, run_pre_request_hooks
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
 from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
-from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, PermissionChecker, require_permission
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, get_permission_service, PermissionChecker, require_permission
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
@@ -165,7 +165,19 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.services.a2a_server_service import A2AServerService
-from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
+from mcpgateway.services.a2a_service import (
+    A2AAgentError,
+    A2AAgentNameConflictError,
+    A2AAgentNotFoundError,
+    A2AAgentService,
+    AUTHENTICATED_EXTENDED_CARD_NOT_CONFIGURED,
+    INVALID_REQUEST,
+    make_jsonrpc_error,
+    PARSE_ERROR,
+    validate_a2a_version,
+    VERSION_NOT_SUPPORTED,
+    VersionNotSupportedError,
+)
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import CompletionError, CompletionService
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, TemplateValidationError
@@ -5218,6 +5230,43 @@ async def get_a2a_agent_card(
     )
 
 
+# A2A 1.0.0 streaming methods that MUST surface as SSE responses (T14).
+# Both v1 PascalCase names AND v0.3 legacy slash-aliases are listed so the
+# streaming branch fires BEFORE the dispatcher rewrites the alias, which
+# matches the wire contract the SDK's ClientFactory expects.
+_A2A_STREAMING_METHODS = frozenset(
+    {
+        "SendStreamingMessage",
+        "SubscribeToTask",
+        "message/stream",
+        "tasks/resubscribe",
+    }
+)
+
+
+async def _sse_format(gen) -> AsyncIterator[str]:
+    """Re-wrap parsed JSON-RPC dicts from T5 as SSE events for downstream (T14).
+
+    T5's :py:meth:`A2AAgentService.dispatch_a2a_jsonrpc_streaming` PARSES
+    the upstream SSE framing and yields plain dicts. T14's job is the
+    single re-wrap: one upstream chunk → exactly one downstream
+    ``data: {json}\\n\\n`` event. Plan D10 + D15 + Oracle re-review #5
+    pairing fix: NO ``data:`` prefix already present in the dict (T5
+    has stripped it), so wrapping it once here is correct framing —
+    NOT double-encoding.
+
+    Compact JSON (``separators=(',', ':')``) minimizes wire bytes.
+
+    Args:
+        gen: Async generator yielding parsed JSON-RPC dicts from T5.
+
+    Yields:
+        SSE-formatted strings, one ``data: ...\\n\\n`` per upstream chunk.
+    """
+    async for chunk in gen:
+        yield f"data: {json.dumps(chunk, separators=(',', ':'))}\n\n"
+
+
 @a2a_router.post("/invoke", response_model=Dict[str, Any])
 @require_permission("a2a.invoke")
 async def invoke_a2a_agent_by_id(
@@ -5310,6 +5359,229 @@ async def invoke_a2a_agent_by_id(
         raise HTTPException(status_code=404, detail=str(e))
     except A2AAgentError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@a2a_router.post("/{agent_name}")
+async def dispatch_a2a_agent(
+    agent_name: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+    permission_service: PermissionService = Depends(get_permission_service),
+) -> Response:
+    """A2A 1.0.0 JSON-RPC dispatch route with method-aware RBAC (Plan T12).
+
+    Body-dependent permission requires per-method RBAC, so there is NO
+    ``@require_permission`` decorator on the route (Oracle v2 #1) and NO
+    ``Body(...)`` parameter (D17 — keeps the raw body available for
+    ``-32700 ParseError`` on malformed JSON).
+
+    Handler flow (strict order — mirrors the verified ``/invoke``
+    pipeline at ``main.py:5040-5137``):
+
+    1. Filter context: ``get_rpc_filter_context(request, user)`` and the
+       same admin / public-only reshape as ``/invoke`` (D11).
+    2. Resolve agent + visibility + v-server membership (T3).
+       ``A2AAgentNotFoundError`` → HTTP 404 (D14 — visibility miss and
+       v-server-foreign collapse to the same wire outcome as
+       agent-not-found).
+    3. Extract ``hop_count`` / ``bearer_token`` / ``content_type`` /
+       ``request_headers`` exactly as ``/invoke`` does (Oracle v3 #3 —
+       the previous plan invented ``X-Forwarded-A2A-Hop``; real code
+       uses ``uaid_utils.read_hop_count``).
+    4. Parse body. ``json.JSONDecodeError`` → ``-32700``;
+       non-object body → ``-32600`` (Oracle v2 #7).
+    5. Validate ``A2A-Version`` header method-aware (T7).
+       ``VersionNotSupportedError`` → ``-32009``.
+    6. Method-dependent RBAC (verified ``check_permission`` signature at
+       ``permission_service.py:70-82`` — ``user_email=`` NOT ``user=``).
+       Passing ``token_teams`` is security-significant: lines 126-130
+       suppress admin bypass when ``token_teams=[]``.
+    7. ``GetExtendedAgentCard`` / ``agent/getAuthenticatedExtendedCard``:
+       NEVER forward upstream (D18). Synthesize from the DB row via T2
+       and return as a JSON-RPC ``result``. ``-32007`` triggers when
+       ``agent.capabilities["extendedAgentCard"]`` is False.
+    8. Streaming methods (``SendStreamingMessage``, ``SubscribeToTask``,
+       v0.3 aliases): T5 + T14 wiring. NO ``await`` on T5 — it returns
+       an async generator (Oracle v5 HIGH fix).
+    9. Else: T4 unary dispatch. Success → ``{"jsonrpc": "2.0",
+       "result": ..., "id": ...}``; error tuple → ``make_jsonrpc_error``.
+
+    Args:
+        agent_name: Agent name from the URL path.
+        request: FastAPI request — used for headers, body, ASGI scope.
+        db: Database session.
+        user: Authenticated user dict from
+            ``get_current_user_with_permissions``.
+        permission_service: Injected ``PermissionService`` for RBAC.
+
+    Returns:
+        ``JSONResponse`` (unary) or ``StreamingResponse`` (streaming
+        methods) carrying the JSON-RPC envelope, OR a bare ``Response``
+        with status 401 / 403 / 404 / 503 for transport-level outcomes.
+
+    Raises:
+        HTTPException: 503 when A2A is disabled at startup.
+    """
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+
+    # 1. Filter context + admin/public-only token reshape (mirrors
+    # /invoke at main.py:5074-5080).
+    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
+    if is_admin and token_teams is None:
+        token_teams = None  # admin unrestricted
+    elif token_teams is None:
+        token_teams = []  # non-admin without teams = public-only
+
+    # 2. Resolve agent (T3) with visibility + v-server membership.
+    try:
+        agent = await a2a_service.resolve_agent_for_dispatch(
+            db,
+            agent_name,
+            server_id=request.scope.get("a2a_server_id"),
+            user_email=user_email,
+            token_teams=token_teams,
+        )
+    except A2AAgentNotFoundError:
+        return Response(status_code=404)
+
+    # 3. Extract per-invoke plumbing (verbatim from /invoke).
+    hop_count = uaid_utils.read_hop_count(request.headers)
+    bearer_token = getattr(request.state, "bearer_token", None)
+    if not bearer_token:
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            bearer_token = auth_header[7:]
+    if bearer_token and not _is_jwt_token(bearer_token):
+        bearer_token = None
+    request_headers = _filter_sensitive_headers({k.lower(): v for k, v in request.headers.items()})
+
+    # 4. Parse body. JSONDecodeError → -32700; non-object → -32600.
+    raw = await request.body()
+    try:
+        body = json.loads(raw) if raw else None
+    except json.JSONDecodeError:
+        return JSONResponse(make_jsonrpc_error(PARSE_ERROR, "Parse error", None), status_code=200)
+    if not isinstance(body, dict):
+        return JSONResponse(
+            make_jsonrpc_error(INVALID_REQUEST, "Request body must be a JSON object", None),
+            status_code=200,
+        )
+
+    request_id = body.get("id")
+    method = body.get("method")
+
+    # 5. Validate A2A-Version (method-aware; T7 accepts missing header
+    # for legacy v0.3 aliases AND rejects missing for v1 methods).
+    try:
+        validate_a2a_version(header_value=request.headers.get("A2A-Version"), method=method)
+    except VersionNotSupportedError as exc:
+        return JSONResponse(
+            make_jsonrpc_error(VERSION_NOT_SUPPORTED, str(exc), request_id),
+            status_code=200,
+        )
+
+    # 6. Method-dependent RBAC. Verified check_permission signature:
+    # check_permission(user_email, permission, resource_type, resource_id,
+    # team_id, token_teams, ...). Passing token_teams is required for
+    # admin-bypass suppression at permission_service.py:126-130.
+    if method in {"GetExtendedAgentCard", "agent/getAuthenticatedExtendedCard"}:
+        granted = await permission_service.check_permission(
+            user_email=user_email,
+            permission="a2a.read",
+            resource_type="a2a_agent",
+            resource_id=str(agent.id),
+            team_id=agent.team_id,
+            token_teams=token_teams,
+        )
+        if not granted:
+            return Response(status_code=403)
+        # -32007 trigger: extended card only synthesizable when the
+        # agent's capabilities explicitly advertise extendedAgentCard.
+        capabilities = agent.capabilities or {}
+        if not capabilities.get("extendedAgentCard", False):
+            return JSONResponse(
+                make_jsonrpc_error(
+                    AUTHENTICATED_EXTENDED_CARD_NOT_CONFIGURED,
+                    "Agent does not support authenticated extended card",
+                    request_id,
+                ),
+                status_code=200,
+            )
+        # NEVER forward upstream (D18). Synthesize directly from the DB row.
+        public_base = getattr(settings, "a2a_public_base_url", None) or str(settings.app_domain).rstrip("/")
+        card = await a2a_service.synthesize_agent_card(
+            db,
+            agent_name,
+            public_base,
+            server_id=request.scope.get("a2a_server_id"),
+            user_email=user_email,
+            token_teams=token_teams,
+        )
+        if card is None:
+            # Visibility was already checked in step 2; getting None here
+            # is a defensive guard for race conditions (agent disabled
+            # mid-request, etc.). Collapse to 404 same as step 2.
+            return Response(status_code=404)
+        return JSONResponse(
+            {
+                "jsonrpc": "2.0",
+                "result": card.model_dump(by_alias=True, exclude_none=True),
+                "id": request_id,
+            },
+            status_code=200,
+        )
+
+    # Non-GetExtendedAgentCard methods: a2a.invoke required.
+    granted = await permission_service.check_permission(
+        user_email=user_email,
+        permission="a2a.invoke",
+        resource_type="a2a_agent",
+        resource_id=str(agent.id),
+        team_id=agent.team_id,
+        token_teams=token_teams,
+    )
+    if not granted:
+        return Response(status_code=403)
+
+    # 7. Streaming methods (T5 + T14). NO `await` on T5 — it returns
+    # an async generator. `await`ing would raise TypeError.
+    if method in _A2A_STREAMING_METHODS:
+        gen = a2a_service.dispatch_a2a_jsonrpc_streaming(
+            db,
+            agent,
+            body,
+            bearer_token=bearer_token,
+            hop_count=hop_count,
+            request_headers=request_headers,
+        )
+        return StreamingResponse(
+            _sse_format(gen),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache"},
+        )
+
+    # 8. Unary dispatch (T4). Success → JSON-RPC result envelope.
+    # Error tuple (code, message, data) → make_jsonrpc_error envelope.
+    result = await a2a_service.dispatch_a2a_jsonrpc_unary(
+        db,
+        agent,
+        body,
+        bearer_token=bearer_token,
+        hop_count=hop_count,
+        request_headers=request_headers,
+    )
+    if isinstance(result, tuple):
+        code, message, data = result
+        return JSONResponse(
+            make_jsonrpc_error(code, message, request_id, data),
+            status_code=200,
+        )
+    return JSONResponse(
+        {"jsonrpc": "2.0", "result": result, "id": request_id},
+        status_code=200,
+    )
 
 
 #############

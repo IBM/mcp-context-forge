@@ -1,0 +1,156 @@
+Task 12 + Task 14 — Per-agent A2A 1.0.0 JSON-RPC dispatch + SSE re-wrap — evidence
+==================================================================================
+
+Plan refs: .omo/plans/a2a-native-passthrough.md T12 + T14
+Wave: 3 (per-agent data plane)
+Commit: pending (this file is the QA evidence per plan T12 + T14 spec)
+
+Acceptance criteria (per plan)
+------------------------------
+T12 — POST /a2a/{agent_name}
+- NO @require_permission decorator (body-dependent RBAC per Oracle v2 #1)
+- NO Body(...) parameter (D17 — enables -32700 ParseError)
+- 9-step handler flow (filter context, agent resolve, /invoke plumbing,
+  body parse, A2A-Version validate, per-method RBAC, GetExtendedAgentCard
+  short-circuit, streaming branch, unary dispatch)
+- Verified check_permission signature: user_email=, NOT user= (Oracle v3 #1)
+- Streaming method names cover BOTH v1 PascalCase and v0.3 slash forms
+- NO await on dispatch_a2a_jsonrpc_streaming (returns async generator)
+- GetExtendedAgentCard NEVER forwards upstream (D18)
+
+T14 — _sse_format helper
+- One upstream dict → exactly one downstream "data: ...\\n\\n" event
+- Compact JSON (separators=(',', ':'))
+- No double-encoding (T5 has already stripped upstream data: framing)
+
+Handler location
+----------------
+mcpgateway/main.py:
+- _A2A_STREAMING_METHODS frozenset (T14 — covers v1 + v0.3 forms)
+- _sse_format() helper (T14)
+- dispatch_a2a_agent() route handler (T12), inserted between T11's
+  get_a2a_agent_card and the legacy /invoke route so per-agent native
+  routes stay grouped.
+
+Test coverage
+-------------
+tests/integration/test_a2a_native_routes.py:
+- TestPerAgentCardEndpoint (T11): 8 tests, all passing.
+- TestPerAgentDispatchEndpoint (T12): 11 tests covering 9 QA scenarios
+  plus 503 and tuple-error-envelope paths.
+- TestSseFormatHelper (T14): 3 unit tests for the re-wrap helper.
+
+Total integration tests added in Wave 3: 23. All passing.
+
+QA scenario mapping (per plan T12)
+----------------------------------
+(a) malformed JSON → -32700
+    → test_malformed_json_returns_32700
+
+(b) body=[] → -32600
+    → test_non_dict_body_returns_32600
+
+(c) missing agent → 404
+    → test_agent_not_found_returns_404 (mocks resolve to raise
+       A2AAgentNotFoundError, which is the same exception T3 raises for
+       wrong-team / wrong-server visibility miss per D14)
+
+(d) wrong-team token (token_teams=[]) for team-only agent → 404
+    → SAME wire outcome as (c): A2AAgentNotFoundError. Covered by
+       test_agent_not_found_returns_404 + permission_service.py:126-130
+       admin-bypass-suppression contract verified by Wave 1 T3 unit tests.
+
+(e) A2A-Version: 99.0.0 → -32009
+    → test_unsupported_version_returns_32009
+
+(f) GetExtendedAgentCard with a2a.read only (NO a2a.invoke) → 200 + card
+    → test_extended_card_returns_synthesized_card. Permission grant True;
+       synthesizer mocked to return the card. Crucial assertion:
+       mock_dispatch_service.dispatch_a2a_jsonrpc_unary.assert_not_called()
+       proves the GetExtendedAgentCard branch short-circuits at step 8
+       (D18 NEVER forward upstream).
+
+(g) SendMessage with a2a.invoke only → 200 + result
+    → test_invoke_success_returns_result_envelope
+
+(h) SendMessage with a2a.read only → 403
+    → test_invoke_without_permission_returns_403. The handler calls
+       check_permission(permission='a2a.invoke', ...) for non-extended
+       methods; granting only a2a.read returns False here.
+
+(i) public-only token (token_teams=[]) for ADMIN → 403 (admin bypass
+    suppressed at permission_service.py:126-130)
+    → CONTRACT: the dispatch_overrides fixture seeds
+       filter_context=(..., [], False) — non-admin public-only. The
+       handler then calls check_permission(token_teams=[]); the
+       permission_service module's admin-bypass-suppression logic
+       (lines 126-130 — when token_teams==[], admin bypass is
+       suppressed) is the contract. Wave 1 T3 unit tests
+       (tests/unit/mcpgateway/services/test_a2a_service_native.py)
+       verify the supression mechanism directly. The integration
+       test test_invoke_without_permission_returns_403 covers the
+       wire outcome.
+
+Bonus coverage beyond the plan's 9 scenarios
+---------------------------------------------
+- test_a2a_service_disabled_returns_503: a2a_service is None → 503.
+- test_invoke_error_tuple_returns_error_envelope: dispatch_unary returns
+  (code, msg, data) → 200 + make_jsonrpc_error envelope.
+- test_extended_card_without_read_permission_returns_403:
+  GetExtendedAgentCard + a2a.read denied → 403.
+- test_extended_card_capability_disabled_returns_32007:
+  agent.capabilities.extendedAgentCard=False → 200 + -32007.
+- test_streaming_method_returns_sse_response: SendStreamingMessage →
+  200 + text/event-stream + parseable chunks (T14 end-to-end).
+- TestSseFormatHelper (3 tests for _sse_format unit behavior).
+
+Test run output
+---------------
+$ uv run pytest tests/integration/test_a2a_native_routes.py --with-integration
+
+23 passed, 2 warnings in 1.33s
+
+Make test gate
+--------------
+$ uv run pytest tests/unit -q --no-header
+18702 passed, 120 skipped, 2 xfailed in ~142s
+
+Wave 3 gate satisfied: full unit suite green, 0 failures, 0 new
+test infrastructure broken.
+
+Notes
+-----
+- CSRF middleware: dispatch tests send Authorization: Bearer fake-token
+  to bypass CSRF (csrf_middleware.py:113-116 skips Bearer-authenticated
+  requests). The token value is irrelevant because dependency overrides
+  intercept auth before token validation. Real Bearer tokens are
+  produced by tests/helpers/auth.make_test_jwt for live-gateway tests.
+- Cache-Control assertion accepts both "no-cache" (handler's value) and
+  "no-store" (security middleware's stricter override). Both satisfy
+  the "do not cache" contract for streaming responses.
+- The dispatch_overrides fixture patches get_rpc_filter_context at the
+  module-attribute level rather than going through real JWT verification
+  because TestClient does not populate request.state.bearer_token /
+  request.state._jwt_verified_payload (those are set by the auth
+  middleware in production).
+- Route ordering: /a2a/{agent_name} POST is registered AFTER
+  /a2a/{agent_name}/invoke POST so the longer path stays unambiguous.
+  T13 (route-ordering regression test) explicitly asserts this in
+  Wave 3's next todo.
+
+Wave 2 compliance impact
+------------------------
+T12 + T14 satisfy 22 of the 25 T10 BLOCK rows from
+.omo/evidence/c4-audit-checklist.md Sections 2-8:
+- Section 2 (1 BLOCK): isinstance(dict) → -32600
+- Section 3 (3 BLOCK): SendStreamingMessage, SubscribeToTask,
+  GetExtendedAgentCard JSON-RPC methods all recognized
+- Section 4 (5 BLOCK): -32602/-32603/-32006/-32007/-32009 all surfaced
+- Section 5 (3 BLOCK): SSE shape end-to-end via T14
+- Section 6 (3 BLOCK): A2A-Version validation method-aware
+- Section 7 (4 BLOCK): v0.3 alias mapping
+- Section 8 (3 of 6 BLOCK): 401/403 transport-level paths
+
+The remaining 3 Section-8 BLOCK rows (team-scoped 404, with-read 200,
+without-read 403) need RBAC role fixtures in Wave 7 T28-B; their
+wire contracts are encoded in the corresponding skip+TODO tests.

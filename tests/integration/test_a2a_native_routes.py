@@ -6,29 +6,31 @@ Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: ContextForge Contributors
 
-Wave 3 scope: T11 per-agent agent-card route handler glue.
+Wave 3 scope: T11 per-agent agent-card route + T12 per-agent JSON-RPC
+dispatch route + T14 SSE re-wrap helper handler glue.
 
-The card synthesizer's behavior matrix (visibility, v-server membership,
-URL rewriting, field-name correctness) is exhaustively covered by
+The service-layer behavior matrix (synthesizer + dispatcher + version
+negotiation + visibility + RBAC) is exhaustively covered by
 :mod:`tests.unit.mcpgateway.services.test_a2a_service_native` (Wave 1
-T2 acceptance, 14 cases). These integration tests cover JUST the FastAPI
-handler glue:
+unit tests). These integration tests cover JUST the FastAPI handler
+glue:
 
-- The route exists at ``GET /a2a/{agent_name}/.well-known/agent-card.json``.
-- It calls :py:meth:`A2AAgentService.synthesize_agent_card` with the
-  correct kwargs (``user_email=None``, ``token_teams=[]``, ``server_id``
-  from ``request.scope``, ``public_base_url`` from settings).
-- It serializes the returned AgentCard with ``by_alias=True`` +
-  ``exclude_none=True`` so wire-level fields like ``protocolBinding``
-  (NOT ``protocol_binding``) reach clients.
-- ``None`` from the synthesizer collapses to HTTP 404 (D14).
-- Missing ``a2a_service`` (A2A disabled at startup) yields HTTP 503.
-- NO ``Authorization`` header is required (D11 — public discovery).
+- T11 card route: synthesizer kwargs (``user_email=None``,
+  ``token_teams=[]``), ``by_alias`` + ``exclude_none`` serialization,
+  ``None``-to-404 collapse, ``a2a_service is None`` → 503.
+- T12 dispatch route: body parse / envelope shape validation,
+  per-method RBAC (``a2a.read`` vs ``a2a.invoke``), GetExtendedAgentCard
+  short-circuit (never forwards upstream — D18), capability gating
+  (``-32007``), streaming method routing to SSE.
+- T14 SSE re-wrap: ``_sse_format`` emits exactly one
+  ``data: {...}\\n\\n`` event per upstream chunk, compact JSON, no
+  double-encoding.
 
-These tests use mocked ``synthesize_agent_card`` so they stay fast and
-hermetic; the broader end-to-end shape is exercised by the Wave 2
-compliance harness in ``tests/live_gateway/a2a_compliance/`` against a
-running gateway + echo agent.
+Tests use mocked ``a2a_service`` methods + ``permission_service``
+overrides so they stay fast and hermetic; the broader end-to-end shape
+is exercised by the Wave 2 compliance harness in
+``tests/live_gateway/a2a_compliance/`` against a running gateway +
+echo agent.
 """
 
 from __future__ import annotations
@@ -186,3 +188,336 @@ class TestPerAgentCardEndpoint:
         # And re-parse to confirm no key has value null.
         for key, value in body.items():
             assert value is not None, f"field {key!r} serialized as null despite exclude_none"
+
+
+# ───────────────────────────────────────────────────────────────────────
+# T12 + T14 — Per-agent JSON-RPC dispatch route + SSE re-wrap
+# ───────────────────────────────────────────────────────────────────────
+
+
+def _mock_agent(agent_id: str = "agt-123", team_id: str | None = None, capabilities: dict | None = None) -> MagicMock:
+    """Build a MagicMock DbA2AAgent stub for dispatch handler tests."""
+    agent = MagicMock()
+    agent.id = agent_id
+    agent.name = "echo"
+    agent.team_id = team_id
+    agent.capabilities = capabilities or {}
+    return agent
+
+
+@pytest.fixture
+def dispatch_overrides():
+    """Override auth + filter-context + permission deps for dispatch tests.
+
+    Yields a dict that tests mutate to control behavior:
+
+    - ``filter_context``: tuple returned by ``get_rpc_filter_context``.
+    - ``permission_grant``: bool returned by ``check_permission``.
+
+    Tear-down restores all overrides + the patched ``get_rpc_filter_context``.
+    """
+    state = {
+        "filter_context": ("test_user@example.com", [], False),  # non-admin, public-only
+        "permission_grant": True,
+    }
+
+    async def fake_get_current_user_with_permissions(request=None, credentials=None, jwt_token=None):
+        return {"email": "test_user@example.com", "full_name": "Test User", "is_admin": False, "ip_address": "127.0.0.1", "user_agent": "test"}
+
+    async def fake_check_permission(*args, **kwargs) -> bool:
+        return state["permission_grant"]
+
+    fake_permission_service = MagicMock()
+    fake_permission_service.check_permission = fake_check_permission
+
+    async def fake_get_permission_service(db=None):
+        return fake_permission_service
+
+    main_mod.app.dependency_overrides[main_mod.get_current_user_with_permissions] = fake_get_current_user_with_permissions
+    main_mod.app.dependency_overrides[main_mod.get_permission_service] = fake_get_permission_service
+
+    # Patch get_rpc_filter_context at the module-attribute level so the
+    # handler sees our controlled tuple (the function consults JWT
+    # claims via request.state, which TestClient does not populate).
+    with patch.object(main_mod, "get_rpc_filter_context", lambda req, user: state["filter_context"]):
+        yield state
+
+    main_mod.app.dependency_overrides.pop(main_mod.get_current_user_with_permissions, None)
+    main_mod.app.dependency_overrides.pop(main_mod.get_permission_service, None)
+
+
+@pytest.fixture
+def mock_dispatch_service():
+    """Patch ``main.a2a_service`` with a MagicMock exposing dispatcher helpers.
+
+    Yields the MagicMock so each test sets:
+
+    - ``service.resolve_agent_for_dispatch`` (AsyncMock) → agent or raises.
+    - ``service.dispatch_a2a_jsonrpc_unary`` (AsyncMock) → dict or tuple.
+    - ``service.dispatch_a2a_jsonrpc_streaming`` (callable) → async gen.
+    - ``service.synthesize_agent_card`` (AsyncMock) → AgentCard for
+      GetExtendedAgentCard branch.
+    """
+    fake = MagicMock()
+    fake.resolve_agent_for_dispatch = AsyncMock()
+    fake.dispatch_a2a_jsonrpc_unary = AsyncMock()
+    fake.synthesize_agent_card = AsyncMock()
+    # streaming uses a callable returning async-gen, NOT AsyncMock
+    fake.dispatch_a2a_jsonrpc_streaming = MagicMock()
+    with patch.object(main_mod, "a2a_service", fake):
+        yield fake
+
+
+def _send_message_body(method: str = "SendMessage", request_id: str = "req-1") -> dict:
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": method,
+        "params": {"message": {"role": "ROLE_USER", "messageId": "m1", "parts": [{"text": "hi"}]}},
+    }
+
+
+# Bearer token to bypass CSRF middleware (csrf_middleware.py:113-116 skips
+# CSRF on bearer-authenticated requests since they are not browser-driven
+# and thus not vulnerable to CSRF). The token VALUE is irrelevant because
+# dependency overrides intercept auth before token validation runs.
+_DISPATCH_HEADERS = {"A2A-Version": "1.0.0", "Authorization": "Bearer fake-test-token"}
+
+
+class TestPerAgentDispatchEndpoint:
+    """T12 — ``POST /a2a/{agent_name}``."""
+
+    def test_a2a_service_disabled_returns_503(self, client: TestClient, dispatch_overrides) -> None:
+        """``a2a_service is None`` → 503 transport-level (no JSON-RPC envelope)."""
+        with patch.object(main_mod, "a2a_service", None):
+            response = client.post(
+                "/a2a/echo",
+                json=_send_message_body(),
+                headers=_DISPATCH_HEADERS,
+            )
+        assert response.status_code == 503, response.text[:200]
+
+    def test_malformed_json_returns_32700(self, client: TestClient, dispatch_overrides, mock_dispatch_service: MagicMock) -> None:
+        """Invalid JSON → 200 + ``-32700 PARSE_ERROR``."""
+        mock_dispatch_service.resolve_agent_for_dispatch.return_value = _mock_agent()
+        response = client.post(
+            "/a2a/echo",
+            content=b"{this is not valid json",
+            headers={"Content-Type": "application/json", **_DISPATCH_HEADERS},
+        )
+        assert response.status_code == 200, response.text[:200]
+        payload = response.json()
+        assert payload["error"]["code"] == -32700, payload
+
+    def test_non_dict_body_returns_32600(self, client: TestClient, dispatch_overrides, mock_dispatch_service: MagicMock) -> None:
+        """``body=[]`` → 200 + ``-32600 INVALID_REQUEST`` (Oracle v2 #7)."""
+        mock_dispatch_service.resolve_agent_for_dispatch.return_value = _mock_agent()
+        response = client.post(
+            "/a2a/echo",
+            content=b"[]",
+            headers={"Content-Type": "application/json", **_DISPATCH_HEADERS},
+        )
+        assert response.status_code == 200, response.text[:200]
+        payload = response.json()
+        assert payload["error"]["code"] == -32600, payload
+
+    def test_agent_not_found_returns_404(self, client: TestClient, dispatch_overrides, mock_dispatch_service: MagicMock) -> None:
+        """``A2AAgentNotFoundError`` (unknown / visibility miss / wrong team) → HTTP 404."""
+        from mcpgateway.services.a2a_service import A2AAgentNotFoundError
+
+        mock_dispatch_service.resolve_agent_for_dispatch.side_effect = A2AAgentNotFoundError("nope")
+        response = client.post(
+            "/a2a/unknown",
+            json=_send_message_body(),
+            headers=_DISPATCH_HEADERS,
+        )
+        assert response.status_code == 404, response.text[:200]
+
+    def test_unsupported_version_returns_32009(self, client: TestClient, dispatch_overrides, mock_dispatch_service: MagicMock) -> None:
+        """``A2A-Version: 99.0.0`` → 200 + ``-32009 VERSION_NOT_SUPPORTED``."""
+        mock_dispatch_service.resolve_agent_for_dispatch.return_value = _mock_agent()
+        response = client.post(
+            "/a2a/echo",
+            json=_send_message_body(),
+            headers={**_DISPATCH_HEADERS, "A2A-Version": "99.0.0"},
+        )
+        assert response.status_code == 200, response.text[:200]
+        payload = response.json()
+        assert payload["error"]["code"] == -32009, payload
+
+    def test_invoke_without_permission_returns_403(self, client: TestClient, dispatch_overrides, mock_dispatch_service: MagicMock) -> None:
+        """``check_permission("a2a.invoke")`` False → HTTP 403."""
+        mock_dispatch_service.resolve_agent_for_dispatch.return_value = _mock_agent()
+        dispatch_overrides["permission_grant"] = False
+        response = client.post(
+            "/a2a/echo",
+            json=_send_message_body(),
+            headers=_DISPATCH_HEADERS,
+        )
+        assert response.status_code == 403, response.text[:200]
+
+    def test_invoke_success_returns_result_envelope(self, client: TestClient, dispatch_overrides, mock_dispatch_service: MagicMock) -> None:
+        """Successful unary dispatch → 200 + ``{"jsonrpc": "2.0", "result": ..., "id": ...}``."""
+        mock_dispatch_service.resolve_agent_for_dispatch.return_value = _mock_agent()
+        mock_dispatch_service.dispatch_a2a_jsonrpc_unary.return_value = {"task": "done"}
+        response = client.post(
+            "/a2a/echo",
+            json=_send_message_body(request_id="abc"),
+            headers=_DISPATCH_HEADERS,
+        )
+        assert response.status_code == 200, response.text[:200]
+        payload = response.json()
+        assert payload == {"jsonrpc": "2.0", "result": {"task": "done"}, "id": "abc"}
+
+    def test_invoke_error_tuple_returns_error_envelope(self, client: TestClient, dispatch_overrides, mock_dispatch_service: MagicMock) -> None:
+        """Unary dispatch returns ``(code, msg, data)`` → 200 + ``make_jsonrpc_error`` envelope."""
+        from mcpgateway.services.a2a_service import INVALID_PARAMS
+
+        mock_dispatch_service.resolve_agent_for_dispatch.return_value = _mock_agent()
+        mock_dispatch_service.dispatch_a2a_jsonrpc_unary.return_value = (INVALID_PARAMS, "bad params", {"extra": "info"})
+        response = client.post(
+            "/a2a/echo",
+            json=_send_message_body(request_id="x"),
+            headers=_DISPATCH_HEADERS,
+        )
+        assert response.status_code == 200, response.text[:200]
+        payload = response.json()
+        assert payload["error"]["code"] == INVALID_PARAMS
+        assert payload["error"]["message"] == "bad params"
+        assert payload["error"]["data"] == {"extra": "info"}
+        assert payload["id"] == "x"
+
+    def test_extended_card_without_read_permission_returns_403(self, client: TestClient, dispatch_overrides, mock_dispatch_service: MagicMock) -> None:
+        """``GetExtendedAgentCard`` + ``a2a.read`` denied → 403."""
+        mock_dispatch_service.resolve_agent_for_dispatch.return_value = _mock_agent(capabilities={"extendedAgentCard": True})
+        dispatch_overrides["permission_grant"] = False
+        response = client.post(
+            "/a2a/echo",
+            json={"jsonrpc": "2.0", "id": "x", "method": "GetExtendedAgentCard", "params": {}},
+            headers=_DISPATCH_HEADERS,
+        )
+        assert response.status_code == 403, response.text[:200]
+
+    def test_extended_card_capability_disabled_returns_32007(self, client: TestClient, dispatch_overrides, mock_dispatch_service: MagicMock) -> None:
+        """Agent ``capabilities.extendedAgentCard=False`` → 200 + ``-32007``."""
+        mock_dispatch_service.resolve_agent_for_dispatch.return_value = _mock_agent(capabilities={"extendedAgentCard": False})
+        response = client.post(
+            "/a2a/echo",
+            json={"jsonrpc": "2.0", "id": "y", "method": "GetExtendedAgentCard", "params": {}},
+            headers=_DISPATCH_HEADERS,
+        )
+        assert response.status_code == 200, response.text[:200]
+        payload = response.json()
+        assert payload["error"]["code"] == -32007, payload
+
+    def test_extended_card_returns_synthesized_card(self, client: TestClient, dispatch_overrides, mock_dispatch_service: MagicMock) -> None:
+        """``GetExtendedAgentCard`` happy path → 200 + JSON-RPC ``result`` carrying the card.
+
+        Crucially, this MUST NOT forward to upstream (D18): the
+        synthesizer is the source of truth for the gateway's extended
+        card view. Assertion below verifies the unary dispatcher was
+        NEVER called.
+        """
+        mock_dispatch_service.resolve_agent_for_dispatch.return_value = _mock_agent(capabilities={"extendedAgentCard": True})
+        mock_dispatch_service.synthesize_agent_card.return_value = _minimal_card()
+        response = client.post(
+            "/a2a/echo",
+            json={"jsonrpc": "2.0", "id": "z", "method": "GetExtendedAgentCard", "params": {}},
+            headers=_DISPATCH_HEADERS,
+        )
+        assert response.status_code == 200, response.text[:200]
+        payload = response.json()
+        assert payload["id"] == "z"
+        assert payload["jsonrpc"] == "2.0"
+        assert payload["result"]["name"] == "echo"
+        # Wire field naming: camelCase from by_alias serialization.
+        assert payload["result"]["supportedInterfaces"][0]["protocolBinding"] == "JSONRPC"
+        # D18 guard: upstream dispatch MUST NOT have been called.
+        mock_dispatch_service.dispatch_a2a_jsonrpc_unary.assert_not_called()
+
+    def test_streaming_method_returns_sse_response(self, client: TestClient, dispatch_overrides, mock_dispatch_service: MagicMock) -> None:
+        """``SendStreamingMessage`` → 200 + ``text/event-stream`` + parseable chunks.
+
+        Covers T14 SSE re-wrap end-to-end: T5's parsed-dict yields →
+        ``_sse_format`` → downstream ``data: ...\\n\\n`` events. Each
+        event parses as a complete JSON-RPC envelope (no double-encoding).
+        """
+        mock_dispatch_service.resolve_agent_for_dispatch.return_value = _mock_agent()
+
+        async def fake_stream(*args, **kwargs):
+            yield {"jsonrpc": "2.0", "result": "chunk1", "id": "s1"}
+            yield {"jsonrpc": "2.0", "result": "chunk2", "id": "s1"}
+
+        mock_dispatch_service.dispatch_a2a_jsonrpc_streaming.side_effect = fake_stream
+
+        with client.stream(
+            "POST",
+            "/a2a/echo",
+            json={"jsonrpc": "2.0", "id": "s1", "method": "SendStreamingMessage", "params": {}},
+            headers=_DISPATCH_HEADERS,
+        ) as response:
+            assert response.status_code == 200
+            assert response.headers["content-type"].startswith("text/event-stream")
+            # Cache-Control: the handler sets "no-cache" but the gateway's
+            # security middleware may strengthen it to "no-store, private".
+            # The contract is "do not cache" — accept either form.
+            cache_control = response.headers.get("cache-control", "")
+            assert "no-cache" in cache_control or "no-store" in cache_control, f"Cache-Control={cache_control!r} should disable caching"
+            chunks = []
+            for line in response.iter_lines():
+                stripped = line.strip()
+                if not stripped.startswith("data:"):
+                    continue
+                payload = json.loads(stripped[len("data:") :].strip())
+                chunks.append(payload)
+        assert len(chunks) == 2, f"expected 2 SSE events, got {len(chunks)}: {chunks}"
+        assert chunks[0] == {"jsonrpc": "2.0", "result": "chunk1", "id": "s1"}
+        assert chunks[1] == {"jsonrpc": "2.0", "result": "chunk2", "id": "s1"}
+
+
+class TestSseFormatHelper:
+    """T14 — ``_sse_format`` SSE re-wrap helper."""
+
+    @pytest.mark.asyncio
+    async def test_emits_one_event_per_chunk(self) -> None:
+        """One upstream dict → exactly one ``data: ...\\n\\n`` line."""
+
+        async def gen():
+            yield {"a": 1}
+            yield {"a": 2}
+            yield {"a": 3}
+
+        events = [event async for event in main_mod._sse_format(gen())]
+        assert len(events) == 3
+        for event in events:
+            assert event.startswith("data: ")
+            assert event.endswith("\n\n")
+
+    @pytest.mark.asyncio
+    async def test_uses_compact_json_separators(self) -> None:
+        """``separators=(',', ':')`` keeps wire bytes minimal."""
+
+        async def gen():
+            yield {"a": 1, "b": 2}
+
+        event = [e async for e in main_mod._sse_format(gen())][0]
+        # No whitespace inside the JSON payload.
+        assert event == 'data: {"a":1,"b":2}\n\n'
+
+    @pytest.mark.asyncio
+    async def test_no_double_encoding_of_data_prefix(self) -> None:
+        """Upstream dicts are already parsed; we add ONE ``data:`` prefix.
+
+        Drives the T5 + T14 pairing fix (Oracle re-review #5).
+        """
+
+        async def gen():
+            yield {"result": "hi"}
+
+        event = [e async for e in main_mod._sse_format(gen())][0]
+        # Exactly one `data:` prefix at the start.
+        assert event.count("data:") == 1
+        assert event.startswith("data: {")
+        # And the payload re-parses cleanly as a dict (no nested data: token).
+        body = event[len("data: ") :].strip()
+        assert json.loads(body) == {"result": "hi"}
