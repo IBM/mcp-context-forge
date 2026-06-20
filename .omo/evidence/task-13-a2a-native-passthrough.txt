@@ -1,0 +1,109 @@
+Task 13 — Route-ordering regression test for native A2A 1.0.0 routes — evidence
+================================================================================
+
+Plan ref: .omo/plans/a2a-native-passthrough.md T13 (Oracle #15)
+Wave: 3 (per-agent data plane)
+Commit: pending
+
+Acceptance criteria (per plan)
+------------------------------
+- New test file tests/integration/test_a2a_route_ordering.py
+- Assert (a): POST /a2a/invoke resolves to LEGACY /invoke handler
+  (NOT captured by /{agent_name})
+- Assert (b): static suffix routes register BEFORE catch-all
+  /{agent_name} in FastAPI route table
+- Assert (c): POST /a2a/foo/invoke does NOT match catch-all
+- Use app.routes introspection
+- MUST NOT mutate any route registration
+
+Test file location
+------------------
+tests/integration/test_a2a_route_ordering.py — 6 tests in
+TestA2ARouteOrdering class plus one helper _first_matching_post_route.
+
+Tests added
+-----------
+1. test_a2a_invoke_registered_before_agent_name_catchall
+   Introspects app.routes registration-ordered POST paths. Asserts
+   index_of("/a2a/invoke") < index_of("/a2a/{agent_name}"). Closes
+   Oracle #15 directly: FastAPI matches routes in registration
+   order; a catch-all registered first would intercept every
+   literal-segment match including /invoke.
+
+2. test_agent_name_invoke_registered_before_agent_name_catchall
+   Same introspection but for the two-segment literal-suffix
+   /{agent_name}/invoke. Asserts it is registered BEFORE the catch-all
+   so /a2a/foo/invoke goes to invoke_a2a_agent (per-agent), not to
+   dispatch_a2a_agent (T12 catch-all).
+
+3. test_well_known_card_registered_before_agent_name_catchall
+   GET (not POST) sanity. The current /a2a/{agent_name}/.well-known/...
+   is GET only, so no POST catch-all conflict. This test pins the
+   invariant that future GETs added under the same prefix will also
+   be registered before any GET catch-all if one is ever added.
+
+4. test_post_a2a_invoke_matches_legacy_handler
+   Concrete-path matching: walks the registered POST routes (in order)
+   to find the FIRST whose path_regex matches /a2a/invoke. Asserts
+   the matched route.path is /a2a/invoke and the endpoint is
+   invoke_a2a_agent_by_id (the legacy ID-based handler).
+
+5. test_post_a2a_foo_invoke_matches_legacy_per_agent_handler
+   Same matching for /a2a/foo/invoke. Asserts route.path is
+   /a2a/{agent_name}/invoke and endpoint is invoke_a2a_agent
+   (per-agent invoke handler).
+
+6. test_post_a2a_foo_matches_catchall
+   Sanity test that confirms the catch-all DOES win when no more-
+   specific route is present. /a2a/foo (no literal suffix) MUST
+   resolve to /a2a/{agent_name} → dispatch_a2a_agent (T12).
+
+Helper: _first_matching_post_route(path: str) -> Route | None
+   Mirrors Starlette router's matching logic at request time —
+   walks routes in registration order and returns the first match
+   via path_regex.match. This is what FastAPI actually does, so
+   the test surfaces routing decisions without standing up a
+   TestClient.
+
+Test run output
+---------------
+$ uv run pytest tests/integration/test_a2a_route_ordering.py -v --tb=short --with-integration
+
+tests/integration/test_a2a_route_ordering.py::TestA2ARouteOrdering::test_a2a_invoke_registered_before_agent_name_catchall PASSED
+tests/integration/test_a2a_route_ordering.py::TestA2ARouteOrdering::test_agent_name_invoke_registered_before_agent_name_catchall PASSED
+tests/integration/test_a2a_route_ordering.py::TestA2ARouteOrdering::test_well_known_card_registered_before_agent_name_catchall PASSED
+tests/integration/test_a2a_route_ordering.py::TestA2ARouteOrdering::test_post_a2a_invoke_matches_legacy_handler PASSED
+tests/integration/test_a2a_route_ordering.py::TestA2ARouteOrdering::test_post_a2a_foo_invoke_matches_legacy_per_agent_handler PASSED
+tests/integration/test_a2a_route_ordering.py::TestA2ARouteOrdering::test_post_a2a_foo_matches_catchall PASSED
+
+6 passed, 1 warning in 1.22s
+
+Verified
+--------
+- All 6 T13 tests PASS against the current state of mcpgateway/main.py
+  (post-T12 route-ordering fix from commit e0a61d75b).
+- T13 tests do NOT mutate any route registration — they only
+  introspect app.routes and call path_regex.match().
+- Tests live under tests/integration/ and skip without
+  --with-integration flag (standard pytest_integration_mark
+  convention).
+
+Wave 3 regression guard
+-----------------------
+T13 catches exactly the bug introduced in T12's initial draft: the
+catch-all /a2a/{agent_name} was registered BEFORE /a2a/invoke,
+causing 11 TestA2AInvokeBodyEndpoint unit tests to fail with
+"object MagicMock can't be used in 'await' expression" because
+POST /a2a/invoke was being captured by the dispatch_a2a_agent
+catch-all instead of invoke_a2a_agent_by_id.
+
+The fix was a programmatic move of the T12 handler to register
+AFTER /a2a/invoke (via Python script using sed-like text
+manipulation). T13 now guards against ANY future change that
+re-introduces the same bug.
+
+References
+----------
+- Oracle #15 in .omo/drafts/a2a-native-passthrough.md
+- Starlette routing semantics: starlette/routing.py:Route.matches
+- FastAPI route ordering: fastapi/routing.py:APIRouter.add_api_route
