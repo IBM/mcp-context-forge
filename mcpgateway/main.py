@@ -5153,6 +5153,71 @@ async def invoke_a2a_agent(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@a2a_router.get("/{agent_name}/.well-known/agent-card.json")
+async def get_a2a_agent_card(
+    agent_name: str,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> Response:
+    """Serve the public A2A 1.0.0 agent card for ``agent_name`` (Plan T11).
+
+    This is a PUBLIC discovery endpoint per Plan D11 — clients fetch the
+    card BEFORE authenticating to learn which transports/methods the
+    agent supports. There is NO ``@require_permission`` decorator and
+    NO ``Depends(get_current_user_with_permissions)``; the synthesizer
+    enforces ``token_teams=[]`` Layer-1 visibility (public-only).
+
+    Same handler serves the v-server-scoped URL
+    ``/servers/{server_id}/a2a/{agent_name}/.well-known/agent-card.json``
+    once Wave 4's path-rewrite middleware (T16) lands and populates
+    ``request.scope["a2a_server_id"]``. The synthesizer enforces
+    v-server membership via :meth:`A2AAgentService.check_server_a2a_membership`;
+    a foreign agent collapses to ``None`` here and the handler returns
+    HTTP 404 — same wire outcome as agent-not-found per D14.
+
+    Args:
+        agent_name: Agent name from the URL path.
+        request: FastAPI request (used to read ``a2a_server_id`` from
+            the ASGI scope when Wave 4 path-rewrite is active).
+        db: Database session.
+
+    Returns:
+        ``Response`` carrying the JSON-serialized AgentCard with
+        ``by_alias=True`` (so wire-level field names like
+        ``protocolBinding`` and ``protocolVersion`` match the A2A 1.0.0
+        protobuf JSON convention) and ``exclude_none=True`` (so optional
+        fields are omitted rather than serialized as ``null``). 404 on
+        any unresolved name / visibility-deny / v-server-membership miss.
+
+    Raises:
+        HTTPException: 503 when A2A is disabled at startup.
+    """
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+
+    # Public base URL resolution (Plan F15 + Oracle re-review #4).
+    # ``a2a_public_base_url`` is a soft / optional setting that operators may
+    # add later; fall back to the always-present ``app_domain`` so this
+    # handler is robust whether the soft setting exists or not.
+    public_base = getattr(settings, "a2a_public_base_url", None) or str(settings.app_domain).rstrip("/")
+
+    card = await a2a_service.synthesize_agent_card(
+        db,
+        agent_name,
+        public_base,
+        server_id=request.scope.get("a2a_server_id"),
+        user_email=None,
+        token_teams=[],
+    )
+    if card is None:
+        return Response(status_code=404)
+
+    return Response(
+        content=card.model_dump_json(by_alias=True, exclude_none=True),
+        media_type="application/json",
+    )
+
+
 @a2a_router.post("/invoke", response_model=Dict[str, Any])
 @require_permission("a2a.invoke")
 async def invoke_a2a_agent_by_id(

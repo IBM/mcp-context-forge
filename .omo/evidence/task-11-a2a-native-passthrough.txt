@@ -1,0 +1,106 @@
+Task 11 — Per-agent A2A 1.0.0 card route — evidence
+=====================================================
+
+Plan ref: .omo/plans/a2a-native-passthrough.md T11
+Wave: 3 (per-agent data plane)
+Commit: pending (this file is the QA evidence per plan T11 spec)
+
+Acceptance criteria (per plan)
+------------------------------
+- Route: GET /a2a/{agent_name}/.well-known/agent-card.json
+- Public (no @require_permission, no auth Depends)
+- Calls synthesize_agent_card with user_email=None, token_teams=[]
+- AgentCard return → 200 + JSON with by_alias=True + exclude_none=True
+- None return → 404
+- a2a_service is None → 503
+- Reads server_id from request.scope["a2a_server_id"] (Wave 4 W16 middleware populates this)
+- Same handler serves v-server URL post-middleware-rewrite
+
+Handler location
+----------------
+mcpgateway/main.py: get_a2a_agent_card() — inserted between
+existing @a2a_router.post("/{agent_name}/invoke") (line 5041)
+and @a2a_router.post("/invoke") (line 5144) so per-agent routes
+stay grouped together.
+
+Test coverage
+-------------
+tests/integration/test_a2a_native_routes.py::TestPerAgentCardEndpoint
+covers 8 handler-glue scenarios (see test class for full list):
+
+  1. test_returns_serialized_card_with_alias_field_names
+     - Happy path: 200, application/json, by_alias serialization
+     - protocolBinding (camelCase) present, protocol_binding (snake) absent
+     - defaultInputModes present, default_input_modes absent
+     - transportProtocol (the WRONG name) absent
+
+  2. test_unknown_agent_returns_404
+     - None from synthesizer → HTTP 404 (D14)
+
+  3. test_a2a_service_disabled_returns_503
+     - a2a_service is None → HTTP 503
+
+  4. test_no_authorization_required
+     - No Authorization header → still 200 (D11 public discovery)
+
+  5. test_synthesizer_called_with_public_visibility_kwargs
+     - kwargs assertion: user_email=None AND token_teams=[]
+     - Explicit guard: token_teams is NOT None (admin-bypass leak guard)
+
+  6. test_synthesizer_called_with_server_id_none_when_not_in_scope
+     - Direct /a2a/... route → server_id=None passed to synthesizer
+     - Wave 4 T16 path-rewrite middleware will populate scope key
+       for /servers/{id}/a2a/... URLs
+
+  7. test_synthesizer_called_with_agent_name_from_path
+     - URL path segment reaches synthesizer as positional arg
+
+  8. test_response_excludes_none_optional_fields
+     - exclude_none=True keeps documentationUrl, iconUrl,
+       securitySchemes off the wire when unset
+
+Test run output
+---------------
+$ uv run pytest tests/integration/test_a2a_native_routes.py -v --tb=short --with-integration
+
+tests/integration/test_a2a_native_routes.py::TestPerAgentCardEndpoint::test_returns_serialized_card_with_alias_field_names PASSED
+tests/integration/test_a2a_native_routes.py::TestPerAgentCardEndpoint::test_unknown_agent_returns_404 PASSED
+tests/integration/test_a2a_native_routes.py::TestPerAgentCardEndpoint::test_a2a_service_disabled_returns_503 PASSED
+tests/integration/test_a2a_native_routes.py::TestPerAgentCardEndpoint::test_no_authorization_required PASSED
+tests/integration/test_a2a_native_routes.py::TestPerAgentCardEndpoint::test_synthesizer_called_with_public_visibility_kwargs PASSED
+tests/integration/test_a2a_native_routes.py::TestPerAgentCardEndpoint::test_synthesizer_called_with_server_id_none_when_not_in_scope PASSED
+tests/integration/test_a2a_native_routes.py::TestPerAgentCardEndpoint::test_synthesizer_called_with_agent_name_from_path PASSED
+tests/integration/test_a2a_native_routes.py::TestPerAgentCardEndpoint::test_response_excludes_none_optional_fields PASSED
+
+8 passed, 2 warnings in 1.27s
+
+Wave 2 compliance impact
+------------------------
+T11 satisfies the contract that Wave 2 T9 card-discovery tests assert
+(.omo/evidence/c4-audit-checklist.md Section 1 BLOCK rows 1-3):
+
+  - test_protocol_binding_is_camelcase_not_transport_protocol
+  - test_protocol_binding_value_is_jsonrpc
+  - test_interface_url_matches_target_base
+
+Those 3 tests live in
+tests/live_gateway/a2a_compliance/v1_0_0/test_agent_card_extra.py
+and currently auto-xfail on the `gateway_proxy` target via
+conftest.py::pytest_collection_modifyitems. With T11 deployed,
+they should surface XPASS on gateway_proxy (no Authorization
+required for card discovery) once a live gateway + echo agent
+stack is brought up (`make testing-up`).
+
+Notes
+-----
+- response_model is deliberately NOT used on the route decorator
+  because FastAPI's response_model serializes by Python attribute
+  name, not by alias — that would silently corrupt the wire shape
+  (Plan T11 Must-NOT-do #1).
+- token_teams=[] is explicit (NOT None). Plan T11 Must-NOT-do #2
+  guards against admin-bypass leaks via _check_agent_access:
+  permission_service.py:126-130 suppresses admin bypass when
+  token_teams=[].
+- public_base resolution uses getattr() because a2a_public_base_url
+  is a SOFT setting that may or may not be defined; app_domain is
+  the always-present fallback (Oracle re-review #4).
