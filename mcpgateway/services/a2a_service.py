@@ -428,6 +428,26 @@ class AgentNotInServerError(A2AAgentError):
         super().__init__(f"A2A agent '{agent_name}' is not bound to virtual server '{server_id}'")
 
 
+class VersionNotSupportedError(A2AAgentError):
+    """Raised when the inbound ``A2A-Version`` header is missing or unsupported.
+
+    Plan T7 / D13: the v1 gateway requires clients to send a recognized
+    ``A2A-Version`` (``"1.0"`` or ``"1.0.0"``). A missing header is
+    tolerated ONLY when the inbound JSON-RPC method is a legacy v0.3
+    alias (``message/send``, ``tasks/get``, etc.) for transitional client
+    support per plan Q12. Anything else raises this exception, which
+    the route layer (T12 step 7) catches and translates to JSON-RPC
+    ``-32009 VERSION_NOT_SUPPORTED`` per plan D6.
+
+    Examples:
+        >>> err = VersionNotSupportedError("client sent A2A-Version: 2.0")
+        >>> isinstance(err, A2AAgentError)
+        True
+        >>> "2.0" in str(err)
+        True
+    """
+
+
 # ----------------------------------------------------------------------
 # JSON-RPC error envelope helpers (plan T6 + D6 + Oracle v3 #6 + #14)
 # ----------------------------------------------------------------------
@@ -524,6 +544,144 @@ def make_jsonrpc_error(
     if data is not None:
         error_obj["data"] = data
     return {"jsonrpc": "2.0", "error": error_obj, "id": request_id}
+
+
+# ----------------------------------------------------------------------
+# A2A-Version negotiation (plan T7 + D13 + Oracle v3 #20 + v4 MEDIUM #9)
+# ----------------------------------------------------------------------
+#
+# The v1 gateway requires inbound clients to send ``A2A-Version: 1.0`` or
+# ``A2A-Version: 1.0.0`` per A2A 1.0.0 spec section 7 (versioning). A
+# missing header is tolerated ONLY when the inbound method is a legacy
+# v0.3 alias, for transitional client support per plan Q12. This is the
+# spec-honest compromise — a v1 client sending a v1 method MUST send the
+# header; a v0.3 client (which does not know about the header) gets to
+# keep using its legacy method names during the transition.
+#
+# Legacy v0.3 method aliases (plan F8 / what's-new-v1.md):
+LEGACY_V03_METHOD_ALIASES = frozenset(
+    {
+        "message/send",
+        "message/stream",
+        "tasks/get",
+        "tasks/cancel",
+        "tasks/resubscribe",
+        "tasks/pushNotificationConfig/set",
+        "tasks/pushNotificationConfig/get",
+        "tasks/pushNotificationConfig/list",
+        "tasks/pushNotificationConfig/delete",
+        "agent/getAuthenticatedExtendedCard",
+    }
+)
+
+# Accepted A2A-Version header values for v1 native dispatch. Per plan
+# D13, "1.0" and "1.0.0" are both spec-compliant Major.Minor renderings
+# of the same protocol version.
+_ACCEPTED_A2A_VERSIONS = frozenset({"1.0", "1.0.0"})
+
+
+def validate_a2a_version(header_value: Optional[str], method: Optional[str] = None) -> str:
+    """Validate and normalize the inbound ``A2A-Version`` header.
+
+    Plan T7 + D13 + Oracle v3 #20 + v4 MEDIUM #9:
+
+    - If ``header_value`` is ``"1.0"`` or ``"1.0.0"`` → return it verbatim
+      (preserve what the client sent; do not silently coerce).
+    - If ``header_value`` is missing/empty/None AND ``method`` is a legacy
+      v0.3 alias (``message/send``, ``tasks/get``, etc.) → return ``"1.0"``
+      and emit a ``logger.info`` so operators can monitor the v0.3
+      transition fleet. This preserves Q12 transitional compatibility.
+    - If ``header_value`` is missing/empty/None AND ``method`` is a v1
+      method (or ``method`` is None — method not yet known) → raise
+      :py:class:`VersionNotSupportedError`. T12 catches and translates to
+      JSON-RPC ``-32009 VERSION_NOT_SUPPORTED`` per plan D6.
+    - Anything else (``"2.0"``, ``"0.3"``, ``"abc"``, ...) → raise
+      :py:class:`VersionNotSupportedError`.
+
+    Args:
+        header_value: Raw ``A2A-Version`` header string. May be ``None``
+            when the client did not send the header at all.
+        method: Optional parsed JSON-RPC ``method`` field from the body.
+            Passed by T12 step 7 after envelope parse so the v0.3
+            transition window can be honored for legacy clients.
+
+    Returns:
+        The normalized version string. For accepted explicit headers,
+        the verbatim header value. For legacy-alias missing-header
+        cases, ``"1.0"``.
+
+    Raises:
+        VersionNotSupportedError: When the header is missing for a v1
+            method, or when the header value is not a recognized v1
+            version.
+
+    Examples:
+        >>> validate_a2a_version("1.0", "SendMessage")
+        '1.0'
+        >>> validate_a2a_version("1.0.0", "SendMessage")
+        '1.0.0'
+        >>> validate_a2a_version(None, "message/send")  # legacy alias OK
+        '1.0'
+        >>> try:
+        ...     validate_a2a_version(None, "SendMessage")
+        ... except VersionNotSupportedError:
+        ...     print("rejected")
+        rejected
+        >>> try:
+        ...     validate_a2a_version("2.0", "SendMessage")
+        ... except VersionNotSupportedError:
+        ...     print("rejected")
+        rejected
+    """
+    if header_value in _ACCEPTED_A2A_VERSIONS:
+        # We just verified membership; mypy/pyright might still narrow
+        # ``header_value`` to ``Optional[str]`` so return the typed value.
+        assert header_value is not None  # nosec B101 — type narrowing
+        return header_value
+
+    if header_value is None or header_value == "":
+        # Missing header is tolerated ONLY for legacy v0.3 aliases per
+        # plan Q12 (transition support for clients that don't know the
+        # v1 header convention).
+        if method is not None and method in LEGACY_V03_METHOD_ALIASES:
+            logger.info(
+                "Accepting legacy v0.3 client without A2A-Version header for method %s (transitional support)",
+                method,
+            )
+            return "1.0"
+        raise VersionNotSupportedError("A2A-Version header is required for v1 native dispatch (legacy v0.3 alias methods exempted)")
+
+    raise VersionNotSupportedError(f"Unsupported A2A-Version: {header_value!r}")
+
+
+def outbound_a2a_version(agent: DbA2AAgent) -> str:
+    """Return the value to set as ``A2A-Version`` when forwarding to an upstream.
+
+    Plan T7 + D13: the gateway forwards each upstream call with an
+    ``A2A-Version`` header equal to whatever the registered agent
+    advertises in its ``protocol_version`` column (plan F8 emphasized
+    that this must NOT be hardcoded — Oracle v3 #21). For most v1
+    agents this is ``"1.0"`` or ``"1.0.0"``; for a registered v0.3
+    legacy agent the registration row carries ``"0.3"`` and the gateway
+    will forward exactly that.
+
+    Args:
+        agent: The :py:class:`mcpgateway.db.A2AAgent` row.
+
+    Returns:
+        The value to set on the outbound ``A2A-Version`` header.
+
+    Examples:
+        >>> from unittest.mock import MagicMock
+        >>> agent = MagicMock()
+        >>> agent.protocol_version = "1.0.0"
+        >>> outbound_a2a_version(agent)
+        '1.0.0'
+        >>> agent.protocol_version = "0.3"
+        >>> outbound_a2a_version(agent)
+        '0.3'
+    """
+    return agent.protocol_version
 
 
 def _validate_a2a_team_assignment(db: Session, user_email: Optional[str], target_team_id: Optional[str]) -> None:

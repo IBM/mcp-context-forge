@@ -43,6 +43,7 @@ from mcpgateway.services.a2a_service import (
     INVALID_AGENT_RESPONSE,
     INVALID_PARAMS,
     INVALID_REQUEST,
+    LEGACY_V03_METHOD_ALIASES,
     METHOD_NOT_FOUND,
     MULTIPLE_PUSH_NOT_SUPPORTED,
     PARSE_ERROR,
@@ -51,7 +52,10 @@ from mcpgateway.services.a2a_service import (
     TASK_NOT_FOUND,
     UNSUPPORTED_OPERATION,
     VERSION_NOT_SUPPORTED,
+    VersionNotSupportedError,
     make_jsonrpc_error,
+    outbound_a2a_version,
+    validate_a2a_version,
 )
 
 
@@ -491,3 +495,106 @@ class TestMakeJsonrpcError:
         """The ``jsonrpc: 2.0`` envelope marker is required by spec."""
         err = make_jsonrpc_error(PARSE_ERROR, "x", None)
         assert err["jsonrpc"] == "2.0"
+
+
+class TestValidateA2AVersion:
+    """Plan T7 + D13: method-aware A2A-Version header validation."""
+
+    @pytest.mark.parametrize("header", ["1.0", "1.0.0"])
+    def test_accepted_versions(self, header: str) -> None:
+        """Spec-recognized v1 header values return verbatim, regardless of method."""
+        assert validate_a2a_version(header, "SendMessage") == header
+        assert validate_a2a_version(header, None) == header
+
+    def test_missing_with_v1_method_rejected(self) -> None:
+        """Missing header + v1 method → :py:class:`VersionNotSupportedError`."""
+        with pytest.raises(VersionNotSupportedError):
+            validate_a2a_version(None, "SendMessage")
+
+    def test_empty_with_v1_method_rejected(self) -> None:
+        """Empty string header + v1 method → :py:class:`VersionNotSupportedError`."""
+        with pytest.raises(VersionNotSupportedError):
+            validate_a2a_version("", "SendMessage")
+
+    def test_missing_with_method_none_rejected(self) -> None:
+        """Missing header + unknown method (None) → :py:class:`VersionNotSupportedError`.
+
+        T12 only knows the method AFTER body parse, so callers may pass
+        ``method=None`` if validation fires before parse. In that case
+        we cannot apply the legacy-alias exception and must reject.
+        """
+        with pytest.raises(VersionNotSupportedError):
+            validate_a2a_version(None, None)
+
+    @pytest.mark.parametrize("alias", sorted(LEGACY_V03_METHOD_ALIASES))
+    def test_missing_with_legacy_alias_accepted(self, alias: str, caplog: pytest.LogCaptureFixture) -> None:
+        """Missing header + legacy v0.3 alias method → returns ``"1.0"`` + info log.
+
+        Q12 transitional support: v0.3 clients don't know about the
+        ``A2A-Version`` header. Tolerating their legacy method names
+        without the header keeps the transition smooth.
+        """
+        import logging
+
+        with caplog.at_level(logging.INFO):
+            result = validate_a2a_version(None, alias)
+        assert result == "1.0"
+        assert any(alias in record.getMessage() for record in caplog.records)
+
+    @pytest.mark.parametrize("alias", sorted(LEGACY_V03_METHOD_ALIASES))
+    def test_empty_with_legacy_alias_accepted(self, alias: str) -> None:
+        """Empty-string header + legacy alias is treated like missing."""
+        assert validate_a2a_version("", alias) == "1.0"
+
+    @pytest.mark.parametrize("bad_version", ["2.0", "0.3", "abc", "1.1", "1.0.1"])
+    def test_unsupported_versions_rejected(self, bad_version: str) -> None:
+        """Anything other than ``1.0`` / ``1.0.0`` is rejected, regardless of method."""
+        with pytest.raises(VersionNotSupportedError):
+            validate_a2a_version(bad_version, "SendMessage")
+        with pytest.raises(VersionNotSupportedError):
+            validate_a2a_version(bad_version, "message/send")
+        with pytest.raises(VersionNotSupportedError):
+            validate_a2a_version(bad_version, None)
+
+    def test_legacy_alias_set_complete(self) -> None:
+        """Plan F8 + what's-new-v1: 10 legacy aliases the v1 gateway tolerates."""
+        expected = {
+            "message/send",
+            "message/stream",
+            "tasks/get",
+            "tasks/cancel",
+            "tasks/resubscribe",
+            "tasks/pushNotificationConfig/set",
+            "tasks/pushNotificationConfig/get",
+            "tasks/pushNotificationConfig/list",
+            "tasks/pushNotificationConfig/delete",
+            "agent/getAuthenticatedExtendedCard",
+        }
+        assert set(LEGACY_V03_METHOD_ALIASES) == expected
+
+
+class TestOutboundA2AVersion:
+    """Plan T7 + Oracle v3 #21: outbound header uses the agent's stored version."""
+
+    def test_returns_agent_protocol_version(self) -> None:
+        """Outbound header echoes ``agent.protocol_version`` verbatim."""
+        agent = MagicMock()
+        agent.protocol_version = "1.0.0"
+        assert outbound_a2a_version(agent) == "1.0.0"
+
+    def test_returns_legacy_v03_when_agent_is_legacy(self) -> None:
+        """A registered legacy v0.3 agent gets ``A2A-Version: 0.3`` forwarded."""
+        agent = MagicMock()
+        agent.protocol_version = "0.3"
+        assert outbound_a2a_version(agent) == "0.3"
+
+    def test_never_hardcodes(self) -> None:
+        """Oracle v3 #21 anti-pattern: outbound version must NOT be hardcoded.
+
+        Verified by parametrizing on arbitrary values — whatever the
+        agent row says, the helper echoes verbatim.
+        """
+        for version in ("1.0", "1.0.0", "1.0.5", "0.3", "2.0"):
+            agent = MagicMock()
+            agent.protocol_version = version
+            assert outbound_a2a_version(agent) == version
