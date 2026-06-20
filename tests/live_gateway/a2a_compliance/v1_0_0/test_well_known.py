@@ -47,10 +47,6 @@ async def test_compat_well_known_alias(echo_agent_base_url: str) -> None:
     assert canonical.json() == compat.json(), "well-known canonical and compat aliases must return identical bodies"
 
 
-@pytest.mark.xfail(
-    reason="A2A-GAP-002: extended card omits supportedInterfaces; same root cause as canonical card",
-    strict=False,
-)
 @pytest.mark.asyncio
 async def test_extended_agent_card_route(echo_agent_base_url: str) -> None:
     """``GET /extendedAgentCard`` MUST return 200 + JSON body for authenticated callers.

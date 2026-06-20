@@ -93,11 +93,16 @@ async def test_get_task_for_unknown_id_raises(client: Client) -> None:
 async def test_list_tasks_returns_response(client: Client) -> None:
     """``ListTasks`` MUST return a ListTasksResponse, even if empty.
 
-    No assertion on count — the agent's task store is per-process and
-    we don't control state across test runs. Empty list is valid.
+    A2A 0.3.0 JSONRPC has no ``ListTasks`` method (added in 1.0.0);
+    the SDK's ``CompatJsonRpcTransport`` raises ``NotImplementedError``
+    explicitly for this call. Skip on that path — there's nothing on
+    the wire to validate.
     """
     request = ListTasksRequest()
-    response = await client.list_tasks(request)
+    try:
+        response = await client.list_tasks(request)
+    except NotImplementedError as exc:
+        pytest.skip(f"list_tasks unsupported on this protocol version: {exc}")
     assert response is not None, "list_tasks returned None"
 
 

@@ -97,141 +97,77 @@ to construct real `Client` instances via
 `NotImplementedError` raises; the next matrix run will surface XPASS
 on every previously-xfailed cell.
 
----
-
-### A2A-GAP-002 — Echo agent emits v0.3.0-shaped card on v1.0.0 endpoints
-
-| | |
-|---|---|
-| **Targets affected** | `reference` (**v1.0.0 suite only** — v0.3.0 tests accept the existing card shape because it IS the v0.3.0 schema) |
-| **Tests** | `v1_0_0/test_agent_card.py::test_agent_card_required_fields`, `::test_supported_interfaces_non_empty`, `v1_0_0/test_well_known.py::test_extended_agent_card_route`, `v1_0_0/test_version_negotiation.py::test_card_advertises_expected_protocol_version` |
-| **Spec** | A2A 1.0.0 vs 0.3.0 `AgentCard` protobuf schemas (verified via Phase-0 introspection of `a2a.types.AgentCard` and `a2a.compat.v0_3.types.AgentCard`) |
-
-**Observed**: the bundled Rust `a2a_echo_agent` always emits a v0.3.0-shaped
-card regardless of the advertised `protocolVersion`:
-
-| Card field | v1.0.0 schema | v0.3.0 schema | Echo agent emits |
-|---|---|---|---|
-| Transport advertisement | `supported_interfaces[]` (array) | `protocol_version`, `url`, `preferred_transport`, `additional_interfaces[]` (top-level) | v0.3.0 shape |
-| `protocol_version` at top level | not in schema | required | always emitted |
-| `url` at top level | not in schema | required | always emitted |
-| `supported_interfaces` array | required | not in schema | never emitted |
-
-The SDK's `ClientFactory.create_from_url` accepts the card under both
-advertised versions because the JSON-RPC transport is the default
-fallback when `supported_interfaces` is empty — but the card violates
-the v1.0.0 protobuf contract on the wire when the agent claims v1.0.0.
-
-**Expected**: when the agent advertises `protocolVersion: 1.x.y`, the
-card should serialize with `supported_interfaces: [{ ... }]` and omit
-the top-level `protocol_version` / `url` fields. When advertising
-`protocolVersion: 0.3.x`, the existing flat shape is correct.
-
-**Why**: the echo agent's card serializer is version-agnostic — it
-emits the same JSON regardless of the `A2A_ECHO_PROTOCOL_VERSION`
-env var. Card was hand-written against an early-draft schema closer
-to v0.3.0 and never adjusted when 1.0.0 introduced the
-`supported_interfaces` indirection.
-
-**How to close**: make the echo agent's card serializer version-aware.
-When `config.protocol_version` starts with `1.`, emit:
-
-```json
-{
-  "name": "...", "version": "...", "capabilities": {...}, ...,
-  "supportedInterfaces": [
-    {"transportProtocol": "JSONRPC", "protocolVersion": "1.0.0", "url": "http://..."}
-  ]
-}
-```
-
-(no top-level `protocolVersion` / `url`). For `0.3.x` versions, keep
-the current flat shape. Once the v1.0.0 card validates against the
-v1.0.0 protobuf, remove the four `@pytest.mark.xfail` decorators
-under `v1_0_0/` that reference this gap.
-
----
-
-### A2A-GAP-004 — Echo agent returns `-32700 Parse error` for an envelope missing the `method` field
-
-| | |
-|---|---|
-| **Targets affected** | `reference` |
-| **Tests** | `test_error_handling.py::test_missing_method_returns_invalid_request` |
-| **Spec** | [JSON-RPC 2.0 § 5.1 reserved error codes](https://www.jsonrpc.org/specification#error_object) — `-32700 Parse error` is reserved specifically for *invalid JSON*. A well-formed JSON envelope missing the `method` field is `-32600 Invalid Request`. |
-
-**Observed**: posting `{"jsonrpc":"2.0","id":"...","params":{}}` (valid
-JSON, no `method`) returns `{"code":-32700,"message":"parse error"}`.
-
-**Expected**: well-formed JSON parses successfully, so `-32700` is the
-wrong code. `-32600 Invalid Request` is the JSON-RPC 2.0 reserved
-value for a JSON object that "is not a valid Request object". A client
-with routing logic that branches on `code == -32600` can't distinguish
-this case from network garbage.
-
-**Why**: likely a single error-mapping function in the echo agent's
-JSON-RPC dispatch that conflates "JSON parse failed" with "envelope
-missing method".
-
-**How to close**: separate the two error paths in the echo agent's
-dispatch and emit `-32600` when `method` is missing or non-string. Drop
-the `xfail` on this test.
-
----
-
-### A2A-GAP-006 — Echo agent response payloads include non-protobuf fields the SDK parser rejects
-
-| | |
-|---|---|
-| **Targets affected** | `reference` |
-| **Tests (v1.0.0)** | 5 cells: `test_jsonrpc_methods.py::test_send_message_returns_at_least_one_response`, `::test_send_message_echoes_input_text`, `::test_list_tasks_returns_response`, `test_messages_artifacts.py::test_send_message_response_populates_message_or_task`, `::test_echo_response_carries_text_part` |
-| **Tests (v0.3.0)** | 1 cell: `test_jsonrpc_methods.py::test_list_tasks_returns_response` (the four `SendMessage`-related tests pass under `CompatJsonRpcTransport`) |
-| **Spec** | A2A 1.0.0 — `SendMessageResponse` protobuf schema: `oneof { Task task; Message message; }`. `artifacts` belongs on `Task`, not at the response root. |
-
-**Observed (v1.0.0)**: the SDK's `Client.send_message` round-trip
-succeeds at the HTTP layer (`POST http://127.0.0.1:9100/` returns
-`200 OK`), then parsing the response into `SendMessageResponse` fails
-with:
-
-```
-google.protobuf.json_format.ParseError: Message type "lf.a2a.v1.SendMessageResponse"
-has no field named "artifacts" at "SendMessageResponse". Available
-Fields(except extensions): "['task', 'message']"
-```
-
-**Observed (v0.3.0)**: the `SendMessage`-related tests **pass** —
-the SDK's `CompatJsonRpcTransport` for legacy 0.3.x has a different
-response shape that doesn't trip on the agent's flat layout.
-`test_list_tasks_returns_response` still fails on v0.3.0 with an
-analogous parse error against the legacy `ListTasksResponse` shape,
-suggesting the agent's response builder has the same flatness bug on
-`tasks/list` as on `SendMessage` but the SDK happens to tolerate the
-`SendMessage`-shape rewrite for v0.3.x.
-
-**Expected**: per the protobuf schema captured during Phase-0
-introspection (`SendMessageResponse.DESCRIPTOR.fields_by_name`,
-`Task.DESCRIPTOR.fields_by_name`), responses carry either a `task`
-field (full Task with its own `artifacts`) or a `message` field. The
-v0.3.0 legacy schema has its own equivalent. Artifacts always
-belong inside a Task, never at the response envelope root.
-
-**Why**: the echo agent's response serializer likely emits a flat
-struct with `message` + `artifacts` instead of wrapping artifacts
-inside a Task or omitting them entirely for the echo-only case. The
-v0.3.0 `CompatJsonRpcTransport` has a more forgiving parser for the
-`SendMessage` path; the `tasks/list` path doesn't get the same lenience.
-
-**How to close**: rework the echo agent's response builder to emit
-`{"message": {...}}` for the message-only echo case, or
-`{"task": {"id": "...", "artifacts": [...], ...}}` when a task is
-involved — for both the 1.0.0 and 0.3.0 schemas. Once responses parse,
-the five v1.0.0 cells and the one v0.3.0 cell pass — drop the conftest's
-`_REFERENCE_GAP_006_TESTS_BY_VERSION` arm at that point and move this
-entry to "Closed gaps".
-
----
-
 ## Closed gaps
+
+### A2A-GAP-006 — Echo agent response payloads included non-protobuf fields *(closed 2026-06-20)*
+
+**Was**: the SDK's `Client.send_message` round-trip succeeded at the HTTP
+layer but `google.protobuf.json_format.ParseError` blew up at parse time
+because the echo agent emitted `task` payload fields at the
+`SendMessageResponse` root rather than wrapping them in the protobuf
+`oneof { Task task; Message message; }`. A separate symptom on v1.0.0
+list_tasks: each `Task` emitted non-schema `createdAt` / `updatedAt`
+fields that the v1.0.0 parser rejected.
+
+**How closed**: two Rust changes in `a2a-agents/rust/a2a-echo-agent/src/main.rs`.
+
+1. `handle_send_message` now wraps the task value for v1.0.0 methods —
+   ``Ok(json!({ "task": task_value }))`` — so `SendMessageResponse`
+   parsing finds the `task` field at the expected path. Legacy v0.3.x
+   methods stay unwrapped (`CompatJsonRpcTransport` tolerates the flat
+   shape).
+2. `task_to_value` no longer emits `createdAt` / `updatedAt` for v1.0.0;
+   those fields are not in the v1.0.0 `Task.DESCRIPTOR`. They remain on
+   the legacy shape (under the existing `kind: "task"` discriminator)
+   for v0.3.x back-compat.
+
+The unit tests in main.rs were updated to dig into `result["task"]`
+for v1.0.0 method calls and to assert the absent timestamp fields.
+
+**v0.3.0 list_tasks nuance**: the SDK's `CompatJsonRpcTransport`
+explicitly raises `NotImplementedError: ListTasks is not supported in
+A2A v0.3 JSONRPC` regardless of agent behavior. `test_list_tasks_returns_response`
+now catches that and `pytest.skip`s on the v0.3.0 cell — not an
+xfail. The conftest's `_REFERENCE_GAP_006_TESTS_BY_VERSION` arm was
+deleted entirely; the only remaining xfail dimension is GAP-001.
+
+---
+
+### A2A-GAP-005 — Echo agent advertised `url: http://localhost:9100` *(closed 2026-06-20)*
+
+**Was**: echo agent's card serialized `url: "http://localhost:9100"`.
+On macOS, the SDK's JSON-RPC follow-up calls hit IPv6-first DNS
+resolution; compose binds IPv4 only → `A2AClientTimeoutError`.
+
+**How closed**: set `A2A_ECHO_PUBLIC_URL=http://127.0.0.1:9100` on
+the `a2a_echo_agent` service in `docker-compose.yml`. Card now
+serializes with the IPv4 literal. Verified: HTTP POSTs to
+`http://127.0.0.1:9100/` succeed (200 OK).
+
+**Successor**: the five SDK Client tests this gap blocked still failed
+initially for a different reason — the echo agent's response shape
+issue — which became A2A-GAP-006 (also now closed).
+
+---
+
+### A2A-GAP-004 — Echo agent returned `-32700 Parse error` for missing-method envelope *(closed 2026-06-20)*
+
+**Was**: the agent's `handle_jsonrpc_body` mapped *any* serde
+deserialization failure to `-32700`, including the well-formed JSON
+case where `method` was simply missing. JSON-RPC 2.0 § 5.1 reserves
+`-32700` for actual parse errors and `-32600` for valid JSON with an
+invalid Request envelope (which includes missing `method`).
+
+**How closed**: refactored `handle_jsonrpc_body` to a two-stage parse.
+Step 1 attempts raw `serde_json::from_slice::<Value>` — failure here
+returns `-32700`. Step 2 inspects the parsed object for required
+fields — missing or non-string `method` returns `-32600` with the
+preserved `id` (per spec). Only after both gates does the body
+deserialize into the typed `JsonRpcRequest`. A new unit test
+(`missing_method_returns_invalid_request_envelope`) pins the
+behavior at the agent level.
+
+---
 
 ### A2A-GAP-003 — Echo agent card omits `securitySchemes` / `securityRequirements` *(closed 2026-06-20 — wontfix, test-side spec misreading)*
 
@@ -257,18 +193,35 @@ emission.
 
 ---
 
-### A2A-GAP-005 — Echo agent advertised `url: http://localhost:9100` *(closed 2026-06-20)*
+### A2A-GAP-002 — Echo agent emitted v0.3.0-shaped card on v1.0.0 endpoints *(closed 2026-06-20)*
 
-**Was**: echo agent's card serialized `url: "http://localhost:9100"`.
-On macOS, the SDK's JSON-RPC follow-up calls hit IPv6-first DNS
-resolution; compose binds IPv4 only → `A2AClientTimeoutError`.
+**Was**: the bundled Rust `a2a_echo_agent` emitted a single flat card
+shape (top-level `protocolVersion` / `url`, no `supportedInterfaces`)
+regardless of the advertised `protocolVersion`. The flat shape is
+correct for v0.3.0's `AgentCard` schema; for v1.0.0, transport
+advertisement moved into a `supported_interfaces` array and the
+top-level fields were dropped from the protobuf.
 
-**How closed**: set `A2A_ECHO_PUBLIC_URL=http://127.0.0.1:9100` on
-the `a2a_echo_agent` service in `docker-compose.yml`. Card now
-serializes with the IPv4 literal. Verified: HTTP POSTs to
-`http://127.0.0.1:9100/` succeed (200 OK).
+**How closed**: made `agent_card()` in
+`a2a-agents/rust/a2a-echo-agent/src/main.rs` version-aware. When
+`config.protocol_version` starts with `1.`, the agent now emits a
+v1.0.0-shaped card with `supportedInterfaces: [{ "protocolBinding":
+"JSONRPC", "protocolVersion": "...", "url": "..." }]` and **no**
+top-level `protocolVersion` / `url`. For `0.3.x` versions, the flat
+shape is preserved.
 
-**Successor**: the five SDK Client tests this gap blocked still fail
-on `[reference-jsonrpc]`, but for a different reason: the echo agent's
-`SendMessageResponse` includes a non-protobuf `artifacts` field at the
-response root. Tracked as A2A-GAP-006.
+**Wire-detail gotcha**: the initial fix used `transportProtocol` as
+the interface field name (intuited from the
+`TransportProtocol.JSONRPC` enum). The actual protobuf field is
+`protocol_binding` (JSON: `protocolBinding`) — the SDK silently
+dropped the misnamed field and `ClientFactory.create_from_url` failed
+with `ValueError: no compatible transports found`. The reliable
+fix-path is always `cls.DESCRIPTOR.fields_by_name` introspection, not
+inferring field names from sibling enum names.
+
+Tests: the four `@pytest.mark.xfail` decorators on v1.0.0 (in
+`test_agent_card.py`, `test_well_known.py`,
+`test_version_negotiation.py`) were removed. v0.3.0 tests were
+rewritten earlier this session to assert against the v0.3.0 schema
+(top-level `protocolVersion` / `url`) and so were unaffected by the
+agent change.

@@ -38,7 +38,7 @@ def _is_reachable(url: str, timeout: float = 3.0) -> bool:
         return False
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def echo_agent_base_url() -> str:
     """Override: point at the v0.3.0 echo agent on port 9101.
 

@@ -35,10 +35,6 @@ def _expected_version() -> str:
     return os.getenv("A2A_ECHO_PROTOCOL_VERSION", "1.0.0")
 
 
-@pytest.mark.xfail(
-    reason="A2A-GAP-002: echo agent puts protocolVersion at top level, not in supportedInterfaces entries",
-    strict=False,
-)
 @pytest.mark.asyncio
 async def test_card_advertises_expected_protocol_version(echo_agent_card_url: str) -> None:
     """Every advertised interface MUST declare ``protocolVersion == expected``.

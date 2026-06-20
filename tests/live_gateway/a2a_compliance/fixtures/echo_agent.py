@@ -37,14 +37,20 @@ def _is_reachable(url: str, timeout: float = 3.0) -> bool:
         return False
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def echo_agent_base_url() -> str:
-    """Return the live echo agent base URL or skip the session if unreachable.
+    """Return the live echo agent base URL or skip the module if unreachable.
 
     The agent is brought up by ``make testing-up`` (compose ``testing``
     profile) and binds ``0.0.0.0:9100`` by default. Override via
     ``A2A_ECHO_BASE_URL`` for non-default port-forwards or remote
     deployments.
+
+    Scope is ``module`` (not ``session``) so the per-version override
+    in ``v0_3_0/conftest.py`` takes effect cleanly per test module —
+    a session-scoped override interacts poorly with pytest's
+    first-seen caching and causes the wrong URL to leak between the
+    v1.0.0 and v0.3.0 suites when both run in one process.
     """
     url = _base_url()
     if not _is_reachable(url):
@@ -52,7 +58,7 @@ def echo_agent_base_url() -> str:
     return url
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def echo_agent_card_url(echo_agent_base_url: str) -> str:
     """URL of the agent card endpoint expected by ``ClientFactory.create_from_url``.
 

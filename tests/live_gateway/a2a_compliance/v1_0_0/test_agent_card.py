@@ -21,10 +21,6 @@ import pytest
 pytestmark = [pytest.mark.a2a, pytest.mark.a2a_v1_0_0, pytest.mark.a2a_agent_card]
 
 
-@pytest.mark.xfail(
-    reason="A2A-GAP-002: echo agent card omits supportedInterfaces; advertises top-level protocolVersion",
-    strict=False,
-)
 @pytest.mark.asyncio
 async def test_agent_card_required_fields(echo_agent_card_url: str) -> None:
     """The agent card MUST advertise ``name``, ``version``, and ``supportedInterfaces``.
@@ -41,10 +37,6 @@ async def test_agent_card_required_fields(echo_agent_card_url: str) -> None:
         assert required in card, f"agent card missing required field {required!r}: {card}"
 
 
-@pytest.mark.xfail(
-    reason="A2A-GAP-002: echo agent card omits supportedInterfaces; advertises top-level protocolVersion",
-    strict=False,
-)
 @pytest.mark.asyncio
 async def test_supported_interfaces_non_empty(echo_agent_card_url: str) -> None:
     """``supportedInterfaces`` MUST be a non-empty list.

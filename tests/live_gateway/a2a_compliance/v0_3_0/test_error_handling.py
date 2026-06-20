@@ -83,10 +83,6 @@ async def test_malformed_json_returns_parse_error(echo_agent_base_url: str) -> N
     assert body["error"].get("code") == -32700, f"expected code -32700 (Parse error), got {body['error']}"
 
 
-@pytest.mark.xfail(
-    reason="A2A-GAP-004: echo agent returns -32700 (parse error) for missing-method envelope; should be -32600",
-    strict=False,
-)
 @pytest.mark.asyncio
 async def test_missing_method_returns_invalid_request(echo_agent_base_url: str) -> None:
     """A JSON-RPC payload missing the ``method`` field MUST yield ``-32600`` or HTTP 4xx.

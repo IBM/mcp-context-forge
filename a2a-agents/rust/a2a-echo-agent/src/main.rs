@@ -184,9 +184,26 @@ async fn jsonrpc_handler(State(state): State<AppState>, body: Bytes) -> impl Int
 }
 
 fn handle_jsonrpc_body(state: &AppState, body: &[u8]) -> JsonRpcResponse {
-    match serde_json::from_slice::<JsonRpcRequest>(body) {
+    // JSON-RPC 2.0 § 5.1 reserves -32700 specifically for "invalid JSON".
+    // Well-formed JSON with a malformed envelope is -32600 "Invalid Request",
+    // and that includes the common case of `method` being missing.
+    let parsed: Value = match serde_json::from_slice(body) {
+        Ok(value) => value,
+        Err(_) => return rpc_error_with_id(Value::Null, -32700, "parse error"),
+    };
+
+    let id = parsed.get("id").cloned().unwrap_or(Value::Null);
+
+    if !parsed.is_object() {
+        return rpc_error_with_id(id, -32600, "request must be a JSON object");
+    }
+    if parsed.get("method").and_then(Value::as_str).is_none() {
+        return rpc_error_with_id(id, -32600, "missing or invalid method field");
+    }
+
+    match serde_json::from_value::<JsonRpcRequest>(parsed) {
         Ok(req) => dispatch_jsonrpc_request(state, &req),
-        Err(_) => rpc_error_with_id(Value::Null, -32700, "parse error"),
+        Err(_) => rpc_error_with_id(id, -32600, "invalid JSON-RPC envelope"),
     }
 }
 
@@ -259,7 +276,17 @@ fn handle_send_message(state: &AppState, method: &str, params: &Value) -> Result
         updated_at: Utc::now(),
     };
     store_task(state, task.clone());
-    Ok(task_to_value(&task, uses_v1_method(method)))
+    let use_v1 = uses_v1_method(method);
+    let task_value = task_to_value(&task, use_v1);
+    if use_v1 {
+        // v1.0.0 SendMessageResponse is a `oneof { Task task; Message message; }`.
+        // Wrap the task so SDK protobuf parsing finds it at the right field path.
+        // Legacy v0.3.x SDK transport (CompatJsonRpcTransport) tolerates the
+        // unwrapped task shape and is left as-is.
+        Ok(json!({ "task": task_value }))
+    } else {
+        Ok(task_value)
+    }
 }
 
 fn store_task(state: &AppState, task: StoredTask) {
@@ -305,6 +332,11 @@ fn write_task_store(state: &AppState) -> RwLockWriteGuard<'_, TaskStore> {
 }
 
 fn task_to_value(task: &StoredTask, use_v1: bool) -> Value {
+    // v1.0.0 Task protobuf has exactly these fields: id, context_id, status,
+    // artifacts, history, metadata. createdAt / updatedAt are not in the
+    // schema and the SDK parser rejects them. Legacy v0.3.x CompatJsonRpcTransport
+    // tolerates extras and historically consumed both timestamps, so we keep
+    // them on the legacy shape for back-compat.
     let mut value = json!({
         "id": task.id,
         "contextId": task.context_id,
@@ -318,12 +350,12 @@ fn task_to_value(task: &StoredTask, use_v1: bool) -> Value {
             ),
             "timestamp": task.updated_at.to_rfc3339()
         },
-        "artifacts": [build_artifact(&format!("{}-artifact", task.id), &task.output_text, use_v1)],
-        "createdAt": task.created_at.to_rfc3339(),
-        "updatedAt": task.updated_at.to_rfc3339()
+        "artifacts": [build_artifact(&format!("{}-artifact", task.id), &task.output_text, use_v1)]
     });
     if !use_v1 {
         value["kind"] = json!("task");
+        value["createdAt"] = json!(task.created_at.to_rfc3339());
+        value["updatedAt"] = json!(task.updated_at.to_rfc3339());
     }
     value
 }
@@ -477,6 +509,47 @@ fn extract_text(value: &Value) -> Option<String> {
 }
 
 fn agent_card(config: &Config, base_url: &str) -> Value {
+    // A2A 1.0.0 introduced the supported_interfaces array for transport
+    // advertisement and dropped top-level protocol_version / url from the
+    // AgentCard protobuf. v0.3.x kept the flat top-level shape. The agent
+    // emits whichever shape matches the configured protocol_version so the
+    // SDK's ClientFactory parses the card against the right schema.
+    if config.protocol_version.starts_with("1.") {
+        agent_card_v1(config, base_url)
+    } else {
+        agent_card_legacy(config, base_url)
+    }
+}
+
+fn agent_card_v1(config: &Config, base_url: &str) -> Value {
+    json!({
+        "name": config.name,
+        "description": "Rust A2A echo agent for ContextForge integration testing",
+        "version": APP_VERSION,
+        "capabilities": {
+            "streaming": false,
+            "pushNotifications": false,
+            "stateTransitionHistory": true,
+            "echo": true
+        },
+        "defaultInputModes": ["text/plain"],
+        "defaultOutputModes": ["text/plain"],
+        "skills": [{
+            "id": "echo",
+            "name": "Echo",
+            "description": "Echoes user text and stores completed tasks in memory",
+            "tags": ["testing", "echo"],
+            "examples": ["hello"]
+        }],
+        "supportedInterfaces": [{
+            "protocolBinding": "JSONRPC",
+            "protocolVersion": config.protocol_version,
+            "url": base_url
+        }]
+    })
+}
+
+fn agent_card_legacy(config: &Config, base_url: &str) -> Value {
     json!({
         "name": config.name,
         "description": "Rust A2A echo agent for ContextForge integration testing",
@@ -586,7 +659,7 @@ mod tests {
             &json!({"message": {"parts": [{"text": "hello"}]}}),
         )
         .unwrap();
-        let id = result["id"].as_str().unwrap();
+        let id = result["task"]["id"].as_str().unwrap();
         assert_eq!(get_task(&state, id).unwrap().output_text, "Echo: hello");
         assert_eq!(
             list_tasks(&state, true)["tasks"].as_array().unwrap().len(),
@@ -603,7 +676,7 @@ mod tests {
             &json!({"message": {"parts": [{"text": "hello"}]}}),
         )
         .unwrap();
-        let id = result["id"].as_str().unwrap();
+        let id = result["task"]["id"].as_str().unwrap();
         let task = cancel_task(&state, id).unwrap();
         assert_eq!(task.state, "canceled");
     }
@@ -709,20 +782,33 @@ mod tests {
         )
         .unwrap();
 
-        assert!(result.get("kind").is_none());
-        assert_eq!(result["status"]["state"], "TASK_STATE_COMPLETED");
-        assert_eq!(result["status"]["message"]["role"], "ROLE_AGENT");
-        assert_eq!(
-            result["status"]["message"]["parts"][0]["text"],
-            "Echo: hello"
+        let task = &result["task"];
+        assert!(
+            task.is_object(),
+            "v1 send_message must wrap the task in a SendMessageResponse oneof"
         );
         assert!(
-            result["status"]["message"]["parts"][0]
-                .get("kind")
-                .is_none()
+            result.get("kind").is_none(),
+            "v1 SendMessageResponse envelope must not carry a kind discriminator"
         );
-        assert_eq!(result["artifacts"][0]["parts"][0]["text"], "Echo: hello");
-        assert!(result["artifacts"][0]["parts"][0].get("kind").is_none());
+        assert!(
+            task.get("kind").is_none(),
+            "v1 Task must not carry a kind discriminator (v0.3.x-only field)"
+        );
+        assert!(
+            task.get("createdAt").is_none(),
+            "v1 Task must not emit createdAt (not in v1.0.0 protobuf schema)"
+        );
+        assert!(
+            task.get("updatedAt").is_none(),
+            "v1 Task must not emit updatedAt (not in v1.0.0 protobuf schema)"
+        );
+        assert_eq!(task["status"]["state"], "TASK_STATE_COMPLETED");
+        assert_eq!(task["status"]["message"]["role"], "ROLE_AGENT");
+        assert_eq!(task["status"]["message"]["parts"][0]["text"], "Echo: hello");
+        assert!(task["status"]["message"]["parts"][0].get("kind").is_none());
+        assert_eq!(task["artifacts"][0]["parts"][0]["text"], "Echo: hello");
+        assert!(task["artifacts"][0]["parts"][0].get("kind").is_none());
     }
 
     #[test]
@@ -745,7 +831,7 @@ mod tests {
     }
 
     #[test]
-    fn agent_card_contains_required_shape() {
+    fn agent_card_v1_uses_supported_interfaces_shape() {
         let config = Config {
             name: "a2a-echo-agent".to_string(),
             protocol_version: "1.0.0".to_string(),
@@ -754,8 +840,52 @@ mod tests {
         };
         let card = agent_card(&config, "http://localhost:9100");
         assert_eq!(card["name"], "a2a-echo-agent");
-        assert_eq!(card["protocolVersion"], "1.0.0");
-        assert!(card["skills"].as_array().unwrap().len() == 1);
+        assert!(
+            card.get("protocolVersion").is_none(),
+            "v1 card must not advertise protocolVersion at the top level"
+        );
+        assert!(
+            card.get("url").is_none(),
+            "v1 card must not advertise url at the top level"
+        );
+        let interfaces = card["supportedInterfaces"].as_array().unwrap();
+        assert_eq!(interfaces.len(), 1);
+        assert_eq!(interfaces[0]["protocolBinding"], "JSONRPC");
+        assert_eq!(interfaces[0]["protocolVersion"], "1.0.0");
+        assert_eq!(interfaces[0]["url"], "http://localhost:9100");
+        assert_eq!(card["skills"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn agent_card_legacy_uses_top_level_shape() {
+        let config = Config {
+            name: "a2a-echo-agent".to_string(),
+            protocol_version: "0.3.0".to_string(),
+            fixed_response: None,
+            public_url: None,
+        };
+        let card = agent_card(&config, "http://localhost:9100");
+        assert_eq!(card["name"], "a2a-echo-agent");
+        assert_eq!(card["protocolVersion"], "0.3.0");
+        assert_eq!(card["url"], "http://localhost:9100");
+        assert!(
+            card.get("supportedInterfaces").is_none(),
+            "v0.3.x card must not emit supportedInterfaces (v1.0.0-only field)"
+        );
+        assert_eq!(card["skills"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn missing_method_returns_invalid_request_envelope() {
+        let state = state();
+        let response =
+            handle_jsonrpc_body(&state, br#"{"jsonrpc":"2.0","id":"req-1","params":{}}"#);
+        let error = response.error.unwrap();
+        assert_eq!(
+            error.code, -32600,
+            "JSON-RPC 2.0 reserves -32600 for envelopes missing required fields"
+        );
+        assert_eq!(response.id, json!("req-1"));
     }
 
     #[test]
