@@ -748,6 +748,7 @@ clean:
 # help: test-protocol-compliance-matrix - Protocol compliance matrix across every runnable engine; summary table (pass MATRIX_ARGS='--format markdown --out X' to override)
 # help: test-protocol-compliance-a2a - A2A protocol compliance harness: full (target, transport) matrix across all versions (K=<filter> to pick one)
 # help: test-protocol-compliance-a2a-v1-0-0 - A2A 1.0.0 compliance harness only (K=<filter> to pick one)
+# help: test-protocol-compliance-a2a-v0-3-0 - A2A 0.3.0 (legacy) compliance harness only (K=<filter> to pick one)
 # help: test-protocol-compliance-a2a-reference - A2A compliance harness, reference echo agent + raw-httpx tests (gateway cells xfail via A2A-GAP-001)
 # help: test-protocol-compliance-a2a-gateway - A2A compliance harness, gateway-proxy + gateway-virtual targets (all xfail via A2A-GAP-001 until native passthrough lands)
 # help: test-mcp-protocol-e2e - MCP protocol E2E via FastMCP client against live gateway (K=<filter> to pick one; MCP_E2E_CLIENT_TIMEOUT env to extend the 5s client timeout)
@@ -851,6 +852,13 @@ test-protocol-compliance-a2a-v1-0-0: uv  ## A2A 1.0.0 compliance harness only (K
 	@$(UV_BIN) run pytest tests/live_gateway/a2a_compliance/v1_0_0 $(if $(K),-k "$(K)") -v --tb=short \
 		|| { echo "❌ A2A 1.0.0 compliance harness failed!"; exit 1; }
 	@echo "✅ A2A 1.0.0 compliance harness passed!"
+
+test-protocol-compliance-a2a-v0-3-0: uv  ## A2A 0.3.0 (legacy) compliance harness only (K=<filter> to pick one)
+	@echo "📜 Running A2A 0.3.0 (legacy) compliance harness..."
+	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
+	@$(UV_BIN) run pytest tests/live_gateway/a2a_compliance/v0_3_0 $(if $(K),-k "$(K)") -v --tb=short \
+		|| { echo "❌ A2A 0.3.0 compliance harness failed!"; exit 1; }
+	@echo "✅ A2A 0.3.0 compliance harness passed!"
 
 test-protocol-compliance-a2a-reference: uv  ## A2A compliance harness — reference echo agent + raw-httpx tests (gateway cells xfail via A2A-GAP-001)
 	@echo "📜 Running A2A compliance harness (reference target + raw-httpx tests)..."

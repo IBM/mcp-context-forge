@@ -730,6 +730,7 @@ markers = [
     "mcp_drift: marks cross-target behavioral-equivalence tests",
     "a2a: marks black-box A2A protocol compliance harness tests (tests/live_gateway/a2a_compliance)",
     "a2a_v1_0_0: marks A2A 1.0.0 compliance tests",
+    "a2a_v0_3_0: marks A2A 0.3.0 (legacy) compliance tests",
     "a2a_agent_card: marks A2A agent card structural compliance tests",
     "a2a_well_known: marks A2A well-known endpoint routing tests",
     "a2a_jsonrpc: marks A2A JSON-RPC method coverage tests (SendMessage, GetTask, ListTasks, CancelTask)",

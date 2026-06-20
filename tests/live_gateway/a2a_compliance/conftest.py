@@ -50,19 +50,39 @@ _CASES: list[tuple[str, Transport]] = [
 
 _GATEWAY_TARGET_NAMES = frozenset({"gateway_proxy", "gateway_virtual"})
 _GATEWAY_XFAIL_REASON = "A2A-GAP-001: ContextForge lacks native A2A passthrough at a public " "JSON-RPC + well-known-card route. See " "tests/live_gateway/a2a_compliance/COMPLIANCE_GAPS.md."
-
-_REFERENCE_GAP_006_TESTS = frozenset(
-    {
-        "test_send_message_returns_at_least_one_response",
-        "test_send_message_echoes_input_text",
-        "test_list_tasks_returns_response",
-        "test_send_message_response_populates_message_or_task",
-        "test_echo_response_carries_text_part",
-    }
-)
+_REFERENCE_GAP_006_TESTS_BY_VERSION: dict[str, frozenset[str]] = {
+    "v1_0_0": frozenset(
+        {
+            "test_send_message_returns_at_least_one_response",
+            "test_send_message_echoes_input_text",
+            "test_list_tasks_returns_response",
+            "test_send_message_response_populates_message_or_task",
+            "test_echo_response_carries_text_part",
+        }
+    ),
+    "v0_3_0": frozenset({"test_list_tasks_returns_response"}),
+}
 _REFERENCE_GAP_006_REASON = (
-    "A2A-GAP-006: echo agent SendMessageResponse includes non-protobuf `artifacts` " "field; SDK protobuf parser rejects with ParseError. See " "tests/live_gateway/a2a_compliance/COMPLIANCE_GAPS.md."
+    "A2A-GAP-006: echo agent response payloads include non-protobuf fields the " "SDK parser rejects with ParseError. See " "tests/live_gateway/a2a_compliance/COMPLIANCE_GAPS.md."
 )
+
+
+def _version_segment_from_path(item: pytest.Item) -> str | None:
+    """Return ``v1_0_0`` / ``v0_3_0`` based on the test's filesystem location.
+
+    The ``a2a_compliance`` package organizes test bodies under per-version
+    subpackages (``v1_0_0/``, ``v0_3_0/``); the path segment is the only
+    stable signal at collection time for distinguishing which version's
+    fixture-override conftest a given test inherits. Returns ``None`` for
+    tests collected outside any versioned subdir (none today, but defended
+    against future flat-layout additions at the harness root).
+    """
+    path_str = str(item.path)
+    if "/v1_0_0/" in path_str or "\\v1_0_0\\" in path_str:
+        return "v1_0_0"
+    if "/v0_3_0/" in path_str or "\\v0_3_0\\" in path_str:
+        return "v0_3_0"
+    return None
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -77,16 +97,20 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
       collection time (before fixture setup runs) means the fixture's
       exception lands inside an xfail-wrapped test and pytest reports
       ``XFAIL`` instead of ``ERROR``.
-    * **A2A-GAP-006 (per-test, ``reference`` target only)** — the five
-      SDK-Client tests in ``_REFERENCE_GAP_006_TESTS`` fail because
-      the echo agent's ``SendMessageResponse`` JSON includes an
+    * **A2A-GAP-006 (per-test, ``reference`` target, per-version)** —
+      the v1.0.0 transport rejects all five SDK-Client tests in
+      ``_REFERENCE_GAP_006_TESTS_BY_VERSION['v1_0_0']`` because the
+      echo agent's ``SendMessageResponse`` JSON includes an
       ``artifacts`` field at the response root that's absent from the
-      SDK's protobuf schema (which has only ``task`` and ``message``).
-      The HTTP round-trip succeeds; the SDK's protobuf parser rejects
-      the response with ``ParseError``. The other matrix tests (e.g.
-      ``test_get_task_for_unknown_id_raises``) pass on this cell
-      because they treat any exception as success — the protobuf
-      parse error satisfies that contract incidentally.
+      SDK's protobuf schema. The HTTP round-trip succeeds; the SDK's
+      protobuf parser rejects the response with ``ParseError``.
+
+      The v0.3.0 ``CompatJsonRpcTransport`` has a different response
+      shape and tolerates four of the five; only
+      ``test_list_tasks_returns_response`` still fails under v0.3.0,
+      so ``_REFERENCE_GAP_006_TESTS_BY_VERSION['v0_3_0']`` is a single
+      entry. The test's version is read from the filesystem path
+      (``v1_0_0/`` vs ``v0_3_0/``) via ``_version_segment_from_path``.
 
     Rather than requiring every future test author to remember to call
     ``xfail_on`` for these column-wide / cell-wide gaps, this hook
@@ -107,8 +131,10 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         target_name = callspec.id.split("-")[0]
         if target_name in _GATEWAY_TARGET_NAMES:
             item.add_marker(pytest.mark.xfail(strict=False, reason=_GATEWAY_XFAIL_REASON))
-        elif target_name == "reference" and item.originalname in _REFERENCE_GAP_006_TESTS:
-            item.add_marker(pytest.mark.xfail(strict=False, reason=_REFERENCE_GAP_006_REASON))
+        elif target_name == "reference":
+            version = _version_segment_from_path(item)
+            if version is not None and item.originalname in _REFERENCE_GAP_006_TESTS_BY_VERSION[version]:
+                item.add_marker(pytest.mark.xfail(strict=False, reason=_REFERENCE_GAP_006_REASON))
 
 
 def _build_target(target_name: str, request: pytest.FixtureRequest):

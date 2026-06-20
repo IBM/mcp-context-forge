@@ -188,17 +188,19 @@ the `xfail` on this test.
 
 ---
 
-### A2A-GAP-006 — Echo agent `SendMessageResponse` includes `artifacts` field not in the protobuf schema
+### A2A-GAP-006 — Echo agent response payloads include non-protobuf fields the SDK parser rejects
 
 | | |
 |---|---|
 | **Targets affected** | `reference` |
-| **Tests** | `test_jsonrpc_methods.py::test_send_message_returns_at_least_one_response`, `::test_send_message_echoes_input_text`, `::test_list_tasks_returns_response`, `test_messages_artifacts.py::test_send_message_response_populates_message_or_task`, `::test_echo_response_carries_text_part` (all under `[reference-jsonrpc]`) |
+| **Tests (v1.0.0)** | 5 cells: `test_jsonrpc_methods.py::test_send_message_returns_at_least_one_response`, `::test_send_message_echoes_input_text`, `::test_list_tasks_returns_response`, `test_messages_artifacts.py::test_send_message_response_populates_message_or_task`, `::test_echo_response_carries_text_part` |
+| **Tests (v0.3.0)** | 1 cell: `test_jsonrpc_methods.py::test_list_tasks_returns_response` (the four `SendMessage`-related tests pass under `CompatJsonRpcTransport`) |
 | **Spec** | A2A 1.0.0 — `SendMessageResponse` protobuf schema: `oneof { Task task; Message message; }`. `artifacts` belongs on `Task`, not at the response root. |
 
-**Observed**: the SDK's `Client.send_message` round-trip succeeds at
-the HTTP layer (`POST http://127.0.0.1:9100/` returns `200 OK`), then
-parsing the response into `SendMessageResponse` fails with:
+**Observed (v1.0.0)**: the SDK's `Client.send_message` round-trip
+succeeds at the HTTP layer (`POST http://127.0.0.1:9100/` returns
+`200 OK`), then parsing the response into `SendMessageResponse` fails
+with:
 
 ```
 google.protobuf.json_format.ParseError: Message type "lf.a2a.v1.SendMessageResponse"
@@ -206,26 +208,35 @@ has no field named "artifacts" at "SendMessageResponse". Available
 Fields(except extensions): "['task', 'message']"
 ```
 
+**Observed (v0.3.0)**: the `SendMessage`-related tests **pass** —
+the SDK's `CompatJsonRpcTransport` for legacy 0.3.x has a different
+response shape that doesn't trip on the agent's flat layout.
+`test_list_tasks_returns_response` still fails on v0.3.0 with an
+analogous parse error against the legacy `ListTasksResponse` shape,
+suggesting the agent's response builder has the same flatness bug on
+`tasks/list` as on `SendMessage` but the SDK happens to tolerate the
+`SendMessage`-shape rewrite for v0.3.x.
+
 **Expected**: per the protobuf schema captured during Phase-0
-introspection (`SendMessageResponse.DESCRIPTOR.fields_by_name`), the
-response carries either `task` (a full Task with its own `artifacts`
-field) or `message` (a single Message). Artifacts produced by a tool
-call belong inside the `Task.artifacts` field, not at the response
-envelope root.
+introspection (`SendMessageResponse.DESCRIPTOR.fields_by_name`,
+`Task.DESCRIPTOR.fields_by_name`), responses carry either a `task`
+field (full Task with its own `artifacts`) or a `message` field. The
+v0.3.0 legacy schema has its own equivalent. Artifacts always
+belong inside a Task, never at the response envelope root.
 
 **Why**: the echo agent's response serializer likely emits a flat
 struct with `message` + `artifacts` instead of wrapping artifacts
 inside a Task or omitting them entirely for the echo-only case. The
-HTTP-layer success makes this look like a wire-format conformance
-issue rather than a connectivity problem.
+v0.3.0 `CompatJsonRpcTransport` has a more forgiving parser for the
+`SendMessage` path; the `tasks/list` path doesn't get the same lenience.
 
-**How to close**: rework the echo agent's `SendMessage` response
-builder to emit `{"message": {...}}` for the message-only echo case,
-or `{"task": {"id": "...", "artifacts": [...], ...}}` when a task is
-involved. Once the response parses, the five affected tests pass on
-`[reference-jsonrpc]` — drop the conftest's
-`_REFERENCE_GAP_006_TESTS` arm at that point and move this entry to
-"Closed gaps".
+**How to close**: rework the echo agent's response builder to emit
+`{"message": {...}}` for the message-only echo case, or
+`{"task": {"id": "...", "artifacts": [...], ...}}` when a task is
+involved — for both the 1.0.0 and 0.3.0 schemas. Once responses parse,
+the five v1.0.0 cells and the one v0.3.0 cell pass — drop the conftest's
+`_REFERENCE_GAP_006_TESTS_BY_VERSION` arm at that point and move this
+entry to "Closed gaps".
 
 ---
 
