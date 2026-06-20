@@ -728,6 +728,15 @@ markers = [
     "transport_sse: marks tests that exercise the SSE transport",
     "transport_http: marks tests that exercise the Streamable HTTP transport",
     "mcp_drift: marks cross-target behavioral-equivalence tests",
+    "a2a: marks black-box A2A protocol compliance harness tests (tests/live_gateway/a2a_compliance)",
+    "a2a_v1_0_0: marks A2A 1.0.0 compliance tests",
+    "a2a_agent_card: marks A2A agent card structural compliance tests",
+    "a2a_well_known: marks A2A well-known endpoint routing tests",
+    "a2a_jsonrpc: marks A2A JSON-RPC method coverage tests (SendMessage, GetTask, ListTasks, CancelTask)",
+    "a2a_error_handling: marks A2A JSON-RPC envelope error-code compliance tests",
+    "a2a_messages_artifacts: marks A2A message and artifact shape compliance tests",
+    "a2a_security: marks A2A security scheme advertisement tests",
+    "a2a_versioning: marks A2A protocol version advertisement tests",
 ]
 
 # Playwright-specific test discovery patterns

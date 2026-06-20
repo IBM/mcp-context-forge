@@ -746,6 +746,10 @@ clean:
 # help: test-protocol-compliance-reference - Protocol compliance harness, reference server only (fast, always-on)
 # help: test-protocol-compliance-gateway - Protocol compliance harness, gateway-proxy + gateway-virtual targets (requires working gateway boot)
 # help: test-protocol-compliance-matrix - Protocol compliance matrix across every runnable engine; summary table (pass MATRIX_ARGS='--format markdown --out X' to override)
+# help: test-protocol-compliance-a2a - A2A protocol compliance harness: full (target, transport) matrix across all versions (K=<filter> to pick one)
+# help: test-protocol-compliance-a2a-v1-0-0 - A2A 1.0.0 compliance harness only (K=<filter> to pick one)
+# help: test-protocol-compliance-a2a-reference - A2A compliance harness, reference echo agent + raw-httpx tests (gateway cells xfail via A2A-GAP-001)
+# help: test-protocol-compliance-a2a-gateway - A2A compliance harness, gateway-proxy + gateway-virtual targets (all xfail via A2A-GAP-001 until native passthrough lands)
 # help: test-mcp-protocol-e2e - MCP protocol E2E via FastMCP client against live gateway (K=<filter> to pick one; MCP_E2E_CLIENT_TIMEOUT env to extend the 5s client timeout)
 # help: test-mcp-cli         - [DEPRECATED] Alias for test-mcp-protocol-e2e (accepts same K=<filter>)
 # help: test-mcp-rbac        - RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
@@ -833,6 +837,32 @@ test-protocol-compliance-gateway: uv  ## Protocol compliance harness — gateway
 
 test-protocol-compliance-matrix: uv  ## MCP compliance matrix across every runnable engine (reference, python, rust_edge, rust_full) with aggregated summary
 	@$(UV_BIN) run python scripts/compliance_matrix.py $(MATRIX_ARGS)
+
+test-protocol-compliance-a2a: uv  ## A2A protocol compliance harness — full (target, transport) matrix across all versions (K=<filter> to pick one)
+	@echo "📜 Running A2A protocol compliance harness (tests/live_gateway/a2a_compliance)..."
+	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
+	@$(UV_BIN) run pytest tests/live_gateway/a2a_compliance $(if $(K),-k "$(K)") -v --tb=short \
+		|| { echo "❌ A2A compliance harness failed!"; exit 1; }
+	@echo "✅ A2A compliance harness passed!"
+
+test-protocol-compliance-a2a-v1-0-0: uv  ## A2A 1.0.0 compliance harness only (K=<filter> to pick one)
+	@echo "📜 Running A2A 1.0.0 compliance harness..."
+	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
+	@$(UV_BIN) run pytest tests/live_gateway/a2a_compliance/v1_0_0 $(if $(K),-k "$(K)") -v --tb=short \
+		|| { echo "❌ A2A 1.0.0 compliance harness failed!"; exit 1; }
+	@echo "✅ A2A 1.0.0 compliance harness passed!"
+
+test-protocol-compliance-a2a-reference: uv  ## A2A compliance harness — reference echo agent + raw-httpx tests (gateway cells xfail via A2A-GAP-001)
+	@echo "📜 Running A2A compliance harness (reference target + raw-httpx tests)..."
+	@$(UV_BIN) run pytest tests/live_gateway/a2a_compliance -k "not gateway_" -v --tb=short \
+		|| { echo "❌ A2A reference compliance harness failed!"; exit 1; }
+	@echo "✅ A2A reference compliance harness passed!"
+
+test-protocol-compliance-a2a-gateway: uv  ## A2A compliance harness — gateway-proxy + gateway-virtual targets (all xfail via A2A-GAP-001 until native passthrough lands)
+	@echo "📜 Running A2A compliance harness (gateway targets — expected to xfail per A2A-GAP-001)..."
+	@$(UV_BIN) run pytest tests/live_gateway/a2a_compliance -k "gateway_proxy or gateway_virtual" -v --tb=short \
+		|| { echo "❌ A2A gateway compliance harness failed!"; exit 1; }
+	@echo "✅ A2A gateway compliance harness finished (expected XFAILs per A2A-GAP-001)."
 
 test-mcp-rbac: uv  ## RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
 	@echo "🔐 Running RBAC + multi-transport MCP protocol tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
