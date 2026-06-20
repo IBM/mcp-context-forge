@@ -754,6 +754,7 @@ class TestTokenExchange:
         assert auth_header.startswith("Basic ")
         # Verify it's valid base64
         import base64
+
         payload = auth_header[len("Basic "):]
         decoded = base64.b64decode(payload).decode("utf-8")
         assert decoded.startswith("test-client-id:")
@@ -809,6 +810,7 @@ class TestTokenExchange:
         header = sso_service._build_basic_auth_header("client@id", "secret:+?")
         assert header.startswith("Basic ")
         import base64
+
         payload = base64.b64decode(header[len("Basic "):]).decode("utf-8")
         assert payload == "client%40id:secret%3A%2B%3F"
 
@@ -1286,6 +1288,94 @@ class TestGetUserInfo:
         assert result["email"] == "user@kc.com"
         assert "admin" in result["groups"]
         assert "/team" in result["groups"]
+
+    @pytest.mark.asyncio
+    async def test_get_user_info_keycloak_merges_realm_access_from_access_token_when_userinfo_succeeds(self, sso_service):
+        """Keycloak's default mappers only put realm_access/resource_access on the access_token
+        (userinfo.token.claim and id.token.claim default to false). Even when userinfo returns
+        200 and there's no id_token claim to fall back to, the gateway should still extract
+        roles by decoding the access_token it already received from the token endpoint."""
+        # Standard
+        import base64
+
+        # Third-Party
+        import orjson
+
+        user_response = MagicMock()
+        user_response.status_code = 200
+        user_response.json.return_value = {"email": "user@kc.com", "name": "KC User", "preferred_username": "kcuser", "sub": "kc-123"}
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=user_response)
+
+        provider = _make_provider(
+            id="keycloak",
+            name="keycloak",
+            provider_type="oidc",
+            provider_metadata={"map_realm_roles": True, "map_client_roles": True},
+        )
+
+        access_token_payload = orjson.dumps({"realm_access": {"roles": ["gateway-admin"]}, "resource_access": {"app": {"roles": ["edit"]}}})
+        access_token_payload_b64 = base64.urlsafe_b64encode(access_token_payload).decode().rstrip("=")
+        fake_access_token = f"eyJhbGciOiJSUzI1NiJ9.{access_token_payload_b64}.sig"
+
+        # No id_token / verified id_token claims at all - the bug surfaces even without
+        # the split-host fallback machinery being involved.
+        token_data = {"access_token": fake_access_token}
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_github_admin_orgs = []
+            result = await sso_service._get_user_info(provider, fake_access_token, token_data)
+
+        assert result is not None
+        assert result["provider"] == "keycloak"
+        assert "gateway-admin" in result["groups"]
+        assert "app:edit" in result["groups"]
+
+    @pytest.mark.asyncio
+    async def test_get_user_info_keycloak_fallback_merges_realm_access_from_access_token_when_id_token_lacks_it(self, sso_service):
+        """On the 401 + split-host fallback path, the id_token may itself lack realm_access
+        (same default-mapper gap as userinfo). The access_token, already in hand from the
+        token endpoint, should be decoded to fill in the missing roles."""
+        # Standard
+        import base64
+
+        # Third-Party
+        import orjson
+
+        fail_response = MagicMock()
+        fail_response.status_code = 401
+        fail_response.text = ""
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=fail_response)
+
+        provider = _make_provider(
+            id="keycloak",
+            name="keycloak",
+            provider_type="oidc",
+            provider_metadata={"map_realm_roles": True, "map_client_roles": False, "base_url": "http://keycloak:8080", "public_base_url": "http://localhost:8180"},
+        )
+
+        # id_token claims have no realm_access (matches Keycloak's default mapper config).
+        id_token_claims = {"sub": "kc-123", "email": "user@kc.com", "name": "KC User", "preferred_username": "kcuser"}
+
+        access_token_payload = orjson.dumps({"realm_access": {"roles": ["gateway-admin"]}})
+        access_token_payload_b64 = base64.urlsafe_b64encode(access_token_payload).decode().rstrip("=")
+        fake_access_token = f"eyJhbGciOiJSUzI1NiJ9.{access_token_payload_b64}.sig"
+
+        token_data = {"access_token": fake_access_token, "_verified_id_token_claims": id_token_claims}
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_github_admin_orgs = []
+            result = await sso_service._get_user_info(provider, fake_access_token, token_data)
+
+        assert result is not None
+        assert result["provider"] == "keycloak"
+        assert result["email"] == "user@kc.com"
+        assert "gateway-admin" in result["groups"]
 
     @pytest.mark.asyncio
     async def test_get_user_info_generic_oidc_merges_groups_from_id_token(self, sso_service):
@@ -2958,6 +3048,43 @@ class TestMapGroupsToRoles:
 
         assert len(result) == 1
         assert result[0]["role_name"] == "developer"
+
+    @pytest.mark.asyncio
+    async def test_role_mapping_matches_case_insensitively(self, sso_service):
+        """A group/role name whose casing differs from the configured role_mappings key
+        must still resolve. _should_user_be_admin() already matches case-insensitively;
+        _map_groups_to_roles() must do the same so is_admin and the RBAC role assignment
+        stay consistent (otherwise a user can get is_admin=True with no platform_admin
+        role row, or vice versa)."""
+        mock_role = SimpleNamespace(name="developer", scope="team", id="r1")
+        provider = _make_provider(provider_metadata={"role_mappings": {"Dev-Group": "developer"}})
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_default_role = None
+            mock_settings.sso_entra_role_mappings = {}
+            role_svc_instance = AsyncMock()
+            role_svc_instance.get_role_by_name = AsyncMock(return_value=mock_role)
+            MockRoleService.return_value = role_svc_instance
+            # IdP returned "dev-group" (lowercase), mapping key is "Dev-Group".
+            result = await sso_service._map_groups_to_roles("user@test.com", ["dev-group"], provider)
+
+        assert len(result) == 1
+        assert result[0]["role_name"] == "developer"
+
+    @pytest.mark.asyncio
+    async def test_admin_shorthand_matches_case_insensitively(self, sso_service):
+        """Same case-insensitivity guarantee for the 'admin'/default_admin_role shorthand path."""
+        provider = _make_provider(provider_metadata={"role_mappings": {"Gateway-Admin": "admin"}})
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.role_service.RoleService"):
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_default_role = None
+            mock_settings.sso_entra_role_mappings = {}
+            mock_settings.default_admin_role = "platform_admin"
+            # IdP returned the role with Keycloak-typical lowercase-hyphen casing.
+            result = await sso_service._map_groups_to_roles("user@test.com", ["gateway-admin"], provider)
+
+        assert any(r["role_name"] == "platform_admin" for r in result)
 
     @pytest.mark.asyncio
     async def test_entra_default_role_fallback(self, sso_service):
@@ -4707,6 +4834,7 @@ class TestADFSProvider:
     @pytest.mark.asyncio
     async def test_get_user_info_adfs_missing_id_token(self, sso_service):
         """ADFS provider raises error when id_token is missing."""
+        # First-Party
         from mcpgateway.services.sso_service import SSOProviderConfigError
 
         provider = _make_provider(id="adfs", name="adfs", provider_type="oidc")
