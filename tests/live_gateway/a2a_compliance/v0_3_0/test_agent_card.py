@@ -6,11 +6,14 @@ Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: ContextForge Contributors
 
-Phase 1 scope: raw-httpx against the reference target. The card-shape
-contract is wire-level, so we drive it without the SDK abstraction.
-When gateway native A2A passthrough lands (A2A-GAP-001) these checks
-should be re-parametrized over the full target matrix via an
-``agent_card_url`` resolver per target.
+The A2A 0.3.0 ``AgentCard`` schema is fundamentally different from
+1.0.0 — transport advertisement lives at the top level
+(``protocol_version``, ``url``, ``preferred_transport``,
+``additional_interfaces``) rather than in a ``supported_interfaces``
+array. These tests assert on the v0.3.0 shape; the v1.0.0 sibling
+under ``../v1_0_0/`` asserts the 1.0.0 shape on the same agent process
+(the echo agent emits a 0.3.0-shaped card regardless of advertised
+version — see A2A-GAP-002 for the 1.0.0 case).
 """
 
 from __future__ import annotations
@@ -21,55 +24,55 @@ import pytest
 pytestmark = [pytest.mark.a2a, pytest.mark.a2a_v0_3_0, pytest.mark.a2a_agent_card]
 
 
-@pytest.mark.xfail(
-    reason="A2A-GAP-002: echo agent card omits supportedInterfaces; advertises top-level protocolVersion",
-    strict=False,
-)
 @pytest.mark.asyncio
 async def test_agent_card_required_fields(echo_agent_card_url: str) -> None:
-    """The agent card MUST advertise ``name``, ``version``, and ``supportedInterfaces``.
+    """The v0.3.0 agent card MUST advertise ``name``, ``version``, ``protocolVersion``, ``url``.
 
-    The A2A 0.3.0 protobuf schema serializes these as camelCase
-    (protobuf JSON convention); the echo agent honors that convention,
-    so we assert on the camelCase wire form.
+    Per the v0.3.0 ``AgentCard`` protobuf schema captured during
+    Phase-0 introspection (``a2a.compat.v0_3.types.AgentCard``), these
+    four fields are the minimum a discovery client needs to bootstrap
+    a JSON-RPC session.
     """
     async with httpx.AsyncClient(timeout=5.0) as client:
         response = await client.get(echo_agent_card_url)
     assert response.status_code == 200, response.text[:200]
     card = response.json()
-    for required in ("name", "version", "supportedInterfaces"):
+    for required in ("name", "version", "protocolVersion", "url"):
         assert required in card, f"agent card missing required field {required!r}: {card}"
 
 
-@pytest.mark.xfail(
-    reason="A2A-GAP-002: echo agent card omits supportedInterfaces; advertises top-level protocolVersion",
-    strict=False,
-)
 @pytest.mark.asyncio
-async def test_supported_interfaces_non_empty(echo_agent_card_url: str) -> None:
-    """``supportedInterfaces`` MUST be a non-empty list.
+async def test_top_level_protocol_version_and_url_non_empty(echo_agent_card_url: str) -> None:
+    """``protocolVersion`` and ``url`` MUST be non-empty strings.
 
-    A card with zero interfaces is unusable — a client cannot pick a
-    transport. The echo agent advertises at least JSON-RPC.
+    Empty values parse as protobuf defaults but leave clients with no
+    actionable transport target.
     """
     async with httpx.AsyncClient(timeout=5.0) as client:
         response = await client.get(echo_agent_card_url)
     card = response.json()
-    interfaces = card.get("supportedInterfaces", [])
-    assert isinstance(interfaces, list), f"supportedInterfaces must be a list: {interfaces!r}"
-    assert len(interfaces) >= 1, f"supportedInterfaces must be non-empty: {interfaces}"
+    protocol_version = card.get("protocolVersion")
+    url = card.get("url")
+    assert isinstance(protocol_version, str) and protocol_version, f"protocolVersion must be a non-empty string: {protocol_version!r}"
+    assert isinstance(url, str) and url, f"url must be a non-empty string: {url!r}"
 
 
 @pytest.mark.asyncio
-async def test_each_interface_has_protocol_version(echo_agent_card_url: str) -> None:
-    """Every entry in ``supportedInterfaces`` MUST declare ``protocolVersion``.
+async def test_optional_transport_fields_well_typed(echo_agent_card_url: str) -> None:
+    """If ``additionalInterfaces`` or ``preferredTransport`` are present, their shapes MUST match the schema.
 
-    Without ``protocolVersion`` the SDK's ``ClientFactory`` can't decide
-    between current and ``CompatJsonRpcTransport`` for legacy 0.3.x.
+    Both fields are optional in v0.3.0; protobuf JSON conventions
+    legitimately omit defaults. This test validates shape *when*
+    emitted.
     """
     async with httpx.AsyncClient(timeout=5.0) as client:
         response = await client.get(echo_agent_card_url)
     card = response.json()
-    for interface in card.get("supportedInterfaces", []):
-        assert "protocolVersion" in interface, f"interface missing protocolVersion: {interface}"
-        assert interface["protocolVersion"], f"protocolVersion must be non-empty: {interface}"
+    if "additionalInterfaces" in card:
+        interfaces = card["additionalInterfaces"]
+        assert isinstance(interfaces, list), f"additionalInterfaces must be a list when present: {interfaces!r}"
+        for interface in interfaces:
+            assert isinstance(interface, dict), f"each additionalInterfaces entry must be an object: {interface!r}"
+    if "preferredTransport" in card:
+        preferred = card["preferredTransport"]
+        assert isinstance(preferred, str), f"preferredTransport must be a string when present: {preferred!r}"

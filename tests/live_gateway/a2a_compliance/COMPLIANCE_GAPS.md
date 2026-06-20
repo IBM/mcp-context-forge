@@ -99,65 +99,56 @@ on every previously-xfailed cell.
 
 ---
 
----
-
-### A2A-GAP-002 — Echo agent card omits `supportedInterfaces`; advertises `protocolVersion` at the top level
+### A2A-GAP-002 — Echo agent emits v0.3.0-shaped card on v1.0.0 endpoints
 
 | | |
 |---|---|
-| **Targets affected** | `reference` |
-| **Tests** | `test_agent_card.py::test_agent_card_required_fields`, `::test_supported_interfaces_non_empty`, `test_well_known.py::test_extended_agent_card_route`, `test_version_negotiation.py::test_card_advertises_expected_protocol_version` |
-| **Spec** | A2A 1.0.0 AgentCard — `supported_interfaces` is the canonical field for per-transport version negotiation; top-level `protocol_version` is **not** in the protobuf schema |
+| **Targets affected** | `reference` (**v1.0.0 suite only** — v0.3.0 tests accept the existing card shape because it IS the v0.3.0 schema) |
+| **Tests** | `v1_0_0/test_agent_card.py::test_agent_card_required_fields`, `::test_supported_interfaces_non_empty`, `v1_0_0/test_well_known.py::test_extended_agent_card_route`, `v1_0_0/test_version_negotiation.py::test_card_advertises_expected_protocol_version` |
+| **Spec** | A2A 1.0.0 vs 0.3.0 `AgentCard` protobuf schemas (verified via Phase-0 introspection of `a2a.types.AgentCard` and `a2a.compat.v0_3.types.AgentCard`) |
 
-**Observed**: the bundled Rust `a2a_echo_agent` serves a card with a
-flat top-level `protocolVersion: "1.0.0"` and no `supportedInterfaces`
-array at all. The SDK's `ClientFactory.create_from_url` accepts the
-shape because the JSON-RPC transport is the default fallback when
-`supported_interfaces` is empty, but the card violates the protobuf
-contract on the wire.
+**Observed**: the bundled Rust `a2a_echo_agent` always emits a v0.3.0-shaped
+card regardless of the advertised `protocolVersion`:
 
-**Expected**: per the protobuf schema captured during Phase-0 probing
-(`AgentCard.DESCRIPTOR.fields_by_name`), the canonical fields are
-`name`, `version`, `supported_interfaces`, `provider`, `capabilities`,
-`security_schemes`, `security_requirements`, etc. — with no top-level
-`protocol_version`. Each interface entry inside `supported_interfaces`
-carries its own `protocol_version`.
+| Card field | v1.0.0 schema | v0.3.0 schema | Echo agent emits |
+|---|---|---|---|
+| Transport advertisement | `supported_interfaces[]` (array) | `protocol_version`, `url`, `preferred_transport`, `additional_interfaces[]` (top-level) | v0.3.0 shape |
+| `protocol_version` at top level | not in schema | required | always emitted |
+| `url` at top level | not in schema | required | always emitted |
+| `supported_interfaces` array | required | not in schema | never emitted |
 
-**Why**: echo agent predates the 1.0.0 schema freeze; its card was
-hand-written rather than generated from the protobuf. Tracked as
-a fix to the `a2a-agents/rust/a2a-echo-agent` Rust source.
+The SDK's `ClientFactory.create_from_url` accepts the card under both
+advertised versions because the JSON-RPC transport is the default
+fallback when `supported_interfaces` is empty — but the card violates
+the v1.0.0 protobuf contract on the wire when the agent claims v1.0.0.
 
-**How to close**: rewrite the echo agent's card serialization to emit
-`supported_interfaces: [{ "transportProtocol": "JSONRPC",
-"protocolVersion": "1.0.0", "url": "..." }]` and drop the top-level
-`protocolVersion`. When the card validates against the protobuf,
-remove the four `@pytest.mark.xfail` decorators referencing this gap.
+**Expected**: when the agent advertises `protocolVersion: 1.x.y`, the
+card should serialize with `supported_interfaces: [{ ... }]` and omit
+the top-level `protocol_version` / `url` fields. When advertising
+`protocolVersion: 0.3.x`, the existing flat shape is correct.
 
----
+**Why**: the echo agent's card serializer is version-agnostic — it
+emits the same JSON regardless of the `A2A_ECHO_PROTOCOL_VERSION`
+env var. Card was hand-written against an early-draft schema closer
+to v0.3.0 and never adjusted when 1.0.0 introduced the
+`supported_interfaces` indirection.
 
-### A2A-GAP-003 — Echo agent card omits `securitySchemes` and `securityRequirements`
+**How to close**: make the echo agent's card serializer version-aware.
+When `config.protocol_version` starts with `1.`, emit:
 
-| | |
-|---|---|
-| **Targets affected** | `reference` |
-| **Tests** | `test_security.py::test_security_schemes_field_present`, `::test_security_requirements_field_present` |
-| **Spec** | A2A 1.0.0 AgentCard — `security_schemes` and `security_requirements` are first-class fields the protobuf always carries (even if empty) |
+```json
+{
+  "name": "...", "version": "...", "capabilities": {...}, ...,
+  "supportedInterfaces": [
+    {"transportProtocol": "JSONRPC", "protocolVersion": "1.0.0", "url": "http://..."}
+  ]
+}
+```
 
-**Observed**: the echo agent's card has no `securitySchemes` /
-`securityRequirements` keys. Protobuf JSON serialization can drop
-fields whose values are empty unless emit-defaults is on; the echo
-agent's Rust implementation appears to default to "drop-if-empty".
-
-**Expected**: clients should be able to confirm "no auth required"
-positively. Missing fields are ambiguous — they could mean "no auth"
-or "spec-violating card". Explicit emission (empty map / empty list)
-is the only way to make the answer unambiguous.
-
-**How to close**: configure the echo agent's serializer to always
-emit `securitySchemes: {}` and `securityRequirements: []` (or
-`null`-typed equivalents the protobuf JSON contract requires). When
-the card includes the fields, remove the two `xfail` decorators
-referencing this gap.
+(no top-level `protocolVersion` / `url`). For `0.3.x` versions, keep
+the current flat shape. Once the v1.0.0 card validates against the
+v1.0.0 protobuf, remove the four `@pytest.mark.xfail` decorators
+under `v1_0_0/` that reference this gap.
 
 ---
 
@@ -240,67 +231,31 @@ entry to "Closed gaps".
 
 ---
 
-### A2A-GAP-005 — Echo agent advertises `url: http://localhost:9100` in its card; SDK follow-ups time out
+## Closed gaps
 
-| | |
-|---|---|
-| **Targets affected** | `reference` |
-| **Tests** | `test_jsonrpc_methods.py::test_send_message_returns_at_least_one_response`, `::test_send_message_echoes_input_text`, `::test_list_tasks_returns_response`, `test_messages_artifacts.py::test_send_message_response_populates_message_or_task`, `::test_echo_response_carries_text_part` (all under `[reference-jsonrpc]`) |
-| **Spec** | A2A 1.0.0 AgentCard `url` field — the card's `url` is what clients use for follow-up JSON-RPC calls after fetching the card |
+### A2A-GAP-003 — Echo agent card omits `securitySchemes` / `securityRequirements` *(closed 2026-06-20 — wontfix, test-side spec misreading)*
 
-**Observed**: the echo agent's card serializes `url: "http://localhost:9100"`.
-The SDK's `ClientFactory` reads this and uses it as the JSON-RPC
-endpoint for all subsequent `send_message` / `list_tasks` / etc. calls.
-On macOS, the project's autouse DNS stub falls through to the system
-resolver, which returns IPv6 first for `localhost`; the compose
-port-forward binds IPv4 only — so the SDK's follow-up POSTs hit
-`[::1]:9100`, time out, and surface as `A2AClientTimeoutError`.
+**Was**: the echo agent's card had no `securitySchemes` /
+`securityRequirements` keys. Tests asserted "MUST emit even if empty"
+and xfailed under this gap.
 
-The initial card-fetch hop succeeds because the test harness uses
-`http://127.0.0.1:9100` directly (via `ClientFactory.create_from_url`
-with the IPv4 literal). It's the *post-card* calls — which read the
-URL out of the card payload — that fail.
+**How closed**: re-examined the protobuf JSON convention — empty maps
+and empty lists are legitimately omittable per the standard
+`json_format` serializer behavior, and the A2A spec doesn't override
+that default. Absence is semantically equivalent to "no auth
+required". The tests were too strict; the agent is conformant.
 
-`test_get_task_for_unknown_id_raises` and `test_cancel_task_for_unknown_id_raises`
-incidentally pass on `[reference-jsonrpc]` because they assert that
-*any* exception escapes — the timeout satisfies that contract. Those
-tests should be tightened to assert on `TaskNotFoundError` once this
-gap closes.
+Tests under `v1_0_0/test_security.py` and `v0_3_0/test_security.py`
+were softened from "MUST be present" to "IF present, validate shape".
+The `xfail` decorators referencing A2A-GAP-003 were removed. Both
+suites now pass on this surface.
 
-**Why**: the echo agent runs in a docker-compose container that needs
-to be reachable from two contexts:
-
-- The test harness on the host → `127.0.0.1:9100` (or `host.docker.internal`).
-- Other compose services → `a2a_echo_agent:9100` (docker DNS).
-
-A single `url` field in the card can't serve both. The agent defaults
-to `localhost:9100` which works for neither without DNS gymnastics.
-
-**Resolution options** (pick one when implementing):
-
-1. **Compose-side**: set `A2A_ECHO_PUBLIC_URL=http://127.0.0.1:9100`
-   on the agent service in `docker-compose.yml`. Cards then advertise
-   the host-reachable address; compose-internal callers stay on the
-   hardcoded `http://a2a_echo_agent:9100/` URL the gateway federation
-   passes to register-a2a-echo (which doesn't read the card).
-2. **Harness-side**: pre-fetch the card via raw httpx, rewrite the
-   `url` field to `127.0.0.1`, and pass the doctored card to
-   `factory.create(card, ...)` instead of using `create_from_url`.
-3. **SDK-side**: pass a `url` override to `ClientFactory` / `ClientConfig`
-   that supersedes the card's `url` for the JSON-RPC transport. Not
-   currently exposed by the SDK as of `a2a-sdk` 0.x (verify with the
-   shipped version before claiming).
-
-**How to close**: implement any of the three resolution options above
-(option 1 is the smallest diff). Once the SDK's follow-up calls reach
-the agent, the five affected tests pass on `[reference-jsonrpc]` and
-the conftest's `_REFERENCE_GAP_005_TESTS` allowlist (see
-`conftest.pytest_collection_modifyitems`) drops to empty — delete the
-hook arm at that point and move this entry to "Closed gaps".
+**Lesson**: protobuf JSON omit-defaults is the norm. Future compliance
+tests should validate field shape when present and accept absence as
+the schema default, unless a specific spec section requires explicit
+emission.
 
 ---
-
-## Closed gaps
 
 ### A2A-GAP-005 — Echo agent advertised `url: http://localhost:9100` *(closed 2026-06-20)*
 

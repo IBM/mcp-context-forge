@@ -33,6 +33,7 @@ from a2a.types import (
     Role,
     SendMessageRequest,
 )
+from a2a.utils.errors import TaskNotFoundError
 
 pytestmark = [pytest.mark.a2a, pytest.mark.a2a_v0_3_0, pytest.mark.a2a_jsonrpc]
 
@@ -84,7 +85,7 @@ async def test_get_task_for_unknown_id_raises(client: Client) -> None:
     ``TaskNotFoundError`` for unknown IDs.
     """
     request = GetTaskRequest(id=f"nonexistent-task-{uuid4()}")
-    with pytest.raises(Exception):  # noqa: BLE001 — broad on purpose; tighten later
+    with pytest.raises(TaskNotFoundError):
         await client.get_task(request)
 
 
@@ -109,5 +110,5 @@ async def test_cancel_task_for_unknown_id_raises(client: Client) -> None:
     routed.
     """
     request = CancelTaskRequest(id=f"nonexistent-task-{uuid4()}")
-    with pytest.raises(Exception):  # noqa: BLE001 — broad on purpose; tighten later
+    with pytest.raises(TaskNotFoundError):
         await client.cancel_task(request)

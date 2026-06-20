@@ -33,6 +33,7 @@ from a2a.types import (
     Role,
     SendMessageRequest,
 )
+from a2a.utils.errors import TaskNotFoundError
 
 pytestmark = [pytest.mark.a2a, pytest.mark.a2a_v1_0_0, pytest.mark.a2a_jsonrpc]
 
@@ -76,15 +77,16 @@ async def test_send_message_echoes_input_text(client: Client) -> None:
 
 @pytest.mark.asyncio
 async def test_get_task_for_unknown_id_raises(client: Client) -> None:
-    """``GetTask`` with an unknown ID MUST raise an A2A client error.
+    """``GetTask`` with an unknown ID MUST raise ``TaskNotFoundError``.
 
-    The exact error code/class can be tightened once the SDK's error
-    taxonomy stabilizes; here we just assert an exception (not a
-    silently-empty Task) escapes the call. Echo agent returns
-    ``TaskNotFoundError`` for unknown IDs.
+    Tightened post-GAP-005 closure: previously caught ``Exception`` to
+    tolerate the IPv6/localhost timeout. Now that follow-up calls
+    reach the agent, the error path runs cleanly and the agent returns
+    a JSON-RPC error mapped by the SDK transport into
+    ``a2a.utils.errors.TaskNotFoundError``.
     """
     request = GetTaskRequest(id=f"nonexistent-task-{uuid4()}")
-    with pytest.raises(Exception):  # noqa: BLE001 — broad on purpose; tighten later
+    with pytest.raises(TaskNotFoundError):
         await client.get_task(request)
 
 
@@ -102,12 +104,11 @@ async def test_list_tasks_returns_response(client: Client) -> None:
 
 @pytest.mark.asyncio
 async def test_cancel_task_for_unknown_id_raises(client: Client) -> None:
-    """``CancelTask`` with an unknown ID MUST raise an A2A client error.
+    """``CancelTask`` with an unknown ID MUST raise ``TaskNotFoundError``.
 
-    Same shape as the GetTask unknown-ID guard — silent success would
-    mask a federation bug where cancellations are dropped instead of
-    routed.
+    Tightened post-GAP-005 closure (same rationale as
+    ``test_get_task_for_unknown_id_raises``).
     """
     request = CancelTaskRequest(id=f"nonexistent-task-{uuid4()}")
-    with pytest.raises(Exception):  # noqa: BLE001 — broad on purpose; tighten later
+    with pytest.raises(TaskNotFoundError):
         await client.cancel_task(request)
