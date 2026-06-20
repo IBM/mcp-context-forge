@@ -383,7 +383,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         # Determine the route-only path (strip root_path for path matching)
         path = request.url.path
-        root_path = resolve_root_path(request, fallback=settings.app_root_path)
+        settings_root_path = getattr(settings, "app_root_path", None)
+        root_path = resolve_root_path(request, fallback=settings_root_path if isinstance(settings_root_path, str) else None)
         if root_path and path.startswith(root_path):
             path = path[len(root_path) :]
 

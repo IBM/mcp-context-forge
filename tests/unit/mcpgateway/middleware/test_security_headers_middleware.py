@@ -342,6 +342,27 @@ async def test_settings_root_path_is_stripped_from_path_for_csp_skip_check():
 
 
 @pytest.mark.asyncio
+async def test_mocked_settings_without_app_root_path_does_not_crash():
+    with patch("mcpgateway.middleware.security_headers.settings") as settings:
+        settings.security_headers_enabled = True
+        settings.x_content_type_options_enabled = True
+        settings.x_frame_options = "DENY"
+        settings.x_xss_protection_enabled = True
+        settings.x_download_options_enabled = True
+        settings.hsts_enabled = False
+        settings.remove_server_headers = True
+        settings.environment = "production"
+        settings.allowed_origins = []
+        settings.cors_allow_credentials = True
+
+        middleware = SecurityHeadersMiddleware(app=None)
+        response = await middleware.dispatch(_make_request(path="/test", root_path=""), _call_next)
+
+        assert response.status_code == 200
+        assert response.headers["X-Content-Type-Options"] == "nosniff"
+
+
+@pytest.mark.asyncio
 async def test_settings_root_path_is_stripped_from_path_for_cache_exemption():
     mock, settings = _mock_settings()
     settings.app_root_path = "/app"
