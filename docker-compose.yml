@@ -2276,6 +2276,7 @@ services:
       - A2A_ECHO_ADDR=0.0.0.0:9100
       - A2A_ECHO_NAME=a2a-echo-agent
       - A2A_ECHO_PROTOCOL_VERSION=1.0.0
+      - A2A_ECHO_PUBLIC_URL=http://127.0.0.1:9100
       - A2A_ECHO_LOG_LEVEL=info
     deploy:
       resources:
