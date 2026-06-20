@@ -16,15 +16,17 @@ from starlette.responses import Response
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 
 
-def _make_request(headers=None, scheme="https"):
+def _make_request(headers=None, scheme="https", path="/", root_path=None):
     """Create a test request."""
     scope = {
         "type": "http",
         "method": "GET",
-        "path": "/",
+        "path": path,
         "scheme": scheme,
         "headers": headers or [],
     }
+    if root_path is not None:
+        scope["root_path"] = root_path
     return Request(scope)
 
 
@@ -46,6 +48,7 @@ def _mock_settings():
     settings.remove_server_headers = False
     settings.environment = "production"
     settings.allowed_origins = []
+    settings.app_root_path = ""
     return mock, settings
 
 
@@ -220,11 +223,8 @@ async def test_hsts_enabled():
     try:
         middleware = SecurityHeadersMiddleware(app=None)
         request = _make_request(headers=[(b"x-forwarded-proto", b"https")])
-        response = await middleware.dispatch(request, _call_next)
-        hsts = response.headers.get("Strict-Transport-Security")
-        assert hsts is not None
-        assert "max-age=31536000" in hsts
-        assert "includeSubDomains" in hsts
+        hsts = (await middleware.dispatch(request, _call_next)).headers.get("Strict-Transport-Security")
+        assert hsts is not None and "max-age=31536000" in hsts and "includeSubDomains" in hsts
     finally:
         mock.stop()
 
@@ -315,19 +315,43 @@ async def test_root_path_is_stripped_from_path_for_csp_skip_check():
     mock, settings = _mock_settings()
     try:
         middleware = SecurityHeadersMiddleware(app=None)
-        request = Request(
-            {
-                "type": "http",
-                "method": "GET",
-                "path": "/app/docs",
-                "root_path": "/app",
-                "scheme": "https",
-                "headers": [],
-            }
-        )
+        request = _make_request(path="/app/docs", root_path="/app")
 
         response = await middleware.dispatch(request, _call_next)
 
         assert response.status_code == 200
+        assert "Content-Security-Policy" not in response.headers
+    finally:
+        mock.stop()
+
+
+@pytest.mark.asyncio
+async def test_settings_root_path_is_stripped_from_path_for_csp_skip_check():
+    mock, settings = _mock_settings()
+    settings.app_root_path = "/app"
+    try:
+        middleware = SecurityHeadersMiddleware(app=None)
+        request = _make_request(path="/app/docs", root_path="")
+
+        response = await middleware.dispatch(request, _call_next)
+
+        assert response.status_code == 200
+        assert "Content-Security-Policy" not in response.headers
+    finally:
+        mock.stop()
+
+
+@pytest.mark.asyncio
+async def test_settings_root_path_is_stripped_from_path_for_cache_exemption():
+    mock, settings = _mock_settings()
+    settings.app_root_path = "/app"
+    try:
+        middleware = SecurityHeadersMiddleware(app=None)
+        request = _make_request(path="/app/health", root_path="")
+
+        response = await middleware.dispatch(request, _call_next)
+
+        assert response.status_code == 200
+        assert all(header not in response.headers for header in ("Cache-Control", "Pragma", "Expires"))
     finally:
         mock.stop()

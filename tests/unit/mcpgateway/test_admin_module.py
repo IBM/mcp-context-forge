@@ -157,7 +157,11 @@ async def test_admin_add_gateway_includes_gateway_payload(monkeypatch):
     result = {"id": "gw-1", "status": "pending", "name": "gw"}
     monkeypatch.setattr(admin, "_parse_gateway_data_from_request", AsyncMock(return_value={"name": "gw", "url": "http://example.com", "transport": "SSE"}))
     monkeypatch.setattr(admin, "TeamManagementService", _GatewayPayloadTeamService)
-    monkeypatch.setattr(admin.MetadataCapture, "extract_creation_metadata", MagicMock(return_value={"created_by": "admin@example.com", "created_from_ip": "127.0.0.1", "created_via": "test", "created_user_agent": "pytest"}))
+    monkeypatch.setattr(
+        admin.MetadataCapture,
+        "extract_creation_metadata",
+        MagicMock(return_value={"created_by": "admin@example.com", "created_from_ip": "127.0.0.1", "created_via": "test", "created_user_agent": "pytest"}),
+    )
     monkeypatch.setattr(admin.gateway_service, "register_gateway", AsyncMock(return_value=result))
 
     response = await _unwrap(admin.admin_add_gateway)(request, db, user)
@@ -176,7 +180,11 @@ async def test_admin_update_gateway_rest_includes_gateway_payload(monkeypatch):
     result = {"id": "gw-1", "status": "pending", "name": "gw"}
     monkeypatch.setattr(admin, "_parse_gateway_data_from_request", AsyncMock(return_value={"name": "gw", "url": "http://example.com", "transport": "SSE"}))
     monkeypatch.setattr(admin, "TeamManagementService", _GatewayPayloadTeamService)
-    monkeypatch.setattr(admin.MetadataCapture, "extract_modification_metadata", MagicMock(return_value={"modified_by": "admin@example.com", "modified_from_ip": "127.0.0.1", "modified_via": "test", "modified_user_agent": "pytest"}))
+    monkeypatch.setattr(
+        admin.MetadataCapture,
+        "extract_modification_metadata",
+        MagicMock(return_value={"modified_by": "admin@example.com", "modified_from_ip": "127.0.0.1", "modified_via": "test", "modified_user_agent": "pytest"}),
+    )
     monkeypatch.setattr(admin.gateway_service, "update_gateway", AsyncMock(return_value=result))
 
     response = await _unwrap(admin.admin_update_gateway_rest)("gw-1", request, db, user)
@@ -195,7 +203,11 @@ async def test_admin_edit_gateway_includes_gateway_payload(monkeypatch):
     user = {"email": "admin@example.com"}
     result = {"id": "gw-1", "status": "pending", "name": "gw"}
     monkeypatch.setattr(admin, "TeamManagementService", _GatewayPayloadTeamService)
-    monkeypatch.setattr(admin.MetadataCapture, "extract_modification_metadata", MagicMock(return_value={"modified_by": "admin@example.com", "modified_from_ip": "127.0.0.1", "modified_via": "test", "modified_user_agent": "pytest"}))
+    monkeypatch.setattr(
+        admin.MetadataCapture,
+        "extract_modification_metadata",
+        MagicMock(return_value={"modified_by": "admin@example.com", "modified_from_ip": "127.0.0.1", "modified_via": "test", "modified_user_agent": "pytest"}),
+    )
     monkeypatch.setattr(admin.gateway_service, "update_gateway", AsyncMock(return_value=result))
 
     response = await _unwrap(admin.admin_edit_gateway)("gw-1", request, db, user)
@@ -504,7 +516,7 @@ async def test_admin_login_handler_paths(monkeypatch):
     user.password_change_required = False
     monkeypatch.setattr(admin.settings, "password_change_enforcement_enabled", False)
     response = await admin.admin_login_handler(request, mock_db)
-    assert response.headers["location"].endswith("/root/admin")
+    assert response.headers["location"].endswith("/root/admin/")
 
 
 @pytest.mark.asyncio
@@ -1198,7 +1210,7 @@ async def test_change_password_required_handler(monkeypatch):
     with patch("sqlalchemy.inspect", return_value=SimpleNamespace(transient=False, detached=False)):
         response = await admin.change_password_required_handler(request, mock_db)
 
-    assert response.headers["location"].endswith("/root/admin")
+    assert response.headers["location"].endswith("/root/admin/")
     assert set_cookie.called
 
 
