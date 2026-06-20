@@ -522,7 +522,7 @@ async def oauth_callback(
     #   validation.
     # - `error` is a small, well-defined RFC 6749 Section 4.1.2.1 enum-like value.
     # - `error_description` is human-readable free text per RFC 6749 Section 5.2.
-    code: Annotated[str | None, Query(max_length=2048, description="Authorization code from OAuth provider")] = None,
+    code: Annotated[str | None, Query(max_length=16384, description="Authorization code from OAuth provider (Microsoft Entra work-account codes exceed 2 KB)")] = None,
     state: Annotated[str | None, Query(max_length=2048, description="State parameter for CSRF protection")] = None,
     error: QueryErrorCode = None,
     error_description: Annotated[str | None, Query(max_length=500, description="OAuth provider error description")] = None,
