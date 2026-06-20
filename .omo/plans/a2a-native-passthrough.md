@@ -793,10 +793,11 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
 - **DCO**: every commit signed with `-s` (`git commit -s`). Non-negotiable per AGENTS.md.
 - **Branch**: continue on `jps/compliance-tests` (the harness branch this plan unblocks). Do NOT create a new branch — harness + native A2A passthrough land together.
 - **Push timing**: do NOT push until the user explicitly asks. Final verification wave runs locally first.
-- **Per-wave QA gate**:
-  - Waves 1-2: `make lint && make test`.
-  - Waves 3-7: `make lint && make test && make test-protocol-compliance-a2a-gateway` (Oracle #25 — `make test` alone ignores `tests/live_gateway/`).
-  - Wave 8: `make lint && make test && mkdocs build`.
+- **Per-wave QA gate (REVISED — softened per user direction)**:
+  - **Lint is NOT a gate.** Pre-commit hooks handle linting at commit time (ruff, black, IBM Detect Secrets, etc.); a wave is not blocked on whole-repo markdown/yamllint hygiene.
+  - **All waves: `make test` passes AND ≥90% test coverage on production code added/changed in this wave.** Existing code paths the wave touched are also expected to retain their prior coverage level (no regression). Test-only files do not count toward the coverage measurement (they ARE the coverage).
+  - **Waves 3-7: also `make test-protocol-compliance-a2a-gateway` passes** against a running gateway (Oracle #25 — `make test` alone ignores `tests/live_gateway/`).
+  - **Wave 8: also `mkdocs build` clean** with the new architecture doc rendered.
   Wave N+1 does not start until Wave N is green. If a Wave N todo's acceptance criterion fails, fix THAT todo in a follow-up commit on the same wave — do NOT carry failures into Wave N+1.
 - **Rollback strategy per wave**:
   - **Wave 1** (T1-T7, Foundation): no behavior change; revert = `git revert` of 7 commits. Safe.

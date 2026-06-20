@@ -373,6 +373,34 @@ class TestSynthesizeAgentCard:
         assert card.skills[0].id == "echo"
 
     @pytest.mark.asyncio
+    async def test_non_dict_skill_is_skipped(self, service: A2AAgentService) -> None:
+        """A skill entry that's not a dict (legacy data drift) is silently skipped.
+
+        Covers the defensive ``if not isinstance(raw_skill, dict): continue``
+        branch in :py:meth:`A2AAgentService.synthesize_agent_card` so a
+        stored ``capabilities.skills`` list mixed with strings or other
+        non-dict entries doesn't blow up card synthesis.
+        """
+        agent = _mock_agent_for_synth(
+            capabilities={
+                "skills": [
+                    "this-is-not-a-dict",  # defensive branch — string entry
+                    {"id": "echo", "name": "Echo", "description": "Echo back"},
+                    42,  # defensive branch — int entry
+                    None,  # defensive branch — None entry
+                ],
+            }
+        )
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        card = await service.synthesize_agent_card(db, "echo", "https://gw.example.com")
+        assert card is not None
+        # The string, int, and None entries are skipped; only the valid dict
+        # produces a parsed skill.
+        assert len(card.skills) == 1
+        assert card.skills[0].id == "echo"
+
+    @pytest.mark.asyncio
     async def test_capabilities_extended_agent_card_flag(self, service: A2AAgentService) -> None:
         """``extendedAgentCard`` from agent.capabilities drives the -32007 trigger."""
         agent = _mock_agent_for_synth(capabilities={"streaming": True, "extendedAgentCard": True})
