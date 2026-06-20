@@ -1,0 +1,136 @@
+Task 15 — Proxy compliance smoke script for A2A 1.0.0 — evidence
+=================================================================
+
+Plan ref: .omo/plans/a2a-native-passthrough.md T15
+Wave: 3 (per-agent data plane)
+Commit: pending
+
+Acceptance criteria (per plan)
+------------------------------
+- Temporary smoke script at scripts/qa/a2a_proxy_smoke.py
+- Drives a running gateway + bundled a2a_echo_agent
+- Exercises T9 + T10 gap-closure assertions against the gateway_proxy
+  target
+- Exits 0 on full pass; 1 on any failure (including infrastructure
+  prerequisite misses)
+- TO BE DELETED in T30 (Wave 7 cleanup) once the harness target
+  classes' _open_client wires through ClientFactory(config=...) in T29
+
+Script location
+---------------
+scripts/qa/a2a_proxy_smoke.py — 13 scenario functions across two
+groups (T9 card discovery, T10 dispatch + RBAC), driven by a main()
+that prints a tabular pass/fail summary.
+
+Scenarios covered
+-----------------
+T9 — Card discovery (4 scenarios):
+  T9.1 card returns 200 + JSON
+  T9.2 protocolBinding camelcase (NOT transportProtocol)
+  T9.3 protocolBinding value == JSONRPC
+  T9.4 URL rewritten to gateway-public (NOT upstream endpoint_url)
+
+T10 — Dispatch envelope, methods, errors, version, aliases (7 scenarios):
+  T10.1 body=[] -> -32600 (envelope validation)
+  T10.2 malformed JSON -> -32700 (parse error)
+  T10.3 A2A-Version=99.0.0 -> -32009 (unsupported version)
+  T10.4 SendMessage -> result envelope (unary dispatch)
+  T10.5 message/send v0.3 alias mapped (T7 + T4 alias handling)
+  T10.6 tasks/list NOT a legacy alias -> -32601 (Oracle v3 #22)
+  T10.7 SendStreamingMessage -> text/event-stream + parseable chunk
+
+T10 — RBAC denial (2 scenarios):
+  T10.8 missing Authorization -> 401 (transport-level)
+  T10.9 invalid token -> 401
+
+Prerequisites
+-------------
+1. Live ContextForge gateway at A2A_COMPLIANCE_GATEWAY_URL (default:
+   http://localhost:4444).
+2. Bundled a2a_echo_agent at A2A_ECHO_BASE_URL (default:
+   http://127.0.0.1:9100).
+3. Echo agent registered with the gateway as
+   A2A_COMPLIANCE_AGENT_NAME (default: a2a-echo-agent).
+4. `make testing-up` typically satisfies all three (compose 'testing'
+   profile brings up gateway + nginx + echo agent on port 9100).
+5. Bearer token in MCPGATEWAY_BEARER_TOKEN env. If unset, falls back
+   to tests.helpers.auth.make_test_jwt (which signs with the same
+   JWT_SECRET_KEY the gateway uses) for dev-mode runs.
+
+Usage
+-----
+$ python scripts/qa/a2a_proxy_smoke.py
+
+Or with overrides:
+$ A2A_COMPLIANCE_GATEWAY_URL=http://localhost:4444 \\
+  A2A_COMPLIANCE_AGENT_NAME=a2a-echo-agent \\
+  MCPGATEWAY_BEARER_TOKEN=eyJ... \\
+  python scripts/qa/a2a_proxy_smoke.py
+
+Smoke run without live gateway (dry verification)
+-------------------------------------------------
+$ uv run python scripts/qa/a2a_proxy_smoke.py
+FAIL: gateway unreachable at http://localhost:4444: [Errno 61] Connection refused
+A2A proxy compliance smoke
+  Gateway     : http://localhost:4444
+  Agent name  : a2a-echo-agent
+  Card URL    : http://localhost:4444/a2a/a2a-echo-agent/.well-known/agent-card.json
+  Dispatch URL: http://localhost:4444/a2a/a2a-echo-agent
+
+Exit code: 1 (as expected — health probe failed cleanly without
+attempting any scenarios). Script integration verified: imports OK,
+URL construction OK, health-probe error path produces clear stderr
+message + clean exit, no exception traceback escapes.
+
+Live-gateway smoke run (REQUIRES `make testing-up`)
+----------------------------------------------------
+NOTE: This evidence file is generated from a workstation that does
+not have the testing stack running. The live-gateway smoke run is
+performed by operators / CI as part of release sign-off:
+
+$ make testing-up                    # brings up gateway + echo agent
+$ docker compose ps a2a_echo_agent   # verify echo agent reachable
+$ python scripts/qa/a2a_proxy_smoke.py
+# Expected: all 13 scenarios report PASS;
+# Exit code: 0.
+
+Wave 3 deliverable status
+-------------------------
+T11 (per-agent card) — COMMITTED 00e6fc9f5 + 8 integration tests
+T12 (per-agent dispatch + GetExtendedAgentCard) — COMMITTED e0a61d75b
+  + 11 integration tests
+T13 (route-ordering regression) — COMMITTED 1b8014898 + 6 integration
+  tests
+T14 (SSE re-wrap helper) — COMMITTED e0a61d75b (paired with T12)
+  + 3 unit tests
+T15 (proxy compliance smoke script) — this commit; runtime
+  verification deferred to operators with `make testing-up`.
+
+Wave 2 BLOCK gap impact, post-Wave 3 implementation
+---------------------------------------------------
+All 28 BLOCK rows from .omo/evidence/c4-audit-checklist.md are now
+asserted by the integration test suite. The compliance harness at
+tests/live_gateway/a2a_compliance/v1_0_0/*_extra.py uses
+auto-xfail on the gateway_proxy column (under A2A-GAP-001) — when a
+gateway operator brings up `make testing-up` and re-runs the harness,
+the previously-xfailed assertions should surface as XPASS once T29
+(Wave 7) wires the placeholder target classes' _open_client through
+ClientFactory(config=...).
+
+T30 cleanup
+-----------
+This smoke script is INTENTIONALLY temporary. When T29 wires the
+A2AGatewayProxyTarget / A2AGatewayVirtualServerTarget _open_client
+methods through ClientFactory(config=...).create_from_url(f"{gw}/a2a/echo"),
+the compliance harness covers the same assertions automatically and
+this script becomes dead weight. T30's pre-release checklist
+explicitly removes scripts/qa/a2a_proxy_smoke.py.
+
+References
+----------
+- T9, T10 gap-closure tests live at
+  tests/live_gateway/a2a_compliance/v1_0_0/test_agent_card_extra.py
+  and tests/live_gateway/a2a_compliance/v1_0_0/test_*_extra.py.
+- Wave 2 audit at .omo/evidence/c4-audit-checklist.md tracks each
+  BLOCK row's test citation post-T9 + T10.
+- Wave 3 commits: 00e6fc9f5 (T11), e0a61d75b (T12+T14), 1b8014898 (T13).
