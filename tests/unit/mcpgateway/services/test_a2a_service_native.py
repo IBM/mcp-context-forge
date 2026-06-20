@@ -32,10 +32,26 @@ import pytest
 
 # First-Party
 from mcpgateway.schemas_a2a_native import AgentCard
+from mcpgateway.services import a2a_service as a2a_service_module
 from mcpgateway.services.a2a_service import (
     A2AAgentNotFoundError,
     A2AAgentService,
     AgentNotInServerError,
+    AUTHENTICATED_EXTENDED_CARD_NOT_CONFIGURED,
+    CONTENT_TYPE_NOT_SUPPORTED,
+    INTERNAL_ERROR,
+    INVALID_AGENT_RESPONSE,
+    INVALID_PARAMS,
+    INVALID_REQUEST,
+    METHOD_NOT_FOUND,
+    MULTIPLE_PUSH_NOT_SUPPORTED,
+    PARSE_ERROR,
+    PUSH_NOT_SUPPORTED,
+    TASK_NOT_CANCELABLE,
+    TASK_NOT_FOUND,
+    UNSUPPORTED_OPERATION,
+    VERSION_NOT_SUPPORTED,
+    make_jsonrpc_error,
 )
 
 
@@ -379,3 +395,99 @@ class TestSynthesizeAgentCard:
         card = await service.synthesize_agent_card(db, "echo", "https://gw.example.com")
         assert card is not None
         assert card.description == ""
+
+
+class TestJsonRpcErrorConstants:
+    """Plan T6: standard JSON-RPC + A2A 1.0.0 spec section 5.4 codes (14 total)."""
+
+    @pytest.mark.parametrize(
+        "name,expected",
+        [
+            # Standard JSON-RPC 2.0
+            ("PARSE_ERROR", -32700),
+            ("INVALID_REQUEST", -32600),
+            ("METHOD_NOT_FOUND", -32601),
+            ("INVALID_PARAMS", -32602),
+            ("INTERNAL_ERROR", -32603),
+            # A2A 1.0.0 spec section 5.4
+            ("TASK_NOT_FOUND", -32001),
+            ("TASK_NOT_CANCELABLE", -32002),
+            ("PUSH_NOT_SUPPORTED", -32003),
+            ("UNSUPPORTED_OPERATION", -32004),
+            ("CONTENT_TYPE_NOT_SUPPORTED", -32005),
+            ("INVALID_AGENT_RESPONSE", -32006),
+            ("AUTHENTICATED_EXTENDED_CARD_NOT_CONFIGURED", -32007),
+            ("MULTIPLE_PUSH_NOT_SUPPORTED", -32008),
+            ("VERSION_NOT_SUPPORTED", -32009),
+        ],
+    )
+    def test_constant_value(self, name: str, expected: int) -> None:
+        """Each constant is exported from the module with the spec-correct value."""
+        actual = getattr(a2a_service_module, name)
+        assert actual == expected, f"{name} should be {expected}, got {actual}"
+
+
+class TestMakeJsonrpcError:
+    """Plan T6 + D6: wire envelope shape, ``data`` omission, ``id`` passthrough."""
+
+    def test_basic_shape(self) -> None:
+        """Standard envelope ordering and field names."""
+        err = make_jsonrpc_error(METHOD_NOT_FOUND, "Method not found", 1)
+        assert err == {"jsonrpc": "2.0", "error": {"code": -32601, "message": "Method not found"}, "id": 1}
+
+    def test_data_omitted_when_none(self) -> None:
+        """When ``data`` is None it does NOT appear in the wire payload."""
+        err = make_jsonrpc_error(INTERNAL_ERROR, "Internal", None)
+        assert "data" not in err["error"]
+        assert err["error"] == {"code": -32603, "message": "Internal"}
+
+    def test_data_included_when_provided(self) -> None:
+        """A dict ``data`` field round-trips into the error block verbatim."""
+        err = make_jsonrpc_error(INTERNAL_ERROR, "Internal", 1, data={"trace": "x"})
+        assert err["error"]["data"] == {"trace": "x"}
+
+    def test_data_typed_array(self) -> None:
+        """The A2A spec section 5.4 typed-array ``data`` shape is preserved."""
+        err = make_jsonrpc_error(INVALID_PARAMS, "Invalid params", 1, data=[{"field": "method"}])
+        assert err["error"]["data"] == [{"field": "method"}]
+
+    def test_id_passthrough_int(self) -> None:
+        """Integer request_id echoes verbatim."""
+        err = make_jsonrpc_error(INVALID_REQUEST, "x", 42)
+        assert err["id"] == 42
+
+    def test_id_passthrough_string(self) -> None:
+        """String request_id echoes verbatim."""
+        err = make_jsonrpc_error(INVALID_REQUEST, "x", "req-1")
+        assert err["id"] == "req-1"
+
+    def test_id_passthrough_null(self) -> None:
+        """``None`` (JSON-RPC notification null) echoes as ``None``."""
+        err = make_jsonrpc_error(PARSE_ERROR, "Parse error", None)
+        assert err["id"] is None
+
+    def test_a2a_code_not_coerced_to_internal_error(self) -> None:
+        """A2A-specific codes (-32001..-32009) are preserved, NOT silently coerced.
+
+        Oracle v3 #6 explicitly called out the anti-pattern of falling back
+        every gateway-detected error to ``-32603`` and discarding the
+        spec-correct code.
+        """
+        for code in (
+            TASK_NOT_FOUND,
+            TASK_NOT_CANCELABLE,
+            PUSH_NOT_SUPPORTED,
+            UNSUPPORTED_OPERATION,
+            CONTENT_TYPE_NOT_SUPPORTED,
+            INVALID_AGENT_RESPONSE,
+            AUTHENTICATED_EXTENDED_CARD_NOT_CONFIGURED,
+            MULTIPLE_PUSH_NOT_SUPPORTED,
+            VERSION_NOT_SUPPORTED,
+        ):
+            err = make_jsonrpc_error(code, "msg", 1)
+            assert err["error"]["code"] == code, f"Code {code} was coerced"
+
+    def test_envelope_jsonrpc_field_always_present(self) -> None:
+        """The ``jsonrpc: 2.0`` envelope marker is required by spec."""
+        err = make_jsonrpc_error(PARSE_ERROR, "x", None)
+        assert err["jsonrpc"] == "2.0"

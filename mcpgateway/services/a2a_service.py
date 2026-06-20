@@ -428,6 +428,104 @@ class AgentNotInServerError(A2AAgentError):
         super().__init__(f"A2A agent '{agent_name}' is not bound to virtual server '{server_id}'")
 
 
+# ----------------------------------------------------------------------
+# JSON-RPC error envelope helpers (plan T6 + D6 + Oracle v3 #6 + #14)
+# ----------------------------------------------------------------------
+#
+# Spec-compliant error codes for native A2A 1.0.0 dispatch. Standard
+# JSON-RPC 2.0 codes for envelope/transport issues; A2A-specific codes
+# (-32001..-32009) per spec section 5.4 for protocol-level issues that
+# the dispatcher emits (gateway-owned rows in the error-mapping table)
+# or passes through (upstream-owned rows).
+#
+# Per plan D6, errors at the JSON-RPC layer are wire-shaped as
+# ``HTTP 200 + JSON-RPC error body``. ``HTTPException`` is reserved for
+# transport-level failures (401 missing auth, 403 RBAC deny, 404 path
+# resource not found, 5xx gateway crash). The disambiguation rule
+# between agent-unknown (HTTP 404) and method-unknown (``-32601``) lives
+# in plan D14.
+
+# Standard JSON-RPC 2.0 error codes (JSON-RPC 2.0 section 5.1).
+PARSE_ERROR = -32700
+INVALID_REQUEST = -32600
+METHOD_NOT_FOUND = -32601
+INVALID_PARAMS = -32602
+INTERNAL_ERROR = -32603
+
+# A2A 1.0.0 spec-specific error codes (spec section 5.4 mappings).
+TASK_NOT_FOUND = -32001
+TASK_NOT_CANCELABLE = -32002
+PUSH_NOT_SUPPORTED = -32003
+UNSUPPORTED_OPERATION = -32004
+CONTENT_TYPE_NOT_SUPPORTED = -32005
+INVALID_AGENT_RESPONSE = -32006
+AUTHENTICATED_EXTENDED_CARD_NOT_CONFIGURED = -32007
+MULTIPLE_PUSH_NOT_SUPPORTED = -32008
+VERSION_NOT_SUPPORTED = -32009
+
+
+def make_jsonrpc_error(
+    code: int,
+    message: str,
+    request_id: Optional[Any],
+    data: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """Build a spec-compliant JSON-RPC 2.0 error envelope.
+
+    Plan T6 + D6: errors at the JSON-RPC layer are wire-shaped as
+    ``HTTP 200`` plus a JSON-RPC error body. :py:class:`fastapi.HTTPException`
+    stays reserved for transport-level failures (401/403/404 on route
+    mismatch, 5xx on gateway crash). The disambiguation between an
+    unknown agent at the path (HTTP 404) and an unknown method on a known
+    agent (JSON-RPC ``-32601``) lives in plan D14.
+
+    Args:
+        code: JSON-RPC error code. Use the module-level constants for
+            standard codes (``PARSE_ERROR``, ``INVALID_REQUEST``, ...)
+            and A2A spec codes (``TASK_NOT_FOUND``, ``VERSION_NOT_SUPPORTED``,
+            ...). Avoid coercing A2A-specific codes silently to ``-32603``.
+        message: Human-readable error message. Kept short — the wire
+            does not need gateway-internal detail.
+        request_id: Echo of the inbound request's ``id`` field. May be
+            ``None`` when a parse error meant we could not extract an
+            ID, a JSON-RPC ``str``, ``int``, or notification ``null``.
+        data: Optional ``data`` field. Omitted from the wire when
+            ``None``. When the A2A spec defines a typed-array shape for
+            the code in question (per section 5.4), pass it here.
+
+    Returns:
+        The JSON-RPC error envelope dict ready to serialize:
+        ``{"jsonrpc": "2.0", "error": {"code": <int>, "message": <str>,
+        "data": <Any>?}, "id": <request_id>}``.
+
+    Examples:
+        >>> err = make_jsonrpc_error(-32601, "Method not found", 1)
+        >>> err["jsonrpc"]
+        '2.0'
+        >>> err["error"]["code"]
+        -32601
+        >>> err["error"]["message"]
+        'Method not found'
+        >>> err["id"]
+        1
+        >>> "data" in err["error"]
+        False
+        >>> err2 = make_jsonrpc_error(INTERNAL_ERROR, "Internal", None, data={"trace": "x"})
+        >>> err2["error"]["data"]
+        {'trace': 'x'}
+        >>> err2["id"] is None
+        True
+        >>> # A2A-specific codes are NOT silently coerced to INTERNAL_ERROR
+        >>> err3 = make_jsonrpc_error(VERSION_NOT_SUPPORTED, "x", 1)
+        >>> err3["error"]["code"]
+        -32009
+    """
+    error_obj: Dict[str, Any] = {"code": code, "message": message}
+    if data is not None:
+        error_obj["data"] = data
+    return {"jsonrpc": "2.0", "error": error_obj, "id": request_id}
+
+
 def _validate_a2a_team_assignment(db: Session, user_email: Optional[str], target_team_id: Optional[str]) -> None:
     """Validate team assignment for A2A agent updates.
 
