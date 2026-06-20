@@ -1,0 +1,147 @@
+Task 16 — A2APathRewriteMiddleware for virtual-server-scoped A2A paths — evidence
+===================================================================================
+
+Plan ref: .omo/plans/a2a-native-passthrough.md T16 (Oracle #14)
+Wave: 4 (virtual-server-scoped data plane)
+Commit: pending
+
+Acceptance criteria (per plan)
+------------------------------
+- New mcpgateway/middleware/a2a_path_rewrite.py with regex matching
+  both base AND suffix forms (Oracle #14 fix: trailing group OPTIONAL)
+- Regex: ^/servers/([^/]+)/a2a/([^/]+)(/.*)?$
+- On match: rewrite scope["path"] to /a2a/{agent_name}{suffix or ""},
+  inject scope["a2a_server_id"] = server_id
+- Preserve scope["modified_path"]
+- Wired into middleware chain in main.py, mirroring MCP middleware
+  position
+- MUST NOT enforce v-server membership (handler's job)
+- MUST NOT match outside /servers/{id}/a2a/...
+- MUST NOT require trailing /* (Oracle #14)
+
+Implementation
+--------------
+mcpgateway/middleware/a2a_path_rewrite.py:
+- A2APathRewriteMiddleware: pure ASGI middleware (NOT BaseHTTPMiddleware)
+  for low overhead and full scope mutability
+- _A2A_VSERVER_PATH_RE: compiled regex with OPTIONAL third group
+- Strips root_path prefix before matching (reverse-proxy aware)
+- Preserves modified_path for downstream middleware
+- Aligns raw_path with rewritten path (latin-1, with warning fallback)
+- Skips non-HTTP scope (websocket / lifespan pass through)
+- Debug logging mirrors MCPPathRewriteMiddleware convention
+
+Wired into mcpgateway/main.py:
+- Import added at line 104 (alphabetical)
+- app.add_middleware(A2APathRewriteMiddleware) added after MCP path
+  rewrite registration (lines ~3158-3165)
+- Independent of MCP middleware: regexes do not overlap, so ordering
+  between them is behaviorally irrelevant; placement keeps both
+  transport rewriters adjacent for code clarity
+
+Verified
+--------
+1. Middleware registration:
+   $ uv run python -c "from mcpgateway.main import app; print(...)"
+   Middleware(A2APathRewriteMiddleware)
+   Middleware(MCPPathRewriteMiddleware, dispatch=<TokenScopingMiddleware ...>)
+   ...
+
+2. Unit tests:
+   $ uv run pytest tests/unit/mcpgateway/middleware/test_a2a_path_rewrite.py -v
+   15 passed, 1 warning in 0.20s
+
+3. Full unit suite (regression check):
+   $ uv run pytest tests/unit
+   18717 passed, 120 skipped, 2 xfailed, 0 failed
+
+Test coverage (15 tests across 6 classes)
+------------------------------------------
+TestPathRewriteBase (3 tests) — Plan T16 acceptance (a):
+  - test_base_dispatch_url_rewrites_and_sets_scope
+    /servers/srv-123/a2a/echo → /a2a/echo + a2a_server_id=srv-123
+  - test_base_dispatch_url_raw_path_aligned
+    raw_path stays in sync (latin-1)
+  - test_uuid_server_id_preserved_verbatim
+    UUID-shaped server ids round-trip
+
+TestPathRewriteSuffix (2 tests) — Plan T16 acceptance (b):
+  - test_well_known_card_url_rewrites
+    /servers/X/a2a/Y/.well-known/agent-card.json → /a2a/Y/.well-known/...
+  - test_arbitrary_suffix_preserved
+    /tasks/abc/cancel suffix preserved verbatim
+
+TestPathPassThrough (4 tests) — Plan T16 acceptance (c) + (d):
+  - test_per_agent_url_untouched
+    /a2a/echo (no /servers/ prefix) NOT rewritten
+  - test_per_agent_well_known_url_untouched
+    /a2a/echo/.well-known/... NOT rewritten
+  - test_servers_mcp_url_untouched
+    /servers/X/mcp owned by MCP middleware, NOT rewritten
+  - test_unrelated_route_untouched
+    /health, /tools, etc. pass through
+
+TestScopeGuards (2 tests):
+  - test_websocket_scope_passes_through
+    Non-HTTP scope forwarded verbatim — no path mutation
+  - test_lifespan_scope_passes_through
+    Lifespan scope unmodified
+
+TestRootPathHandling (2 tests):
+  - test_root_path_prefix_stripped_before_match
+    /gw/servers/X/a2a/Y matches behind a proxy at /gw
+  - test_root_path_with_trailing_slash_normalized
+    root_path="/gw/" handled cleanly
+
+TestNoMembershipEnforcement (2 tests) — Plan must-not-do:
+  - test_middleware_does_not_query_database
+    Bogus server_id still rewrites (membership = handler's job)
+  - test_middleware_does_not_match_outside_a2a_prefix
+    /servers/X/tools/echo NOT rewritten
+
+Architectural decision deferred to user direction (raised pre-T17/T18)
+----------------------------------------------------------------------
+User raised two valid architectural questions during T16 work:
+
+(1) Independent RBAC for v-server agents (combination of server-level
+    AND agent-level visibility):
+    - Current plan: T2/T3 enforce v-server membership + agent visibility,
+      but NOT server-level visibility. A user who cannot see server S1
+      but CAN see agent A (publicly visible) could currently reach A via
+      /servers/S1/a2a/A.
+    - This contrasts with the existing /servers/{id}/mcp path which DOES
+      enforce server-level visibility.
+    - Fix scope: add one check in resolve_agent_for_dispatch (T12) AND
+      synthesize_agent_card (T11) to verify the caller can see the
+      server itself when server_id is set.
+    - Effort: small (one ServerService visibility check).
+    - Severity: SECURITY — leaks server existence; should be added BEFORE
+      Wave 4 ships.
+
+(2) Per-virtual-server agent name aliasing:
+    - Current plan: URL /servers/{id}/a2a/{name} uses the agent's GLOBAL
+      name. No aliasing mechanism.
+    - User-facing impact: operators cannot expose an agent under a
+      v-server-scoped alias (vendor-neutral naming, migration shims,
+      etc.).
+    - Fix scope: schema migration (add alias_name column on
+      server_a2a_association with UNIQUE(server_id, COALESCE(alias_name,
+      global_name))) + T2/T3 lookup change to resolve URL name against
+      alias FIRST + T11/T12 card URL must use the alias + Admin UI
+      affordance.
+    - Effort: medium (schema migration + service-layer + UI).
+    - Severity: FEATURE — defer to follow-up release.
+
+T16 middleware itself is correct regardless of either decision: it
+rewrites the path; the WHAT-TO-AUTHORIZE / WHAT-NAME-TO-RESOLVE
+decisions happen downstream in T11 + T12 handlers via the service
+layer (T2 + T3). So T16 is COMMIT-SAFE; T17 + T18 are the natural
+checkpoint to make these decisions.
+
+References
+----------
+- F2 (MCPPathRewriteMiddleware at main.py:2872-3071) — shape mirrored
+- Oracle #14 — regex must match base + suffix forms
+- D11, D14 — visibility hides, membership miss = 404
+- _normalize_scope_path helper at mcpgateway/main.py:2535
+  (mirrored inline rather than imported, avoiding cyclic import risk)

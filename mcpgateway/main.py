@@ -101,6 +101,7 @@ from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.deprecations import RUST_MCP_RUNTIME_DEPRECATION_MESSAGE, VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE
 from mcpgateway.handlers.sampling import SamplingError, SamplingHandler
+from mcpgateway.middleware.a2a_path_rewrite import A2APathRewriteMiddleware
 from mcpgateway.middleware.client_disconnect import ClientDisconnectMiddleware
 from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
@@ -3165,6 +3166,16 @@ if settings.email_auth_enabled:
 else:
     # Add streamable HTTP middleware for /mcp routes
     app.add_middleware(MCPPathRewriteMiddleware)
+
+# Add A2A v-server path rewrite middleware (Plan T16). Rewrites
+# /servers/{id}/a2a/{name}[/...] → /a2a/{name}[/...] and stamps
+# request.scope["a2a_server_id"] so the existing T11 + T12 handlers
+# enforce v-server membership via the service layer (T2 + T3) without
+# a duplicate route decorator. Independent of MCP middleware: the
+# regexes do not overlap, so registration order between them is
+# behaviorally irrelevant; placement here keeps the two transport
+# rewriters adjacent for code clarity.
+app.add_middleware(A2APathRewriteMiddleware)
 
 # Add HTTP authentication hook middleware for plugins (before auth dependencies)
 # Middleware will get the global plugin manager at request time if factory exists
