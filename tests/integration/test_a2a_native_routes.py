@@ -521,3 +521,149 @@ class TestSseFormatHelper:
         # And the payload re-parses cleanly as a dict (no nested data: token).
         body = event[len("data: ") :].strip()
         assert json.loads(body) == {"result": "hi"}
+
+
+# ───────────────────────────────────────────────────────────────────────
+# T17 + T18 — Virtual-server-scoped routes (same handlers via T16
+# A2APathRewriteMiddleware rewriting /servers/{id}/a2a/{name}[/...] →
+# /a2a/{name}[/...] and stamping scope["a2a_server_id"]).
+# ───────────────────────────────────────────────────────────────────────
+
+
+class TestVirtualServerCardEndpoint:
+    """T17 — ``GET /servers/{server_id}/a2a/{agent_name}/.well-known/agent-card.json``.
+
+    The route handler is the same as T11. The path-rewrite middleware
+    populates ``request.scope["a2a_server_id"]`` so the handler passes
+    it to ``synthesize_agent_card``, which then enforces the
+    three-level conjunctive check via the centralized policy module.
+    """
+
+    def test_happy_path_serves_card_and_passes_server_id(self, client: TestClient, mock_a2a_service: AsyncMock) -> None:
+        """Happy path: GET v-server URL → 200 + card + synthesizer called with server_id.
+
+        Asserts the T16 middleware rewrote the path correctly and the
+        T11 handler forwarded ``server_id`` from the scope.
+        """
+        mock_a2a_service.return_value = _minimal_card()
+        response = client.get("/servers/srv-abc/a2a/echo/.well-known/agent-card.json")
+        assert response.status_code == 200, response.text[:200]
+        assert response.headers["content-type"].startswith("application/json")
+        # Server id from the URL reached the synthesizer.
+        kwargs = mock_a2a_service.await_args.kwargs
+        assert kwargs["server_id"] == "srv-abc"
+        # Anonymous public-only kwargs are still the contract on this
+        # public discovery endpoint (D11) — even under v-server URL.
+        assert kwargs["user_email"] is None
+        assert kwargs["token_teams"] == []
+
+    def test_denial_returns_404(self, client: TestClient, mock_a2a_service: AsyncMock) -> None:
+        """Any denial (server-deny / membership-miss / agent-deny) → 404.
+
+        The route does NOT distinguish between the three. All collapse
+        to the same wire outcome per D14 so callers cannot enumerate
+        v-server membership or hidden agents.
+        """
+        mock_a2a_service.return_value = None  # any denial path
+        response = client.get("/servers/srv-1/a2a/missing-agent/.well-known/agent-card.json")
+        assert response.status_code == 404, response.text[:200]
+        # Synthesizer was still invoked with the v-server id (the
+        # middleware ran), proving the rewrite happened.
+        kwargs = mock_a2a_service.await_args.kwargs
+        assert kwargs["server_id"] == "srv-1"
+
+    def test_no_authorization_required(self, client: TestClient, mock_a2a_service: AsyncMock) -> None:
+        """V-server card discovery stays PUBLIC (D11) just like the per-agent route."""
+        mock_a2a_service.return_value = _minimal_card()
+        response = client.get("/servers/srv-2/a2a/echo/.well-known/agent-card.json")
+        assert response.status_code == 200, response.text[:200]
+
+
+class TestVirtualServerDispatchEndpoint:
+    """T18 — ``POST /servers/{server_id}/a2a/{agent_name}`` JSON-RPC dispatch."""
+
+    def test_happy_send_message_resolves_with_server_id(self, client: TestClient, dispatch_overrides, mock_dispatch_service: MagicMock) -> None:
+        """Happy path: POST via v-server URL → 200 + result + resolver gets server_id."""
+        mock_dispatch_service.resolve_agent_for_dispatch.return_value = _mock_agent()
+        mock_dispatch_service.dispatch_a2a_jsonrpc_unary.return_value = {"task": "done"}
+
+        response = client.post(
+            "/servers/srv-x/a2a/echo",
+            json=_send_message_body(request_id="abc"),
+            headers=_DISPATCH_HEADERS,
+        )
+        assert response.status_code == 200, response.text[:200]
+        payload = response.json()
+        assert payload == {"jsonrpc": "2.0", "result": {"task": "done"}, "id": "abc"}
+        # Resolver received the server id from the URL via middleware → scope.
+        kwargs = mock_dispatch_service.resolve_agent_for_dispatch.await_args.kwargs
+        assert kwargs["server_id"] == "srv-x"
+
+    def test_agent_not_in_server_returns_404(self, client: TestClient, dispatch_overrides, mock_dispatch_service: MagicMock) -> None:
+        """``AgentNotInServerError`` from the resolver → HTTP 404 (D14).
+
+        The handler's existing ``A2AAgentNotFoundError`` branch covers
+        this because :class:`AgentNotInServerError` derives from
+        :class:`A2AAgentNotFoundError` (single error hierarchy, single
+        wire outcome).
+        """
+        from mcpgateway.services.a2a_service import AgentNotInServerError
+
+        mock_dispatch_service.resolve_agent_for_dispatch.side_effect = AgentNotInServerError("foreign", "srv-x")
+        response = client.post(
+            "/servers/srv-x/a2a/foreign",
+            json=_send_message_body(),
+            headers=_DISPATCH_HEADERS,
+        )
+        assert response.status_code == 404, response.text[:200]
+
+    def test_streaming_via_vserver_url_returns_sse(self, client: TestClient, dispatch_overrides, mock_dispatch_service: MagicMock) -> None:
+        """``SendStreamingMessage`` via v-server URL → 200 + text/event-stream.
+
+        Confirms the T14 SSE wiring works through the rewritten path
+        identically to the direct per-agent URL.
+        """
+        mock_dispatch_service.resolve_agent_for_dispatch.return_value = _mock_agent()
+
+        async def fake_stream(*args, **kwargs):
+            yield {"jsonrpc": "2.0", "result": "chunk1", "id": "s1"}
+
+        mock_dispatch_service.dispatch_a2a_jsonrpc_streaming.side_effect = fake_stream
+
+        with client.stream(
+            "POST",
+            "/servers/srv-y/a2a/echo",
+            json={"jsonrpc": "2.0", "id": "s1", "method": "SendStreamingMessage", "params": {}},
+            headers=_DISPATCH_HEADERS,
+        ) as response:
+            assert response.status_code == 200
+            assert response.headers["content-type"].startswith("text/event-stream")
+            # Resolver also received the server id on the streaming path.
+            kwargs = mock_dispatch_service.resolve_agent_for_dispatch.await_args.kwargs
+            assert kwargs["server_id"] == "srv-y"
+
+    def test_extended_card_via_vserver_respects_a2a_read(self, client: TestClient, dispatch_overrides, mock_dispatch_service: MagicMock) -> None:
+        """``GetExtendedAgentCard`` via v-server URL → 200 + card with a2a.read granted.
+
+        The extended-card synthesis SHORT-CIRCUITS upstream (D18 — never
+        forwards) and uses the same v-server-aware synthesizer that T17
+        exercises. Permission check uses ``a2a.read``, not
+        ``a2a.invoke``.
+        """
+        mock_dispatch_service.resolve_agent_for_dispatch.return_value = _mock_agent(capabilities={"extendedAgentCard": True})
+        mock_dispatch_service.synthesize_agent_card.return_value = _minimal_card()
+
+        response = client.post(
+            "/servers/srv-z/a2a/echo",
+            json={"jsonrpc": "2.0", "id": "ec", "method": "GetExtendedAgentCard", "params": {}},
+            headers=_DISPATCH_HEADERS,
+        )
+        assert response.status_code == 200, response.text[:200]
+        payload = response.json()
+        assert payload["id"] == "ec"
+        assert payload["result"]["name"] == "echo"
+        # Synthesizer also got the server id.
+        kwargs = mock_dispatch_service.synthesize_agent_card.await_args.kwargs
+        assert kwargs["server_id"] == "srv-z"
+        # NEVER forwarded upstream (D18).
+        mock_dispatch_service.dispatch_a2a_jsonrpc_unary.assert_not_called()

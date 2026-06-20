@@ -171,6 +171,7 @@ from mcpgateway.services.a2a_service import (
     A2AAgentNameConflictError,
     A2AAgentNotFoundError,
     A2AAgentService,
+    AgentNotInServerError,
     AUTHENTICATED_EXTENDED_CARD_NOT_CONFIGURED,
     INVALID_REQUEST,
     make_jsonrpc_error,
@@ -5454,7 +5455,11 @@ async def dispatch_a2a_agent(
             user_email=user_email,
             token_teams=token_teams,
         )
-    except A2AAgentNotFoundError:
+    except (A2AAgentNotFoundError, AgentNotInServerError):
+        # D14: all four denial reasons (agent name unknown, agent
+        # visibility miss, v-server membership miss, v-server visibility
+        # miss) collapse to HTTP 404. Prevents existence-leak side
+        # channels at every layer.
         return Response(status_code=404)
 
     # 3. Extract per-invoke plumbing (verbatim from /invoke).
