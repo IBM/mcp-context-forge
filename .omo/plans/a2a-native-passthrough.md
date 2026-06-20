@@ -1,19 +1,17 @@
 # a2a-native-passthrough - Work Plan
 
-> **Pre-execution checklist (known residual items after 5 review rounds — executor must address in-flight)**
+> **Pre-execution checklist — resolution log**
 >
-> The plan converged through 5 adversarial review cycles. Final-round verdict: Oracle APPROVE-WITH-CAVEATS, Momus REJECT (3 blockers, all mechanical — fixed in this polish pass: T12 step 9 `await` removed on async generator, pytest selectors use lowercase parametrize IDs `gateway_proxy`/`gateway_virtual`, UAID handling wording clarified to reflect service-layer reality).
+> The plan converged through 5 adversarial review cycles (CRITICAL count 5→5→2→0→0). Final-round polish applied 3 fixes (T12 step 9 `await` removed, pytest selectors lowercase, UAID wording clarified) plus the 6 documented MEDIUMs from this checklist (all resolved before execution began):
 >
-> The following MEDIUM-severity residuals are KNOWN and tracked here so the executor catches them during the relevant todo's implementation rather than at PR review:
+> 1. ✅ **Error mapping table `Test` column** — added in T6 table; each gateway-owned trigger row maps to a concrete `pytest tests/...` reference.
+> 2. ✅ **`-32007` trigger condition concrete** — defined as "agent's `capabilities.extendedAgentCard` is False or absent"; T12 step 8 GetExtendedAgentCard branch now checks `agent.capabilities.get("extendedAgentCard", False)` before synthesizing.
+> 3. ✅ **Dependency matrix T28 split refs** — T27 row no longer claims to block T28A continuation; T29 row depends on T28B+T15+T19; Wave 1+2 summary text updated.
+> 4. ✅ **Cargo verification structural** — T27 step 5 replaced grep-on-output with `cargo metadata --format-version=1 --no-deps | jq '.workspace_default_members[]'` structural check, immune to cache state.
+> 5. ✅ **Error table line ref** — "T12 step 6" → "T7 + T12 step 7" (matches polish-pass reordering).
+> 6. ✅ **Draft staleness scrub** — `get_upstream_client_config` mentions in draft C1-CP row + Scope IN section now annotated as superseded with rationale.
 >
-> 1. **Error mapping table needs a `Test` column** (T6 + Oracle MEDIUM): add `Test` column when generating the table artifact `.omo/evidence/task-6-error-mapping-table.md`. Each gateway-owned trigger row gets a `pytest tests/...` reference.
-> 2. **`-32007 AUTHENTICATED_EXTENDED_CARD_NOT_CONFIGURED` trigger is unspecified** (T6+T12 + Oracle MEDIUM): the v1 gateway-synthesized card is always "configured" (built fresh from `A2AAgent` row). The trigger is "gateway cannot synthesize an extended card because the agent has no `capabilities.extendedAgentCard` flag". Document this concrete trigger in T12 step 8a or fold into the docs (T31).
-> 3. **Dependency matrix has residual unsplit `T28` references** (Oracle MEDIUM): when implementing, treat the split as T28A (Wave 2 prerequisite) and T28B (Wave 7 finalization). The matrix rows for T26→T27 and T29 should reference T28B for the server-creation dependency.
-> 4. **Cargo verification is grep-on-output, not structural** (T27 + Oracle MEDIUM): for T27 step 5/6, prefer `cargo metadata --format-version=1 --no-deps | jq '.workspace_default_members'` over `cargo build --verbose | rg -c "Compiling contextforge_a2a_runtime"`. The grep variant can false-pass when cargo prints `Fresh` instead of `Compiling`.
-> 5. **Error table line reference says "T12 step 6"** but version validation moved to step 7 in the polish pass (Oracle LOW): fix the table cell to read "T7 + T12 step 7".
-> 6. **Draft has stale "C1 must-have: get_upstream_client_config" mention** despite removal from plan C1 (Oracle MEDIUM): scrub the draft inline before the implementer reads it. Plan supersedes draft per the supersession notice but proactively cleaning the draft avoids confusion.
->
-> All other adversarial-review findings (CRITICAL, HIGH) are addressed in the plan body. The plan is **APPROVED FOR EXECUTION** with this checklist as the pre-flight reference.
+> Plan is **APPROVED FOR EXECUTION**.
 
 
 
@@ -189,8 +187,8 @@ The Final verification wave below is non-negotiable. All sub-tasks must APPROVE 
 
 > Target 5-8 todos per wave. Fewer than 3 (except the final) means you under-split. P5 binds wave ordering: compliance gap closure precedes implementation.
 
-- **Wave 1 (Foundation)** — 7 todos — Pydantic models + control-plane API + dispatch helpers + error mapper + version validator + upstream client config + setup `.omo/evidence/`.
-- **Wave 2 (Compliance audit + gap closure)** — 5 todos — audit existing assertions, write gap-closure tests for missing protocol behavior (D19 / P5). MUST land BEFORE Wave 3 implementation.
+- **Wave 1 (Foundation)** — 7 todos — Pydantic models + control-plane API (synthesize_agent_card with v-server membership, resolve_agent_for_dispatch with visibility, check_server_a2a_membership) + dispatch helpers (unary + streaming) + error mapper + version validator. Setup `.omo/evidence/` directory inline. (`get_upstream_client_config` removed from must-have per Momus v4 #3 — T4/T5 reuse existing `invoke_agent()` per D5.)
+- **Wave 2 (Compliance harness fixture wiring + audit + gap closure)** — 4 todos — T28A fixture plumbing PRECEDES T8 audit + T9/T10 gap-closure tests (D19 / P5). MUST land BEFORE Wave 3 implementation. Without T28A target-aware URL fixtures, gap-closure tests cannot exercise gateway targets.
 - **Wave 3 (Per-agent data plane)** — 5 todos — card route, dispatch route, route-ordering regression, SSE wiring, proxy compliance smoke. Implementation lands to flip C4's gap-closure assertions GREEN.
 - **Wave 4 (Virtual-server data plane)** — 4 todos — middleware (with corrected regex per Oracle #14), v-server card + dispatch routes, integration test + v-server compliance smoke.
 - **Wave 5 (Server CRUD + Admin UI verify/patch)** — 3 todos — `ServerService.create_server` wiring verification, admin UI server-form selector verification, card-endpoint-URL ops affordance. Parallelizable with Wave 3+4.
@@ -230,10 +228,10 @@ Within a wave, todos can run in parallel unless flagged in the per-todo header.
 | T24 (remove crates/a2a_runtime from default-members) | T15 | T26 | T23, T25 |
 | T25 (remove rust branches in tool_service.py + a2a_service.py) | T15 | T26 | T23, T24 |
 | T26 (mark Rust module/config DEPRECATED; physical deletion → release N+1) | T23, T24, T25 | T27 | — |
-| T27 (full-system smoke after deprecation marking; correct crate name verification) | T26 | T28A continuation | — |
+| T27 (full-system smoke after deprecation marking; correct crate name verification) | T26 | — (terminal in Wave 6; does NOT block T28A which is a Wave 2 prerequisite already in flight) | — |
 | T28A (Wave 2 prerequisite: minimal fixtures — gateway_base_url, auth_token via tests/helpers/auth.py, registered_agent_id, raw_card_url/raw_dispatch_url over {reference, gateway_proxy}) | none (executes FIRST in Wave 2) | T8, T9, T10, T15 | — |
 | T28B (Wave 7: server creation with associated_a2a_agents=[agent_id, ...], `test_fixture_sanity.py` new file, gateway_virtual parameterization) | T19, T20, T22 | T29, T30 | — |
-| T29 (update both target classes' _open_client with real ClientFactory(config=...)) | T28 | T30 | — |
+| T29 (update both target classes' _open_client with real ClientFactory(config=...)) | T28B, T15, T19 | T30 | — |
 | T30 (delete GAP-001 xfail hook + close GAPS.md) | T29 | T31 | — |
 | T31 (architecture docs) | T30 | — | — |
 
@@ -293,20 +291,20 @@ Within a wave, todos can run in parallel unless flagged in the per-todo header.
 
   Also produce `.omo/evidence/task-6-error-mapping-table.md` (committed as part of this todo) with the mapping table:
 
-  | Trigger | Owner | Code | Wire location |
-  |---------|-------|------|---------------|
-  | JSON syntax error in body | Gateway | `-32700` | T12 manual parse |
-  | Body not a JSON object | Gateway | `-32600` | T12 isinstance(dict) guard |
-  | Method field missing or non-string | Gateway | `-32600` | T4 envelope validation |
-  | `A2A-Version` missing OR unsupported | Gateway | `-32009` | T7 + T12 step 6 |
-  | Unknown method on a known agent | Upstream | `-32601` | upstream agent (gateway pass-through) |
-  | Invalid params on a known method | Upstream | `-32602` | upstream agent |
-  | Task ID not found (`GetTask`, `CancelTask`) | Upstream | `-32001` | upstream agent |
-  | Task in terminal state (`CancelTask`) | Upstream | `-32002` | upstream agent |
-  | Push config method on agent without `pushNotifications` capability | Upstream OR gateway-fast-fail | `-32003` | gateway checks agent.capabilities BEFORE forwarding (optional optimization) |
-  | Upstream returns malformed JSON in SSE chunk | Gateway | `-32006` | T5 SSE parser |
-  | `GetExtendedAgentCard` invoked when gateway-card has no extended fields configured | Gateway | `-32007` | T12 GetExtendedAgentCard branch |
-  | Upstream HTTP 5xx or transport error | Gateway | `-32603` | T4/T5 catch + map |
+  | Trigger | Owner | Code | Wire location | Test |
+  |---------|-------|------|---------------|------|
+  | JSON syntax error in body | Gateway | `-32700` | T12 manual parse | `tests/integration/test_a2a_native_routes.py::test_dispatch_parse_error` |
+  | Body not a JSON object (`[]`, `123`, `"x"`) | Gateway | `-32600` | T12 isinstance(dict) guard | `tests/integration/test_a2a_native_routes.py::test_dispatch_invalid_request_shape` |
+  | Method field missing or non-string | Gateway | `-32600` | T4 envelope validation | `tests/unit/mcpgateway/services/test_a2a_service_native.py::test_dispatch_unary_envelope_validation` |
+  | `A2A-Version` missing OR unsupported (and method is not a legacy v0.3 alias) | Gateway | `-32009` | T7 + T12 step 7 | `tests/unit/mcpgateway/services/test_a2a_version_negotiation.py::test_missing_header_v1_method_rejected` + `tests/integration/test_a2a_native_routes.py::test_dispatch_version_unsupported` |
+  | Unknown method on a known agent | Upstream | `-32601` | upstream agent (gateway pass-through) | upstream test (out of scope) |
+  | Invalid params on a known method | Upstream | `-32602` | upstream agent | upstream test (out of scope) |
+  | Task ID not found (`GetTask`, `CancelTask`) | Upstream | `-32001` | upstream agent | upstream test (out of scope) |
+  | Task in terminal state (`CancelTask`) | Upstream | `-32002` | upstream agent | upstream test (out of scope) |
+  | Push config method on agent without `pushNotifications` capability | Upstream | `-32003` | upstream agent (gateway pass-through; no gateway-side fast-fail in phase 1) | upstream test (out of scope) |
+  | Upstream returns malformed JSON in SSE chunk | Gateway | `-32006` | T5 SSE parser | `tests/unit/mcpgateway/services/test_a2a_service_native.py::test_dispatch_streaming_malformed_chunk` |
+  | `GetExtendedAgentCard` invoked when agent's `capabilities.extendedAgentCard` is False or absent | Gateway | `-32007` | T12 `GetExtendedAgentCard` branch | `tests/integration/test_a2a_native_routes.py::test_get_extended_card_not_configured` |
+  | Upstream HTTP 5xx or transport error | Gateway | `-32603` | T4/T5 catch + map | `tests/unit/mcpgateway/services/test_a2a_service_native.py::test_dispatch_unary_upstream_5xx` |
   | Unauthorized caller per `a2a.invoke` or `a2a.read` | Gateway HTTP | HTTP 403 (NOT JSON-RPC) | T12 permission check |
   | Unknown agent at path | Gateway HTTP | HTTP 404 (NOT JSON-RPC, per D14) | T12 resolve_agent_for_dispatch |
   | Malformed/missing auth | Gateway HTTP | HTTP 401 | middleware |
@@ -425,6 +423,15 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
          )
          if not granted:
              return Response(status_code=403)
+         # Concrete -32007 trigger (v4 MEDIUM #2 + error-table fix): the
+         # gateway can only synthesize the extended card if the agent's
+         # capabilities explicitly advertise extendedAgentCard support.
+         capabilities = agent.capabilities or {}
+         if not capabilities.get("extendedAgentCard", False):
+             return JSONResponse(
+                 make_jsonrpc_error(AUTHENTICATED_EXTENDED_CARD_NOT_CONFIGURED, "Agent does not support authenticated extended card", body.get("id")),
+                 status_code=200,
+             )
          card = await synthesize_agent_card(
              db, agent_name, public_base_url,
              server_id=request.scope.get("a2a_server_id"),
@@ -639,7 +646,7 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
   2. `make test` — exits 0 with no new regressions; existing tests asserting the flag setting still pass (since fields remain per T26 split).
   3. `make test-protocol-compliance-a2a-gateway` — exits 0 (live harness against running gateway).
   4. `cargo check --workspace` — exits 0 (validates all members including `contextforge_a2a_runtime` still compile in members list).
-  5. `cargo build` (NO `--workspace`, NO `--package`) — completes; verify via `cargo build --verbose 2>&1 | rg -c "Compiling contextforge_a2a_runtime"` returning `0` (default-members build skips it per T24).
+  5. **Structural default-members verification** (v4 MEDIUM #4 / v5 MEDIUM fix — grep on `cargo build --verbose` can false-pass when cargo prints `Fresh` instead of `Compiling` from cache): `cargo metadata --format-version=1 --no-deps | jq -r '.workspace_default_members[]' | rg -v contextforge_a2a_runtime | wc -l` returns the number of crates remaining in default-members AND `cargo metadata --format-version=1 --no-deps | jq -r '.workspace_default_members[]' | rg -c contextforge_a2a_runtime` returns `0`. This inspects the resolved workspace metadata directly, immune to cache state.
   6. `cargo test --workspace --exclude contextforge_a2a_runtime` — exits 0 (uses verified crate package name from Momus re-review #3, NOT directory name `a2a_runtime`).
   7. New test: `pytest tests/unit/mcpgateway/services/test_rust_a2a_runtime_deprecation.py` asserting `import mcpgateway.services.rust_a2a_runtime` emits `DeprecationWarning` at module-load time.
   Must NOT do: do NOT use `--exclude a2a_runtime` (wrong name — directory not package, Momus #3). Do NOT skip the deprecation-warning test (proves T23+T26 deprecation cycle is real).
