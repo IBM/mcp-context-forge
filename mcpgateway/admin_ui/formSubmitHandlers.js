@@ -441,6 +441,21 @@ export const handleServerFormSubmit = async function (e) {
       }
     }
 
+    // Build A2A agent selection from Map
+    const a2aContainer = document.getElementById("associatedA2aAgents");
+    if (a2aContainer) {
+      const a2aSel = getEditSelections("associatedA2aAgents");
+      a2aContainer
+        .querySelectorAll('input[name="associatedA2aAgents"]')
+        .forEach((cb) => {
+          if (cb.checked) a2aSel.add(String(cb.value));
+        });
+      if (a2aSel.size > 0) {
+        formData.delete("associatedA2aAgents");
+        a2aSel.forEach((id) => formData.append("associatedA2aAgents", id));
+      }
+    }
+
     const response = await fetch(`${window.ROOT_PATH}/admin/servers`, {
       method: "POST",
       body: formData,
@@ -994,6 +1009,10 @@ export const handleEditServerFormSubmit = async function (e) {
       {
         containerId: "edit-server-prompts",
         fieldName: "associatedPrompts",
+      },
+      {
+        containerId: "edit-server-a2a-agents",
+        fieldName: "associatedA2aAgents",
       },
     ].forEach(({ containerId, fieldName }) => {
       const container = document.getElementById(containerId);
