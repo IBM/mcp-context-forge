@@ -1,0 +1,351 @@
+name: Plugin Integration E2E
+
+# End-to-end integration tests for the managed cpex plugins running inside a
+# live ContextForge gateway. Each plugin is exercised in isolation and, where
+# applicable, through both enforcement paths:
+#
+#   * static  — the gateway boots with a dedicated single-plugin enforce config
+#               (derived from plugins/config.yaml) and the plugin enforces via
+#               its static configuration.
+#   * binding — the gateway boots with every plugin disabled and the suite
+#               creates a runtime tool-plugin-binding that flips the plugin to
+#               enforce for its team+tool.
+#
+# Both configs are derived from plugins/config.yaml at run time (the binding
+# config just adds --all-disabled), so there is no second copy of any plugin
+# block to keep in sync. The pytest suite under tests/live_gateway/plugins/
+# drives the gateway over MCP and asserts the plugin's behaviour; the selected
+# path is passed through the PLUGIN_ENFORCEMENT env var.
+#
+# The suites never import the cpex plugin packages — the gateway loads them from
+# PLUGINS_CONFIG_FILE — so a broken wheel (or its compiled Rust extension)
+# surfaces as a failing job rather than a silently skipped test.
+#
+# Runs in the merge queue (merge_group) so plugin behaviour is verified before
+# code lands, and on pull_request when the inputs that affect plugin loading or
+# the suites themselves change.
+
+on:
+    merge_group:
+    pull_request:
+        branches: [main]
+        types: [opened, synchronize, reopened]
+        paths:
+            - "pyproject.toml"
+            - "uv.lock"
+            - "plugins/config.yaml"
+            # SQL Sanitizer is a native plugin (not a cpex wheel), so its source
+            # lives in the repo and must retrigger the suite when it changes.
+            - "plugins/sql_sanitizer/**"
+            - "tests/live_gateway/plugins/**"
+            - "mcp-servers/rust/fast-time-server/**"
+            - ".github/workflows/plugin-integration.yml"
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+env:
+    CARGO_TERM_COLOR: always
+    RUST_BACKTRACE: 1
+
+jobs:
+    plugin-e2e:
+        if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+        name: ${{ matrix.plugin.name }} (${{ matrix.plugin.enforcement }}) E2E
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        # A Redis service backs the rate limiter's production (redis) backend.
+        # Only the rate-limiter legs use it (they set RATELIMITER_REDIS_URL); it
+        # is idle for the other legs, whose plugins keep no cross-request state.
+        services:
+            redis:
+                image: redis:7-bookworm
+                ports:
+                    - 6379:6379
+                options: >-
+                    --health-cmd "redis-cli ping"
+                    --health-interval 5s
+                    --health-timeout 3s
+                    --health-retries 20
+        strategy:
+            fail-fast: false
+            matrix:
+                # One leg per (plugin, enforcement path). New plugins are added
+                # here with the plugin's `name` (as it appears in
+                # plugins/config.yaml), its test module, and the `enforcement`
+                # path to exercise:
+                #
+                #   * static  — derive a single-plugin enforce config.
+                #   * binding — derive an all-disabled config and let the suite
+                #               create the runtime tool-plugin-binding.
+                #
+                # Both configs are derived from plugins/config.yaml at run time,
+                # so there is no second copy of the plugin block to keep in sync.
+                # Resource-hook plugins (e.g. url-reputation) only have a static
+                # path because tool-plugin-bindings govern tool hooks only.
+                plugin:
+                    - name: secrets-detection
+                      plugin_name: SecretsDetection
+                      tests: tests/live_gateway/plugins/test_secrets_detection_e2e.py
+                      enforcement: static
+                    - name: secrets-detection
+                      plugin_name: SecretsDetection
+                      tests: tests/live_gateway/plugins/test_secrets_detection_e2e.py
+                      enforcement: binding
+                    - name: encoded-exfil-detection
+                      plugin_name: EncodedExfilDetector
+                      tests: tests/live_gateway/plugins/test_encoded_exfil_detection_e2e.py
+                      enforcement: static
+                    - name: encoded-exfil-detection
+                      plugin_name: EncodedExfilDetector
+                      tests: tests/live_gateway/plugins/test_encoded_exfil_detection_e2e.py
+                      enforcement: binding
+                    - name: url-reputation
+                      plugin_name: URLReputationPlugin
+                      tests: tests/live_gateway/plugins/test_url_reputation_e2e.py
+                      enforcement: static
+                    # The rate limiter keeps per-user counters in Redis (its
+                    # production backend), so these legs point the config's
+                    # env-templated redis_url at the job's Redis service.
+                    - name: rate-limiter
+                      plugin_name: RateLimiterPlugin
+                      tests: tests/live_gateway/plugins/test_rate_limiter_e2e.py
+                      enforcement: static
+                      redis_url: redis://localhost:6379/0
+                    - name: rate-limiter
+                      plugin_name: RateLimiterPlugin
+                      tests: tests/live_gateway/plugins/test_rate_limiter_e2e.py
+                      enforcement: binding
+                      redis_url: redis://localhost:6379/0
+                    - name: retry-with-backoff
+                      plugin_name: RetryWithBackoffPlugin
+                      tests: tests/live_gateway/plugins/test_retry_with_backoff_e2e.py
+                      enforcement: static
+                    - name: retry-with-backoff
+                      plugin_name: RetryWithBackoffPlugin
+                      tests: tests/live_gateway/plugins/test_retry_with_backoff_e2e.py
+                      enforcement: binding
+                    # PII filter masks (does not block) detected PII in place. It
+                    # covers tool hooks (both paths via echo) and prompt hooks
+                    # the prompt cases self-skip on the binding leg.
+                    - name: pii-filter
+                      plugin_name: PIIFilterPlugin
+                      tests: tests/live_gateway/plugins/test_pii_filter_e2e.py
+                      enforcement: static
+                    - name: pii-filter
+                      plugin_name: PIIFilterPlugin
+                      tests: tests/live_gateway/plugins/test_pii_filter_e2e.py
+                      enforcement: binding
+                    # SQL Sanitizer is a native plugin (not a cpex wheel)
+                    - name: sql-sanitizer
+                      plugin_name: SQLSanitizer
+                      tests: tests/live_gateway/plugins/test_sql_sanitizer_e2e.py
+                      enforcement: static
+                      config_override: 'fields=["sql","query","statement","message"]'
+                    - name: sql-sanitizer
+                      plugin_name: SQLSanitizer
+                      tests: tests/live_gateway/plugins/test_sql_sanitizer_e2e.py
+                      enforcement: binding
+                      config_override: 'fields=["sql","query","statement","message"]'
+
+        steps:
+            - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+              with:
+                  persist-credentials: false
+
+            - name: Setup Python
+              uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+              with:
+                  python-version: "3.12"
+
+            - name: Install uv
+              uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+              with:
+                  enable-cache: true
+
+            - name: Cache uv virtual environment
+              uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+              with:
+                  path: .venv
+                  key: venv-${{ runner.os }}-python-3.12-${{ hashFiles('uv.lock') }}
+                  restore-keys: |
+                      venv-${{ runner.os }}-python-3.12-
+                      venv-${{ runner.os }}-
+
+            - name: Install Rust stable
+              run: |
+                  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+                  echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+                  source $HOME/.cargo/env
+                  rustup toolchain install stable
+                  rustup default stable
+                  rustc --version
+
+            - name: Cache Cargo
+              uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                      mcp-servers/rust/fast-time-server/target
+                  key: ${{ runner.os }}-cargo-fast-time-${{ hashFiles('mcp-servers/rust/fast-time-server/Cargo.lock') }}
+                  restore-keys: |
+                      ${{ runner.os }}-cargo-fast-time-
+
+            - name: Install gateway with plugins and test deps
+              # install-dev installs the dev group plus the [plugins] extra, which
+              # pulls the cpex wheels the gateway must import at boot.
+              run: |
+                  make venv
+                  make install-dev
+
+            - name: Generate JWT secret
+              run: |
+                  SECRET=$(openssl rand -base64 32)
+                  echo "DYNAMIC_JWT_SECRET=$SECRET" >> "${GITHUB_ENV}"
+
+            - name: Build fast-time-server
+              working-directory: mcp-servers/rust/fast-time-server
+              run: cargo build
+
+            - name: Start fast-time-server
+              run: |
+                  pkill -9 -f "fast-time-server" 2>/dev/null || true
+                  sleep 1
+                  nohup mcp-servers/rust/fast-time-server/target/debug/fast-time-server \
+                    > fast-time-server.log 2>&1 &
+                  echo $! > fast-time-server.pid
+
+                  echo "Waiting for fast-time-server..."
+                  for i in {1..30}; do
+                    if curl -s http://localhost:9080/health >/dev/null 2>&1; then
+                      echo "fast-time-server is up!"
+                      break
+                    fi
+                    echo "Waiting for fast-time-server... (attempt $i)"
+                    sleep 2
+                  done
+
+                  if ! curl -s http://localhost:9080/health >/dev/null 2>&1; then
+                    echo "ERROR: fast-time-server failed to start"
+                    cat fast-time-server.log
+                    exit 1
+                  fi
+
+            - name: Derive ${{ matrix.plugin.enforcement }} config for ${{ matrix.plugin.name }}
+              # Single source of truth: derive the config from the committed
+              # plugins/config.yaml instead of maintaining a second copy of the
+              # plugin block. The binding path adds --all-disabled so the plugin
+              # boots loaded-but-inert and a runtime binding does the enforcing.
+              # config_override (passed via env so its JSON quoting survives the
+              # shell) lets a plugin add scanned fields, e.g. the SQL sanitizer
+              # adding the echo tool's `message` arg to `fields`.
+              env:
+                  CONFIG_OVERRIDE: ${{ matrix.plugin.config_override }}
+              run: |
+                  . .venv/bin/activate
+                  EXTRA_ARGS=()
+                  if [ "${{ matrix.plugin.enforcement }}" = "binding" ]; then
+                    EXTRA_ARGS+=(--all-disabled)
+                  fi
+                  if [ -n "$CONFIG_OVERRIDE" ]; then
+                    EXTRA_ARGS+=(--config-override "$CONFIG_OVERRIDE")
+                  fi
+                  python tests/live_gateway/plugins/make_enforce_config.py \
+                    --source plugins/config.yaml \
+                    --plugin "${{ matrix.plugin.plugin_name }}" \
+                    "${EXTRA_ARGS[@]}" \
+                    --output /tmp/plugin_e2e_config.yaml
+                  echo "--- derived ${{ matrix.plugin.enforcement }} config ---"
+                  cat /tmp/plugin_e2e_config.yaml
+
+            - name: Start gateway (${{ matrix.plugin.name }} ${{ matrix.plugin.enforcement }})
+              env:
+                  PLUGINS_ENABLED: true
+                  # The gateway (pydantic Settings) reads PLUGIN_CONFIG_FILE
+                  # (singular); compose uses the plural. Set both so the derived
+                  # config is honoured whether booting via make serve or compose.
+                  PLUGIN_CONFIG_FILE: /tmp/plugin_e2e_config.yaml
+                  PLUGINS_CONFIG_FILE: /tmp/plugin_e2e_config.yaml
+                  # Resolves the rate limiter's {{ env.RATELIMITER_REDIS_URL }}
+                  # config template to the job's Redis service. Empty (and so
+                  # ignored) for every other leg.
+                  RATELIMITER_REDIS_URL: ${{ matrix.plugin.redis_url }}
+                  REDIS_URL: ${{ matrix.plugin.redis_url }}
+                  GUNICORN_WORKERS: 1
+                  MCPGATEWAY_UI_ENABLED: true
+                  MCPGATEWAY_ADMIN_API_ENABLED: true
+                  # Disabled: localhost-only test, fast-time-server is local.
+                  SSRF_PROTECTION_ENABLED: false
+                  JWT_SECRET_KEY: ${{ env.DYNAMIC_JWT_SECRET }}
+                  ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP: false
+                  PASSWORD_CHANGE_ENFORCEMENT_ENABLED: false
+                  LOG_LEVEL: INFO
+              run: |
+                  make stop-serve || true
+                  make serve > gateway.log 2>&1 &
+
+                  echo "Waiting for gateway to start..."
+                  for i in {1..60}; do
+                    if curl -s http://localhost:4444 >/dev/null 2>&1; then
+                      echo "Gateway is up!"
+                      break
+                    fi
+                    echo "Waiting for port 4444 to open... (attempt $i)"
+                    sleep 4
+                  done
+
+                  if ! curl -s http://localhost:4444 >/dev/null 2>&1; then
+                    echo "ERROR: gateway failed to start (plugin import may have failed)"
+                    cat gateway.log
+                    exit 1
+                  fi
+
+            - name: Run ${{ matrix.plugin.name }} (${{ matrix.plugin.enforcement }}) E2E suite
+              env:
+                  MCP_CLI_BASE_URL: http://127.0.0.1:4444
+                  JWT_SECRET_KEY: ${{ env.DYNAMIC_JWT_SECRET }}
+                  # Selects the enforcement path the suite exercises; must match
+                  # the config derived above (static enforce vs all-disabled).
+                  PLUGIN_ENFORCEMENT: ${{ matrix.plugin.enforcement }}
+                  # Lets the rate-limiter suite flush its Redis counters between
+                  # tests; empty (and unused) for every other leg.
+                  RATELIMITER_REDIS_URL: ${{ matrix.plugin.redis_url }}
+                  REDIS_URL: ${{ matrix.plugin.redis_url }}
+              run: |
+                  . .venv/bin/activate
+                  python -m pytest "${{ matrix.plugin.tests }}" -v
+
+            - name: Upload logs on failure
+              if: failure()
+              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+              with:
+                  name: plugin-e2e-${{ matrix.plugin.name }}-${{ matrix.plugin.enforcement }}-logs
+                  path: |
+                      gateway.log
+                      fast-time-server.log
+                  if-no-files-found: ignore
+
+    # Aggregation gate: a single, stable check name that branch protection /
+    # the merge queue can require. It succeeds only when every matrix leg
+    # passes. The companion plugin-integration-required.yml skip reporter
+    # reports the same "Plugin Integration Complete" name on every PR so that
+    # PRs whose paths don't trigger this suite are never blocked.
+    plugin-integration-complete:
+        name: Plugin Integration Complete
+        runs-on: ubuntu-latest
+        needs: [plugin-e2e]
+        if: always()
+        steps:
+            - name: Verify all plugin E2E legs succeeded
+              run: |
+                  if [ "${{ needs.plugin-e2e.result }}" != "success" ]; then
+                    echo "Plugin E2E matrix result: ${{ needs.plugin-e2e.result }}"
+                    exit 1
+                  fi
+                  echo "All plugin E2E legs passed."
