@@ -2939,6 +2939,81 @@
                     aria-live="polite"
                   ></div>
                 </div>
+
+                <div
+                  class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-300 dark:border-gray-700"
+                >
+                  <div class="flex items-center justify-between mb-2">
+                    <label
+                      class="block text-sm font-semibold text-gray-700 dark:text-gray-300"
+                      for="associatedA2aAgents"
+                    >
+                      Associated A2A Agents
+                    </label>
+                  </div>
+                  <input
+                    type="text"
+                    id="searchA2aAgents"
+                    placeholder="Search for A2A agents..."
+                    class="mb-4 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm p-2 dark:bg-gray-900 dark:text-gray-300"
+                  />
+                  <div
+                    id="associatedA2aAgents"
+                    class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
+                    hx-get="{{ root_path }}/admin/a2a/partial?page=1&per_page=50&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+                    hx-trigger="load"
+                    hx-swap="innerHTML"
+                    hx-on:htmx:after-swap="window.Admin?.initA2aAgentSelect?.('associatedA2aAgents', 'selectedA2aAgentsPills', 'selectedA2aAgentsWarning', 6, 'selectAllA2aAgentsBtn', 'clearAllA2aAgentsBtn')"
+                  >
+                    <!-- A2A agents will be loaded via HTMX -->
+                    <div class="text-center py-4 text-gray-500 dark:text-gray-400">
+                      <svg class="animate-spin h-5 w-5 text-purple-600 dark:text-purple-400 inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      <span class="ml-2">Loading A2A agents...</span>
+                    </div>
+                  </div>
+                  <p
+                    id="noA2aAgentsMessage"
+                    class="text-gray-700 dark:text-gray-300 mt-2"
+                    style="display: none"
+                  >
+                    No A2A agent found containing "<span id="searchQueryA2aAgents"></span>"
+                  </p>
+                  <div class="flex justify-end mt-3 gap-2">
+                    <button
+                      type="button"
+                      id="selectAllA2aAgentsBtn"
+                      class="px-3 py-1 text-sm font-semibold text-green-600 border border-green-600 rounded-md hover:bg-green-50 focus:outline-none focus:ring-2 focus:ring-green-300 focus:ring-offset-1"
+                      aria-label="Select all A2A agents"
+                    >
+                      Select All
+                    </button>
+
+                    <button
+                      type="button"
+                      id="clearAllA2aAgentsBtn"
+                      class="px-3 py-1 text-sm font-semibold text-red-600 border border-red-600 rounded-md hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-300 focus:ring-offset-1"
+                      aria-label="Clear all selected A2A agents"
+                    >
+                      Clear All
+                    </button>
+                  </div>
+
+                  <!-- Selected pills -->
+                  <div
+                    id="selectedA2aAgentsPills"
+                    class="mt-4 flex flex-wrap gap-2"
+                  ></div>
+
+                  <!-- Warning message -->
+                  <div
+                    id="selectedA2aAgentsWarning"
+                    class="mt-2 min-h-[1.25rem] text-sm font-semibold text-yellow-600"
+                    aria-live="polite"
+                  ></div>
+                </div>
               </div>
               <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
@@ -11411,6 +11486,80 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         aria-live="polite"
                       ></div>
                     </div>
+                    <div
+                      class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-600"
+                    >
+                      <div class="flex items-center justify-between mb-2">
+                        <label
+                          for="edit-server-a2a-agents"
+                          class="block text-sm font-semibold text-gray-700 dark:text-gray-300"
+                        >
+                          Associated A2A Agents
+                        </label>
+                      </div>
+                       <input
+                        type="text"
+                        id="searchEditA2aAgents"
+                        placeholder="Search for A2A agents..."
+                        class="mb-4 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm p-2 dark:bg-gray-900 dark:text-gray-300"
+                      />
+                      <div
+                        id="edit-server-a2a-agents"
+                        class="max-h-60 overflow-y-auto rounded-md border border-gray-600 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
+                        hx-get="{{ root_path }}/admin/a2a/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+                        hx-trigger="load"
+                        hx-swap="innerHTML"
+                        hx-on:htmx:after-swap="window.Admin?.initA2aAgentSelect?.('edit-server-a2a-agents', 'selectedEditA2aAgentsPills', 'selectedEditA2aAgentsWarning', 6, 'selectAllEditA2aAgentsBtn', 'clearAllEditA2aAgentsBtn')"
+                      >
+                        <!-- A2A agents will be loaded via HTMX -->
+                        <div class="text-center py-4 text-gray-500 dark:text-gray-400">
+                          <svg class="animate-spin h-5 w-5 text-purple-600 dark:text-purple-400 inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          <span class="ml-2">Loading A2A agents...</span>
+                        </div>
+                      </div>
+                      <p
+                        id="noEditA2aAgentsMessage"
+                        class="text-gray-700 dark:text-gray-300 mt-2"
+                        style="display: none"
+                      >
+                        No A2A agent found containing "<span id="searchQueryEditA2aAgents"></span>"
+                      </p>
+                      <div class="flex justify-end gap-3 mt-3">
+                        <button
+                          type="button"
+                          id="selectAllEditA2aAgentsBtn"
+                          class="px-3 py-1 text-sm font-semibold text-green-600 border border-green-600 rounded-md hover:bg-green-50 focus:outline-none focus:ring-2 focus:ring-green-300 focus:ring-offset-1"
+                          aria-label="Select all A2A agents"
+                        >
+                          Select All
+                        </button>
+
+                        <button
+                          type="button"
+                          id="clearAllEditA2aAgentsBtn"
+                          class="px-3 py-1 text-sm font-semibold text-red-600 border border-red-600 rounded-md hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-300 focus:ring-offset-1"
+                          aria-label="Clear all selected A2A agents"
+                        >
+                          Clear All
+                        </button>
+                      </div>
+
+                      <!-- Selected pills -->
+                      <div
+                        id="selectedEditA2aAgentsPills"
+                        class="mt-4 flex flex-wrap gap-2"
+                      ></div>
+
+                      <!-- Warning message -->
+                      <div
+                        id="selectedEditA2aAgentsWarning"
+                        class="mt-2 min-h-[1.25rem] text-sm font-semibold text-yellow-600"
+                        aria-live="polite"
+                      ></div>
+                    </div>
                   </div>
                 <div class="mt-6">
                   <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -12118,6 +12267,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT = {{ mcpgateway_ui_tool_test_timeout | tojson }};
       window.CURRENT_USER = {{ current_user | tojson }};
       window.IS_ADMIN = {{ is_admin | tojson }};
+      window.A2A_PUBLIC_BASE_URL = {{ a2a_public_base_url | default("") | tojson }};
       window.UI_HIDDEN_SECTIONS = {{ ui_hidden_sections | default([]) | tojson }};
       window.UI_HIDDEN_HEADER_ITEMS = {{ ui_hidden_header_items | default([]) | tojson }};
       window.UI_HIDDEN_TABS = {{ ui_hidden_tabs | default([]) | tojson }};

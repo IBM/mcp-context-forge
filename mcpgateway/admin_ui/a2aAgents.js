@@ -1,6 +1,7 @@
 import { getAuthHeaders, loadAuthHeaders } from "./auth.js";
 import { closeModal, openModal } from "./modals.js";
 import { escapeHtml, validateInputName, validateUrl } from "./security.js";
+import { getEditSelections } from "./servers.js";
 import { applyVisibilityRestrictions, isTeamScopedView } from "./teams.js";
 import {
   decodeHtml,
@@ -71,6 +72,25 @@ export const viewA2AAgent = async function (agentId) {
       agentIdP.appendChild(agentIdSpan);
       agentIdP.appendChild(makeCopyIdButton(agent.id));
       container.appendChild(agentIdP);
+
+      if (agent.name) {
+        const publicBase = (typeof window !== "undefined" && window.A2A_PUBLIC_BASE_URL)
+          || (typeof window !== "undefined" && window.location ? window.location.origin : "");
+        const cardUrl = `${publicBase}/a2a/${encodeURIComponent(agent.name)}/.well-known/agent-card.json`;
+        const cardUrlP = document.createElement("p");
+        const cardUrlStrong = document.createElement("strong");
+        cardUrlStrong.textContent = "Card URL: ";
+        cardUrlP.appendChild(cardUrlStrong);
+        const cardUrlLink = document.createElement("a");
+        cardUrlLink.href = cardUrl;
+        cardUrlLink.target = "_blank";
+        cardUrlLink.rel = "noopener noreferrer";
+        cardUrlLink.className = "font-mono text-xs break-all text-indigo-600 dark:text-indigo-400 hover:underline";
+        cardUrlLink.textContent = cardUrl;
+        cardUrlP.appendChild(cardUrlLink);
+        cardUrlP.appendChild(makeCopyIdButton(cardUrl));
+        container.appendChild(cardUrlP);
+      }
 
       const fields = [
         { label: "Name", value: agent.name },
@@ -949,5 +969,135 @@ export const cleanupA2ATestModal = function () {
     console.log("✓ Cleaned up A2A test modal listeners");
   } catch (error) {
     console.error("Error cleaning up A2A test modal:", error);
+  }
+};
+
+export const initA2aAgentSelect = function (
+  selectId,
+  pillsId,
+  warnId,
+  max = 6,
+  selectBtnId = null,
+  clearBtnId = null
+) {
+  const container = safeGetElement(selectId);
+  const pillsBox = safeGetElement(pillsId);
+  const warnBox = safeGetElement(warnId);
+  const clearBtn = clearBtnId ? safeGetElement(clearBtnId) : null;
+  const selectBtn = selectBtnId ? safeGetElement(selectBtnId) : null;
+
+  if (!container || !pillsBox || !warnBox) {
+    console.warn(
+      `A2A agent select elements not found: ${selectId}, ${pillsId}, ${warnId}`
+    );
+    return;
+  }
+
+  const pillClasses =
+    "inline-block bg-purple-100 text-purple-800 text-xs px-2 py-1 rounded-full dark:bg-purple-900 dark:text-purple-200";
+  const maxPillsToShow = 3;
+
+  const update = function () {
+    try {
+      const checkboxes = container.querySelectorAll(
+        'input[name="associatedA2aAgents"]'
+      );
+      const sel = getEditSelections(selectId);
+
+      checkboxes.forEach((cb) => {
+        const value = String(cb.value);
+        if (cb.checked) {
+          sel.add(value);
+        } else {
+          sel.delete(value);
+        }
+      });
+
+      const count = sel.size;
+
+      pillsBox.innerHTML = "";
+      const labelById = new Map();
+      checkboxes.forEach((cb) => {
+        const value = String(cb.value);
+        const label = cb.dataset?.agentName || cb.nextElementSibling?.textContent?.trim() || value;
+        labelById.set(value, label);
+      });
+
+      const orderedIds = Array.from(sel);
+      orderedIds.slice(0, maxPillsToShow).forEach((id) => {
+        const span = document.createElement("span");
+        span.className = pillClasses;
+        const label = labelById.get(id) || id.substring(0, 8) + "...";
+        span.textContent = label;
+        span.title = label;
+        pillsBox.appendChild(span);
+      });
+
+      if (count > maxPillsToShow) {
+        const span = document.createElement("span");
+        span.className = pillClasses + " cursor-pointer";
+        span.title = "Click to see all selected A2A agents";
+        span.textContent = `+${count - maxPillsToShow} more`;
+        pillsBox.appendChild(span);
+      }
+
+      if (count > max) {
+        warnBox.textContent = `Selected ${count} A2A agents. Selecting more than ${max} can degrade agent performance with the server.`;
+      } else {
+        warnBox.textContent = "";
+      }
+
+      if (selectBtnId) {
+        const currentSelectBtn = document.getElementById(selectBtnId);
+        if (currentSelectBtn) {
+          currentSelectBtn.textContent =
+            count > 0 ? `Select All (${count})` : "Select All";
+        }
+      }
+    } catch (error) {
+      console.error("Error updating A2A agent select:", error);
+    }
+  };
+
+  if (clearBtn && !clearBtn.dataset.listenerAttached) {
+    clearBtn.dataset.listenerAttached = "true";
+    const newClearBtn = clearBtn.cloneNode(true);
+    newClearBtn.dataset.listenerAttached = "true";
+    clearBtn.parentNode.replaceChild(newClearBtn, clearBtn);
+
+    newClearBtn.addEventListener("click", () => {
+      const checkboxes = container.querySelectorAll(
+        'input[name="associatedA2aAgents"]'
+      );
+      checkboxes.forEach((cb) => (cb.checked = false));
+      getEditSelections(selectId).clear();
+      update();
+    });
+  }
+
+  if (selectBtn && !selectBtn.dataset.listenerAttached) {
+    selectBtn.dataset.listenerAttached = "true";
+    const newSelectBtn = selectBtn.cloneNode(true);
+    newSelectBtn.dataset.listenerAttached = "true";
+    selectBtn.parentNode.replaceChild(newSelectBtn, selectBtn);
+
+    newSelectBtn.addEventListener("click", () => {
+      const checkboxes = container.querySelectorAll(
+        'input[name="associatedA2aAgents"]'
+      );
+      checkboxes.forEach((cb) => (cb.checked = true));
+      update();
+    });
+  }
+
+  update();
+
+  if (!container.dataset.changeListenerAttached) {
+    container.dataset.changeListenerAttached = "true";
+    container.addEventListener("change", (e) => {
+      if (e.target.type === "checkbox" && e.target.name === "associatedA2aAgents") {
+        update();
+      }
+    });
   }
 };

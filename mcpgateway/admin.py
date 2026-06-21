@@ -3034,13 +3034,14 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
     try:
         LOGGER.debug(f"User {get_user_email(user)} is adding a new server with name: {form['name']}")
 
-        # Handle "Select All" for tools, resources, and prompts.
+        # Handle "Select All" for tools, resources, prompts, and A2A agents.
         # _merge_select_all_ids takes the union of the server-fetched paginated IDs
         # (allToolIds etc.) with the explicitly checked form values so that
         # platform-public items visible in the UI are never silently dropped.
         associated_tools_list = _merge_select_all_ids(form, "selectAllTools", "allToolIds", form.getlist("associatedTools"))
         associated_resources_list = _merge_select_all_ids(form, "selectAllResources", "allResourceIds", form.getlist("associatedResources"))
         associated_prompts_list = _merge_select_all_ids(form, "selectAllPrompts", "allPromptIds", form.getlist("associatedPrompts"))
+        associated_a2a_agents_list = form.getlist("associatedA2aAgents")
 
         # Handle OAuth 2.0 configuration (RFC 9728)
         oauth_enabled = form.get("oauth_enabled") == "on"
@@ -3079,6 +3080,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             associated_tools=",".join(str(x) for x in associated_tools_list),
             associated_resources=",".join(str(x) for x in associated_resources_list),
             associated_prompts=",".join(str(x) for x in associated_prompts_list),
+            associated_a2a_agents=",".join(str(x) for x in associated_a2a_agents_list) if associated_a2a_agents_list else None,
             tags=tags,
             visibility=visibility,
             oauth_enabled=oauth_enabled,
@@ -3200,13 +3202,14 @@ async def admin_edit_server(
 
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
 
-        # Handle "Select All" for tools, resources, and prompts.
+        # Handle "Select All" for tools, resources, prompts, and A2A agents.
         # _merge_select_all_ids takes the union of the server-fetched paginated IDs
         # (allToolIds etc.) with the explicitly checked form values so that
         # platform-public items visible in the UI are never silently dropped.
         associated_tools_list = _merge_select_all_ids(form, "selectAllTools", "allToolIds", form.getlist("associatedTools"))
         associated_resources_list = _merge_select_all_ids(form, "selectAllResources", "allResourceIds", form.getlist("associatedResources"))
         associated_prompts_list = _merge_select_all_ids(form, "selectAllPrompts", "allPromptIds", form.getlist("associatedPrompts"))
+        associated_a2a_agents_list = form.getlist("associatedA2aAgents")
 
         # Handle OAuth 2.0 configuration (RFC 9728)
         oauth_enabled = form.get("oauth_enabled") == "on"
@@ -3245,6 +3248,7 @@ async def admin_edit_server(
             associated_tools=",".join(str(x) for x in associated_tools_list),
             associated_resources=",".join(str(x) for x in associated_resources_list),
             associated_prompts=",".join(str(x) for x in associated_prompts_list),
+            associated_a2a_agents=",".join(str(x) for x in associated_a2a_agents_list) if associated_a2a_agents_list else None,
             tags=tags,
             visibility=visibility,
             team_id=team_id,
@@ -4106,6 +4110,7 @@ async def admin_ui(
             "prompts": prompts,
             "gateways": gateways,
             "a2a_agents": a2a_agents,
+            "a2a_public_base_url": (getattr(settings, "a2a_public_base_url", None) or str(settings.app_domain).rstrip("/")),
             "grpc_services": grpc_services,
             "roots": roots,
             "include_inactive": include_inactive,
