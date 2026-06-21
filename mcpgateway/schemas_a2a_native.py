@@ -33,6 +33,7 @@ The legacy ``a2a_service.get_agent_card()`` is intentionally NOT migrated
 through these models per plan D12 — it stays on the v0.3-shaped dict.
 """
 
+# Future
 from __future__ import annotations
 
 # Standard
