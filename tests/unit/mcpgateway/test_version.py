@@ -761,16 +761,24 @@ class TestA2ARuntimeDiagnostics:
         assert payload["sidecar_transport"] == "uds"
         assert payload["sidecar_target"] == "/tmp/a2a.sock"
 
-    def test_rust_a2a_runtime_managed_default(self, monkeypatch):
+    def test_rust_a2a_runtime_managed_always_false_post_t26(self, monkeypatch):
+        """T26 (Wave 6): _rust_a2a_runtime_managed() returns False regardless of env.
+
+        The Rust A2A runtime is no longer wired into the execution path
+        (T25 removed all call sites; T26 marks the module as deprecated).
+        The symbol is preserved so external /version consumers don't
+        break, but the value is now a constant False — the
+        EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED env var has no effect.
+        Physical removal is scheduled for release N+1.
+        """
         # First-Party
         from mcpgateway.version import _rust_a2a_runtime_managed
 
         monkeypatch.delenv("EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED", raising=False)
-        assert _rust_a2a_runtime_managed() is True
+        assert _rust_a2a_runtime_managed() is False
 
-    def test_rust_a2a_runtime_managed_false(self, monkeypatch):
-        # First-Party
-        from mcpgateway.version import _rust_a2a_runtime_managed
+        monkeypatch.setenv("EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED", "true")
+        assert _rust_a2a_runtime_managed() is False
 
         monkeypatch.setenv("EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED", "false")
         assert _rust_a2a_runtime_managed() is False

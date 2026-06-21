@@ -202,12 +202,25 @@ async def test_patch_mcp_mode_flips_to_shadow(allow_admin, edge_boot, admin_user
 
 
 @pytest.mark.asyncio
-async def test_patch_a2a_mode_flips_to_shadow(allow_admin, edge_boot, admin_user, db_session, request_no_proxy, monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.parametrize("mode", ["shadow", "edge"])
+async def test_patch_a2a_mode_returns_410_gone_unconditionally(allow_admin, edge_boot, admin_user, db_session, request_no_proxy, monkeypatch: pytest.MonkeyPatch, mode: str):
+    """T26 (Wave 6): PATCH /a2a-mode is unconditionally HTTP 410 Gone.
+
+    The A2A Rust runtime is no longer wired into the execution path
+    (T25 removed all call sites; T26 marks the backing module as
+    deprecated). Any PATCH that attempts to flip the runtime mode
+    returns 410 with a migration message, regardless of the requested
+    mode or the boot state. The GET endpoint still works for
+    /version-style read consumers.
+    """
     monkeypatch.setattr(router_module, "get_security_logger", MagicMock)
-    body = router_module.RuntimeModeUpdate(mode="shadow")
-    payload = await router_module.patch_a2a_mode(body, request=request_no_proxy, user=admin_user, db=db_session)
-    assert payload["effective_mode"] == "shadow"
-    assert payload["override_active"] is True
+    body = router_module.RuntimeModeUpdate(mode=mode)
+    with pytest.raises(HTTPException) as exc:
+        await router_module.patch_a2a_mode(body, request=request_no_proxy, user=admin_user, db=db_session)
+    assert exc.value.status_code == 410
+    assert "DEPRECATED" in exc.value.detail
+    assert "a2a_service" in exc.value.detail
+    assert "plans/a2a-native-passthrough.md" in exc.value.detail
 
 
 # ---------------------------------------------------------------------------
@@ -231,18 +244,6 @@ async def test_patch_mcp_mode_409_when_boot_mode_off(allow_admin, off_boot, admi
     assert exc.value.status_code == 409
     # Recommendation must be 'shadow' or 'edge' — must NOT recommend 'full',
     # which would just trade NO_DISPATCHER for BOOT_FULL_STRANDS.
-    assert "'shadow' or 'edge'" in exc.value.detail
-    assert "'full'" not in exc.value.detail
-
-
-@pytest.mark.asyncio
-async def test_patch_a2a_mode_409_when_boot_mode_off(allow_admin, off_boot, admin_user, db_session, request_no_proxy, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(router_module, "get_security_logger", MagicMock)
-    body = router_module.RuntimeModeUpdate(mode="edge")
-    with pytest.raises(HTTPException) as exc:
-        await router_module.patch_a2a_mode(body, request=request_no_proxy, user=admin_user, db=db_session)
-    assert exc.value.status_code == 409
-    # A2A has no 'full' mode at all — the recommendation must not mention it.
     assert "'shadow' or 'edge'" in exc.value.detail
     assert "'full'" not in exc.value.detail
 
@@ -280,17 +281,6 @@ async def test_patch_mcp_mode_409_when_boot_mode_shadow(allow_admin, shadow_boot
     assert exc.value.status_code == 409
     assert "shadow" in exc.value.detail
     assert "experimental_rust_mcp_session_auth_reuse_enabled" in exc.value.detail
-
-
-@pytest.mark.asyncio
-async def test_patch_a2a_mode_409_when_boot_mode_shadow(allow_admin, shadow_boot, admin_user, db_session, request_no_proxy, monkeypatch: pytest.MonkeyPatch):
-    """Safety invariant (A2A): boot=shadow didn't opt into delegate-enabled."""
-    monkeypatch.setattr(router_module, "get_security_logger", MagicMock)
-    body = router_module.RuntimeModeUpdate(mode="edge")
-    with pytest.raises(HTTPException) as exc:
-        await router_module.patch_a2a_mode(body, request=request_no_proxy, user=admin_user, db=db_session)
-    assert exc.value.status_code == 409
-    assert "shadow" in exc.value.detail
 
 
 @pytest.mark.asyncio
