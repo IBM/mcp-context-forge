@@ -86,7 +86,6 @@ from mcpgateway.services.metrics_query_service import get_top_performers_combine
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.performance_tracker import get_performance_tracker
-from mcpgateway.services.rust_a2a_runtime import get_rust_a2a_runtime_client, RustA2ARuntimeError
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context, get_upstream_session_registry, RegistryNotInitializedError, TransportType
@@ -5865,26 +5864,19 @@ class ToolService(BaseService):
                     )
 
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "A2A"}):
-                        # Make HTTP request with timeout enforcement
+                        # Make HTTP request with timeout enforcement.
+                        # T25: Python HTTP dispatch is the only path post-Wave 6;
+                        # the prior Rust runtime delegate branch was removed.
                         logger.info("Calling A2A agent '%s' at %s", a2a_agent_name, prepared.sanitized_endpoint_url)
                         a2a_start_time = time.time()
                         try:
-                            # First-Party
-                            from mcpgateway.version import should_delegate_a2a_to_rust  # pylint: disable=import-outside-toplevel
-
-                            if should_delegate_a2a_to_rust():
-                                runtime_response = await get_rust_a2a_runtime_client().invoke(prepared, timeout_seconds=int(max(1, effective_timeout)))
-                                status_code = int(runtime_response.get("status_code", 200))
-                                response_data = runtime_response.get("json")
-                                response_text = str(runtime_response.get("text") or "")
-                            else:
-                                http_response = await asyncio.wait_for(
-                                    self._http_client.post(prepared.endpoint_url, json=prepared.request_data, headers=prepared.headers),
-                                    timeout=effective_timeout,
-                                )
-                                status_code = http_response.status_code
-                                response_data = http_response.json() if status_code == 200 else None
-                                response_text = http_response.text
+                            http_response = await asyncio.wait_for(
+                                self._http_client.post(prepared.endpoint_url, json=prepared.request_data, headers=prepared.headers),
+                                timeout=effective_timeout,
+                            )
+                            status_code = http_response.status_code
+                            response_data = http_response.json() if status_code == 200 else None
+                            response_text = http_response.text
                         except (asyncio.TimeoutError, httpx.TimeoutException):
                             a2a_elapsed_ms = (time.time() - a2a_start_time) * 1000
                             structured_logger.log(
@@ -5910,10 +5902,6 @@ class ToolService(BaseService):
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
-                        except RustA2ARuntimeError as e:
-                            status_code = 502
-                            response_data = None
-                            response_text = str(e)
 
                         if status_code == 200:
                             if isinstance(response_data, dict) and "response" in response_data:
@@ -7126,18 +7114,8 @@ class ToolService(BaseService):
         )
         logger.info("invoke tool request_data prepared: %s", prepared.request_data)
 
-        # First-Party
-        from mcpgateway.version import should_delegate_a2a_to_rust  # pylint: disable=import-outside-toplevel
-
-        if should_delegate_a2a_to_rust():
-            runtime_response = await get_rust_a2a_runtime_client().invoke(
-                prepared,
-                timeout_seconds=int(settings.mcpgateway_a2a_default_timeout),
-            )
-            if int(runtime_response.get("status_code", 200)) == 200:
-                return runtime_response.get("json") if runtime_response.get("json") is not None else runtime_response.get("text")
-            raise Exception(f"HTTP {runtime_response.get('status_code')}: {runtime_response.get('text')}")
-
+        # T25: Python HTTP dispatch is the only path post-Wave 6;
+        # the prior Rust runtime delegate branch was removed.
         # Make HTTP request to the agent endpoint using shared HTTP client
         # First-Party
         from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel

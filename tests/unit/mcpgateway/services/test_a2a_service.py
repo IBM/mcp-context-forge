@@ -25,7 +25,6 @@ from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.schemas import A2AAgentCreate, A2AAgentRead, A2AAgentUpdate
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.encryption_service import get_encryption_service
-from mcpgateway.services.rust_a2a_runtime import RustA2ARuntimeError
 from mcpgateway.utils.services_auth import encode_auth
 
 # Local
@@ -2656,47 +2655,6 @@ class TestInvokeAgentEdgeCases:
         assert "kind" not in outbound_json["params"]["message"]
         assert outbound_headers["A2A-Version"] == "1.0"
 
-    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
-    @patch("mcpgateway.services.a2a_service.fresh_db_session")
-    @patch("mcpgateway.services.http_client_service.get_http_client")
-    async def test_invoke_delegates_to_rust_runtime_when_enabled(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
-        """A2A invocations should delegate to the Rust runtime when explicitly enabled."""
-        rust_runtime = MagicMock()
-        rust_runtime.invoke = AsyncMock(return_value={"status_code": 200, "json": {"ok": True}, "text": ""})
-
-        agent = SimpleNamespace(
-            id="a1",
-            name="ag",
-            enabled=True,
-            endpoint_url="https://x.com/",
-            auth_type=None,
-            auth_value=None,
-            auth_query_params=None,
-            visibility="public",
-            team_id=None,
-            owner_email=None,
-            agent_type="generic",
-            protocol_version="1.0.0",
-        )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_rust_a2a_runtime_client", lambda: rust_runtime)
-        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_enabled", True)
-        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_delegate_enabled", True)
-        mock_db.commit = MagicMock()
-        mock_db.close = MagicMock()
-
-        mock_ts_db = MagicMock()
-        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
-        mock_fresh_db.return_value.__exit__.return_value = None
-        mock_metrics_fn.return_value = MagicMock()
-
-        result = await service.invoke_agent(mock_db, "ag", {"query": "hello"})
-
-        assert result == {"ok": True}
-        rust_runtime.invoke.assert_called_once()
-        mock_get_client.assert_not_called()
-
     async def test_get_agent_card_returns_none_when_agent_missing(self, service, mock_db):
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
@@ -2773,7 +2731,9 @@ class TestInvokeAgentEdgeCases:
 
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
-    async def test_invoke_rust_runtime_error_wraps_agent_error(self, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_invoke_persists_task_from_status_object(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+        """Task persistence still fires under the Python HTTP path (T25 — Rust removed)."""
         agent = SimpleNamespace(
             id="a1",
             name="ag",
@@ -2788,57 +2748,17 @@ class TestInvokeAgentEdgeCases:
             agent_type="generic",
             protocol_version="1.0",
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        mock_db.commit = MagicMock()
-        mock_db.close = MagicMock()
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
-        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_enabled", True)
-        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_delegate_enabled", True)
-
-        rust_runtime = MagicMock()
-        rust_runtime.invoke = AsyncMock(side_effect=RustA2ARuntimeError("runtime failed"))
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_rust_a2a_runtime_client", lambda: rust_runtime)
-
-        mock_fresh_db.return_value.__enter__.return_value = MagicMock()
-        mock_fresh_db.return_value.__exit__.return_value = None
-        mock_metrics_fn.return_value = MagicMock()
-
-        with pytest.raises(A2AAgentError, match="runtime failed"):
-            await service.invoke_agent(mock_db, "ag", {})
-
-    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
-    @patch("mcpgateway.services.a2a_service.fresh_db_session")
-    async def test_invoke_persists_task_from_status_object(self, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
-        agent = SimpleNamespace(
-            id="a1",
-            name="ag",
-            enabled=True,
-            endpoint_url="https://x.com/",
-            auth_type=None,
-            auth_value=None,
-            auth_query_params=None,
-            visibility="public",
-            team_id=None,
-            owner_email=None,
-            agent_type="generic",
-            protocol_version="1.0",
+        mock_client = AsyncMock()
+        mock_client.post.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"result": {"id": "task-1", "status": {"state": "working", "message": {"role": "agent"}}, "history": [1], "artifacts": [2]}}),
         )
-        rust_runtime = MagicMock()
-        rust_runtime.invoke = AsyncMock(
-            return_value={
-                "status_code": 200,
-                "json": {"result": {"id": "task-1", "status": {"state": "working", "message": {"role": "agent"}}, "history": [1], "artifacts": [2]}},
-                "text": "",
-            }
-        )
+        mock_get_client.return_value = mock_client
 
         mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
         monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_rust_a2a_runtime_client", lambda: rust_runtime)
-        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_enabled", True)
-        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_delegate_enabled", True)
         mock_fresh_db.return_value.__enter__.return_value = MagicMock()
         mock_fresh_db.return_value.__exit__.return_value = None
         mock_metrics_fn.return_value = MagicMock()
@@ -2851,7 +2771,9 @@ class TestInvokeAgentEdgeCases:
 
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
-    async def test_invoke_task_persistence_failure_rolls_back(self, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_invoke_task_persistence_failure_rolls_back(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+        """Persistence error triggers rollback under the Python HTTP path (T25 — Rust removed)."""
         agent = SimpleNamespace(
             id="a1",
             name="ag",
@@ -2866,17 +2788,18 @@ class TestInvokeAgentEdgeCases:
             agent_type="generic",
             protocol_version="1.0",
         )
-        rust_runtime = MagicMock()
-        rust_runtime.invoke = AsyncMock(return_value={"status_code": 200, "json": {"result": {"id": "task-1", "status": {"state": "working"}}}, "text": ""})
+        mock_client = AsyncMock()
+        mock_client.post.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"result": {"id": "task-1", "status": {"state": "working"}}}),
+        )
+        mock_get_client.return_value = mock_client
 
         mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
         mock_db.rollback = MagicMock()
         monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_rust_a2a_runtime_client", lambda: rust_runtime)
-        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_enabled", True)
-        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_delegate_enabled", True)
         mock_fresh_db.return_value.__enter__.return_value = MagicMock()
         mock_fresh_db.return_value.__exit__.return_value = None
         mock_metrics_fn.return_value = MagicMock()
@@ -4606,102 +4529,6 @@ class TestPublishA2AInvalidation:
             await _publish_a2a_invalidation("agent_created", agent_id="a2")
 
 
-class TestShadowModeComparison:
-    """Unit tests for the observe-only shadow mode block inside invoke_agent.
-
-    Shadow mode no longer dispatches a second live call to the Rust sidecar
-    (to avoid duplicate side effects on non-idempotent agents).  It only
-    logs that the runtime is available.  The Rust runtime client should
-    NOT be invoked.
-    """
-
-    @pytest.fixture
-    def service(self):
-        return A2AAgentService()
-
-    @pytest.fixture
-    def mock_db(self):
-        return MagicMock(spec=Session)
-
-    def _make_agent(self):
-        return SimpleNamespace(
-            id="a1",
-            name="ag",
-            enabled=True,
-            endpoint_url="https://x.com/",
-            auth_type=None,
-            auth_value=None,
-            auth_query_params=None,
-            visibility="public",
-            team_id=None,
-            owner_email=None,
-            agent_type="generic",
-            protocol_version="1.0",
-        )
-
-    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
-    @patch("mcpgateway.services.a2a_service.fresh_db_session")
-    @patch("mcpgateway.services.http_client_service.get_http_client")
-    async def test_shadow_mode_does_not_invoke_rust(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
-        """Shadow mode logs readiness but does NOT dispatch to Rust sidecar."""
-        agent = self._make_agent()
-        response_body = {"result": "ok"}
-
-        mock_client = AsyncMock()
-        mock_client.post.return_value = MagicMock(status_code=200, json=MagicMock(return_value=response_body))
-        mock_get_client.return_value = mock_client
-
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
-        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_enabled", True)
-        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_delegate_enabled", False)
-
-        rust_runtime = MagicMock()
-        rust_runtime.invoke = AsyncMock()
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_rust_a2a_runtime_client", lambda: rust_runtime)
-
-        mock_ts_db = MagicMock()
-        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
-        mock_fresh_db.return_value.__exit__.return_value = None
-        mock_metrics_fn.return_value = MagicMock()
-        mock_db.commit = MagicMock()
-
-        result = await service.invoke_agent(mock_db, "ag", {})
-
-        assert result == response_body
-        # Shadow mode must NOT invoke the Rust runtime (no dual-dispatch).
-        rust_runtime.invoke.assert_not_awaited()
-
-    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
-    @patch("mcpgateway.services.a2a_service.fresh_db_session")
-    @patch("mcpgateway.services.http_client_service.get_http_client")
-    async def test_shadow_mode_not_triggered_when_delegate_enabled(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
-        """Shadow mode block is skipped when delegate_enabled=True (Rust handles the call)."""
-        agent = self._make_agent()
-
-        rust_runtime = MagicMock()
-        rust_runtime.invoke = AsyncMock(return_value={"status_code": 200, "json": {"ok": True}, "text": ""})
-
-        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
-        monkeypatch.setattr("mcpgateway.services.a2a_service.get_rust_a2a_runtime_client", lambda: rust_runtime)
-        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_enabled", True)
-        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_delegate_enabled", True)
-
-        mock_ts_db = MagicMock()
-        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
-        mock_fresh_db.return_value.__exit__.return_value = None
-        mock_metrics_fn.return_value = MagicMock()
-        mock_db.commit = MagicMock()
-
-        result = await service.invoke_agent(mock_db, "ag", {})
-
-        # Only one invoke (delegated), not a second shadow invoke
-        assert rust_runtime.invoke.await_count == 1
-        assert result == {"ok": True}
-        mock_get_client.assert_not_called()
-
-
 # ---------------------------------------------------------------------------
 # Visibility and task scoping tests
 # ---------------------------------------------------------------------------
@@ -5424,71 +5251,6 @@ class TestCrossGatewayRoutingCoverage:
         )
 
         assert captured_headers.get("X-Contextforge-UAID-Hop") == "2", f"local-agent outbound must stamp hop+1; headers={captured_headers!r}"
-
-    async def test_local_agent_invoke_delegate_path_passes_hop_unincremented(self, service, monkeypatch):
-        """When Python delegates to the Rust runtime (POST /invoke), the
-        hop header handed to Rust must carry the CURRENT hop value, not
-        hop+1.  Rust's `handle_invoke` re-reads the header, enforces the
-        guard, and emits the single +1 increment on its outbound HTTP
-        call.  Double-stamping here would advance the counter twice per
-        logical hop and halve the effective federation chain length.
-
-        Regression guard for a revision where Python stamped
-        unconditionally — breaking the delegate path.
-        """
-        # First-Party
-        from mcpgateway.services import a2a_service as a2a_service_module  # pylint: disable=import-outside-toplevel
-
-        captured_prepared: dict = {}
-
-        async def fake_invoke(prepared, *, timeout_seconds=None):  # pylint: disable=unused-argument
-            captured_prepared["headers"] = dict(prepared.headers)
-            return {"status_code": 200, "json": {"ok": True}, "text": ""}
-
-        fake_client = MagicMock()
-        fake_client.invoke = AsyncMock(side_effect=fake_invoke)
-
-        monkeypatch.setattr(a2a_service_module, "get_rust_a2a_runtime_client", lambda: fake_client)
-        monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_enabled", True)
-        monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_delegate_enabled", True)
-
-        agent = MagicMock()
-        agent.id = "agent-id-delegate"
-        agent.name = "delegated-agent"
-        agent.endpoint_url = "https://peer.example.com/a2a/delegated-agent/invoke"
-        agent.agent_type = "generic"
-        agent.protocol_version = "1.0"
-        agent.auth_type = None
-        agent.auth_value = None
-        agent.auth_query_params = None
-        agent.enabled = True
-        agent.visibility = "public"
-        agent.owner_email = None
-        agent.team_id = None
-        agent.tags = []
-        # UAID fields - set to None to skip UAID validation
-        agent.uaid = None
-        agent.uaid_native_id = None
-
-        mock_db = MagicMock(spec=Session)
-        result = MagicMock()
-        result.scalar_one_or_none.return_value = agent.id
-        mock_db.execute.return_value = result
-        monkeypatch.setattr(a2a_service_module, "get_for_update", lambda db, model, pk: agent)
-
-        await service.invoke_agent(
-            db=mock_db,
-            agent_name="delegated-agent",
-            parameters={"q": "hi"},
-            interaction_type="query",
-            hop_count=2,  # inbound says hop 2
-        )
-
-        # Python must hand Rust the raw inbound hop so Rust's
-        # handle_invoke performs the single +1 increment.  If Python
-        # had also stamped, Rust would see "3" and emit "4" downstream —
-        # that's the regression this test defends against.
-        assert captured_prepared["headers"].get("X-Contextforge-UAID-Hop") == "2", f"delegate path must pass hop unincremented; headers={captured_prepared['headers']!r}"
 
     async def test_federation_chain_increments_hop_and_rejects_at_max(self, service, mock_db, monkeypatch):
         """Three-hop chain locks in the stamp-N+1 vs reject-at-max
@@ -6247,15 +6009,7 @@ class TestListAgentsForUserTypeValidation:
         with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
 
-            result = await service.list_agents_for_user(
-                db=mock_db,
-                user_info="user@example.com",
-                team_id=None,
-                visibility=None,
-                include_inactive=False,
-                skip=0,
-                limit=100
-            )
+            result = await service.list_agents_for_user(db=mock_db, user_info="user@example.com", team_id=None, visibility=None, include_inactive=False, skip=0, limit=100)
 
             # Should call get_user_teams with the string email
             mock_team_service.return_value.get_user_teams.assert_called_once_with("user@example.com")
@@ -6267,21 +6021,9 @@ class TestListAgentsForUserTypeValidation:
         with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
 
-            user_dict = {
-                "email": "admin@example.com",
-                "full_name": "Admin User",
-                "is_admin": True
-            }
+            user_dict = {"email": "admin@example.com", "full_name": "Admin User", "is_admin": True}
 
-            result = await service.list_agents_for_user(
-                db=mock_db,
-                user_info=user_dict,
-                team_id=None,
-                visibility=None,
-                include_inactive=False,
-                skip=0,
-                limit=100
-            )
+            result = await service.list_agents_for_user(db=mock_db, user_info=user_dict, team_id=None, visibility=None, include_inactive=False, skip=0, limit=100)
 
             # Should extract email string and call get_user_teams
             mock_team_service.return_value.get_user_teams.assert_called_once_with("admin@example.com")
@@ -6294,22 +6036,10 @@ class TestListAgentsForUserTypeValidation:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
 
             # Simulate the bug: email key contains a dict instead of string
-            user_dict = {
-                "email": {"nested": "dict", "value": "admin@example.com"},
-                "full_name": "Admin User",
-                "is_admin": True
-            }
+            user_dict = {"email": {"nested": "dict", "value": "admin@example.com"}, "full_name": "Admin User", "is_admin": True}
 
             with caplog.at_level("WARNING"):
-                result = await service.list_agents_for_user(
-                    db=mock_db,
-                    user_info=user_dict,
-                    team_id=None,
-                    visibility=None,
-                    include_inactive=False,
-                    skip=0,
-                    limit=100
-                )
+                result = await service.list_agents_for_user(db=mock_db, user_info=user_dict, team_id=None, visibility=None, include_inactive=False, skip=0, limit=100)
 
             # Should log warning about non-string type
             assert any("user_info['email'] is non-string type dict" in record.message for record in caplog.records)
@@ -6325,21 +6055,10 @@ class TestListAgentsForUserTypeValidation:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
 
             # Email key contains a list instead of string
-            user_dict = {
-                "email": ["admin@example.com", "backup@example.com"],
-                "full_name": "Admin User"
-            }
+            user_dict = {"email": ["admin@example.com", "backup@example.com"], "full_name": "Admin User"}
 
             with caplog.at_level("WARNING"):
-                result = await service.list_agents_for_user(
-                    db=mock_db,
-                    user_info=user_dict,
-                    team_id=None,
-                    visibility=None,
-                    include_inactive=False,
-                    skip=0,
-                    limit=100
-                )
+                result = await service.list_agents_for_user(db=mock_db, user_info=user_dict, team_id=None, visibility=None, include_inactive=False, skip=0, limit=100)
 
             # Should log warning about non-string type
             assert any("user_info['email'] is non-string type list" in record.message for record in caplog.records)
@@ -6354,20 +6073,9 @@ class TestListAgentsForUserTypeValidation:
         with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
 
-            user_dict = {
-                "email": None,
-                "full_name": "Anonymous User"
-            }
+            user_dict = {"email": None, "full_name": "Anonymous User"}
 
-            result = await service.list_agents_for_user(
-                db=mock_db,
-                user_info=user_dict,
-                team_id=None,
-                visibility=None,
-                include_inactive=False,
-                skip=0,
-                limit=100
-            )
+            result = await service.list_agents_for_user(db=mock_db, user_info=user_dict, team_id=None, visibility=None, include_inactive=False, skip=0, limit=100)
 
             # Should call get_user_teams with empty string (None is not a string)
             # Note: None.get() would fail, but user_dict.get("email") returns None,
@@ -6381,20 +6089,9 @@ class TestListAgentsForUserTypeValidation:
         with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
 
-            user_dict = {
-                "full_name": "User Without Email",
-                "is_admin": False
-            }
+            user_dict = {"full_name": "User Without Email", "is_admin": False}
 
-            result = await service.list_agents_for_user(
-                db=mock_db,
-                user_info=user_dict,
-                team_id=None,
-                visibility=None,
-                include_inactive=False,
-                skip=0,
-                limit=100
-            )
+            result = await service.list_agents_for_user(db=mock_db, user_info=user_dict, team_id=None, visibility=None, include_inactive=False, skip=0, limit=100)
 
             # Should call get_user_teams with empty string (default from .get())
             mock_team_service.return_value.get_user_teams.assert_called_once_with("")
@@ -6406,21 +6103,10 @@ class TestListAgentsForUserTypeValidation:
         with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
 
-            user_dict = {
-                "email": 12345,
-                "full_name": "User With Integer Email"
-            }
+            user_dict = {"email": 12345, "full_name": "User With Integer Email"}
 
             with caplog.at_level("WARNING"):
-                result = await service.list_agents_for_user(
-                    db=mock_db,
-                    user_info=user_dict,
-                    team_id=None,
-                    visibility=None,
-                    include_inactive=False,
-                    skip=0,
-                    limit=100
-                )
+                result = await service.list_agents_for_user(db=mock_db, user_info=user_dict, team_id=None, visibility=None, include_inactive=False, skip=0, limit=100)
 
             # Should log warning about non-string type
             assert any("user_info['email'] is non-string type int" in record.message for record in caplog.records)
