@@ -1471,22 +1471,64 @@ class A2AAgentService(BaseService):
             "id": body.get("id"),
         }
 
-        # Build outbound headers. Drop None values to avoid httpx errors.
-        outbound_headers: Dict[str, str] = {
-            "Accept": "text/event-stream",
-            "Content-Type": "application/json",
-            "A2A-Version": agent.protocol_version,
-            "X-Contextforge-UAID-Hop": str(hop_count + 1),
-        }
-        if request_headers:
+        # Oracle F1 #2 fix: route the streaming upstream call through the
+        # SAME prepare_a2a_invocation pipeline the unary path uses, so
+        # registered auth_type / auth_value / oauth / query-param auth +
+        # the agent.passthrough_headers whitelist + UAID hop stamping all
+        # apply identically. The caller-bearer is intentionally NOT
+        # forwarded (matches invoke_agent's local-path semantics; the
+        # cross-gateway UAID streaming feature, if it ever lands, is a
+        # separate codepath gated by settings.uaid_forward_auth).
+        try:
+            prepared = prepare_a2a_invocation(
+                agent_type=agent.agent_type,
+                endpoint_url=agent.endpoint_url,
+                protocol_version=agent.protocol_version,
+                parameters=upstream_body,
+                interaction_type="query",
+                auth_type=agent.auth_type,
+                auth_value=agent.auth_value,
+                auth_query_params=agent.auth_query_params,
+                correlation_id=get_correlation_id(),
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            yield make_jsonrpc_error(
+                INTERNAL_ERROR,
+                f"Failed to prepare A2A streaming invocation: {exc}",
+                body.get("id"),
+            )
+            return
+
+        # SSE-specific Accept override (prepare_a2a_invocation defaults to
+        # application/json which is correct for unary but wrong for SSE).
+        prepared.headers["Accept"] = "text/event-stream"
+
+        # UAID hop stamp (matches invoke_agent post-T25).
+        # First-Party
+        from mcpgateway.utils import uaid as uaid_utils  # pylint: disable=import-outside-toplevel
+
+        uaid_utils.stamp_hop(prepared.headers, hop_count)
+
+        # Passthrough header whitelist: caller request_headers are
+        # intersected with agent.passthrough_headers so plugins / clients
+        # can pass observability or correlation headers through without
+        # leaking sensitive ones. Authorization is explicitly excluded
+        # so the caller-bearer is NEVER forwarded via this channel
+        # (Scope OUT #15 — D5 says caller bearers only flow through the
+        # cross-gateway UAID federation path).
+        if request_headers and agent.passthrough_headers:
+            whitelist_lower = {h.lower() for h in agent.passthrough_headers}
             for key, value in request_headers.items():
-                # Caller (T12) already filtered sensitive headers via
-                # _filter_sensitive_headers; forward what's left except
-                # the headers we already set above (avoid double-stamp).
-                if key.lower() not in {"accept", "content-type", "a2a-version", "host", "content-length"}:
-                    outbound_headers[key] = value
-        if bearer_token:
-            outbound_headers["Authorization"] = f"Bearer {bearer_token}"
+                key_lower = key.lower()
+                if key_lower in {"accept", "content-type", "a2a-version", "host", "content-length", "authorization"}:
+                    continue
+                if key_lower in whitelist_lower:
+                    prepared.headers[key] = value
+
+        # bearer_token parameter is preserved for signature compatibility
+        # with potential future cross-gateway streaming federation, but
+        # is NOT forwarded today. See Oracle F1 #2 fix justification.
+        del bearer_token  # explicit: not used
 
         # Lazy import matches the existing pattern at a2a_service.py:3190,
         # :3530 (inline import to avoid circular dependency).
@@ -1497,9 +1539,9 @@ class A2AAgentService(BaseService):
         try:
             async with client.stream(
                 "POST",
-                agent.endpoint_url,
-                json=upstream_body,
-                headers=outbound_headers,
+                prepared.endpoint_url,
+                json=prepared.request_data,
+                headers=prepared.headers,
                 timeout=httpx.Timeout(settings.federation_timeout),
             ) as response:
                 # On upstream HTTP error before stream begins, yield one
@@ -4513,10 +4555,10 @@ class A2AAgentService(BaseService):
     ) -> List[Dict[str, Any]]:
         """List push configs with decrypted ``auth_token`` for webhook dispatch.
 
-        Used only by the trusted ``/_internal/a2a/push/list`` endpoint that
-        serves the Rust sidecar.  The token is decrypted on the fly and
-        returned in plaintext so the sidecar can sign outbound webhook
-        requests; at rest the DB column stays encrypted.
+        Used only by the trusted ``/_internal/a2a/push/list`` endpoint
+        that serves push-notification dispatchers. The token is decrypted
+        on the fly and returned in plaintext so the dispatcher can sign
+        outbound webhook requests; at rest the DB column stays encrypted.
 
         Visibility scoping is pushed into SQL via ``_visible_agent_ids`` —
         the prior Python-side post-filter scanned every row regardless of

@@ -13,9 +13,14 @@ so the **DECISIONS** are co-located even though the primitives they
 compose live in domain services today.
 
 **Migration intent** (per user direction): when the platform adopts a
-rules-engine (OPA, Casbin, custom DSL), the bodies of these functions
-become policy-lookup calls; the **callers and call sites do not change**.
-That is the contract that makes this module worth maintaining.
+policy engine via ``cpex`` or any other rules-engine substrate, the
+bodies of these three functions become policy-lookup calls; the
+**callers and call sites do not change** for today's signatures. The
+``a2a_service`` delegation-shim parameter is provisional and will drop
+when the primitives' return values are pre-fetched at the call site —
+see Amendment E in ``.omo/plans/a2a-native-passthrough.md`` for the
+honest scope statement. This module is worth maintaining BECAUSE it
+isolates the decision points to three named functions.
 
 The three decisions exposed here:
 

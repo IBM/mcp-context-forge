@@ -5731,6 +5731,17 @@ async def dispatch_a2a_agent(
             make_jsonrpc_error(code, message, request_id, data),
             status_code=200,
         )
+    # D14 disambiguation fix (Oracle F2 #1): upstream A2A agents are
+    # themselves JSON-RPC endpoints and return ``{"jsonrpc": "2.0",
+    # "result"/"error": ..., "id": <upstream_id>}`` envelopes. Wrapping
+    # such an envelope a second time as ``{"result": <envelope>}`` would
+    # turn an upstream ``-32601 method not found`` into a successful
+    # response containing an error object. Detect the envelope shape and
+    # pass through with the inbound request id substituted in.
+    if isinstance(result, dict) and result.get("jsonrpc") == "2.0" and ("result" in result or "error" in result):
+        envelope = dict(result)
+        envelope["id"] = request_id
+        return JSONResponse(envelope, status_code=200)
     return JSONResponse(
         {"jsonrpc": "2.0", "result": result, "id": request_id},
         status_code=200,

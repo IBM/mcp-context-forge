@@ -387,6 +387,68 @@ class TestPerAgentDispatchEndpoint:
         assert payload["error"]["data"] == {"extra": "info"}
         assert payload["id"] == "x"
 
+    def test_invoke_upstream_result_envelope_passed_through_not_double_wrapped(self, client: TestClient, dispatch_overrides, mock_dispatch_service: MagicMock) -> None:
+        """Oracle F2 #1 (D14 fix): upstream JSON-RPC ``result`` envelope is passed through, not double-wrapped.
+
+        Upstream A2A agents are themselves JSON-RPC endpoints (per spec) and
+        return ``{"jsonrpc": "2.0", "result": ..., "id": ...}`` envelopes.
+        Wrapping such an envelope a second time as ``{"result": <envelope>}``
+        would put the upstream ``result`` two layers deep — a real spec
+        violation. The fix detects the envelope shape and passes through
+        with the inbound request id substituted in.
+        """
+        mock_dispatch_service.resolve_agent_for_dispatch.return_value = _mock_agent()
+        upstream_envelope = {
+            "jsonrpc": "2.0",
+            "result": {"task": "completed", "id": "upstream-task-1"},
+            "id": "upstream-original-id",
+        }
+        mock_dispatch_service.dispatch_a2a_jsonrpc_unary.return_value = upstream_envelope
+        response = client.post(
+            "/a2a/echo",
+            json=_send_message_body(request_id="client-req-1"),
+            headers=_DISPATCH_HEADERS,
+        )
+        assert response.status_code == 200, response.text[:200]
+        payload = response.json()
+        assert payload == {
+            "jsonrpc": "2.0",
+            "result": {"task": "completed", "id": "upstream-task-1"},
+            "id": "client-req-1",
+        }, "envelope must pass through with client request_id, not double-wrapped"
+        # Regression guard: result must NOT be a nested JSON-RPC envelope.
+        assert "jsonrpc" not in payload["result"], "result was double-wrapped"
+
+    def test_invoke_upstream_error_envelope_passed_through_with_request_id(self, client: TestClient, dispatch_overrides, mock_dispatch_service: MagicMock) -> None:
+        """Oracle F2 #1 (D14 fix): upstream JSON-RPC ``error`` envelope passes through with client request_id.
+
+        Without the fix, an upstream ``-32601 Method not found`` envelope
+        becomes a successful response containing an error object (caller
+        thinks the call succeeded with weird data). With the fix, the
+        error surfaces at the top level where JSON-RPC clients expect it.
+        """
+        mock_dispatch_service.resolve_agent_for_dispatch.return_value = _mock_agent()
+        upstream_envelope = {
+            "jsonrpc": "2.0",
+            "error": {"code": -32601, "message": "Method not found"},
+            "id": "upstream-id",
+        }
+        mock_dispatch_service.dispatch_a2a_jsonrpc_unary.return_value = upstream_envelope
+        response = client.post(
+            "/a2a/echo",
+            json=_send_message_body(request_id="client-x"),
+            headers=_DISPATCH_HEADERS,
+        )
+        assert response.status_code == 200, response.text[:200]
+        payload = response.json()
+        assert payload == {
+            "jsonrpc": "2.0",
+            "error": {"code": -32601, "message": "Method not found"},
+            "id": "client-x",
+        }, "error envelope must surface at the top level"
+        # Regression guard: no successful 'result' wrapping of the error.
+        assert "result" not in payload, "upstream error was misclassified as result"
+
     def test_extended_card_without_read_permission_returns_403(self, client: TestClient, dispatch_overrides, mock_dispatch_service: MagicMock) -> None:
         """``GetExtendedAgentCard`` + ``a2a.read`` denied → 403."""
         mock_dispatch_service.resolve_agent_for_dispatch.return_value = _mock_agent(capabilities={"extendedAgentCard": True})
