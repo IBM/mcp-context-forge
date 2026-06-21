@@ -4147,6 +4147,8 @@ async def create_server(
             team_id = team_id or token_team_id
 
         logger.debug(f"User {SecurityValidator.sanitize_log_message(user_email)} is creating a new server for team {team_id}")
+        from mcpgateway.services.caller_context import CallerContext  # noqa: E402  pylint: disable=import-outside-toplevel
+
         result = await server_service.register_server(
             db,
             server,
@@ -4157,8 +4159,7 @@ async def create_server(
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
-            caller_user_email=user_email,
-            caller_token_teams=token_teams,
+            caller_context=CallerContext.for_user(user_email, token_teams),
         )
         db.commit()
         db.close()
@@ -4207,6 +4208,7 @@ async def update_server(
 
         user_email: str = get_user_email(user)
         caller_token_teams = getattr(request.state, "token_teams", None)
+        from mcpgateway.services.caller_context import CallerContext  # noqa: E402  pylint: disable=import-outside-toplevel
 
         result = await server_service.update_server(
             db,
@@ -4217,7 +4219,7 @@ async def update_server(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
-            caller_token_teams=caller_token_teams,
+            caller_context=CallerContext.for_user(user_email, caller_token_teams),
         )
         db.commit()
         db.close()

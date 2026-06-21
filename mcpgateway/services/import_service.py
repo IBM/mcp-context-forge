@@ -814,8 +814,14 @@ class ImportService:
         try:
             create_data = await self._convert_to_server_create(db, server_data)
 
+            # SECURITY: CallerContext.system() bypasses A2A CRUD authorization.
+            # Safe ONLY because the import endpoint is admin-only at the route
+            # level. If import ever opens to non-admin users, switch to
+            # CallerContext.for_user(imported_by, <resolved_teams>).
+            from mcpgateway.services.caller_context import CallerContext  # noqa: E402  pylint: disable=import-outside-toplevel
+
             try:
-                await self.server_service.register_server(db, create_data, created_by=imported_by, created_via="import")
+                await self.server_service.register_server(db, create_data, created_by=imported_by, created_via="import", caller_context=CallerContext.system())
                 status.created_entities += 1
                 logger.debug("Created server: %s", server_name)
 
@@ -830,7 +836,7 @@ class ImportService:
                         existing_server = next((s for s in servers if s.name == server_name), None)
                         if existing_server:
                             update_data = await self._convert_to_server_update(db, server_data)
-                            await self.server_service.update_server(db, existing_server.id, update_data, imported_by)
+                            await self.server_service.update_server(db, existing_server.id, update_data, imported_by, caller_context=CallerContext.system())
                             status.updated_entities += 1
                             logger.debug("Updated server: %s", server_name)
                         else:
@@ -843,7 +849,7 @@ class ImportService:
                 elif conflict_strategy == ConflictStrategy.RENAME:
                     new_name = f"{server_name}_imported_{int(datetime.now().timestamp())}"
                     create_data.name = new_name
-                    await self.server_service.register_server(db, create_data, created_by=imported_by, created_via="import")
+                    await self.server_service.register_server(db, create_data, created_by=imported_by, created_via="import", caller_context=CallerContext.system())
                     status.created_entities += 1
                     status.warnings.append(f"Renamed server {server_name} to {new_name}")
                 elif conflict_strategy == ConflictStrategy.FAIL:

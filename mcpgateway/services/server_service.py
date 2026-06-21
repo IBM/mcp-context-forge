@@ -41,6 +41,7 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
+from mcpgateway.services.caller_context import CallerContext
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
@@ -211,8 +212,7 @@ async def _authorize_a2a_associations(
     db: Session,
     db_server: DbServer,
     agents: list[DbA2AAgent],
-    caller_user_email: Optional[str],
-    caller_token_teams: Optional[list[str]],
+    caller_context: CallerContext,
 ) -> None:
     """Enforce CRUD authorization for adding A2A agents to a server (Phase A T20).
 
@@ -221,33 +221,28 @@ async def _authorize_a2a_associations(
     be able to see BOTH the server they are mutating AND the agent they
     are adding.
 
-    When ``caller_user_email`` is ``None`` and ``caller_token_teams`` is
-    ``None``, the check is skipped — this is the SYSTEM CONTEXT path
-    (bootstrap, internal seeding, tests that explicitly opt out). Real
-    user-driven CRUD calls MUST pass caller context; the route handlers
-    in ``main.py`` and ``admin.py`` do so via
-    :func:`mcpgateway.auth_context.get_rpc_filter_context`.
+    When ``caller_context.is_system`` is ``True`` the check is skipped —
+    this is the EXPLICIT system-context opt-in (bootstrap, seed, import
+    after admin-only verification, tests that opt out). The old
+    "both Nones means system" magic is GONE: callers must construct
+    ``CallerContext.system()`` deliberately, which makes the bypass
+    visible at the call site (Momus Block 2 hardening).
 
     Args:
         db: Database session.
         db_server: The virtual-server ORM row being mutated.
         agents: List of A2A agent ORM rows being associated.
-        caller_user_email: Caller's authenticated email; ``None`` skips
-            the auth check (system context).
-        caller_token_teams: Caller's JWT-scoped teams.
+        caller_context: Authenticated caller context. Use
+            ``CallerContext.for_user(...)`` from route handlers,
+            ``CallerContext.system()`` from internal pathways.
 
     Raises:
         ServerError: When the caller cannot associate at least one of
             the agents (transactional rollback at the caller).
     """
-    if caller_user_email is None and caller_token_teams is None:
-        # System context (no auth required). Bootstrap / seed / tests
-        # that explicitly opt out of CRUD authorization.
+    if caller_context.is_system:
         return
 
-    # Lazy imports avoid a circular import at module load (a2a_service
-    # imports from this module's neighbor a2a_access_policy).
-    # First-Party
     from mcpgateway.services.a2a_access_policy import can_associate_a2a_agent_with_server  # noqa: E402 pylint: disable=import-outside-toplevel
     from mcpgateway.services.a2a_service import A2AAgentService  # noqa: E402 pylint: disable=import-outside-toplevel
 
@@ -257,14 +252,11 @@ async def _authorize_a2a_associations(
             db,
             agent=agent,
             server=db_server,
-            user_email=caller_user_email,
-            token_teams=caller_token_teams,
+            user_email=caller_context.user_email,
+            token_teams=caller_context.token_teams,
             a2a_service=a2a_service,
         )
         if not allowed:
-            # Generic error message — does NOT leak WHICH agent failed
-            # the check (could be the caller can see neither the
-            # server nor the agent; could be one or the other).
             raise ServerError("Cannot associate A2A agent: insufficient access to the server or agent.")
 
 
@@ -272,8 +264,7 @@ async def _associate_server_entities(
     db: Session,
     db_server: DbServer,
     server_in: ServerCreate,
-    caller_user_email: Optional[str] = None,
-    caller_token_teams: Optional[list[str]] = None,
+    caller_context: Optional[CallerContext] = None,
 ) -> None:
     """Associate tools/resources/prompts/a2a_agents with a server during creation.
 
@@ -281,11 +272,17 @@ async def _associate_server_entities(
     field is non-empty, validates that the referenced IDs exist and appends
     the loaded objects to the corresponding server relationship.
 
-    When ``caller_user_email`` is provided AND the association type is
-    A2A, runs :func:`_authorize_a2a_associations` for the loaded agents
-    so the user-clarified CRUD authorization rule fires before the
-    binding is committed.
+    For A2A associations, runs :func:`_authorize_a2a_associations` for
+    the loaded agents so the user-clarified CRUD authorization rule
+    fires before the binding is committed. When ``caller_context`` is
+    omitted (``None``), defaults to :meth:`CallerContext.system` —
+    this matches the pre-CallerContext default behaviour and lets
+    legacy / internal callers that have not yet been updated keep
+    working. New callers should pass an explicit
+    ``CallerContext.for_user(...)``.
     """
+    if caller_context is None:
+        caller_context = CallerContext.system()
     for at in SERVER_ASSOCIATION_TYPES:
         input_ids = getattr(server_in, at.input_field, None)
         if not input_ids:
@@ -301,7 +298,7 @@ async def _associate_server_entities(
             if missing:
                 raise ServerError(f"{at.label}s with ids {missing} do not exist.")
             if at.model is DbA2AAgent:
-                await _authorize_a2a_associations(db, db_server, list(objs), caller_user_email, caller_token_teams)
+                await _authorize_a2a_associations(db, db_server, list(objs), caller_context)
             rel.extend(objs)
             if at.model is DbA2AAgent:
                 for obj in objs:
@@ -311,7 +308,7 @@ async def _associate_server_entities(
             if not obj:
                 raise ServerError(f"{at.label} with id {ids[0]} does not exist.")
             if at.model is DbA2AAgent:
-                await _authorize_a2a_associations(db, db_server, [obj], caller_user_email, caller_token_teams)
+                await _authorize_a2a_associations(db, db_server, [obj], caller_context)
             rel.append(obj)
             if at.model is DbA2AAgent:
                 logger.info("A2A agent %s associated with server %s", obj.name, db_server.name)
@@ -321,31 +318,34 @@ async def _update_server_associations(
     db: Session,
     server: DbServer,
     server_update: ServerUpdate,
-    caller_user_email: Optional[str] = None,
-    caller_token_teams: Optional[list[str]] = None,
+    caller_context: Optional[CallerContext] = None,
 ) -> None:
     """Replace tool/resource/prompt/a2a_agent associations during server update.
 
     For each association type whose input field is explicitly provided (not
-    ``None``), clears the existing relationship and re-populates it from the
-    supplied IDs.
-
-    When ``caller_user_email`` is provided AND the association type is
-    A2A, runs :func:`_authorize_a2a_associations` for the loaded agents
-    so the user-clarified CRUD authorization rule fires before the
-    binding is committed.
+    ``None``), clears the existing relationship and re-populates it from
+    the supplied IDs. For A2A associations, the new agent list is
+    authorized via :func:`_authorize_a2a_associations` BEFORE the
+    relationship is mutated (Metis H4 hardening — denied auth leaves
+    ``server.a2a_agents`` intact rather than emptying it). When
+    ``caller_context`` is omitted (``None``), defaults to
+    :meth:`CallerContext.system` for backward-compatibility with
+    legacy / internal callers.
     """
+    if caller_context is None:
+        caller_context = CallerContext.system()
     for at in SERVER_ASSOCIATION_TYPES:
         new_ids = getattr(server_update, at.input_field, None)
         if new_ids is None:
             continue
-        setattr(server, at.rel_attr, [])
         ids = [id_ for id_ in new_ids if id_]
-        if ids:
-            objs = db.execute(select(at.model).where(at.model.id.in_(ids))).scalars().all()
-            if at.model is DbA2AAgent:
-                await _authorize_a2a_associations(db, server, list(objs), caller_user_email, caller_token_teams)
-            setattr(server, at.rel_attr, list(objs))
+        if not ids:
+            setattr(server, at.rel_attr, [])
+            continue
+        objs = db.execute(select(at.model).where(at.model.id.in_(ids))).scalars().all()
+        if at.model is DbA2AAgent:
+            await _authorize_a2a_associations(db, server, list(objs), caller_context)
+        setattr(server, at.rel_attr, list(objs))
 
 
 class ServerService(BaseService):
@@ -614,8 +614,7 @@ class ServerService(BaseService):
         team_id: Optional[str] = None,
         owner_email: Optional[str] = None,
         visibility: Optional[str] = "public",
-        caller_user_email: Optional[str] = None,
-        caller_token_teams: Optional[list[str]] = None,
+        caller_context: Optional[CallerContext] = None,
     ) -> ServerRead:
         """
         Register a new server in the catalog and validate that all associated items exist.
@@ -641,12 +640,14 @@ class ServerService(BaseService):
             team_id (Optional[str]): Team ID to assign the server to.
             owner_email (Optional[str]): Email of the user who owns this server.
             visibility (str): Server visibility level (private, team, public).
-            caller_user_email (Optional[str]): Authenticated caller's email used by the
-                A2A CRUD authorization check (Phase A T20). ``None`` invokes the
-                SYSTEM CONTEXT path (auth skipped) for bootstrap / seed / opt-out callers.
-            caller_token_teams (Optional[list[str]]): Authenticated caller's JWT-scoped
-                team list, paired with ``caller_user_email`` for the A2A CRUD
-                authorization check.
+            caller_context (Optional[CallerContext]): Authenticated caller context used
+                by the A2A CRUD authorization check (Phase A T20). Construct via
+                ``CallerContext.for_user(email, teams)`` from route handlers, or
+                ``CallerContext.system()`` from internal pathways that explicitly opt
+                out of CRUD auth. When ``None``, defaults to
+                ``CallerContext.system()`` for backward compatibility with legacy /
+                internal callers — new user-facing callers MUST pass an explicit
+                ``CallerContext.for_user(...)``.
 
         Returns:
             ServerRead: The newly created server, with associated item IDs.
@@ -727,7 +728,7 @@ class ServerService(BaseService):
             logger.info("Adding server to DB session: %s", db_server.name)
             db.add(db_server)
 
-            await _associate_server_entities(db, db_server, server_in, caller_user_email, caller_token_teams)
+            await _associate_server_entities(db, db_server, server_in, caller_context)
 
             # Commit the new record and refresh.
             db.commit()
@@ -1269,7 +1270,7 @@ class ServerService(BaseService):
         modified_from_ip: Optional[str] = None,
         modified_via: Optional[str] = None,
         modified_user_agent: Optional[str] = None,
-        caller_token_teams: Optional[list[str]] = None,
+        caller_context: Optional[CallerContext] = None,
     ) -> ServerRead:
         """Update an existing server.
 
@@ -1282,9 +1283,14 @@ class ServerService(BaseService):
             modified_from_ip: IP address from which modification was made.
             modified_via: Source of modification (api, ui, etc.).
             modified_user_agent: User agent of the client making the modification.
-            caller_token_teams: Authenticated caller's JWT-scoped team list, paired
-                with ``user_email`` for the A2A CRUD authorization check (Phase A T20).
-                ``None`` skips the auth check (system context for bootstrap / opt-out).
+            caller_context: Authenticated caller context for the A2A CRUD authorization
+                check (Phase A T20). Construct via ``CallerContext.for_user(email,
+                teams)`` from route handlers. When ``None``, defaults to
+                ``CallerContext.system()`` for backward compatibility — new
+                user-facing callers MUST pass an explicit
+                ``CallerContext.for_user(...)``. Closes Metis C1 (the old
+                ``user_email`` positional that doubled as ``caller_user_email``
+                created an asymmetric API surface).
 
         Returns:
             The updated ServerRead object.
@@ -1404,7 +1410,7 @@ class ServerService(BaseService):
                     _validate_server_team_assignment(db, user_email, server_update.team_id)
                 server.team_id = server_update.team_id
 
-            await _update_server_associations(db, server, server_update, user_email, caller_token_teams)
+            await _update_server_associations(db, server, server_update, caller_context)
 
             # Update tags if provided
             if server_update.tags is not None:

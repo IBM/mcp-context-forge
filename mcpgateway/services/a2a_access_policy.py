@@ -78,14 +78,40 @@ async def can_view_a2a_agent_directly(
         db: Database session.
         agent: The A2A agent ORM row (must expose ``visibility``,
             ``owner_email``, ``team_id``).
-        user_email: Caller email; ``None`` for anonymous (combined with
-            ``token_teams=None`` triggers admin-bypass).
-        token_teams: Caller team scope per
-            ``_check_agent_access`` semantics: ``None`` is unrestricted,
-            ``[]`` is public-only, ``[ids...]`` is team-scoped.
+        user_email: Caller email; ``None`` for anonymous.
+        token_teams: Caller team scope. Semantics per
+            ``A2AAgentService._check_agent_access`` (see
+            ``a2a_service.py:807``), summarized here because it is
+            load-bearing for the rules-engine migration:
+
+            - ``[]`` (empty list) — public-only token. Sees public
+              agents only; cannot see team or private agents.
+            - ``[id1, id2, ...]`` — team-scoped. Sees public + agents
+              whose ``team_id`` is in the list + agents the caller
+              owns directly.
+            - ``None`` — JWT did NOT carry a ``teams`` claim. Behaviour
+              then depends on ``user_email``:
+
+                * ``user_email=None`` AND ``token_teams=None`` →
+                  anonymous admin bypass: sees public + team agents
+                  only (PR #4341 — NEVER sees private agents).
+                * ``user_email=<admin>`` AND ``token_teams=None`` →
+                  authenticated admin: sees public + team + OWN
+                  private (other users' private remain hidden).
+                * ``user_email=<non-admin>`` AND ``token_teams=None``
+                  → upstream normalization should prevent this state,
+                  but defended: returns False for non-public.
+
+            ``None`` is therefore NOT "unrestricted" in any case; it
+            is the JWT-absent path that grants admin-flavoured access
+            ONLY when paired with the appropriate ``user_email``.
         a2a_service: The :class:`A2AAgentService` instance — we delegate
-            to its existing primitive. A future rules-engine migration
-            will drop this parameter once the primitive moves here.
+            to its existing primitive. The future rules-engine migration
+            (Cedar / cedarpy) replaces the function BODY with a policy
+            lookup; whether the ``a2a_service`` parameter survives
+            depends on whether the primitives also migrate. Treat the
+            signature as STABLE for today's callers; expect a follow-up
+            refactor when the rules engine lands.
 
     Returns:
         ``True`` when the caller can see the agent, ``False`` otherwise.
@@ -120,17 +146,28 @@ async def can_view_a2a_agent_in_server_context(
        Layer-1 scope still applies in v-server context). Async, may
        query team membership.
 
-    This ordering also reduces timing side-channels: the expensive
-    team-membership query in step 3 is short-circuited by the cheaper
-    checks above, so denials at the first two layers are
-    indistinguishable in latency from each other.
+    Cheap-first ordering is for PERFORMANCE on the allowed path and to
+    minimize DB work on early denials. It does **NOT** make denials
+    indistinguishable by latency: a step-1 denial (sync only) is
+    faster than a step-2 denial (one SELECT) is faster than a
+    step-3 denial (potentially a team-membership SELECT). A timing
+    attacker who measures many samples could distinguish the three
+    denial layers. The wire response is uniform per D14 (HTTP 404 for
+    every denial reason); the timing differences are an accepted
+    tradeoff vs. the cost of constant-time evaluation. If the
+    deployment threat model needs constant-time, switch to running
+    all three checks unconditionally and combining the booleans.
+
+    See :func:`can_view_a2a_agent_directly` for the ``token_teams``
+    semantics that load-bear the agent-visibility check (step 3).
 
     Args:
         db: Database session.
         agent: The A2A agent ORM row.
         server: The virtual-server ORM row.
         user_email: Caller email.
-        token_teams: Caller team scope.
+        token_teams: Caller team scope (see
+            :func:`can_view_a2a_agent_directly` for the full table).
         a2a_service: The :class:`A2AAgentService` instance (delegation
             shim — see :func:`can_view_a2a_agent_directly`).
 
