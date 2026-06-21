@@ -10,8 +10,16 @@ members = [
     "mcp-servers/rust/slow-time-server",
     "a2a-agents/rust/a2a-echo-agent",
 ]
+# default-members intentionally excludes crates/a2a_runtime
+# (contextforge_a2a_runtime) which is deprecated. The crate stays in
+# `members` so `cargo check --workspace` still validates it, but the
+# default `cargo build` / `cargo test` no longer compile or test it.
+# Physical removal of the crate is scheduled for release N+1 per the
+# split deprecation cycle. See plans/a2a-native-passthrough.md T24.
 default-members = [
-    "crates/*",
+    "crates/mcp_runtime",
+    "crates/request_logging_masking_native_extension",
+    "crates/wrapper",
     "mcp-servers/rust/slow-time-server",
     "a2a-agents/rust/a2a-echo-agent",
 ]
