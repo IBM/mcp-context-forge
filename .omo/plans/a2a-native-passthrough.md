@@ -930,9 +930,60 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
 
   Background: the cpex framework that owns ``AgentHookType`` is an external dependency and exposes only ``AGENT_PRE_INVOKE`` / ``AGENT_POST_INVOKE`` for A2A. Adding the granular event names this amendment originally specified (``a2a.card.pre``, ``a2a.extended_card.pre``, ``a2a.dispatch.post.streaming``) would require either (a) modifying cpex to introduce new hook types, or (b) reusing ``AGENT_PRE_INVOKE`` / ``AGENT_POST_INVOKE`` for all three paths — which conflates metadata reads (card discovery) with actual invocations from a plugin's perspective, breaking semantic expectations for rate-limiters and content filters.
 
-  Scope reduction adopted: Phase C ships as a future focused commit (not this session) that BOTH (a) extracts a shared ``_fire_a2a_pre_invoke_hook`` / ``_fire_a2a_post_invoke_hook`` helper from the existing ``invoke_agent`` boilerplate (~80 lines of GlobalContext + PydanticA2AAgent + invoke_hook setup duplicated per call site otherwise), AND (b) decides between the cpex-extension path and the reuse path based on whether the operator-visible plugins in tree (rate-limiters, audit) need to distinguish card-discovery from invocation. The HTTP-level ``HttpAuthMiddleware → run_pre_request_hooks`` already fires for ``/a2a/*`` URLs per the global registration at ``main.py``, so plugins that gate at the HTTP layer continue to work today on the native paths.
+  Scope reduction adopted: Phase C ships in two stages. Stage (a) — helper extraction + placeholder wiring at T11/T12/T5 — landed in commit ``676130982`` and is documented in detail below; stage (b) — cpex fork decision + placeholder body swap — remains as the gating future commit. The HTTP-level ``HttpAuthMiddleware → run_pre_request_hooks`` already fires for ``/a2a/*`` URLs per the global registration at ``main.py``, so plugins that gate at the HTTP layer continue to work today on the native paths.
 
-  Plan task entries for the three sub-tasks (T-Phase-C-1, T-Phase-C-2, T-Phase-C-3) remain valid as the acceptance contract for the future commit. Status flipped from OPEN to DEFERRED to signal that the design decision (cpex-extend vs reuse-with-method-field) is the gating fork, NOT the implementation effort.
+  Plan task entries for the three sub-tasks (T-Phase-C-1, T-Phase-C-2, T-Phase-C-3) remain valid as the acceptance contract for stage (b). The placeholder helpers in ``mcpgateway/services/a2a_hooks.py`` (commit ``676130982``) have stable signatures matching what each event will need at firing time; the stage (b) commit becomes a body swap, not a re-wiring.
+
+#### Phase C stage (a) closeout — helper extraction + placeholder wiring (DONE, commit 676130982)
+
+  What landed:
+
+  - ``mcpgateway/services/a2a_hooks.py`` NEW. Three live helpers — ``build_a2a_hook_context``, ``fire_a2a_pre_invoke_hook``, ``fire_a2a_post_invoke_hook`` — wrap the existing cpex ``AGENT_PRE_INVOKE`` / ``AGENT_POST_INVOKE`` types and consolidate the GlobalContext + PydanticA2AAgent + invoke_hook setup that previously lived inline. Six placeholder helpers (``fire_a2a_card_pre_hook`` / ``fire_a2a_card_post_hook`` / ``fire_a2a_extended_card_pre_hook`` / ``fire_a2a_extended_card_post_hook`` / ``fire_a2a_streaming_dispatch_pre_hook`` / ``fire_a2a_streaming_dispatch_post_hook``) document the integration points for the deferred Phase C events. They are no-ops today that log at DEBUG so the audit trail still reflects WHERE the firing would happen.
+  - ``mcpgateway/services/a2a_service.py``. ``invoke_agent`` now uses the three live helpers. Behavior is byte-identical to the prior inline form — the existing ``test_a2a_agent_invoke_hooks.py`` suite (16 tests) passes unchanged. Agent fields are snapshot into a ``SimpleNamespace`` so the helper call happens AFTER ``db.commit() + db.close()``, preserving the release-DB-before-HTTP timing contract.
+  - ``mcpgateway/main.py``. ``get_a2a_agent_card`` (T11) fires ``fire_a2a_card_pre_hook`` before ``synthesize_agent_card`` and ``fire_a2a_card_post_hook`` after, with ``card_resolved=True/False`` distinguishing real discovery from 404 outcomes. ``dispatch_a2a_agent`` extended-card branch (T12) builds an ``A2AHookContext`` from the resolved agent, fires the pre-hook before the capability check, then fires the post-hook before either the ``-32007`` return or the success return. ``dispatch_a2a_agent`` streaming branch (T5) wraps the SSE generator with a ``try/finally`` that fires ``fire_a2a_streaming_dispatch_post_hook`` OUTSIDE the yield loop — one event per request, not per chunk, per the Amendment F constraint.
+  - ``docs/docs/architecture/a2a-cpex-hook-proposal.md`` NEW. Documents the six proposed cpex ``AgentHookType`` values + payload classes (Path A) vs the ``AGENT_PRE_INVOKE`` / ``AGENT_POST_INVOKE`` reuse path with method discriminator (Path B). Recommendation is Path A. Records open questions (card-route denial semantics, per-chunk hook, potential MCP overlap).
+  - ``tests/unit/mcpgateway/services/test_a2a_hooks.py`` NEW. 14 tests across 4 classes covering the live helpers and the six placeholder no-ops. The full regression set (66 tests across hooks, invoke hooks, T11/T12/T5 native-route integration, and route ordering) passes.
+
+  What still needs the stage (b) commit:
+
+  - Decide Path A or Path B with the cpex maintainers. The markdown proposal recommends Path A (clean enum separation) but accepts Path B as a transitional shape if cpex changes are blocked.
+  - Swap the six placeholder helper bodies for real ``invoke_hook`` calls against the chosen path. The call sites at T11 / T12 / T5 do NOT change — helper signatures are stable across both paths.
+  - Land the cpex enum / payload additions (Path A) OR the payload schema extension (Path B) in the cpex repository.
+  - Add per-event "fired" tests asserting the plugin chain receives the expected payload. The existing placeholder tests pin the no-op contract; the stage (b) tests will pin the real-firing contract.
+
+### Amendment G — ``A2AAgentSnapshot`` frozen dataclass for shared hook + policy consumption (PROPOSED)
+
+  Background: the helper extraction in commit ``676130982`` introduced a ``SimpleNamespace``-based "agent snapshot" pattern in ``invoke_agent`` — a detached projection of the ``DbA2AAgent`` ORM row that ``build_a2a_hook_context`` consumes. The pattern works (it satisfies the helper's duck-typed ``agent`` parameter) but the ``SimpleNamespace`` shape is loose; a future maintainer can drift the field set without anything failing fast. The user-raised observation that the same shape is naturally consumable by the ``a2a_access_policy.py`` functions (Amendment A) suggests formalizing it as a proper frozen dataclass. That formalization:
+
+  - Locks the field set so any new policy or hook concern adds fields explicitly rather than reaching for ORM attributes ad-hoc.
+  - Decouples every downstream consumer from the DB session lifecycle (already true for the hook path, would become true for the policy path too).
+  - Pairs with ``CallerContext`` (Amendment C) as the AGENT side of every policy input — together they are the canonical ``(caller, target)`` tuple every policy + hook decision needs.
+  - Matches Amendment E's restatement that the future policy-engine migration needs pre-fetched primitives passed as entity attributes. The snapshot is the bridge to that migration.
+
+  What to do (split into three commits for clean bisectability):
+
+  1. Define ``A2AAgentSnapshot`` as a frozen dataclass in ``mcpgateway/services/a2a_hooks.py`` (or a new ``a2a_agent_snapshot.py`` if ``a2a_hooks.py`` grows past 250 LOC). Add a ``from_orm(agent: DbA2AAgent) -> A2AAgentSnapshot`` classmethod that extracts all fields once. Fields: ``id``, ``name``, ``team_id``, ``visibility``, ``enabled``, ``tags``, ``owner_email``, ``oauth_config``, ``oauth_enabled``, ``passthrough_headers``, ``auth_type``. Audit ``_check_agent_access`` and the three ``a2a_access_policy.py`` functions to confirm field coverage before locking the set.
+  2. Refactor the ``invoke_agent`` caller to pass ``A2AAgentSnapshot.from_orm(agent)`` instead of the inline ``SimpleNamespace`` construction. Keep ``build_a2a_hook_context``'s ``getattr`` fallback for backward compatibility during transition.
+  3. Refactor ``can_view_a2a_agent_directly``, ``can_view_a2a_agent_in_server_context``, and ``can_associate_a2a_agent_with_server`` in ``a2a_access_policy.py`` to accept ``agent_snapshot: A2AAgentSnapshot``. Update the underlying ``_check_agent_access`` primitive to take the snapshot too. Update callers (``synthesize_agent_card``, ``resolve_agent_for_dispatch``, server_service hooks) to build the snapshot once after the lookup and pass it through.
+
+  Must NOT do:
+
+  - Do NOT remove the duck-typed ``getattr`` fallback in ``build_a2a_hook_context`` without first migrating ALL hook callers to pass ``A2AAgentSnapshot`` — partial migration creates a confusing dual-mode helper.
+  - Do NOT add wire-level secrets (``endpoint_url``, ``auth_value``, ``auth_query_params``) to the snapshot. Those stay on the ORM row and flow through ``prepare_a2a_invocation`` separately. The snapshot is for AUTHORIZATION + OBSERVABILITY identity, not for invocation wire shape.
+  - Do NOT change the policy function signatures in the same commit as the snapshot introduction. Split into (1) introduce snapshot, (2) refactor ``invoke_agent`` caller, (3) refactor policy callers. Each commit independently bisectable.
+
+  Acceptance criteria:
+
+  - ``pytest tests/unit/mcpgateway/services/test_a2a_hooks.py`` continues to pass after stage (1) and (2).
+  - ``pytest tests/unit/mcpgateway/services/test_a2a_access_policy.py`` is updated in stage (3) to construct ``A2AAgentSnapshot`` via ``from_orm``; all 11 tests still pass.
+  - ``_check_agent_access`` accepts both the snapshot AND the legacy ORM row during transition (overload or duck-typing); a follow-up commit can drop the ORM signature once all callers migrate.
+  - Pre-commit hooks pass; LSP clean on changed files; behavior unchanged for unauthenticated card-route callers (Amendment B three-level conjunctive deny still collapses to ``False``).
+
+  References: user-raised design question in the helper-extraction session ("Could the SimpleNamespace object also be used by the AuthN/AuthZ/RBAC/ABAC policy module?"); Amendment A (centralized policy module — the consumer that benefits); Amendment C (``CallerContext`` sentinel — the caller-side pair to this agent-side snapshot); Amendment E (future policy-engine migration restatement — explains why pre-fetched primitives matter); commit ``676130982`` (where the ``SimpleNamespace`` pattern was introduced and is now ready for formalization).
+
+  Status: PROPOSED.
+
+  Commit (when implemented, split into three): ``refactor(a2a): introduce A2AAgentSnapshot frozen dataclass for hook + policy reuse (Amendment G part 1)``; ``refactor(a2a): invoke_agent uses A2AAgentSnapshot (Amendment G part 2)``; ``refactor(a2a): a2a_access_policy + _check_agent_access accept A2AAgentSnapshot (Amendment G part 3)``.
 
 ## Final verification wave (REVISED)
 
