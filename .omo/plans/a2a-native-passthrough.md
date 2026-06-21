@@ -810,7 +810,7 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
 
   Commit: bd551b215 | refactor(a2a)/feat(servers): close Metis C1/C2/C3/H3/H4 + Momus Block 2 via CallerContext sentinel.
 
-### Amendment D — T21 split into T21A (DONE) + T21B (OPEN)
+### Amendment D — T21 split into T21A (DONE) + T21B (DONE)
 
   Original T21 (line 551 of this plan) bundled three deliverables into one task: template selector + JS submit-handler wiring + card-URL ops affordance + bundle rebuild + Vitest tests. Momus correctly flagged that an in-session commit landed only the JS submit handler (T21A) with the other deliverables deferred, contradicting the plan's "no deferred CRUD/UI verification" stance. This amendment makes the split canonical.
 
@@ -824,7 +824,7 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
 
   Commit: 7b965a962 | feat(admin-ui): server-form A2A agent submit handler (T21 phase 1).
 
-#### T21B — Template selector + init helper + card-URL affordance + bundle rebuild + Vitest (OPEN)
+#### T21B — Template selector + init helper + card-URL affordance + bundle rebuild + Vitest (DONE)
 
   What to do: Five sub-deliverables, all required for T21 to be considered complete per the original plan acceptance:
 
@@ -853,9 +853,9 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
 
   QA: happy=full UI flow round-trips A2A agent IDs end-to-end. failure=selector renders but server has empty `associated_a2a_agents` after save → JS submit handler missing or template input name mismatch (most likely cause: stale bundle, run `make build-ui`). Evidence: `.omo/evidence/task-21B-a2a-native-passthrough.txt`.
 
-  Commit: Y | feat(admin-ui): server-form A2A selector + init helper + card-URL affordance (T21B)
+  Commit: 81820b68a | feat(admin-ui)/feat(servers): server-form A2A selector + card-URL affordance (T21B)
 
-  Status: OPEN.
+  Status: DONE. Landed in commit ``81820b68a`` (also closes T22 via commit ``77b73562d``). Oracle F1 caught the stale "OPEN" text in a follow-up review and this commit flipped it to match the shipped state.
 
 ### Amendment E — Future policy-engine migration is out of scope (closes Momus Block 3)
 
@@ -984,6 +984,75 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
   Status: PROPOSED.
 
   Commit (when implemented, split into three): ``refactor(a2a): introduce A2AAgentSnapshot frozen dataclass for hook + policy reuse (Amendment G part 1)``; ``refactor(a2a): invoke_agent uses A2AAgentSnapshot (Amendment G part 2)``; ``refactor(a2a): a2a_access_policy + _check_agent_access accept A2AAgentSnapshot (Amendment G part 3)``.
+
+### Amendment H — T3 agent-name lookup is case-sensitive (closes Oracle F1 #3)
+
+  Background: Oracle F1 (background task ``bg_6cd20eb9``) flagged that the T3 plan-task entry specified case-INSENSITIVE name matching for ``A2AAgentService.resolve_agent_for_dispatch`` but the shipped code at ``a2a_service.py:995-998`` documents and ``a2a_service.py:1050`` implements case-SENSITIVE matching (``DbA2AAgent.name == agent_name`` exact). Oracle marked this MAJOR with the recommendation to either implement case-insensitive lookup or amend the plan to explicitly accept case-sensitive parity with the existing ``/invoke`` route.
+
+  Decision (Path b): the plan is amended to explicitly accept case-sensitive matching. Rationale:
+
+  - The existing ``/invoke`` route is case-sensitive. Switching to case-insensitive for the new native-passthrough routes would create a SURPRISING inconsistency where the same agent name resolves differently depending on which transport the caller chose.
+  - Case-insensitive matching introduces a name-collision policy decision (what if both ``"Foo"`` and ``"foo"`` register? which wins on lookup?) that the plan never resolved. Path-a would force that resolution as a side-effect.
+  - The T3 original text was written before the ``/invoke`` parity constraint was fully appreciated. The plan amendment realigns the contract with the shipped behaviour rather than introducing a behaviour change post-Wave 7.
+
+  What to do: nothing in code. This amendment closes Oracle F1 #3 by adjusting the plan acceptance criterion.
+
+  Must NOT do: do NOT add a case-insensitive lookup primitive without a parallel decision about name-collision precedence, name-canonicalisation at registration, and migration handling for existing case-variant names in production datastores. That is a separate scoped change with its own design review.
+
+  Acceptance criteria: ``a2a_service.py::resolve_agent_for_dispatch`` and the underlying ``DbA2AAgent.name == agent_name`` filter remain case-sensitive. ``/a2a/{name}`` per-agent dispatch, ``/servers/{id}/a2a/{name}`` v-server dispatch, and the legacy ``/invoke`` route all behave identically with respect to case. Existing tests at ``tests/integration/test_a2a_native_routes.py`` (case-sensitive resolution) and ``tests/integration/test_a2a_vserver_composition.py`` (case-sensitive v-server lookup) continue to pass without modification.
+
+  References: Oracle F1 #3 ``bg_6cd20eb9``; original T3 plan entry; ``mcpgateway/services/a2a_service.py:995-998`` (case-sensitivity documentation); ``mcpgateway/services/a2a_service.py:1050`` (case-sensitive name filter); existing ``/invoke`` route case-sensitive behaviour.
+
+  Status: DONE (docs-only amendment).
+
+  Commit: this commit | docs(plan): Amendment H + Amendment D status flip + deferred follow-up work (Oracle F1+F2 plan-side closeout).
+
+### Amendment I — Deferred follow-up work (Oracle F1+F2 + 250 LOC ceiling)
+
+  Captures the items Oracle F1 ``bg_6cd20eb9`` and Oracle F2 ``bg_dc735107`` surfaced that cannot land as ad-hoc fixes in the current commit cycle and need their own focused commits or program-level attention. The Oracle critical fixes (D14 double-wrap, streaming auth refactor, stale docstrings + P5 TODO honesty) landed in commit ``059a376e7``; what is left here is the work that requires a meaningful chunk of new code, new fixtures, or cross-codebase refactoring beyond this plan's scope.
+
+#### I.1 — T31 architecture documentation (Wave 8, BLOCKING per F1)
+
+  What to do: write ``docs/docs/architecture/a2a-native.md`` per the original T31 entry. Covers: native passthrough architecture (per-agent + v-server URL families), the synthesizer, the path-rewrite middleware, method-aware RBAC, A2A-Version negotiation, the streaming dispatch wrapper, the helper-extraction + placeholder hook wiring (Amendment F stage a), the Rust runtime deprecation cycle (Wave 6), and the compliance harness layout. Cross-link from ``docs/docs/index.md`` plus the relevant existing docs (manage/rbac.md, architecture/multitenancy.md). Run ``mkdocs build`` clean.
+
+  Must NOT do: do NOT skip the deprecation-cycle section (T23–T27) or the Amendment-F-deferral framing — both are operator-visible and shape the migration story.
+
+  Acceptance: doc exists; ``mkdocs build`` succeeds; doc is reachable from the mkdocs nav; references commit ``676130982`` (Amendment F stage a) and commit ``059a376e7`` (Oracle F1+F2 critical fixes) as part of the implementation trail.
+
+  Status: DEFERRED to a focused Wave 8 commit (no work in this commit).
+
+  Commit (when implemented): Y | docs(a2a): T31 native passthrough architecture doc (Wave 8)
+
+#### I.2 — P5 compliance fixture work (BLOCKING per F2)
+
+  What to do: add two fixtures to ``tests/live_gateway/a2a_compliance/`` that the existing P5 placeholder skips at ``v1_0_0/test_rbac_extra.py:143-151`` and ``:166-172`` reference:
+
+  - A team-scoped A2A agent registered to ``team-a`` (mirrors ``registered_agent_id`` but scoped) + a JWT token with ``teams=["team-b"]``. Lets the wrong-team-visibility-404 assertion fire (D11: visibility hides rather than 403).
+  - A non-admin JWT token granted ``a2a.read`` ONLY (not ``a2a.invoke``). Lets the ``GetExtendedAgentCard`` permission test fire (T12 step 8: per-method RBAC).
+
+  Both fixtures live in ``conftest.py`` alongside the existing ``registered_agent_id`` + ``server_id`` fixtures (commits ``2bc20d26d``, ``fd03f8f05``, etc.). Once the fixtures land, remove the two TODO ``pytest.skip`` lines and let the existing assertion bodies run.
+
+  Must NOT do: do NOT inline the fixture work into ``v1_0_0/test_rbac_extra.py`` — keep the conftest fixture / test split so other compliance tests can reuse the team-scoped + per-permission tokens.
+
+  Acceptance: ``pytest tests/live_gateway/a2a_compliance/v1_0_0/test_rbac_extra.py -v`` runs the previously-skipped assertions; both pass against a live gateway with the matching agent + token registered.
+
+  Status: DEFERRED to a focused fixture-work commit (no work in this commit; the TODO comments now honestly point at this addendum rather than the stale "Wave 7 T28 Part B" reference).
+
+  Commit (when implemented): Y | test(a2a-compliance): team-scoped agent + per-permission token fixtures (F2 P5 closeout)
+
+#### I.3 — 250 LOC ceiling violations (program-level, not this plan)
+
+  What was found: F2 ``bg_dc735107`` cross-cutting note flagged ``mcpgateway/main.py`` (13,166 LOC), ``mcpgateway/services/a2a_service.py`` (4,528 LOC), ``mcpgateway/services/server_service.py`` (2,147 LOC), and ``tests/live_gateway/a2a_compliance/conftest.py`` (410 LOC) all violate the 250 LOC ceiling. These files PRE-DATE this plan and accumulated their bulk over the project lifetime; this plan's contribution to the line count is bounded (helper extraction + placeholder wiring + plan amendments).
+
+  What to do: a separate program-level refactor that splits these files along genuine seam lines (transport vs admin vs RBAC vs service vs middleware for main.py; per-domain helper modules for a2a_service.py + server_service.py; fixture modules for the harness conftest.py). NOT an ad-hoc edit attached to this plan.
+
+  Must NOT do: do NOT attempt a single-commit "split the file" mass refactor without a comprehensive test plan — these are the busiest hot paths in the gateway and a botched seam means weeks of regressions. The current bulk is acceptable cost relative to that risk profile until a real decomposition design lands.
+
+  Acceptance: out of scope for this plan. Captured here for traceability — Oracle F2 saw it; the project owner decides when to spin it up as its own initiative.
+
+  Status: DEFERRED (program-level concern, NOT a follow-up commit to this plan).
+
+  Commit (when undertaken): owned by a separate refactor initiative.
 
 ## Final verification wave (REVISED)
 

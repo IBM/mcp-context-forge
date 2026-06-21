@@ -202,9 +202,20 @@ packages.json
 .claude/*
 .codex
 .continue
-.omo
 aider*
 CLAUDE.local.md
+
+# .omo is OMO's working directory. The three artifact subdirs
+# (plans/, drafts/, evidence/) are PROJECT artifacts — they hold the
+# canonical plan, the design draft Oracle audits read, and the per-task
+# evidence files that plan acceptance criteria cite. They MUST be
+# tracked. Everything else under .omo is per-session local state
+# (run-continuation/, cache/, tmp/, logs/, sessions/, .scratch/) and
+# stays ignored.
+.omo/*
+!.omo/plans/
+!.omo/drafts/
+!.omo/evidence/
 
 # ========================================
 # Security & Static Analysis
