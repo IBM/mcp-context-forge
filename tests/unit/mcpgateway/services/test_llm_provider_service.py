@@ -11,7 +11,7 @@ Tests for LLM provider service.
 import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 # Third-Party
 import httpx
@@ -110,6 +110,61 @@ def test_create_provider_rejects_ssrf_unsafe_api_base(service, db, monkeypatch: 
         service.create_provider(db, provider_data, created_by="user")
 
 
+@pytest.mark.parametrize("config_key", ["custom_host", "portkey_custom_host"])
+def test_create_provider_rejects_ssrf_unsafe_portkey_custom_host(service, db, monkeypatch: pytest.MonkeyPatch, config_key: str):
+    """Portkey ``custom_host`` (a header that selects upstream) must pass SSRF rules at save time."""
+    db.execute.return_value = _mock_execute_scalar(None)
+    monkeypatch.setattr(settings, "ssrf_allow_localhost", False)
+    monkeypatch.setattr(settings, "ssrf_allow_private_networks", False)
+
+    provider_data = LLMProviderCreate(
+        name="Portkey",
+        provider_type=LLMProviderType.PORTKEY,
+        api_base="https://portkey.example.com/v1",
+        config={"provider": "openai", config_key: "http://169.254.169.254/latest/meta-data"},
+        enabled=True,
+    )
+
+    with pytest.raises(LLMProviderValidationError):
+        service.create_provider(db, provider_data, created_by="user")
+
+
+def test_create_provider_accepts_public_portkey_custom_host(service, db, monkeypatch: pytest.MonkeyPatch):
+    """A public-scheme ``custom_host`` should pass SSRF validation and persist."""
+    db.execute.return_value = _mock_execute_scalar(None)
+
+    provider_data = LLMProviderCreate(
+        name="Portkey",
+        provider_type=LLMProviderType.PORTKEY,
+        api_base="https://portkey.example.com/v1",
+        config={"provider": "openai", "custom_host": "https://api.example.com/v1"},
+        enabled=True,
+    )
+
+    provider = service.create_provider(db, provider_data, created_by="user")
+    assert provider.config["custom_host"] == "https://api.example.com/v1"
+
+
+def test_create_provider_encrypts_virtual_key(service, db, monkeypatch: pytest.MonkeyPatch):
+    """Portkey ``virtual_key`` is a credential — must be encrypted at rest like an API key."""
+    db.execute.return_value = _mock_execute_scalar(None)
+
+    provider_data = LLMProviderCreate(
+        name="Portkey",
+        provider_type=LLMProviderType.PORTKEY,
+        api_base="https://portkey.example.com/v1",
+        config={"provider": "openai", "virtual_key": "vk-live-supersecret"},  # pragma: allowlist secret
+        enabled=True,
+    )
+
+    provider = service.create_provider(db, provider_data, created_by="user")
+
+    # virtual_key must NOT be stored as plaintext; envelope structure must match other secrets.
+    stored = provider.config["virtual_key"]
+    assert isinstance(stored, dict), f"virtual_key not encrypted at rest: {stored!r}"
+    assert "_mcpgateway_encrypted_value_v1" in stored, f"virtual_key envelope missing key marker: {stored!r}"
+
+
 def test_create_provider_encrypts_sensitive_config(service, db, monkeypatch: pytest.MonkeyPatch):
     db.execute.return_value = _mock_execute_scalar(None)
     monkeypatch.setattr("mcpgateway.services.llm_provider_service.encode_auth", lambda data: f"encoded:{data.get('data', data.get('value'))}")
@@ -129,8 +184,8 @@ def test_create_provider_encrypts_sensitive_config(service, db, monkeypatch: pyt
 
 
 def test_get_provider_api_key_decodes_secret(monkeypatch: pytest.MonkeyPatch):
-    provider = SimpleNamespace(name="Provider", api_key="encoded")
-    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda _: {"api_key": "secret"})
+    provider = SimpleNamespace(name="Provider", api_key="encoded")  # pragma: allowlist secret
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda _: {"api_key": "secret"})  # pragma: allowlist secret
 
     assert get_provider_api_key(provider) == "secret"
 
@@ -139,15 +194,15 @@ def test_build_portkey_headers_direct_provider(monkeypatch: pytest.MonkeyPatch):
     provider = SimpleNamespace(
         name="Portkey",
         provider_type="portkey",
-        api_key="encoded",
+        api_key="encoded",  # pragma: allowlist secret
         config={
             "provider": "openai",
-            "portkey_api_key": "pk-live",
+            "portkey_api_key": "pk-live",  # pragma: allowlist secret
             "portkey_config": {"retry": {"attempts": 2}},
             "custom_host": "https://llm.internal/v1",
         },
     )
-    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda _: {"api_key": "upstream-secret"})
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda _: {"api_key": "upstream-secret"})  # pragma: allowlist secret
 
     headers = build_portkey_headers(provider, include_content_type=True)
 
@@ -163,10 +218,10 @@ def test_build_portkey_headers_managed_provider_skips_authorization(monkeypatch:
     provider = SimpleNamespace(
         name="Portkey",
         provider_type="portkey",
-        api_key="encoded",
-        config={"provider": "@managed-openai", "portkey_api_key": "pk-live"},
+        api_key="encoded",  # pragma: allowlist secret
+        config={"provider": "@managed-openai", "portkey_api_key": "pk-live"},  # pragma: allowlist secret
     )
-    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda _: {"api_key": "upstream-secret"})
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda _: {"api_key": "upstream-secret"})  # pragma: allowlist secret
 
     headers = build_portkey_headers(provider)
 
@@ -179,10 +234,10 @@ def test_build_portkey_headers_virtual_key_keeps_provider(monkeypatch: pytest.Mo
     provider = SimpleNamespace(
         name="Portkey",
         provider_type="portkey",
-        api_key="encoded",
-        config={"provider": "openai", "virtual_key": "vk-live", "portkey_api_key": "pk-live"},
+        api_key="encoded",  # pragma: allowlist secret
+        config={"provider": "openai", "virtual_key": "vk-live", "portkey_api_key": "pk-live"},  # pragma: allowlist secret
     )
-    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda _: {"api_key": "upstream-secret"})
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda _: {"api_key": "upstream-secret"})  # pragma: allowlist secret
 
     headers = build_portkey_headers(provider)
 
@@ -195,13 +250,13 @@ def test_build_portkey_headers_translated_azure_provider(monkeypatch: pytest.Mon
     provider = SimpleNamespace(
         name="Azure",
         provider_type="azure_openai",
-        api_key="encoded",
+        api_key="encoded",  # pragma: allowlist secret
         api_base="https://my-azure.openai.azure.com",
         api_version="2024-02-15-preview",
         config={"deployment_name": "dep-123"},
     )
     model = SimpleNamespace(model_id="gpt-4o")
-    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda _: {"api_key": "azure-secret"})
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda _: {"api_key": "azure-secret"})  # pragma: allowlist secret
 
     headers = build_portkey_headers(provider, model=model)
 
@@ -216,11 +271,11 @@ def test_build_portkey_headers_translated_openai_compatible_custom_host(monkeypa
     provider = SimpleNamespace(
         name="Compat",
         provider_type="openai_compatible",
-        api_key="encoded",
+        api_key="encoded",  # pragma: allowlist secret
         api_base="https://compat.example.com/v1",
         config={},
     )
-    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda _: {"api_key": "compat-secret"})
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda _: {"api_key": "compat-secret"})  # pragma: allowlist secret
 
     headers = build_portkey_headers(provider)
 
@@ -373,6 +428,38 @@ def test_update_provider_rejects_ssrf_unsafe_api_base(service, db, monkeypatch: 
     monkeypatch.setattr(settings, "ssrf_allow_localhost", False)
     monkeypatch.setattr(settings, "ssrf_allow_private_networks", False)
     update = LLMProviderUpdate.model_construct(api_base="http://127.0.0.1")
+
+    with pytest.raises(LLMProviderValidationError):
+        service.update_provider(db, "p1", update, modified_by="editor")
+
+
+def test_update_provider_rejects_ssrf_unsafe_portkey_custom_host(service, db, monkeypatch: pytest.MonkeyPatch):
+    """Updates must enforce SSRF rules on Portkey ``custom_host`` just like ``api_base``."""
+    provider = SimpleNamespace(
+        id="p1",
+        name="Portkey",
+        slug="portkey",
+        description=None,
+        provider_type=LLMProviderType.PORTKEY,
+        api_key=None,
+        api_base="https://portkey.example.com/v1",
+        api_version=None,
+        config={"provider": "openai"},
+        default_model=None,
+        default_temperature=None,
+        default_max_tokens=None,
+        enabled=True,
+        plugin_ids=None,
+    )
+    service.get_provider = MagicMock(return_value=provider)
+    db.execute.return_value = _mock_execute_scalar(None)
+
+    monkeypatch.setattr(settings, "ssrf_allow_localhost", False)
+    monkeypatch.setattr(settings, "ssrf_allow_private_networks", False)
+
+    update = LLMProviderUpdate.model_construct(
+        config={"provider": "openai", "custom_host": "http://169.254.169.254/latest/meta-data"},
+    )
 
     with pytest.raises(LLMProviderValidationError):
         service.update_provider(db, "p1", update, modified_by="editor")

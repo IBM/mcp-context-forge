@@ -486,7 +486,7 @@ PROVIDER_CONFIGS: Dict[str, ProviderConfigDefinition] = {
             ProviderFieldDefinition(
                 name="virtual_key",
                 label="Virtual Key",
-                field_type="text",
+                field_type="password",
                 required=False,
                 placeholder="vk-xxxxx",
                 help_text="Legacy Portkey virtual key header. Prefer a managed provider slug in the Provider field when possible.",

@@ -74,9 +74,9 @@ _PORTKEY_EXTRA_HEADER_FIELD_MAPPINGS = {
     "vertex_project_id": "x-portkey-vertex-project-id",
     "vertex_region": "x-portkey-vertex-region",
     "aws_access_key_id": "x-portkey-aws-access-key-id",
-    "aws_secret_access_key": "x-portkey-aws-secret-access-key",
+    "aws_secret_access_key": "x-portkey-aws-secret-access-key",  # pragma: allowlist secret
     "aws_region": "x-portkey-aws-region",
-    "aws_session_token": "x-portkey-aws-session-token",
+    "aws_session_token": "x-portkey-aws-session-token",  # pragma: allowlist secret
 }
 _PORTKEY_PROVIDER_SLUGS = {
     LLMProviderType.OPENAI: "openai",
@@ -541,11 +541,7 @@ def build_portkey_headers(
         portkey_provider = _derive_translated_portkey_provider_slug(provider, provider_config)
 
     virtual_key = _stringify_portkey_header_value(provider_config.get("virtual_key"))
-    custom_host = (
-        _stringify_portkey_header_value(provider_config.get("custom_host"))
-        if provider_type == LLMProviderType.PORTKEY
-        else _derive_translated_portkey_custom_host(provider, provider_config)
-    )
+    custom_host = _stringify_portkey_header_value(provider_config.get("custom_host")) if provider_type == LLMProviderType.PORTKEY else _derive_translated_portkey_custom_host(provider, provider_config)
 
     if portkey_provider:
         headers["x-portkey-provider"] = portkey_provider
@@ -684,6 +680,33 @@ class LLMProviderService:
             except ValueError as exc:
                 raise LLMProviderValidationError(str(exc)) from exc
 
+    @staticmethod
+    def _validate_provider_config_urls(config: Optional[Dict[str, Any]]) -> None:
+        """Validate any URL-bearing fields inside provider config against SSRF rules.
+
+        Portkey routes traffic to the host named by the ``x-portkey-custom-host``
+        header. Any URL we accept into config and later emit as that header
+        therefore expands the SSRF surface of the deployment and must pass the
+        same validation as a provider ``api_base``.
+
+        Args:
+            config: Decoded provider config dictionary (or ``None``).
+
+        Raises:
+            LLMProviderValidationError: If any URL-bearing config field fails
+                core URL or SSRF validation.
+        """
+        if not isinstance(config, dict):
+            return
+        for key in ("custom_host", "portkey_custom_host"):
+            raw_value = config.get(key)
+            if not raw_value:
+                continue
+            try:
+                SecurityValidator.validate_url(str(raw_value), f"Provider config '{key}'")
+            except ValueError as exc:
+                raise LLMProviderValidationError(str(exc)) from exc
+
     async def initialize(self) -> None:
         """Initialize the LLM provider service."""
         if not self._initialized:
@@ -731,6 +754,7 @@ class LLMProviderService:
             encrypted_api_key = encode_auth({"api_key": provider_data.api_key})
 
         self._validate_provider_api_base(provider_data.api_base)
+        self._validate_provider_config_urls(provider_data.config)
 
         # Create provider
         provider = LLMProvider(
@@ -892,6 +916,7 @@ class LLMProviderService:
         if provider_data.api_version is not None:
             provider.api_version = provider_data.api_version
         if provider_data.config is not None:
+            self._validate_provider_config_urls(provider_data.config)
             provider.config = protect_provider_config_for_storage(
                 provider_data.config,
                 existing_config=provider.config if isinstance(provider.config, dict) else None,
