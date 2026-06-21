@@ -699,11 +699,17 @@ class LLMProviderService:
         if not isinstance(config, dict):
             return
         for key in ("custom_host", "portkey_custom_host"):
-            raw_value = config.get(key)
-            if not raw_value:
+            # Mirror ``_stringify_portkey_header_value`` so that anything that
+            # the runtime header path would later emit as ``x-portkey-custom-host``
+            # is caught here. ``_stringify_portkey_header_value`` returns ``None``
+            # only for ``None``/empty-string; falsy values such as ``0``,
+            # ``False``, ``[]`` and ``{}`` are stringified and emitted as a
+            # header value, so we must validate them too.
+            value = _stringify_portkey_header_value(config.get(key))
+            if value is None:
                 continue
             try:
-                SecurityValidator.validate_url(str(raw_value), f"Provider config '{key}'")
+                SecurityValidator.validate_url(value, f"Provider config '{key}'")
             except ValueError as exc:
                 raise LLMProviderValidationError(str(exc)) from exc
 

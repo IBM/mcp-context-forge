@@ -145,6 +145,34 @@ def test_create_provider_accepts_public_portkey_custom_host(service, db, monkeyp
     assert provider.config["custom_host"] == "https://api.example.com/v1"
 
 
+@pytest.mark.parametrize(
+    "falsy_value",
+    [0, False, [], {}, "0", "False"],
+    ids=["int_zero", "bool_false", "empty_list", "empty_dict", "str_zero", "str_false"],
+)
+def test_create_provider_rejects_falsy_non_url_custom_host(service, db, monkeypatch: pytest.MonkeyPatch, falsy_value):
+    """Falsy non-URL ``custom_host`` values must still be rejected.
+
+    Regression guard: ``_stringify_portkey_header_value`` stringifies ``0``,
+    ``False``, ``[]``, ``{}`` etc. and ``build_portkey_headers`` emits the
+    result as ``x-portkey-custom-host``. The save-time validator must use the
+    same normalization so nothing that gets emitted as a header can bypass
+    SSRF validation by being "falsy" in a Python ``if not value`` sense.
+    """
+    db.execute.return_value = _mock_execute_scalar(None)
+
+    provider_data = LLMProviderCreate(
+        name="Portkey",
+        provider_type=LLMProviderType.PORTKEY,
+        api_base="https://portkey.example.com/v1",
+        config={"provider": "openai", "custom_host": falsy_value},
+        enabled=True,
+    )
+
+    with pytest.raises(LLMProviderValidationError):
+        service.create_provider(db, provider_data, created_by="user")
+
+
 def test_create_provider_encrypts_virtual_key(service, db, monkeypatch: pytest.MonkeyPatch):
     """Portkey ``virtual_key`` is a credential — encrypted at rest, decrypted at runtime, masked in responses."""
     db.execute.return_value = _mock_execute_scalar(None)
