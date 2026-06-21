@@ -82,6 +82,104 @@ def plugin_manager_factory_none() -> AsyncMock:
     return _factory
 
 
+class TestA2AAgentSnapshot:
+    """Pin :class:`A2AAgentSnapshot` + :meth:`A2AAgentSnapshot.from_orm` contract (Plan Amendment G)."""
+
+    def test_snapshot_is_frozen(self, fake_agent):
+        """Identifier fields can't drift after construction — frozen dataclass invariant."""
+        from dataclasses import FrozenInstanceError
+
+        from mcpgateway.services.a2a_hooks import A2AAgentSnapshot
+
+        snap = A2AAgentSnapshot.from_orm(fake_agent)
+        with pytest.raises(FrozenInstanceError):
+            snap.id = "different-id"  # type: ignore[misc]
+
+    def test_from_orm_extracts_all_fields(self, fake_agent):
+        """``from_orm`` populates every documented field from a complete agent."""
+        from mcpgateway.services.a2a_hooks import A2AAgentSnapshot
+
+        snap = A2AAgentSnapshot.from_orm(fake_agent)
+        assert snap.id == "agent-uuid"
+        assert snap.name == "echo-agent"
+        assert snap.team_id == "team-1"
+        assert snap.visibility == "public"
+        assert snap.enabled is True
+        assert snap.tags == ["echo"]
+        assert snap.oauth_config is None
+        assert snap.passthrough_headers is None
+        assert snap.auth_type is None
+
+    def test_from_orm_handles_missing_optional_attrs(self):
+        """``from_orm`` falls back to documented defaults when optional attrs are missing.
+
+        Amendment G acceptance criterion: the helper accepts duck-typed
+        stand-ins like minimal :class:`SimpleNamespace` objects so tests
+        can mint agents without re-declaring every column.
+        """
+        from mcpgateway.services.a2a_hooks import A2AAgentSnapshot
+
+        minimal = SimpleNamespace(id="bare-id", name="bare")
+        snap = A2AAgentSnapshot.from_orm(minimal)
+        assert snap.id == "bare-id"
+        assert snap.name == "bare"
+        assert snap.team_id is None
+        assert snap.visibility == "public"
+        assert snap.enabled is True
+        assert snap.tags == []
+        assert snap.owner_email is None
+        assert snap.oauth_config is None
+        assert snap.oauth_enabled is False
+        assert snap.passthrough_headers is None
+        assert snap.auth_type is None
+
+    def test_from_orm_normalizes_tags_none_to_empty_list(self):
+        """ORM rows often return ``None`` for empty list columns; snapshot stores ``[]``."""
+        from mcpgateway.services.a2a_hooks import A2AAgentSnapshot
+
+        agent = SimpleNamespace(id="x", name="y", tags=None)
+        snap = A2AAgentSnapshot.from_orm(agent)
+        assert snap.tags == []
+
+    def test_from_orm_owns_its_tags_list(self):
+        """Snapshot tags is a fresh ``list`` copy so the source InstrumentedList can't be mutated through it."""
+        from mcpgateway.services.a2a_hooks import A2AAgentSnapshot
+
+        source_tags = ["a", "b"]
+        agent = SimpleNamespace(id="x", name="y", tags=source_tags)
+        snap = A2AAgentSnapshot.from_orm(agent)
+        assert snap.tags == source_tags
+        assert snap.tags is not source_tags  # owned copy, not aliased
+
+    def test_from_orm_coerces_id_to_string(self):
+        """UUID-shaped ids stay as strings — snapshot pins the wire-level identity type."""
+        from uuid import UUID
+
+        from mcpgateway.services.a2a_hooks import A2AAgentSnapshot
+
+        uuid_id = UUID("12345678-1234-5678-1234-567812345678")
+        agent = SimpleNamespace(id=uuid_id, name="y")
+        snap = A2AAgentSnapshot.from_orm(agent)
+        assert isinstance(snap.id, str)
+        assert snap.id == str(uuid_id)
+
+    def test_from_orm_coerces_oauth_enabled_to_bool(self):
+        """Truthy non-bool values get normalized so the snapshot's invariant holds.
+
+        Guards against ORM columns that return ``1``/``0`` integers or
+        ``"true"``/``"false"`` strings depending on the dialect.
+        """
+        from mcpgateway.services.a2a_hooks import A2AAgentSnapshot
+
+        for truthy in (1, "true", True):
+            agent = SimpleNamespace(id="x", name="y", oauth_enabled=truthy)
+            assert A2AAgentSnapshot.from_orm(agent).oauth_enabled is True
+
+        for falsy in (0, "", None, False):
+            agent = SimpleNamespace(id="x", name="y", oauth_enabled=falsy)
+            assert A2AAgentSnapshot.from_orm(agent).oauth_enabled is False
+
+
 class TestBuildA2AHookContext:
     """Pin :func:`build_a2a_hook_context` contract."""
 

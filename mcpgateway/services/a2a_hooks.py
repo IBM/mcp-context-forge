@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Plugin-hook helpers for A2A code paths.
+"""Plugin-hook helpers + agent-snapshot dataclass for A2A code paths.
 
 Location: ./mcpgateway/services/a2a_hooks.py
 Copyright 2026
@@ -11,6 +11,18 @@ Extracted from the inline boilerplate that previously lived in
 share the same plugin-hook firing convention without duplicating
 ~80 lines of GlobalContext + PydanticA2AAgent + invoke_hook setup at
 each call site.
+
+Public types:
+
+* :class:`A2AAgentSnapshot` — frozen projection of a
+  :class:`mcpgateway.db.A2AAgent` ORM row. Used by every downstream
+  consumer (hooks, policy, telemetry) so the agent identity is
+  pinned at lookup time and the DB session can be released early.
+  Pairs with :class:`mcpgateway.services.caller_context.CallerContext`
+  as the agent side of every ``(caller, target)`` policy input
+  (Plan Amendment G).
+* :class:`A2AHookContext` — bundle of identifiers + plugin manager +
+  cpex ``GlobalContext`` + ``context_table`` threaded pre → post.
 
 Three live helpers wrap the existing ``cpex.framework`` hook types:
 
@@ -34,9 +46,83 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class A2AAgentSnapshot:
+    """Frozen projection of a :class:`mcpgateway.db.A2AAgent` ORM row.
+
+    Built once per request from a session-attached ``DbA2AAgent`` via
+    :meth:`from_orm`. Lets every downstream consumer (plugin hooks,
+    visibility policy, telemetry) work with the same identity tuple
+    WITHOUT needing the DB session, so the connection can be released
+    before any HTTP / RPC latency. Pairs with
+    :class:`mcpgateway.services.caller_context.CallerContext` as the
+    AGENT side of every ``(caller, target)`` policy input — together
+    they're the canonical decision input for the three policy
+    functions in :mod:`mcpgateway.services.a2a_access_policy`.
+
+    Field set is deliberately bounded: identity, visibility / RBAC
+    inputs, plugin-relevant config flags, and the auth-type label.
+    Wire-level secrets (``endpoint_url``, ``auth_value``,
+    ``auth_query_params``) stay on the ORM row and flow through
+    :func:`mcpgateway.services.a2a_protocol.prepare_a2a_invocation`
+    separately — those are dispatch concerns, not authorization
+    concerns. Per Amendment G's MUST NOT clause, do NOT add wire
+    secrets to this snapshot.
+    """
+
+    id: str
+    name: str
+    team_id: Optional[str]
+    visibility: str
+    enabled: bool
+    tags: List[str]
+    owner_email: Optional[str]
+    oauth_config: Optional[Dict[str, Any]]
+    oauth_enabled: bool
+    passthrough_headers: Optional[List[str]]
+    auth_type: Optional[str]
+
+    @classmethod
+    def from_orm(cls, agent: Any) -> "A2AAgentSnapshot":
+        """Project a session-attached ``DbA2AAgent`` into a detached snapshot.
+
+        Uses ``getattr`` with sensible defaults so the helper also accepts
+        duck-typed stand-ins (``SimpleNamespace``, mocked ORM rows,
+        Pydantic projections) without losing type discipline at the call
+        site. Tags coerced to a fresh ``list`` so the snapshot owns its
+        own copy and an ORM-level ``InstrumentedList`` cannot be mutated
+        through it.
+
+        Args:
+            agent: A :class:`mcpgateway.db.A2AAgent` ORM row, OR any
+                object that exposes the same field names. ``id`` is
+                ``str()``-coerced so UUID columns and string keys both
+                work; ``oauth_enabled`` is ``bool()``-coerced so the
+                snapshot's invariant holds even when the ORM column
+                returns a truthy non-bool.
+
+        Returns:
+            A frozen :class:`A2AAgentSnapshot` with every field locked
+            for the rest of the request lifecycle.
+        """
+        return cls(
+            id=str(agent.id),
+            name=agent.name,
+            team_id=getattr(agent, "team_id", None),
+            visibility=getattr(agent, "visibility", "public"),
+            enabled=bool(getattr(agent, "enabled", True)),
+            tags=list(getattr(agent, "tags", None) or []),
+            owner_email=getattr(agent, "owner_email", None),
+            oauth_config=getattr(agent, "oauth_config", None),
+            oauth_enabled=bool(getattr(agent, "oauth_enabled", False)),
+            passthrough_headers=getattr(agent, "passthrough_headers", None),
+            auth_type=getattr(agent, "auth_type", None),
+        )
 
 
 @dataclass(frozen=True)
