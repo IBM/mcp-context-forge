@@ -1316,6 +1316,25 @@ def _restore_default_sighup_handler() -> None:
     signal.signal(signal.SIGHUP, signal.SIG_DFL)
 
 
+def _warn_if_rust_a2a_runtime_deprecated() -> None:
+    """Surface a startup deprecation warning when the experimental Rust A2A runtime is enabled.
+
+    Plan T23: the ``EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED`` feature
+    flag has been deprecated as part of the A2A native passthrough
+    migration. The Python dispatcher in
+    :mod:`mcpgateway.services.a2a_service` (T4 + T5) is now the
+    only execution path; the flag is effectively a no-op and is
+    scheduled for physical removal in release N+1 per T26's split
+    deprecation cycle (Oracle re-review #8 — a warning cycle must
+    ship before deletion so operators see at least one warned
+    release).
+    """
+    if getattr(settings, "experimental_rust_a2a_runtime_enabled", False):
+        logger.warning(
+            "EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED=true is DEPRECATED. " "The Rust A2A runtime is removed in the next release; " "Python dispatcher is the only path. This flag is now ignored."
+        )
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """
@@ -1345,6 +1364,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # Initialize logging service FIRST to ensure all logging goes to dual output
     await logging_service.initialize()
     logger.info("Starting ContextForge services")
+
+    _warn_if_rust_a2a_runtime_deprecated()
 
     # Wait for the database to be ready, then run bootstrap (alembic + seed).
     # This used to run at module-import time, which made every test that
