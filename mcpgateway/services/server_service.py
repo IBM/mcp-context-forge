@@ -244,13 +244,15 @@ async def _authorize_a2a_associations(
         return
 
     from mcpgateway.services.a2a_access_policy import can_associate_a2a_agent_with_server  # noqa: E402 pylint: disable=import-outside-toplevel
+    from mcpgateway.services.a2a_hooks import A2AAgentSnapshot  # noqa: E402 pylint: disable=import-outside-toplevel
     from mcpgateway.services.a2a_service import A2AAgentService  # noqa: E402 pylint: disable=import-outside-toplevel
 
     a2a_service = A2AAgentService()
     for agent in agents:
+        agent_snapshot = A2AAgentSnapshot.from_orm(agent)
         allowed = await can_associate_a2a_agent_with_server(
             db,
-            agent=agent,
+            agent_snapshot=agent_snapshot,
             server=db_server,
             user_email=caller_context.user_email,
             token_teams=caller_context.token_teams,

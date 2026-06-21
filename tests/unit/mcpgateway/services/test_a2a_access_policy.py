@@ -36,17 +36,24 @@ from mcpgateway.services.a2a_access_policy import (
     can_view_a2a_agent_directly,
     can_view_a2a_agent_in_server_context,
 )
+from mcpgateway.services.a2a_hooks import A2AAgentSnapshot
 
 
-def _agent(visibility: str = "public", team_id: Optional[str] = None, owner_email: Optional[str] = None) -> MagicMock:
-    """Build a MagicMock DbA2AAgent with the visibility-relevant attrs."""
-    agent = MagicMock()
-    agent.id = "agt-1"
-    agent.name = "echo"
-    agent.visibility = visibility
-    agent.team_id = team_id
-    agent.owner_email = owner_email
-    return agent
+def _agent_snapshot(visibility: str = "public", team_id: Optional[str] = None, owner_email: Optional[str] = None) -> A2AAgentSnapshot:
+    """Build an A2AAgentSnapshot with visibility-relevant attrs (Amendment G)."""
+    return A2AAgentSnapshot(
+        id="agt-1",
+        name="echo",
+        team_id=team_id,
+        visibility=visibility,
+        enabled=True,
+        tags=[],
+        owner_email=owner_email,
+        oauth_config=None,
+        oauth_enabled=False,
+        passthrough_headers=None,
+        auth_type=None,
+    )
 
 
 def _server(visibility: str = "public", team_id: Optional[str] = None, owner_email: Optional[str] = None) -> MagicMock:
@@ -80,7 +87,7 @@ class TestCanViewAgentDirectly:
         svc = _service(agent_allowed=True)
         result = await can_view_a2a_agent_directly(
             db=MagicMock(),
-            agent=_agent(),
+            agent_snapshot=_agent_snapshot(),
             user_email="u@x.com",
             token_teams=["t1"],
             a2a_service=svc,
@@ -93,7 +100,7 @@ class TestCanViewAgentDirectly:
         svc = _service(agent_allowed=False)
         result = await can_view_a2a_agent_directly(
             db=MagicMock(),
-            agent=_agent(visibility="team"),
+            agent_snapshot=_agent_snapshot(visibility="team"),
             user_email="u@x.com",
             token_teams=[],  # public-only token
             a2a_service=svc,
@@ -109,7 +116,7 @@ class TestCanViewAgentInServerContext:
         svc = _service(agent_allowed=True, member=True)
         result = await can_view_a2a_agent_in_server_context(
             db=MagicMock(),
-            agent=_agent(),
+            agent_snapshot=_agent_snapshot(),
             server=_server(),  # public server
             user_email="u@x.com",
             token_teams=["t1"],
@@ -130,7 +137,7 @@ class TestCanViewAgentInServerContext:
         svc = _service()
         result = await can_view_a2a_agent_in_server_context(
             db=MagicMock(),
-            agent=_agent(),
+            agent_snapshot=_agent_snapshot(),
             server=_server(visibility="private", owner_email="other@x.com"),
             user_email="u@x.com",  # NOT owner
             token_teams=["t1"],
@@ -153,7 +160,7 @@ class TestCanViewAgentInServerContext:
         svc = _service(member=False)
         result = await can_view_a2a_agent_in_server_context(
             db=MagicMock(),
-            agent=_agent(),
+            agent_snapshot=_agent_snapshot(),
             server=_server(),  # public server passes step 1
             user_email="u@x.com",
             token_teams=["t1"],
@@ -173,7 +180,7 @@ class TestCanViewAgentInServerContext:
         svc = _service(agent_allowed=False, member=True)
         result = await can_view_a2a_agent_in_server_context(
             db=MagicMock(),
-            agent=_agent(visibility="team", team_id="other-team"),
+            agent_snapshot=_agent_snapshot(visibility="team", team_id="other-team"),
             server=_server(),  # public server
             user_email="u@x.com",
             token_teams=["t1"],  # not in agent's team
@@ -193,14 +200,14 @@ class TestCanViewAgentInServerContext:
         # Server-deny
         svc1 = _service()
         r1 = await can_view_a2a_agent_in_server_context(
-            db=MagicMock(), agent=_agent(), server=_server(visibility="private", owner_email="o@x.com"), user_email="u@x.com", token_teams=["t1"], a2a_service=svc1
+            db=MagicMock(), agent_snapshot=_agent_snapshot(), server=_server(visibility="private", owner_email="o@x.com"), user_email="u@x.com", token_teams=["t1"], a2a_service=svc1
         )
         # Membership-deny
         svc2 = _service(member=False)
-        r2 = await can_view_a2a_agent_in_server_context(db=MagicMock(), agent=_agent(), server=_server(), user_email="u@x.com", token_teams=["t1"], a2a_service=svc2)
+        r2 = await can_view_a2a_agent_in_server_context(db=MagicMock(), agent_snapshot=_agent_snapshot(), server=_server(), user_email="u@x.com", token_teams=["t1"], a2a_service=svc2)
         # Agent-deny
         svc3 = _service(agent_allowed=False)
-        r3 = await can_view_a2a_agent_in_server_context(db=MagicMock(), agent=_agent(), server=_server(), user_email="u@x.com", token_teams=["t1"], a2a_service=svc3)
+        r3 = await can_view_a2a_agent_in_server_context(db=MagicMock(), agent_snapshot=_agent_snapshot(), server=_server(), user_email="u@x.com", token_teams=["t1"], a2a_service=svc3)
         assert r1 is False
         assert r2 is False
         assert r3 is False
@@ -214,7 +221,7 @@ class TestCanAssociateAgentWithServer:
         svc = _service(agent_allowed=True)
         result = await can_associate_a2a_agent_with_server(
             db=MagicMock(),
-            agent=_agent(),
+            agent_snapshot=_agent_snapshot(),
             server=_server(),
             user_email="u@x.com",
             token_teams=["t1"],
@@ -228,7 +235,7 @@ class TestCanAssociateAgentWithServer:
         svc = _service(agent_allowed=True)
         result = await can_associate_a2a_agent_with_server(
             db=MagicMock(),
-            agent=_agent(),
+            agent_snapshot=_agent_snapshot(),
             server=_server(visibility="private", owner_email="other@x.com"),
             user_email="u@x.com",
             token_teams=["t1"],
@@ -248,7 +255,7 @@ class TestCanAssociateAgentWithServer:
         svc = _service(agent_allowed=False)
         result = await can_associate_a2a_agent_with_server(
             db=MagicMock(),
-            agent=_agent(visibility="team", team_id="other-team"),
+            agent_snapshot=_agent_snapshot(visibility="team", team_id="other-team"),
             server=_server(),
             user_email="u@x.com",
             token_teams=["t1"],
@@ -266,7 +273,7 @@ class TestCanAssociateAgentWithServer:
         svc = _service()
         await can_associate_a2a_agent_with_server(
             db=MagicMock(),
-            agent=_agent(),
+            agent_snapshot=_agent_snapshot(),
             server=_server(),
             user_email="u@x.com",
             token_teams=["t1"],

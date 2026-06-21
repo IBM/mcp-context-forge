@@ -57,8 +57,8 @@ from typing import TYPE_CHECKING, List, Optional
 
 from sqlalchemy.orm import Session
 
-from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import Server as DbServer
+from mcpgateway.services.a2a_hooks import A2AAgentSnapshot
 from mcpgateway.services.a2a_server_service import _check_server_access
 
 if TYPE_CHECKING:  # pragma: no cover - import-time-only
@@ -68,7 +68,7 @@ if TYPE_CHECKING:  # pragma: no cover - import-time-only
 async def can_view_a2a_agent_directly(
     db: Session,
     *,
-    agent: DbA2AAgent,
+    agent_snapshot: A2AAgentSnapshot,
     user_email: Optional[str],
     token_teams: Optional[List[str]],
     a2a_service: "A2AAgentService",
@@ -81,8 +81,11 @@ async def can_view_a2a_agent_directly(
 
     Args:
         db: Database session.
-        agent: The A2A agent ORM row (must expose ``visibility``,
-            ``owner_email``, ``team_id``).
+        agent_snapshot: Frozen :class:`A2AAgentSnapshot` projection of
+            the agent ORM row. Plan Amendment G: callers build the
+            snapshot once via :meth:`A2AAgentSnapshot.from_orm` and
+            thread it through every visibility decision so the DB
+            connection can be released early.
         user_email: Caller email; ``None`` for anonymous.
         token_teams: Caller team scope. Semantics per
             ``A2AAgentService._check_agent_access`` (see
@@ -121,13 +124,13 @@ async def can_view_a2a_agent_directly(
     Returns:
         ``True`` when the caller can see the agent, ``False`` otherwise.
     """
-    return await a2a_service._check_agent_access(db, agent, user_email, token_teams)  # pylint: disable=protected-access
+    return await a2a_service._check_agent_access(db, agent_snapshot, user_email, token_teams)  # pylint: disable=protected-access
 
 
 async def can_view_a2a_agent_in_server_context(
     db: Session,
     *,
-    agent: DbA2AAgent,
+    agent_snapshot: A2AAgentSnapshot,
     server: DbServer,
     user_email: Optional[str],
     token_teams: Optional[List[str]],
@@ -168,7 +171,8 @@ async def can_view_a2a_agent_in_server_context(
 
     Args:
         db: Database session.
-        agent: The A2A agent ORM row.
+        agent_snapshot: Frozen :class:`A2AAgentSnapshot` for the agent
+            being checked (Plan Amendment G).
         server: The virtual-server ORM row.
         user_email: Caller email.
         token_teams: Caller team scope (see
@@ -181,9 +185,9 @@ async def can_view_a2a_agent_in_server_context(
     """
     if not _check_server_access(server, user_email, token_teams):
         return False
-    if not await a2a_service.check_server_a2a_membership(db, server.id, agent.id):
+    if not await a2a_service.check_server_a2a_membership(db, server.id, agent_snapshot.id):
         return False
-    if not await a2a_service._check_agent_access(db, agent, user_email, token_teams):  # pylint: disable=protected-access
+    if not await a2a_service._check_agent_access(db, agent_snapshot, user_email, token_teams):  # pylint: disable=protected-access
         return False
     return True
 
@@ -191,7 +195,7 @@ async def can_view_a2a_agent_in_server_context(
 async def can_associate_a2a_agent_with_server(
     db: Session,
     *,
-    agent: DbA2AAgent,
+    agent_snapshot: A2AAgentSnapshot,
     server: DbServer,
     user_email: Optional[str],
     token_teams: Optional[List[str]],
@@ -214,7 +218,8 @@ async def can_associate_a2a_agent_with_server(
 
     Args:
         db: Database session.
-        agent: The A2A agent ORM row being added.
+        agent_snapshot: Frozen :class:`A2AAgentSnapshot` of the agent
+            being added (Plan Amendment G).
         server: The virtual-server ORM row being mutated.
         user_email: Caller email.
         token_teams: Caller team scope.
@@ -226,6 +231,6 @@ async def can_associate_a2a_agent_with_server(
     """
     if not _check_server_access(server, user_email, token_teams):
         return False
-    if not await a2a_service._check_agent_access(db, agent, user_email, token_teams):  # pylint: disable=protected-access
+    if not await a2a_service._check_agent_access(db, agent_snapshot, user_email, token_teams):  # pylint: disable=protected-access
         return False
     return True

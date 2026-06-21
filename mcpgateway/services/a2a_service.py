@@ -793,7 +793,7 @@ class A2AAgentService(BaseService):
     async def _check_agent_access(
         self,
         db: Session,
-        agent: DbA2AAgent,
+        agent: Any,
         user_email: Optional[str],
         token_teams: Optional[List[str]],
     ) -> bool:
@@ -808,7 +808,14 @@ class A2AAgentService(BaseService):
 
         Args:
             db: Database session for admin lookup
-            agent: The agent to check access for
+            agent: The agent to check access for. Per Plan Amendment G
+                this accepts EITHER a session-attached
+                :class:`mcpgateway.db.A2AAgent` ORM row OR a frozen
+                :class:`mcpgateway.services.a2a_hooks.A2AAgentSnapshot`
+                projection. Both expose the same ``visibility``,
+                ``owner_email``, and ``team_id`` field names, so the
+                attribute-access body below works against either shape
+                without branching.
             user_email: User's email for owner matching
             token_teams: Teams from JWT. None = admin bypass ONLY when user_email is also None; [] = public-only
 
@@ -1073,9 +1080,12 @@ class A2AAgentService(BaseService):
             if not server:
                 raise AgentNotInServerError(agent_name, server_id)
 
+            from mcpgateway.services.a2a_hooks import A2AAgentSnapshot  # pylint: disable=import-outside-toplevel
+
+            agent_snapshot = A2AAgentSnapshot.from_orm(agent)
             allowed = await can_view_a2a_agent_in_server_context(
                 db,
-                agent=agent,
+                agent_snapshot=agent_snapshot,
                 server=server,
                 user_email=user_email,
                 token_teams=token_teams,
@@ -1090,9 +1100,12 @@ class A2AAgentService(BaseService):
         # to the centralized policy module. Visibility miss surfaces as
         # A2AAgentNotFoundError per plan D11 / Oracle v2 #3 to prevent
         # existence-leak side channels.
+        from mcpgateway.services.a2a_hooks import A2AAgentSnapshot  # pylint: disable=import-outside-toplevel
+
+        agent_snapshot = A2AAgentSnapshot.from_orm(agent)
         allowed_direct = await can_view_a2a_agent_directly(
             db,
-            agent=agent,
+            agent_snapshot=agent_snapshot,
             user_email=user_email,
             token_teams=token_teams,
             a2a_service=self,
@@ -1182,6 +1195,10 @@ class A2AAgentService(BaseService):
         if not agent:
             return None
 
+        from mcpgateway.services.a2a_hooks import A2AAgentSnapshot  # pylint: disable=import-outside-toplevel
+
+        agent_snapshot = A2AAgentSnapshot.from_orm(agent)
+
         if server_id is not None:
             # V-server context — delegate to the centralized policy
             # module (see resolve_agent_for_dispatch above for the same
@@ -1195,7 +1212,7 @@ class A2AAgentService(BaseService):
 
             allowed = await can_view_a2a_agent_in_server_context(
                 db,
-                agent=agent,
+                agent_snapshot=agent_snapshot,
                 server=server,
                 user_email=user_email,
                 token_teams=token_teams,
@@ -1208,7 +1225,7 @@ class A2AAgentService(BaseService):
             # policy module for the single-level decision.
             allowed_direct = await can_view_a2a_agent_directly(
                 db,
-                agent=agent,
+                agent_snapshot=agent_snapshot,
                 user_email=user_email,
                 token_teams=token_teams,
                 a2a_service=self,
