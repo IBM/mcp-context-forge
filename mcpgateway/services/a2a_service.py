@@ -3129,12 +3129,32 @@ class A2AAgentService(BaseService):
         agent_oauth_config = getattr(agent, "oauth_config", None)
         agent_passthrough_headers = getattr(agent, "passthrough_headers", None)
 
-        # SECURITY: Split header flows for plugin hooks vs downstream agent
-        # Plugin hooks ALWAYS receive sanitized headers (prevents credential leaks)
-        # Downstream headers respect the ENABLE_SENSITIVE_HEADER_PASSTHROUGH flag
+        # Amendment G part 2: build the snapshot while the ORM is still
+        # session-attached so getattr fallbacks (owner_email, oauth_enabled)
+        # hit real column values rather than from_orm's safe defaults. The
+        # snapshot is the single source of truth for hook + policy
+        # consumption further down; the rest of this function still uses
+        # the existing local copies for span attributes + log messages.
+        # First-Party
+        from mcpgateway.services.a2a_hooks import A2AAgentSnapshot  # pylint: disable=import-outside-toplevel
+
+        agent_snapshot = A2AAgentSnapshot.from_orm(agent)
+
+        # SECURITY: Split header flows for plugin hooks vs downstream agent (upstream PR #5183).
+        # Plugin hooks ALWAYS receive sanitized headers (prevents credential leaks);
+        # downstream headers respect the ENABLE_SENSITIVE_HEADER_PASSTHROUGH flag.
+        # This supersedes the simpler case-sensitive whitelist filter that Amendment G
+        # part 2 originally introduced inline.
         plugin_headers, downstream_headers = self._prepare_header_flows(request_headers, agent_passthrough_headers)
 
-        # SECURITY AUDIT: Record metrics for downstream header forwarding (Issue #3621 Phase 1)
+        # Reassign request_headers to the filtered plugin-safe variant so the
+        # extracted pre-invoke hook helper (fire_a2a_pre_invoke_hook, added by
+        # commit d14f1c8d5) receives only whitelisted headers. Preserves the
+        # Amendment G part 2 intent (plugins see only safe headers) on top of
+        # the upstream-provided _prepare_header_flows split.
+        request_headers = plugin_headers
+
+        # SECURITY AUDIT: Record metrics for downstream header forwarding (Issue #3621 Phase 1).
         # Counter metric enables alerting/aggregation without log volume explosion.
         # Startup warning (setup_passthrough_headers) provides one-time visibility.
         if downstream_headers and settings.observability_enabled:
@@ -3243,25 +3263,9 @@ class A2AAgentService(BaseService):
             fire_a2a_pre_invoke_hook,
         )
 
-        # Standard
-        from types import SimpleNamespace  # pylint: disable=import-outside-toplevel
-
-        # Snapshot the agent fields the helper needs into a detached object.
-        # `agent` is the ORM row but `db.commit() + db.close()` above released
-        # the session; using the snapshot keeps the helper duck-typing happy
-        # without re-touching the now-closed DB connection.
-        agent_snapshot = SimpleNamespace(
-            id=agent_id,
-            name=agent_name,
-            team_id=agent_team_id,
-            visibility=agent_visibility,
-            enabled=agent_enabled,
-            tags=agent_tags,
-            oauth_config=agent_oauth_config,
-            passthrough_headers=agent_passthrough_headers,
-            auth_type=agent_auth_type,
-        )
-
+        # Amendment G part 2: reuse the A2AAgentSnapshot built before
+        # db.close (the prior commit replaced the inline SimpleNamespace
+        # with the proper frozen dataclass).
         ctx = await build_a2a_hook_context(
             agent_snapshot,
             correlation_id=correlation_id,
