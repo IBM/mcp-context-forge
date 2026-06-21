@@ -136,7 +136,6 @@ docs/docs/security/report.md
 # ========================================
 # IDE & Editor
 # ========================================
-.codex
 .vscode
 .vscode/
 .idea/
@@ -195,13 +194,17 @@ packages.json
 # ========================================
 # AI & Code Assistant Tools
 # ========================================
-.aider*
-aider*
+# Alphabetized, single source of truth. ``.ai*`` covers ``.aider*``,
+# ``.aiderconfig`` and similar dotfile variants; the ``aider*`` line
+# (no leading dot) catches the non-dotfile variants.
 .ai*
 .bob
 .claude/*
-CLAUDE.local.md
+.codex
 .continue
+.omo
+aider*
+CLAUDE.local.md
 
 # ========================================
 # Security & Static Analysis
