@@ -5252,14 +5252,43 @@ async def get_a2a_agent_card(
     # handler is robust whether the soft setting exists or not.
     public_base = getattr(settings, "a2a_public_base_url", None) or str(settings.app_domain).rstrip("/")
 
+    # T-Phase-C-1 placeholder hooks (Amendment F deferral).
+    # Today these are no-ops that log at DEBUG; the future Phase C commit
+    # swaps the bodies for real AGENT_CARD_PRE / POST firing once the cpex
+    # fork is resolved. See docs/docs/architecture/a2a-cpex-hook-proposal.md.
+    # First-Party
+    from mcpgateway.plugins import get_plugin_manager  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.a2a_hooks import (  # pylint: disable=import-outside-toplevel
+        fire_a2a_card_post_hook,
+        fire_a2a_card_pre_hook,
+    )
+
+    card_server_id = request.scope.get("a2a_server_id")
+    card_plugin_manager = await get_plugin_manager()
+    await fire_a2a_card_pre_hook(
+        card_plugin_manager,
+        agent_name=agent_name,
+        server_id=card_server_id,
+        public_base_url=public_base,
+        caller_email=None,
+    )
+
     card = await a2a_service.synthesize_agent_card(
         db,
         agent_name,
         public_base,
-        server_id=request.scope.get("a2a_server_id"),
+        server_id=card_server_id,
         user_email=None,
         token_teams=[],
     )
+
+    await fire_a2a_card_post_hook(
+        card_plugin_manager,
+        agent_name=agent_name,
+        server_id=card_server_id,
+        card_resolved=card is not None,
+    )
+
     if card is None:
         return Response(status_code=404)
 
@@ -5540,10 +5569,39 @@ async def dispatch_a2a_agent(
         )
         if not granted:
             return Response(status_code=403)
+
+        # T-Phase-C-2 placeholder hooks (Amendment F deferral).
+        # Today these are no-ops that log at DEBUG; the future Phase C
+        # commit swaps the bodies for real AGENT_EXTENDED_CARD_PRE / POST
+        # firing once the cpex fork is resolved.
+        # First-Party
+        from mcpgateway.plugins import get_plugin_manager  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.a2a_hooks import (  # pylint: disable=import-outside-toplevel
+            build_a2a_hook_context,
+            fire_a2a_extended_card_post_hook,
+            fire_a2a_extended_card_pre_hook,
+        )
+        from mcpgateway.utils.correlation_id import get_correlation_id  # pylint: disable=import-outside-toplevel
+
+        ec_server_id = request.scope.get("a2a_server_id")
+        ec_ctx = await build_a2a_hook_context(
+            agent,
+            correlation_id=get_correlation_id() or "",
+            user_email=user_email,
+            plugin_manager_factory=get_plugin_manager,
+        )
+        await fire_a2a_extended_card_pre_hook(ec_ctx, server_id=ec_server_id)
+
         # -32007 trigger: extended card only synthesizable when the
         # agent's capabilities explicitly advertise extendedAgentCard.
         capabilities = agent.capabilities or {}
-        if not capabilities.get("extendedAgentCard", False):
+        capabilities_advertised = bool(capabilities.get("extendedAgentCard", False))
+        if not capabilities_advertised:
+            await fire_a2a_extended_card_post_hook(
+                ec_ctx,
+                server_id=ec_server_id,
+                capabilities_advertised=False,
+            )
             return JSONResponse(
                 make_jsonrpc_error(
                     AUTHENTICATED_EXTENDED_CARD_NOT_CONFIGURED,
@@ -5558,9 +5616,14 @@ async def dispatch_a2a_agent(
             db,
             agent_name,
             public_base,
-            server_id=request.scope.get("a2a_server_id"),
+            server_id=ec_server_id,
             user_email=user_email,
             token_teams=token_teams,
+        )
+        await fire_a2a_extended_card_post_hook(
+            ec_ctx,
+            server_id=ec_server_id,
+            capabilities_advertised=True,
         )
         if card is None:
             # Visibility was already checked in step 2; getting None here
@@ -5591,6 +5654,34 @@ async def dispatch_a2a_agent(
     # 7. Streaming methods (T5 + T14). NO `await` on T5 — it returns
     # an async generator. `await`ing would raise TypeError.
     if method in _A2A_STREAMING_METHODS:
+        # T-Phase-C-3 placeholder hooks (Amendment F deferral).
+        # Today these are no-ops that log at DEBUG; the future Phase C
+        # commit swaps the bodies for real AGENT_STREAMING_DISPATCH_PRE /
+        # POST firing once the cpex fork is resolved. Post-hook MUST fire
+        # OUTSIDE the yield loop — one event per request, not per chunk.
+        # First-Party
+        from mcpgateway.plugins import get_plugin_manager  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.a2a_hooks import (  # pylint: disable=import-outside-toplevel
+            build_a2a_hook_context,
+            fire_a2a_streaming_dispatch_post_hook,
+            fire_a2a_streaming_dispatch_pre_hook,
+        )
+        from mcpgateway.utils.correlation_id import get_correlation_id  # pylint: disable=import-outside-toplevel
+
+        stream_server_id = request.scope.get("a2a_server_id")
+        stream_ctx = await build_a2a_hook_context(
+            agent,
+            correlation_id=get_correlation_id() or "",
+            user_email=user_email,
+            plugin_manager_factory=get_plugin_manager,
+        )
+        await fire_a2a_streaming_dispatch_pre_hook(
+            stream_ctx,
+            method=method,
+            server_id=stream_server_id,
+            hop_count=hop_count,
+        )
+
         gen = a2a_service.dispatch_a2a_jsonrpc_streaming(
             db,
             agent,
@@ -5599,8 +5690,27 @@ async def dispatch_a2a_agent(
             hop_count=hop_count,
             request_headers=request_headers,
         )
+
+        async def _stream_with_post_hook() -> AsyncIterator[str]:
+            """Wrap the SSE generator so the post-hook fires once on stream close."""
+            chunks_sent = 0
+            completed_normally = False
+            try:
+                async for chunk in _sse_format(gen):
+                    chunks_sent += 1
+                    yield chunk
+                completed_normally = True
+            finally:
+                await fire_a2a_streaming_dispatch_post_hook(
+                    stream_ctx,
+                    method=method,
+                    server_id=stream_server_id,
+                    chunks_sent=chunks_sent,
+                    completed_normally=completed_normally,
+                )
+
         return StreamingResponse(
-            _sse_format(gen),
+            _stream_with_post_hook(),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache"},
         )

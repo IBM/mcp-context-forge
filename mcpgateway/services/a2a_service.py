@@ -3183,95 +3183,97 @@ class A2AAgentService(BaseService):
         # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 2b: Plugin context setup and PRE_INVOKE hook
         # ═══════════════════════════════════════════════════════════════════════════
+        # T-Phase-C-pre (Amendment F deferral): the GlobalContext +
+        # PydanticA2AAgent metadata + invoke_hook boilerplate that used
+        # to live inline here was extracted to mcpgateway/services/a2a_hooks.py
+        # so the card / extended-card / streaming dispatch paths can
+        # reuse the same plumbing via the placeholder helpers documented
+        # in docs/docs/architecture/a2a-cpex-hook-proposal.md. Behavior is
+        # identical to the prior inline form — the helper just routes
+        # the same cpex calls through a named function.
+
         # Third-Party
-        from cpex.framework import (
-            AgentHookType,
-            AgentPreInvokePayload,
-            GlobalContext,
-            HttpHeaderPayload,
-            PluginViolationError,
-        )
+        from cpex.framework import PluginViolationError  # pylint: disable=import-outside-toplevel
 
         # First-Party
-        from mcpgateway.plugins.gateway_plugin_manager import make_context_id  # pylint: disable=import-outside-toplevel
-        from mcpgateway.schemas import A2A_AGENT_METADATA, PydanticA2AAgent  # pylint: disable=import-outside-toplevel
-
-        agent_context_id = make_context_id(str(agent_team_id), agent_name) if agent_team_id else agent_id
-        plugin_manager = await self._get_plugin_manager(agent_context_id)
-        context_table: Dict[str, Any] = {}
-
-        # Build GlobalContext for plugin hooks
-        global_context = GlobalContext(
-            request_id=correlation_id or "",
-            server_id=agent_context_id if agent_team_id else agent_id,
-            tenant_id=agent_team_id if agent_team_id and isinstance(agent_team_id, str) else None,
-            user=user_email,
+        from mcpgateway.services.a2a_hooks import (  # pylint: disable=import-outside-toplevel
+            build_a2a_hook_context,
+            fire_a2a_pre_invoke_hook,
         )
 
-        if plugin_manager:
-            try:
-                agent_metadata = PydanticA2AAgent(
-                    id=agent_id,
-                    name=agent_name,
-                    team_id=agent_team_id,
-                    visibility=agent_visibility,
-                    enabled=agent_enabled,
-                    tags=agent_tags or [],
-                    oauth_config=agent_oauth_config,
-                    passthrough_headers=agent_passthrough_headers,
-                    auth_type=agent_auth_type,
-                )
-                if content_type:
-                    agent_metadata.content_type = content_type
-                global_context.metadata[A2A_AGENT_METADATA] = agent_metadata
-            except Exception as e:
-                logger.warning("Failed to build A2A agent metadata for plugins: %s", e)
+        # Standard
+        from types import SimpleNamespace  # pylint: disable=import-outside-toplevel
 
-        # Fire pre-invoke hook — can modify parameters, headers, and agent metadata
-        if plugin_manager and plugin_manager.has_hooks_for(AgentHookType.AGENT_PRE_INVOKE):
-            try:
-                pre_result, context_table = await plugin_manager.invoke_hook(
-                    AgentHookType.AGENT_PRE_INVOKE,
-                    payload=AgentPreInvokePayload(
-                        agent_id=agent_id,
-                        messages=[{"role": "user", "content": parameters}] if parameters else [],
-                        headers=HttpHeaderPayload(root=plugin_headers),
-                        parameters=parameters if isinstance(parameters, dict) else {},
-                    ),
-                    global_context=global_context,
-                    local_contexts=context_table,
-                    violations_as_exceptions=True,
-                )
-                if pre_result.modified_payload:
-                    if pre_result.modified_payload.parameters is not None:
-                        parameters = pre_result.modified_payload.parameters
-                    if pre_result.modified_payload.headers is not None:
-                        # Security: Re-filter plugin-returned headers to prevent malicious
-                        # plugins from injecting sensitive headers into downstream requests
-                        # (PR #5183 review fix)
-                        plugin_returned = pre_result.modified_payload.headers.model_dump()
-                        safe_headers = self._refilter_plugin_headers(
-                            plugin_headers=plugin_returned,
-                            agent=agent,
-                            feature_flag_enabled=settings.enable_sensitive_header_passthrough,
+        # Snapshot the agent fields the helper needs into a detached object.
+        # `agent` is the ORM row but `db.commit() + db.close()` above released
+        # the session; using the snapshot keeps the helper duck-typing happy
+        # without re-touching the now-closed DB connection.
+        agent_snapshot = SimpleNamespace(
+            id=agent_id,
+            name=agent_name,
+            team_id=agent_team_id,
+            visibility=agent_visibility,
+            enabled=agent_enabled,
+            tags=agent_tags,
+            oauth_config=agent_oauth_config,
+            passthrough_headers=agent_passthrough_headers,
+            auth_type=agent_auth_type,
+        )
+
+        ctx = await build_a2a_hook_context(
+            agent_snapshot,
+            correlation_id=correlation_id,
+            user_email=user_email,
+            plugin_manager_factory=self._get_plugin_manager,
+            content_type=content_type,
+        )
+        plugin_manager = ctx.plugin_manager
+        global_context = ctx.global_context
+        context_table = ctx.context_table
+
+        # Fire pre-invoke hook — can modify parameters, headers, and agent metadata.
+        try:
+            pre_result = await fire_a2a_pre_invoke_hook(
+                ctx,
+                parameters=parameters,
+                request_headers=request_headers,
+            )
+            if pre_result and pre_result.modified_payload:
+                if pre_result.modified_payload.parameters is not None:
+                    parameters = pre_result.modified_payload.parameters
+                if pre_result.modified_payload.headers is not None:
+                    # Security: Re-filter plugin-returned headers to prevent malicious
+                    # plugins from injecting sensitive headers into downstream requests
+                    # (upstream PR #5183 review fix; preserved across d14f1c8d5 helper
+                    # extraction — fire_a2a_pre_invoke_hook's docstring designates
+                    # headers handling as invocation-specific call-site work).
+                    # agent_snapshot duck-types as DbA2AAgent for _refilter_plugin_headers
+                    # since the filter only reads `passthrough_headers`.
+                    plugin_returned = pre_result.modified_payload.headers.model_dump()
+                    safe_headers = self._refilter_plugin_headers(
+                        plugin_headers=plugin_returned,
+                        agent=agent_snapshot,  # type: ignore[arg-type]
+                        feature_flag_enabled=settings.enable_sensitive_header_passthrough,
+                    )
+                    prepared.headers.update(safe_headers)
+
+                    # Log security-blocked headers for forensic awareness
+                    if plugin_returned.keys() - safe_headers.keys():
+                        removed = sorted(plugin_returned.keys() - safe_headers.keys())
+                        logger.warning(
+                            "Plugin attempted to set headers blocked by security policy: %s (agent=%s, flag=%s)",
+                            removed,
+                            agent_name,
+                            settings.enable_sensitive_header_passthrough,
                         )
-                        prepared.headers.update(safe_headers)
-
-                        # Log security-blocked headers for forensic awareness
-                        if plugin_returned.keys() - safe_headers.keys():
-                            removed = sorted(plugin_returned.keys() - safe_headers.keys())
-                            logger.warning(
-                                "Plugin attempted to set headers blocked by security policy: %s (agent=%s, flag=%s)",
-                                removed,
-                                agent.name,
-                                settings.enable_sensitive_header_passthrough,
-                            )
-            except PluginViolationError as e:
-                logger.error("Plugin RBAC violation for A2A agent %s: %s", agent_id, e)
-                raise A2AAgentError(f"Plugin RBAC violation: {e}") from e
-            except Exception as e:
-                logger.error("Pre-invoke plugin error for A2A agent %s: %s", agent_id, e)
-                raise A2AAgentError(f"Pre-invoke plugin error: {e}") from e
+        except PluginViolationError as e:
+            logger.error("Plugin RBAC violation for A2A agent %s: %s", agent_id, e)
+            raise A2AAgentError(f"Plugin RBAC violation: {e}") from e
+        except A2AAgentError:
+            raise
+        except Exception as e:
+            logger.error("Pre-invoke plugin error for A2A agent %s: %s", agent_id, e)
+            raise A2AAgentError(f"Pre-invoke plugin error: {e}") from e
 
         span_attributes = {
             "a2a.agent.name": agent_name,
@@ -3445,30 +3447,20 @@ class A2AAgentService(BaseService):
                 # ═══════════════════════════════════════════════════════════════════════════
                 # PHASE 3: Post-invoke plugin hook (non-blocking, errors do not fail request)
                 # ═══════════════════════════════════════════════════════════════════════════
-                if plugin_manager and plugin_manager.has_hooks_for(AgentHookType.AGENT_POST_INVOKE):
-                    try:
-                        # Third-Party
-                        from cpex.framework import AgentPostInvokePayload  # pylint: disable=import-outside-toplevel
+                # T-Phase-C-pre (Amendment F deferral): boilerplate now lives in
+                # mcpgateway/services/a2a_hooks.py::fire_a2a_post_invoke_hook so
+                # other A2A paths can reuse it. The helper swallows plugin
+                # exceptions internally, matching the prior inline behavior.
+                # First-Party
+                from mcpgateway.services.a2a_hooks import fire_a2a_post_invoke_hook  # pylint: disable=import-outside-toplevel
 
-                        post_result, _ = await plugin_manager.invoke_hook(
-                            AgentHookType.AGENT_POST_INVOKE,
-                            payload=AgentPostInvokePayload(
-                                agent_id=agent_id,
-                                messages=[{"role": "assistant", "content": response}] if response and success else [],
-                                tool_calls=None,
-                            ),
-                            global_context=global_context,
-                            local_contexts=context_table,
-                            violations_as_exceptions=False,
-                        )
-                        if post_result and post_result.retry_delay_ms > 0:
-                            logger.info(
-                                "Plugin requested retry for A2A agent %s after %sms",
-                                agent_id,
-                                post_result.retry_delay_ms,
-                            )
-                    except Exception as e:
-                        logger.warning("Post-invoke plugin error for A2A agent %s: %s", agent_id, e)
+                post_result = await fire_a2a_post_invoke_hook(ctx, response=response, success=success)
+                if post_result and post_result.retry_delay_ms > 0:
+                    logger.info(
+                        "Plugin requested retry for A2A agent %s after %sms",
+                        agent_id,
+                        post_result.retry_delay_ms,
+                    )
 
                 # ═══════════════════════════════════════════════════════════════════════════
                 # PHASE 4: Record metrics via buffered service (batches writes for performance)
