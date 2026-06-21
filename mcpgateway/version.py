@@ -138,12 +138,20 @@ def _rust_runtime_managed() -> bool:
 
 
 def _rust_a2a_runtime_managed() -> bool:
-    """Return whether the gateway expects to manage the Rust A2A sidecar locally.
+    """DEPRECATED: always returns False post-T26 (Wave 6).
+
+    The Rust A2A runtime is no longer wired into the execution path
+    (T25 removed all call sites; the module itself is deprecated per
+    T26). This symbol is preserved so external ``/version`` consumers
+    that read ``rust_runtime_managed`` from the payload do NOT break;
+    the value is now a constant ``False`` regardless of the
+    ``EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED`` env var. Scheduled for
+    physical removal in release N+1 per the split deprecation cycle.
 
     Returns:
-        ``True`` when the ``EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED`` env var is unset or truthy.
+        Always ``False``.
     """
-    return _env_flag("EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED", default=True)
+    return False
 
 
 def _runtime_override_mode(runtime: str) -> Optional[str]:

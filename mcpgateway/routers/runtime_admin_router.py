@@ -460,7 +460,15 @@ async def patch_a2a_mode(
     user: Dict[str, Any] = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    """Flip the registered-A2A invocation path between Python and the Rust runtime.
+    """DEPRECATED in T26: A2A runtime mode override returns HTTP 410.
+
+    Plan T26 (Wave 6) — the Rust A2A runtime is no longer wired into
+    the execution path. T25 removed all call sites; T26 marks the
+    backing module and config fields as deprecated. There is no
+    longer a runtime to flip the override to, so any PATCH that
+    attempts to enable a different mode returns HTTP 410 Gone with
+    a migration message. The GET endpoint still works so existing
+    /version consumers can read the static state.
 
     Args:
         body: Request body containing the target mode.
@@ -468,24 +476,17 @@ async def patch_a2a_mode(
         user: Authenticated user context (must have ``admin.system_config``).
         db: Request-scoped DB session for the audit write.
 
-    Returns:
-        Updated state payload after the flip is applied locally and published.
+    Raises:
+        HTTPException: Always raises HTTP 410 Gone.
     """
-    boot_mode = version_module.boot_a2a_runtime_mode()
-    result = await _apply_mode_change(
-        runtime=RuntimeKind.A2A,
-        new_mode=body.mode,
-        user=user,
-        db=db,
-        boot_mode=boot_mode,
-        resource_label="a2a_mode",
-        request=request,
+    del body, request, user, db
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail=(
+            "A2A runtime mode override is DEPRECATED and no longer wired. "
+            "The Rust A2A runtime was removed from the execution path in T25 "
+            "(see plans/a2a-native-passthrough.md). The Python dispatcher in "
+            "mcpgateway.services.a2a_service is the only A2A execution path. "
+            "Physical removal of this endpoint is scheduled for release N+1."
+        ),
     )
-    payload = _build_state_payload(
-        RuntimeKind.A2A,
-        boot_mode=boot_mode,
-        invoke_mode="rust" if version_module.should_delegate_a2a_to_rust() else "python",
-    )
-    payload["publish_status"] = result.publish_status.value
-    payload["audit_persisted"] = result.audit_persisted
-    return payload

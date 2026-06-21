@@ -1,10 +1,26 @@
 # -*- coding: utf-8 -*-
-"""Location: ./mcpgateway/services/rust_a2a_runtime.py
+"""DEPRECATED in release N. Removal scheduled for release N+1.
+
+Location: ./mcpgateway/services/rust_a2a_runtime.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 Python client for the experimental Rust A2A runtime sidecar.
+
+T26 (Wave 6 of the A2A native passthrough plan) marks this module as
+DEPRECATED. The Python dispatcher in
+:mod:`mcpgateway.services.a2a_service` is now the only A2A execution
+path; all call sites for this module were removed in T25
+(commit 248b6faa2). The module remains importable this release so
+external integrations relying on the symbols ``RustA2ARuntimeError``
+and ``get_rust_a2a_runtime_client`` continue to load, but the
+``DeprecationWarning`` fires at import time so any remaining user
+sees a single warned release before the physical-removal release
+N+1 lands.
+
+See ``.omo/plans/a2a-native-passthrough.md`` T26 for the full
+deprecation cycle.
 """
 
 # Future
@@ -13,6 +29,7 @@ from __future__ import annotations
 # Standard
 import asyncio
 import logging
+import warnings
 from typing import Any, Dict, Optional
 from urllib.parse import urlsplit, urlunsplit
 
@@ -24,6 +41,16 @@ from mcpgateway.config import settings
 from mcpgateway.deprecations import RUST_A2A_RUNTIME_DEPRECATION_MESSAGE
 from mcpgateway.services.a2a_protocol import PreparedA2AInvocation
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
+
+# T26: import-time deprecation. Fires once per process per import.
+warnings.warn(
+    "mcpgateway.services.rust_a2a_runtime is DEPRECATED and scheduled "
+    "for removal in release N+1. The Python dispatcher in "
+    "mcpgateway.services.a2a_service is the only A2A execution path; "
+    "see plans/a2a-native-passthrough.md for migration details.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 logger = logging.getLogger(__name__)
 _RUST_A2A_RUNTIME_DEPRECATION_LOGGED = False
