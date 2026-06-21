@@ -734,6 +734,198 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
   QA: happy=mkdocs build no warnings; doc readable end-to-end. failure=warnings on cross-links → fix until clean. Evidence: .omo/evidence/task-31-a2a-native-passthrough.txt
   Commit: Y | docs(a2a): native A2A 1.0.0 passthrough + migration + deprecation policy
 
+## Session amendments (post-Wave 1 execution, ratified via Metis + Momus reviews)
+
+> These amendments document architectural decisions that arose DURING execution of the canonical waves above and were promoted to plan-level after Metis (architectural review) and Momus (plan critique) passes converged on the same fault lines. Each amendment is written with the same shape as the canonical task entries (What to do, Must NOT do, Acceptance, References, Status, Commit) so it can be audited as a first-class plan item rather than as an ad-hoc patch in commit messages. They DO NOT replace the canonical tasks T1-T31; they extend the contract for items that were under-specified or out-of-scope when the plan was first drafted.
+
+### Amendment A — Centralized A2A access-decision policy module
+
+  What was done: Created `mcpgateway/services/a2a_access_policy.py` exposing three async module-level functions that hold ALL visibility and authorization decisions for A2A agents:
+
+    - `can_view_a2a_agent_directly(...)` — single-level: agent visibility primitive only. Used by the per-agent `/a2a/{name}` URL family.
+    - `can_view_a2a_agent_in_server_context(...)` — three-level conjunctive (see Amendment B). Used by the v-server-scoped `/servers/{id}/a2a/{name}` URL family.
+    - `can_associate_a2a_agent_with_server(...)` — CRUD authorization. Used by `ServerService.register_server` / `update_server` to gate the creation of `server_a2a_association` rows.
+
+  Each function takes the existing primitives' instance (`A2AAgentService`) as a delegation-shim parameter so the existing `_check_agent_access` and `check_server_a2a_membership` methods can be called without circular imports.
+
+  Must NOT do: do NOT inline visibility logic in any new A2A code path. All decisions go through the policy module. Do NOT call the underlying primitives directly from outside the policy module; the policy functions are the single source of truth.
+
+  Acceptance: `pytest tests/unit/mcpgateway/services/test_a2a_access_policy.py` passes 11 tests pinning the three functions' contracts (TestCanViewAgentDirectly + TestCanViewAgentInServerContext + TestCanAssociateAgentWithServer). The refactored Wave 1 `synthesize_agent_card` and `resolve_agent_for_dispatch` in `a2a_service.py` delegate to the policy functions; the inline visibility logic is gone.
+
+  References: Metis review (background task `bg_84ec601d`); Momus critique (background task `bg_ab1b9fd3`); D11; D14; F1; F5.
+
+  Status: DONE.
+
+  Commit: ef3edb6b0 | feat(a2a): centralized A2A access-decision policy module (Phase A)
+
+### Amendment B — Three-level conjunctive access in v-server context (clarifies D11)
+
+  What was done: Codified the v-server visibility contract as a THREE-level conjunctive check inside `can_view_a2a_agent_in_server_context`:
+
+    1. **Server-level visibility** — caller can see the virtual server itself (sync, no DB).
+    2. **Agent-in-server membership** — the binding has been explicitly configured on this server via `server_a2a_association` (single SELECT).
+    3. **Agent-level visibility** — caller can see the agent itself; its Layer-1 scope still applies in v-server context (async, may query team membership).
+
+  ALL three checks must pass; NONE substitute for the others. Server membership does NOT bypass agent visibility, agent visibility does NOT bypass server visibility, and public visibility on either side does NOT bypass the binding check. All denial paths return the same `False`; the route layer collapses to HTTP 404 per D14 so the caller cannot distinguish WHICH layer denied.
+
+  This amendment SUPERSEDES an in-session interpretation where server membership was to be the source of truth and agent visibility was to be bypassed in v-server context. That interpretation conflicted with the user-stated requirement ("Visibility of an agent in a virtual server is two-level: does the user have access to the virtual server? Do they access to the agent? Finally, do they have access to the agent-server combination?") and was reversed before any code shipped under it.
+
+  Check ordering is CHEAPEST-FIRST for performance and DB-work reduction, NOT for constant-time evaluation. Denials at the three layers are distinguishable by latency in milliseconds (sync < SELECT < team-query SELECT). Deployments with a stronger threat model can run all three unconditionally and combine the booleans — the policy function is the single edit point.
+
+  Must NOT do: do NOT bypass any of the three checks via per-deployment configuration in the policy module; threat-model-driven changes should be a forked policy module.
+
+  Acceptance: `pytest tests/unit/mcpgateway/services/test_a2a_access_policy.py::TestCanViewAgentInServerContext` passes 5 tests pinning the conjunctive contract: all-three-pass returns True; each individual denial short-circuits subsequent checks; all three denial paths collapse to the same False (no leak about which layer denied).
+
+  References: User architectural clarification this session (two-tier statement); Metis H3; D11 (extended); D14.
+
+  Status: DONE.
+
+  Commit: ef3edb6b0 (initial) + bd551b215 (timing-side-channel docstring honesty fix).
+
+### Amendment C — CallerContext sentinel for CRUD authorization (closes Momus Block 2)
+
+  What was done: Created `mcpgateway/services/caller_context.py` exposing a frozen `CallerContext` dataclass with two factory methods:
+
+    - `CallerContext.system()` — explicit opt-in bypass for internal pathways (bootstrap, seed, import after admin-only verification, tests that opt out).
+    - `CallerContext.for_user(user_email, token_teams)` — real authenticated caller from a route handler.
+
+  The `CallerContext.is_system` attribute is the ONLY condition that bypasses the CRUD authorization check in `_authorize_a2a_associations`. The pre-amendment pattern (`caller_user_email is None AND caller_token_teams is None` → system context) was magic-by-omission: any caller that forgot to thread auth context would silently hit the bypass. Momus correctly flagged this as a CRITICAL under-specification. `CallerContext.for_user(None, [])` — an anonymous public-only caller — is NOT a system context; the policy check runs and denies non-public access correctly.
+
+  Refactored signatures: `ServerService.register_server`, `ServerService.update_server`, `_authorize_a2a_associations`, `_associate_server_entities`, `_update_server_associations` all take `caller_context: Optional[CallerContext]` instead of the prior `(caller_user_email, caller_token_teams)` pair. `None` defaults to `CallerContext.system()` for backward compatibility with the 100+ pre-existing tests that don't thread auth context; new user-facing callers MUST pass `CallerContext.for_user(...)`.
+
+  Threaded through 4 user-facing route handlers (`main.py` create_server + update_server, `admin.py` register_server + update_server) and 3 internal call sites (`import_service.py`, all with explicit `CallerContext.system()` + load-bearing SECURITY comment naming the admin-only route precondition).
+
+  Must NOT do: do NOT add a third factory method that constructs a non-system context with arbitrary defaults. Do NOT remove the `is_system` flag — it is the load-bearing distinction between explicit bypass and "real caller with no teams". Do NOT call the policy function `can_associate_a2a_agent_with_server` from new code WITHOUT routing through `_authorize_a2a_associations` (which holds the bypass logic).
+
+  Acceptance: `pytest tests/unit/mcpgateway/services/test_server_service_a2a_auth.py` passes 12 tests across 4 classes:
+
+    - `TestAuthorizeA2AAssociationsSystemContext` (3): bypass fires ONLY for `.system()`; does NOT fire for `for_user(None, [])` (anonymous public-only) or `for_user("admin", None)` (authenticated-admin shape) — closes Metis M4 boundary tests.
+    - `TestAuthorizeA2AAssociationsAllowPath` (2): for_user grants → silent return + correct kwargs forwarded.
+    - `TestAuthorizeA2AAssociationsDenyPath` (3): denial raises ServerError, generic message (no agent/server name leak), short-circuits on first.
+    - `TestCallerContextFactories` (4): factory shapes; frozen invariant; anonymous != system.
+
+  References: Metis C2 (import bypass); Momus Block 2 (under-specified escape hatch); D11; F10.
+
+  Status: DONE.
+
+  Commit: bd551b215 | refactor(a2a)/feat(servers): close Metis C1/C2/C3/H3/H4 + Momus Block 2 via CallerContext sentinel.
+
+### Amendment D — T21 split into T21A (DONE) + T21B (OPEN)
+
+  Original T21 (line 551 of this plan) bundled three deliverables into one task: template selector + JS submit-handler wiring + card-URL ops affordance + bundle rebuild + Vitest tests. Momus correctly flagged that an in-session commit landed only the JS submit handler (T21A) with the other deliverables deferred, contradicting the plan's "no deferred CRUD/UI verification" stance. This amendment makes the split canonical.
+
+#### T21A — JS submit handler (DONE)
+
+  What was done: Added the A2A agent submit-handler block to `mcpgateway/admin_ui/formSubmitHandlers.js`, mirroring the existing `associatedTools` / `associatedResources` / `associatedPrompts` pattern. The handler reads the persistent edit-selection store for `associatedA2aAgents`, flushes currently-checked checkboxes from the live DOM into the store, and replaces the FormData entries with the union. Defensive `if (a2aContainer)` guard means the handler is a no-op until T21B lands the template selector.
+
+  Acceptance: `node --check mcpgateway/admin_ui/formSubmitHandlers.js` passes (syntactic). The handler runs in two places: the server-create flow (after the prompts block, before the fetch to `/admin/servers`) and the server-edit flow (inside the existing `forEach` over the selectors array). Field name is camelCase `associatedA2aAgents` because the FastAPI endpoints already accept this camelCase form-data key (Pydantic alias for the snake-case `associated_a2a_agents`).
+
+  Status: DONE.
+
+  Commit: 7b965a962 | feat(admin-ui): server-form A2A agent submit handler (T21 phase 1).
+
+#### T21B — Template selector + init helper + card-URL affordance + bundle rebuild + Vitest (OPEN)
+
+  What to do: Five sub-deliverables, all required for T21 to be considered complete per the original plan acceptance:
+
+    a. **Template selector** in `mcpgateway/templates/admin.html`: add an A2A agent multi-select to BOTH the server-CREATE and server-EDIT forms, mirroring the existing `associatedTools` / `associatedResources` / `associatedPrompts` selector blocks. Match the input `name="associatedA2aAgents"` (the JS handler from T21A already expects this). HTMX endpoint `/admin/a2a/partial` already exists at `mcpgateway/admin.py:10963` — no new endpoint needed. For the server-EDIT form, the container id must be `edit-server-a2a-agents` so the T21A handler's array-driven sync block matches.
+
+    b. **Init helper** in `mcpgateway/admin_ui/admin.js`: add `initA2aAgentSelect(...)` mirroring `initToolSelect` / `initResourceSelect`. The template's `hx-on:htmx:after-swap` handler invokes it once the partial loads. Pin the helper signature with the same first-load arg names the existing helpers use so any future refactor can replace all three with a single generic helper without breaking call sites.
+
+    c. **Card-URL ops affordance** in `mcpgateway/admin_ui/a2aAgents.js`: in the agent-detail view, add a "Card endpoint URL" display showing `{public_base}/a2a/{name}/.well-known/agent-card.json` plus a Copy button using `navigator.clipboard.writeText(url)`. The `public_base` is the same value `get_a2a_agent_card` reads via `getattr(settings, "a2a_public_base_url", None) or str(settings.app_domain).rstrip("/")` — expose it on the agent-detail page via the existing template variable injection or a small HTMX call.
+
+    d. **UI bundle rebuild**: `make build-ui` (requires `npm install` in the dev environment). The Vitest tests in (e) and the existing Vitest suite verify the bundle.
+
+    e. **Vitest tests** for T21A handler + T21B init helper: `tests/unit/js/serverForms.test.js` (NEW) exercising the persistent-selection store sync logic + the init helper's interaction with the HTMX-loaded partial. Mirrors the shape of existing Vitest tests under `tests/unit/js/`.
+
+  Must NOT do: do NOT introduce a different camelCase convention than `associatedA2aAgents` (the JS handler from T21A and the FastAPI body-form key are both already on this name). Do NOT skip the bundle rebuild — without it the template selector renders but the handler doesn't run. Do NOT add server-edit form changes that break the existing `getEditSelections("...")` contract.
+
+  Parallelization: Wave 5+ | Blocked by: T20, T21A | Blocks: T22
+
+  References: original T21 (line 551), Oracle re-review #10 (the JS submit handler being the load-bearing piece, not just template inclusion).
+
+  Acceptance:
+    - Manual: server-edit form shows an A2A agent multi-select alongside tools/resources/prompts; selecting agents and saving the form persists them to `server.associated_a2a_agents` in the API response.
+    - Manual: agent-detail view shows the rewritten card URL + working Copy button.
+    - Automated: `pytest tests/integration/test_admin_server_a2a_flow.py::test_form_submits_a2a_agents` (referenced in T21 original, T22 makes this real) simulates form POST with `associatedA2aAgents=["a1","a2"]` and asserts the resulting server row has both IDs in `server_a2a_association`.
+    - Automated: `npx vitest run tests/unit/js/serverForms.test.js` passes.
+    - Build: `make build-ui` succeeds; the produced bundle includes the new init helper and submit-handler blocks.
+
+  QA: happy=full UI flow round-trips A2A agent IDs end-to-end. failure=selector renders but server has empty `associated_a2a_agents` after save → JS submit handler missing or template input name mismatch (most likely cause: stale bundle, run `make build-ui`). Evidence: `.omo/evidence/task-21B-a2a-native-passthrough.txt`.
+
+  Commit: Y | feat(admin-ui): server-form A2A selector + init helper + card-URL affordance (T21B)
+
+  Status: OPEN.
+
+### Amendment E — Future policy-engine migration is out of scope (closes Momus Block 3)
+
+  Original Phase A messaging asserted that the `a2a_access_policy.py` module is "rules-engine-ready" with stable signatures. Momus correctly flagged that this overcommitted: the same evidence file stated the `a2a_service` delegation-shim parameter "will drop" once primitives migrate into the policy layer. Both stability and parameter-drop cannot be true.
+
+  Adopted scope:
+
+  - **Today's call sites are STABLE** through any implementation refactor of the three policy functions that keeps the same kwargs and the same boolean return contract.
+  - **Function signatures are STABLE for today's callers ONLY.** The `a2a_service` delegation-shim parameter exists to avoid circular imports today and has no semantic role in the policy decision — it is provisional and may be dropped in a future refactor when the primitives' return values are pre-fetched at the call site instead.
+  - **No specific policy-engine vendor or migration is committed.** Any future move to an external policy engine is a separate plan with its own scope, acceptance criteria, and breaking-change disclosure. The current policy-module shape is chosen for clarity TODAY, not as a no-op migration target for any specific engine.
+
+  Must NOT do: do NOT advertise the policy module as a no-op migration target for any external rules engine. Do NOT promise stable signatures forever; the `a2a_service` parameter is provisional.
+
+  Acceptance: the `can_view_a2a_agent_directly` docstring now contains both the stability claim ("treat the signature as STABLE for today's callers") and a breaking-change disclaimer naming the `a2a_service` parameter as provisional.
+
+  References: Momus Block 3 (internal contradiction in original "rules-engine-ready" claim); Phase A evidence at `.omo/evidence/phase-a-a2a-access-policy.txt`.
+
+  Status: DONE (clarification only, no further code change required).
+
+  Commit: bd551b215 (docstring update in `a2a_access_policy.py`).
+
+### Amendment F — Phase C: Plugin wiring gaps on T11 card, T12 GetExtendedAgentCard, and T5 streaming (OPEN)
+
+  What to do: Plugin-context preservation in the original plan (D5) was scoped only to the unary dispatch path that reuses `invoke_agent`. Three new code paths landed during Wave 3 + Wave 4 that DO NOT reuse `invoke_agent` and therefore do NOT fire A2A-specific pre/post hooks (only the global `HttpAuthMiddleware → run_pre_request_hooks` HTTP-level hook fires, which is necessary but not sufficient for plugins that enforce per-method policy):
+
+    - **T11 card route** (`get_a2a_agent_card` in `main.py`): calls `synthesize_agent_card` which reads the DB directly. No A2A-specific hook fires.
+    - **T12 GetExtendedAgentCard branch**: D18 explicitly forbids forwarding upstream; the gateway synthesizes the extended card via T2 and returns it directly. No A2A-specific hook fires.
+    - **T5 streaming dispatch** (`dispatch_a2a_jsonrpc_streaming`): uses `client.stream()` directly per Oracle v2 #5 + v3 #5 SEPARATE-codepath decision. Bypasses `invoke_agent` entirely. No A2A-specific hook fires.
+
+  Worst case impact:
+
+    - **Audit gap**: A2A-specific plugins that audit per-method invocations miss all card discoveries, all extended card synthesis events, and all streaming dispatches.
+    - **Policy bypass**: A2A-specific plugins that enforce per-method rate-limiting, content filtering, or DLP miss the same three paths. A streaming method that should be rate-limited via an A2A plugin is unbounded.
+
+  Three sub-tasks:
+
+#### T-Phase-C-1 — A2A pre/post hooks on T11 card route
+
+  What to do: In `main.py::get_a2a_agent_card`, before calling `a2a_service.synthesize_agent_card` and after receiving the result (or on the None-return path), fire the A2A-specific pre/post hooks. Hook event names: `a2a.card.pre` and `a2a.card.post`. Hook context: agent name, server id (if v-server), public base URL, caller (None for anonymous). Mirror the existing hook-firing pattern in `invoke_agent`.
+
+  Acceptance: pytest `tests/unit/mcpgateway/test_main_a2a_hooks.py::test_card_route_fires_pre_post_hooks` passes; a registered plugin that hooks `a2a.card.pre` and `a2a.card.post` observes both events for every card request including v-server URL form.
+
+  Status: OPEN.
+
+  Commit: Y | feat(a2a): A2A pre/post hooks on T11 card route (Phase C #1)
+
+#### T-Phase-C-2 — A2A pre/post hooks on T12 GetExtendedAgentCard branch
+
+  What to do: In `main.py::dispatch_a2a_agent`, inside the `GetExtendedAgentCard` / `agent/getAuthenticatedExtendedCard` short-circuit (before synthesize_agent_card and after the result), fire the A2A-specific pre/post hooks. Hook event names: `a2a.extended_card.pre` and `a2a.extended_card.post`. Hook context: agent name, server id, caller identity, capabilities flag, agent.id. Must remain CONSISTENT with D18 — hooks observe the request; they do NOT enable a plugin to forward upstream.
+
+  Acceptance: pytest `tests/unit/mcpgateway/test_main_a2a_hooks.py::test_extended_card_fires_pre_post_hooks` passes; D18 (NEVER forward upstream) is still enforced via the existing assert_not_called check on dispatch_a2a_jsonrpc_unary.
+
+  Status: OPEN.
+
+  Commit: Y | feat(a2a): A2A pre/post hooks on T12 GetExtendedAgentCard branch (Phase C #2)
+
+#### T-Phase-C-3 — A2A pre/post hooks on T5 streaming dispatch
+
+  What to do: In `mcpgateway/services/a2a_service.py::dispatch_a2a_jsonrpc_streaming`, fire the A2A-specific pre hook BEFORE the upstream `client.stream()` call and the post hook AFTER the stream closes (in the finally block or stream-end branch). Hook event names: `a2a.dispatch.pre` (matches the unary path's pre-hook) and `a2a.dispatch.post.streaming` (distinguishes from unary post-hook so plugins can distinguish if needed). Hook context: agent name, server id (if v-server), method (SendStreamingMessage / SubscribeToTask / v0.3 alias), caller identity, hop count, bearer-token presence (not value).
+
+  Acceptance: pytest `tests/unit/mcpgateway/services/test_a2a_streaming_hooks.py::test_streaming_fires_pre_post_hooks` passes; a registered plugin sees one pre-hook event before the SSE stream starts and one post-hook event after it ends, even on early disconnect. Integration test extends `tests/integration/test_a2a_native_routes.py::TestPerAgentDispatchEndpoint::test_streaming_method_returns_sse_response` to verify hook firing through the route.
+
+  Must NOT do: do NOT fire the post-hook from inside the async-generator yield loop — it must fire OUTSIDE so plugins see one event per request, not one per chunk.
+
+  Status: OPEN.
+
+  Commit: Y | feat(a2a): A2A pre/post hooks on T5 streaming dispatch (Phase C #3)
+
+  References: Metis H1 (plugin wiring gap as the user's first-raised concern); D5 (original plugin context decision, now extended); D18 (GetExtendedAgentCard NEVER forwards upstream, still enforced).
+
 ## Final verification wave (REVISED)
 
 > Runs in parallel after ALL 31 todos T1-T31. ALL four must APPROVE. Surface results and wait for the user's explicit okay before declaring complete.
