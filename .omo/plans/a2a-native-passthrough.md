@@ -877,7 +877,7 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
 
   Commit: bd551b215 (docstring update in `a2a_access_policy.py`).
 
-### Amendment F — Phase C: Plugin wiring gaps on T11 card, T12 GetExtendedAgentCard, and T5 streaming (OPEN)
+### Amendment F — Phase C: Plugin wiring gaps on T11 card, T12 GetExtendedAgentCard, and T5 streaming (DEFERRED — scope clarified)
 
   What to do: Plugin-context preservation in the original plan (D5) was scoped only to the unary dispatch path that reuses `invoke_agent`. Three new code paths landed during Wave 3 + Wave 4 that DO NOT reuse `invoke_agent` and therefore do NOT fire A2A-specific pre/post hooks (only the global `HttpAuthMiddleware → run_pre_request_hooks` HTTP-level hook fires, which is necessary but not sufficient for plugins that enforce per-method policy):
 
@@ -925,6 +925,14 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
   Commit: Y | feat(a2a): A2A pre/post hooks on T5 streaming dispatch (Phase C #3)
 
   References: Metis H1 (plugin wiring gap as the user's first-raised concern); D5 (original plugin context decision, now extended); D18 (GetExtendedAgentCard NEVER forwards upstream, still enforced).
+
+#### Phase C deferral note (added post-Wave 7 closeout)
+
+  Background: the cpex framework that owns ``AgentHookType`` is an external dependency and exposes only ``AGENT_PRE_INVOKE`` / ``AGENT_POST_INVOKE`` for A2A. Adding the granular event names this amendment originally specified (``a2a.card.pre``, ``a2a.extended_card.pre``, ``a2a.dispatch.post.streaming``) would require either (a) modifying cpex to introduce new hook types, or (b) reusing ``AGENT_PRE_INVOKE`` / ``AGENT_POST_INVOKE`` for all three paths — which conflates metadata reads (card discovery) with actual invocations from a plugin's perspective, breaking semantic expectations for rate-limiters and content filters.
+
+  Scope reduction adopted: Phase C ships as a future focused commit (not this session) that BOTH (a) extracts a shared ``_fire_a2a_pre_invoke_hook`` / ``_fire_a2a_post_invoke_hook`` helper from the existing ``invoke_agent`` boilerplate (~80 lines of GlobalContext + PydanticA2AAgent + invoke_hook setup duplicated per call site otherwise), AND (b) decides between the cpex-extension path and the reuse path based on whether the operator-visible plugins in tree (rate-limiters, audit) need to distinguish card-discovery from invocation. The HTTP-level ``HttpAuthMiddleware → run_pre_request_hooks`` already fires for ``/a2a/*`` URLs per the global registration at ``main.py``, so plugins that gate at the HTTP layer continue to work today on the native paths.
+
+  Plan task entries for the three sub-tasks (T-Phase-C-1, T-Phase-C-2, T-Phase-C-3) remain valid as the acceptance contract for the future commit. Status flipped from OPEN to DEFERRED to signal that the design decision (cpex-extend vs reuse-with-method-field) is the gating fork, NOT the implementation effort.
 
 ## Final verification wave (REVISED)
 
