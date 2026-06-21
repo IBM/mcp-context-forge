@@ -146,23 +146,41 @@ def test_create_provider_accepts_public_portkey_custom_host(service, db, monkeyp
 
 
 def test_create_provider_encrypts_virtual_key(service, db, monkeypatch: pytest.MonkeyPatch):
-    """Portkey ``virtual_key`` is a credential — must be encrypted at rest like an API key."""
+    """Portkey ``virtual_key`` is a credential — encrypted at rest, decrypted at runtime, masked in responses."""
     db.execute.return_value = _mock_execute_scalar(None)
+    plaintext = "vk-live-supersecret-roundtrip"  # pragma: allowlist secret
 
     provider_data = LLMProviderCreate(
         name="Portkey",
         provider_type=LLMProviderType.PORTKEY,
         api_base="https://portkey.example.com/v1",
-        config={"provider": "openai", "virtual_key": "vk-live-supersecret"},  # pragma: allowlist secret
+        config={"provider": "openai", "virtual_key": plaintext},
         enabled=True,
     )
 
     provider = service.create_provider(db, provider_data, created_by="user")
 
-    # virtual_key must NOT be stored as plaintext; envelope structure must match other secrets.
+    # 1) AT-REST: virtual_key must NOT be stored as plaintext; envelope structure must match other secrets.
     stored = provider.config["virtual_key"]
     assert isinstance(stored, dict), f"virtual_key not encrypted at rest: {stored!r}"
     assert "_mcpgateway_encrypted_value_v1" in stored, f"virtual_key envelope missing key marker: {stored!r}"
+    assert plaintext not in repr(stored), f"plaintext leaked into stored envelope: {stored!r}"
+
+    # 2) RUNTIME DECRYPT: ``decrypt_provider_config_for_runtime`` must recover the original plaintext
+    #    so request-time code paths still receive the real secret.
+    decrypted = decrypt_provider_config_for_runtime(provider.config)
+    assert decrypted["virtual_key"] == plaintext, f"decrypt round-trip failed: {decrypted.get('virtual_key')!r}"
+
+    # 3) HEADER ROUND-TRIP: ``build_portkey_headers`` must emit the plaintext virtual_key as
+    #    ``x-portkey-virtual-key`` — proving the encrypt-at-rest path does not break Portkey routing.
+    headers = build_portkey_headers(provider)
+    assert headers["x-portkey-virtual-key"] == plaintext, f"virtual_key did not survive encrypt/decrypt for Portkey: {headers!r}"
+
+    # 4) API RESPONSE MASK: ``sanitize_provider_config_for_response`` must mask the virtual_key
+    #    in admin/API responses so the encrypted blob and the plaintext both stay server-side.
+    sanitized = sanitize_provider_config_for_response(provider.config)
+    assert sanitized["virtual_key"] != plaintext, "virtual_key leaked through response sanitizer"
+    assert plaintext not in repr(sanitized), f"plaintext leaked into sanitized response: {sanitized!r}"
 
 
 def test_create_provider_encrypts_sensitive_config(service, db, monkeypatch: pytest.MonkeyPatch):
