@@ -3097,6 +3097,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
 
         # Ensure default visibility is private and assign to personal team when available
         team_id_cast = typing_cast(Optional[str], team_id)
+        caller_token_teams = getattr(request.state, "token_teams", None)
         await server_service.register_server(
             db,
             server,
@@ -3106,6 +3107,8 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             created_user_agent=creation_metadata["created_user_agent"],
             team_id=team_id_cast,
             visibility=visibility,
+            caller_user_email=user_email,
+            caller_token_teams=caller_token_teams,
         )
         return ORJSONResponse(
             content={"message": "Server created successfully!", "success": True},
@@ -3249,6 +3252,7 @@ async def admin_edit_server(
             oauth_config=oauth_config,
         )
 
+        caller_token_teams = getattr(request.state, "token_teams", None)
         await server_service.update_server(
             db,
             server_id,
@@ -3258,6 +3262,7 @@ async def admin_edit_server(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            caller_token_teams=caller_token_teams,
         )
 
         return ORJSONResponse(

@@ -4157,6 +4157,8 @@ async def create_server(
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
+            caller_user_email=user_email,
+            caller_token_teams=token_teams,
         )
         db.commit()
         db.close()
@@ -4204,6 +4206,7 @@ async def update_server(
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
         user_email: str = get_user_email(user)
+        caller_token_teams = getattr(request.state, "token_teams", None)
 
         result = await server_service.update_server(
             db,
@@ -4214,6 +4217,7 @@ async def update_server(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            caller_token_teams=caller_token_teams,
         )
         db.commit()
         db.close()
