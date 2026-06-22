@@ -209,6 +209,32 @@ class TestResolveAgentForDispatch:
             assert result is agent
             membership_check.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_disabled_agent_raises_not_found(self, service: A2AAgentService) -> None:
+        """Disabled agents collapse to NotFound — same wire outcome as missing per D14.
+
+        Closes the Oracle F2 finding: ``dispatch_a2a_jsonrpc_streaming``
+        bypasses ``invoke_agent``'s ``if not agent.enabled`` guard
+        because it calls ``prepare_a2a_invocation`` + ``client.stream``
+        directly against ``agent.endpoint_url``. Without an enabled
+        filter at the resolve layer, a disabled agent reaches the
+        upstream over SSE. The filter MUST live in
+        ``resolve_agent_for_dispatch`` so all three native dispatch
+        paths (unary, streaming, card-via-dispatch) share the same
+        hide-when-disabled contract that the card synthesizer already
+        enforces at ``synthesize_agent_card`` line 1188.
+        """
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+        with pytest.raises(A2AAgentNotFoundError):
+            await service.resolve_agent_for_dispatch(db, "disabled-agent")
+        # SQL-shape assertion: the SELECT must include the enabled
+        # filter so the mock-return-None behavior corresponds to the
+        # real-DB filter that hides disabled agents from dispatch.
+        call = db.execute.call_args
+        query_str = str(call.args[0])
+        assert "enabled" in query_str.lower(), f"Query must filter on enabled column to hide disabled agents from streaming dispatch: {query_str}"
+
 
 def _mock_agent_for_synth(
     agent_id: str = "agt-1",
