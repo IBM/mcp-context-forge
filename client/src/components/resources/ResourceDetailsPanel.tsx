@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { X, Trash2, FileText } from "lucide-react";
 import type { Resource } from "@/types/resource";
 import { Button } from "@/components/ui/button";
@@ -29,13 +30,27 @@ export function ResourceDetailsPanel({
   onClose,
   onDeleteResource,
 }: ResourceDetailsPanelProps) {
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (open && closeButtonRef.current) {
+      closeButtonRef.current.focus();
+    }
+  }, [open]);
+
   return (
     <Sheet open={open} onOpenChange={onClose}>
       <SheetContent side="right" className="w-full sm:max-w-2xl overflow-y-auto">
         <SheetHeader className="mb-6">
           <div className="flex items-center justify-between">
             <SheetTitle className="text-lg font-semibold">{gatewaySlug} Resources</SheetTitle>
-            <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close panel">
+            <Button
+              ref={closeButtonRef}
+              variant="ghost"
+              size="sm"
+              onClick={onClose}
+              aria-label="Close panel"
+            >
               <X className="h-4 w-4" />
             </Button>
           </div>

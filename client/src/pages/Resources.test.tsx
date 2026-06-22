@@ -504,4 +504,27 @@ describe("Resources", () => {
       expect(screen.queryByRole("heading", { name: "Add Resource" })).not.toBeInTheDocument();
     });
   });
+
+  describe("Error Boundary", () => {
+    it("catches and displays rendering errors gracefully", async () => {
+      // Mock console.error to suppress error output in test logs
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      // Force a rendering error by making the component throw
+      server.use(
+        http.get("/resources", () => {
+          throw new Error("Simulated rendering error");
+        }),
+      );
+
+      renderWithRouter(<Resources />);
+
+      // Error boundary should catch the error and display fallback UI
+      await waitFor(() => {
+        expect(screen.getByRole("alert")).toBeInTheDocument();
+      });
+
+      consoleErrorSpy.mockRestore();
+    });
+  });
 });

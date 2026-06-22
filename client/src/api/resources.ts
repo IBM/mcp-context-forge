@@ -16,6 +16,11 @@ function validateResourceId(id: string): string {
     throw new Error("Invalid resource ID");
   }
 
+  // Enforce reasonable length limit to prevent DoS
+  if (id.length > 255) {
+    throw new Error("Resource ID too long");
+  }
+
   // Ensure ID is alphanumeric with hyphens/underscores only
   if (!/^[a-zA-Z0-9_-]+$/.test(id)) {
     throw new Error("Invalid resource ID format");
