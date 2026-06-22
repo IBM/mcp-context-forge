@@ -5204,6 +5204,31 @@ async def invoke_a2a_agent(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+def _resolve_a2a_public_base() -> str:
+    """Resolve the public base URL used to build A2A agent-card interface URLs.
+
+    Settings-only (Plan F15 + Oracle re-review #4 + F3 (m) host-spoof guard):
+    NEVER derive from the request ``Host`` header. The advertised card URL
+    is a contract the gateway publishes to *other* clients; deriving from a
+    client-controlled header opens a Host-header-injection channel.
+    Operators must configure ``APP_DOMAIN`` (or the soft override
+    ``a2a_public_base_url``) to the actual address callers can reach.
+
+    Precedence:
+
+    1. ``settings.a2a_public_base_url`` -- soft override (Plan F15).
+    2. ``settings.app_domain`` -- always present.
+
+    Returns:
+        Scheme + host (no trailing slash) suitable for path concatenation,
+        e.g. ``"http://127.0.0.1:8080"``.
+    """
+    override = getattr(settings, "a2a_public_base_url", None)
+    if override:
+        return str(override).rstrip("/")
+    return str(settings.app_domain).rstrip("/")
+
+
 @a2a_router.get("/{agent_name}/.well-known/agent-card.json")
 async def get_a2a_agent_card(
     agent_name: str,
@@ -5247,10 +5272,7 @@ async def get_a2a_agent_card(
         raise HTTPException(status_code=503, detail="A2A service not available")
 
     # Public base URL resolution (Plan F15 + Oracle re-review #4).
-    # ``a2a_public_base_url`` is a soft / optional setting that operators may
-    # add later; fall back to the always-present ``app_domain`` so this
-    # handler is robust whether the soft setting exists or not.
-    public_base = getattr(settings, "a2a_public_base_url", None) or str(settings.app_domain).rstrip("/")
+    public_base = _resolve_a2a_public_base()
 
     # T-Phase-C-1 placeholder hooks (Amendment F deferral).
     # Today these are no-ops that log at DEBUG; the future Phase C commit
@@ -5611,7 +5633,7 @@ async def dispatch_a2a_agent(
                 status_code=200,
             )
         # NEVER forward upstream (D18). Synthesize directly from the DB row.
-        public_base = getattr(settings, "a2a_public_base_url", None) or str(settings.app_domain).rstrip("/")
+        public_base = _resolve_a2a_public_base()
         card = await a2a_service.synthesize_agent_card(
             db,
             agent_name,
