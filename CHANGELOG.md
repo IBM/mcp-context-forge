@@ -8,14 +8,13 @@
 
 - Rust MCP runtime sidecar, Rust A2A runtime sidecar, and ValidationMiddleware are deprecated as of 2026-06-11 and will sunset on 2026-07-07. Use the Python MCP transport path, the Python A2A invocation path, and endpoint-level Pydantic or protocol-specific validation instead. See [Deprecations](docs/docs/deprecations.md).
 
-## [1.0.4] - 2026-06-22 - Admin UI Rewrite Completion, Rust Server Migration, Security Fixes, and Build Hardening
+## [1.0.4] - 2026-06-22 - Rust Server Migration, Security Fixes, and Build Hardening
 
 ### Overview
 
-Release 1.0.4 consolidates **52 PRs** focused on **Admin UI rewrite completion**, **Rust server migration**, **security and auth correctness**, **multi-architecture build hardening**, and **database reliability**. This release brings the rewritten React-based Admin UI to feature parity for tool, user, and virtual server lifecycle management, migrates test servers to Rust, and resolves a broad set of auth, CSRF, login, and container build issues:
+Release 1.0.4 consolidates **35+ PRs** focused on **Rust server migration**, **security and auth correctness**, **multi-architecture build hardening**, and **database reliability**. This release migrates test servers to Rust and resolves a broad set of auth, CSRF, login, and container build issues:
 
-- **🖥️ Admin UI Rewrite** - User CRUD (create/edit/delete), Tool details panel with schema viewer, edit, and delete actions, virtual server create/edit/delete flows, REST tool creation form, OAuth post-login tool activation, team visibility tracking, and Users page Playwright test coverage.
-- **🔐 Security & Auth** - Keycloak SSO role merging from `access_token`, `client_secret_basic` support for SSO token exchange, CSRF exempt-path fixes, login redirect loop fix, OAuth `auth_type` propagation fix for tool creation, and session-affinity auth context forwarding across workers.
+- **🔐 Security & Auth** - Keycloak SSO role merging from `access_token`, `client_secret_basic` support for SSO token exchange, CSRF exempt-path fixes, login redirect loop fix, and OAuth `auth_type` propagation fix for tool creation.
 - **🦀 Rust Servers** - Slow-time MCP test server migrated to Rust (breaking binary path change), Rust benchmark server added replacing Go, Rust A2A echo agent added for integration testing.
 - **🛡️ FedRAMP / Build** - s390x `rustup` fix, hermetic wheel closure for s390x/ppc64le multiplatform builds, `Containerfile.lite` venv fix, PyPI UI bundle fix, PyO3 and Rust CI dependency updates.
 - **🗄️ Database & Performance** - DB connection pool multiplication resolved, lazy log formatting migration across services, tag length made configurable via env vars.
@@ -23,20 +22,6 @@ Release 1.0.4 consolidates **52 PRs** focused on **Admin UI rewrite completion**
 - **🔧 CI / DevOps** - Hadolint via Docker image, docker-scan scoped to merge queue, linting-full moved to merge queue, npm audit fixes, release dependency lock refresh, `cpex-rate-limiter` bump to 0.1.4.
 
 ### Added
-
-#### **🖥️ Admin UI Rewrite**
-
-- **👤 User Delete** ([#5149](https://github.com/IBM/mcp-context-forge/pull/5149)) – User delete flow in the rewritten Admin UI. Completes user lifecycle management.
-- **✏️ User Edit** ([#5184](https://github.com/IBM/mcp-context-forge/pull/5184)) – User edit form in the rewritten Admin UI. Enables inline user profile updates.
-- **🔧 REST Tool Creation Form** ([#5137](https://github.com/IBM/mcp-context-forge/pull/5137)) – REST tool creation form in the rewritten UI. Replaces legacy modal with a structured form.
-- **🔍 Tools Details View** ([#5194](https://github.com/IBM/mcp-context-forge/pull/5194)) – Tool details side panel with full metadata display. Enables tool inspection without leaving the list.
-- **🗂️ Input/Output Schema Dialog** ([#5234](https://github.com/IBM/mcp-context-forge/pull/5234)) – Schema dialog with syntax highlighting for tool input/output schemas. Improves developer ergonomics.
-- **🗑️ Delete Tool from Details Panel** ([#5231](https://github.com/IBM/mcp-context-forge/pull/5231)) – Delete tool action directly from the Tools details panel. Reduces navigation steps.
-- **✏️ Edit Tools in Details Panel** ([#5283](https://github.com/IBM/mcp-context-forge/pull/5283)) – Edit tool functionality within the ToolDetailPanel. Unifies view and edit into a single panel.
-- **🗑️ Virtual Server Delete Flow** ([#5236](https://github.com/IBM/mcp-context-forge/pull/5236)) – Delete flow for virtual servers in the rewritten UI. Completes virtual server lifecycle management.
-- **✏️ Edit Virtual Servers** ([#5263](https://github.com/IBM/mcp-context-forge/pull/5263)) – Edit virtual server form in the rewritten UI. Enables in-place server reconfiguration.
-- **📋 Virtual Server Source Panels** ([#5122](https://github.com/IBM/mcp-context-forge/pull/5122)) – Updated virtual server source panels. Improves source visibility in the UI.
-- **🔑 OAuth Post-Login Tool Activation** ([#5076](https://github.com/IBM/mcp-context-forge/pull/5076)) – Fetch tools and activate MCP server after OAuth completion. Fixes blank tool list after OAuth login.
 
 #### **🔐 Security & Auth**
 
@@ -72,6 +57,7 @@ Release 1.0.4 consolidates **52 PRs** focused on **Admin UI rewrite completion**
 - **🔒 Docker-Scan Scoped to Merge Queue** ([#5209](https://github.com/IBM/mcp-context-forge/pull/5209)) – Docker vulnerability scan scoped to PR lint + merge-queue gate. Avoids redundant scans on every push.
 - **⬛ Hadolint via Docker Image** ([#5259](https://github.com/IBM/mcp-context-forge/pull/5259)) – Hadolint run via Docker image to satisfy org Actions allowlist. Removes dependency on non-allowlisted GitHub Action.
 - **⏩ Skip CI for Secrets Baseline Commits** ([#5012](https://github.com/IBM/mcp-context-forge/pull/5012)) – Full CI skipped for `detect-secrets` baseline-only commits. Reduces unnecessary CI load.
+- **📌 Pin buildx Version** – Pinned `setup-buildx-action` to a fixed version to avoid Docker Hub rate-limit failures. Prevents intermittent CI build failures from upstream rate limiting.
 
 ### Fixed
 
@@ -81,13 +67,10 @@ Release 1.0.4 consolidates **52 PRs** focused on **Admin UI rewrite completion**
 - **🔒 CSRF Exempt Paths** ([#5157](https://github.com/IBM/mcp-context-forge/pull/5157)) – Added missing API paths to `csrf_exempt_paths`; fixed env drift between config and middleware. Prevents spurious CSRF rejections on valid API calls.
 - **🔄 Login Redirect Loop** ([#5203](https://github.com/IBM/mcp-context-forge/pull/5203)) – Fixed login redirect loop. Prevents infinite redirect cycle after authentication.
 - **🔧 OAuth auth_type Ignored in Tool Creation** ([#5180](https://github.com/IBM/mcp-context-forge/pull/5180)) – OAuth `auth_type` offered in Add Tool form was silently ignored by `POST /tools` and `POST /admin/tools`. Fix propagates auth type through tool creation pipeline.
-- **🔑 Session-Affinity Auth Context** ([#5212](https://github.com/IBM/mcp-context-forge/pull/5212)) – Carry edge-validated auth context across cross-worker forwards. Prevents auth context loss during session migration between workers.
 
-#### **🖥️ Admin UI**
+#### **🧪 Tests**
 
-- **👥 Team Visibility on Form Submit** ([#5250](https://github.com/IBM/mcp-context-forge/pull/5250)) – Team visibility now always tracks current sidebar team on form submit. Prevents visibility mismatch when switching teams before submitting.
 - **🧪 Playwright: FK Cascade and Team Delegation** ([#5211](https://github.com/IBM/mcp-context-forge/pull/5211)) – Fixed user deletion FK cascade and team selector delegation in Playwright tests. Stabilizes E2E test suite.
-- **👥 Users Page Playwright Tests** ([#5300](https://github.com/IBM/mcp-context-forge/pull/5300)) – Added Users page Playwright test coverage.
 
 #### **🛡️ FedRAMP / FIPS Compliance**
 
@@ -123,6 +106,12 @@ Release 1.0.4 consolidates **52 PRs** focused on **Admin UI rewrite completion**
 | [#5275](https://github.com/IBM/mcp-context-forge/pull/5275) | chore: update code owners for certain topics | brian-hussey |
 | [#5012](https://github.com/IBM/mcp-context-forge/pull/5012) | chore: skip full CI for secrets baseline commits | lucarlig |
 | [#4749](https://github.com/IBM/mcp-context-forge/pull/4749) | chore(logging): migrate f-string log calls to lazy %-style | msureshkumar88 |
+| – | chore(docker): update UBI image versions | msureshkumar88 |
+| – | fix(deps): update cryptography and msgpack | cafalchio |
+| – | chore: addressed dependabot security dependency issues | – |
+| – | chore: refresh Go dependencies | – |
+| – | chore: update Python versions in container images | – |
+| – | chore: code quality gates pass | – |
 
 ## [1.0.3] - 2026-06-10 - Auth & JWT Cleanup, Admin UI Fixes, FedRAMP/FIPS Hardening, and Bug Fixes
 
