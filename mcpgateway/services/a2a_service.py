@@ -576,8 +576,12 @@ _ACCEPTED_A2A_VERSIONS = frozenset({"1.0", "1.0.0"})
 # equivalents before forwarding to upstream.
 #
 # **NOT mapped**: ``tasks/list`` (Oracle v3 #22 — it is NEW in v1.0, NOT
-# a legacy v0.3 alias). A client sending ``tasks/list`` is sending a v1
-# method name and the gateway forwards it verbatim.
+# a legacy v0.3 alias). A client sending ``tasks/list`` is confused
+# about the protocol generation; the dispatcher explicitly rejects it
+# with ``-32601`` via :py:data:`_V1_ONLY_SLASH_FORMS` rather than
+# forwarding verbatim (which would mask the client bug).
+_V1_ONLY_SLASH_FORMS: frozenset[str] = frozenset({"tasks/list"})
+
 LEGACY_V03_METHOD_MAP: Dict[str, str] = {
     "message/send": "SendMessage",
     "message/stream": "SendStreamingMessage",
@@ -1362,8 +1366,14 @@ class A2AAgentService(BaseService):
         if params is not None and not isinstance(params, dict):
             return (INVALID_PARAMS, "params must be a JSON object or null", None)
 
-        # Map legacy v0.3 method aliases to v1.0 names. EXCLUDES ``tasks/list``
-        # (Oracle v3 #22 — new in v1.0, NOT a legacy alias). Unknown methods
+        # ``tasks/list`` is NEW in v1.0 -- NO v0.3 predecessor (Oracle v3
+        # #22). A client sending the slash form is confused about the
+        # protocol generation; the gateway MUST reject with -32601 rather
+        # than forward verbatim (which would mask the client bug).
+        if method in _V1_ONLY_SLASH_FORMS:
+            return (METHOD_NOT_FOUND, f"Method not found: {method!r} is NEW in A2A v1.0 and has no slash-form alias; use the PascalCase v1 name instead", None)
+
+        # Map legacy v0.3 method aliases to v1.0 names. Unknown methods
         # pass through to upstream which decides whether to honor them.
         mapped_method = LEGACY_V03_METHOD_MAP.get(method, method)
 
@@ -1491,6 +1501,9 @@ class A2AAgentService(BaseService):
         params = body.get("params")
         if params is not None and not isinstance(params, dict):
             yield make_jsonrpc_error(INVALID_PARAMS, "params must be a JSON object or null", body.get("id"))
+            return
+        if method in _V1_ONLY_SLASH_FORMS:
+            yield make_jsonrpc_error(METHOD_NOT_FOUND, f"Method not found: {method!r} is NEW in A2A v1.0 and has no slash-form alias; use the PascalCase v1 name instead", body.get("id"))
             return
         mapped_method = LEGACY_V03_METHOD_MAP.get(method, method)
 

@@ -175,6 +175,7 @@ from mcpgateway.services.a2a_service import (
     AUTHENTICATED_EXTENDED_CARD_NOT_CONFIGURED,
     INVALID_REQUEST,
     make_jsonrpc_error,
+    outbound_a2a_version,
     PARSE_ERROR,
     validate_a2a_version,
     VERSION_NOT_SUPPORTED,
@@ -5734,7 +5735,7 @@ async def dispatch_a2a_agent(
         return StreamingResponse(
             _stream_with_post_hook(),
             media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache"},
+            headers={"Cache-Control": "no-cache", "A2A-Version": outbound_a2a_version(agent)},
         )
 
     # 8. Unary dispatch (T4). Success → JSON-RPC result envelope.
@@ -5747,11 +5748,13 @@ async def dispatch_a2a_agent(
         hop_count=hop_count,
         request_headers=request_headers,
     )
+    version_headers = {"A2A-Version": outbound_a2a_version(agent)}
     if isinstance(result, tuple):
         code, message, data = result
         return JSONResponse(
             make_jsonrpc_error(code, message, request_id, data),
             status_code=200,
+            headers=version_headers,
         )
     # D14 disambiguation fix (Oracle F2 #1): upstream A2A agents are
     # themselves JSON-RPC endpoints and return ``{"jsonrpc": "2.0",
@@ -5763,10 +5766,11 @@ async def dispatch_a2a_agent(
     if isinstance(result, dict) and result.get("jsonrpc") == "2.0" and ("result" in result or "error" in result):
         envelope = dict(result)
         envelope["id"] = request_id
-        return JSONResponse(envelope, status_code=200)
+        return JSONResponse(envelope, status_code=200, headers=version_headers)
     return JSONResponse(
         {"jsonrpc": "2.0", "result": result, "id": request_id},
         status_code=200,
+        headers=version_headers,
     )
 
 
