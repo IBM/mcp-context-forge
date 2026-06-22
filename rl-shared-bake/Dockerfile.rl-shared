@@ -1,0 +1,29 @@
+# Bakes the shared-connection cpex-rate-limiter wheel (0.1.6, linux/arm64) onto the
+# standard main-baseline gateway image, and runs 2 gunicorn workers so the per-worker
+# shared Redis connection is exercised under the same per-(team,tool) manager churn.
+#
+# Base = the unmodified `make docker-prod` image built from origin/main (cpex 0.1.4 from PyPI).
+# Build context = this directory (just the wheel), so the layer on top is a 5-second swap.
+ARG BASE_IMAGE=mcpgateway/mcpgateway:base-0.1.4
+FROM ${BASE_IMAGE}
+
+USER 0
+
+# Swap the PyPI cpex-rate-limiter (0.1.4, per-instance connection) for the shared-connection
+# 0.1.6 build. The lite venv is uv-built and has no pip, so install via stdlib zipfile-extract.
+COPY cpex_rate_limiter-*.whl /tmp/rl.whl
+RUN SP="$(/app/.venv/bin/python -c 'import site; print(site.getsitepackages()[0])')" \
+ && rm -rf "$SP/cpex_rate_limiter" "$SP"/cpex_rate_limiter-*.dist-info \
+ && /app/.venv/bin/python -m zipfile -e /tmp/rl.whl "$SP/" \
+ && rm -f /tmp/rl.whl \
+ && /app/.venv/bin/python -c "import importlib.metadata as m; print('cpex-rate-limiter ->', m.version('cpex-rate-limiter'))" \
+ && /app/.venv/bin/python -c "import cpex_rate_limiter.rate_limiter; print('native .so import OK on linux/arm64')"
+
+USER 10001
+
+# Two workers (small fixed count makes the per-worker connection observable);
+# preload mirrors production. The cpex Redis connection is lazy (first request),
+# so it opens post-fork per worker and is never shared across the fork boundary.
+ENV GUNICORN_WORKERS=2 \
+    GUNICORN_PRELOAD_APP=true \
+    HTTP_SERVER=gunicorn

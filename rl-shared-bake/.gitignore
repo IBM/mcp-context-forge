@@ -1,0 +1,2 @@
+# Baked wheels are build artifacts — rebuild via README, do not commit.
+*.whl
