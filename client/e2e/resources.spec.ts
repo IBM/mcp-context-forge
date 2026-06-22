@@ -66,7 +66,7 @@ test.describe("Resources page", () => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ data: [] }),
+        body: JSON.stringify([]),
       });
     });
 
@@ -80,15 +80,13 @@ test.describe("Resources page", () => {
     ).toBeVisible();
   });
 
-  test("shows resource group cards when resources exist", async ({ page }) => {
+  test("shows individual resource cards when resources exist", async ({ page }) => {
     // Mock resources response with data
     await page.route("**/resources?*", async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({
-          data: [MOCK_RESOURCE],
-        }),
+        body: JSON.stringify([MOCK_RESOURCE]),
       });
     });
 
@@ -101,30 +99,27 @@ test.describe("Resources page", () => {
     // Check for "Add resources" card
     await expect(page.getByText("Add resources")).toBeVisible();
 
-    // Check for resource group card - gateway slug and count
-    await expect(page.getByText("test-gateway")).toBeVisible();
-    await expect(page.getByText("1 resource")).toBeVisible();
+    // Check for individual resource card with resource name
+    await expect(page.getByText("Test Document")).toBeVisible();
   });
 
-  test("displays resource group card with badges", async ({ page }) => {
+  test("displays resource card with metadata badges", async ({ page }) => {
     await page.route("**/resources?*", async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({
-          data: [MOCK_RESOURCE],
-        }),
+        body: JSON.stringify([MOCK_RESOURCE]),
       });
     });
 
     await page.goto(APP.RESOURCES);
     await page.waitForLoadState("networkidle");
 
-    // Check for gateway slug
-    await expect(page.getByText("test-gateway")).toBeVisible();
-
-    // Check for resource name badge
+    // Check for resource name in card header
     await expect(page.getByText("Test Document")).toBeVisible();
+
+    // Check for MIME type badge
+    await expect(page.getByText("text/plain")).toBeVisible();
   });
 
   test("clicking add resources card opens form", async ({ page }) => {
@@ -132,9 +127,7 @@ test.describe("Resources page", () => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({
-          data: [],
-        }),
+        body: JSON.stringify([]),
       });
     });
 
@@ -149,28 +142,26 @@ test.describe("Resources page", () => {
     await expect(page.getByLabel("Name")).toBeVisible();
   });
 
-  test.skip("opens resource group details panel", async ({ page }) => {
+  test.skip("opens resource details panel", async ({ page }) => {
     await page.route("**/resources?*", async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({
-          data: [MOCK_RESOURCE],
-        }),
+        body: JSON.stringify([MOCK_RESOURCE]),
       });
     });
 
     await page.goto(APP.RESOURCES);
     await page.waitForLoadState("networkidle");
 
-    // Click the three-dot menu on the resource group card
-    await page.getByRole("button", { name: /More options for test-gateway/i }).click();
+    // Click the three-dot menu on the resource card
+    await page.getByRole("button", { name: /More options for Test Document/i }).click();
 
     // Click "View Details"
     await page.getByRole("menuitem", { name: "View Details" }).click();
 
     // Check details panel is visible
-    await expect(page.getByText("test-gateway")).toBeVisible();
+    await expect(page.getByText("Test Document Details")).toBeVisible();
   });
 
   test.skip("creates a new resource", async ({ page }) => {
@@ -185,9 +176,7 @@ test.describe("Resources page", () => {
         await route.fulfill({
           status: 200,
           contentType: "application/json",
-          body: JSON.stringify({
-            data: resources,
-          }),
+          body: JSON.stringify(resources),
         });
       }
     });
@@ -222,8 +211,8 @@ test.describe("Resources page", () => {
     await expect.poll(() => createRequestCount).toBe(1);
     await expect.poll(() => listRequestCount).toBeGreaterThan(1);
 
-    // Verify new resource group appears
-    await expect(page.getByText("api-gateway")).toBeVisible();
+    // Verify new resource card appears
+    await expect(page.getByText("API Configuration")).toBeVisible();
   });
 
   test.skip("validates required fields in create form", async ({ page }) => {
@@ -231,9 +220,7 @@ test.describe("Resources page", () => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({
-          data: [MOCK_RESOURCE],
-        }),
+        body: JSON.stringify([MOCK_RESOURCE]),
       });
     });
 
@@ -260,9 +247,7 @@ test.describe("Resources page", () => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({
-          data: isDeleted ? [] : [MOCK_RESOURCE],
-        }),
+        body: JSON.stringify(isDeleted ? [] : [MOCK_RESOURCE]),
       });
     });
 
@@ -277,10 +262,10 @@ test.describe("Resources page", () => {
     await page.goto(APP.RESOURCES);
     await page.waitForLoadState("networkidle");
 
-    await expect(page.getByText("test-gateway")).toBeVisible();
+    await expect(page.getByText("Test Document")).toBeVisible();
 
     // Open details panel
-    await page.getByRole("button", { name: /More options for test-gateway/i }).click();
+    await page.getByRole("button", { name: /More options for Test Document/i }).click();
     await page.getByRole("menuitem", { name: "View Details" }).click();
 
     // Delete from panel
@@ -293,7 +278,7 @@ test.describe("Resources page", () => {
 
     await expect.poll(() => deleteRequestCount).toBe(1);
     await expect.poll(() => listRequestCount).toBeGreaterThan(1);
-    await expect(page.getByText("test-gateway")).toHaveCount(0);
+    await expect(page.getByText("Test Document")).toHaveCount(0);
   });
 
   test("shows error state when API fails", async ({ page }) => {
@@ -312,52 +297,48 @@ test.describe("Resources page", () => {
     await expect(page.getByText("Error loading resources")).toBeVisible();
   });
 
-  test("displays multiple resource groups correctly", async ({ page }) => {
+  test("displays multiple individual resource cards correctly", async ({ page }) => {
     await page.route("**/resources?*", async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({
-          data: [MOCK_RESOURCE, MOCK_RESOURCE_JSON],
-        }),
+        body: JSON.stringify([MOCK_RESOURCE, MOCK_RESOURCE_JSON]),
       });
     });
 
     await page.goto(APP.RESOURCES);
     await page.waitForLoadState("networkidle");
 
-    // Check for both gateway groups
-    await expect(page.getByText("test-gateway")).toBeVisible();
-    await expect(page.getByText("api-gateway")).toBeVisible();
+    // Check for both individual resource cards
+    await expect(page.getByText("Test Document")).toBeVisible();
+    await expect(page.getByText("API Configuration")).toBeVisible();
 
-    // Check resource counts - should have two "1 resource" texts
-    const resourceCountTexts = page.getByText("1 resource");
-    await expect(resourceCountTexts).toHaveCount(2);
+    // Should have 3 cards total (2 resources + 1 add card)
+    const cards = page.locator('[data-slot="card"]');
+    await expect(cards).toHaveCount(3);
   });
 
-  test("groups resources by gateway automatically", async ({ page }) => {
-    const resource1 = { ...MOCK_RESOURCE, gatewaySlug: "gateway-a" };
-    const resource2 = { ...MOCK_RESOURCE_JSON, gatewaySlug: "gateway-b" };
+  test("displays resources from different gateways as individual cards", async ({ page }) => {
+    const resource1 = { ...MOCK_RESOURCE, gatewaySlug: "gateway-a", name: "Resource A" };
+    const resource2 = { ...MOCK_RESOURCE_JSON, gatewaySlug: "gateway-b", name: "Resource B" };
 
     await page.route("**/resources?*", async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({
-          data: [resource1, resource2],
-        }),
+        body: JSON.stringify([resource1, resource2]),
       });
     });
 
     await page.goto(APP.RESOURCES);
     await page.waitForLoadState("networkidle");
 
-    // Check for gateway group cards
-    await expect(page.getByText("gateway-a")).toBeVisible();
-    await expect(page.getByText("gateway-b")).toBeVisible();
+    // Check for individual resource cards (not grouped by gateway)
+    await expect(page.getByText("Resource A")).toBeVisible();
+    await expect(page.getByText("Resource B")).toBeVisible();
   });
 
-  test("shows resource count in group card", async ({ page }) => {
+  test("shows all resources as individual cards", async ({ page }) => {
     const resource1 = { ...MOCK_RESOURCE, id: "res-1", name: "Resource 1" };
     const resource2 = { ...MOCK_RESOURCE, id: "res-2", name: "Resource 2" };
 
@@ -365,16 +346,19 @@ test.describe("Resources page", () => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({
-          data: [resource1, resource2],
-        }),
+        body: JSON.stringify([resource1, resource2]),
       });
     });
 
     await page.goto(APP.RESOURCES);
     await page.waitForLoadState("networkidle");
 
-    // Check for resource count
-    await expect(page.getByText("2 resources")).toBeVisible();
+    // Check for individual resource cards
+    await expect(page.getByText("Resource 1")).toBeVisible();
+    await expect(page.getByText("Resource 2")).toBeVisible();
+
+    // Should have 3 cards total (2 resources + 1 add card)
+    const cards = page.locator('[data-slot="card"]');
+    await expect(cards).toHaveCount(3);
   });
 });

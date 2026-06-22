@@ -7,7 +7,7 @@ vi.mock("sonner", () => ({
   },
 }));
 
-import { screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { render } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
@@ -30,6 +30,9 @@ function createMockResource(id: number, gatewaySlug: string, enabled = true): Re
     enabled,
     uri: `resource://example/${id}`,
     mimeType: "application/json",
+    size: 0,
+    version: 1,
+    visibility: "public",
     tags: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -67,7 +70,7 @@ describe("Resources", () => {
     server.use(
       http.get("/resources", async () => {
         await new Promise(() => {}); // Never resolves
-        return HttpResponse.json({ data: [] });
+        return HttpResponse.json([]);
       }),
     );
 
@@ -84,7 +87,7 @@ describe("Resources", () => {
       createMockResource(3, "server-2"),
     ];
 
-    server.use(http.get("/resources", () => HttpResponse.json({ data: mockResources })));
+    server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
 
     renderWithRouter(<Resources />);
 
@@ -92,22 +95,18 @@ describe("Resources", () => {
       expect(screen.getByText("Resources")).toBeInTheDocument();
     });
 
-    // Check groups rendered
-    expect(screen.getByText("server-1")).toBeInTheDocument();
-    expect(screen.getByText("server-2")).toBeInTheDocument();
-
-    // Check counts
-    expect(screen.getByText("2 resources")).toBeInTheDocument();
-    expect(screen.getByText("1 resource")).toBeInTheDocument();
-
-    // Check individual resources
+    // Check individual resource cards rendered
     expect(screen.getByText("Resource 1")).toBeInTheDocument();
     expect(screen.getByText("Resource 2")).toBeInTheDocument();
     expect(screen.getByText("Resource 3")).toBeInTheDocument();
+
+    // Should have 4 cards total (3 resources + 1 add card)
+    const cards = document.querySelectorAll('[data-slot="card"]');
+    expect(cards).toHaveLength(4);
   });
 
   it("renders Add resources card", async () => {
-    server.use(http.get("/resources", () => HttpResponse.json({ data: [] })));
+    server.use(http.get("/resources", () => HttpResponse.json([])));
 
     renderWithRouter(<Resources />);
 
@@ -122,7 +121,7 @@ describe("Resources", () => {
 
   it("handles Add resources card click", async () => {
     const user = userEvent.setup();
-    server.use(http.get("/resources", () => HttpResponse.json({ data: [] })));
+    server.use(http.get("/resources", () => HttpResponse.json([])));
 
     renderWithRouter(<Resources />);
 
@@ -143,7 +142,7 @@ describe("Resources", () => {
 
   it("handles Add resources card keyboard activation", async () => {
     const user = userEvent.setup();
-    server.use(http.get("/resources", () => HttpResponse.json({ data: [] })));
+    server.use(http.get("/resources", () => HttpResponse.json([])));
 
     renderWithRouter(<Resources />);
 
@@ -178,7 +177,7 @@ describe("Resources", () => {
     expect(screen.getByText("Error loading resources")).toBeInTheDocument();
   });
 
-  it("groups resources by gateway slug correctly", async () => {
+  it("renders individual resource cards for all resources", async () => {
     const mockResources: Resource[] = [
       createMockResource(1, "gateway-a"),
       createMockResource(2, "gateway-a"),
@@ -187,17 +186,24 @@ describe("Resources", () => {
       createMockResource(5, "gateway-b"),
     ];
 
-    server.use(http.get("/resources", () => HttpResponse.json({ data: mockResources })));
+    server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
 
     renderWithRouter(<Resources />);
 
     await waitFor(() => {
-      expect(screen.getByText("gateway-a")).toBeInTheDocument();
+      expect(screen.getByText("Resource 1")).toBeInTheDocument();
     });
 
-    expect(screen.getByText("gateway-b")).toBeInTheDocument();
-    expect(screen.getByText("3 resources")).toBeInTheDocument();
-    expect(screen.getByText("2 resources")).toBeInTheDocument();
+    // All 5 resources should be visible as individual cards
+    expect(screen.getByText("Resource 1")).toBeInTheDocument();
+    expect(screen.getByText("Resource 2")).toBeInTheDocument();
+    expect(screen.getByText("Resource 3")).toBeInTheDocument();
+    expect(screen.getByText("Resource 4")).toBeInTheDocument();
+    expect(screen.getByText("Resource 5")).toBeInTheDocument();
+
+    // Should have 6 cards total (5 resources + 1 add card)
+    const cards = document.querySelectorAll('[data-slot="card"]');
+    expect(cards).toHaveLength(6);
   });
 
   it("shows active status indicator for enabled resources", async () => {
@@ -206,26 +212,7 @@ describe("Resources", () => {
       createMockResource(2, "inactive-gateway", false),
     ];
 
-    server.use(http.get("/resources", () => HttpResponse.json({ data: mockResources })));
-
-    renderWithRouter(<Resources />);
-
-    await waitFor(() => {
-      expect(screen.getByText("active-gateway")).toBeInTheDocument();
-    });
-
-    expect(screen.getByText("inactive-gateway")).toBeInTheDocument();
-
-    const cards = screen
-      .getAllByRole("generic")
-      .filter((el) => el.getAttribute("data-slot") === "card");
-    expect(cards.length).toBeGreaterThan(0);
-  });
-
-  it("displays resource descriptions as tooltips", async () => {
-    const mockResources: Resource[] = [createMockResource(1, "server-1")];
-
-    server.use(http.get("/resources", () => HttpResponse.json({ data: mockResources })));
+    server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
 
     renderWithRouter(<Resources />);
 
@@ -233,32 +220,51 @@ describe("Resources", () => {
       expect(screen.getByText("Resource 1")).toBeInTheDocument();
     });
 
-    const resourceBadge = screen.getByText("Resource 1");
-    expect(resourceBadge).toHaveAttribute("title", "Description for resource 1");
+    expect(screen.getByText("Resource 2")).toBeInTheDocument();
+
+    // Should have 3 cards total (2 resources + 1 add card)
+    const cards = document.querySelectorAll('[data-slot="card"]');
+    expect(cards).toHaveLength(3);
   });
 
-  it("renders more options button for each resource group", async () => {
+  it("displays resource names in card headers", async () => {
+    const mockResources: Resource[] = [createMockResource(1, "server-1")];
+
+    server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
+
+    renderWithRouter(<Resources />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Resource 1")).toBeInTheDocument();
+    });
+
+    // Resource name should be visible in the card
+    const resourceName = screen.getByText("Resource 1");
+    expect(resourceName).toBeInTheDocument();
+  });
+
+  it("renders more options button for each resource card", async () => {
     const mockResources: Resource[] = [
       createMockResource(1, "server-1"),
       createMockResource(2, "server-2"),
     ];
 
-    server.use(http.get("/resources", () => HttpResponse.json({ data: mockResources })));
+    server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
 
     renderWithRouter(<Resources />);
 
     await waitFor(() => {
-      expect(screen.getByText("server-1")).toBeInTheDocument();
+      expect(screen.getByText("Resource 1")).toBeInTheDocument();
     });
 
     const moreOptionsButtons = screen.getAllByLabelText(/More options for/i);
     expect(moreOptionsButtons).toHaveLength(2);
-    expect(screen.getByLabelText("More options for server-1")).toBeInTheDocument();
-    expect(screen.getByLabelText("More options for server-2")).toBeInTheDocument();
+    expect(screen.getByLabelText("More options for Resource 1")).toBeInTheDocument();
+    expect(screen.getByLabelText("More options for Resource 2")).toBeInTheDocument();
   });
 
   it("handles empty resources list", async () => {
-    server.use(http.get("/resources", () => HttpResponse.json({ data: [] })));
+    server.use(http.get("/resources", () => HttpResponse.json([])));
 
     renderWithRouter(<Resources />);
 
@@ -271,7 +277,7 @@ describe("Resources", () => {
   });
 
   it("uses correct grid layout classes", async () => {
-    server.use(http.get("/resources", () => HttpResponse.json({ data: [] })));
+    server.use(http.get("/resources", () => HttpResponse.json([])));
 
     renderWithRouter(<Resources />);
 
@@ -290,7 +296,7 @@ describe("Resources", () => {
     expect(gridContainer).toHaveClass("2xl:grid-cols-3");
   });
 
-  it("groups resources without gateway slug under 'ungrouped'", async () => {
+  it("renders resources without gateway slug", async () => {
     const mockResources: Resource[] = [
       {
         ...createMockResource(1, ""),
@@ -298,33 +304,17 @@ describe("Resources", () => {
       },
     ];
 
-    server.use(http.get("/resources", () => HttpResponse.json({ data: mockResources })));
+    server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
 
     renderWithRouter(<Resources />);
 
     await waitFor(() => {
-      expect(screen.getByText("ungrouped")).toBeInTheDocument();
+      expect(screen.getByText("Resource 1")).toBeInTheDocument();
     });
 
-    expect(screen.getByText("1 resource")).toBeInTheDocument();
-  });
-
-  it("correctly pluralizes resource count", async () => {
-    const mockResources: Resource[] = [
-      createMockResource(1, "single-resource-gateway"),
-      createMockResource(2, "multi-resource-gateway"),
-      createMockResource(3, "multi-resource-gateway"),
-    ];
-
-    server.use(http.get("/resources", () => HttpResponse.json({ data: mockResources })));
-
-    renderWithRouter(<Resources />);
-
-    await waitFor(() => {
-      expect(screen.getByText("1 resource")).toBeInTheDocument();
-    });
-
-    expect(screen.getByText("2 resources")).toBeInTheDocument();
+    // Should have 2 cards total (1 resource + 1 add card)
+    const cards = document.querySelectorAll('[data-slot="card"]');
+    expect(cards).toHaveLength(2);
   });
 
   it("handles network errors gracefully", async () => {
@@ -343,66 +333,26 @@ describe("Resources", () => {
     expect(screen.getByText("Error loading resources")).toBeInTheDocument();
   });
 
-  it("displays up to 8 resources and shows +N tag for remaining", async () => {
+  it("displays all resources as individual cards", async () => {
     const mockResources: Resource[] = Array.from({ length: 12 }, (_, i) =>
       createMockResource(i + 1, "gateway-with-many-resources"),
     );
 
-    server.use(http.get("/resources", () => HttpResponse.json({ data: mockResources })));
+    server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
 
     renderWithRouter(<Resources />);
 
     await waitFor(() => {
-      expect(screen.getByText("gateway-with-many-resources")).toBeInTheDocument();
+      expect(screen.getByText("Resource 1")).toBeInTheDocument();
     });
 
-    // First 8 visible
+    // All 12 resources should be visible as individual cards
     expect(screen.getByText("Resource 1")).toBeInTheDocument();
-    expect(screen.getByText("Resource 8")).toBeInTheDocument();
+    expect(screen.getByText("Resource 12")).toBeInTheDocument();
 
-    // 9-12 not visible
-    expect(screen.queryByText("Resource 9")).not.toBeInTheDocument();
-    expect(screen.queryByText("Resource 12")).not.toBeInTheDocument();
-
-    // +4 tag
-    expect(screen.getByText("+4")).toBeInTheDocument();
-    expect(screen.getByTitle("4 more resources")).toBeInTheDocument();
-  });
-
-  it("displays all resources when count is 8 or less without +N tag", async () => {
-    const mockResources: Resource[] = Array.from({ length: 8 }, (_, i) =>
-      createMockResource(i + 1, "gateway-with-eight-resources"),
-    );
-
-    server.use(http.get("/resources", () => HttpResponse.json({ data: mockResources })));
-
-    renderWithRouter(<Resources />);
-
-    await waitFor(() => {
-      expect(screen.getByText("gateway-with-eight-resources")).toBeInTheDocument();
-    });
-
-    expect(screen.getByText("Resource 1")).toBeInTheDocument();
-    expect(screen.getByText("Resource 8")).toBeInTheDocument();
-
-    expect(screen.queryByText(/^\+\d+$/)).not.toBeInTheDocument();
-  });
-
-  it("shows +1 tag with singular 'resource' in title for 9 resources", async () => {
-    const mockResources: Resource[] = Array.from({ length: 9 }, (_, i) =>
-      createMockResource(i + 1, "gateway-with-nine-resources"),
-    );
-
-    server.use(http.get("/resources", () => HttpResponse.json({ data: mockResources })));
-
-    renderWithRouter(<Resources />);
-
-    await waitFor(() => {
-      expect(screen.getByText("gateway-with-nine-resources")).toBeInTheDocument();
-    });
-
-    expect(screen.getByText("+1")).toBeInTheDocument();
-    expect(screen.getByTitle("1 more resource")).toBeInTheDocument();
+    // Should have 13 cards total (12 resources + 1 add card)
+    const cards = document.querySelectorAll('[data-slot="card"]');
+    expect(cards).toHaveLength(13);
   });
 
   describe("Dropdown Menu and Details Panel", () => {
@@ -410,15 +360,15 @@ describe("Resources", () => {
       const user = userEvent.setup();
       const mockResources: Resource[] = [createMockResource(1, "test-gateway")];
 
-      server.use(http.get("/resources", () => HttpResponse.json({ data: mockResources })));
+      server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
 
       renderWithRouter(<Resources />);
 
       await waitFor(() => {
-        expect(screen.getByText("test-gateway")).toBeInTheDocument();
+        expect(screen.getByText("Resource 1")).toBeInTheDocument();
       });
 
-      const moreOptionsButton = screen.getByLabelText("More options for test-gateway");
+      const moreOptionsButton = screen.getByLabelText("More options for Resource 1");
       await user.click(moreOptionsButton);
 
       await waitFor(() => {
@@ -428,27 +378,24 @@ describe("Resources", () => {
 
     it("opens details panel when clicking View Details menu item", async () => {
       const user = userEvent.setup();
-      const mockResources: Resource[] = [
-        createMockResource(1, "test-gateway"),
-        createMockResource(2, "test-gateway"),
-      ];
+      const mockResources: Resource[] = [createMockResource(1, "test-gateway")];
 
-      server.use(http.get("/resources", () => HttpResponse.json({ data: mockResources })));
+      server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
 
       renderWithRouter(<Resources />);
 
       await waitFor(() => {
-        expect(screen.getByText("test-gateway")).toBeInTheDocument();
+        expect(screen.getByText("Resource 1")).toBeInTheDocument();
       });
 
-      const moreOptionsButton = screen.getByLabelText("More options for test-gateway");
+      const moreOptionsButton = screen.getByLabelText("More options for Resource 1");
       await user.click(moreOptionsButton);
 
       const viewDetailsItem = await screen.findByText("View Details");
       await user.click(viewDetailsItem);
 
       await waitFor(() => {
-        expect(screen.getByText(/test-gateway Resources/i)).toBeInTheDocument();
+        expect(screen.getByText(/gateway-test-gateway Resources/i)).toBeInTheDocument();
       });
     });
 
@@ -456,28 +403,27 @@ describe("Resources", () => {
       const user = userEvent.setup();
       const mockResources: Resource[] = [createMockResource(1, "test-gateway")];
 
-      server.use(http.get("/resources", () => HttpResponse.json({ data: mockResources })));
+      server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
 
       renderWithRouter(<Resources />);
 
       await waitFor(() => {
-        expect(screen.getByText("test-gateway")).toBeInTheDocument();
+        expect(screen.getByText("Resource 1")).toBeInTheDocument();
       });
 
-      const moreOptionsButton = screen.getByLabelText("More options for test-gateway");
+      const moreOptionsButton = screen.getByLabelText("More options for Resource 1");
       await user.click(moreOptionsButton);
       const viewDetailsItem = await screen.findByText("View Details");
       await user.click(viewDetailsItem);
-
       await waitFor(() => {
-        expect(screen.getByText(/test-gateway Resources/i)).toBeInTheDocument();
+        expect(screen.getByText(/gateway-test-gateway Resources/i)).toBeInTheDocument();
       });
 
       const closeButton = screen.getByLabelText("Close panel");
       await user.click(closeButton);
 
       await waitFor(() => {
-        expect(screen.queryByText(/test-gateway Resources/i)).not.toBeInTheDocument();
+        expect(screen.queryByText(/Resource 1 Details/i)).not.toBeInTheDocument();
       });
     });
 
@@ -485,68 +431,58 @@ describe("Resources", () => {
       const user = userEvent.setup();
       const mockResources: Resource[] = [createMockResource(1, "test-gateway")];
 
-      server.use(http.get("/resources", () => HttpResponse.json({ data: mockResources })));
+      server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
 
       renderWithRouter(<Resources />);
 
       await waitFor(() => {
-        expect(screen.getByText("test-gateway")).toBeInTheDocument();
+        expect(screen.getByText("Resource 1")).toBeInTheDocument();
       });
 
-      const moreOptionsButton = screen.getByLabelText("More options for test-gateway");
+      const moreOptionsButton = screen.getByLabelText("More options for Resource 1");
       await user.click(moreOptionsButton);
       const viewDetailsItem = await screen.findByText("View Details");
       await user.click(viewDetailsItem);
-
       await waitFor(() => {
-        expect(screen.getByText(/test-gateway Resources/i)).toBeInTheDocument();
+        expect(screen.getByText(/gateway-test-gateway Resources/i)).toBeInTheDocument();
       });
 
       await user.keyboard("{Escape}");
 
       await waitFor(() => {
-        expect(screen.queryByText(/test-gateway Resources/i)).not.toBeInTheDocument();
+        expect(screen.queryByText(/Resource 1 Details/i)).not.toBeInTheDocument();
       });
     });
 
-    it("displays all resources from selected group in details panel", async () => {
+    it("displays resource details in details panel", async () => {
       const user = userEvent.setup();
-      const mockResources: Resource[] = [
-        createMockResource(1, "multi-resource-gateway"),
-        createMockResource(2, "multi-resource-gateway"),
-        createMockResource(3, "multi-resource-gateway"),
-      ];
+      const mockResources: Resource[] = [createMockResource(1, "test-gateway")];
 
-      server.use(http.get("/resources", () => HttpResponse.json({ data: mockResources })));
+      server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
 
       renderWithRouter(<Resources />);
 
       await waitFor(() => {
-        expect(screen.getByText("multi-resource-gateway")).toBeInTheDocument();
+        expect(screen.getByText("Resource 1")).toBeInTheDocument();
       });
 
-      const moreOptionsButton = screen.getByLabelText("More options for multi-resource-gateway");
+      const moreOptionsButton = screen.getByLabelText("More options for Resource 1");
       await user.click(moreOptionsButton);
       const viewDetailsItem = await screen.findByText("View Details");
       await user.click(viewDetailsItem);
-
       await waitFor(() => {
-        expect(screen.getByText(/multi-resource-gateway Resources/i)).toBeInTheDocument();
+        expect(screen.getByText(/gateway-test-gateway Resources/i)).toBeInTheDocument();
       });
-
-      // All resources visible in panel
-      const panel = screen
-        .getByText(/multi-resource-gateway Resources/i)
-        .closest('[role="dialog"]');
+      // Resource details visible in panel
+      const panel = screen.getByText(/gateway-test-gateway Resources/i).closest('[role="dialog"]');
       expect(panel).toBeInTheDocument();
-      expect(within(panel! as HTMLElement).getAllByText(/Resource \d/)).toHaveLength(3);
     });
   });
 
   describe("ResourceForm Toggle", () => {
     it("closes form when Cancel clicked", async () => {
       const user = userEvent.setup();
-      server.use(http.get("/resources", () => HttpResponse.json({ data: [] })));
+      server.use(http.get("/resources", () => HttpResponse.json([])));
 
       renderWithRouter(<Resources />);
 

@@ -7,13 +7,14 @@ export interface Resource {
   uri: string;
   name: string;
   description?: string;
-  title?: string;
   mimeType?: string;
-  size?: number;
+  gatewayId?: string;
   uriTemplate?: string;
+  size: number;
   createdAt: string;
   updatedAt: string;
   enabled: boolean;
+  metrics?: Record<string, unknown>;
   tags: string[];
 
   // Audit fields
@@ -26,12 +27,25 @@ export interface Resource {
   modifiedVia?: string;
   modifiedUserAgent?: string;
 
-  // Content
+  // Import/federation metadata
+  importBatchId?: string;
+  federationSource?: string;
+  version: number;
+
+  // Ownership/visibility
+  teamId?: string;
+  team?: Record<string, unknown>;
+  ownerEmail?: string;
+  visibility: "public" | "private";
+
+  // Optional display metadata
+  title?: string;
+  annotations?: Record<string, unknown>;
+  _meta?: Record<string, unknown>;
+
+  // UI-specific optional fields
   textContent?: string;
   binaryContent?: string; // Base64 encoded
-
-  // Relationships
-  gatewayId?: string;
   gatewaySlug?: string;
   serverIds?: string[];
 }
@@ -41,22 +55,6 @@ export interface ResourceGroup {
   gatewayId?: string;
   resources: Resource[];
   isActive: boolean; // At least one resource is enabled
-}
-
-export interface ResourcesResponse {
-  data: Resource[];
-  pagination: {
-    page: number;
-    perPage: number;
-    total: number;
-    totalPages: number;
-  };
-  links?: {
-    first?: string;
-    prev?: string;
-    next?: string;
-    last?: string;
-  };
 }
 
 export interface ResourceCreateRequest {

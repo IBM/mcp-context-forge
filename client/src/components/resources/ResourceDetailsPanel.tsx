@@ -74,7 +74,7 @@ export function ResourceDetailsPanel({
                 <div>
                   <span className="font-medium text-neutral-700 dark:text-neutral-300">URI:</span>
                   <code className="ml-2 rounded bg-neutral-100 px-1.5 py-0.5 text-xs dark:bg-neutral-800">
-                    {resource.uri}
+                    {resource.uriTemplate || resource.uri}
                   </code>
                 </div>
 
