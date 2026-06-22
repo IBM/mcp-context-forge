@@ -71,6 +71,10 @@ const mockCreateVirtualServer = vi.mocked(createVirtualServer);
 
 describe("CreateServer", () => {
   beforeEach(() => {
+    mockForm = false;
+    capturedProps = null;
+    mockSourceSelection = false;
+    capturedSourceSelectionProps = null;
     mockNavigate.mockClear();
     mockCreateVirtualServer.mockReset();
     mockCreateVirtualServer.mockResolvedValue({

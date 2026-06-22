@@ -87,7 +87,7 @@ describe("Gateways Utils", () => {
 
       expect(() => copyToClipboard("test")).not.toThrow();
 
-      // @ts-expect-error - invalid url - restoring clipboard
+      // @ts-expect-error - restoring clipboard
       navigator.clipboard = originalClipboard;
     });
   });
