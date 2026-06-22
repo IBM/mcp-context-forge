@@ -241,7 +241,7 @@ Within a wave, todos can run in parallel unless flagged in the per-todo header.
 
 ### Wave 1 — Foundation (control-plane API + reusable helpers, NO HTTP yet)
 
-- [ ] 1. Pydantic models at `mcpgateway/schemas_a2a_native.py` (top-level file, NOT under `schemas/`)
+- [x] 1. Pydantic models at `mcpgateway/schemas_a2a_native.py` (top-level file, NOT under `schemas/`)
   What to do: Create `mcpgateway/schemas_a2a_native.py` (verified: `mcpgateway/schemas.py` is a file, NOT a package — placing models under `schemas/` would collide per Momus #1 / Oracle #1). Pydantic v2 models `AgentCard`, `AgentProvider`, `AgentCapabilities`, `AgentSkill`, `SupportedInterface`, `SecurityRequirement`. `Field(alias="protocolBinding")` for snake→camel. `protocolVersion` on `SupportedInterface`, NEVER on `AgentCard` (D9). `ConfigDict(populate_by_name=True, extra="forbid")`. Required fields per F8. Also create `tests/unit/mcpgateway/test_a2a_native_schemas.py` with a LOCAL fixture (not the undefined `minimal_valid_card` from the original plan — Momus #2 fix).
   Must NOT do: do NOT use path `mcpgateway/schemas/a2a_native.py`. Do NOT add `transportProtocol` alias. Do NOT use `extra="allow"`. Do NOT put `protocolVersion` on AgentCard root.
   Parallelization: Wave 1 | Blocked by: none | Blocks: T2, T11
@@ -250,7 +250,7 @@ Within a wave, todos can run in parallel unless flagged in the per-todo header.
   QA: happy=local fixture parses to AgentCard. failure=dict with `transportProtocol` raises ValidationError. Evidence: .omo/evidence/task-1-a2a-native-passthrough.txt
   Commit: Y | feat(a2a): add A2A 1.0.0 Pydantic models with strict field-name enforcement
 
-- [ ] 2. Card synthesizer `synthesize_agent_card(...)` — FRESH from row (D12) + v-server membership enforcement (Oracle re-review #2)
+- [x] 2. Card synthesizer `synthesize_agent_card(...)` — FRESH from row (D12) + v-server membership enforcement (Oracle re-review #2)
   What to do: Add `synthesize_agent_card(db, agent_name, public_base_url, server_id=None, user_email=None, token_teams=None) -> Optional[AgentCard]` in `mcpgateway/services/a2a_service.py`. Resolve agent. If `server_id` is provided AND `check_server_a2a_membership(db, server_id, agent.id)` returns False → **return None** (forged-card prevention). Then check visibility via `_check_agent_access(db, agent, user_email, token_teams)`; return None on deny. Then build the v1 `AgentCard` (T1 model) DIRECTLY from `A2AAgent` row fields. ONE `SupportedInterface` entry: `url = f"{public_base_url}/servers/{server_id}/a2a/{agent_name}"` or `f"{public_base_url}/a2a/{agent_name}"`, `protocolBinding="JSONRPC"`, `protocolVersion=agent.protocol_version` (NOT hardcoded). Caller resolves `public_base_url = getattr(settings, "a2a_public_base_url", None) or str(settings.app_domain).rstrip('/')` (Oracle re-review #4 — defensive getattr because `a2a_public_base_url` is a SOFT addition, not a hard new config field).
   Must NOT do: do NOT call `get_agent_card()` and pass output through (Oracle #16 — wire shape mismatch). Do NOT hardcode `protocolVersion="1.0"`. Do NOT serve a card when `server_id` is provided but membership fails (Oracle re-review #2 — security hole). Do NOT raise inside the helper — return None on every deny path.
   Parallelization: Wave 1 | Blocked by: T1 | Blocks: T11, T17
@@ -259,7 +259,7 @@ Within a wave, todos can run in parallel unless flagged in the per-todo header.
   QA: happy=public agent + `token_teams=[]` → card. failure 1=team-only agent + `token_teams=[]` → None. failure 2=foreign agent at `/servers/{X}/a2a/foreign` → None. Evidence: .omo/evidence/task-2-a2a-native-passthrough.txt
   Commit: Y | feat(a2a): synthesize v1 AgentCard with visibility + v-server membership
 
-- [ ] 3. Agent resolution + membership — with visibility derivation
+- [x] 3. Agent resolution + membership — with visibility derivation
   What to do: Add `resolve_agent_for_dispatch(db, agent_name, server_id=None, user_email=None, token_teams=None) -> A2AAgent` and `check_server_a2a_membership(db, server_id, agent_id) -> bool` to `mcpgateway/services/a2a_service.py`. Case-insensitive name match. AFTER finding agent, call `_check_agent_access(db, agent, user_email, token_teams)`; on deny raise `A2AAgentNotFoundError` (Oracle #3 — visibility miss looks like not-found). If `server_id` provided AND membership check fails, raise `AgentNotInServerError`. Membership: direct join query on `server_a2a_association` (NOT relationship traversal).
   Must NOT do: do NOT skip visibility. Do NOT raise HTTPException. Do NOT use `Server.a2a_agents` ORM traversal.
   Parallelization: Wave 1 | Blocked by: none | Blocks: T11, T12, T15
@@ -268,7 +268,7 @@ Within a wave, todos can run in parallel unless flagged in the per-todo header.
   QA: happy=admin bypass returns agent. failure=team-only agent + `token_teams=[]` → A2AAgentNotFoundError. Evidence: .omo/evidence/task-3-a2a-native-passthrough.txt
   Commit: Y | feat(a2a): agent resolution + membership with explicit visibility
 
-- [ ] 4. Unary dispatch helper `dispatch_a2a_jsonrpc_unary(...)` (signature aligned with T12 — CRITICAL v3 #2)
+- [x] 4. Unary dispatch helper `dispatch_a2a_jsonrpc_unary(...)` (signature aligned with T12 — CRITICAL v3 #2)
   What to do: Add `async def dispatch_a2a_jsonrpc_unary(db, agent, body, *, bearer_token=None, hop_count=0, request_headers=None) -> dict | tuple[int, str, Any]` to `mcpgateway/services/a2a_service.py`. **Signature matches the exact kwargs T12 passes** (Oracle v3 #2 fix). Validate envelope (`jsonrpc=="2.0"`, `method` non-empty str, `params` dict-or-null, `id` optional). Map legacy v0.3 aliases per F8 EXCLUDING `tasks/list` (Oracle #22). Calls existing `a2a_service.invoke_agent(...)` (verified at `main.py:5125-5137`) passing through `bearer_token`, `hop_count`, `content_type=request_headers.get("content-type")`, `request_headers` to preserve per-agent auth + UAID federation + plugin context (D5). **UAID-first**: if `agent.uaid` is set AND format suggests cross-gateway, the existing `invoke_agent` already routes via federation path. Return either the successful dict OR a `(code, message, data)` tuple for error cases that T12 maps to `make_jsonrpc_error`.
   Must NOT do: do NOT include `tasks/list` in alias map. Do NOT handle `GetExtendedAgentCard` here (T12 route-layer branch). Do NOT raise HTTPException. Do NOT touch FastAPI objects. Do NOT drop the `hop_count` / `request_headers` kwargs — they are part of the verified `/invoke` contract.
   Parallelization: Wave 1 | Blocked by: none | Blocks: T12
@@ -277,7 +277,7 @@ Within a wave, todos can run in parallel unless flagged in the per-todo header.
   QA: happy=`SendMessage` → dict. failure 1=`tasks/list` reaches upstream unchanged. failure 2=missing `hop_count` kwarg → TypeError caught at unit-test level. Evidence: .omo/evidence/task-4-a2a-native-passthrough.txt
   Commit: Y | feat(a2a): unary JSON-RPC dispatch (kwargs aligned with verified /invoke)
 
-- [ ] 5. Streaming dispatch `dispatch_a2a_jsonrpc_streaming(...)` — REAL SSE parser + aligned signature (v3 CRITICAL #5 + #2)
+- [x] 5. Streaming dispatch `dispatch_a2a_jsonrpc_streaming(...)` — REAL SSE parser + aligned signature (v3 CRITICAL #5 + #2)
   What to do: Add `async def dispatch_a2a_jsonrpc_streaming(db, agent, body, *, bearer_token=None, hop_count=0, request_headers=None) -> AsyncIterator[dict]` to `mcpgateway/services/a2a_service.py`. **Signature matches T12's exact kwargs** (Oracle v3 #2 fix — paired with T4). Use `async with client.stream("POST", upstream_url, headers={"Accept": "text/event-stream", "A2A-Version": agent.protocol_version, **(request_headers or {}), "Authorization": f"Bearer {bearer_token}" if bearer_token else None})` (build headers dict carefully — drop None values). **Iterate as a real SSE parser, NOT `aiter_lines() + json.loads`** (Oracle v2 #5): maintain a `data_buffer: list[str] = []`; for each line from `response.aiter_lines()`: if line starts with `data: ` → append `line[6:]` to buffer; if line is empty (blank line, SSE event delimiter) AND buffer is non-empty → `payload = "\n".join(data_buffer); buffer.clear(); try: yield json.loads(payload) except json.JSONDecodeError: yield make_jsonrpc_error(INVALID_AGENT_RESPONSE, "Upstream sent malformed SSE payload", body.get("id"))`. Ignore `id:`, `event:`, `retry:` SSE field lines. On generator cancellation (downstream consumer disconnects), the `async with client.stream(...)` context exits and closes the upstream connection. On upstream HTTP error before stream starts → yield ONE `make_jsonrpc_error(...)` then exit.
   Must NOT do: do NOT call T4 for streaming methods. Do NOT use `client.post(...).json()` — buffers (Oracle #10). Do NOT json.loads each line — A2A SSE framing is `data: {...}\n\n` not line-delimited JSON (Oracle re-review #5). Do NOT prepend `data:` in the yielded dict — caller (T14) re-wraps for the downstream SSE response.
   Parallelization: Wave 1 | Blocked by: none | Blocks: T14
@@ -286,7 +286,7 @@ Within a wave, todos can run in parallel unless flagged in the per-todo header.
   QA: happy=mock SSE → 3 dicts. failure=`data: not-json\n\n` → INVALID_AGENT_RESPONSE chunk. Evidence: .omo/evidence/task-5-a2a-native-passthrough.txt
   Commit: Y | feat(a2a): streaming JSON-RPC dispatch with real SSE parser
 
-- [ ] 6. A2A error envelope helpers + trigger table (Oracle re-review #14)
+- [x] 6. A2A error envelope helpers + trigger table (Oracle re-review #14)
   What to do: Add to `mcpgateway/services/a2a_service.py` constants `PARSE_ERROR=-32700`, `INVALID_REQUEST=-32600`, `METHOD_NOT_FOUND=-32601`, `INVALID_PARAMS=-32602`, `INTERNAL_ERROR=-32603`, plus A2A-specific `TASK_NOT_FOUND=-32001`, `TASK_NOT_CANCELABLE=-32002`, `PUSH_NOT_SUPPORTED=-32003`, `UNSUPPORTED_OPERATION=-32004`, `CONTENT_TYPE_NOT_SUPPORTED=-32005`, `INVALID_AGENT_RESPONSE=-32006`, `AUTHENTICATED_EXTENDED_CARD_NOT_CONFIGURED=-32007`, `MULTIPLE_PUSH_NOT_SUPPORTED=-32008`, `VERSION_NOT_SUPPORTED=-32009`. Add `make_jsonrpc_error(code, message, request_id, data=None) -> dict` returning `{"jsonrpc":"2.0","error":{"code":code,"message":message,"data":data},"id":request_id}` with `data` omitted when None.
 
   Also produce `.omo/evidence/task-6-error-mapping-table.md` (committed as part of this todo) with the mapping table:
@@ -317,7 +317,7 @@ Within a wave, todos can run in parallel unless flagged in the per-todo header.
   QA: happy=`make_jsonrpc_error(VERSION_NOT_SUPPORTED,"...",1)` → exact wire dict with `-32009`. failure=missing positional → TypeError. Evidence: .omo/evidence/task-6-a2a-native-passthrough.txt
   Commit: Y | feat(a2a): JSON-RPC error helpers + error-mapping trigger table
 
-- [ ] 7. `validate_a2a_version` — method-aware (legacy aliases tolerate missing header) (v4 MEDIUM #9)
+- [x] 7. `validate_a2a_version` — method-aware (legacy aliases tolerate missing header) (v4 MEDIUM #9)
   What to do: Add `validate_a2a_version(header_value: Optional[str], method: Optional[str] = None) -> str` to `mcpgateway/services/a2a_service.py`. Behavior:
   - If `header_value` is `"1.0"` or `"1.0.0"` → return it verbatim (preserve what client sent).
   - If `header_value` is missing/empty/None AND `method` is one of the legacy v0.3 aliases (`message/send`, `message/stream`, `tasks/get`, `tasks/cancel`, `tasks/resubscribe`, `tasks/pushNotificationConfig/*`, `agent/getAuthenticatedExtendedCard`) → return `"1.0"` AND log `logger.info("Accepting legacy v0.3 client without A2A-Version header for method %s; v0.3 alias transition support", method)`. This preserves transitional v0.3 client compatibility per Q12 / Oracle v3 #9.
@@ -341,7 +341,7 @@ Part B of T28 (server creation with `associated_a2a_agents=[agent_id, ...]` + `t
 
 Without Part A executing first, Wave 2 gap-closure tests could only exercise the `reference` target — P5 compliance-test-first principle would be unrealized for the gateway surface.
 
-- [ ] 8. C4 audit: enumerate existing compliance assertions and map to A2A 1.0.0 protocol catalog
+- [x] 8. C4 audit: enumerate existing compliance assertions and map to A2A 1.0.0 protocol catalog
   What to do: Read every test in `tests/live_gateway/a2a_compliance/` and produce `.omo/evidence/c4-audit-checklist.md` with sections: (1) Card discovery — every required field name + URL-rewrite assertion; (2) JSON-RPC envelope validation; (3) Method catalog — every method from F8 (`SendMessage`, `SendStreamingMessage`, `GetTask`, `ListTasks`, `CancelTask`, `SubscribeToTask`, push-config CRUD, `GetExtendedAgentCard`); (4) Error codes — standard `-32700..-32603` AND A2A-specific `-32001..-32009`; (5) SSE shape — `text/event-stream` MIME, `data:` chunk shape, terminal state handling; (6) `A2A-Version` header — inbound validation, outbound set; (7) v0.3 alias acceptance (EXCLUDING `tasks/list`); (8) RBAC / visibility denial paths; (9) v-server scoping behavior. For each row: which test file/function asserts it, OR "GAP" with severity (BLOCK vs nice-to-have).
   Must NOT do: do NOT write new tests in this todo — only document gaps. Do NOT extend matrix / fixture / target-class CONSTRUCTOR shapes (A9 still binds).
   Parallelization: Wave 2 | Blocked by: none | Blocks: T9, T10
@@ -350,7 +350,7 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
   QA: happy=checklist is comprehensive (every F8 method appears, every error code appears). failure=any spec requirement missing from the doc. Evidence: .omo/evidence/task-8-a2a-native-passthrough.md (the checklist)
   Commit: Y | docs(a2a): compliance coverage audit checklist for A2A-1.0.0 surface
 
-- [ ] 9. Gap-closure compliance tests — card discovery + field-name assertions
+- [x] 9. Gap-closure compliance tests — card discovery + field-name assertions
   What to do: Implement every BLOCK-severity GAP from T8's audit section (1) Card discovery. Per gap: add or extend assertion in `tests/live_gateway/a2a_compliance/test_*.py` (or new file `tests/live_gateway/a2a_compliance/test_card_discovery_extra.py` if no existing home fits). Assertions to cover: `supportedInterfaces[0].protocolBinding == "JSONRPC"` (NOT `transportProtocol`), `protocolVersion` is per-interface (NEVER top-level), `supportedInterfaces[0].url` rewritten to gateway-public URL (matches `{public_base}/a2a/{name}`), required fields present per F8, `extra="forbid"` on the model — unknown card fields rejected at parse time.
   Must NOT do: do NOT change matrix/fixture/target constructors. Do NOT add NICE-severity gaps in this todo (defer to follow-up). Do NOT add assertions for fields the spec marks optional unless the GAP-BLOCK list says so.
   Parallelization: Wave 2 | Blocked by: T8 | Blocks: T11
@@ -359,7 +359,7 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
   QA: happy=new assertions present and run. failure=spec field missed → re-open T8 checklist. Evidence: .omo/evidence/task-9-a2a-native-passthrough.txt
   Commit: Y | test(a2a-compliance): add gap-closure card-discovery assertions
 
-- [ ] 10. Gap-closure compliance tests — JSON-RPC methods + error codes + SSE + A2A-Version + RBAC denial
+- [x] 10. Gap-closure compliance tests — JSON-RPC methods + error codes + SSE + A2A-Version + RBAC denial
   What to do: Implement every BLOCK-severity GAP from T8's sections 2-9. Specifically: assertions for each method in the catalog (Send/Stream/Get/List/Cancel/Subscribe/push-config-CRUD/GetExtendedAgentCard) returning the correct response envelope shape; assertions for each error code (standard `-32700..-32603` + A2A `-32001..-32009`) being emitted under the right trigger condition; SSE assertion that each `data:` chunk parses as complete JSON-RPC response; `A2A-Version` inbound rejection of unsupported (HTTP 200 + `-32009`); v0.3 alias acceptance for `message/send` → `SendMessage` etc. (EXCLUDING `tasks/list` per Oracle #22); RBAC denial paths — auth missing → 401, wrong team token → 404 (visibility deny looks like not-found per D11/Oracle #3), wrong scope → 403; v-server scoping — agent-not-in-server returns 404 at path (D14).
   Must NOT do: do NOT include `tasks/list` in alias-test expectations. Do NOT change matrix. Do NOT touch reference-target tests beyond what gap closure requires.
   Parallelization: Wave 2 | Blocked by: T8 | Blocks: T12, T14
@@ -370,7 +370,7 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
 
 ### Wave 3 — Per-agent data plane (`/a2a/{name}/*` routes) — implementation flips Wave 2 assertions GREEN
 
-- [ ] 11. Per-agent card route `GET /a2a/{agent_name}/.well-known/agent-card.json` (public; D11)
+- [x] 11. Per-agent card route `GET /a2a/{agent_name}/.well-known/agent-card.json` (public; D11)
   What to do: Add to `mcpgateway/main.py` under `a2a_router`. Signature: `async def get_a2a_agent_card(agent_name: str, request: Request, db: Session = Depends(get_db)) -> Response`. Resolve `public_base = getattr(settings, "a2a_public_base_url", None) or str(settings.app_domain).rstrip('/')` (Oracle re-review #4 — defensive getattr because `a2a_public_base_url` is a SOFT addition, not a hard new config field that this plan adds). Call `synthesize_agent_card(db, agent_name, public_base, server_id=request.scope.get("a2a_server_id"), user_email=None, token_teams=[])` (PUBLIC path passes `token_teams=[]` per D11; v-server membership enforced inside T2). None return → HTTP 404 (covers: unknown agent, visibility deny, v-server membership miss — all collapse to one transport-level outcome per D14). AgentCard return → `Response(content=card.model_dump_json(by_alias=True, exclude_none=True), media_type="application/json")`. NO `@require_permission`. Same handler serves v-server path post-middleware-rewrite (W4).
   Must NOT do: do NOT use `response_model=AgentCard` (FastAPI serializes by python name, not alias). Do NOT pass `token_teams=None` (admin bypass leaks). Do NOT assume `settings.a2a_public_base_url` is defined (Oracle re-review #4 — use getattr).
   Parallelization: Wave 3 | Blocked by: T1, T2, T3, T9 | Blocks: T13, T15
@@ -379,7 +379,7 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
   QA: happy=public agent → 200 + valid card. failure 1=unknown → 404. failure 2=team-only for anonymous → 404. failure 3=foreign agent at `/servers/{X}/a2a/foreign-agent/.well-known/agent-card.json` → 404 (membership). Evidence: .omo/evidence/task-11-a2a-native-passthrough.txt
   Commit: Y | feat(a2a): public well-known A2A card endpoint with v-server safety
 
-- [ ] 12. Per-agent dispatch route `POST /a2a/{agent_name}` — method-aware RBAC + verified `/invoke` plumbing (v3 REGRESSION CRITICAL #1 + HIGH #3 + #8)
+- [x] 12. Per-agent dispatch route `POST /a2a/{agent_name}` — method-aware RBAC + verified `/invoke` plumbing (v3 REGRESSION CRITICAL #1 + HIGH #3 + #8)
   What to do: Route handler in `mcpgateway/main.py` under `a2a_router`. **Signature: `async def dispatch_a2a_agent(agent_name: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions), permission_service: PermissionService = Depends(get_permission_service)) -> Response`. NO `@require_permission(...)` decorator on the route** (Oracle v2 #1 — body-dependent RBAC requires per-method check). **NO `Body(...)` parameter** (D17 — enables `-32700 ParseError`).
 
   Handler flow (strict order — matches verified `/invoke` at `main.py:5040-5137`):
@@ -461,7 +461,7 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
   QA: (a) malformed JSON → HTTP 200 + `-32700`; (b) `body=[]` → HTTP 200 + `-32600`; (c) missing agent → HTTP 404; (d) wrong-team token (`token_teams=[]`) for team-only agent → HTTP 404; (e) `A2A-Version: 2.0` → HTTP 200 + `-32009`; (f) `GetExtendedAgentCard` with `a2a.read` only (NO `a2a.invoke`) → 200 + synthesized card (proves route-level decorator is gone); (g) `SendMessage` with `a2a.invoke` only → 200 + result; (h) `SendMessage` with `a2a.read` only → 403; (i) public-only token (`token_teams=[]`) for ADMIN user calling private agent → 403 (proves admin bypass suppression at lines 126-130 fires). Evidence: .omo/evidence/task-12-a2a-native-passthrough.txt
   Commit: Y | feat(a2a): A2A 1.0.0 dispatch with method-aware RBAC + verified plumbing
 
-- [ ] 13. Route ordering regression test (Oracle #15)
+- [x] 13. Route ordering regression test (Oracle #15)
   What to do: pytest `tests/integration/test_a2a_route_ordering.py`. Assert: (a) `POST /a2a/invoke` still resolves to LEGACY `/invoke` handler (NOT captured by `/{agent_name}`); (b) static suffix routes register BEFORE catch-all `/{agent_name}` in FastAPI route table; (c) `POST /a2a/foo/invoke` does NOT match the catch-all `POST /{agent_name}`. Use `app.routes` introspection. If PR #5313 lands later, extend to assert `/a2a/foo/jsonrpc` also keeps its semantics.
   Must NOT do: do NOT mutate any route registration.
   Parallelization: Wave 3 | Blocked by: T11, T12 | Blocks: T15
@@ -470,7 +470,7 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
   QA: happy=`POST /a2a/invoke` hits legacy. failure=catch-all wins → regression. Evidence: .omo/evidence/task-13-a2a-native-passthrough.txt
   Commit: Y | test(a2a): route-ordering regression for catch-all dispatch
 
-- [ ] 14. SSE response wiring for streaming methods (D10/D15) — single re-wrap, no double-encoding
+- [x] 14. SSE response wiring for streaming methods (D10/D15) — single re-wrap, no double-encoding
   What to do: In T12 handler when streaming method detected: `from fastapi.responses import StreamingResponse; gen = dispatch_a2a_jsonrpc_streaming(db, agent, body, bearer_token=bearer_token, hop_count=hop_count, request_headers=request_headers); return StreamingResponse(_sse_format(gen), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})` — `request_headers` matches T5's verified kwarg name (Oracle v4 #4 regression fix). **Helper `_sse_format(gen) -> AsyncIterator[str]`: for each dict yielded by T5, emit EXACTLY `f"data: {json.dumps(chunk, separators=(',', ':'))}\n\n"`** — one SSE event per parsed upstream event (Oracle re-review #5 pairing fix: T5 yields parsed dicts, T14 re-wraps as SSE for downstream; the upstream `data:` framing has already been STRIPPED by T5's SSE parser, so T14's re-wrap does NOT double-encode). Use `separators=(',', ':')` compact form to minimize bytes on the wire.
   Must NOT do: do NOT use T4 for streaming methods. Do NOT batch chunks into one envelope. Do NOT add SSE retry headers. Do NOT emit a downstream `data:` prefix if the upstream chunk text already had one — T5's parser has stripped the `data:` framing; the dict yielded is the PARSED JSON object, not the SSE-framed text.
   Parallelization: Wave 3 | Blocked by: T5, T10 | Blocks: T15
@@ -479,7 +479,7 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
   QA: happy=stream emits Task → status_update → final → close with N upstream events == N downstream SSE events. failure=double-encoded `data:` inside body or fewer/more downstream events than upstream → fix T5 or T14. Evidence: .omo/evidence/task-14-a2a-native-passthrough.txt
   Commit: Y | feat(a2a): SSE streaming response wiring (single re-wrap, spec-correct framing)
 
-- [ ] 15. Proxy compliance smoke: verify T9+T10 assertions now GREEN
+- [x] 15. Proxy compliance smoke: verify T9+T10 assertions now GREEN
   What to do: After T11+T12+T13+T14, run `pytest tests/live_gateway/a2a_compliance/ -k 'A2AGatewayProxyTarget' -v` against running gateway with echo agent (docker-compose ports 9100/9101). The gap-closure assertions written in T9+T10 should now PASS. NOTE: harness target class `_open_client` still raises NotImplementedError (T29 fixes that); for this todo, use a temporary smoke script `scripts/qa/a2a_proxy_smoke.py` that opens `ClientFactory(config=...).create_from_url(f"{gw}/a2a/echo")` directly and exercises the gap-closure assertions. Delete the smoke script in T30 once harness is wired.
   Must NOT do: do NOT update harness target classes yet (Wave 7). Do NOT skip on failure — failure means C2 impl bug.
   Parallelization: Wave 3 | Blocked by: T11, T12, T13, T14 | Blocks: T16, T29
@@ -490,7 +490,7 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
 
 ### Wave 4 — Virtual-server-scoped data plane (`/servers/{id}/a2a/{name}/*`)
 
-- [ ] 16. `A2APathRewriteMiddleware` — regex matches base AND suffix forms (Oracle #14 fix)
+- [x] 16. `A2APathRewriteMiddleware` — regex matches base AND suffix forms (Oracle #14 fix)
   What to do: New `mcpgateway/middleware/a2a_path_rewrite.py`. Mirror `MCPPathRewriteMiddleware` shape from `main.py:3000-3041`. Regex: `^/servers/([^/]+)/a2a/([^/]+)(/.*)?$` — captures `server_id`, `agent_name`, optional `suffix`. On match: rewrite `request.scope["path"]` to `/a2a/{agent_name}{suffix or ""}`, inject `request.scope["a2a_server_id"] = server_id`. Preserve `request.scope["modified_path"]` for downstream. Wire into middleware chain at `main.py:3197-3220` mirroring MCP middleware position.
   Must NOT do: do NOT enforce membership in middleware (handler's job per T3+T11+T12 split). Do NOT match outside `/servers/{id}/a2a/...`. Do NOT use a regex that requires a trailing `/*` — Oracle #14 — the BASE dispatch URL `/servers/X/a2a/Y` would otherwise be missed.
   Parallelization: Wave 4 | Blocked by: T3 | Blocks: T17, T18
@@ -499,7 +499,7 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
   QA: happy=both base + suffix URL forms route. failure=base URL misses → regex bug. Evidence: .omo/evidence/task-16-a2a-native-passthrough.txt
   Commit: Y | feat(a2a): v-server path rewrite middleware (base + suffix forms)
 
-- [ ] 17. V-server card route (same handler as T11 via middleware-set scope)
+- [x] 17. V-server card route (same handler as T11 via middleware-set scope)
   What to do: T11 handler ALREADY reads `request.scope.get("a2a_server_id")` and passes to `synthesize_agent_card(..., server_id=...)`. So this todo is a verification + integration test, not new code. Add `tests/integration/test_a2a_native_routes.py::test_vserver_card` asserting (a) card URL contains `/servers/{id}/` prefix, (b) membership-miss returns HTTP 404, (c) anonymous request to team-only agent in server returns 404 (visibility hides).
   Must NOT do: do NOT add a duplicate route decorator.
   Parallelization: Wave 4 | Blocked by: T11, T16 | Blocks: T19
@@ -508,7 +508,7 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
   QA: happy=v-server card returns with prefixed URL. failure=URL missing prefix → T2 synthesize ignored server_id. Evidence: .omo/evidence/task-17-a2a-native-passthrough.txt
   Commit: Y | test(a2a): v-server card endpoint integration
 
-- [ ] 18. V-server dispatch route (same handler as T12 via middleware-set scope)
+- [x] 18. V-server dispatch route (same handler as T12 via middleware-set scope)
   What to do: T12 handler ALREADY reads server_id from scope. Verification + integration test. Add `tests/integration/test_a2a_native_routes.py::test_vserver_dispatch` covering (a) happy SendMessage via v-server URL, (b) agent-not-in-server returns HTTP 404 (D14 — path resource doesn't exist), (c) streaming `SendStreamingMessage` via v-server URL still SSEs, (d) GetExtendedAgentCard via v-server URL respects `a2a.read`.
   Must NOT do: do NOT introduce a separate v-server handler.
   Parallelization: Wave 4 | Blocked by: T12, T14, T16 | Blocks: T19
@@ -517,7 +517,7 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
   QA: happy=v-server dispatch round-trips through both URL families identically. failure=membership-miss → wrong code → D14 not enforced. Evidence: .omo/evidence/task-18-a2a-native-passthrough.txt
   Commit: Y | test(a2a): v-server dispatch endpoint integration
 
-- [ ] 19. V-server composition integration test + compliance smoke (IDs not names — Momus v3 #3)
+- [x] 19. V-server composition integration test + compliance smoke (IDs not names — Momus v3 #3)
   What to do: pytest `tests/integration/test_a2a_vserver_composition.py`. Fixture flow (VERIFIED against `server_service.py:210-241` which queries `at.model.id.in_(ids)`):
   ```python
   # register two echo agents, capture their IDs
@@ -539,7 +539,7 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
 
 ### Wave 5 — Server CRUD service + Admin UI verify/patch (NEW — addresses user goals #1+#2)
 
-- [ ] 20. Verify/patch `ServerService` populates `server_a2a_association` from `associated_a2a_agents` (F10)
+- [x] 20. Verify/patch `ServerService` populates `server_a2a_association` from `associated_a2a_agents` (F10)
   What to do: Read `mcpgateway/services/server_service.py::create_server` and `update_server`. Trace whether `schemas.ServerCreate.associated_a2a_agents` (F10 verified: schemas.py:4264 declares it) actually propagates to rows in `server_a2a_association`. If wired: write regression test `tests/unit/mcpgateway/services/test_server_service.py::test_a2a_association_roundtrip` covering create → DB → read shows the binding. If NOT wired: add the missing service-layer code (mirror the `associated_tools` pattern that DOES work) + write the test.
   Must NOT do: do NOT change the schema (F10 confirms it's already correct). Do NOT skip the test even if wired — regression coverage is the deliverable.
   Parallelization: Wave 5 | Blocked by: none | Blocks: T22
@@ -548,7 +548,7 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
   QA: happy=create server with `associated_a2a_agents=["a1","a2"]` → both rows in DB. failure=count mismatch → wiring missing/broken. Evidence: .omo/evidence/task-20-a2a-native-passthrough.txt
   Commit: Y | feat(servers)/test(servers): verify/wire A2A agent association on server CRUD
 
-- [ ] 21. Admin UI: server-form A2A selector + JS submit-handler wiring + card-URL affordance (Oracle re-review #10)
+- [x] 21. Admin UI: server-form A2A selector + JS submit-handler wiring + card-URL affordance (Oracle re-review #10)
   What to do: **Full UI binding flow**, NOT just template inclusion (Oracle re-review #10: rendering the selector ≠ actually submitting selected agents). Three parts:
 
   (a) **Template**: in `mcpgateway/templates/admin.html`, locate server-create and server-edit form sections. If `agents_selector_items.html` (F11 confirmed exists) is NOT already `{% include %}`-d for A2A binding, add it mirroring the existing `associatedTools` / `associatedResources` selector pattern. Match the input `name="associatedA2aAgents"` (camelCase to match the existing convention for other selectors in the form).
@@ -580,7 +580,7 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
   QA: happy=full UI flow round-trips A2A agent IDs. failure=selector renders but server has empty `associated_a2a_agents` after save → JS submit handler missing or template input name mismatch. Evidence: .omo/evidence/task-21-a2a-native-passthrough.txt
   Commit: Y | feat(admin-ui): server-form A2A selector + JS submit handler + card-URL affordance
 
-- [ ] 22. Integration test: server-create-with-A2A-agents end-to-end through admin API
+- [x] 22. Integration test: server-create-with-A2A-agents end-to-end through admin API
   What to do: pytest `tests/integration/test_admin_server_a2a_flow.py`: POST to `/admin/servers` (or equivalent admin endpoint) with body containing `associated_a2a_agents=["agent-1", "agent-2"]`; assert HTTP 201; assert `GET /servers/{id}` returns both in `associated_a2a_agents`; assert `GET /servers/{id}/a2a/agent-1/.well-known/agent-card.json` returns the v-server-scoped card; assert `GET /servers/{id}/a2a/foreign-agent/.well-known/agent-card.json` returns 404 (foreign agent NOT in server).
   Must NOT do: do NOT mock the admin service.
   Parallelization: Wave 5 | Blocked by: T19, T20, T21 | Blocks: T28
@@ -591,7 +591,7 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
 
 ### Wave 6 — Rust A2A runtime deprecation (depends on Wave 3: Python target must exist)
 
-- [ ] 23. Startup deprecation warning when `EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED=true` (D16 / Oracle #19)
+- [x] 23. Startup deprecation warning when `EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED=true` (D16 / Oracle #19)
   What to do: In `mcpgateway/main.py` startup hook (or wherever startup-time settings are validated), if `settings.experimental_rust_a2a_runtime_enabled is True`, emit `logger.warning("EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED=true is DEPRECATED. The Rust A2A runtime is removed in the next release; Python dispatcher is the only path. This flag is now ignored.")`. Add pytest deprecation-warning test that sets the env var and asserts the warning is logged at startup.
   Must NOT do: do NOT delete the flag yet (T26). Do NOT suppress the warning behind a separate flag.
   Parallelization: Wave 6 | Blocked by: T15 | Blocks: T24, T25, T26
@@ -600,7 +600,7 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
   QA: happy=flag set → warning. failure=warning missing → fix logger call. Evidence: .omo/evidence/task-23-a2a-native-passthrough.txt
   Commit: Y | refactor(a2a): deprecation warning for experimental Rust A2A runtime flag
 
-- [ ] 24. Remove `crates/a2a_runtime/` from Cargo workspace `default-members` (F13 / D16) — using verified crate name
+- [x] 24. Remove `crates/a2a_runtime/` from Cargo workspace `default-members` (F13 / D16) — using verified crate name
   What to do: Edit root `Cargo.toml`. In `default-members`, replace the `crates/*` glob with an explicit list that EXCLUDES `crates/a2a_runtime`. Keep `crates/a2a_runtime` in `members` for the transition release (Scope OUT: removing from members is a follow-up release). Add a comment in `Cargo.toml` explaining the policy and pointing at this todo: `# default-members intentionally excludes crates/a2a_runtime (contextforge_a2a_runtime) which is deprecated. See plans/a2a-native-passthrough.md T24.` (Oracle re-review #17 — comment requirement). Note the actual crate package name is `contextforge_a2a_runtime` (verified from `crates/a2a_runtime/Cargo.toml:package.name`).
   Must NOT do: do NOT remove from `members`. Do NOT use the wrong package name in verification commands (Momus #3 — `a2a_runtime` is the DIRECTORY; `contextforge_a2a_runtime` is the package NAME).
   Parallelization: Wave 6 | Blocked by: T23 | Blocks: T26
@@ -612,7 +612,7 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
   QA: happy=default build skips contextforge_a2a_runtime. failure=`cargo check --workspace` fails → fix Cargo.toml syntax; failure=`cargo build` still compiles contextforge_a2a_runtime → check default-members glob/list was actually replaced. Evidence: .omo/evidence/task-24-a2a-native-passthrough.txt
   Commit: Y | refactor(a2a): exclude contextforge_a2a_runtime from Cargo default-members
 
-- [ ] 25. Remove `rust_a2a_runtime` branches in `tool_service.py` + `a2a_service.py`
+- [x] 25. Remove `rust_a2a_runtime` branches in `tool_service.py` + `a2a_service.py`
   What to do: Per F7 caller inventory: in `mcpgateway/services/tool_service.py` delete import at line 89, remove `if settings.experimental_rust_a2a_runtime_enabled:` branches around lines 5873 + 7130, delete `except RustA2ARuntimeError as e:` at 5910. In `mcpgateway/services/a2a_service.py` delete import at line 45, remove `if settings.experimental_rust_a2a_runtime_enabled:` branch around 2306, remove delegate-mode branch 2395-2436 and its `except RustA2ARuntimeError` handler. Delete `_should_delegate_a2a_to_rust()` if unused elsewhere. Python dispatcher (T4+T5) becomes unconditional.
   Must NOT do: do NOT change `invoke_agent()` public signature. Do NOT alter per-agent auth handling (D5). Do NOT touch `/invoke` route semantics.
   Parallelization: Wave 6 | Blocked by: T23 | Blocks: T26
@@ -621,7 +621,7 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
   QA: happy=service tests + /invoke smoke unchanged. failure=behavior change → revert + investigate. Evidence: .omo/evidence/task-25-a2a-native-passthrough.txt
   Commit: Y | refactor(a2a): drop Rust runtime branches from tool_service + a2a_service
 
-- [ ] 26. Mark `rust_a2a_runtime.py` + config + reporting as DEPRECATED (NO physical deletion — Oracle re-review #8 split)
+- [x] 26. Mark `rust_a2a_runtime.py` + config + reporting as DEPRECATED (NO physical deletion — Oracle re-review #8 split)
   What to do: This todo finalizes deprecation marking WITHOUT physically deleting code/config — physical deletion moves to a follow-up release after this plan's warning cycle ships (Oracle re-review #8: T23 warning + T25/T26 same-release deletion would mean users never see a warned version).
   - In `mcpgateway/services/rust_a2a_runtime.py`: add module-level docstring `"""DEPRECATED in release N. Removal scheduled for release N+1. Migrated to Python dispatcher in mcpgateway/services/a2a_service.py. See plans/a2a-native-passthrough.md."""` and emit `warnings.warn("rust_a2a_runtime module is deprecated; use Python dispatcher", DeprecationWarning, stacklevel=2)` at module import time.
   - In `mcpgateway/config.py:331-351`: keep the 6 fields BUT add a `# DEPRECATED: removed in release N+1 (see plans/a2a-native-passthrough.md)` comment per field. They remain settable so callers with the env var don't crash; T23 startup warning surfaces the deprecation; T25 already made Python the only execution path.
@@ -640,7 +640,7 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
   QA: happy=import emits DeprecationWarning; config field still settable but no longer affects dispatch. failure=physical deletion happened → undo, follow split. Evidence: .omo/evidence/task-26-a2a-native-passthrough.txt
   Commit: Y | refactor(a2a): mark Rust runtime module/config/reporting deprecated (deletion in N+1)
 
-- [ ] 27. Rust deprecation full-system smoke — using verified crate name + correct flags
+- [x] 27. Rust deprecation full-system smoke — using verified crate name + correct flags
   What to do: After T23-T26 all land, run and capture:
   1. `make lint` — exits 0.
   2. `make test` — exits 0 with no new regressions; existing tests asserting the flag setting still pass (since fields remain per T26 split).
@@ -658,7 +658,7 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
 
 ### Wave 7 — Compliance harness completion
 
-- [ ] 28. Wire real fixtures into compliance-harness `conftest.py` — **SPLIT into Wave-2 minimal vs Wave-7 server-creation** (v3 HIGH #6)
+- [x] 28. Wire real fixtures into compliance-harness `conftest.py` — **SPLIT into Wave-2 minimal vs Wave-7 server-creation** (v3 HIGH #6)
 
   **Split rationale** (Oracle v3 #6 fix): the previous "T28 executes first in Wave 2" was internally inconsistent because T28 also created a server using `associated_a2a_agents` which depends on T20's service-layer verification. Resolution: split T28 into two operationally-distinct pieces, both still tracked under todo #28 to preserve numbering:
 
@@ -686,7 +686,7 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
   Evidence: `.omo/evidence/task-28-a-a2a-native-passthrough.txt` (Part A), `.omo/evidence/task-28-b-a2a-native-passthrough.txt` (Part B).
   Commit: Y (TWO commits): `test(a2a-compliance): Part A minimal fixtures for Wave 2 gap closure` + `test(a2a-compliance): Part B server fixture + sanity test for Wave 7`
 
-- [ ] 29. Update both target classes' `_open_client` — `@asynccontextmanager` shape with VERIFIED attribute names (v3 HIGH #7)
+- [x] 29. Update both target classes' `_open_client` — `@asynccontextmanager` shape with VERIFIED attribute names (v3 HIGH #7)
   What to do: In `tests/live_gateway/a2a_compliance/targets/gateway_proxy.py::_open_client` (VERIFIED current attributes at `gateway_proxy.py:44-47` are `self._base_url`, `self._auth_token`, `self._agent_name` — Oracle v3 #7 caught the previous plan's nonexistent `self.gateway_base_url` etc):
   ```python
   from contextlib import asynccontextmanager
@@ -714,7 +714,7 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
   QA: happy=both targets execute the asynccontextmanager and successfully exchange JSON-RPC with the gateway. failure=NotImplementedError → wrong line edited; missing yield → asynccontextmanager raises. Evidence: .omo/evidence/task-29-a2a-native-passthrough.txt
   Commit: Y | test(a2a-compliance): target classes use asynccontextmanager + ClientConfig
 
-- [ ] 30. Delete GAP-001 xfail hook + close in `COMPLIANCE_GAPS.md`
+- [x] 30. Delete GAP-001 xfail hook + close in `COMPLIANCE_GAPS.md`
   What to do: Delete the `pytest_collection_modifyitems` hook in `tests/live_gateway/a2a_compliance/conftest.py` that blanket-x-fails gateway-target cells under GAP-001. Edit `tests/live_gateway/a2a_compliance/COMPLIANCE_GAPS.md`: mark GAP-001 as **CLOSED** with a one-line reference to the closing commit. The 28 previously-x-failed cells (14 gateway × 2 protocol-version columns) become live conformance assertions. ALSO: delete the temporary `scripts/qa/a2a_proxy_smoke.py` and `scripts/qa/a2a_vserver_smoke.py` created in T15 and T19 — the harness is now the canonical verification surface (Oracle #24 — prefer pytest over ad-hoc scripts).
   Must NOT do: do NOT delete any OTHER xfail hooks. Do NOT remove the GAP-001 entry from `COMPLIANCE_GAPS.md` — mark it CLOSED for the audit trail.
   Parallelization: Wave 7 | Blocked by: T29 | Blocks: T31
@@ -725,7 +725,7 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
 
 ### Wave 8 — Documentation
 
-- [ ] 31. A2A 1.0.0 wire-conformance + migration documentation
+- [x] 31. A2A 1.0.0 wire-conformance + migration documentation
   What to do: Create `docs/docs/architecture/a2a-native.md` covering: (a) route inventory (per-agent `/a2a/{name}/.well-known/agent-card.json` + `POST /a2a/{name}`, v-server variants `/servers/{id}/a2a/{name}/...`); (b) control-plane / data-plane split with the interaction contract (P1); (c) AuthN/AuthZ posture (P3) — `Depends(get_current_user_with_permissions)` + `@require_permission(...)` + visibility derivation via `get_rpc_filter_context`; (d) card synthesis + URL rewrite + `protocolBinding`/`protocolVersion` field-name gotchas (D8/D9); (e) JSON-RPC error model with full code table — standard `-32700..-32603` + A2A-specific `-32001..-32009` (D6); (f) `A2A-Version` negotiation (D13); (g) v0.3 method-alias support timeline — accepted during transition with documented end-of-support policy (Q12 default + Oracle #26); (h) Rust A2A runtime retirement history; (i) migration guide for callers moving from `/a2a/{name}/invoke` (legacy) to native `POST /a2a/{name}`. Cross-link from `docs/docs/manage/` index. Add the legacy-alias deprecation warning header / log behavior to the "Future work" section (Oracle #26 fix).
   Must NOT do: do NOT document gRPC or HTTP+JSON bindings (Q13 default — JSONRPC-only for phase 1). Do NOT document push-notification methods as gateway features beyond spec pass-through.
   Parallelization: Wave 8 | Blocked by: T30 | Blocks: none
@@ -981,9 +981,9 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
 
   References: user-raised design question in the helper-extraction session ("Could the SimpleNamespace object also be used by the AuthN/AuthZ/RBAC/ABAC policy module?"); Amendment A (centralized policy module — the consumer that benefits); Amendment C (``CallerContext`` sentinel — the caller-side pair to this agent-side snapshot); Amendment E (future policy-engine migration restatement — explains why pre-fetched primitives matter); commit ``676130982`` (where the ``SimpleNamespace`` pattern was introduced and is now ready for formalization).
 
-  Status: PROPOSED.
+  Status: DONE — landed in three focused commits per the original split plan: ``d52d23854`` (part 1, frozen ``A2AAgentSnapshot`` dataclass + ``from_orm`` classmethod + 7 new unit tests), ``9c57030b1`` (part 2, ``invoke_agent`` builds the snapshot before ``db.commit + db.close`` so plugin firing sees real column values, not getattr defaults), ``84d6ffed8`` (part 3, ``a2a_access_policy`` module + ``_check_agent_access`` accept the snapshot; 11 policy tests + 4 service callers updated). All three parts pass the original acceptance criteria; existing 11 policy + 16 invoke-hook tests still green; 21 hook+snapshot tests green; 36 a2a integration tests green.
 
-  Commit (when implemented, split into three): ``refactor(a2a): introduce A2AAgentSnapshot frozen dataclass for hook + policy reuse (Amendment G part 1)``; ``refactor(a2a): invoke_agent uses A2AAgentSnapshot (Amendment G part 2)``; ``refactor(a2a): a2a_access_policy + _check_agent_access accept A2AAgentSnapshot (Amendment G part 3)``.
+  Commit: ``d52d23854`` | ``refactor(a2a): introduce A2AAgentSnapshot frozen dataclass for hook + policy reuse (Amendment G part 1)``; ``9c57030b1`` | ``refactor(a2a): invoke_agent uses A2AAgentSnapshot (Amendment G part 2)``; ``84d6ffed8`` | ``refactor(a2a): policy module + _check_agent_access consume A2AAgentSnapshot (Amendment G part 3)``.
 
 ### Amendment H — T3 agent-name lookup is case-sensitive (closes Oracle F1 #3)
 
@@ -1019,9 +1019,9 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
 
   Acceptance: doc exists; ``mkdocs build`` succeeds; doc is reachable from the mkdocs nav; references commit ``676130982`` (Amendment F stage a) and commit ``059a376e7`` (Oracle F1+F2 critical fixes) as part of the implementation trail.
 
-  Status: DEFERRED to a focused Wave 8 commit (no work in this commit).
+  Status: DONE — landed in commit ``4c3504b46`` (``docs(a2a): T31 native passthrough architecture doc (closes Amendment I.1 / Wave 8)``). Architecture doc at ``docs/docs/architecture/a2a-native.md`` covers all 12 required sections (overview, URL families, path-rewrite middleware, synthesizer, dispatch pipeline, method-aware RBAC, A2A-Version negotiation, streaming dispatch, plugin hooks, visibility + security invariants, Rust deprecation cycle, compliance harness). Nav entry added to ``docs/docs/architecture/.pages``; cross-link added to ``docs/docs/architecture/index.md``. 4 relative .md links resolve; 12 external GitHub link targets resolve; code fences balanced; detect-secrets clean. The Oracle F2 review (final-2-a2a-native-passthrough.md) confirmed the doc is present and reachable from the architecture nav.
 
-  Commit (when implemented): Y | docs(a2a): T31 native passthrough architecture doc (Wave 8)
+  Commit: ``4c3504b46`` | ``docs(a2a): T31 native passthrough architecture doc (closes Amendment I.1 / Wave 8)``.
 
 #### I.2 — P5 compliance fixture work (BLOCKING per F2)
 
@@ -1036,9 +1036,9 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
 
   Acceptance: ``pytest tests/live_gateway/a2a_compliance/v1_0_0/test_rbac_extra.py -v`` runs the previously-skipped assertions; both pass against a live gateway with the matching agent + token registered.
 
-  Status: DEFERRED to a focused fixture-work commit (no work in this commit; the TODO comments now honestly point at this addendum rather than the stale "Wave 7 T28 Part B" reference).
+  Status: DONE — landed in commit ``22a70fe12`` (``test(a2a-compliance): team-scoped + per-permission fixtures close P5 placeholder skips (Amendment I.2)``). Three new conftest fixtures: ``team_scoped_agent_id`` (module-scoped — provisions team ``a2a-compliance-team-a`` via ``POST /teams/`` + registers a ``visibility=team`` agent under it), ``wrong_team_auth_token`` (session-scoped JWT with a fake team UUID), and ``a2a_read_only_token`` (session-scoped — creates non-admin user via ``POST /auth/email/admin/users``, looks up ``platform_viewer`` role via ``GET /rbac/roles?scope=global``, assigns globally via ``POST /rbac/users/.../roles``, returns JWT bound to that user — ``platform_viewer`` is the only built-in role with ``a2a.read`` but not ``a2a.invoke``). Plus the ``team_scoped_raw_dispatch_url`` per-target helper. Two previously-skipped tests in ``v1_0_0/test_rbac_extra.py:128-153`` and ``:156-175`` now have real assertion bodies wired through the new fixtures. All 18 tests in the module SKIP cleanly without a running gateway (no ScopeMismatch errors).
 
-  Commit (when implemented): Y | test(a2a-compliance): team-scoped agent + per-permission token fixtures (F2 P5 closeout)
+  Commit: ``22a70fe12`` | ``test(a2a-compliance): team-scoped + per-permission fixtures close P5 placeholder skips (Amendment I.2)``.
 
 #### I.3 — 250 LOC ceiling violations (program-level, not this plan)
 
@@ -1058,11 +1058,11 @@ Without Part A executing first, Wave 2 gap-closure tests could only exercise the
 
 > Runs in parallel after ALL 31 todos T1-T31. ALL four must APPROVE. Surface results and wait for the user's explicit okay before declaring complete.
 
-- [ ] F1. **Plan compliance audit** — Oracle (read-only) review of the implemented diff against this plan's Must have (8 components) and Must NOT have (20 items). Auditor reads each commit in order, maps it to a todo number (T1-T31), and asserts the todo's acceptance criteria were actually met. APPROVE = zero Must-NOT violations + every Must-have deliverable present.
+- [x] F1. **Plan compliance audit** — Oracle (read-only) review of the implemented diff against this plan's Must have (8 components) and Must NOT have (20 items). Auditor reads each commit in order, maps it to a todo number (T1-T31), and asserts the todo's acceptance criteria were actually met. APPROVE = zero Must-NOT violations + every Must-have deliverable present.
   References: `.omo/plans/a2a-native-passthrough.md` (this file); `.omo/drafts/a2a-native-passthrough.md` (full reasoning + findings F1-F15 + decisions D1-D19 + principles P1-P5).
   Acceptance: Oracle returns "APPROVE" with no Must-NOT violations and every Must-have item evidenced. Evidence: `.omo/evidence/final-1-a2a-native-passthrough.md`
 
-- [ ] F2. **Code quality review** — Oracle (read-only) review on the most load-bearing files:
+- [x] F2. **Code quality review** — Oracle (read-only) review on the most load-bearing files:
   - `mcpgateway/schemas_a2a_native.py` (D8/D9 strict field-name enforcement; `extra="forbid"`)
   - `mcpgateway/services/a2a_service.py` (new synthesizer NOT reusing `get_agent_card`, D12; unary+streaming dispatch separation, D15; visibility via `_check_agent_access`, D11; A2A error helpers including `-32001..-32009`, D6)
   - The new card+dispatch route handlers in `mcpgateway/main.py` (D2 no inline auth; D17 manual JSON parse, no `Body()`; D18 `GetExtendedAgentCard` branch; D14 HTTP 404 vs `-32601` disambiguation; D13 `A2A-Version` validation)
