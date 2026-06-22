@@ -1227,6 +1227,16 @@ class TokenScopingMiddleware:
             if any(normalized_path.startswith(path) for path in skip_paths):
                 return await call_next(request)
 
+            # Native A2A passthrough at ``/a2a/{name}`` carries its own
+            # scope-aware visibility via ``resolve_agent_for_dispatch``
+            # and collapses visibility misses to HTTP 404 per D11/D14.
+            # The generic team-membership and resource-team-ownership
+            # checks below would 403 here, leaking resource existence
+            # (Oracle v2 #3) and violating the F3 scenario (j)
+            # wrong-team -> 404 contract. IP / server_id / scope
+            # restrictions still apply to these routes.
+            team_check_exempt = normalized_path.startswith("/a2a/") or normalized_path == "/a2a"
+
             # Skip server-specific well-known endpoints (RFC 9728)
             if re.match(r"^/servers/[^/]+/\.well-known/", normalized_path):
                 return await call_next(request)
@@ -1275,12 +1285,18 @@ class TokenScopingMiddleware:
                     # even though the user has valid DB teams).
                     # NOTE: session-token membership staleness is bounded by the
                     # auth_cache TTL (see _resolve_teams_from_db).
-                    if token_use != "session" and not self._check_team_membership(payload, db=db):  # nosec B105 - Not a password; token_use is a JWT claim type
+                    # ``team_check_exempt``: native A2A routes do their own
+                    # D11/D14 visibility-hide via ``resolve_agent_for_dispatch``;
+                    # the membership check here would 403 instead of 404.
+                    if not team_check_exempt and token_use != "session" and not self._check_team_membership(payload, db=db):  # nosec B105 - Not a password; token_use is a JWT claim type
                         logger.warning("Token rejected: User no longer member of associated team(s)")
                         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User is no longer a member of the associated team")
 
-                    # Check resource team ownership with shared session
-                    if not self._check_resource_team_ownership(normalized_path, token_teams, db=db, _user_email=user_email):
+                    # Check resource team ownership with shared session.
+                    # ``team_check_exempt``: native A2A routes evaluate
+                    # resource-team-ownership inside their own visibility
+                    # check; skipping here lets them 404 (not 403) per D11.
+                    if not team_check_exempt and not self._check_resource_team_ownership(normalized_path, token_teams, db=db, _user_email=user_email):
                         logger.warning(f"Access denied: Resource does not belong to token's teams {SecurityValidator.sanitize_log_message(str(token_teams))}")
                         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
                 finally:
@@ -1294,11 +1310,11 @@ class TokenScopingMiddleware:
                 # skip _check_team_membership for session tokens — the empty
                 # intersection already means no team-scoped access.
                 # Membership staleness bounded by auth_cache TTL.
-                if token_use != "session" and not self._check_team_membership(payload):  # nosec B105 - Not a password; token_use is a JWT claim type
+                if not team_check_exempt and token_use != "session" and not self._check_team_membership(payload):  # nosec B105 - Not a password; token_use is a JWT claim type
                     logger.warning("Token rejected: User no longer member of associated team(s)")
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User is no longer a member of the associated team")
 
-                if not self._check_resource_team_ownership(normalized_path, token_teams, _user_email=user_email):
+                if not team_check_exempt and not self._check_resource_team_ownership(normalized_path, token_teams, _user_email=user_email):
                     logger.warning(f"Access denied: Resource does not belong to token's teams {SecurityValidator.sanitize_log_message(str(token_teams))}")
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 

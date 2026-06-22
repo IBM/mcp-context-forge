@@ -115,6 +115,18 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         if _extract_bearer_token(auth_header):
             return await call_next(request)
 
+        # 4b. Skip fully anonymous requests (no bearer, no session cookie).
+        # CSRF protects state-changing actions performed BY an authenticated
+        # user against cross-site forgery; an anonymous request has no
+        # session to forge. Returning 403 CSRF for anonymous requests on
+        # bearer-only API routes (e.g. /a2a/*, /servers/*) is also wrong
+        # per F3 scenario (j.1): missing-auth must surface as transport-
+        # level 401 from the route's auth dependency, NOT a 403 CSRF.
+        csrf_cookie_name = getattr(settings, "csrf_cookie_name", "csrf_token")
+        has_session = bool(request.cookies.get("jwt_token") or request.cookies.get("access_token") or request.cookies.get(csrf_cookie_name))
+        if not has_session:
+            return await call_next(request)
+
         # 5. Extract CSRF token from header. Do not consume form bodies here:
         # BaseHTTPMiddleware cannot safely replay request bodies for downstream handlers.
         csrf_token = request.headers.get(settings.csrf_token_name)
