@@ -7,12 +7,24 @@ import { getPanelSearchConfig, loadSearchablePanel, queueSearchablePanelReload, 
 import { safeGetElement } from "./utils.js";
 
 /**
+ * Get the current tag validation config from window.GATEWAY_CONFIG with fallback defaults.
+ * Reads dynamically to support test mocking.
+ * @returns {{minLength: number, maxLength: number}}
+ */
+const getTagValidationConfig = () => ({
+  minLength: window.GATEWAY_CONFIG?.validationMinTagLength || 2,
+  maxLength: window.GATEWAY_CONFIG?.validationMaxTagLength || 50,
+});
+
+/**
  * Extract all unique tags from entities in a given entity type
  * @param {string} entityType - The entity type (tools, resources, prompts, servers, gateways)
  * @returns {Array<string>} - Array of unique tags
  */
-const isValidTag = (t) =>
-  t && t.length >= 2 && t.length <= 50 && !INVALID_TAG_VALUES.has(t.toLowerCase());
+const isValidTag = (t) => {
+  const config = getTagValidationConfig();
+  return t && t.length >= config.minLength && t.length <= config.maxLength && !INVALID_TAG_VALUES.has(t.toLowerCase());
+};
 
 export const extractAvailableTags = function (entityType) {
   const tags = new Set();

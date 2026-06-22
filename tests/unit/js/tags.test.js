@@ -118,6 +118,68 @@ describe("extractAvailableTags", () => {
     expect(tags).toEqual(["ab"]);
     consoleSpy.mockRestore();
   });
+
+  test("respects configured max tag length from GATEWAY_CONFIG", () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    // Set a higher limit
+    window.GATEWAY_CONFIG = { validationMaxTagLength: 150, validationMinTagLength: 2 };
+
+    const longTag = "a".repeat(120); // 120 characters - within the 150 limit
+    const tooLongTag = "b".repeat(160); // 160 characters - exceeds the 150 limit
+
+    buildTable("tools", [
+      { name: "Tool A", tags: ["short", longTag, tooLongTag] }
+    ]);
+
+    const tags = extractAvailableTags("tools");
+    expect(tags).toContain("short");
+    expect(tags).toContain(longTag); // Should include 120-char tag
+    expect(tags).not.toContain(tooLongTag); // Should exclude 160-char tag
+
+    // Cleanup
+    delete window.GATEWAY_CONFIG;
+    consoleSpy.mockRestore();
+  });
+
+  test("falls back to default 50-char limit when GATEWAY_CONFIG is missing", () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    // Ensure GATEWAY_CONFIG is not set
+    delete window.GATEWAY_CONFIG;
+
+    const tag51 = "a".repeat(51); // 51 characters - exceeds default 50 limit
+    const tag50 = "b".repeat(50); // 50 characters - at default limit
+
+    buildTable("tools", [
+      { name: "Tool A", tags: ["short", tag50, tag51] }
+    ]);
+
+    const tags = extractAvailableTags("tools");
+    expect(tags).toContain("short");
+    expect(tags).toContain(tag50); // Should include 50-char tag
+    expect(tags).not.toContain(tag51); // Should exclude 51-char tag (default limit)
+
+    consoleSpy.mockRestore();
+  });
+
+  test("respects configured min tag length from GATEWAY_CONFIG", () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    // Set a higher minimum
+    window.GATEWAY_CONFIG = { validationMaxTagLength: 100, validationMinTagLength: 5 };
+
+    buildTable("tools", [
+      { name: "Tool A", tags: ["ab", "abcd", "abcde", "abcdef"] }
+    ]);
+
+    const tags = extractAvailableTags("tools");
+    expect(tags).not.toContain("ab"); // 2 chars - below min of 5
+    expect(tags).not.toContain("abcd"); // 4 chars - below min of 5
+    expect(tags).toContain("abcde"); // 5 chars - at min
+    expect(tags).toContain("abcdef"); // 6 chars - above min
+
+    // Cleanup
+    delete window.GATEWAY_CONFIG;
+    consoleSpy.mockRestore();
+  });
 });
 
 // ---------------------------------------------------------------------------
