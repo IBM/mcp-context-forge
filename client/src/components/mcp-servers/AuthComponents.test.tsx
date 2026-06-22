@@ -26,10 +26,10 @@ describe("Auth Components", () => {
       const passwordInput = screen.getByLabelText(/Password/i);
 
       await user.type(usernameInput, "testuser");
-      expect(onUsernameChange).toHaveBeenCalled();
+      expect(onUsernameChange).toHaveBeenCalledWith("testuser");
 
       await user.type(passwordInput, "testpass");
-      expect(onPasswordChange).toHaveBeenCalled();
+      expect(onPasswordChange).toHaveBeenCalledWith("testpass");
     });
   });
 
@@ -43,7 +43,7 @@ describe("Auth Components", () => {
       const tokenInput = screen.getByLabelText(/Bearer token/i);
 
       await user.type(tokenInput, "testtoken");
-      expect(onTokenChange).toHaveBeenCalled();
+      expect(onTokenChange).toHaveBeenCalledWith("testtoken");
     });
   });
 
@@ -66,10 +66,10 @@ describe("Auth Components", () => {
       const apiKeyInput = screen.getByLabelText(/API key/i);
 
       await user.type(paramNameInput, "api_key");
-      expect(onParameterNameChange).toHaveBeenCalled();
+      expect(onParameterNameChange).toHaveBeenCalledWith("api_key");
 
       await user.type(apiKeyInput, "testkey");
-      expect(onApiKeyChange).toHaveBeenCalled();
+      expect(onApiKeyChange).toHaveBeenCalledWith("testkey");
     });
   });
 });
