@@ -4134,6 +4134,9 @@ async def admin_ui(
             "require_token_expiration": getattr(settings, "require_token_expiration", True),
             "sri_hashes": load_sri_hashes(),
             "max_members_per_team": settings.max_members_per_team,
+            # Tag validation config - expose to frontend for consistent validation
+            "validation_min_tag_length": settings.validation_min_tag_length,
+            "validation_max_tag_length": settings.validation_max_tag_length,
         },
     )
 

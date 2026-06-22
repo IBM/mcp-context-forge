@@ -12122,6 +12122,12 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       window.UI_HIDDEN_HEADER_ITEMS = {{ ui_hidden_header_items | default([]) | tojson }};
       window.UI_HIDDEN_TABS = {{ ui_hidden_tabs | default([]) | tojson }};
 
+      // Tag validation config - expose backend settings to frontend
+      window.GATEWAY_CONFIG = {
+        validationMinTagLength: {{ validation_min_tag_length | tojson }},
+        validationMaxTagLength: {{ validation_max_tag_length | tojson }}
+      };
+
       // Display flash messages from URL parameters
       (function() {
         const urlParams = new URLSearchParams(window.location.search);
