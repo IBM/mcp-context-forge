@@ -357,8 +357,8 @@ repos:
       - id: remove-tabs
         name: 🚀 Remove Tabs
         description: Replaces tabs by whitespaces.
-        # exclude root-level Makefiles and any path ending in /Makefile or .mk or .jinja
-        exclude: '(^|/)Makefile$|(\.mk|\.jinja)$'
+        # exclude root-level Makefiles and any path ending in /Makefile, Makefile.*, .mk or .jinja
+        exclude: '(^|/)Makefile(\.[^/]*)?$|(\.mk|\.jinja)$'
 
 
   # -----------------------------------------------------------------------------
