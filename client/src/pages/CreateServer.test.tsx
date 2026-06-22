@@ -78,6 +78,10 @@ const mockNavigate = routerMock.navigate;
 
 describe("CreateServer", () => {
   beforeEach(() => {
+    mockForm = false;
+    capturedProps = null;
+    mockSourceSelection = false;
+    capturedSourceSelectionProps = null;
     mockNavigate.mockClear();
     routerMock.path = "/app/gateways/create-server";
     componentMockState.mockForm = false;

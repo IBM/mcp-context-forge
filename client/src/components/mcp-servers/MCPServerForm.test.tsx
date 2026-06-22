@@ -84,6 +84,8 @@ describe("MCPServerForm", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockHookActive = false;
+    mockHookReturnValue = null;
     // Set initial path for router
     window.history.pushState({}, "", "/app/servers");
   });
