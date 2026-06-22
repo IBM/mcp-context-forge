@@ -1061,11 +1061,11 @@ class A2AAgentService(BaseService):
         # dispatch: ``dispatch_a2a_jsonrpc_streaming`` calls
         # ``prepare_a2a_invocation`` + ``client.stream(...)`` directly
         # against ``agent.endpoint_url`` and never reaches
-        # ``invoke_agent``'s ``if not agent.enabled`` guard at line 3050.
-        # Without this filter, a disabled agent reaches the upstream
-        # over SSE. Disabled-agent miss collapses to
-        # ``A2AAgentNotFoundError`` (HTTP 404) per D14, same wire
-        # outcome as agent-not-found (closes Oracle F2 finding).
+        # ``invoke_agent``'s ``if not agent.enabled`` guard. Without
+        # this filter, a disabled agent reaches the upstream over SSE.
+        # Disabled-agent miss collapses to ``A2AAgentNotFoundError``
+        # (HTTP 404) per D14, same wire outcome as agent-not-found
+        # (closes Oracle F2 finding).
         query = select(DbA2AAgent).where(
             DbA2AAgent.name == agent_name,  # pylint: disable=comparison-with-callable
             DbA2AAgent.enabled.is_(True),

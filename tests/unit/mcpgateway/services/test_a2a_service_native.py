@@ -222,7 +222,7 @@ class TestResolveAgentForDispatch:
         ``resolve_agent_for_dispatch`` so all three native dispatch
         paths (unary, streaming, card-via-dispatch) share the same
         hide-when-disabled contract that the card synthesizer already
-        enforces at ``synthesize_agent_card`` line 1188.
+        enforces at its query layer.
         """
         db = MagicMock()
         db.execute.return_value.scalar_one_or_none.return_value = None
