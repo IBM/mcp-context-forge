@@ -22,7 +22,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 # First-Party
-from mcpgateway.auth_context import is_trusted_internal_mcp_request
 from mcpgateway.config import settings
 from mcpgateway.plugins import get_plugin_manager
 from mcpgateway.utils.correlation_id import generate_correlation_id, get_correlation_id
@@ -164,10 +163,6 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
         Returns:
             The response from the application
         """
-        # Skip HTTP auth hooks for the trusted-internal dispatch; they already ran on the edge request.
-        if is_trusted_internal_mcp_request(request):
-            return await call_next(request)
-
         # Note: HTTP hooks always use global config (__global__ context) because
         # this middleware runs before virtual server routing. Per-tenant HTTP hooks
         # would require extracting server_id from the request path, which is not
