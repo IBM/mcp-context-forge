@@ -90,6 +90,10 @@ async function executeRequest<TData, TBody>(
         return await api.patch<TData>(path, body, { headers, signal: controller.signal });
       case "DELETE":
         return await api.delete<TData>(path, { headers, signal: controller.signal });
+      default: {
+        const _exhaustive: never = method;
+        throw new Error(`Unhandled method: ${_exhaustive}`);
+      }
     }
   } finally {
     clearTimeout(timeoutId);

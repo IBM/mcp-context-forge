@@ -8,6 +8,8 @@
 import { api } from "./client";
 import type { ServersResponse, MCPServer } from "../types/server";
 
+const serverByIdRequestCache = new Map<string, Promise<MCPServer>>();
+
 /**
  * Validates server ID to prevent path traversal and injection attacks
  * @param id - The server ID to validate
@@ -68,7 +70,20 @@ export const serversApi = {
    */
   get: (id: string): Promise<MCPServer> => {
     const validId = validateServerId(id);
-    return api.get(`/gateways/${validId}`);
+
+    const cachedRequest = serverByIdRequestCache.get(validId);
+    if (cachedRequest) {
+      return cachedRequest;
+    }
+
+    const request = api.get<MCPServer>(`/gateways/${validId}`);
+    serverByIdRequestCache.set(validId, request);
+
+    request.catch(() => {
+      serverByIdRequestCache.delete(validId);
+    });
+
+    return request;
   },
 
   /**
