@@ -153,14 +153,32 @@ class TestAPIIntegration:
         Uses the json_param_tool fixture to guarantee a tool with an object
         parameter exists before the test runs.
         """
+        import json
+
         page.click('[data-testid="tools-tab"]')
         page.wait_for_selector("#tools-panel:not(.hidden)")
+        # The admin_page fixture only waits for domcontentloaded; the tools table's
+        # hx-trigger="load" initial HTMX request may still be in-flight.  Both the
+        # initial load and the search target #tools-table with outerHTML swap, so if
+        # the search fires before the initial load completes there is no #tools-table-body
+        # for HTMX to target — the swap goes nowhere and the table stays empty.
+        # Waiting for #tools-table-body to be attached (= initial load done) first
+        # eliminates this race entirely, for both fresh-page and pre-loaded cases.
+        page.wait_for_selector("#tools-table-body", state="attached", timeout=15000)
 
-        # Search for the fixture-created tool by name to avoid pagination issues
+        # Search for the fixture-created tool.  Wrap fill in expect_response so we
+        # explicitly wait for the HTMX partial response — and any synchronous
+        # history.replaceState fired by updatePanelSearchStateInUrl before the request —
+        # to fully settle before calling page.evaluate(), preventing "execution context
+        # was destroyed" errors from navigation events racing with evaluate.
         search_input = page.locator("#tools-search-input")
         search_input.wait_for(state="visible", timeout=10000)
-        search_input.fill(json_param_tool)
-        search_input.press("Enter")
+        with page.expect_response(
+            lambda r: "/admin/tools/partial" in r.url and r.request.method == "GET",
+            timeout=10000,
+        ):
+            search_input.fill(json_param_tool)
+            search_input.press("Enter")
 
         tool_row = page.locator(f'#tools-table-body tr:has-text("{json_param_tool}")')
         tool_row.wait_for(state="visible", timeout=10000)
@@ -168,24 +186,16 @@ class TestAPIIntegration:
         tool_row.locator("button[aria-expanded]").click()
         tool_row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
 
-        # HTMX may swap the tools-table-body, detaching the button during click.
-        # Extract tool ID and call testTool() directly via page.evaluate() to avoid DOM detachment.
+        # The expect_response above guarantees the search HTMX response has settled and
+        # no swap is in-flight, so clicking the Test button directly is safe (no DOM
+        # detachment risk).  Using evaluate("Admin.testTool(...)") is avoided here
+        # because testTool is async: awaiting it inside page.evaluate() while a fetch
+        # is in-flight can race with a navigation and produce "execution context
+        # was destroyed" errors.  Direct click fires the async function without blocking.
         test_btn = tool_row.locator('button:has-text("Test")')
-        tool_id = tool_row.evaluate("el => el.querySelector('button[data-test-tool-id]')?.getAttribute('data-test-tool-id')")
-        if tool_id:
-            # Call testTool directly to avoid HTMX DOM detachment race condition
-            # Tool IDs are UUID strings, not integers - pass as quoted string
-            import json
-
-            # HTMX pushes the search query into the URL via hx-push-url; Playwright
-            # treats that pushState as an in-flight navigation.  Waiting for
-            # domcontentloaded ensures the navigation event has settled before we
-            # evaluate JS, preventing "execution context was destroyed" errors.
-            page.wait_for_load_state("domcontentloaded", timeout=5000)
-            page.evaluate(f"Admin.testTool({json.dumps(tool_id)})")
-        else:
-            # Fallback if data attribute is missing
-            test_btn.click()
+        # get_attribute reads the DOM directly without a JS evaluate call.
+        tool_id = test_btn.get_attribute("data-test-tool-id")
+        test_btn.click()
 
         expect(page.locator("#tool-test-modal")).to_be_visible(timeout=10000)
         page.wait_for_selector("#tool-test-form-fields", state="visible", timeout=10000)
