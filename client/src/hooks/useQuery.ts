@@ -3,9 +3,6 @@ import { api } from "@/api/client";
 
 type QueryMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
-// In-flight request cache to prevent duplicate concurrent requests
-const inFlightRequests = new Map<string, Promise<unknown>>();
-
 interface QueryError {
   message: string;
   code?: string;
@@ -73,14 +70,6 @@ async function executeRequest<TData, TBody>(
   timeout = 30000,
   externalSignal?: AbortSignal,
 ): Promise<TData> {
-  // Create cache key for request deduplication (only for GET requests)
-  const cacheKey = method === "GET" ? `${method}:${path}:${createHeadersKey(headers)}` : null;
-
-  // Check if there's already an in-flight request for this key
-  if (cacheKey && inFlightRequests.has(cacheKey)) {
-    return inFlightRequests.get(cacheKey) as Promise<TData>;
-  }
-
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
 
@@ -89,35 +78,26 @@ async function executeRequest<TData, TBody>(
     externalSignal.addEventListener("abort", () => controller.abort());
   }
 
-  const requestPromise = (async () => {
-    try {
-      switch (method) {
-        case "GET":
-          return await api.get<TData>(path, headers, controller.signal);
-        case "POST":
-          return await api.post<TData>(path, body, { headers, signal: controller.signal });
-        case "PUT":
-          return await api.put<TData>(path, body, { headers, signal: controller.signal });
-        case "PATCH":
-          return await api.patch<TData>(path, body, { headers, signal: controller.signal });
-        case "DELETE":
-          return await api.delete<TData>(path, { headers, signal: controller.signal });
-      }
-    } finally {
-      clearTimeout(timeoutId);
-      // Remove from cache when request completes
-      if (cacheKey) {
-        inFlightRequests.delete(cacheKey);
+  try {
+    switch (method) {
+      case "GET":
+        return await api.get<TData>(path, headers, controller.signal);
+      case "POST":
+        return await api.post<TData>(path, body, { headers, signal: controller.signal });
+      case "PUT":
+        return await api.put<TData>(path, body, { headers, signal: controller.signal });
+      case "PATCH":
+        return await api.patch<TData>(path, body, { headers, signal: controller.signal });
+      case "DELETE":
+        return await api.delete<TData>(path, { headers, signal: controller.signal });
+      default: {
+        const _exhaustive: never = method;
+        throw new Error(`Unhandled method: ${_exhaustive}`);
       }
     }
-  })();
-
-  // Store in cache if this is a GET request
-  if (cacheKey) {
-    inFlightRequests.set(cacheKey, requestPromise);
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  return requestPromise;
 }
 
 export function useQuery<TData, TBody = unknown>(

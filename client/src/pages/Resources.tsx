@@ -23,6 +23,14 @@ import { ResourceDetailsPanel } from "@/components/resources/ResourceDetailsPane
  * @param gatewaySlug - Gateway slug for the resource
  * @param onViewResource - Callback when user clicks to view resource details
  */
+function getUriLabel(uri: string): string {
+  try {
+    return new URL(uri).hostname || uri;
+  } catch {
+    return uri;
+  }
+}
+
 const ResourceCard = memo(function ResourceCard({
   resource,
   onViewResource,
@@ -83,7 +91,7 @@ const ResourceCard = memo(function ResourceCard({
               className="inline-flex items-center rounded bg-tool-badge-bg px-1.5 py-1 text-[10px] font-medium leading-none text-white"
               title={resource.uri}
             >
-              {new URL(resource.uri).hostname}
+              {getUriLabel(resource.uri)}
             </span>
           )}
         </div>

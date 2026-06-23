@@ -34,14 +34,16 @@ export interface Resource {
 
   // Ownership/visibility
   teamId?: string;
-  team?: Record<string, unknown>;
+  team?: string;
   ownerEmail?: string;
-  visibility: "public" | "private";
+  visibility: "public" | "private" | "team";
 
   // Optional display metadata
   title?: string;
   annotations?: Record<string, unknown>;
   _meta?: Record<string, unknown>;
+
+  content?: string | null;
 
   // UI-specific optional fields
   textContent?: string;
@@ -65,7 +67,7 @@ export interface ResourceCreateRequest {
   uriTemplate?: string;
   content: string;
   tags?: string[];
-  visibility?: "public" | "private";
+  visibility?: "public" | "private" | "team";
   teamId?: string;
 }
 
