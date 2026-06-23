@@ -423,7 +423,10 @@ export const viewServer = async function (serverId) {
         associatedDiv.appendChild(promptsSection);
       }
 
-      // A2A Agents section
+      // A2A Agents section. Names come from the disambiguated
+      // ``associatedA2aAgents`` list (server-side collision suffix);
+      // IDs from the parallel ``associatedA2aAgentIds`` list. Each
+      // index in the two arrays describes one agent.
       if (server.associatedA2aAgents && server.associatedA2aAgents.length > 0) {
         const agentsSection = document.createElement("div");
         agentsSection.className = "mt-3";
@@ -436,21 +439,28 @@ export const viewServer = async function (serverId) {
         const agentsList = document.createElement("div");
         agentsList.className = "mt-1 space-y-1";
 
-        server.associatedA2aAgents.forEach((agentId) => {
+        const agentIds = server.associatedA2aAgentIds || [];
+        server.associatedA2aAgents.forEach((agentName, index) => {
+          const agentId = agentIds[index] || "";
           const agentItem = document.createElement("div");
           agentItem.className = "flex items-center space-x-2";
 
           const agentBadge = document.createElement("span");
           agentBadge.className =
-            "inline-block bg-orange-100 text-orange-800 text-xs px-2 py-1 rounded-full dark:bg-orange-900 dark:text-orange-200";
-          agentBadge.textContent = `Agent ${agentId}`;
-
-          const agentIdSpan = document.createElement("span");
-          agentIdSpan.className = "text-xs text-gray-500 dark:text-gray-400";
-          agentIdSpan.textContent = `(${agentId})`;
+            "inline-block bg-amber-100 text-amber-800 text-xs px-2 py-1 rounded-full dark:bg-amber-900 dark:text-amber-200";
+          agentBadge.textContent = agentName;
+          if (agentId) {
+            agentBadge.title = agentId;
+          }
 
           agentItem.appendChild(agentBadge);
-          agentItem.appendChild(agentIdSpan);
+          if (agentId) {
+            const agentIdSpan = document.createElement("span");
+            agentIdSpan.className =
+              "text-xs text-gray-500 dark:text-gray-400 font-mono";
+            agentIdSpan.textContent = agentId;
+            agentItem.appendChild(agentIdSpan);
+          }
           agentsList.appendChild(agentItem);
         });
 

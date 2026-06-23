@@ -12,6 +12,7 @@
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Tools</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Resources</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Prompts</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Agents</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Tags</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Owner</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Team</th>
@@ -21,7 +22,7 @@
   <tbody id="servers-table-body" data-testid="server-list" class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
   {% if data|length == 0 %}
   <tr data-testid="servers-empty-state">
-    <td colspan="14" class="px-6 py-8 text-center">
+    <td colspan="15" class="px-6 py-8 text-center">
       <p class="text-sm font-medium text-gray-700 dark:text-gray-300">
         {% if query_params is defined and query_params.get('team_id') %}
         No servers found in the selected team.
@@ -163,6 +164,13 @@
       <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300">{{ server.associatedPrompts | length }} prompt{{ 's' if server.associatedPrompts | length != 1 else '' }}</span>
       {% else %}
       <span class="text-gray-500 dark:text-gray-400 text-xs">0 prompts</span>
+      {% endif %}
+    </td>
+    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-300">
+      {% if server.associatedA2aAgents %}
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-300">{{ server.associatedA2aAgents | length }} agent{{ 's' if server.associatedA2aAgents | length != 1 else '' }}</span>
+      {% else %}
+      <span class="text-gray-500 dark:text-gray-400 text-xs">0 agents</span>
       {% endif %}
     </td>
     <td class="px-6 py-4 whitespace-nowrap">

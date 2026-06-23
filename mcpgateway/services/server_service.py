@@ -77,6 +77,66 @@ class _AssociationType(NamedTuple):
 _server_rels: dict[type[Base], Any] = {rel.mapper.class_: rel for rel in sa_inspect(DbServer).relationships if rel.mapper.class_ in set(SERVER_ASSOCIABLE_ENTITY_MODELS)}
 _LABEL_OVERRIDES: dict[type[Base], str] = {DbA2AAgent: "A2A Agent"}
 
+
+def disambiguate_a2a_agent_names(pairs: List[tuple[str, str]]) -> List[str]:
+    """Disambiguate A2A agent display names within a single virtual server.
+
+    An agent retains its original name unless another agent on the same
+    server carries the same name. Collisions are resolved with a
+    sequential numeric suffix (``foo``, ``foo-2``, ``foo-3``, ...). The
+    sharing group is ordered by ``agent_id`` so suffix assignment is
+    stable across queries and across processes -- the lexicographically
+    smallest ``agent_id`` keeps the bare name, others get ``-2``,
+    ``-3``, ...
+
+    A2A agents are globally registered but uniquely named only within a
+    ``(team_id, owner_email, slug)`` triple (see
+    ``mcpgateway/db.py`` ``uq_team_owner_slug_a2a_agent``). Two agents
+    from different teams or owners can carry the same human name and
+    both be bound to the same virtual server, so per-server
+    disambiguation is required to render the UI without ambiguity and
+    to give operators stable display names to script against.
+
+    Args:
+        pairs: ``(agent_id, agent_name)`` tuples in DB-relationship
+            order. Both fields are required; ``agent_id`` is used only
+            to order tie-breakers and never appears in the output.
+
+    Returns:
+        List of display names of the same length as ``pairs``, where
+        ``result[i]`` corresponds to ``pairs[i]``.
+
+    Examples:
+        >>> disambiguate_a2a_agent_names([])
+        []
+        >>> disambiguate_a2a_agent_names([("id-1", "echo")])
+        ['echo']
+        >>> disambiguate_a2a_agent_names([("id-z", "echo"), ("id-a", "echo")])
+        ['echo-2', 'echo']
+        >>> disambiguate_a2a_agent_names([("id-1", "a"), ("id-2", "b"), ("id-3", "a")])
+        ['a', 'b', 'a-2']
+    """
+    # Standard
+    from collections import defaultdict  # pylint: disable=import-outside-toplevel
+
+    indices_by_name: dict[str, list[int]] = defaultdict(list)
+    for index, (_agent_id, name) in enumerate(pairs):
+        indices_by_name[name].append(index)
+
+    result: List[str] = [name for _agent_id, name in pairs]
+    for name, indices in indices_by_name.items():
+        if len(indices) <= 1:
+            continue
+        # Stable suffixing: within a colliding group the lex-smallest
+        # agent_id keeps the bare name, the rest get -2, -3, ...
+        ordered = sorted(indices, key=lambda i: pairs[i][0])
+        for rank, idx in enumerate(ordered):
+            if rank == 0:
+                continue
+            result[idx] = f"{name}-{rank + 1}"
+    return result
+
+
 SERVER_ASSOCIATION_TYPES: list[_AssociationType] = [
     _AssociationType(
         model=m,
@@ -243,6 +303,7 @@ async def _authorize_a2a_associations(
     if caller_context.is_system:
         return
 
+    # First-Party
     from mcpgateway.services.a2a_access_policy import can_associate_a2a_agent_with_server  # noqa: E402 pylint: disable=import-outside-toplevel
     from mcpgateway.services.a2a_hooks import A2AAgentSnapshot  # noqa: E402 pylint: disable=import-outside-toplevel
     from mcpgateway.services.a2a_service import A2AAgentService  # noqa: E402 pylint: disable=import-outside-toplevel
@@ -547,7 +608,9 @@ class ServerService(BaseService):
         server_dict["associated_tool_ids"] = [str(tool.id) for tool in server.tools if getattr(tool, "enabled", True)] if server.tools else []
         server_dict["associated_resources"] = [res.id for res in server.resources if getattr(res, "enabled", True)] if server.resources else []
         server_dict["associated_prompts"] = [prompt.id for prompt in server.prompts if getattr(prompt, "enabled", True)] if server.prompts else []
-        server_dict["associated_a2a_agents"] = [agent.id for agent in server.a2a_agents if getattr(agent, "enabled", True)] if server.a2a_agents else []
+        _enabled_a2a_agents = [agent for agent in server.a2a_agents if getattr(agent, "enabled", True)] if server.a2a_agents else []
+        server_dict["associated_a2a_agent_ids"] = [agent.id for agent in _enabled_a2a_agents]
+        server_dict["associated_a2a_agents"] = disambiguate_a2a_agent_names([(agent.id, agent.name) for agent in _enabled_a2a_agents])
 
         # Team name is loaded via server.team property from email_team relationship
         server_dict["team"] = getattr(server, "team", None)

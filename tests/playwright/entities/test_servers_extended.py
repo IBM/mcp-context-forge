@@ -342,12 +342,33 @@ class TestServersExtended:
         servers_page.navigate_to_servers_tab()
         servers_page.wait_for_servers_table_loaded()
 
-        # Verify table headers exist
         table_headers = servers_page.servers_table.locator("thead th")
         header_count = table_headers.count()
 
-        # Should have at least the main columns
-        assert header_count >= 10
+        # Hard equality so silent column drift (add/remove) trips this
+        # test instead of just any future floor-violating change. Keep
+        # in sync with ``servers_partial.html``.
+        assert header_count == 15
+
+    def test_server_table_has_agents_column(self, servers_page: ServersPage):
+        """Test that the Agents column header is present in the servers table."""
+        servers_page.navigate_to_servers_tab()
+        servers_page.wait_for_servers_table_loaded()
+
+        agents_header = servers_page.servers_table.locator("thead th", has_text="Agents")
+        expect(agents_header).to_have_count(1)
+
+        # Every rendered row MUST have an Agents cell. The badge text
+        # ends in ``agent`` or ``agents`` (singular vs plural per the
+        # template's conditional). Empty-state rows have a single
+        # full-width ``<td colspan="15">`` and are excluded by the
+        # ``[data-testid='server-item']`` filter.
+        server_rows = servers_page.servers_table.locator("tbody tr[data-testid='server-item']")
+        if server_rows.count() > 0:
+            for row_index in range(server_rows.count()):
+                row = server_rows.nth(row_index)
+                agents_cell_text = row.locator("td").nth(10).inner_text().strip()
+                assert agents_cell_text.endswith("agent") or agents_cell_text.endswith("agents"), f"Row {row_index} agents cell did not end in 'agent(s)': " f"{agents_cell_text!r}"
 
     def test_server_count_method(self, servers_page: ServersPage):
         """Test get_server_count method returns valid count."""

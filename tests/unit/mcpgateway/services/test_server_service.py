@@ -24,6 +24,7 @@ from mcpgateway.schemas import ServerCreate, ServerRead, ServerUpdate
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.server_service import (
     _validate_server_team_assignment,
+    disambiguate_a2a_agent_names,
     ServerError,
     ServerNotFoundError,
     ServerService,
@@ -3788,3 +3789,65 @@ class TestConvertServerToReadAssociatedToolIds:
             assert len(server_result.associated_prompts) == 1
             assert "prompt-1" in server_result.associated_prompts
             assert "prompt-2" not in server_result.associated_prompts
+
+
+# --------------------------------------------------------------------------- #
+# disambiguate_a2a_agent_names: collision suffix policy                       #
+# --------------------------------------------------------------------------- #
+
+
+class TestDisambiguateA2AAgentNames:
+    """Agent retains its name unless another agent in the same virtual
+    server shares it; collisions get a sequential numeric suffix
+    (foo, foo-2, foo-3, ...). Sharing-group order is by agent_id so
+    the bare name always lands on the lex-smallest ID.
+    """
+
+    def test_empty_input(self):
+        assert disambiguate_a2a_agent_names([]) == []
+
+    def test_single_agent_unchanged(self):
+        assert disambiguate_a2a_agent_names([("id-1", "echo")]) == ["echo"]
+
+    def test_no_collisions_preserves_order(self):
+        pairs = [("id-1", "echo"), ("id-2", "translate"), ("id-3", "search")]
+        assert disambiguate_a2a_agent_names(pairs) == ["echo", "translate", "search"]
+
+    def test_two_way_collision_lex_smallest_keeps_bare_name(self):
+        pairs = [("id-z", "echo"), ("id-a", "echo")]
+        assert disambiguate_a2a_agent_names(pairs) == ["echo-2", "echo"]
+
+    def test_two_way_collision_input_order_lex_smallest_first(self):
+        pairs = [("id-a", "echo"), ("id-z", "echo")]
+        assert disambiguate_a2a_agent_names(pairs) == ["echo", "echo-2"]
+
+    def test_three_way_collision_assigns_2_3(self):
+        pairs = [("id-c", "echo"), ("id-a", "echo"), ("id-b", "echo")]
+        assert disambiguate_a2a_agent_names(pairs) == ["echo-3", "echo", "echo-2"]
+
+    def test_mixed_collisions_and_uniques(self):
+        pairs = [
+            ("id-1", "a"),
+            ("id-2", "b"),
+            ("id-3", "a"),
+            ("id-4", "b"),
+            ("id-5", "c"),
+        ]
+        assert disambiguate_a2a_agent_names(pairs) == ["a", "b", "a-2", "b-2", "c"]
+
+    def test_distinct_input_orderings_yield_same_id_to_name_map(self):
+        pairs_v1 = [("id-c", "x"), ("id-a", "x"), ("id-b", "x")]
+        pairs_v2 = [("id-a", "x"), ("id-b", "x"), ("id-c", "x")]
+        result_v1 = disambiguate_a2a_agent_names(pairs_v1)
+        result_v2 = disambiguate_a2a_agent_names(pairs_v2)
+        map_v1 = {pid: result_v1[i] for i, (pid, _) in enumerate(pairs_v1)}
+        map_v2 = {pid: result_v2[i] for i, (pid, _) in enumerate(pairs_v2)}
+        assert map_v1 == map_v2 == {"id-a": "x", "id-b": "x-2", "id-c": "x-3"}
+
+    def test_distinct_names_do_not_interfere(self):
+        pairs = [("id-1", "alpha"), ("id-2", "beta"), ("id-3", "alpha"), ("id-4", "gamma")]
+        assert disambiguate_a2a_agent_names(pairs) == ["alpha", "beta", "alpha-2", "gamma"]
+
+    def test_name_with_existing_numeric_suffix_treated_as_just_a_name(self):
+        pairs = [("id-z", "foo-2"), ("id-a", "foo-2")]
+        assert disambiguate_a2a_agent_names(pairs) == ["foo-2-2", "foo-2"]
