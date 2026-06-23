@@ -4,7 +4,7 @@
        {% if gateway_async_lifecycle_enabled|default(false) %}
        hx-get="{{ root_path }}/admin/gateways/partial"
        hx-swap="outerHTML"
-       hx-vals='js:{include_inactive: document.getElementById("show-inactive-gateways")?.checked || true, q: document.getElementById("gateways-search-input")?.value || "", tags: document.getElementById("gateways-tag-filter")?.value || ""}'
+       hx-vals="js:{include_inactive: document.getElementById('show-inactive-gateways')?.checked || true, q: document.getElementById('gateways-search-input')?.value || '', tags: document.getElementById('gateways-tag-filter')?.value || ''}"
        hx-trigger="refresh from:body, every 10s"
        hx-indicator="#gateway-polling-indicator"
        {% endif %}
