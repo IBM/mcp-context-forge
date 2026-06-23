@@ -28,6 +28,7 @@ cpex-retry-with-backoff = "2026-06-18T23:59:59Z"
 cpex-secrets-detection = "2026-06-18T23:59:59Z"
 granian = "2026-06-18T23:59:59Z"
 tornado = "2026-06-10T23:59:59Z"
+langsmith = "2026-06-20T23:59:59Z"
 
 
 [tool.uv.sources]
@@ -231,7 +232,7 @@ llmchat = [
     "langchain-ollama>=1.1.0",
     "langchain-openai<=1.2.1",
     "langgraph<=1.2.0",
-    "langsmith>=0.8.9", # Transitive pin (langchain-core)
+    "langsmith>=0.8.18", # Transitive pin (langchain-core)
 ]
 
 # Observability dependencies (optional)
