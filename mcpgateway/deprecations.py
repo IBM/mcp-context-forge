@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Shared deprecation metadata for runtime warnings."""
+"""Location: ./mcpgateway/deprecations.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Shared deprecation metadata for runtime warnings.
+"""
 
 DEPRECATION_EFFECTIVE_DATE = "2026-06-11"
 DEPRECATION_HEADER_DATE = "@1781136000"

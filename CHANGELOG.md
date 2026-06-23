@@ -8,6 +8,111 @@
 
 - Rust MCP runtime sidecar, Rust A2A runtime sidecar, and ValidationMiddleware are deprecated as of 2026-06-11 and will sunset on 2026-07-07. Use the Python MCP transport path, the Python A2A invocation path, and endpoint-level Pydantic or protocol-specific validation instead. See [Deprecations](docs/docs/deprecations.md).
 
+## [1.0.4] - 2026-06-22 - Rust Server Migration, Security Fixes, and Build Hardening
+
+### Overview
+
+Release 1.0.4 consolidates **35+ PRs** focused on **Rust server migration**, **security and auth correctness**, **multi-architecture build hardening**, and **database reliability**. This release migrates test servers to Rust and resolves a broad set of auth, CSRF, login, and container build issues:
+
+- **🔐 Security & Auth** - Keycloak SSO role merging from `access_token`, `client_secret_basic` support for SSO token exchange, CSRF exempt-path fixes, login redirect loop fix, and OAuth `auth_type` propagation fix for tool creation.
+- **🦀 Rust Servers** - Slow-time MCP test server migrated to Rust (breaking binary path change), Rust benchmark server added replacing Go, Rust A2A echo agent added for integration testing.
+- **🛡️ FedRAMP / Build** - s390x `rustup` fix, hermetic wheel closure for s390x/ppc64le multiplatform builds, `Containerfile.lite` venv fix, PyPI UI bundle fix, PyO3 and Rust CI dependency updates.
+- **🗄️ Database & Performance** - DB connection pool multiplication resolved, lazy log formatting migration across services, tag length made configurable via env vars.
+- **🌐 API** - RFC 6585 HTTP status code compliance (429, etc.), HTTP 202 Accepted response support for async operations.
+- **🔧 CI / DevOps** - Hadolint via Docker image, docker-scan scoped to merge queue, linting-full moved to merge queue, npm audit fixes, release dependency lock refresh, `cpex-rate-limiter` bump to 0.1.4.
+
+### Added
+
+#### **🔐 Security & Auth**
+
+- **🔑 client_secret_basic SSO Token Exchange** ([#5132](https://github.com/IBM/mcp-context-forge/pull/5132)) – `client_secret_basic` HTTP Basic Auth support for SSO token exchange. Broadens compatibility with OAuth 2.0 compliant identity providers.
+
+#### **🌐 API**
+
+- **📋 RFC 6585 HTTP Status Code Compliance** ([#4797](https://github.com/IBM/mcp-context-forge/pull/4797)) – RFC 6585 compliant HTTP status codes (429, etc.). Improves API standards conformance.
+- **✅ HTTP 202 Accepted Response** ([#5210](https://github.com/IBM/mcp-context-forge/pull/5210)) – HTTP 202 Accepted response support for async operations. Enables proper async API patterns.
+
+#### **🦀 Rust Servers**
+
+- **⚡ Rust Benchmark Server** ([#5091](https://github.com/IBM/mcp-context-forge/pull/5091)) – Rust benchmark server replaces the Go benchmark server; benchmark compose profiles rewired to build from `mcp-servers/rust/benchmark-server`. **Breaking:** binary paths move from `./dist/benchmark-server` to `./target/release/benchmark-server`.
+- **🤖 Rust A2A Echo Agent** ([#5092](https://github.com/IBM/mcp-context-forge/pull/5092)) – Rust implementation of an A2A echo agent for integration testing. Provides a fast, low-overhead test target.
+
+### Changed
+
+#### **🦀 Rust Servers**
+
+- **⚡ Slow-Time Server Migrated to Rust** ([#5090](https://github.com/IBM/mcp-context-forge/pull/5090)) – Slow-time MCP test server migrated from Python to Rust. **Breaking:** binary paths and compose targets change; update any local scripts referencing the old Python entrypoint.
+
+#### **🔧 Infrastructure & DevOps**
+
+- **🔒 Security Policy — IBM PSIRT** ([#5225](https://github.com/IBM/mcp-context-forge/pull/5225)) – Security vulnerability reporting redirected to IBM PSIRT. Aligns with IBM security disclosure process.
+- **📦 cpex-rate-limiter Bump to 0.1.4** ([#5242](https://github.com/IBM/mcp-context-forge/pull/5242)) – Bumped `cpex-rate-limiter` dependency to 0.1.4. Picks up upstream rate-limiter fixes.
+- **📝 Lazy Log Formatting** ([#4749](https://github.com/IBM/mcp-context-forge/pull/4749)) – Migrated f-string log calls to lazy `%`-style across services. Avoids string interpolation overhead when log level is suppressed.
+- **🔒 Configurable Tag Length** ([#5178](https://github.com/IBM/mcp-context-forge/pull/5178)) – Tag length now configurable via environment variables. Enables site-specific tag truncation policy.
+- **🔒 CODEOWNERS Update** ([#5275](https://github.com/IBM/mcp-context-forge/pull/5275)) – Updated code owners for certain topics. Ensures correct review routing.
+
+#### **🖥️ CI**
+
+- **🔍 Linting-Full Moved to Merge Queue** ([#5189](https://github.com/IBM/mcp-context-forge/pull/5189)) – Full repo lint sweep moved to merge queue gate. Reduces PR feedback noise while maintaining merge quality.
+- **🔒 Docker-Scan Scoped to Merge Queue** ([#5209](https://github.com/IBM/mcp-context-forge/pull/5209)) – Docker vulnerability scan scoped to PR lint + merge-queue gate. Avoids redundant scans on every push.
+- **⬛ Hadolint via Docker Image** ([#5259](https://github.com/IBM/mcp-context-forge/pull/5259)) – Hadolint run via Docker image to satisfy org Actions allowlist. Removes dependency on non-allowlisted GitHub Action.
+- **⏩ Skip CI for Secrets Baseline Commits** ([#5012](https://github.com/IBM/mcp-context-forge/pull/5012)) – Full CI skipped for `detect-secrets` baseline-only commits. Reduces unnecessary CI load.
+- **📌 Pin buildx Version** – Pinned `setup-buildx-action` to a fixed version to avoid Docker Hub rate-limit failures. Prevents intermittent CI build failures from upstream rate limiting.
+
+### Fixed
+
+#### **🔐 Security & Auth**
+
+- **🔑 Keycloak SSO Role Merging from access_token** ([#5330](https://github.com/IBM/mcp-context-forge/pull/5330)) – Merge Keycloak realm/client roles from `access_token` instead of only `userinfo`/`id_token`. Fixes missing roles for clients with roles only in `access_token`.
+- **🔒 CSRF Exempt Paths** ([#5157](https://github.com/IBM/mcp-context-forge/pull/5157)) – Added missing API paths to `csrf_exempt_paths`; fixed env drift between config and middleware. Prevents spurious CSRF rejections on valid API calls.
+- **🔄 Login Redirect Loop** ([#5203](https://github.com/IBM/mcp-context-forge/pull/5203)) – Fixed login redirect loop. Prevents infinite redirect cycle after authentication.
+- **🔧 OAuth auth_type Ignored in Tool Creation** ([#5180](https://github.com/IBM/mcp-context-forge/pull/5180)) – OAuth `auth_type` offered in Add Tool form was silently ignored by `POST /tools` and `POST /admin/tools`. Fix propagates auth type through tool creation pipeline.
+
+#### **🧪 Tests**
+
+- **🧪 Playwright: FK Cascade and Team Delegation** ([#5211](https://github.com/IBM/mcp-context-forge/pull/5211)) – Fixed user deletion FK cascade and team selector delegation in Playwright tests. Stabilizes E2E test suite.
+
+#### **🛡️ FedRAMP / FIPS Compliance**
+
+- **🔧 python3 Symlink After subscription-manager** ([#5119](https://github.com/IBM/mcp-context-forge/pull/5119)) – Re-assert `python3` symlink after `subscription-manager` clobbers it in FedRAMP builds. Fixes Python invocation failure in RHEL-based FedRAMP images.
+
+#### **🦀 Rust / Build**
+
+- **📦 PyO3 Dependency Update** ([#5208](https://github.com/IBM/mcp-context-forge/pull/5208)) – Updated PyO3 dependency. Resolves compatibility issue with newer Rust toolchain.
+- **🔧 Rust CI Dependencies** ([#5227](https://github.com/IBM/mcp-context-forge/pull/5227)) – Updated Rust CI dependencies. Fixes CI failures from stale dependency pins.
+- **🔧 s390x Containerfile rustup** ([#5207](https://github.com/IBM/mcp-context-forge/pull/5207)) – Updated s390x Containerfile to use `rustup` for the latest Rust compiler. Fixes s390x builds broken by toolchain version mismatch.
+- **📦 A2A Image Workspace Members** ([#5268](https://github.com/IBM/mcp-context-forge/pull/5268)) – Include workspace members in the A2A image build. Fixes missing crates in multi-workspace Docker builds.
+- **🐳 Containerfile.lite Empty Venv** ([#5278](https://github.com/IBM/mcp-context-forge/pull/5278)) – Fixed `Containerfile.lite` shipping an empty venv masked by a stray `|| true`. Restores correct Python environment in the lite image.
+- **🐳 Hermetic Wheel Closure s390x/ppc64le** ([#5287](https://github.com/IBM/mcp-context-forge/pull/5287)) – Hermetic wheel closure for s390x/ppc64le multiplatform builds. Prevents platform-specific wheel contamination in multi-arch images.
+- **📦 PyPI Bundle UI Files** ([#5202](https://github.com/IBM/mcp-context-forge/pull/5202)) – Bundle UI files on PyPI build. Fixes missing Admin UI assets in PyPI-installed package.
+
+#### **🗄️ Database & Infrastructure**
+
+- **🔗 DB Connection Pool Multiplication** ([#4696](https://github.com/IBM/mcp-context-forge/pull/4696)) – Resolved database connection pool multiplication. Prevents pool exhaustion under concurrent load.
+- **📦 Duplicate python-multipart in uv.lock** ([#5316](https://github.com/IBM/mcp-context-forge/pull/5316)) – Removed duplicate `python-multipart` entry in `uv.lock`. Fixes dependency resolution warnings.
+- **📦 npm Audit Fix** ([#5301](https://github.com/IBM/mcp-context-forge/pull/5301)) – Applied `npm audit fix` for UI dependency vulnerabilities.
+
+### Chores
+
+| PR | Description | Author |
+|----|-------------|--------|
+| [#5179](https://github.com/IBM/mcp-context-forge/pull/5179) | chore: deprecate runtime sidecars and validation middleware | lucarlig |
+| [#5302](https://github.com/IBM/mcp-context-forge/pull/5302) | chore: refresh release dependency locks | lucarlig |
+| [#5308](https://github.com/IBM/mcp-context-forge/pull/5308) | docs: add cargo-vet prune release step | lucarlig |
+| [#5173](https://github.com/IBM/mcp-context-forge/pull/5173) | docs: add LLM Gateway feature documentation | jonpspri |
+| [#4846](https://github.com/IBM/mcp-context-forge/pull/4846) | docs: clarify contribution guidelines | lucarlig |
+| [#4897](https://github.com/IBM/mcp-context-forge/pull/4897) | docs: clarify section 14 manual testing expected behaviours | msureshkumar88 |
+| [#5242](https://github.com/IBM/mcp-context-forge/pull/5242) | chore: bump cpex-rate-limiter to 0.1.4 | gandhipratik203 |
+| [#5275](https://github.com/IBM/mcp-context-forge/pull/5275) | chore: update code owners for certain topics | brian-hussey |
+| [#5012](https://github.com/IBM/mcp-context-forge/pull/5012) | chore: skip full CI for secrets baseline commits | lucarlig |
+| [#4749](https://github.com/IBM/mcp-context-forge/pull/4749) | chore(logging): migrate f-string log calls to lazy %-style | msureshkumar88 |
+| – | chore(docker): update UBI image versions | msureshkumar88 |
+| – | fix(deps): update cryptography and msgpack | cafalchio |
+| – | chore: addressed dependabot security dependency issues | – |
+| – | chore: refresh Go dependencies | – |
+| – | chore: update Python versions in container images | – |
+| – | chore: code quality gates pass | – |
+
 ## [1.0.3] - 2026-06-10 - Auth & JWT Cleanup, Admin UI Fixes, FedRAMP/FIPS Hardening, and Bug Fixes
 
 ### Overview
