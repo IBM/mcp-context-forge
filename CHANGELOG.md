@@ -8,7 +8,7 @@
 
 - Rust MCP runtime sidecar, Rust A2A runtime sidecar, and ValidationMiddleware are deprecated as of 2026-06-11 and will sunset on 2026-07-07. Use the Python MCP transport path, the Python A2A invocation path, and endpoint-level Pydantic or protocol-specific validation instead. See [Deprecations](docs/docs/deprecations.md).
 
-## [1.0.4] - 2026-06-22 - Rust Server Migration, Security Fixes, and Build Hardening
+## [1.0.4] - 2026-06-23 - Rust Server Migration, Security Fixes, and Build Hardening
 
 ### Overview
 
