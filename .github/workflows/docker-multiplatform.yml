@@ -59,11 +59,12 @@ env:
 
 jobs:
   # ---------------------------------------------------------------
-  # Build the full dependency-closure wheel image for every arch, so
-  # Containerfile.lite's `ARG WHEELS_REF` default (${TARGETARCH}-latest)
-  # resolves on all four without a flag. Content-addressed by
-  # sha256(uv.lock) and pull-or-build idempotent, so unchanged deps are a
-  # cache hit. Rides the same non-PR events as the platform builds below
+  # Build the full dependency-closure wheel image for s390x and ppc64le only.
+  # amd64/arm64 have full PyPI manylinux coverage and do not need a wheel
+  # closure — Containerfile.lite always resolves via PyPI for those arches.
+  # s390x/ppc64le wheels are content-addressed by sha256(uv.lock) and the
+  # build is idempotent (skipped when the lock-hash tag already exists).
+  # Rides the same non-PR events as the platform builds below
   # (push/merge_group/workflow_dispatch).
   # ---------------------------------------------------------------
   wheels:
@@ -73,12 +74,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: linux/amd64
-            runner: ubuntu-24.04
-            suffix: amd64
-          - platform: linux/arm64
-            runner: ubuntu-24.04-arm
-            suffix: arm64
           - platform: linux/s390x
             runner: ubuntu-24.04-s390x
             suffix: s390x
@@ -107,6 +102,8 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          version: latest
 
       - name: Log in to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -220,6 +217,8 @@ jobs:
       - name: Set up Docker Buildx
         if: github.event_name != 'pull_request' || matrix.build_on_pr
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          version: latest
 
       # Login is needed both for pushing the final image (push/workflow_dispatch)
       # and for probing the wheel-image registry below.
@@ -231,33 +230,34 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Resolve WHEELS_REF explicitly for every arch so the pipeline never
-      # relies on Containerfile.lite's bare `ARG WHEELS_REF` default (which
-      # points at a GHCR tag for local-build convenience). Prefer the
-      # lock-matched tag (exact reproducible closure); if it isn't published
-      # yet (cold lock-hash, `wheels` job still running), fall back to the
-      # per-arch `latest` wheel image. If neither exists (first-ever run,
-      # before `wheels` has published anything for this arch), fall back to
-      # the literal UBI_MINIMAL default so the build doesn't depend on a
-      # GHCR tag that doesn't exist yet - Containerfile.lite's install step
-      # then falls through to a live PyPI install, compiling anything
-      # missing itself.
+      # Resolve WHEELS_REF for the build:
+      # - amd64/arm64: always use UBI_MINIMAL (full PyPI manylinux coverage,
+      #   no wheel closure needed; avoids stale GHCR images)
+      # - s390x/ppc64le: prefer the lock-hash-tagged wheel image built by the
+      #   `wheels` job above; fall back to `latest` if the lock-hash tag isn't
+      #   published yet; fall back to UBI_MINIMAL if neither exists (first-ever
+      #   run before any wheel image has been published for this arch).
       - name: Compute wheel image ref
         if: github.event_name != 'pull_request' || matrix.build_on_pr
         run: |
-          WHEELS_IMAGE_LC=$(echo "${{ env.IMAGE_NAME }}-wheels" | tr '[:upper:]' '[:lower:]')
-          LOCK_HASH=$(sha256sum uv.lock | cut -c1-16)
-          LOCK_TAG="${{ env.REGISTRY }}/${WHEELS_IMAGE_LC}:${{ matrix.suffix }}-${LOCK_HASH}"
-          LATEST_TAG="${{ env.REGISTRY }}/${WHEELS_IMAGE_LC}:${{ matrix.suffix }}-latest"
-          if docker manifest inspect "${LOCK_TAG}" >/dev/null 2>&1; then
-            echo "Using lock-matched wheel image: ${LOCK_TAG}"
-            echo "WHEELS_REF=${LOCK_TAG}" >> "${GITHUB_ENV}"
-          elif docker manifest inspect "${LATEST_TAG}" >/dev/null 2>&1; then
-            echo "Lock-matched wheel image not published yet; falling back to ${LATEST_TAG}"
-            echo "WHEELS_REF=${LATEST_TAG}" >> "${GITHUB_ENV}"
+          UBI_MINIMAL_DEFAULT=$(grep -m1 '^ARG UBI_MINIMAL=' Containerfile.lite | cut -d= -f2-)
+          if [[ "${{ matrix.suffix }}" == "s390x" || "${{ matrix.suffix }}" == "ppc64le" ]]; then
+            WHEELS_IMAGE_LC=$(echo "${{ env.IMAGE_NAME }}-wheels" | tr '[:upper:]' '[:lower:]')
+            LOCK_HASH=$(sha256sum uv.lock | cut -c1-16)
+            LOCK_TAG="${{ env.REGISTRY }}/${WHEELS_IMAGE_LC}:${{ matrix.suffix }}-${LOCK_HASH}"
+            LATEST_TAG="${{ env.REGISTRY }}/${WHEELS_IMAGE_LC}:${{ matrix.suffix }}-latest"
+            if docker manifest inspect "${LOCK_TAG}" >/dev/null 2>&1; then
+              echo "Using lock-matched wheel image: ${LOCK_TAG}"
+              echo "WHEELS_REF=${LOCK_TAG}" >> "${GITHUB_ENV}"
+            elif docker manifest inspect "${LATEST_TAG}" >/dev/null 2>&1; then
+              echo "Lock-matched wheel image not published yet; falling back to ${LATEST_TAG}"
+              echo "WHEELS_REF=${LATEST_TAG}" >> "${GITHUB_ENV}"
+            else
+              echo "No wheel image available yet for ${{ matrix.suffix }}; falling back to ${UBI_MINIMAL_DEFAULT}"
+              echo "WHEELS_REF=${UBI_MINIMAL_DEFAULT}" >> "${GITHUB_ENV}"
+            fi
           else
-            UBI_MINIMAL_DEFAULT=$(grep -m1 '^ARG UBI_MINIMAL=' Containerfile.lite | cut -d= -f2-)
-            echo "No wheel image available yet for ${{ matrix.suffix }}; falling back to ${UBI_MINIMAL_DEFAULT}, Containerfile.lite will install from PyPI"
+            echo "${{ matrix.suffix }}: using UBI_MINIMAL as WHEELS_REF (PyPI install, no wheel closure needed)"
             echo "WHEELS_REF=${UBI_MINIMAL_DEFAULT}" >> "${GITHUB_ENV}"
           fi
 
@@ -333,6 +333,8 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          version: latest
 
       - name: Log in to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3

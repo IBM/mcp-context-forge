@@ -47,23 +47,18 @@ ARG ENABLE_PROFILING=false
 #     --build-arg NODEJS_IMAGE=<internal-registry>/ubi9/nodejs-20:latest \
 #     --build-arg UBI_MINIMAL=<internal-registry>/ubi9/ubi-minimal:latest \
 #     .
-ARG UBI_BASE=registry.access.redhat.com/ubi10:1780550950
-ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:1780432202
-ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:1780550884
-# Wheel closure stage - pulls the prebuilt dependency closure for the target
-# arch from GHCR (built by the `wheels` job in docker-multiplatform.yml from
-# infra/wheels/Containerfile, for all four arches). The default below is
-# arch-aware so a plain `docker build` with no --build-arg pulls the real
-# closure on every arch - TARGETARCH (amd64/arm64/s390x/ppc64le) matches the
-# wheels job's tag suffix exactly. The pipeline (docker-multiplatform.yml)
-# never relies on this default: its "Compute wheel image ref" step resolves
-# an explicit WHEELS_REF for every arch (lock-hash tag, else `latest` tag,
-# else an explicit UBI_MINIMAL override for the cold-start case before any
-# wheel image has been published), so CI never depends on this GHCR tag
-# existing. This default only matters for local builds with no flags. These
-# wheel images are public, no registry auth needed.
-ARG TARGETARCH
-ARG WHEELS_REF=ghcr.io/ibm/mcp-context-forge-wheels:${TARGETARCH}-latest
+ARG UBI_BASE=registry.access.redhat.com/ubi10:1781510254
+ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:1781700998
+ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:1781509581
+# Wheel closure stage — used only for s390x and ppc64le where PyPI manylinux
+# binary wheels are unavailable (tiktoken/psycopg/cryptography require native
+# compilation, and psycopg-binary has no s390x wheel at all).
+# For amd64/arm64, WHEELS_REF defaults to UBI_MINIMAL so /wheels is always
+# empty and the install step below always resolves via PyPI.
+# For s390x/ppc64le, the CI pipeline (docker-multiplatform.yml) passes an
+# explicit WHEELS_REF pointing to the lock-hash-tagged wheel image built by
+# the `wheels` job in infra/wheels/Containerfile.
+ARG WHEELS_REF=${UBI_MINIMAL}
 FROM ${WHEELS_REF} AS wheels
 RUN mkdir -p /wheels
 
@@ -397,7 +392,7 @@ LABEL maintainer="Mihai Criveti" \
     org.opencontainers.image.title="mcp/mcpgateway" \
     org.opencontainers.image.description="ContextForge: An enterprise-ready Model Context Protocol Gateway" \
     org.opencontainers.image.licenses="Apache-2.0" \
-    org.opencontainers.image.version="1.0.3"
+    org.opencontainers.image.version="1.0.4"
 
 # ----------------------------------------------------------------------------
 # Install minimal runtime dependencies

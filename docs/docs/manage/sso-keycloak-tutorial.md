@@ -240,14 +240,25 @@ To include roles in JWT tokens:
 **realm roles**:
 
 - Maps realm roles to `realm_access.roles` claim
-- Should be enabled by default
+- Exists by default
 
 **client roles**:
 
 - Maps client roles to `resource_access.{client_id}.roles` claim
-- Should be enabled by default
+- Exists by default
 
 If missing, create them manually using **Add mapper** → **By configuration** → **User Realm Role** or **User Client Role**.
+
+**Important — enable on ID token and userinfo, not just the access token:**
+
+Keycloak's built-in **realm roles** and **client roles** mappers ship with only **Add to access token** turned on. **Add to ID token** and **Add to userinfo** are off by default. ContextForge reads roles from the userinfo response (and falls back to the ID token in some configurations) — it does not parse the access token — so with the defaults left as-is, `realm_access`/`resource_access` never reach the gateway and `SSO_KEYCLOAK_ROLE_MAPPINGS`/`SSO_KEYCLOAK_MAP_REALM_ROLES` silently have nothing to map, even though the role is assigned correctly in Keycloak.
+
+For each of the **realm roles** and **client roles** mappers, open it and switch on:
+
+- **Add to ID token**
+- **Add to userinfo**
+
+(in addition to the default **Add to access token**). The local `infra/keycloak/realm-export.json` dev seed already configures these mappers correctly — this step is only needed when wiring up your own Keycloak realm by hand.
 
 ## Step 5: Configure User Attributes and Groups
 
@@ -839,10 +850,11 @@ SSO_KEYCLOAK_PUBLIC_BASE_URL=http://localhost:8180   # Browser-facing (auth URL,
 **Problem**: User roles not included in JWT token
 **Solution**: Configure role mappers and enable role mapping
 
-1. Verify role mappers exist:
+1. Verify role mappers exist and reach the ID token / userinfo:
 
    - Go to **Client scopes** → **roles** → **Mappers**
    - Ensure **realm roles** and **client roles** mappers exist
+   - Open each mapper and confirm **Add to ID token** and **Add to userinfo** are both ON — Keycloak ships these mappers with only **Add to access token** enabled by default, and ContextForge reads roles from userinfo/ID token, not the access token. This is the most common cause of "role assigned in Keycloak but gateway treats user as default role" — see [Step 4.4](#44-configure-role-mappers).
 
 2. Enable role mapping in gateway:
 ```bash

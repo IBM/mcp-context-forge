@@ -42,13 +42,13 @@ curl -fsSL "https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js" \
   -o "${STATIC_DIR}/chartjs/chart.umd.min.js"
 
 # Download Marked (Markdown parser, pinned to 18.0.2 for reproducibility)
-echo "  ⬇️  Marked 18.0.3..."
+echo "  ⬇️  Marked 18.0.5..."
 mkdir -p "${STATIC_DIR}/marked"
 curl -fsSL "https://cdn.jsdelivr.net/npm/marked@18.0.5/lib/marked.umd.js" \
   -o "${STATIC_DIR}/marked/marked.min.js"
 
 # Download DOMPurify (XSS sanitizer, pinned to 3.4.1 for reproducibility)
-echo "  ⬇️  DOMPurify 3.4.2..."
+echo "  ⬇️  DOMPurify 3.4.8..."
 mkdir -p "${STATIC_DIR}/dompurify"
 curl -fsSL "https://cdn.jsdelivr.net/npm/dompurify@3.4.8/dist/purify.min.js" \
   -o "${STATIC_DIR}/dompurify/purify.min.js"

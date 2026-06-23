@@ -2,6 +2,7 @@
 """Location: ./tests/unit/mcpgateway/tools/builder/test_build_hooks.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Unit tests for mcpgateway/tools/builder/build_hooks.py.
 """

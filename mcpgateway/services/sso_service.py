@@ -1450,10 +1450,23 @@ class SSOService:
             return
 
         # Keycloak: merge realm_access, resource_access, and groups from id_token
-        if provider.id == "keycloak" and verified_id_token_claims:
+        # and, failing that, the access_token. Keycloak's built-in "realm roles"
+        # and "client roles" client-scope mappers default access.token.claim=true
+        # but id.token.claim=userinfo.token.claim=false, so on a stock Keycloak
+        # setup these claims are normally present ONLY on the access_token —
+        # never on the userinfo response or id_token. The access_token was
+        # already received directly from the trusted token endpoint, so decoding
+        # it here (without re-verifying the signature) carries the same trust
+        # level as the verified_id_token_claims fallback above.
+        if provider.id == "keycloak":
+            access_token_claims = self._decode_jwt_claims(access_token) or {}
             for claim in ["realm_access", "resource_access", "groups"]:
-                if claim in verified_id_token_claims and claim not in user_data:
+                if claim in user_data:
+                    continue
+                if verified_id_token_claims and claim in verified_id_token_claims:
                     user_data[claim] = verified_id_token_claims[claim]
+                elif claim in access_token_claims:
+                    user_data[claim] = access_token_claims[claim]
             return
 
         # Generic OIDC (including Okta, IBM Verify, and any custom provider):
@@ -1577,7 +1590,15 @@ class SSOService:
                     public_base_url,
                     metadata.get("base_url"),
                 )
-                return self._normalize_user_info(provider, verified_id_token_claims)
+                fallback_claims = dict(verified_id_token_claims)
+                # id_token also lacks realm_access/resource_access/groups by default
+                # on a stock Keycloak setup (see _enrich_user_data_from_claims) -
+                # pull them from the access_token, which carries them by default.
+                access_token_claims = self._decode_jwt_claims(access_token) or {}
+                for claim in ["realm_access", "resource_access", "groups"]:
+                    if claim not in fallback_claims and claim in access_token_claims:
+                        fallback_claims[claim] = access_token_claims[claim]
+                return self._normalize_user_info(provider, fallback_claims)
 
         logger.error("User info request failed for %s: HTTP %s - %s", provider.name, response.status_code, response.text)
 
@@ -2283,6 +2304,12 @@ class SSOService:
             logger.debug("No role mappings configured for provider %s, skipping role sync", provider.id)
             return role_assignments
 
+        # Match role_mappings keys case-insensitively, consistent with _should_user_be_admin().
+        # Without this, an IdP group/role casing that differs from the configured mapping key
+        # (e.g. Keycloak role "gateway-admin" vs a mapping key "Gateway-Admin") would silently
+        # skip RBAC role assignment even though is_admin could already be granted.
+        lower_role_mappings = {str(k).lower(): v for k, v in role_mappings.items()}
+
         personal_team_id: Optional[str] = None
         personal_team_checked = False
 
@@ -2339,10 +2366,9 @@ class SSOService:
         # Batch role lookups: collect all role names that need to be looked up
         role_names_to_lookup = set()
         for group in user_groups:
-            if group in role_mappings:
-                role_name = role_mappings[group]
-                if role_name not in ["admin", settings.default_admin_role]:
-                    role_names_to_lookup.add(role_name)
+            role_name = lower_role_mappings.get(group.lower())
+            if role_name and role_name not in ["admin", settings.default_admin_role]:
+                role_names_to_lookup.add(role_name)
 
         # Add default role to lookup if needed
         if has_provider_default_role and provider_default_role:
@@ -2361,8 +2387,8 @@ class SSOService:
 
         # Process role mappings for ALL providers
         for group in user_groups:
-            if group in role_mappings:
-                role_name = role_mappings[group]
+            role_name = lower_role_mappings.get(group.lower())
+            if role_name:
                 # Special case for "admin" shorthand or configured admin role name
                 if role_name in ["admin", settings.default_admin_role]:
                     role_assignments.append({"role_name": settings.default_admin_role, "scope": "global", "scope_id": None})
