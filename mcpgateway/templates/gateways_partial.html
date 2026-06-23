@@ -170,7 +170,7 @@
             <span class="text-gray-500 dark:text-gray-300 text-xs">None</span>
           {% endif %}
         </td>
-        <td class="px-6 py-4 whitespace-nowrap text-sm">
+        <td class="px-6 py-4 {% if not gateway_async_lifecycle_enabled|default(false) %}whitespace-nowrap{% endif %} text-sm">
           {% if gateway_async_lifecycle_enabled|default(false) and gateway.status|default('active') == 'pending' %}
           <div class="flex flex-col gap-1">
             <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400" role="status" aria-live="polite">
@@ -178,7 +178,7 @@
               🔄 Pending
             </span>
             {% if gateway.statusMessage %}
-            <span class="text-xs text-gray-600 dark:text-gray-400 break-words max-w-xs line-clamp-2">{{ gateway.statusMessage }}</span>
+            <span class="block text-xs text-gray-600 dark:text-gray-400 break-words line-clamp-2">{{ gateway.statusMessage }}</span>
             {% endif %}
           </div>
           {% elif gateway_async_lifecycle_enabled and gateway.status|default('active') == 'deleting' %}
@@ -188,7 +188,7 @@
               🗑️ Deleting
             </span>
             {% if gateway.statusMessage %}
-            <span class="text-xs text-gray-600 dark:text-gray-400 break-words max-w-xs line-clamp-2">{{ gateway.statusMessage }}</span>
+            <span class="block text-xs text-gray-600 dark:text-gray-400 break-words line-clamp-2">{{ gateway.statusMessage }}</span>
             {% endif %}
           </div>
           {% elif gateway_async_lifecycle_enabled and gateway.status|default('active') == 'active' and gateway.enabled %}
