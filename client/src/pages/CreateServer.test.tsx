@@ -4,12 +4,16 @@ import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/mocks/server";
 import { renderWithProviders } from "@/test/test-utils";
-import { createVirtualServer } from "@/api/virtualServers";
+import { createVirtualServer, updateVirtualServer } from "@/api/virtualServers";
 import { ApiError } from "@/api/client";
 import { CreateServer } from "./CreateServer";
 
 interface MockCreateServerFormProps {
   onSuccess: (details: Record<string, unknown> | null) => void;
+  initialValues?: Record<string, unknown>;
+  title?: string;
+  submitLabel?: string;
+  submitError?: string | null;
 }
 
 interface MockSourceSelectionProps {
@@ -54,20 +58,23 @@ vi.mock("@/components/gateways/SourceSelection", async (importOriginal) => {
 });
 
 const mockNavigate = vi.fn();
+let mockRouterPath = "/app/gateways/create-server";
 
 vi.mock("@/router", () => ({
   useRouter: () => ({
     navigate: mockNavigate,
-    path: "/app/gateways/create-server",
+    path: mockRouterPath,
     params: {},
   }),
 }));
 
 vi.mock("@/api/virtualServers", () => ({
   createVirtualServer: vi.fn(),
+  updateVirtualServer: vi.fn(),
 }));
 
 const mockCreateVirtualServer = vi.mocked(createVirtualServer);
+const mockUpdateVirtualServer = vi.mocked(updateVirtualServer);
 
 describe("CreateServer", () => {
   beforeEach(() => {
@@ -75,12 +82,18 @@ describe("CreateServer", () => {
     capturedProps = null;
     mockSourceSelection = false;
     capturedSourceSelectionProps = null;
+    mockRouterPath = "/app/gateways/create-server";
     mockNavigate.mockClear();
     mockCreateVirtualServer.mockReset();
+    mockUpdateVirtualServer.mockReset();
     mockCreateVirtualServer.mockResolvedValue({
       id: "server-1",
       name: "Research server",
     } as Awaited<ReturnType<typeof createVirtualServer>>);
+    mockUpdateVirtualServer.mockResolvedValue({
+      id: "server-1",
+      name: "Research server",
+    } as Awaited<ReturnType<typeof updateVirtualServer>>);
   });
 
   it("renders accessible form fields", () => {
@@ -89,10 +102,176 @@ describe("CreateServer", () => {
     expect(screen.getByRole("heading", { name: "Create server" })).toBeInTheDocument();
     expect(screen.getByLabelText(/Name/)).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Server Name")).toHaveValue("");
-    expect(screen.getByRole("radio", { name: /Team/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /Public/ })).toBeChecked();
     expect(screen.getByRole("switch", { name: /Require OAuth/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Optional configuration" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Tags")).not.toBeInTheDocument();
+  });
+
+  it("renders stored edit details and updates the virtual server", async () => {
+    mockForm = true;
+    mockRouterPath = "/app/gateways/create-server?editServerId=gateway-1";
+    server.use(
+      http.get("*/servers/gateway-1", () =>
+        HttpResponse.json({
+          id: "gateway-1",
+          name: "GH repo tasks",
+          description: "Test server",
+          icon: "",
+          createdAt: "2026-04-16T13:23:12Z",
+          updatedAt: "2026-04-16T13:23:12Z",
+          enabled: true,
+          associatedTools: ["existing-tool"],
+          associatedToolIds: ["existing-tool-id"],
+          associatedResources: ["existing-resource-id"],
+          associatedPrompts: ["existing-prompt-id"],
+          associatedA2aAgents: [],
+          metrics: null,
+          tags: [
+            { id: "tag-team", label: "team" },
+            { id: "tag-enabled", label: "enabled" },
+          ],
+          createdBy: "admin@example.com",
+          createdFromIp: "127.0.0.1",
+          createdVia: "ui",
+          createdUserAgent: "Mozilla/5.0",
+          modifiedBy: null,
+          modifiedFromIp: null,
+          modifiedVia: null,
+          modifiedUserAgent: null,
+          importBatchId: null,
+          federationSource: null,
+          version: 1,
+          teamId: "team-1",
+          team: "Test Team",
+          ownerEmail: "admin@example.com",
+          visibility: "team",
+          oauthEnabled: false,
+          oauthConfig: null,
+        }),
+      ),
+    );
+
+    renderWithProviders(<CreateServer />);
+
+    expect(await screen.findByTestId("mock-create-server-form")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(capturedProps?.title).toBe("Edit server");
+      expect(capturedProps?.submitLabel).toBe("Submit");
+      expect(capturedProps?.initialValues).toMatchObject({
+        name: "GH repo tasks",
+        description: "Test server",
+        visibility: "team",
+        oauthEnabled: false,
+        tags: ["team", "enabled"],
+        teamId: "team-1",
+      });
+    });
+
+    await act(async () => {
+      capturedProps?.onSuccess({
+        name: "Updated GH repo tasks",
+        description: "Updated server",
+        visibility: "public",
+        oauthEnabled: false,
+        tags: ["updated"],
+      });
+    });
+
+    await waitFor(() => {
+      expect(mockUpdateVirtualServer).toHaveBeenCalledWith(
+        "gateway-1",
+        expect.objectContaining({
+          name: "Updated GH repo tasks",
+          description: "Updated server",
+          visibility: "public",
+          oauthEnabled: false,
+          tags: ["updated"],
+          associatedTools: ["existing-tool-id"],
+          associatedResources: ["existing-resource-id"],
+          associatedPrompts: ["existing-prompt-id"],
+        }),
+      );
+    });
+    expect(mockCreateVirtualServer).not.toHaveBeenCalled();
+    expect(mockNavigate).toHaveBeenCalledWith("/app/gateways");
+  });
+
+  it("shows an error when edit server details cannot be loaded", async () => {
+    mockRouterPath = "/app/gateways/create-server?editServerId=missing-server";
+    server.use(
+      http.get("*/servers/missing-server", () =>
+        HttpResponse.json({ detail: "Virtual server not found" }, { status: 404 }),
+      ),
+    );
+
+    renderWithProviders(<CreateServer />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("HTTP 404");
+    expect(screen.queryByRole("heading", { name: "Edit server" })).not.toBeInTheDocument();
+  });
+
+  it("shows an error when updating an edited virtual server fails", async () => {
+    mockForm = true;
+    mockRouterPath = "/app/gateways/create-server?editServerId=gateway-1";
+    mockUpdateVirtualServer.mockRejectedValueOnce(new Error("Update failed"));
+    server.use(
+      http.get("*/servers/gateway-1", () =>
+        HttpResponse.json({
+          id: "gateway-1",
+          name: "GH repo tasks",
+          description: "Test server",
+          icon: "",
+          createdAt: "2026-04-16T13:23:12Z",
+          updatedAt: "2026-04-16T13:23:12Z",
+          enabled: true,
+          associatedTools: [],
+          associatedToolIds: [],
+          associatedResources: [],
+          associatedPrompts: [],
+          associatedA2aAgents: [],
+          metrics: null,
+          tags: [],
+          createdBy: "admin@example.com",
+          createdFromIp: "127.0.0.1",
+          createdVia: "ui",
+          createdUserAgent: "Mozilla/5.0",
+          modifiedBy: null,
+          modifiedFromIp: null,
+          modifiedVia: null,
+          modifiedUserAgent: null,
+          importBatchId: null,
+          federationSource: null,
+          version: 1,
+          teamId: "team-1",
+          team: "Test Team",
+          ownerEmail: "admin@example.com",
+          visibility: "public",
+          oauthEnabled: false,
+          oauthConfig: null,
+        }),
+      ),
+    );
+
+    renderWithProviders(<CreateServer />);
+
+    expect(await screen.findByTestId("mock-create-server-form")).toBeInTheDocument();
+    await act(async () => {
+      capturedProps?.onSuccess({
+        name: "GH repo tasks",
+        description: "Test server",
+        visibility: "public",
+        oauthEnabled: false,
+        tags: [],
+      });
+    });
+
+    await waitFor(() => {
+      expect(capturedProps?.submitError).toBe("Update failed");
+    });
+    expect(mockUpdateVirtualServer).toHaveBeenCalledOnce();
+    expect(mockCreateVirtualServer).not.toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalledWith("/app/gateways");
   });
 
   it("shows optional configuration fields when expanded", async () => {
@@ -163,6 +342,32 @@ describe("CreateServer", () => {
           ],
         });
       }),
+      http.get("*/tools", ({ request }) => {
+        const gatewayId = new URL(request.url).searchParams.get("gateway_id");
+        return HttpResponse.json({
+          tools:
+            gatewayId === "github-notify"
+              ? [
+                  { id: "tool-alpha", name: "alpha-tool" },
+                  { id: "tool-beta", name: "beta-tool" },
+                ]
+              : [],
+        });
+      }),
+      http.get("*/resources", ({ request }) => {
+        const gatewayId = new URL(request.url).searchParams.get("gateway_id");
+        return HttpResponse.json({
+          resources:
+            gatewayId === "github-notify" ? [{ id: "resource-alpha", name: "alpha-resource" }] : [],
+        });
+      }),
+      http.get("*/prompts", ({ request }) => {
+        const gatewayId = new URL(request.url).searchParams.get("gateway_id");
+        return HttpResponse.json({
+          prompts:
+            gatewayId === "github-notify" ? [{ id: "prompt-alpha", name: "alpha-prompt" }] : [],
+        });
+      }),
     );
 
     renderWithProviders(<CreateServer />);
@@ -191,13 +396,19 @@ describe("CreateServer", () => {
     expect(gatewaysRequestCount).toBe(1);
     expect(mockNavigate).not.toHaveBeenCalledWith("/app/tools");
 
-    await user.click(screen.getByRole("button", { name: "Skip for now" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select github-notify" }));
+    expect(screen.getByRole("button", { name: "Submit" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Submit" }));
     await waitFor(() => {
       expect(mockCreateVirtualServer).toHaveBeenCalledWith({
         name: "Research server",
-        visibility: "team",
+        visibility: "public",
         oauthEnabled: false,
-        associatedMCPServerIds: [],
+        associatedTools: ["tool-alpha", "tool-beta"],
+        associatedResources: ["resource-alpha"],
+        associatedPrompts: ["prompt-alpha"],
+        associatedMCPServerIds: ["github-notify"],
       });
     });
     expect(mockNavigate).toHaveBeenCalledWith("/app/gateways");
