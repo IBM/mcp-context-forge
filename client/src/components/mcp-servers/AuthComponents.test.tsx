@@ -1,5 +1,4 @@
-import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { BasicAuth } from "./BasicAuth";
@@ -8,8 +7,7 @@ import { QueryParameterAuth } from "./QueryParameterAuth";
 
 describe("Auth Components", () => {
   describe("BasicAuth", () => {
-    it("calls change handlers on input", async () => {
-      const user = userEvent.setup();
+    it("calls change handlers on input", () => {
       const onUsernameChange = vi.fn();
       const onPasswordChange = vi.fn();
 
@@ -25,31 +23,31 @@ describe("Auth Components", () => {
       const usernameInput = screen.getByLabelText(/Username/i);
       const passwordInput = screen.getByLabelText(/Password/i);
 
-      await user.type(usernameInput, "testuser");
+      // Use fireEvent.change to simulate a complete value change on a controlled component
+      fireEvent.change(usernameInput, { target: { value: "testuser" } });
       expect(onUsernameChange).toHaveBeenCalledWith("testuser");
 
-      await user.type(passwordInput, "testpass");
+      fireEvent.change(passwordInput, { target: { value: "testpass" } });
       expect(onPasswordChange).toHaveBeenCalledWith("testpass");
     });
   });
 
   describe("BearerTokenAuth", () => {
-    it("calls change handler on input", async () => {
-      const user = userEvent.setup();
+    it("calls change handler on input", () => {
       const onTokenChange = vi.fn();
 
       render(<BearerTokenAuth token="" onTokenChange={onTokenChange} />);
 
       const tokenInput = screen.getByLabelText(/Bearer token/i);
 
-      await user.type(tokenInput, "testtoken");
+      // Use fireEvent.change to simulate a complete value change on a controlled component
+      fireEvent.change(tokenInput, { target: { value: "testtoken" } });
       expect(onTokenChange).toHaveBeenCalledWith("testtoken");
     });
   });
 
   describe("QueryParameterAuth", () => {
-    it("calls change handlers on input", async () => {
-      const user = userEvent.setup();
+    it("calls change handlers on input", () => {
       const onParameterNameChange = vi.fn();
       const onApiKeyChange = vi.fn();
 
@@ -65,10 +63,11 @@ describe("Auth Components", () => {
       const paramNameInput = screen.getByLabelText(/Query parameter name/i);
       const apiKeyInput = screen.getByLabelText(/API key/i);
 
-      await user.type(paramNameInput, "api_key");
+      // Use fireEvent.change to simulate a complete value change on a controlled component
+      fireEvent.change(paramNameInput, { target: { value: "api_key" } });
       expect(onParameterNameChange).toHaveBeenCalledWith("api_key");
 
-      await user.type(apiKeyInput, "testkey");
+      fireEvent.change(apiKeyInput, { target: { value: "testkey" } });
       expect(onApiKeyChange).toHaveBeenCalledWith("testkey");
     });
   });
