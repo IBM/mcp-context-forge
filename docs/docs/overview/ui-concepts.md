@@ -148,7 +148,57 @@ After registering a new gateway, you can use the **"Test Gateway Connectivity"**
 
     Choose the appropriate test method based on what you need to verify.
 
+### Gateway Status Monitoring
 
+When asynchronous gateway lifecycle operations are enabled (`GATEWAY_ASYNC_LIFECYCLE_ENABLED=true`), the Admin UI provides real-time status monitoring for gateway registration and deletion operations.
+
+???+ info "🔄 Async Lifecycle Status Indicators"
+
+    **Status Badges:**
+    
+    - **🔄 Pending** (Yellow) - Gateway registration in progress, retrying connection
+    - **✓ Active** (Green) - Gateway successfully registered and operational  
+    - **🗑️ Deleting** (Orange) - Gateway deletion in progress
+    - **Inactive** (Red) - Gateway disabled (flag OFF behavior)
+
+    **Retry Information Column:**
+    
+    When a gateway is pending, an additional column shows:
+    
+    - **Attempts**: Number of connection attempts made
+    - **Next**: Timestamp of next retry attempt (exponential backoff)
+
+    **Auto-Refresh:**
+    
+    The gateways table automatically polls every 10 seconds when pending/deleting gateways exist, updating status and retry counts in real-time without manual page refresh.
+
+    **Action Button States:**
+    
+    - **Edit** button disabled during pending/deleting operations
+    - **Activate/Deactivate** button disabled during pending/deleting operations  
+    - **Delete** button remains enabled and shows "Cancel" for pending gateways
+
+???+ tip "💡 When to Use Async Lifecycle"
+
+    Enable `GATEWAY_ASYNC_LIFECYCLE_ENABLED=true` when:
+    
+    - Registering gateways with slow or unreliable network connections
+    - Managing many gateways where connection attempts may timeout
+    - You want non-blocking UI operations (202 Accepted responses)
+    - Background workers should handle retries with exponential backoff
+
+    When disabled (default), gateway operations are synchronous and block until completion.
+
+???+ example "📊 Status Message Display"
+
+    Below each pending/deleting status badge, the UI displays a truncated error or status message (max 2 lines):
+    
+    ```
+    🔄 Pending
+    Failed to initialize gateway at http://...: Connection timeout
+    ```
+    
+    This provides immediate feedback on connection issues without exposing sensitive internal details like full stack traces.
 
 ---
 
