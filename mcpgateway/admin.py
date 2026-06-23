@@ -44,6 +44,7 @@ import urllib.parse
 import uuid
 
 # Third-Party
+from cryptography.exceptions import InvalidTag
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
@@ -9592,7 +9593,7 @@ async def admin_gateways_partial_html(
     for g in gateways_db:
         try:
             gateways_pydantic.append(gateway_service.convert_gateway_to_read(g))
-        except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+        except (ValidationError, ValueError, KeyError, TypeError, AttributeError, binascii.Error, InvalidTag) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert gateway {getattr(g, 'id', 'unknown')} ({getattr(g, 'name', 'unknown')}): {e}")
     _adjust_pagination_for_conversion_failures(pagination, failed_count, len(gateways_pydantic))
@@ -9641,6 +9642,7 @@ async def admin_gateways_partial_html(
             "current_user_email": user_email,
             "is_admin": _is_admin,
             "user_team_roles": _team_roles,
+            "gateway_async_lifecycle_enabled": settings.gateway_async_lifecycle_enabled,
         },
     )
 

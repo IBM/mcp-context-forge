@@ -141,6 +141,9 @@ ContextForge supports multiple database backends with full feature parity across
 | `GATEWAY_ASYNC_LIFECYCLE_LEASE_SECONDS` | Lease TTL in seconds for DB-backed async lifecycle claims | `90.0` | float > 0 |
 | `GATEWAY_ASYNC_LIFECYCLE_SHUTDOWN_TIMEOUT` | Bounded shutdown wait in seconds for async gateway lifecycle task cancellation | `5.0` | float > 0 |
 
+!!! info "Gateway Async Lifecycle"
+    When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=true`, the Admin UI displays real-time status monitoring with automatic polling, retry counters, and visual indicators for pending/deleting gateways. See [Gateway Status Monitoring](../overview/ui-concepts.md#gateway-status-monitoring) for UI details.
+
 !!! warning "Query Parameter Authentication (INSECURE)"
     The `INSECURE_ALLOW_QUERYPARAM_AUTH` setting enables API key authentication via URL query parameters. This is inherently insecure (CWE-598) as API keys may appear in proxy logs, browser history, and server access logs. Only enable this when the upstream MCP server (e.g., Tavily) requires this authentication method. Always configure `INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS` to restrict which hosts can use this feature.
 
