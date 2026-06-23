@@ -1,0 +1,11 @@
+{
+  "resources.title": "Resources",
+  "resources.loading": "Loading resources, please wait...",
+  "resources.errorLoading": "Error loading resources",
+  "resources.addResources.title": "Add resources",
+  "resources.addResources.description": "Resources will appear automatically when you connect a MCP server. Or, register a standalone resource endpoint.",
+  "resources.card.moreOptions": "More options for {gatewaySlug}",
+  "resources.card.viewDetails": "View Details",
+  "resources.card.resourceCount": "{count, plural, one {# resource} other {# resources}}",
+  "resources.card.moreResources": "{count} more {count, plural, one {resource} other {resources}}"
+}
