@@ -1163,6 +1163,7 @@ class TestMcpSerialization:
         payload = _serialize_mcp_tool_definition(
             {
                 "name": "a2a-test-agent",
+                "title": "A2A Test Agent",
                 "description": "A2A tool",
                 "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}},
                 "outputSchema": {"type": "object"},
@@ -1174,6 +1175,7 @@ class TestMcpSerialization:
 
         assert payload == {
             "name": "a2a-test-agent",
+            "title": "A2A Test Agent",
             "description": "A2A tool",
             "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}},
             "outputSchema": {"type": "object"},
@@ -1185,6 +1187,41 @@ class TestMcpSerialization:
     def test_serialize_mcp_tool_definition_handles_unknown_objects(self):
         """Unknown objects should serialize to an empty MCP payload."""
         assert _serialize_mcp_tool_definition(object()) == {}
+
+    def test_serialize_mcp_tool_definition_omits_title_when_null(self):
+        """title should be omitted from payload when None/absent."""
+        payload = _serialize_mcp_tool_definition(
+            {
+                "name": "test-no-title",
+                "title": None,
+                "description": "No title tool",
+                "inputSchema": {"type": "object"},
+            }
+        )
+
+        assert payload == {
+            "name": "test-no-title",
+            "description": "No title tool",
+            "inputSchema": {"type": "object"},
+        }
+        assert "title" not in payload
+
+    def test_serialize_mcp_tool_definition_gets_title_from_object_attr(self):
+        """title should be extractable via getattr for non-dict objects."""
+        class FakeTool:
+            name = "fake-tool"
+            title = "Fake Tool Title"
+            description = "A fake tool"
+            input_schema = {"type": "object"}
+
+        payload = _serialize_mcp_tool_definition(FakeTool())
+
+        assert payload == {
+            "name": "fake-tool",
+            "title": "Fake Tool Title",
+            "description": "A fake tool",
+            "inputSchema": {"type": "object"},
+        }
 
     def test_serialize_mcp_tool_definition_normalizes_null_description(self):
         """MCP tool payloads should always expose a string description."""

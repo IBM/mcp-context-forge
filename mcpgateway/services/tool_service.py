@@ -3008,6 +3008,7 @@ class ToolService(BaseService):
             query = (
                 select(
                     name_column.label("name"),
+                    DbTool.title.label("title"),
                     DbTool.description.label("description"),
                     DbTool.input_schema.label("input_schema"),
                     DbTool.output_schema.label("output_schema"),
@@ -3045,6 +3046,8 @@ class ToolService(BaseService):
                     "inputSchema": row["input_schema"] or {"type": "object", "properties": {}},
                     "annotations": row["annotations"] or {},
                 }
+                if row["title"] is not None:
+                    payload["title"] = row["title"]
                 if row["output_schema"] is not None:
                     payload["outputSchema"] = row["output_schema"]
                 result.append(payload)

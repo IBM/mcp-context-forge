@@ -8921,6 +8921,7 @@ class TestRustMcpExecutionPlan:
         rows = [
             {
                 "name": "tool-public",
+                "title": None,
                 "description": "desc",
                 "input_schema": {"type": "object"},
                 "output_schema": None,
@@ -8931,6 +8932,7 @@ class TestRustMcpExecutionPlan:
             },
             {
                 "name": "tool-team",
+                "title": "Team Tool",
                 "description": "team-desc",
                 "input_schema": None,
                 "output_schema": {"type": "object"},
@@ -8960,6 +8962,7 @@ class TestRustMcpExecutionPlan:
             },
             {
                 "name": "tool-team",
+                "title": "Team Tool",
                 "description": "team-desc",
                 "inputSchema": {"type": "object", "properties": {}},
                 "annotations": {"title": "Team"},
@@ -10550,6 +10553,7 @@ async def test_list_server_mcp_tool_definitions_creates_span(tool_service):
     db.execute.return_value.mappings.return_value.all.return_value = [
         {
             "name": "tool-one",
+            "title": None,
             "description": "Tool One",
             "input_schema": {"type": "object"},
             "output_schema": None,
