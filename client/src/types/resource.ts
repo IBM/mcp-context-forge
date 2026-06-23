@@ -30,7 +30,7 @@ export interface Resource {
   // Import/federation metadata
   importBatchId?: string;
   federationSource?: string;
-  version: number;
+  version?: number;
 
   // Ownership/visibility
   teamId?: string;
