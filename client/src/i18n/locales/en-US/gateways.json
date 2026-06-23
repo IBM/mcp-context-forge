@@ -3,8 +3,6 @@
   "gateways.notifications": "Notifications",
   "gateways.loadingVirtualServers": "Loading virtual servers, please wait...",
   "gateways.errorLoadingVirtualServers": "Error loading virtual servers",
-  "gateways.action.virtualServer.title": "Virtual Server",
-  "gateways.action.virtualServer.description": "combine Tools, Resources, and Prompts into an MCP Server with its own API key",
   "gateways.action.mcpServer.title": "MCP server",
   "gateways.action.mcpServer.description": "Register an endpoint implementing the Model Context Protocol",
   "gateways.action.aiAgent.title": "AI agent",

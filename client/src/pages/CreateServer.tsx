@@ -32,6 +32,7 @@ import type { MCPServer, ServerStatus, VirtualServer, VirtualServerTag } from "@
 const SERVERS_FORM_PATH = "/app/servers?openForm=true";
 const EDIT_SERVER_ID_QUERY_PARAM = "editServerId";
 const MCP_SERVERS_QUERY_PATH = "/gateways?limit=100&include_inactive=true";
+const COMPONENT_PAGE_SIZE = 100;
 
 type CreateServerStep = "details" | "sources";
 type ListedMCPServer = MCPServer & {
@@ -77,6 +78,8 @@ interface ComponentSelection {
   prompts: string[];
 }
 
+type ComponentListResponse<T> = T[] | Record<string, unknown>;
+
 type SelectableComponent = (GatewayTool | GatewayResource | GatewayPrompt) & {
   kind: ComponentKind;
 };
@@ -92,6 +95,13 @@ function getResponseItems<T>(data: T[] | Record<string, unknown> | undefined, ke
 
   const dataItems = data?.data;
   return Array.isArray(dataItems) ? (dataItems as T[]) : [];
+}
+
+function getNextCursor<T>(data: ComponentListResponse<T> | undefined): string | null {
+  if (!data || Array.isArray(data)) return null;
+
+  const nextCursor = data.nextCursor;
+  return typeof nextCursor === "string" && nextCursor.length > 0 ? nextCursor : null;
 }
 
 function getMCPServers(data: MCPServersResponse | ListedMCPServer[] | undefined) {
@@ -155,6 +165,36 @@ function uniqueStrings(values: Array<string | null | undefined>) {
   return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
 }
 
+function getGatewayComponentPath(kind: ComponentKind, serverId: string, cursor?: string | null) {
+  const params = new URLSearchParams({
+    limit: String(COMPONENT_PAGE_SIZE),
+    include_inactive: "true",
+    include_pagination: "true",
+    gateway_id: serverId,
+  });
+  if (cursor) params.set("cursor", cursor);
+  return `/${kind}?${params.toString()}`;
+}
+
+async function getAllGatewayComponents<T>(
+  kind: ComponentKind,
+  key: string,
+  serverId: string,
+): Promise<T[]> {
+  const items: T[] = [];
+  let cursor: string | null = null;
+
+  do {
+    const data: ComponentListResponse<T> = await api.get<ComponentListResponse<T>>(
+      getGatewayComponentPath(kind, serverId, cursor),
+    );
+    items.push(...getResponseItems<T>(data, key));
+    cursor = getNextCursor(data);
+  } while (cursor);
+
+  return items;
+}
+
 function getComponentName(component: GatewayTool | GatewayResource | GatewayPrompt) {
   return component.name || ("uri" in component ? component.uri : undefined) || component.id;
 }
@@ -209,23 +249,16 @@ async function getComponentsForSelectedMCPServers(
 ): Promise<ComponentSelection> {
   const componentGroups = await Promise.all(
     mcpServerIds.map(async (serverId) => {
-      const encodedServerId = encodeURIComponent(serverId);
-      const [toolsData, resourcesData, promptsData] = await Promise.all([
-        api.get<GatewayTool[] | { tools: GatewayTool[] }>(
-          `/tools?limit=1000&include_inactive=true&gateway_id=${encodedServerId}`,
-        ),
-        api.get<GatewayResource[] | { resources: GatewayResource[] }>(
-          `/resources?limit=1000&include_inactive=true&gateway_id=${encodedServerId}`,
-        ),
-        api.get<GatewayPrompt[] | { prompts: GatewayPrompt[] }>(
-          `/prompts?limit=1000&include_inactive=true&gateway_id=${encodedServerId}`,
-        ),
+      const [tools, resources, prompts] = await Promise.all([
+        getAllGatewayComponents<GatewayTool>("tools", "tools", serverId),
+        getAllGatewayComponents<GatewayResource>("resources", "resources", serverId),
+        getAllGatewayComponents<GatewayPrompt>("prompts", "prompts", serverId),
       ]);
 
       return {
-        tools: getResponseItems(toolsData, "tools").map((tool) => tool.id),
-        resources: getResponseItems(resourcesData, "resources").map((resource) => resource.id),
-        prompts: getResponseItems(promptsData, "prompts").map((prompt) => prompt.id),
+        tools: tools.map((tool) => tool.id),
+        resources: resources.map((resource) => resource.id),
+        prompts: prompts.map((prompt) => prompt.id),
       };
     }),
   );

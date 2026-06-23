@@ -320,6 +320,7 @@ describe("CreateServer", () => {
   it("supports source selection actions after continuing from details", async () => {
     const user = userEvent.setup();
     let gatewaysRequestCount = 0;
+    const toolCursors: Array<string | null> = [];
     server.use(
       http.get("*/gateways", () => {
         gatewaysRequestCount += 1;
@@ -343,15 +344,18 @@ describe("CreateServer", () => {
         });
       }),
       http.get("*/tools", ({ request }) => {
-        const gatewayId = new URL(request.url).searchParams.get("gateway_id");
+        const url = new URL(request.url);
+        const gatewayId = url.searchParams.get("gateway_id");
+        const cursor = url.searchParams.get("cursor");
+        toolCursors.push(cursor);
         return HttpResponse.json({
           tools:
-            gatewayId === "github-notify"
-              ? [
-                  { id: "tool-alpha", name: "alpha-tool" },
-                  { id: "tool-beta", name: "beta-tool" },
-                ]
-              : [],
+            gatewayId === "github-notify" && !cursor
+              ? [{ id: "tool-alpha", name: "alpha-tool" }]
+              : gatewayId === "github-notify" && cursor === "tools-page-2"
+                ? [{ id: "tool-beta", name: "beta-tool" }]
+                : [],
+          nextCursor: gatewayId === "github-notify" && !cursor ? "tools-page-2" : null,
         });
       }),
       http.get("*/resources", ({ request }) => {
@@ -401,6 +405,7 @@ describe("CreateServer", () => {
 
     await user.click(screen.getByRole("button", { name: "Submit" }));
     await waitFor(() => {
+      expect(toolCursors).toEqual([null, "tools-page-2"]);
       expect(mockCreateVirtualServer).toHaveBeenCalledWith({
         name: "Research server",
         visibility: "public",
