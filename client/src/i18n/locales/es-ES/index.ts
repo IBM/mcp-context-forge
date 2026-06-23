@@ -7,6 +7,7 @@ import grpc from "./grpc.json";
 import gateways from "./gateways.json";
 import users from "./users.json";
 import tools from "./tools.json";
+import resources from "./resources.json";
 
 export default {
   ...common,
@@ -18,4 +19,5 @@ export default {
   ...gateways,
   ...users,
   ...tools,
+  ...resources,
 };

@@ -1,0 +1,11 @@
+{
+  "resources.title": "Recursos",
+  "resources.loading": "Carregando recursos, por favor aguarde...",
+  "resources.errorLoading": "Erro ao carregar recursos",
+  "resources.addResources.title": "Adicionar recursos",
+  "resources.addResources.description": "Os recursos aparecerão automaticamente quando você conectar um servidor MCP. Ou registre um endpoint de recursos independente.",
+  "resources.card.moreOptions": "Mais opções para {gatewaySlug}",
+  "resources.card.viewDetails": "Ver detalhes",
+  "resources.card.resourceCount": "{count, plural, one {# recurso} other {# recursos}}",
+  "resources.card.moreResources": "Mais {count} {count, plural, one {recurso} other {recursos}}"
+}
