@@ -102,7 +102,6 @@ test-results/
 tests/playwright/reports/
 tests/playwright/videos/
 tests/playwright/screenshots/
-tests/jmeter/results/
 tests/async/reports/
 tests/async/profiles/
 tests/migration/reports/
@@ -369,10 +368,6 @@ tools_rust/mcp_runtime/flamegraph*.svg
 tools_rust/mcp_runtime/flamegraph*.html
 tools_rust/mcp_runtime/perf.data*
 
-# JMeter test results and local installation
-tests/jmeter/results/*.jtl
-tests/jmeter/results/*/
-.jmeter/
 .bob
 
 # OCP deployment secrets (never commit)
