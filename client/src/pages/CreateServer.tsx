@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/accordion";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Loading } from "@/components/ui/loading";
-import { ApiError } from "@/api/client";
+import { api, ApiError } from "@/api/client";
 import { useQuery } from "@/hooks/useQuery";
 import { useRouter } from "@/router";
 import type { MCPServer, ServerStatus, VirtualServer, VirtualServerTag } from "@/types/server";
@@ -202,6 +202,39 @@ function getCreateServerError(error: unknown, fallbackMessage: string): string {
 
   if (error instanceof Error) return error.message;
   return fallbackMessage;
+}
+
+async function getComponentsForSelectedMCPServers(
+  mcpServerIds: string[],
+): Promise<ComponentSelection> {
+  const componentGroups = await Promise.all(
+    mcpServerIds.map(async (serverId) => {
+      const encodedServerId = encodeURIComponent(serverId);
+      const [toolsData, resourcesData, promptsData] = await Promise.all([
+        api.get<GatewayTool[] | { tools: GatewayTool[] }>(
+          `/tools?limit=1000&include_inactive=true&gateway_id=${encodedServerId}`,
+        ),
+        api.get<GatewayResource[] | { resources: GatewayResource[] }>(
+          `/resources?limit=1000&include_inactive=true&gateway_id=${encodedServerId}`,
+        ),
+        api.get<GatewayPrompt[] | { prompts: GatewayPrompt[] }>(
+          `/prompts?limit=1000&include_inactive=true&gateway_id=${encodedServerId}`,
+        ),
+      ]);
+
+      return {
+        tools: getResponseItems(toolsData, "tools").map((tool) => tool.id),
+        resources: getResponseItems(resourcesData, "resources").map((resource) => resource.id),
+        prompts: getResponseItems(promptsData, "prompts").map((prompt) => prompt.id),
+      };
+    }),
+  );
+
+  return {
+    tools: uniqueStrings(componentGroups.flatMap((group) => group.tools)),
+    resources: uniqueStrings(componentGroups.flatMap((group) => group.resources)),
+    prompts: uniqueStrings(componentGroups.flatMap((group) => group.prompts)),
+  };
 }
 
 function SourcesLoadingStatus({ message }: { message: string }) {
@@ -660,8 +693,28 @@ export function CreateServer() {
     setIsCreating(true);
     setCreateError(null);
     try {
+      const selectedSourceComponents =
+        selectedSourceIds.length > 0
+          ? await getComponentsForSelectedMCPServers(selectedSourceIds)
+          : null;
       const detailsWithSources = {
         ...serverDetails,
+        ...(selectedSourceComponents
+          ? {
+              associatedTools: uniqueStrings([
+                ...(serverDetails.associatedTools ?? []),
+                ...selectedSourceComponents.tools,
+              ]),
+              associatedResources: uniqueStrings([
+                ...(serverDetails.associatedResources ?? []),
+                ...selectedSourceComponents.resources,
+              ]),
+              associatedPrompts: uniqueStrings([
+                ...(serverDetails.associatedPrompts ?? []),
+                ...selectedSourceComponents.prompts,
+              ]),
+            }
+          : {}),
         associatedMCPServerIds: selectedSourceIds,
       };
       await createVirtualServer(detailsWithSources);
