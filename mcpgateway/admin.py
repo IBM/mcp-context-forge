@@ -945,6 +945,7 @@ async def _parse_gateway_data_from_request(request: Request) -> dict[str, Any]:
             oauth_password = str(data.get("oauth_password", ""))
             oauth_scopes_str = str(data.get("oauth_scopes", ""))
             oauth_audience = str(data.get("oauth_audience", ""))
+            oauth_extra_auth_params = str(data.get("oauth_extra_auth_params", ""))
 
             # If any OAuth field is provided, assemble oauth_config
             if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
@@ -974,6 +975,14 @@ async def _parse_gateway_data_from_request(request: Request) -> dict[str, Any]:
                     scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
                     if scopes:
                         oauth_config["scopes"] = scopes
+                # Additional authorization URL parameters (e.g. Google access_type=offline, prompt=consent)
+                if oauth_extra_auth_params:
+                    try:
+                        parsed_extra = orjson.loads(oauth_extra_auth_params)
+                        if isinstance(parsed_extra, dict):
+                            oauth_config["extra_auth_params"] = parsed_extra
+                    except (orjson.JSONDecodeError, ValueError):
+                        pass
 
         # Only set oauth_config if it's a non-empty dict
         if oauth_config:
@@ -12891,6 +12900,16 @@ async def admin_edit_gateway(
                     scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
                     if scopes:
                         oauth_config["scopes"] = scopes
+
+                # Parse extra authorization parameters (JSON)
+                extra_auth_params_raw = str(form.get("oauth_extra_auth_params", "")).strip()
+                if extra_auth_params_raw:
+                    try:
+                        extra_auth_params = json.loads(extra_auth_params_raw)
+                        if isinstance(extra_auth_params, dict):
+                            oauth_config["extra_auth_params"] = extra_auth_params
+                    except (json.JSONDecodeError, ValueError):
+                        pass  # silently ignore invalid JSON
 
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_grant_type}, issuer={oauth_issuer}")
 

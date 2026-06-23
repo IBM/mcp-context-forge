@@ -401,6 +401,215 @@ class TestCompleteAuthorizationCodeFlowWithPKCE:
         call_kwargs = mock_exchange.call_args[1]
         assert call_kwargs["code_verifier"] == "verifier-xyz"
 
+
+class TestExtraAuthParams:
+    """Test extra_auth_params support in authorization URL generation."""
+
+    def test_extra_auth_params_appear_in_pkce_url(self):
+        """Test that extra_auth_params are included in the PKCE authorization URL."""
+        manager = OAuthManager()
+
+        credentials = {
+            "client_id": "test-client",
+            "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+            "redirect_uri": "http://localhost:4444/callback",
+            "scopes": ["openid", "email"],
+            "extra_auth_params": {"access_type": "offline", "prompt": "consent"},
+        }
+
+        auth_url = manager._create_authorization_url_with_pkce(credentials, "state", "challenge", "S256")
+
+        assert "access_type=offline" in auth_url
+        assert "prompt=consent" in auth_url
+
+    def test_extra_auth_params_do_not_override_core_params(self):
+        """Test that extra_auth_params cannot override core OAuth parameters."""
+        manager = OAuthManager()
+
+        credentials = {
+            "client_id": "real-client",
+            "authorization_url": "https://as.example.com/authorize",
+            "redirect_uri": "http://localhost:4444/callback",
+            "scopes": [],
+            "extra_auth_params": {
+                "client_id": "evil-client",
+                "response_type": "token",
+                "state": "malicious-state",
+            },
+        }
+
+        auth_url = manager._create_authorization_url_with_pkce(credentials, "legit-state", "challenge", "S256")
+
+        assert "client_id=real-client" in auth_url
+        assert "evil-client" not in auth_url
+        assert "response_type=code" in auth_url
+        assert "response_type=token" not in auth_url
+        assert "state=legit-state" in auth_url
+        assert "malicious-state" not in auth_url
+
+    def test_extra_auth_params_empty_dict_is_noop(self):
+        """Test that an empty extra_auth_params dict produces the same URL as no extra params."""
+        manager = OAuthManager()
+
+        base_credentials = {
+            "client_id": "test-client",
+            "authorization_url": "https://as.example.com/authorize",
+            "redirect_uri": "http://localhost:4444/callback",
+            "scopes": ["openid"],
+        }
+
+        url_without = manager._create_authorization_url_with_pkce(base_credentials, "state", "challenge", "S256")
+
+        credentials_with_empty = {**base_credentials, "extra_auth_params": {}}
+        url_with_empty = manager._create_authorization_url_with_pkce(credentials_with_empty, "state", "challenge", "S256")
+
+        assert url_without == url_with_empty
+
+    def test_extra_auth_params_none_is_noop(self):
+        """Test that extra_auth_params=None produces the same URL as no extra params."""
+        manager = OAuthManager()
+
+        base_credentials = {
+            "client_id": "test-client",
+            "authorization_url": "https://as.example.com/authorize",
+            "redirect_uri": "http://localhost:4444/callback",
+            "scopes": ["openid"],
+        }
+
+        url_without = manager._create_authorization_url_with_pkce(base_credentials, "state", "challenge", "S256")
+
+        credentials_with_none = {**base_credentials, "extra_auth_params": None}
+        url_with_none = manager._create_authorization_url_with_pkce(credentials_with_none, "state", "challenge", "S256")
+
+        assert url_without == url_with_none
+
+    def test_base_url_with_existing_query_params(self):
+        """Test that authorization URLs with existing query parameters are handled correctly."""
+        manager = OAuthManager()
+
+        credentials = {
+            "client_id": "test-client",
+            "authorization_url": "https://as.example.com/authorize?audience=https://api.example.com",
+            "redirect_uri": "http://localhost:4444/callback",
+            "scopes": ["openid"],
+        }
+
+        auth_url = manager._create_authorization_url_with_pkce(credentials, "state", "challenge", "S256")
+
+        # Both the existing param and the new params should be present
+        assert "audience=https" in auth_url
+        assert "client_id=test-client" in auth_url
+        assert "response_type=code" in auth_url
+        assert "code_challenge=challenge" in auth_url
+        # Bug fix verification: URL must have exactly one '?' separator
+        assert auth_url.count("?") == 1, f"Expected exactly one '?' in URL, got {auth_url.count('?')}: {auth_url}"
+
+    def test_extra_auth_params_non_dict_ignored(self):
+        """Test that non-dict extra_auth_params values are safely ignored."""
+        manager = OAuthManager()
+
+        credentials = {
+            "client_id": "test-client",
+            "authorization_url": "https://as.example.com/authorize",
+            "redirect_uri": "http://localhost:4444/callback",
+            "scopes": [],
+            "extra_auth_params": "not-a-dict",
+        }
+
+        # Should not raise, just ignore the invalid value
+        auth_url = manager._create_authorization_url_with_pkce(credentials, "state", "challenge", "S256")
+        assert "client_id=test-client" in auth_url
+
+
+class TestExtraAuthParamsNonPKCE:
+    """Test extra_auth_params support in non-PKCE authorization URL generation."""
+
+    @pytest.mark.asyncio
+    async def test_extra_auth_params_passed_via_oauth2session(self):
+        """Test that extra_auth_params are passed to OAuth2Session.authorization_url()."""
+        manager = OAuthManager()
+
+        credentials = {
+            "client_id": "test-client",
+            "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+            "redirect_uri": "http://localhost:4444/callback",
+            "scopes": ["openid"],
+            "extra_auth_params": {"access_type": "offline", "prompt": "consent"},
+        }
+
+        result = await manager.get_authorization_url(credentials)
+
+        # The URL should contain the extra params
+        assert "access_type=offline" in result["authorization_url"]
+        assert "prompt=consent" in result["authorization_url"]
+        assert "state" in result
+
+    @pytest.mark.asyncio
+    async def test_non_pkce_without_extra_params(self):
+        """Test that get_authorization_url works without extra_auth_params."""
+        manager = OAuthManager()
+
+        credentials = {
+            "client_id": "test-client",
+            "authorization_url": "https://as.example.com/authorize",
+            "redirect_uri": "http://localhost:4444/callback",
+            "scopes": ["openid"],
+        }
+
+        result = await manager.get_authorization_url(credentials)
+
+        assert "authorization_url" in result
+        assert "state" in result
+        assert "client_id=test-client" in result["authorization_url"]
+
+    @pytest.mark.asyncio
+    async def test_non_pkce_empty_extra_params(self):
+        """Test that empty extra_auth_params dict is a no-op for non-PKCE flow."""
+        manager = OAuthManager()
+
+        credentials = {
+            "client_id": "test-client",
+            "authorization_url": "https://as.example.com/authorize",
+            "redirect_uri": "http://localhost:4444/callback",
+            "scopes": ["openid"],
+            "extra_auth_params": {},
+        }
+
+        result = await manager.get_authorization_url(credentials)
+
+        assert "authorization_url" in result
+        assert "state" in result
+
+    @pytest.mark.asyncio
+    async def test_non_pkce_extra_auth_params_do_not_override_core_params(self):
+        """Test that extra_auth_params cannot override core OAuth parameters in non-PKCE flow."""
+        manager = OAuthManager()
+
+        credentials = {
+            "client_id": "legitimate-client",
+            "authorization_url": "https://as.example.com/authorize",
+            "redirect_uri": "http://localhost:4444/callback",
+            "scopes": ["openid"],
+            "extra_auth_params": {
+                "redirect_uri": "https://evil.com/steal",
+                "client_id": "attacker-client",
+                "state": "malicious-state",
+                "response_type": "token",
+                "access_type": "offline",
+            },
+        }
+
+        result = await manager.get_authorization_url(credentials)
+        url = result["authorization_url"]
+
+        # Core params must NOT be overridden
+        assert "evil.com" not in url
+        assert "attacker-client" not in url
+        assert "malicious-state" not in url
+        assert "response_type=token" not in url
+        # Safe extra param should still be included
+        assert "access_type=offline" in url
+
     @pytest.mark.asyncio
     async def test_complete_authorization_code_flow_fails_with_invalid_state(self):
         """Test that invalid state causes flow to fail."""
