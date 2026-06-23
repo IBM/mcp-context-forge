@@ -28,9 +28,17 @@ attic/
 .benchmarks/
 .claude
 
-# Rust slow-time-server is built from the root Cargo workspace.
+# Rust MCP servers built from the root Cargo workspace.
 !mcp-servers/
 !mcp-servers/rust/
+!mcp-servers/rust/fast-time-server/
+!mcp-servers/rust/fast-time-server/Cargo.toml
+!mcp-servers/rust/fast-time-server/src/
+!mcp-servers/rust/fast-time-server/src/**
+!mcp-servers/rust/filesystem-server/
+!mcp-servers/rust/filesystem-server/Cargo.toml
+!mcp-servers/rust/filesystem-server/src/
+!mcp-servers/rust/filesystem-server/src/**
 !mcp-servers/rust/slow-time-server/
 !mcp-servers/rust/slow-time-server/Cargo.toml
 !mcp-servers/rust/slow-time-server/src/
