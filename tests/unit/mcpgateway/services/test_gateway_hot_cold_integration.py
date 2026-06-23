@@ -80,6 +80,15 @@ def _make_mock_gateway(
     mock.visibility = "private"
     mock.last_refresh_at = None
     mock.refresh_interval_seconds = None
+    # Async lifecycle fields (Issue #5127)
+    mock.status = "active"
+    mock.status_message = None
+    mock.registration_attempts = 0
+    mock.next_retry_at = None
+    mock.last_error = None
+    mock.lifecycle_claimed_by = None
+    mock.lifecycle_claimed_at = None
+    mock.lifecycle_claim_expires_at = None
     return mock
 
 
@@ -768,6 +777,15 @@ class TestUpdateGatewayPollSchedule:
         mock_gw.federation_source = None
         mock_gw.ca_certificate_sig = None
         mock_gw.signing_algorithm = "ed25519"
+        # Async lifecycle fields (Issue #5127)
+        mock_gw.status = "active"
+        mock_gw.status_message = None
+        mock_gw.registration_attempts = 0
+        mock_gw.next_retry_at = None
+        mock_gw.last_error = None
+        mock_gw.lifecycle_claimed_by = None
+        mock_gw.lifecycle_claimed_at = None
+        mock_gw.lifecycle_claim_expires_at = None
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gw
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
