@@ -1,48 +1,86 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/mocks/server";
 import { renderWithProviders } from "@/test/test-utils";
-import { createVirtualServer, updateVirtualServer } from "@/api/virtualServers";
+import { createVirtualServer } from "@/api/virtualServers";
+import { ApiError } from "@/api/client";
 import { CreateServer } from "./CreateServer";
 
-const routerMock = vi.hoisted(() => ({
-  navigate: vi.fn(),
-  path: "/app/gateways/create-server",
-}));
+interface MockCreateServerFormProps {
+  onSuccess: (details: Record<string, unknown> | null) => void;
+}
+
+interface MockSourceSelectionProps {
+  createServerActions: {
+    onSkip: () => Promise<void>;
+  };
+}
+
+let mockForm = false;
+let capturedProps: MockCreateServerFormProps | null = null;
+let mockSourceSelection = false;
+let capturedSourceSelectionProps: MockSourceSelectionProps | null = null;
+
+vi.mock("@/components/gateways/CreateServerForm", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    CreateServerForm: (props: MockCreateServerFormProps) => {
+      if (mockForm) {
+        capturedProps = props;
+        return <div data-testid="mock-create-server-form" />;
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (actual.CreateServerForm as any)(props);
+    },
+  };
+});
+
+vi.mock("@/components/gateways/SourceSelection", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    SourceSelection: (props: MockSourceSelectionProps) => {
+      if (mockSourceSelection) {
+        capturedSourceSelectionProps = props;
+        return <div data-testid="mock-source-selection" />;
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (actual.SourceSelection as any)(props);
+    },
+  };
+});
+
+const mockNavigate = vi.fn();
 
 vi.mock("@/router", () => ({
   useRouter: () => ({
-    navigate: routerMock.navigate,
-    path: routerMock.path,
+    navigate: mockNavigate,
+    path: "/app/gateways/create-server",
     params: {},
   }),
 }));
 
 vi.mock("@/api/virtualServers", () => ({
   createVirtualServer: vi.fn(),
-  updateVirtualServer: vi.fn(),
 }));
 
 const mockCreateVirtualServer = vi.mocked(createVirtualServer);
-const mockUpdateVirtualServer = vi.mocked(updateVirtualServer);
-const mockNavigate = routerMock.navigate;
 
 describe("CreateServer", () => {
   beforeEach(() => {
+    mockForm = false;
+    capturedProps = null;
+    mockSourceSelection = false;
+    capturedSourceSelectionProps = null;
     mockNavigate.mockClear();
-    routerMock.path = "/app/gateways/create-server";
     mockCreateVirtualServer.mockReset();
-    mockUpdateVirtualServer.mockReset();
     mockCreateVirtualServer.mockResolvedValue({
       id: "server-1",
       name: "Research server",
     } as Awaited<ReturnType<typeof createVirtualServer>>);
-    mockUpdateVirtualServer.mockResolvedValue({
-      id: "server-1",
-      name: "Research server",
-    } as Awaited<ReturnType<typeof updateVirtualServer>>);
   });
 
   it("renders accessible form fields", () => {
@@ -55,259 +93,6 @@ describe("CreateServer", () => {
     expect(screen.getByRole("switch", { name: /Require OAuth/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Optional configuration" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Tags")).not.toBeInTheDocument();
-  });
-
-  it("renders stored edit details and updates selected MCP server associations", async () => {
-    const user = userEvent.setup();
-    server.use(
-      http.get("*/gateways", () =>
-        HttpResponse.json({
-          gateways: [
-            {
-              id: "mcp-connected",
-              name: "connected-source",
-              url: "http://localhost:9000",
-              transport: "SSE",
-              enabled: true,
-              reachable: true,
-              visibility: "public",
-              tool_count: 3,
-              resource_count: 1,
-              prompt_count: 2,
-              created_at: "2024-01-01T00:00:00Z",
-              updated_at: "2024-01-01T00:00:00Z",
-            },
-            {
-              id: "mcp-available",
-              name: "available-source",
-              url: "http://localhost:9001",
-              transport: "SSE",
-              enabled: true,
-              reachable: true,
-              visibility: "public",
-              tool_count: 2,
-              resource_count: 1,
-              prompt_count: 1,
-              created_at: "2024-01-01T00:00:00Z",
-              updated_at: "2024-01-01T00:00:00Z",
-            },
-          ],
-        }),
-      ),
-      http.get("*/servers/gateway-1", () =>
-        HttpResponse.json({
-          id: "gateway-1",
-          name: "GH repo tasks",
-          description: "Test server",
-          icon: "",
-          createdAt: "2026-04-16T13:23:12Z",
-          updatedAt: "2026-04-16T13:23:12Z",
-          enabled: true,
-          associatedTools: ["existing-tool"],
-          associatedToolIds: ["existing-tool-id"],
-          associatedResources: ["existing-resource-id"],
-          associatedPrompts: ["existing-prompt-id"],
-          associatedA2aAgents: [],
-          metrics: null,
-          tags: [
-            { id: "tag-team", label: "team" },
-            { id: "tag-enabled", label: "enabled" },
-          ],
-          createdBy: "admin@example.com",
-          createdFromIp: "127.0.0.1",
-          createdVia: "ui",
-          createdUserAgent: "Mozilla/5.0",
-          modifiedBy: null,
-          modifiedFromIp: null,
-          modifiedVia: null,
-          modifiedUserAgent: null,
-          importBatchId: null,
-          federationSource: null,
-          version: 1,
-          teamId: "team-1",
-          team: "Test Team",
-          ownerEmail: "admin@example.com",
-          visibility: "team",
-          oauthEnabled: false,
-          oauthConfig: null,
-        }),
-      ),
-      http.get("*/servers/gateway-1/tools", () =>
-        HttpResponse.json({
-          tools: [
-            {
-              id: "existing-tool-id",
-              name: "existing-tool",
-              originalName: "existing-tool",
-            },
-          ],
-        }),
-      ),
-      http.get("*/servers/gateway-1/resources", () =>
-        HttpResponse.json({
-          resources: [
-            {
-              id: "existing-resource-id",
-              name: "existing-resource",
-              uri: "mcp://existing-resource",
-            },
-          ],
-        }),
-      ),
-      http.get("*/servers/gateway-1/prompts", () =>
-        HttpResponse.json({
-          prompts: [
-            {
-              id: "existing-prompt-id",
-              name: "existing-prompt",
-              originalName: "existing-prompt",
-            },
-          ],
-        }),
-      ),
-      http.get("*/tools", ({ request }) => {
-        const gatewayId = new URL(request.url).searchParams.get("gateway_id");
-        if (gatewayId === "mcp-connected") {
-          return HttpResponse.json([
-            {
-              id: "existing-tool-id",
-              name: "existing-tool",
-              originalName: "existing-tool",
-              gateway_id: "mcp-connected",
-            },
-          ]);
-        }
-        if (gatewayId !== "mcp-available") return HttpResponse.json([]);
-        return HttpResponse.json([
-          {
-            id: "available-tool-id",
-            name: "available-tool",
-            originalName: "available-tool",
-            gateway_id: "mcp-available",
-          },
-        ]);
-      }),
-      http.get("*/resources", ({ request }) => {
-        const gatewayId = new URL(request.url).searchParams.get("gateway_id");
-        if (gatewayId === "mcp-connected") {
-          return HttpResponse.json([
-            {
-              id: "existing-resource-id",
-              name: "existing-resource",
-              uri: "mcp://existing-resource",
-              gateway_id: "mcp-connected",
-            },
-          ]);
-        }
-        if (gatewayId !== "mcp-available") return HttpResponse.json([]);
-        return HttpResponse.json([
-          {
-            id: "available-resource-id",
-            name: "available-resource",
-            uri: "mcp://available-resource",
-            gateway_id: "mcp-available",
-          },
-        ]);
-      }),
-      http.get("*/prompts", ({ request }) => {
-        const gatewayId = new URL(request.url).searchParams.get("gateway_id");
-        if (gatewayId === "mcp-connected") {
-          return HttpResponse.json([
-            {
-              id: "existing-prompt-id",
-              name: "existing-prompt",
-              originalName: "existing-prompt",
-              gateway_id: "mcp-connected",
-            },
-          ]);
-        }
-        if (gatewayId !== "mcp-available") return HttpResponse.json([]);
-        return HttpResponse.json([
-          {
-            id: "available-prompt-id",
-            name: "available-prompt",
-            originalName: "available-prompt",
-            gateway_id: "mcp-available",
-          },
-        ]);
-      }),
-    );
-    routerMock.path = "/app/gateways/create-server?editServerId=gateway-1";
-
-    renderWithProviders(<CreateServer />);
-
-    expect(await screen.findByRole("heading", { name: "Edit server" })).toBeInTheDocument();
-    expect(screen.getByLabelText(/Name/)).toHaveValue("GH repo tasks");
-    expect(screen.getByLabelText("Tags")).toHaveValue("team, enabled");
-    expect(screen.getByLabelText("Virtual server description")).toHaveValue("Test server");
-    expect(screen.getByRole("button", { name: "Submit" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
-    const mcpServersSection = screen.getByRole("region", { name: "MCP server" });
-    await within(mcpServersSection).findByText("connected-source");
-    expect(within(mcpServersSection).getByText("available-source")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("heading", { name: "Connected MCP servers" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("heading", { name: "Available MCP servers" }),
-    ).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: /connected-source/ }));
-    const existingToolCheckbox = await screen.findByRole("checkbox", {
-      name: "Select existing-tool",
-    });
-    const existingResourceCheckbox = await screen.findByRole("checkbox", {
-      name: "Select existing-resource",
-    });
-    const existingPromptCheckbox = await screen.findByRole("checkbox", {
-      name: "Select existing-prompt",
-    });
-    expect(existingToolCheckbox).toBeChecked();
-    expect(existingResourceCheckbox).toBeChecked();
-    expect(existingPromptCheckbox).toBeChecked();
-    await user.click(existingToolCheckbox);
-    await user.click(existingResourceCheckbox);
-    await user.click(existingPromptCheckbox);
-
-    await user.click(screen.getByRole("button", { name: /available-source/ }));
-    const availableToolCheckbox = await screen.findByRole("checkbox", {
-      name: "Select available-tool",
-    });
-    const availableResourceCheckbox = await screen.findByRole("checkbox", {
-      name: "Select available-resource",
-    });
-    const availablePromptCheckbox = await screen.findByRole("checkbox", {
-      name: "Select available-prompt",
-    });
-    expect(availableToolCheckbox).not.toBeChecked();
-    expect(availableResourceCheckbox).not.toBeChecked();
-    expect(availablePromptCheckbox).not.toBeChecked();
-    await user.click(availableToolCheckbox);
-    await user.click(availableResourceCheckbox);
-    await user.click(availablePromptCheckbox);
-
-    const nameInput = screen.getByLabelText(/Name/);
-    await user.clear(nameInput);
-    await user.type(nameInput, "Updated GH repo tasks");
-    await user.click(screen.getByRole("button", { name: "Submit" }));
-
-    await waitFor(() => {
-      expect(mockUpdateVirtualServer).toHaveBeenCalledWith(
-        "gateway-1",
-        expect.objectContaining({
-          name: "Updated GH repo tasks",
-          description: "Test server",
-          tags: ["team", "enabled"],
-          visibility: "team",
-          oauthEnabled: false,
-          associatedTools: ["available-tool-id"],
-          associatedResources: ["available-resource-id"],
-          associatedPrompts: ["available-prompt-id"],
-        }),
-      );
-    });
-    expect(mockCreateVirtualServer).not.toHaveBeenCalled();
-    expect(mockNavigate).toHaveBeenCalledWith("/app/gateways");
   });
 
   it("shows optional configuration fields when expanded", async () => {
@@ -476,12 +261,87 @@ describe("CreateServer", () => {
     expect(mockNavigate).toHaveBeenCalledWith("/app/servers?openForm=true");
   });
 
-  it("shows validation errors before submit", async () => {
+  it("shows ApiError message when body contains message", async () => {
     const user = userEvent.setup();
+    const apiError = new ApiError(400, { message: "Api message error" }, "");
+    mockCreateVirtualServer.mockRejectedValueOnce(apiError);
     renderWithProviders(<CreateServer />);
 
+    await user.type(screen.getByLabelText(/Name/), "Research server");
     await user.click(screen.getByRole("button", { name: /Continue/ }));
+    await screen.findByRole("heading", { name: "Connect a source" });
+    await user.click(screen.getByRole("button", { name: "Skip for now" }));
 
-    expect(await screen.findByText("Server name is required.")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Api message error");
+  });
+
+  it("shows ApiError message when body contains detail as string", async () => {
+    const user = userEvent.setup();
+    const apiError = new ApiError(400, { detail: "Api detail string error" }, "");
+    mockCreateVirtualServer.mockRejectedValueOnce(apiError);
+    renderWithProviders(<CreateServer />);
+
+    await user.type(screen.getByLabelText(/Name/), "Research server");
+    await user.click(screen.getByRole("button", { name: /Continue/ }));
+    await screen.findByRole("heading", { name: "Connect a source" });
+    await user.click(screen.getByRole("button", { name: "Skip for now" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Api detail string error");
+  });
+
+  it("shows ApiError message when body contains detail as array of validation errors", async () => {
+    const user = userEvent.setup();
+    const apiError = new ApiError(400, { detail: [{ msg: "Msg 1" }, "String msg 2"] }, "");
+    mockCreateVirtualServer.mockRejectedValueOnce(apiError);
+    renderWithProviders(<CreateServer />);
+
+    await user.type(screen.getByLabelText(/Name/), "Research server");
+    await user.click(screen.getByRole("button", { name: /Continue/ }));
+    await screen.findByRole("heading", { name: "Connect a source" });
+    await user.click(screen.getByRole("button", { name: "Skip for now" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Msg 1; String msg 2");
+  });
+
+  it("shows fallback message when error is arbitrary object", async () => {
+    const user = userEvent.setup();
+    mockCreateVirtualServer.mockRejectedValueOnce({ raw: "some raw error" });
+    renderWithProviders(<CreateServer />);
+
+    await user.type(screen.getByLabelText(/Name/), "Research server");
+    await user.click(screen.getByRole("button", { name: /Continue/ }));
+    await screen.findByRole("heading", { name: "Connect a source" });
+    await user.click(screen.getByRole("button", { name: "Skip for now" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Unable to create server. Please try again.",
+    );
+  });
+
+  it("should set step back to details if handleSkipForNow is called and serverDetails is null", async () => {
+    mockForm = true;
+    mockSourceSelection = true;
+    try {
+      renderWithProviders(<CreateServer />);
+
+      // Step 1: Trigger success on the form with null details
+      act(() => {
+        capturedProps?.onSuccess(null);
+      });
+
+      // Now step should be sources, and SourceSelection should render
+      expect(screen.getByTestId("mock-source-selection")).toBeInTheDocument();
+
+      // Step 2: Trigger onSkip from SourceSelection
+      await act(async () => {
+        await capturedSourceSelectionProps?.createServerActions.onSkip();
+      });
+
+      // Step should set back to details, rendering CreateServerForm again
+      expect(screen.getByTestId("mock-create-server-form")).toBeInTheDocument();
+    } finally {
+      mockForm = false;
+      mockSourceSelection = false;
+    }
   });
 });

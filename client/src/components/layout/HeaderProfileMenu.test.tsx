@@ -3,22 +3,28 @@ import userEvent from "@testing-library/user-event";
 import { ThemeProvider } from "@/hooks/useTheme";
 import { I18nProvider } from "@/i18n";
 import { render, screen } from "@testing-library/react";
+import type { User } from "../../types/user";
 import { HeaderProfileMenu } from "./HeaderProfileMenu";
 
 const mockLogout = vi.fn();
 const mockNavigate = vi.fn();
 
+let mockUser: User | null = {
+  email: "bobo@cf.com",
+  full_name: "Bobo Example",
+  is_admin: false,
+  is_active: true,
+  auth_provider: "local",
+  email_verified: true,
+  password_change_required: false,
+  created_at: new Date().toISOString(),
+  failed_login_attempts: 0,
+  is_locked: false,
+};
+
 vi.mock("@/auth/useAuth", () => ({
   useAuth: () => ({
-    user: {
-      email: "bobo@cf.com",
-      full_name: "Bobo Example",
-      is_admin: false,
-      is_active: true,
-      auth_provider: "local",
-      email_verified: true,
-      password_change_required: false,
-    },
+    user: mockUser,
     logout: mockLogout,
   }),
 }));
@@ -106,5 +112,25 @@ describe("HeaderProfileMenu", () => {
     await user.click(screen.getByRole("button", { name: "System theme" }));
 
     expect(localStorage.getItem("theme-preference")).toBe("system");
+  });
+
+  it("renders null when user is not logged in", () => {
+    mockUser = null;
+    const { container } = renderMenu();
+    expect(container.firstChild).toBeNull();
+
+    // Restore mockUser for other test suites running concurrently/subsequently
+    mockUser = {
+      email: "bobo@cf.com",
+      full_name: "Bobo Example",
+      is_admin: false,
+      is_active: true,
+      auth_provider: "local",
+      email_verified: true,
+      password_change_required: false,
+      created_at: new Date().toISOString(),
+      failed_login_attempts: 0,
+      is_locked: false,
+    };
   });
 });

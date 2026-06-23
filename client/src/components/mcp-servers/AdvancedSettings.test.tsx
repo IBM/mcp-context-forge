@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import * as AuthContextModule from "@/auth/AuthContext";
 import { AdvancedSettings } from "./AdvancedSettings";
 
@@ -48,7 +49,7 @@ const makeProps = (overrides: Partial<AdvancedSettingsProps> = {}): AdvancedSett
   oauthStoreTokens: false,
   oauthAutoRefresh: false,
   oauthUsername: "",
-  oauthPassword: "",
+  oauthPassword: "", // pragma: allowlist secret
   onOAuthClientIdChange: vi.fn(),
   onOAuthClientSecretChange: vi.fn(),
   onOAuthTokenUrlChange: vi.fn(),
@@ -62,7 +63,7 @@ const makeProps = (overrides: Partial<AdvancedSettingsProps> = {}): AdvancedSett
   onOAuthUsernameChange: vi.fn(),
   onOAuthPasswordChange: vi.fn(),
   queryParamName: "",
-  queryParamApiKey: "",
+  queryParamApiKey: "", // pragma: allowlist secret
   onQueryParamNameChange: vi.fn(),
   onQueryParamApiKeyChange: vi.fn(),
   oneTimeAuth: false,
@@ -77,6 +78,80 @@ describe("AdvancedSettings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockUseAuthContext.mockReturnValue(makeAuthContext());
+  });
+
+  describe("auth type rendering", () => {
+    it("renders auth content according to authType", () => {
+      const { rerender } = render(<AdvancedSettings {...makeProps()} />);
+      // "none" auth renders nothing special
+      expect(screen.queryByLabelText(/Username/i)).not.toBeInTheDocument();
+
+      // "basic" auth
+      rerender(<AdvancedSettings {...makeProps({ authType: "basic" })} />);
+      expect(screen.getByLabelText(/Username/i)).toBeInTheDocument();
+
+      // "bearer" auth
+      rerender(<AdvancedSettings {...makeProps({ authType: "bearer" })} />);
+      expect(screen.getByPlaceholderText(/Paste bearer token/i)).toBeInTheDocument();
+
+      // "custom" auth
+      rerender(<AdvancedSettings {...makeProps({ authType: "custom" })} />);
+      expect(screen.getByRole("button", { name: /\+?\s*Add header/i })).toBeInTheDocument();
+
+      // "oauth" auth
+      rerender(<AdvancedSettings {...makeProps({ authType: "oauth" })} />);
+      expect(screen.getByLabelText(/Client ID/i)).toBeInTheDocument();
+
+      // "query" auth
+      rerender(<AdvancedSettings {...makeProps({ authType: "query" })} />);
+      expect(screen.getByLabelText(/Parameter name/i)).toBeInTheDocument();
+
+      // invalid/default authType
+      rerender(<AdvancedSettings {...makeProps({ authType: "invalid-type" as never })} />);
+      expect(screen.queryByLabelText(/Username/i)).not.toBeInTheDocument();
+      expect(screen.queryByPlaceholderText(/Paste bearer token/i)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/Parameter name/i)).not.toBeInTheDocument();
+    });
+
+    it("renders warning when oneTimeAuth is true", () => {
+      const { rerender } = render(<AdvancedSettings {...makeProps({ oneTimeAuth: false })} />);
+      expect(screen.queryByText(/Add passthrough headers when one-time/i)).not.toBeInTheDocument();
+
+      rerender(<AdvancedSettings {...makeProps({ oneTimeAuth: true })} />);
+      expect(screen.getByText(/Add passthrough headers when one-time/i)).toBeInTheDocument();
+    });
+
+    it("calls callback handlers when inputs change", async () => {
+      const user = userEvent.setup();
+      const handleAuthTypeChange = vi.fn();
+      const handleOneTimeAuthChange = vi.fn();
+      const handlePassthroughHeadersChange = vi.fn();
+
+      render(
+        <AdvancedSettings
+          {...makeProps({
+            onAuthTypeChange: handleAuthTypeChange,
+            onOneTimeAuthChange: handleOneTimeAuthChange,
+            onPassthroughHeadersChange: handlePassthroughHeadersChange,
+          })}
+        />,
+      );
+
+      // Switch auth type
+      const basicRadio = screen.getByLabelText("Basic");
+      await user.click(basicRadio);
+      expect(handleAuthTypeChange).toHaveBeenCalledWith("basic");
+
+      // Toggle one time auth switch
+      const oneTimeSwitch = screen.getByRole("switch", { name: /One-time authentication/i });
+      await user.click(oneTimeSwitch);
+      expect(handleOneTimeAuthChange).toHaveBeenCalled();
+
+      // Change passthrough headers textarea
+      const textarea = screen.getByLabelText("Passthrough headers");
+      await user.type(textarea, "X-Custom-Header");
+      expect(handlePassthroughHeadersChange).toHaveBeenCalled();
+    });
   });
 
   describe("team visibility — teamId sync (issue #5077)", () => {

@@ -8,6 +8,27 @@ import { RouterProvider } from "@/router";
 import { I18nProvider } from "@/i18n";
 import { AuthProvider } from "@/auth/AuthContext";
 
+let mockHookActive = false;
+let mockHookReturnValue: Record<string, unknown> | null = null;
+
+vi.mock("@/hooks/useMCPServerForm", async (importOriginal) => {
+  const actual = (await importOriginal()) as {
+    useMCPServerForm: (serverId?: string) => Record<string, unknown>;
+  };
+  return {
+    ...actual,
+    useMCPServerForm: (serverId?: string) => {
+      if (mockHookActive) {
+        return {
+          ...actual.useMCPServerForm(serverId),
+          ...mockHookReturnValue,
+        };
+      }
+      return actual.useMCPServerForm(serverId);
+    },
+  };
+});
+
 // Mock API responses for ExposeComponentsForm and gateway creation
 const server = setupServer(
   http.get("/app/auth/me", () => {
@@ -63,6 +84,8 @@ describe("MCPServerForm", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockHookActive = false;
+    mockHookReturnValue = null;
     // Set initial path for router
     window.history.pushState({}, "", "/app/servers");
   });
@@ -105,6 +128,42 @@ describe("MCPServerForm", () => {
 
       const catalogLink = screen.getByRole("button", { name: /mcp server catalog/i });
       expect(catalogLink).toBeInTheDocument();
+    });
+  });
+
+  describe("Error States", () => {
+    it("renders description error when errors.description is present", () => {
+      mockHookActive = true;
+      mockHookReturnValue = {
+        errors: { description: "mock description error" },
+      };
+
+      try {
+        renderWithRouter(<MCPServerForm {...defaultProps} />);
+        expect(screen.getByText("mock description error")).toBeInTheDocument();
+        expect(screen.getByPlaceholderText(/Add an optional description/i)).toHaveAttribute(
+          "aria-invalid",
+          "true",
+        );
+      } finally {
+        mockHookActive = false;
+        mockHookReturnValue = null;
+      }
+    });
+
+    it("renders submit error block when errors.submit is present", () => {
+      mockHookActive = true;
+      mockHookReturnValue = {
+        errors: { submit: "mock submit error" },
+      };
+
+      try {
+        renderWithRouter(<MCPServerForm {...defaultProps} />);
+        expect(screen.getByText("mock submit error")).toBeInTheDocument();
+      } finally {
+        mockHookActive = false;
+        mockHookReturnValue = null;
+      }
     });
   });
 
@@ -755,41 +814,52 @@ describe("MCPServerForm", () => {
     });
 
     it("disables the submit button when username is empty", async () => {
-      const user = await renderWithOAuthPassword();
-      await user.type(screen.getByLabelText(/^Name/i), "Test Server");
-      await user.type(screen.getByLabelText(/^URL/i), "http://localhost:3000");
+      await renderWithOAuthPassword();
+      fireEvent.change(screen.getByLabelText(/^Name/i), { target: { value: "Test Server" } });
+      fireEvent.change(screen.getByLabelText(/^URL/i), {
+        target: { value: "http://localhost:3000" },
+      });
       // Leave username empty, fill password
-      await user.type(screen.getByLabelText(/^Password/i), "secret");
+      fireEvent.change(screen.getByLabelText(/^Password/i), { target: { value: "secret" } });
       expect(screen.getByRole("button", { name: /Connect server/i })).toBeDisabled();
     });
 
     it("disables the submit button when password is empty", async () => {
-      const user = await renderWithOAuthPassword();
-      await user.type(screen.getByLabelText(/^Name/i), "Test Server");
-      await user.type(screen.getByLabelText(/^URL/i), "http://localhost:3000");
-      await user.type(screen.getByLabelText(/^Username/i), "service-account");
+      await renderWithOAuthPassword();
+      fireEvent.change(screen.getByLabelText(/^Name/i), { target: { value: "Test Server" } });
+      fireEvent.change(screen.getByLabelText(/^URL/i), {
+        target: { value: "http://localhost:3000" },
+      });
+      fireEvent.change(screen.getByLabelText(/^Username/i), {
+        target: { value: "service-account" },
+      });
       // Leave password empty
       expect(screen.getByRole("button", { name: /Connect server/i })).toBeDisabled();
     });
 
     it("enables the submit button when both username and password are provided", async () => {
-      const user = await renderWithOAuthPassword();
-      await user.type(screen.getByLabelText(/^Name/i), "Test Server");
-      await user.type(screen.getByLabelText(/^URL/i), "http://localhost:3000");
-      await user.type(screen.getByLabelText(/^Username/i), "service-account");
-      await user.type(screen.getByLabelText(/^Password/i), "secret");
+      await renderWithOAuthPassword();
+      fireEvent.change(screen.getByLabelText(/^Name/i), { target: { value: "Test Server" } });
+      fireEvent.change(screen.getByLabelText(/^URL/i), {
+        target: { value: "http://localhost:3000" },
+      });
+      fireEvent.change(screen.getByLabelText(/^Username/i), {
+        target: { value: "service-account" },
+      });
+      fireEvent.change(screen.getByLabelText(/^Password/i), { target: { value: "secret" } });
       expect(screen.getByRole("button", { name: /Connect server/i })).not.toBeDisabled();
     });
 
     it("marks username input as aria-invalid when username error is present", async () => {
-      const user = await renderWithOAuthPassword();
-      await user.type(screen.getByLabelText(/^Name/i), "Test Server");
-      await user.type(screen.getByLabelText(/^URL/i), "http://localhost:3000");
+      await renderWithOAuthPassword();
+      fireEvent.change(screen.getByLabelText(/^Name/i), { target: { value: "Test Server" } });
+      fireEvent.change(screen.getByLabelText(/^URL/i), {
+        target: { value: "http://localhost:3000" },
+      });
       // Only fill password, leave username empty
-      await user.type(screen.getByLabelText(/^Password/i), "secret");
+      fireEvent.change(screen.getByLabelText(/^Password/i), { target: { value: "secret" } });
 
-      // Temporarily type and clear username to expose the field without a value,
-      // then attempt form submission via the form element directly
+      // Expose the field without a value and attempt form submission
       const form = document.querySelector("form")!;
       fireEvent.submit(form);
 
@@ -799,10 +869,14 @@ describe("MCPServerForm", () => {
     });
 
     it("marks password input as aria-invalid when password error is present", async () => {
-      const user = await renderWithOAuthPassword();
-      await user.type(screen.getByLabelText(/^Name/i), "Test Server");
-      await user.type(screen.getByLabelText(/^URL/i), "http://localhost:3000");
-      await user.type(screen.getByLabelText(/^Username/i), "service-account");
+      await renderWithOAuthPassword();
+      fireEvent.change(screen.getByLabelText(/^Name/i), { target: { value: "Test Server" } });
+      fireEvent.change(screen.getByLabelText(/^URL/i), {
+        target: { value: "http://localhost:3000" },
+      });
+      fireEvent.change(screen.getByLabelText(/^Username/i), {
+        target: { value: "service-account" },
+      });
       // Leave password empty, submit the form
       const form = document.querySelector("form")!;
       fireEvent.submit(form);
@@ -814,8 +888,10 @@ describe("MCPServerForm", () => {
 
     it("shows inline error messages for both fields when both are empty", async () => {
       await renderWithOAuthPassword();
-      await userEvent.type(screen.getByLabelText(/^Name/i), "Test Server");
-      await userEvent.type(screen.getByLabelText(/^URL/i), "http://localhost:3000");
+      fireEvent.change(screen.getByLabelText(/^Name/i), { target: { value: "Test Server" } });
+      fireEvent.change(screen.getByLabelText(/^URL/i), {
+        target: { value: "http://localhost:3000" },
+      });
       fireEvent.submit(document.querySelector("form")!);
 
       await waitFor(() => {
@@ -825,13 +901,18 @@ describe("MCPServerForm", () => {
     });
 
     it("does not show password-grant errors when a different OAuth grant type is selected", async () => {
+      // Mock window.open to prevent jsdom not implemented error
+      const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+
       const user = userEvent.setup();
       renderWithRouter(<MCPServerForm {...defaultProps} />);
       await user.click(screen.getByRole("button", { name: /Advanced settings/i }));
       await user.click(screen.getByRole("radio", { name: /OAuth 2\.0/i }));
       // Leave on the default client_credentials grant
-      await user.type(screen.getByLabelText(/Name/i), "Test Server");
-      await user.type(screen.getByLabelText(/^URL/i), "http://localhost:3000");
+      fireEvent.change(screen.getByLabelText(/Name/i), { target: { value: "Test Server" } });
+      fireEvent.change(screen.getByLabelText(/^URL/i), {
+        target: { value: "http://localhost:3000" },
+      });
       fireEvent.submit(document.querySelector("form")!);
 
       await waitFor(() => {
@@ -842,6 +923,8 @@ describe("MCPServerForm", () => {
           screen.queryByText("Password is required for password grant"),
         ).not.toBeInTheDocument();
       });
+
+      openSpy.mockRestore();
     });
 
     it("does not show password-grant errors when auth type is not OAuth", async () => {
@@ -849,8 +932,10 @@ describe("MCPServerForm", () => {
       renderWithRouter(<MCPServerForm {...defaultProps} />);
       await user.click(screen.getByRole("button", { name: /Advanced settings/i }));
       await user.click(screen.getByRole("radio", { name: /Basic/i }));
-      await user.type(screen.getByLabelText(/^Name/i), "Test Server");
-      await user.type(screen.getByLabelText(/^URL/i), "http://localhost:3000");
+      fireEvent.change(screen.getByLabelText(/^Name/i), { target: { value: "Test Server" } });
+      fireEvent.change(screen.getByLabelText(/^URL/i), {
+        target: { value: "http://localhost:3000" },
+      });
       fireEvent.submit(document.querySelector("form")!);
 
       await waitFor(() => {
@@ -1006,6 +1091,157 @@ describe("MCPServerForm", () => {
         renderWithRouter(<MCPServerForm {...defaultProps} />);
         const submitButton = screen.getByRole("button", { name: /Connect server/i });
         expect(submitButton).toBeInTheDocument();
+      });
+
+      it("renders success OAuth notification and handles dismiss", async () => {
+        const clearSpy = vi.fn();
+        mockHookActive = true;
+        mockHookReturnValue = {
+          oauthNotification: { type: "success", message: "OAuth authenticated!" },
+          clearOAuthNotification: clearSpy,
+        };
+
+        try {
+          renderWithRouter(<MCPServerForm {...defaultProps} />);
+          expect(screen.getByText("OAuth authenticated!")).toBeInTheDocument();
+
+          const dismissButton = screen.getByRole("button", { name: /Dismiss OAuth notification/i });
+          await userEvent.click(dismissButton);
+          expect(clearSpy).toHaveBeenCalled();
+        } finally {
+          mockHookActive = false;
+          mockHookReturnValue = null;
+        }
+      });
+
+      it("renders error OAuth notification", () => {
+        mockHookActive = true;
+        mockHookReturnValue = {
+          oauthNotification: { type: "error", message: "OAuth failed!" },
+        };
+
+        try {
+          renderWithRouter(<MCPServerForm {...defaultProps} />);
+          expect(screen.getByText("OAuth failed!")).toBeInTheDocument();
+          const notificationBox = screen.getByText("OAuth failed!").closest("div[role='alert']");
+          expect(notificationBox).toBeInTheDocument();
+        } finally {
+          mockHookActive = false;
+          mockHookReturnValue = null;
+        }
+      });
+
+      it("renders waiting status when oauthPending is true", () => {
+        mockHookActive = true;
+        mockHookReturnValue = {
+          oauthPending: true,
+        };
+
+        try {
+          renderWithRouter(<MCPServerForm {...defaultProps} />);
+          expect(screen.getByText(/Waiting for OAuth authorization/i)).toBeInTheDocument();
+          expect(screen.getByRole("button", { name: "Waiting for OAuth…" })).toBeInTheDocument();
+        } finally {
+          mockHookActive = false;
+          mockHookReturnValue = null;
+        }
+      });
+    });
+
+    describe("Submit Callbacks", () => {
+      it("calls onSuccess in edit mode if onSubmit succeeds", async () => {
+        const onSuccessSpy = vi.fn();
+        const onToggleSpy = vi.fn();
+        const handleSubmitMock = vi.fn((event, callback) => {
+          event.preventDefault();
+          callback({ success: true });
+        });
+
+        mockHookActive = true;
+        mockHookReturnValue = {
+          handleSubmit: handleSubmitMock,
+          isValid: true,
+        };
+
+        try {
+          renderWithRouter(
+            <MCPServerForm
+              isOpen={true}
+              onToggle={onToggleSpy}
+              serverId="some-server-id"
+              onSuccess={onSuccessSpy}
+            />,
+          );
+
+          const form = screen.getByRole("button", { name: /Save changes/i }).closest("form")!;
+          fireEvent.submit(form);
+
+          expect(handleSubmitMock).toHaveBeenCalled();
+          expect(onSuccessSpy).toHaveBeenCalled();
+          expect(onToggleSpy).not.toHaveBeenCalled();
+        } finally {
+          mockHookActive = false;
+          mockHookReturnValue = null;
+        }
+      });
+
+      it("calls onToggle in edit mode if onSuccess is not provided", async () => {
+        const onToggleSpy = vi.fn();
+        const handleSubmitMock = vi.fn((event, callback) => {
+          event.preventDefault();
+          callback({ success: true });
+        });
+
+        mockHookActive = true;
+        mockHookReturnValue = {
+          handleSubmit: handleSubmitMock,
+          isValid: true,
+        };
+
+        try {
+          renderWithRouter(
+            <MCPServerForm isOpen={true} onToggle={onToggleSpy} serverId="some-server-id" />,
+          );
+
+          const form = screen.getByRole("button", { name: /Save changes/i }).closest("form")!;
+          fireEvent.submit(form);
+
+          expect(onToggleSpy).toHaveBeenCalled();
+        } finally {
+          mockHookActive = false;
+          mockHookReturnValue = null;
+        }
+      });
+
+      it("logs error and calls onToggle if response ID is missing in create mode", async () => {
+        const onToggleSpy = vi.fn();
+        const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+        const handleSubmitMock = vi.fn((event, callback) => {
+          event.preventDefault();
+          callback({});
+        });
+
+        mockHookActive = true;
+        mockHookReturnValue = {
+          handleSubmit: handleSubmitMock,
+          isValid: true,
+        };
+
+        try {
+          renderWithRouter(<MCPServerForm isOpen={true} onToggle={onToggleSpy} />);
+
+          const form = screen.getByRole("button", { name: /Connect server/i }).closest("form")!;
+          fireEvent.submit(form);
+
+          expect(consoleErrorSpy).toHaveBeenCalledWith(
+            "Gateway created but ID is missing from response",
+          );
+          expect(onToggleSpy).toHaveBeenCalled();
+        } finally {
+          mockHookActive = false;
+          mockHookReturnValue = null;
+          consoleErrorSpy.mockRestore();
+        }
       });
     });
   });
