@@ -26084,3 +26084,118 @@ async def test_admin_gateways_partial_html_passes_async_lifecycle_fields_to_temp
     assert gateway_data["statusMessage"] == "Connecting to server"
     assert gateway_data["registrationAttempts"] == 3
     assert gateway_data["lifecycleClaimedBy"] == "worker-1"
+
+
+
+# ============================================================================
+# InvalidTag Exception Handling Tests (Issue #5127 Task #22)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_admin_gateways_handles_invalidtag_exception_gracefully(monkeypatch, mock_request, mock_db):
+    """Test admin endpoint handles InvalidTag exception during gateway conversion."""
+    from cryptography.exceptions import InvalidTag
+    
+    monkeypatch.setattr("mcpgateway.admin.settings.gateway_async_lifecycle_enabled", True)
+    
+    # Create two gateways - one will fail with InvalidTag, one will succeed
+    mock_gw_bad = SimpleNamespace(id="gw-bad", team_id="team-1")
+    mock_gw_good = SimpleNamespace(id="gw-good", team_id="team-1")
+    
+    pagination = make_pagination_meta(page=1, per_page=10, total_items=2)
+    monkeypatch.setattr(
+        "mcpgateway.admin.paginate_query",
+        AsyncMock(return_value={
+            "data": [mock_gw_bad, mock_gw_good],
+            "pagination": pagination,
+            "links": None
+        }),
+    )
+    setup_team_service(monkeypatch, ["team-1"])
+    
+    # Mock gateway_service to raise InvalidTag for first gateway, succeed for second
+    gateway_service = MagicMock()
+    def convert_side_effect(gateway):
+        if gateway.id == "gw-bad":
+            raise InvalidTag("AES-GCM decryption failed for encrypted auth credentials")
+        return {
+            "id": "gw-good",
+            "name": "Good Gateway",
+            "status": "active",
+            "enabled": True,
+        }
+    
+    gateway_service.convert_gateway_to_read.side_effect = convert_side_effect
+    monkeypatch.setattr("mcpgateway.admin.gateway_service", gateway_service)
+    
+    mock_request.headers = {}
+    
+    # Should not raise exception - handles InvalidTag gracefully
+    response = await admin_gateways_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    
+    # Response should succeed (fail-open behavior)
+    # The bad gateway with InvalidTag exception is logged and filtered out
+    # The good gateway conversion should succeed
+    assert response.status_code == 200
+    assert gateway_service.convert_gateway_to_read.call_count == 2  # Both gateways attempted
+
+
+@pytest.mark.asyncio
+async def test_admin_gateways_handles_attributeerror_exception_gracefully(monkeypatch, mock_request, mock_db):
+    """Test admin endpoint handles AttributeError exception during gateway conversion."""
+    monkeypatch.setattr("mcpgateway.admin.settings.gateway_async_lifecycle_enabled", True)
+    
+    mock_gw_bad = SimpleNamespace(id="gw-attr-error", team_id="team-1")
+    mock_gw_good = SimpleNamespace(id="gw-ok", team_id="team-1")
+    
+    pagination = make_pagination_meta(page=1, per_page=10, total_items=2)
+    monkeypatch.setattr(
+        "mcpgateway.admin.paginate_query",
+        AsyncMock(return_value={
+            "data": [mock_gw_bad, mock_gw_good],
+            "pagination": pagination,
+            "links": None
+        }),
+    )
+    setup_team_service(monkeypatch, ["team-1"])
+    
+    gateway_service = MagicMock()
+    def convert_side_effect(gateway):
+        if gateway.id == "gw-attr-error":
+            raise AttributeError("Missing gateway attribute during conversion")
+        return {
+            "id": "gw-ok",
+            "name": "OK Gateway",
+            "status": "active",
+            "enabled": True,
+        }
+    
+    gateway_service.convert_gateway_to_read.side_effect = convert_side_effect
+    monkeypatch.setattr("mcpgateway.admin.gateway_service", gateway_service)
+    
+    mock_request.headers = {}
+    
+    # Should not raise exception
+    response = await admin_gateways_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    
+    # Response should succeed (fail-open behavior)
+    # The bad gateway with AttributeError is logged and filtered out
+    assert response.status_code == 200
+    assert gateway_service.convert_gateway_to_read.call_count == 2  # Both gateways attempted
