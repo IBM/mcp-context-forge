@@ -389,3 +389,21 @@ Priority order (try in this sequence; fall through if the constraints don't fit)
 4. **Approach 4: Redis-resident sessions.** Last resort. Only viable if every upstream MCP server supports cross-connection session resumption AND the per-call reconnect cost (50–500 ms) is acceptable. Most rmcp / Python SDK upstreams don't support this today.
 
 Within Approach 3, the transport sub-options (3d / 3e) can be adopted incrementally as performance demands grow. See [Approach 3](#approach-3--redis-based-cross-worker-forwarding) above. They don't change the priority order.
+
+## Action Plan
+
+Based on the recommendation above, the execution plan is:
+
+### Immediate
+
+Take **Approach 3 — Redis-based cross-worker forwarding** forward now. This means landing the hardening work for the current architecture and treating the four Approach 3 invariants as the implementation contract: unique per-worker `WORKER_ID`, exactly one subscriber per worker channel, in-process owner execution, and preserved `streamable_http_auth()` context through trusted-internal forwarding.
+
+### Try Next
+
+Try **Approach 1 — sticky load balancing on `Authorization`** after Approach 3, if Redis forwarding still leaves a performance or operational gap. Before recommending it broadly, validate the public-only traffic case, token-rotation behaviour, and the one-worker-per-pod deployment trade-off.
+
+### Hold Off For Now
+
+Hold off **Approach 2 — coordinator-worker model** unless cluster-wide session migration, blue/green deploys without session loss, or multi-region failover becomes a hard requirement.
+
+Hold off **Approach 4 — Redis-resident sessions** because it depends on cross-connection session resumption support that arbitrary upstream MCP servers generally do not provide.
