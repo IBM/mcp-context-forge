@@ -107,6 +107,12 @@ def mock_server(mock_tool, mock_resource, mock_prompt):
     server.oauth_enabled = False
     server.oauth_config = None
 
+    # Virtual Meta-Server fields
+    server.server_type = "standard"
+    server.hide_underlying_tools = True
+    server.meta_config = None
+    server.meta_scope = None
+
     # Associated objects -------------------------------------------------- #
     server.tools = [mock_tool]
     server.resources = [mock_resource]

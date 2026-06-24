@@ -459,14 +459,6 @@ class MetricsResponse(BaseModelWithConfigDict):
 
     @model_serializer(mode="wrap")
     def _exclude_none_a2a(self, handler):
-        """Omit the A2A metrics field when that feature is disabled.
-
-        Args:
-            handler: Pydantic serializer callback for the wrapped model.
-
-        Returns:
-            Dict[str, Any]: Serialized metrics payload without empty A2A fields.
-        """
         result = handler(self)
         if self.a2a_agents is None:
             result.pop("a2aAgents", None)
@@ -4272,6 +4264,30 @@ class ServerCreate(BaseModel):
     oauth_enabled: bool = Field(False, description="Enable OAuth 2.0 for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
 
+    # Meta-server configuration
+    server_type: str = Field("standard", description="Server type: 'standard' or 'meta'. Meta servers expose meta-tools instead of real tools.")
+    hide_underlying_tools: bool = Field(True, description="When True and server_type is 'meta', underlying tools are hidden from tool listing endpoints")
+    meta_config: Optional[Dict[str, Any]] = Field(None, description="Meta-server configuration (MetaConfig schema). Only applicable when server_type is 'meta'.")
+    meta_scope: Optional[Dict[str, Any]] = Field(None, description="Scope rules for filtering tools visible to the meta-server (MetaToolScope schema).")
+
+    @field_validator("server_type")
+    @classmethod
+    def validate_server_type(cls, v: str) -> str:
+        """Validate that the server type is a supported value.
+
+        Args:
+            v: Server type to validate.
+
+        Returns:
+            The validated server type.
+
+        Raises:
+            ValueError: If the server type is not ``standard`` or ``meta``.
+        """
+        if v not in ("standard", "meta"):
+            raise ValueError("server_type must be one of: standard, meta")
+        return v
+
     @field_validator("name")
     @classmethod
     def validate_name(cls, v: str) -> str:
@@ -4431,6 +4447,30 @@ class ServerUpdate(BaseModelWithConfigDict):
     associated_prompts: Optional[List[str]] = Field(None, description="Comma-separated prompt IDs")
     associated_a2a_agents: Optional[List[str]] = Field(None, description="Comma-separated A2A agent IDs")
 
+    # Meta-server configuration (optional update fields)
+    server_type: Optional[str] = Field(None, description="Server type: 'standard' or 'meta'")
+    hide_underlying_tools: Optional[bool] = Field(None, description="When True and server_type is 'meta', underlying tools are hidden")
+    meta_config: Optional[Dict[str, Any]] = Field(None, description="Meta-server configuration (MetaConfig schema)")
+    meta_scope: Optional[Dict[str, Any]] = Field(None, description="Scope rules for filtering tools visible to the meta-server")
+
+    @field_validator("server_type")
+    @classmethod
+    def validate_server_type(cls, v: Optional[str]) -> Optional[str]:
+        """Validate the optional server type when provided.
+
+        Args:
+            v: Server type to validate, or ``None`` to leave unchanged.
+
+        Returns:
+            The validated server type or ``None``.
+
+        Raises:
+            ValueError: If a non-null server type is not ``standard`` or ``meta``.
+        """
+        if v is not None and v not in ("standard", "meta"):
+            raise ValueError("server_type must be one of: standard, meta")
+        return v
+
     @field_validator("name")
     @classmethod
     def validate_name(cls, v: str) -> str:
@@ -4560,6 +4600,12 @@ class ServerRead(BaseModelWithConfigDict):
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: bool = Field(False, description="Whether OAuth 2.0 is enabled for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+
+    # Meta-server configuration
+    server_type: str = Field("standard", description="Server type: 'standard' or 'meta'")
+    hide_underlying_tools: bool = Field(True, description="When True and server_type is 'meta', underlying tools are hidden")
+    meta_config: Optional[Dict[str, Any]] = Field(None, description="Meta-server configuration (MetaConfig schema)")
+    meta_scope: Optional[Dict[str, Any]] = Field(None, description="Scope rules for filtering tools visible to the meta-server")
 
     _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
@@ -8475,8 +8521,6 @@ class PerformanceHistoryResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Tool Plugin Binding Schemas
-# ---------------------------------------------------------------------------
 
 
 class PluginBindingMode(str, Enum):
@@ -8740,3 +8784,19 @@ class A2AAgentPluginBindingListResponse(BaseModelWithConfigDict):
 
     bindings: List[A2AAgentPluginBindingResponse] = Field(default_factory=list, description="List of A2A agent plugin bindings")
     total: int = Field(0, description="Total number of bindings returned")
+
+
+class ToolSearchResult(BaseModelWithConfigDict):
+    """Single result row returned by the meta-server tool search.
+
+    Used by ``mcpgateway.meta_server.service`` to carry a ranked tool match
+    (semantic similarity, keyword overlap, or listing) along with minimal
+    routing context. Ownership/visibility filtering happens later by joining
+    against ``Tool``/``Gateway`` records.
+    """
+
+    tool_name: str = Field(..., description="Federated tool name (gateway-qualified).")
+    description: str = Field("", description="Human-readable tool description.")
+    server_id: Optional[str] = Field(None, description="ID of the gateway/server hosting the tool.")
+    server_name: Optional[str] = Field(None, description="Display name of the hosting gateway/server.")
+    similarity_score: float = Field(0.0, ge=0.0, le=1.0, description="Ranking score in [0, 1]; 1.0 for plain listing.")

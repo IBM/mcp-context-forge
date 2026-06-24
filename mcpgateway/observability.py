@@ -115,7 +115,6 @@ except ImportError:
         logging.getLogger(__name__).debug("Skipping OpenTelemetry shim setup: %s", exc)
 
 # First-Party
-from mcpgateway import __version__  # noqa: E402  # pylint: disable=wrong-import-position
 from mcpgateway.config import get_settings  # noqa: E402  # pylint: disable=wrong-import-position
 from mcpgateway.utils.correlation_id import get_correlation_id  # noqa: E402  # pylint: disable=wrong-import-position
 from mcpgateway.utils.log_sanitizer import sanitize_for_log  # noqa: E402  # pylint: disable=wrong-import-position
@@ -1016,7 +1015,7 @@ def init_telemetry() -> Optional[Any]:
         # Create resource attributes
         resource_attributes: Dict[str, Any] = {
             "service.name": cfg.otel_service_name,
-            "service.version": __version__,
+            "service.version": "1.0.0-RC-2",
             "deployment.environment": _get_deployment_environment(),
         }
 
@@ -1162,7 +1161,7 @@ def init_telemetry() -> Optional[Any]:
         # Get tracer
         # Obtain a tracer if trace API available; otherwise create a no-op tracer
         if trace is not None and hasattr(trace, "get_tracer"):
-            _TRACER = cast(Any, trace).get_tracer("mcp-gateway", __version__, schema_url="https://opentelemetry.io/schemas/1.11.0")
+            _TRACER = cast(Any, trace).get_tracer("mcp-gateway", "1.0.0-RC-2", schema_url="https://opentelemetry.io/schemas/1.11.0")
         else:
 
             class _NoopTracer:

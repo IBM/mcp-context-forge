@@ -664,6 +664,36 @@ async def oauth_callback(
 
         logger.info(f"Completed OAuth flow for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, user {SecurityValidator.sanitize_log_message(str(result.get('user_id')))}")
 
+        # Check for chained authorization flow (from /oauth/authorize-all)
+        oauth_chain = request.cookies.get("oauth_chain") if request else None
+        if oauth_chain and isinstance(oauth_chain, str):
+            chain_ids = [gid.strip() for gid in oauth_chain.split(",") if gid.strip()]
+            if chain_ids:
+                next_gw_id = chain_ids[0]
+                remaining = chain_ids[1:]
+                response = RedirectResponse(url=f"{safe_root_path}/oauth/authorize/{next_gw_id}", status_code=302)
+                use_secure = (settings.environment == "production") or settings.secure_cookies
+                if remaining:
+                    response.set_cookie(
+                        key="oauth_chain",
+                        value=",".join(remaining),
+                        max_age=600,
+                        httponly=True,
+                        secure=use_secure,
+                        samesite=settings.cookie_samesite,
+                        path=settings.app_root_path or "/",
+                    )
+                else:
+                    response.delete_cookie(
+                        "oauth_chain",
+                        path=settings.app_root_path or "/",
+                        secure=use_secure,
+                        httponly=True,
+                        samesite=settings.cookie_samesite,
+                    )
+                logger.info(f"OAuth chain: authorized {SecurityValidator.sanitize_log_message(gateway_id)}, continuing to next gateway")
+                return response
+
         # Return success page with option to return to admin
         # Get CSP nonce for inline script
         csp_nonce = get_csp_nonce_from_request(request)
@@ -860,6 +890,97 @@ async def oauth_callback(
         """,
             status_code=500,
         )
+
+
+@oauth_router.get("/authorize-all", response_model=None)
+async def authorize_all_gateways(
+    request: Request,
+    current_user: EmailUserResponse = Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+):
+    """Authorize all OAuth gateways the user has access to in a single flow.
+
+    This endpoint chains OAuth authorization flows for all gateways that
+    require authorization_code grant and where the user does not yet have
+    a valid token. After authorizing the first gateway, the callback handler
+    continues to the next one automatically via the ``oauth_chain`` cookie.
+
+    Args:
+        request: The FastAPI request object.
+        current_user: The authenticated user.
+        db: The database session.
+
+    Returns:
+        RedirectResponse to the first pending gateway, or an HTML page if
+        all gateways are already authorized.
+    """
+    requester_email = _extract_user_email(current_user)
+    if not requester_email:
+        raise HTTPException(status_code=401, detail="User authentication required")
+
+    root_path = request.scope.get("root_path", "") if request else ""
+    safe_root_path = escape(str(root_path), quote=True)
+
+    # Find all OAuth gateways with authorization_code flow
+    gateways = db.execute(
+        select(Gateway).where(
+            Gateway.auth_type == "oauth",
+            Gateway.enabled.is_(True),
+        )
+    ).scalars().all()
+
+    token_service = TokenStorageService(db)
+    pending_gateway_ids = []
+    already_authorized = []
+
+    for gw in gateways:
+        if not gw.oauth_config or gw.oauth_config.get("grant_type") != "authorization_code":
+            continue
+        # Check access — skip gateways the user can't reach
+        try:
+            await _enforce_gateway_access(gw.id, gw, current_user, db, request=request)
+        except HTTPException:
+            continue
+        # Check existing token
+        token_info = await token_service.get_token_info(gw.id, requester_email)
+        if token_info and not token_info.get("is_expired", True):
+            already_authorized.append(gw.name)
+        else:
+            pending_gateway_ids.append(gw.id)
+
+    if not pending_gateway_ids:
+        gw_list = "".join(f"<li>{escape(n)}</li>" for n in already_authorized) if already_authorized else "<li>No OAuth gateways found</li>"
+        return HTMLResponse(
+            content=f"""<!DOCTYPE html><html><head><title>All Gateways Authorized</title>
+            <style>body{{font-family:Arial,sans-serif;margin:40px}}.success{{color:#059669}}
+            .button{{display:inline-block;padding:10px 20px;background-color:#3b82f6;color:white;
+            text-decoration:none;border-radius:5px;margin-top:20px}}</style></head><body>
+            <h1 class="success">✅ All Gateways Already Authorized</h1>
+            <ul>{gw_list}</ul>
+            <p>You can close this tab and return to your AI agent.</p>
+            <a href="{safe_root_path}/admin#gateways" class="button">Admin Panel</a>
+            </body></html>""",
+        )
+
+    # Start chain: redirect to first gateway, store remaining in cookie
+    first_gw_id = pending_gateway_ids[0]
+    remaining = pending_gateway_ids[1:]
+
+    response = RedirectResponse(url=f"{root_path}/oauth/authorize/{first_gw_id}", status_code=302)
+
+    if remaining:
+        use_secure = (settings.environment == "production") or settings.secure_cookies
+        response.set_cookie(
+            key="oauth_chain",
+            value=",".join(remaining),
+            max_age=600,  # 10 minutes for the full chain
+            httponly=True,
+            secure=use_secure,
+            samesite=settings.cookie_samesite,
+            path=settings.app_root_path or "/",
+        )
+
+    return response
 
 
 @oauth_router.get("/status/{gateway_id}")

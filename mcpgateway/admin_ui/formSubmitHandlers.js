@@ -441,6 +441,17 @@ export const handleServerFormSubmit = async function (e) {
       }
     }
 
+    // Handle Meta-Server configuration
+    const metaEnabledCheckbox = safeGetElement("server-meta-enabled");
+    if (metaEnabledCheckbox && metaEnabledCheckbox.checked) {
+      formData.set("server_type", "meta");
+      const hideToolsCheckbox = safeGetElement("server-hide-underlying-tools");
+      formData.set("hide_underlying_tools", hideToolsCheckbox && hideToolsCheckbox.checked ? "true" : "false");
+    } else {
+      formData.set("server_type", "standard");
+      formData.delete("hide_underlying_tools");
+    }
+
     const response = await fetch(`${window.ROOT_PATH}/admin/servers`, {
       method: "POST",
       body: formData,
@@ -1017,6 +1028,17 @@ export const handleEditServerFormSubmit = async function (e) {
         sel.forEach((uuid) => formData.append(fieldName, uuid));
       }
     });
+
+    // Handle Meta-Server configuration
+    const metaEnabledCheckbox = safeGetElement("edit-server-meta-enabled");
+    if (metaEnabledCheckbox && metaEnabledCheckbox.checked) {
+      formData.set("server_type", "meta");
+      const hideToolsCheckbox = safeGetElement("edit-server-hide-underlying-tools");
+      formData.set("hide_underlying_tools", hideToolsCheckbox && hideToolsCheckbox.checked ? "true" : "false");
+    } else {
+      formData.set("server_type", "standard");
+      formData.delete("hide_underlying_tools");
+    }
 
     // Submit via fetch
     const response = await fetch(form.action, {
