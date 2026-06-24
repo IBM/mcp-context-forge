@@ -286,6 +286,8 @@ plugin_settings:
   plugin_health_check_interval: 60
 ```
 
+For A2A tools, `TOOL_PRE_INVOKE` receives `payload.headers` with the request headers that pass the global `DEFAULT_PASSTHROUGH_HEADERS` allowlist and the A2A agent's `passthrough_headers` allowlist. This matches the header context available to REST and MCP tool invocations.
+
 To integrate this plugin with the gateway, all you need to do is copying the following configuration under the `plugins` list in the gateway's `plugins/config.yaml` file:
 
 ```yaml
