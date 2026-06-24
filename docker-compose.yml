@@ -375,6 +375,8 @@ services:
       - PROTECT_ALL_ADMINS=${PROTECT_ALL_ADMINS:-true}
       - PLATFORM_ADMIN_EMAIL=admin@example.com
       - PLATFORM_ADMIN_PASSWORD=changeme
+      # Compose default off so /admin/* REST works without bootstrap redirect; override for production.
+      - PASSWORD_CHANGE_ENFORCEMENT_ENABLED=${PASSWORD_CHANGE_ENFORCEMENT_ENABLED:-true}
       - ACCOUNT_LOCKOUT_NOTIFICATION_ENABLED=${ACCOUNT_LOCKOUT_NOTIFICATION_ENABLED:-true}
       # Self-service password reset (feature flags + hardening controls)
       - PASSWORD_RESET_ENABLED=${PASSWORD_RESET_ENABLED:-true}
@@ -2274,13 +2276,34 @@ services:
       - A2A_ECHO_ADDR=0.0.0.0:9100
       - A2A_ECHO_NAME=a2a-echo-agent
       - A2A_ECHO_PROTOCOL_VERSION=1.0.0
+      - A2A_ECHO_PUBLIC_URL=http://127.0.0.1:9100
       - A2A_ECHO_LOG_LEVEL=info
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:9100/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 64M
+    profiles: ["testing", "sso"]
+
+  ###############################################################################
+  # A2A echo agent v0.3.0 overlay — same image as a2a_echo_agent, different
+  # port + advertised version. One binary serves both 0.3.0 and 1.0.0.
+  ###############################################################################
+  a2a_echo_agent_v0_3_0:
+    image: mcpgateway/a2a-echo-agent:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "9101:9100"
+    environment:
+      - A2A_ECHO_ADDR=0.0.0.0:9100
+      - A2A_ECHO_NAME=a2a-echo-agent-v0-3-0
+      - A2A_ECHO_PROTOCOL_VERSION=0.3.0
+      - A2A_ECHO_PUBLIC_URL=http://127.0.0.1:9101
+      - A2A_ECHO_LOG_LEVEL=info
     deploy:
       resources:
         limits:
