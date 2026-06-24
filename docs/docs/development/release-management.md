@@ -195,17 +195,10 @@ Update non-Python dependencies across the repository.
 
 ### 3.1 Rust dependencies
 
-Update the root workspace `Cargo.lock`, plus any standalone Rust server locks outside the workspace, and verify they build and pass tests:
+Update the root workspace `Cargo.lock` and verify the workspace builds and passes tests:
 
 ```bash
-# Update the root Rust workspace lockfile
 cargo update --workspace
-
-# Update standalone Rust MCP server locks
-for manifest in mcp-servers/rust/*/Cargo.toml; do
-  server_dir="$(dirname "$manifest")"
-  (cd "$server_dir" && cargo update)
-done
 
 # Verify build + lint + tests
 make rust-check
@@ -1501,7 +1494,7 @@ make install-dev
 make pip-audit
 
 # 2. Rust / Go / JS / CDN dependency updates
-# ... repeat for all Cargo.toml dirs (see Section 3) ...
+cargo update --workspace
 # ... go get -u ./... && go mod tidy for all go.mod dirs ...
 make linting-go-gosec linting-go-govulncheck
 npm update && npm audit && npm audit fix

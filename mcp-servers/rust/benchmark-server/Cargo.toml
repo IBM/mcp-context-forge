@@ -1,6 +1,6 @@
 [package]
 name = "benchmark-server"
-version.workspace = true
+version = "1.0.3"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

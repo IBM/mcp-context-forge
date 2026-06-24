@@ -170,7 +170,7 @@ jobs:
                   pkill -9 -f "fast-time-server" 2>/dev/null || true
                   sleep 1
 
-                  nohup mcp-servers/rust/fast-time-server/target/debug/fast-time-server \
+                  nohup target/debug/fast-time-server \
                     > fast-time-server.log 2>&1 &
                   echo $! > fast-time-server.pid
 

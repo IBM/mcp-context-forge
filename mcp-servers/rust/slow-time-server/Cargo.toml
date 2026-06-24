@@ -1,6 +1,6 @@
 [package]
 name = "slow-time-server"
-version.workspace = true
+version = "1.0.3"
 edition.workspace = true
 rust-version.workspace = true
 description = "Configurable-latency MCP test server for resilience testing"
