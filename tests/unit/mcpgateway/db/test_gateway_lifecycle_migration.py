@@ -14,7 +14,7 @@ from mcpgateway.db import Gateway as DbGateway
 
 MODULE_NAME = "mcpgateway.alembic.versions.6c0e5f8a9b1d_add_gateway_lifecycle_fields"
 REVISION = "6c0e5f8a9b1d"  # pragma: allowlist secret
-DOWN_REVISION = "0a089912b5f0"  # pragma: allowlist secret
+DOWN_REVISION = "e28cd485ad3c"  # pragma: allowlist secret
 GATEWAY_TABLE = "gateways"
 LIFECYCLE_COLUMNS = {
     "status",
