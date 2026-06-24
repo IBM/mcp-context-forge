@@ -22,6 +22,39 @@ from mcpgateway.services.sso_service import ADFS_PROVIDER_ID
 logger = logging.getLogger(__name__)
 
 
+def _parse_json_object_mapping(raw_mapping: Any, env_var_name: str) -> Dict[str, Any]:
+    """Parse a JSON object mapping from an optional environment setting."""
+    if not raw_mapping:
+        return {}
+
+    try:
+        parsed = json.loads(raw_mapping)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("Failed to parse %s as JSON; using empty mapping", env_var_name)
+        return {}
+
+    if not isinstance(parsed, dict):
+        logger.warning("%s must be a JSON object (got %s); using empty mapping", env_var_name, type(parsed).__name__)
+        return {}
+
+    return parsed
+
+
+def _ibm_verify_issuer_url(configured_issuer: Any) -> str:
+    """Return the IBM Verify issuer endpoint from a tenant base, issuer, or discovery URL."""
+    issuer_url = str(configured_issuer).strip() if configured_issuer else "https://tenant.verify.ibm.com"
+    issuer_url = issuer_url.rstrip("/")
+
+    well_known_suffix = "/.well-known/openid-configuration"
+    if issuer_url.endswith(well_known_suffix):
+        issuer_url = issuer_url[: -len(well_known_suffix)].rstrip("/")
+
+    if "/oidc/endpoint/" in issuer_url:
+        return issuer_url
+
+    return f"{issuer_url}/oidc/endpoint/default"
+
+
 def get_predefined_sso_providers() -> List[Dict]:
     """Get list of predefined SSO providers based on environment configuration.
 
@@ -154,39 +187,33 @@ def get_predefined_sso_providers() -> List[Dict]:
 
     # IBM Security Verify Provider
     if settings.sso_ibm_verify_enabled and settings.sso_ibm_verify_client_id:
-        base_url = settings.sso_ibm_verify_issuer or "https://tenant.verify.ibm.com"
-        providers.append(
-            {
-                "id": "ibm_verify",
-                "name": "ibm_verify",
-                "display_name": "IBM Security Verify",
-                "provider_type": "oidc",
-                "client_id": settings.sso_ibm_verify_client_id,
-                "client_secret": settings.sso_ibm_verify_client_secret.get_secret_value() if settings.sso_ibm_verify_client_secret else "",
-                "authorization_url": f"{base_url}/oidc/endpoint/default/authorize",
-                "token_url": f"{base_url}/oidc/endpoint/default/token",
-                "userinfo_url": f"{base_url}/oidc/endpoint/default/userinfo",
-                "issuer": f"{base_url}/oidc/endpoint/default",
-                "scope": "openid profile email",
-                "trusted_domains": settings.sso_trusted_domains,
-                "auto_create_users": settings.sso_auto_create_users,
-                "team_mapping": {},
-            }
-        )
+        issuer_url = _ibm_verify_issuer_url(settings.sso_ibm_verify_issuer)
+        ibm_user_mapping = _parse_json_object_mapping(settings.ibm_verify_user_mapping, "IBM_VERIFY_USER_MAPPING")
+        ibm_provider_config: Dict[str, Any] = {
+            "id": "ibm_verify",
+            "name": "ibm_verify",
+            "display_name": "IBM Security Verify",
+            "provider_type": "oidc",
+            "client_id": settings.sso_ibm_verify_client_id,
+            "client_secret": settings.sso_ibm_verify_client_secret.get_secret_value() if settings.sso_ibm_verify_client_secret else "",
+            "authorization_url": f"{issuer_url}/authorize",
+            "token_url": f"{issuer_url}/token",
+            "userinfo_url": f"{issuer_url}/userinfo",
+            "issuer": issuer_url,
+            "scope": settings.sso_ibm_verify_scope,
+            "trusted_domains": settings.sso_trusted_domains,
+            "auto_create_users": settings.sso_auto_create_users,
+            "team_mapping": _parse_json_object_mapping(settings.ibm_verify_group_mapping, "IBM_VERIFY_GROUP_MAPPING"),
+        }
+        if ibm_user_mapping:
+            ibm_provider_config["provider_metadata"] = {"user_mapping": ibm_user_mapping}
+
+        providers.append(ibm_provider_config)
 
     # Okta Provider
     if settings.sso_okta_enabled and settings.sso_okta_client_id:
         base_url = settings.sso_okta_issuer or "https://company.okta.com"
-        okta_team_mapping: Dict[str, Any] = {}
-        if settings.okta_group_mapping:
-            try:
-                parsed = json.loads(settings.okta_group_mapping)
-                if isinstance(parsed, dict):
-                    okta_team_mapping = parsed
-                else:
-                    logger.warning("OKTA_GROUP_MAPPING must be a JSON object (got %s); using empty team mapping", type(parsed).__name__)
-            except (json.JSONDecodeError, TypeError):
-                logger.warning("Failed to parse OKTA_GROUP_MAPPING as JSON; using empty team mapping")
+        okta_team_mapping = _parse_json_object_mapping(settings.okta_group_mapping, "OKTA_GROUP_MAPPING")
         providers.append(
             {
                 "id": "okta",

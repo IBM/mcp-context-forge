@@ -41,6 +41,9 @@ def test_get_predefined_sso_providers_multiple(monkeypatch):
         sso_ibm_verify_client_id="ibm-client",
         sso_ibm_verify_client_secret=secret,
         sso_ibm_verify_issuer="https://tenant.verify.ibm.com",
+        sso_ibm_verify_scope="openid profile email groups",
+        ibm_verify_group_mapping='{"CN=Developers,OU=Groups": "dev-team-uuid"}',
+        ibm_verify_user_mapping='{"preferred_username": "username", "uid": "provider_id"}',
         sso_okta_enabled=True,
         sso_okta_client_id="okta-client",
         sso_okta_client_secret=secret,
@@ -107,6 +110,13 @@ def test_get_predefined_sso_providers_multiple(monkeypatch):
     provider_ids = {provider["id"] for provider in providers}
 
     assert {"github", "google", "ibm_verify", "okta", "entra", "keycloak", "authentik"} <= provider_ids
+
+    ibm_provider = next(provider for provider in providers if provider["id"] == "ibm_verify")
+    assert ibm_provider["scope"] == "openid profile email groups"
+    assert ibm_provider["team_mapping"] == {"CN=Developers,OU=Groups": "dev-team-uuid"}
+    assert ibm_provider["provider_metadata"] == {"user_mapping": {"preferred_username": "username", "uid": "provider_id"}}
+    assert ibm_provider["authorization_url"] == "https://tenant.verify.ibm.com/oidc/endpoint/default/authorize"
+    assert ibm_provider["issuer"] == "https://tenant.verify.ibm.com/oidc/endpoint/default"
 
     okta_provider = next(provider for provider in providers if provider["id"] == "okta")
     assert okta_provider["scope"] == "openid profile email groups"
@@ -1059,6 +1069,103 @@ def test_okta_invalid_group_mapping_json_uses_empty(monkeypatch, caplog):
     assert len(providers) == 1
     assert providers[0]["team_mapping"] == {}
     assert any("Failed to parse OKTA_GROUP_MAPPING" in record.message for record in caplog.records)
+
+
+def test_ibm_verify_invalid_mappings_use_empty(monkeypatch, caplog):
+    """Invalid IBM Verify mapping JSON should log warnings and use empty mappings."""
+    # First-Party
+    from mcpgateway.utils.sso_bootstrap import get_predefined_sso_providers
+
+    secret = DummySecret("secret-value")
+    cfg = SimpleNamespace(
+        sso_github_enabled=False,
+        sso_github_client_id=None,
+        sso_github_client_secret=None,
+        sso_google_enabled=False,
+        sso_google_client_id=None,
+        sso_google_client_secret=None,
+        sso_ibm_verify_enabled=True,
+        sso_ibm_verify_client_id="ibm-client",
+        sso_ibm_verify_client_secret=secret,
+        sso_ibm_verify_issuer="https://tenant.verify.ibm.com",
+        sso_ibm_verify_scope="openid profile email",
+        ibm_verify_group_mapping="not-valid-json{",
+        ibm_verify_user_mapping='["not", "a", "dict"]',
+        sso_okta_enabled=False,
+        sso_okta_client_id=None,
+        sso_okta_client_secret=None,
+        sso_okta_issuer=None,
+        sso_entra_enabled=False,
+        sso_entra_client_id=None,
+        sso_entra_client_secret=None,
+        sso_entra_tenant_id=None,
+        sso_keycloak_enabled=False,
+        sso_keycloak_base_url=None,
+        sso_keycloak_client_id=None,
+        sso_adfs_enabled=False,
+        sso_generic_enabled=False,
+        sso_generic_provider_id=None,
+        sso_generic_client_id=None,
+        sso_trusted_domains=[],
+        sso_auto_create_users=True,
+    )
+
+    monkeypatch.setattr("mcpgateway.utils.sso_bootstrap.settings", cfg)
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.sso_bootstrap"):
+        providers = get_predefined_sso_providers()
+
+    assert len(providers) == 1
+    assert providers[0]["team_mapping"] == {}
+    assert "provider_metadata" not in providers[0]
+    assert any("Failed to parse IBM_VERIFY_GROUP_MAPPING" in record.message for record in caplog.records)
+    assert any("IBM_VERIFY_USER_MAPPING must be a JSON object" in record.message for record in caplog.records)
+
+
+def test_ibm_verify_issuer_accepts_documented_endpoint(monkeypatch):
+    """IBM Verify issuer should accept the documented /oidc/endpoint/default value."""
+    # First-Party
+    from mcpgateway.utils.sso_bootstrap import get_predefined_sso_providers
+
+    secret = DummySecret("secret-value")
+    cfg = SimpleNamespace(
+        sso_github_enabled=False,
+        sso_github_client_id=None,
+        sso_github_client_secret=None,
+        sso_google_enabled=False,
+        sso_google_client_id=None,
+        sso_google_client_secret=None,
+        sso_ibm_verify_enabled=True,
+        sso_ibm_verify_client_id="ibm-client",
+        sso_ibm_verify_client_secret=secret,
+        sso_ibm_verify_issuer="https://tenant.verify.ibm.com/oidc/endpoint/default",
+        sso_ibm_verify_scope="openid profile email",
+        ibm_verify_group_mapping=None,
+        ibm_verify_user_mapping=None,
+        sso_okta_enabled=False,
+        sso_okta_client_id=None,
+        sso_okta_client_secret=None,
+        sso_okta_issuer=None,
+        sso_entra_enabled=False,
+        sso_entra_client_id=None,
+        sso_entra_client_secret=None,
+        sso_entra_tenant_id=None,
+        sso_keycloak_enabled=False,
+        sso_keycloak_base_url=None,
+        sso_keycloak_client_id=None,
+        sso_adfs_enabled=False,
+        sso_generic_enabled=False,
+        sso_generic_provider_id=None,
+        sso_generic_client_id=None,
+        sso_trusted_domains=[],
+        sso_auto_create_users=True,
+    )
+
+    monkeypatch.setattr("mcpgateway.utils.sso_bootstrap.settings", cfg)
+    providers = get_predefined_sso_providers()
+
+    assert providers[0]["authorization_url"] == "https://tenant.verify.ibm.com/oidc/endpoint/default/authorize"
+    assert providers[0]["token_url"] == "https://tenant.verify.ibm.com/oidc/endpoint/default/token"
+    assert providers[0]["issuer"] == "https://tenant.verify.ibm.com/oidc/endpoint/default"
 
 
 class TestBootstrapPreservesDBValues:

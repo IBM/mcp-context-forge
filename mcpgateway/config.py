@@ -487,6 +487,9 @@ class Settings(BaseSettings):
     sso_ibm_verify_client_id: Optional[str] = Field(default=None, description="IBM Security Verify client ID")
     sso_ibm_verify_client_secret: Optional[SecretStr] = Field(default=None, description="IBM Security Verify client secret")
     sso_ibm_verify_issuer: Optional[str] = Field(default=None, description="IBM Security Verify OIDC issuer URL")
+    sso_ibm_verify_scope: str = Field(default="openid profile email", description="IBM Security Verify OIDC scopes (space-separated)")
+    ibm_verify_group_mapping: Optional[str] = Field(default=None, description="JSON mapping of IBM Security Verify group names to team UUIDs")
+    ibm_verify_user_mapping: Optional[str] = Field(default=None, description="JSON mapping of IBM Security Verify user claim names to normalized user fields")
 
     sso_okta_enabled: bool = Field(default=False, description="Enable Okta OIDC authentication")
     sso_okta_client_id: Optional[str] = Field(default=None, description="Okta client ID")

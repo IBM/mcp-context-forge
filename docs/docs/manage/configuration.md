@@ -446,6 +446,9 @@ When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered
 | `SSO_IBM_VERIFY_CLIENT_ID`    | IBM Security Verify client ID                    | (none)                | string  |
 | `SSO_IBM_VERIFY_CLIENT_SECRET` | IBM Security Verify client secret               | (none)                | string  |
 | `SSO_IBM_VERIFY_ISSUER`       | IBM Security Verify OIDC issuer URL             | (none)                | string  |
+| `SSO_IBM_VERIFY_SCOPE`        | IBM Security Verify OIDC scopes                 | `openid profile email` | string |
+| `IBM_VERIFY_GROUP_MAPPING`    | IBM Security Verify group-to-team mapping       | (none)                | JSON object |
+| `IBM_VERIFY_USER_MAPPING`     | IBM Security Verify claim-to-user-field mapping | (none)                | JSON object |
 
 **Keycloak OIDC:**
 

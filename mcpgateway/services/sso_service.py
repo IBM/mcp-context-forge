@@ -1744,6 +1744,35 @@ class SSOService:
             normalized.update(extra)
         return normalized
 
+    @staticmethod
+    def _resolve_user_mapping_overrides(user_data: Dict[str, Any], user_mapping: Any) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Resolve configured IdP claim mappings into normalized-user overrides."""
+        if not isinstance(user_mapping, dict) or not user_mapping:
+            return {}, {}
+
+        normalized_field_aliases = {
+            "name": "full_name",
+            "picture": "avatar_url",
+            "sub": "provider_id",
+        }
+        supported_normalized_fields = {"email", "full_name", "avatar_url", "provider_id", "username"}
+        overrides: Dict[str, Any] = {}
+        extra: Dict[str, Any] = {}
+
+        for source_claim, target_field in user_mapping.items():
+            if not isinstance(source_claim, str) or not source_claim.strip() or not isinstance(target_field, str) or not target_field.strip():
+                continue
+            if source_claim not in user_data:
+                continue
+
+            normalized_target = normalized_field_aliases.get(target_field.strip(), target_field.strip())
+            if normalized_target in supported_normalized_fields:
+                overrides[normalized_target] = user_data.get(source_claim)
+            else:
+                extra[normalized_target] = user_data.get(source_claim)
+
+        return overrides, extra
+
     def _normalize_user_info(self, provider: SSOProvider, user_data: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize user info from different providers to common format.
 
@@ -1790,7 +1819,14 @@ class SSOService:
         # Handle IBM Verify provider
         if provider.id == "ibm_verify":
             groups = self._extract_groups_and_roles(user_data, groups_claim)
-            return self._build_normalized_user_info(user_data, "ibm_verify", groups)
+            user_overrides, extra = self._resolve_user_mapping_overrides(user_data, metadata.get("user_mapping"))
+            return self._build_normalized_user_info(
+                user_data,
+                "ibm_verify",
+                groups,
+                extra=extra or None,
+                **user_overrides,
+            )
 
         # Handle Okta provider
         if provider.id == "okta":

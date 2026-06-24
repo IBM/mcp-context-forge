@@ -813,6 +813,32 @@ class TestIBMVerifyNormalization:
 
         assert sorted(normalized["groups"]) == ["Engineering", "Platform"]
 
+    def test_ibm_verify_user_mapping_overrides_normalized_fields(self, sso_service):
+        """IBM Verify user_mapping maps source claims to normalized user fields."""
+        ibm_provider = SSOProvider(
+            id="ibm_verify",
+            name="ibm_verify",
+            display_name="IBM Security Verify",
+            provider_type="oidc",
+            provider_metadata={"user_mapping": {"preferred_username": "username", "uid": "provider_id", "display_name": "full_name", "family_name": "last_name"}},
+        )
+        user_data = {
+            "email": "user@company.com",
+            "name": "Default Name",
+            "sub": "default-sub",
+            "preferred_username": "mapped-user",
+            "uid": "ibm-uid-123",
+            "display_name": "Mapped Name",
+            "family_name": "MappedFamily",
+        }
+
+        normalized = sso_service._normalize_user_info(ibm_provider, user_data)
+
+        assert normalized["username"] == "mapped-user"
+        assert normalized["provider_id"] == "ibm-uid-123"
+        assert normalized["full_name"] == "Mapped Name"
+        assert normalized["last_name"] == "MappedFamily"
+
     def test_ibm_verify_roles_single_string(self, sso_service):
         """A single string roles value is included in groups for IBM Verify."""
         ibm_provider = SSOProvider(id="ibm_verify", name="ibm_verify", display_name="IBM Security Verify", provider_type="oidc")
