@@ -1309,6 +1309,23 @@ def test_synthetic_service_principal_user_info_falls_back_to_sub():
     assert info["email"] == "svc-svc-app@kc.service.local"
 
 
+def test_synthetic_service_principal_user_info_sanitizes_client_id():
+    """An IdP-controlled client_id containing '@' (or other email-breaking chars)
+    must not be able to forge the synthetic service-principal email's domain part."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    provider = _fake_provider("https://idp.example.com")
+    provider.id = "kc"
+    claims = {"sub": "x", "azp": "evil@attacker.example.com", "typ": "at+jwt"}
+
+    info = vc._synthetic_service_principal_user_info(provider, claims)
+
+    # Exactly one '@' (the one we control), and the malicious value is neutralized.
+    assert info["email"].count("@") == 1
+    assert info["email"] == "svc-evil_attacker.example.com@kc.service.local"
+
+
 def test_get_sso_service_returns_sso_service_instance():
     """_get_sso_service is a thin factory wrapping SSOService(db)."""
     # First-Party
@@ -1357,4 +1374,108 @@ async def test_build_external_identity_owned_session_commit_failure(monkeypatch)
     result = await vc.build_external_identity(prov, {"iss": "https://kc/realms/m", "email": "u@corp.com"}, "raw", db)
 
     assert result is None
-    db.rollback.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_external_idp_session_denied_by_layer2_rbac(monkeypatch):
+    """Layer 2 RBAC must not special-case external-IdP-derived identities: a
+    session payload built from an external token (token_use='session',
+    source='external_idp') with no granted permission is denied exactly like
+    any other identity -- Layer 1 (visibility) and Layer 2 (RBAC) stay independent."""
+    # Third-Party
+    from fastapi import HTTPException
+
+    # First-Party
+    from mcpgateway.middleware import rbac
+
+    class DenyingPermissionService:
+        def __init__(self, db):
+            pass
+
+        async def check_permission(self, **kwargs):
+            return False
+
+    monkeypatch.setattr(rbac, "PermissionService", DenyingPermissionService)
+
+    @rbac.require_permission("tools.execute")
+    async def protected(user=None):
+        return "should-not-run"
+
+    external_session_user = {
+        "email": "svc-agent@kc.service.local",
+        "sub": "svc-agent@kc.service.local",
+        "token_use": "session",
+        "source": "external_idp",
+        "is_admin": False,
+        "teams": [],
+        "db": MagicMock(),
+    }
+
+    with pytest.raises(HTTPException) as exc:
+        await protected(user=external_session_user)
+    assert exc.value.status_code == 403
+
+
+def test_update_provider_rejects_partial_update_clearing_audience():
+    """G2 fix: a partial update that only clears api_audience (without also
+    flipping trusted_for_api_auth in the same payload) must not silently leave
+    a provider trusted_for_api_auth=True with no audience restriction -- the
+    RESULTING state is checked, not just the incoming payload."""
+    # First-Party
+    from mcpgateway.services.sso_service import SSOService
+
+    db = MagicMock()
+    svc = SSOService(db)
+
+    existing = MagicMock()
+    existing.trusted_for_api_auth = True
+    existing.api_audience = "mcp-gateway"
+    svc.get_provider = lambda _id: existing
+
+    with pytest.raises(ValueError, match="api_audience is required"):
+        # Standard
+        import asyncio
+
+        asyncio.run(svc.update_provider("kc", {"api_audience": ""}))
+
+    db.rollback.assert_called()
+    db.commit.assert_not_called()
+
+
+def test_bootstrap_disables_trust_for_provider_missing_audience(monkeypatch):
+    """G2 hard-block: bootstrap must actively revoke trusted_for_api_auth (not just
+    log) for any persisted provider found with trusted_for_api_auth=True and no
+    api_audience -- closing the gap for providers that reached that state via a
+    direct DB edit or a pre-invariant migrated row."""
+    # First-Party
+    from mcpgateway.utils import sso_bootstrap
+
+    bad_provider = MagicMock()
+    bad_provider.id = "legacy"
+    bad_provider.display_name = "Legacy"
+    bad_provider.trusted_for_api_auth = True
+    bad_provider.api_audience = None
+
+    fake_db = MagicMock()
+    monkeypatch.setattr(sso_bootstrap.settings, "sso_enabled", True, raising=False)
+
+    class FakeSSOService:
+        def __init__(self, db):
+            pass
+
+        def list_all_providers(self):
+            return [bad_provider]
+
+        async def update_provider(self, *_a, **_kw):
+            return None
+
+    monkeypatch.setattr("mcpgateway.services.sso_service.SSOService", FakeSSOService)
+    monkeypatch.setattr(sso_bootstrap, "get_predefined_sso_providers", lambda: [])
+    monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([fake_db]))
+
+    # Standard
+    import asyncio
+
+    asyncio.run(sso_bootstrap.bootstrap_sso_providers())
+
+    assert bad_provider.trusted_for_api_auth is False

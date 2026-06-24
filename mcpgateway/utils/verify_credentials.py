@@ -57,6 +57,7 @@ from base64 import b64decode
 import binascii
 import hashlib
 import json
+import re
 import time
 from time import monotonic
 from typing import Any, Optional, Union
@@ -2095,6 +2096,9 @@ def _synthetic_service_principal_user_info(provider: SSOProvider, claims: dict) 
         carrying through any group/role claims so role/team mapping still applies.
     """
     client = str(claims.get("azp") or claims.get("client_id") or claims.get("sub"))
+    # IdP-controlled value: strip anything that could break out of the email
+    # local-part (e.g. an embedded "@") and produce a malformed/spoofed address.
+    client = re.sub(r"[^a-zA-Z0-9._-]", "_", client)
     pid = getattr(provider, "id", "ext")
     return {
         "email": f"svc-{client}@{pid}.service.local",

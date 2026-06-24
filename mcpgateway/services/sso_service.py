@@ -755,6 +755,9 @@ class SSOService:
         if skipped:
             logger.warning("Ignored unknown SSOProvider fields during creation: %s", skipped)
 
+        if filtered_data.get("trusted_for_api_auth") and not (filtered_data.get("api_audience") or "").strip():
+            raise ValueError("api_audience is required when trusted_for_api_auth is enabled (prevents confused-deputy token acceptance)")
+
         provider = SSOProvider(**filtered_data)
         self.db.add(provider)
         self.db.commit()
@@ -803,6 +806,14 @@ class SSOService:
         for key, value in provider_data.items():
             if hasattr(provider, key):
                 setattr(provider, key, value)
+
+        # Re-check the RESULTING state, not just the incoming payload: a partial
+        # update that only touches api_audience (e.g. clearing it to "") would
+        # otherwise leave a pre-existing trusted_for_api_auth=True provider
+        # accepting tokens for any audience (confused-deputy).
+        if getattr(provider, "trusted_for_api_auth", False) and not (getattr(provider, "api_audience", None) or "").strip():
+            self.db.rollback()
+            raise ValueError("api_audience is required when trusted_for_api_auth is enabled (prevents confused-deputy token acceptance)")
 
         provider.updated_at = utc_now()
         self.db.commit()
