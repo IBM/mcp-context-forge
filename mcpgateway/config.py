@@ -1478,6 +1478,10 @@ class Settings(BaseSettings):
         # client_mode is intentionally NOT exempted — secret-strength enforcement is always active.
         weak_secrets = {v.lower() for v in self.WEAK_VALUES}
         env = str(self.environment).lower()
+        bind_host = str(self.host).strip().lower()
+        local_only_hosts = {"127.0.0.1", "localhost", "::1"}
+        externally_reachable = bind_host not in local_only_hosts
+        strict_secret_context = env != "development" or externally_reachable
         for field_name, secret_field in (("jwt_secret_key", self.jwt_secret_key), ("auth_encryption_secret", self.auth_encryption_secret)):
             val = secret_field.get_secret_value()
             if val.lower().startswith("__replace_me__"):
@@ -1485,15 +1489,26 @@ class Settings(BaseSettings):
                     raise SecurityConfigurationError(f"{field_name}: Value is an unset placeholder (__REPLACE_ME__). " "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
                 logger.warning(f"🔓 SECURITY WARNING - {field_name}: Value is an unset placeholder (__REPLACE_ME__). Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
             if val.lower() in weak_secrets:
-                if env != "development":
+                if strict_secret_context:
+                    context_hint = f"host={self.host}" if externally_reachable else f"environment={env}"
                     raise SecurityConfigurationError(
-                        f"{field_name}: Weak/default secret rejected in '{env}' environment. " "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values."
+                        f"{field_name}: Weak/default secret rejected when the gateway is externally reachable ({context_hint}). "
+                        "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values or bind to localhost for local-only development."
                     )
         # In non-production environments, unset placeholder secrets emit SECURITY WARNINGs but
         # do not block startup. Production always rejects them. Weak secrets are rejected in
-        # staging and production; development allows them with warnings from the field validator.
+        # staging and production, and also in development when the gateway is bound to a
+        # non-local interface so exposed dev deployments cannot start with known secrets.
 
         if not self.client_mode:
+            platform_admin_pw = self.platform_admin_password.get_secret_value()
+            if self.email_auth_enabled and strict_secret_context and platform_admin_pw.lower() in weak_secrets:
+                context_hint = f"host={self.host}" if externally_reachable else f"environment={env}"
+                raise SecurityConfigurationError(
+                    "platform_admin_password: Weak/default bootstrap admin password rejected when the gateway is externally reachable "
+                    f"({context_hint}). Set PLATFORM_ADMIN_PASSWORD to a strong value before startup."
+                )
+
             # Check for dangerous combinations - only log warnings, don't raise errors
             if not self.auth_required and self.mcpgateway_ui_enabled:
                 logger.warning("🔓 SECURITY WARNING: Admin UI is enabled without authentication. Consider setting AUTH_REQUIRED=true for production.")
