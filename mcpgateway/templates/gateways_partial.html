@@ -1,12 +1,14 @@
 <!-- htmlhint doctype-first:false -->
 <table id="gateways-table"
        class="min-w-full divide-y divide-gray-200"
-       {% if gateway_async_lifecycle_enabled|default(false) %}
        hx-get="{{ root_path }}/admin/gateways/partial"
        hx-swap="outerHTML"
-       hx-vals="js:{include_inactive: document.getElementById('show-inactive-gateways')?.checked || false, q: document.getElementById('gateways-search-input')?.value || '', tags: document.getElementById('gateways-tag-filter')?.value || ''}"
-       hx-trigger="refresh from:body, every 10s[document.querySelector('#gateways-table-body .bg-yellow-100, #gateways-table-body .bg-orange-100')]"
+       hx-vals='js:{"include_inactive": (document.getElementById("show-inactive-gateways") && document.getElementById("show-inactive-gateways").checked) || false, "q": (document.getElementById("gateways-search-input") && document.getElementById("gateways-search-input").value) || "", "tags": (document.getElementById("gateways-tag-filter") && document.getElementById("gateways-tag-filter").value) || ""}'
+       {% if gateway_async_lifecycle_enabled|default(false) %}
+       hx-trigger="refresh from:body, every 10s [!!document.querySelector('#gateways-table-body .bg-yellow-100, #gateways-table-body .bg-orange-100')]"
        hx-indicator="#gateway-polling-indicator"
+       {% else %}
+       hx-indicator="#gateways-loading"
        {% endif %}
 >
   <thead class="bg-gray-50 dark:bg-gray-700">
