@@ -26,12 +26,14 @@ export function ToolsTable({
   onSelectTool,
   onDeleteTool,
   onEditTool,
+  onToggleTool,
 }: {
   tools: Tool[];
   selectedToolId?: string | null;
   onSelectTool: (tool: Tool) => void;
   onDeleteTool?: (toolId: string) => void;
   onEditTool?: (tool: Tool) => void;
+  onToggleTool?: (tool: Tool) => void;
 }) {
   const intl = useIntl();
   const [schemaDialogTool, setSchemaDialogTool] = useState<Tool | null>(null);
@@ -143,7 +145,7 @@ export function ToolsTable({
               </TableCell>
 
               <TableCell className="px-4 py-3 text-center">
-                {onEditTool || onDeleteTool ? (
+                {onEditTool || onToggleTool || onDeleteTool ? (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button
@@ -168,6 +170,18 @@ export function ToolsTable({
                           }}
                         >
                           {intl.formatMessage({ id: "tools.table.edit" })}
+                        </DropdownMenuItem>
+                      )}
+                      {onToggleTool && (
+                        <DropdownMenuItem
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onToggleTool(tool);
+                          }}
+                        >
+                          {intl.formatMessage({
+                            id: tool.enabled ? "tools.table.deactivate" : "tools.table.activate",
+                          })}
                         </DropdownMenuItem>
                       )}
                       {onDeleteTool && (
