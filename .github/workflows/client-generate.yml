@@ -1,0 +1,123 @@
+name: Client Type Generation
+
+on:
+    pull_request:
+        branches:
+            - epic/ui-rewrite
+        types: [opened, synchronize, reopened, ready_for_review]
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    generate-types:
+        if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+        name: Generate and verify types
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+
+        steps:
+            - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+              with:
+                  persist-credentials: false
+
+            - name: Setup Python
+              uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+              with:
+                  python-version: "3.12"
+
+            - name: Install uv
+              uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+              with:
+                  enable-cache: true
+
+            - name: Setup Node
+              uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+              with:
+                  node-version: "20"
+
+            - name: Cache uv virtual environment
+              uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+              with:
+                  path: .venv
+                  key: venv-${{ runner.os }}-python-3.12-${{ hashFiles('uv.lock') }}
+                  restore-keys: |
+                      venv-${{ runner.os }}-python-3.12-
+                      venv-${{ runner.os }}-
+
+            - name: Generate JWT secret
+              run: |
+                  SECRET=$(openssl rand -base64 32)
+                  echo "DYNAMIC_JWT_SECRET=$SECRET" >> "${GITHUB_ENV}"
+
+            - name: Start gateway
+              env:
+                  GUNICORN_WORKERS: 1
+                  MCPGATEWAY_UI_ENABLED: false
+                  MCPGATEWAY_ADMIN_API_ENABLED: true
+                  SSRF_PROTECTION_ENABLED: false
+                  JWT_SECRET_KEY: ${{ env.DYNAMIC_JWT_SECRET }}
+                  ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP: false
+                  PASSWORD_CHANGE_ENFORCEMENT_ENABLED: false
+                  LOG_LEVEL: ERROR
+              run: |
+                  cp .env.example .env
+                  make venv
+                  make install
+                  make stop-serve
+                  make serve > gateway.log 2>&1 &
+
+                  echo "Waiting for gateway to start..."
+                  for i in {1..60}; do
+                    if curl -s http://localhost:4444 >/dev/null 2>&1; then
+                      echo "Gateway is up!"
+                      break
+                    fi
+                    echo "Waiting for port 4444 to open... (attempt $i)"
+                    sleep 2
+                  done
+
+                  if ! curl -s http://localhost:4444 >/dev/null 2>&1; then
+                    echo "ERROR: gateway failed to start"
+                    cat gateway.log
+                    exit 1
+                  fi
+
+            - name: Generate JWT token
+              id: generate_jwt
+              env:
+                  JWT_SECRET_KEY: ${{ env.DYNAMIC_JWT_SECRET }}
+              run: |
+                  TOKEN=$(uv run --no-dev python -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret "$JWT_SECRET_KEY")
+                  echo "::add-mask::$TOKEN"
+                  echo "token=$TOKEN" >> "${GITHUB_OUTPUT}"
+                  echo "JWT token generated successfully"
+
+            - name: Fetch OpenAPI spec
+              run: |
+                  curl -sf http://localhost:4444/openapi.json \
+                    -H "Authorization: Bearer ${{ steps.generate_jwt.outputs.token }}" \
+                    -o client/openapi.json
+                  echo "OpenAPI spec fetched ($(wc -c < client/openapi.json) bytes)"
+
+            - name: Install client dependencies
+              working-directory: client
+              run: npm ci --no-audit --no-fund
+
+            - name: Generate types with orval
+              working-directory: client
+              run: npm run generate
+
+            - name: Verify generated types exist
+              run: |
+                  test -d client/src/generated/types || (echo "ERROR: src/generated/types/ not created" && exit 1)
+                  echo "Generated types count: $(find client/src/generated/types -name '*.ts' | wc -l)"
+
+            - name: Verify generated types compile
+              working-directory: client
+              run: npx tsc --noEmit

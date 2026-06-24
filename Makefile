@@ -375,7 +375,7 @@ init-secrets: ## Generate secure secrets for the gateway (US-3)
 
 .PHONY: serve serve-ssl serve-granian serve-granian-ssl serve-granian-http2 dev dev-remote stop stop-dev stop-serve run \
         certs certs-jwt certs-jwt-ecdsa certs-all certs-mcp-ca certs-mcp-gateway certs-mcp-plugin certs-mcp-all certs-mcp-check \
-        js-build
+        js-build fetch-openapi
 
 ## --- JS build ----------------------------------------------------------------
 js-build:                        ## Install npm dependencies and build JS bundle with Vite (includes client React app)
@@ -385,6 +385,12 @@ js-build:                        ## Install npm dependencies and build JS bundle
 	else \
 		echo "WARNING: npm not found — skipping JS bundle build (admin UI may not load)"; \
 	fi
+
+fetch-openapi:                   ## Fetch OpenAPI spec from running gateway into client/openapi.json (requires MCPGATEWAY_BEARER_TOKEN; override URL with MCP_CLI_BASE_URL)
+	@curl -sf "$${MCP_CLI_BASE_URL:-http://localhost:4444}/openapi.json" \
+		-H "Authorization: Bearer $${MCPGATEWAY_BEARER_TOKEN}" \
+		-o client/openapi.json
+	@echo "OpenAPI spec saved to client/openapi.json"
 
 ## --- Primary servers ---------------------------------------------------------
 serve: install js-build                  ## Run production server with Gunicorn + Uvicorn (default)

@@ -23,7 +23,8 @@
     "e2e:install": "playwright install --with-deps chromium",
     "e2e:report": "playwright show-report",
     "i18n:extract": "formatjs extract 'src/**/*.{ts,tsx}' --out-file src/i18n/extracted.json --id-interpolation-pattern '[sha512:contenthash:base64:6]'",
-    "i18n:compile": "formatjs compile-folder --ast src/i18n/locales src/i18n/compiled"
+    "i18n:compile": "formatjs compile-folder --ast src/i18n/locales src/i18n/compiled",
+    "generate": "orval"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.2.8",
@@ -64,6 +65,7 @@
     "globals": "^16.0.0",
     "jsdom": "^25.0.1",
     "msw": "^2.14.2",
+    "orval": "^8.18.0",
     "prettier": "^3.4.2",
     "tailwindcss": "^4.1.4",
     "typescript": "~5.8.3",
