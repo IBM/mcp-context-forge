@@ -4134,6 +4134,7 @@ async def admin_ui(
             "require_token_expiration": getattr(settings, "require_token_expiration", True),
             "sri_hashes": load_sri_hashes(),
             "max_members_per_team": settings.max_members_per_team,
+            "bundle_js": get_bundle_js_filename(),
         },
     )
 
