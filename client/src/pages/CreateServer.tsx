@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/accordion";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Loading } from "@/components/ui/loading";
-import { ApiError } from "@/api/client";
+import { api, ApiError } from "@/api/client";
 import { useQuery } from "@/hooks/useQuery";
 import { useRouter } from "@/router";
 import type { MCPServer, ServerStatus, VirtualServer, VirtualServerTag } from "@/types/server";
@@ -32,6 +32,7 @@ import type { MCPServer, ServerStatus, VirtualServer, VirtualServerTag } from "@
 const SERVERS_FORM_PATH = "/app/servers?openForm=true";
 const EDIT_SERVER_ID_QUERY_PARAM = "editServerId";
 const MCP_SERVERS_QUERY_PATH = "/gateways?limit=100&include_inactive=true";
+const COMPONENT_PAGE_SIZE = 100;
 
 type CreateServerStep = "details" | "sources";
 type ListedMCPServer = MCPServer & {
@@ -77,6 +78,8 @@ interface ComponentSelection {
   prompts: string[];
 }
 
+type ComponentListResponse<T> = T[] | Record<string, unknown>;
+
 type SelectableComponent = (GatewayTool | GatewayResource | GatewayPrompt) & {
   kind: ComponentKind;
 };
@@ -92,6 +95,13 @@ function getResponseItems<T>(data: T[] | Record<string, unknown> | undefined, ke
 
   const dataItems = data?.data;
   return Array.isArray(dataItems) ? (dataItems as T[]) : [];
+}
+
+function getNextCursor<T>(data: ComponentListResponse<T> | undefined): string | null {
+  if (!data || Array.isArray(data)) return null;
+
+  const nextCursor = data.nextCursor;
+  return typeof nextCursor === "string" && nextCursor.length > 0 ? nextCursor : null;
 }
 
 function getMCPServers(data: MCPServersResponse | ListedMCPServer[] | undefined) {
@@ -155,6 +165,36 @@ function uniqueStrings(values: Array<string | null | undefined>) {
   return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
 }
 
+function getGatewayComponentPath(kind: ComponentKind, serverId: string, cursor?: string | null) {
+  const params = new URLSearchParams({
+    limit: String(COMPONENT_PAGE_SIZE),
+    include_inactive: "true",
+    include_pagination: "true",
+    gateway_id: serverId,
+  });
+  if (cursor) params.set("cursor", cursor);
+  return `/${kind}?${params.toString()}`;
+}
+
+async function getAllGatewayComponents<T>(
+  kind: ComponentKind,
+  key: string,
+  serverId: string,
+): Promise<T[]> {
+  const items: T[] = [];
+  let cursor: string | null = null;
+
+  do {
+    const data: ComponentListResponse<T> = await api.get<ComponentListResponse<T>>(
+      getGatewayComponentPath(kind, serverId, cursor),
+    );
+    items.push(...getResponseItems<T>(data, key));
+    cursor = getNextCursor(data);
+  } while (cursor);
+
+  return items;
+}
+
 function getComponentName(component: GatewayTool | GatewayResource | GatewayPrompt) {
   return component.name || ("uri" in component ? component.uri : undefined) || component.id;
 }
@@ -202,6 +242,32 @@ function getCreateServerError(error: unknown, fallbackMessage: string): string {
 
   if (error instanceof Error) return error.message;
   return fallbackMessage;
+}
+
+async function getComponentsForSelectedMCPServers(
+  mcpServerIds: string[],
+): Promise<ComponentSelection> {
+  const componentGroups = await Promise.all(
+    mcpServerIds.map(async (serverId) => {
+      const [tools, resources, prompts] = await Promise.all([
+        getAllGatewayComponents<GatewayTool>("tools", "tools", serverId),
+        getAllGatewayComponents<GatewayResource>("resources", "resources", serverId),
+        getAllGatewayComponents<GatewayPrompt>("prompts", "prompts", serverId),
+      ]);
+
+      return {
+        tools: tools.map((tool) => tool.id),
+        resources: resources.map((resource) => resource.id),
+        prompts: prompts.map((prompt) => prompt.id),
+      };
+    }),
+  );
+
+  return {
+    tools: uniqueStrings(componentGroups.flatMap((group) => group.tools)),
+    resources: uniqueStrings(componentGroups.flatMap((group) => group.resources)),
+    prompts: uniqueStrings(componentGroups.flatMap((group) => group.prompts)),
+  };
 }
 
 function SourcesLoadingStatus({ message }: { message: string }) {
@@ -660,8 +726,28 @@ export function CreateServer() {
     setIsCreating(true);
     setCreateError(null);
     try {
+      const selectedSourceComponents =
+        selectedSourceIds.length > 0
+          ? await getComponentsForSelectedMCPServers(selectedSourceIds)
+          : null;
       const detailsWithSources = {
         ...serverDetails,
+        ...(selectedSourceComponents
+          ? {
+              associatedTools: uniqueStrings([
+                ...(serverDetails.associatedTools ?? []),
+                ...selectedSourceComponents.tools,
+              ]),
+              associatedResources: uniqueStrings([
+                ...(serverDetails.associatedResources ?? []),
+                ...selectedSourceComponents.resources,
+              ]),
+              associatedPrompts: uniqueStrings([
+                ...(serverDetails.associatedPrompts ?? []),
+                ...selectedSourceComponents.prompts,
+              ]),
+            }
+          : {}),
         associatedMCPServerIds: selectedSourceIds,
       };
       await createVirtualServer(detailsWithSources);

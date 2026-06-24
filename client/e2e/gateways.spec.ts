@@ -46,6 +46,21 @@ const MOCK_VIRTUAL_SERVER_DETAILS: VirtualServer = {
   tags: [{ id: "tag-development", label: "development" }],
 };
 
+const MOCK_MCP_SERVER = {
+  id: "mcp-gateway-1",
+  name: "github-mcp",
+  url: "http://localhost:9000",
+  transport: "SSE",
+  enabled: true,
+  reachable: true,
+  visibility: "public",
+  tool_count: 1,
+  resource_count: 1,
+  prompt_count: 1,
+  created_at: "2026-04-28T15:41:31.233166",
+  updated_at: "2026-04-28T15:41:31.233168",
+};
+
 test.describe("Gateways page", () => {
   test.beforeEach(async ({ page, apiMock }) => {
     // Mock authentication
@@ -62,7 +77,7 @@ test.describe("Gateways page", () => {
     // This is better tested in unit tests with controlled timing
   });
 
-  test("shows source selection when no servers exist", async ({ page }) => {
+  test("shows connect source card when no virtual servers exist", async ({ page }) => {
     // Mock empty servers response
     await page.route("**/servers?*", async (route) => {
       await route.fulfill({
@@ -75,26 +90,18 @@ test.describe("Gateways page", () => {
     await page.goto(APP.GATEWAYS);
     await page.waitForLoadState("networkidle");
 
-    // Check for source selection heading
-    await expect(page.getByRole("heading", { name: "Connect a source" })).toBeVisible();
-
-    // Check all four action cards are present (use role="main" to avoid sidebar conflicts)
+    await expect(page.getByRole("heading", { name: "Virtual servers" })).toBeVisible();
     const mainContent = page.getByRole("main");
-    await expect(mainContent.getByText("MCP server", { exact: true })).toBeVisible();
-    await expect(mainContent.getByText("AI agent", { exact: true })).toBeVisible();
-    await expect(mainContent.getByText("REST API", { exact: true })).toBeVisible();
-    await expect(mainContent.getByText("gRPC", { exact: true })).toBeVisible();
-
-    // Check descriptions
     await expect(
-      page.getByText("Register an endpoint implementing the Model Context Protocol"),
+      mainContent.getByRole("button", { name: /Create server Make external sources/i }),
     ).toBeVisible();
-    await expect(
-      page.getByText("Add an agent over A2A, OpenAI, or Anthropic protocols"),
-    ).toBeVisible();
+    await expect(page.getByTestId("virtual-server-card")).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Connect a source" })).toHaveCount(0);
+    await expect(mainContent.getByText("MCP server", { exact: true })).toHaveCount(0);
+    await expect(mainContent.getByText("Virtual Server", { exact: true })).toHaveCount(0);
   });
 
-  test("navigates to create server UI when MCP server card is clicked", async ({ page }) => {
+  test("navigates to create server UI when connect source card is clicked", async ({ page }) => {
     await page.route("**/servers?*", async (route) => {
       await route.fulfill({
         status: 200,
@@ -106,30 +113,9 @@ test.describe("Gateways page", () => {
     await page.goto(APP.GATEWAYS);
     await page.waitForLoadState("networkidle");
 
-    // Click the MCP server connect button
-    await page.getByRole("button", { name: "+ Connect" }).first().click();
+    await page.getByRole("button", { name: /Create server Make external sources/i }).click();
 
-    // Should navigate to create server UI
-    await expect(page).toHaveURL(/\/app\/gateways\/create-server/);
-  });
-
-  test("navigates to agents page when AI agent card is clicked", async ({ page }) => {
-    await page.route("**/servers?*", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ servers: [] }),
-      });
-    });
-
-    await page.goto(APP.GATEWAYS);
-    await page.waitForLoadState("networkidle");
-
-    // Click the AI agent connect button (second button)
-    await page.getByRole("button", { name: "+ Connect" }).nth(1).click();
-
-    // Should navigate to agents page
-    await expect(page).toHaveURL(/\/app\/agents/);
+    await expect(page).toHaveURL(/\/app\/gateways\/create-server$/);
   });
 
   test("shows virtual servers list when servers exist", async ({ page }) => {
@@ -383,7 +369,7 @@ test.describe("Gateways page", () => {
     await expect(detailsPanel.getByText("summarize_pull_request")).toHaveCount(0);
   });
 
-  test("details panel add source button navigates to the create server UI", async ({ page }) => {
+  test("details panel add source button navigates to edit the virtual server", async ({ page }) => {
     await page.route("**/servers?*", async (route) => {
       await route.fulfill({
         status: 200,
@@ -411,7 +397,9 @@ test.describe("Gateways page", () => {
       })
       .click();
 
-    await expect(page).toHaveURL(/\/app\/gateways\/create-server/);
+    await expect(page).toHaveURL(
+      new RegExp(`/app/gateways/create-server\\?editServerId=${MOCK_VIRTUAL_SERVER.id}`),
+    );
   });
 
   test("disables the Upload action button on virtual server cards", async ({ page }) => {
@@ -626,9 +614,96 @@ test.describe("Gateways page", () => {
     await expect(card.getByTestId("prompt-count")).toHaveCount(0);
   });
 
-  test("disables not-yet-implemented source types in the empty-state selector", async ({
+  test("empty virtual server add sources button navigates to edit the virtual server", async ({
     page,
   }) => {
+    const serverWithNoAssociations = {
+      ...MOCK_VIRTUAL_SERVER,
+      associatedToolIds: [],
+      associatedResources: [],
+      associatedPrompts: [],
+    };
+
+    await page.route("**/servers?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ servers: [serverWithNoAssociations] }),
+      });
+    });
+
+    await page.goto(APP.GATEWAYS);
+    await page.waitForLoadState("networkidle");
+
+    await page
+      .getByTestId("virtual-server-card")
+      .filter({ hasText: "testVS" })
+      .getByRole("button", { name: "Add sources and components" })
+      .click();
+
+    await expect(page).toHaveURL(
+      new RegExp(`/app/gateways/create-server\\?editServerId=${MOCK_VIRTUAL_SERVER.id}`),
+    );
+  });
+
+  test("creates a virtual server with components from a selected MCP server", async ({ page }) => {
+    let createPayload: unknown = null;
+
+    await page.route("**/gateways?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ gateways: [MOCK_MCP_SERVER] }),
+      });
+    });
+    await page.route("**/tools?*", async (route) => {
+      expect(new URL(route.request().url()).searchParams.get("gateway_id")).toBe(
+        MOCK_MCP_SERVER.id,
+      );
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ tools: [{ id: "tool-from-mcp", name: "Tool from MCP" }] }),
+      });
+    });
+    await page.route("**/resources?*", async (route) => {
+      expect(new URL(route.request().url()).searchParams.get("gateway_id")).toBe(
+        MOCK_MCP_SERVER.id,
+      );
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          resources: [{ id: "resource-from-mcp", name: "Resource from MCP" }],
+        }),
+      });
+    });
+    await page.route("**/prompts?*", async (route) => {
+      expect(new URL(route.request().url()).searchParams.get("gateway_id")).toBe(
+        MOCK_MCP_SERVER.id,
+      );
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ prompts: [{ id: "prompt-from-mcp", name: "Prompt from MCP" }] }),
+      });
+    });
+    await page.route("**/servers", async (route) => {
+      expect(route.request().method()).toBe("POST");
+      createPayload = route.request().postDataJSON();
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ...MOCK_VIRTUAL_SERVER,
+          id: "created-server-id",
+          name: "MCP backed server",
+          associatedToolIds: ["tool-from-mcp"],
+          associatedResources: ["resource-from-mcp"],
+          associatedPrompts: ["prompt-from-mcp"],
+        }),
+      });
+    });
     await page.route("**/servers?*", async (route) => {
       await route.fulfill({
         status: 200,
@@ -637,16 +712,30 @@ test.describe("Gateways page", () => {
       });
     });
 
-    await page.goto(APP.GATEWAYS);
+    await page.goto("/app/gateways/create-server");
     await page.waitForLoadState("networkidle");
 
-    const restCard = page.getByTestId("action-card-REST API");
-    const grpcCard = page.getByTestId("action-card-gRPC");
+    await expect(page.getByRole("radio", { name: "Public" })).toBeChecked();
+    await page.getByLabel("Name").fill("MCP backed server");
+    await page.getByRole("button", { name: "Continue" }).click();
+    await page
+      .getByRole("button", { name: "Add tools, resources, and prompts from connected sources" })
+      .click();
+    await page.getByRole("checkbox", { name: "Select github-mcp" }).check();
+    await expect(page.getByRole("button", { name: "Submit" })).toBeVisible();
+    await page.getByRole("button", { name: "Submit" }).click();
 
-    await expect(restCard).toHaveAttribute("aria-disabled", "true");
-    await expect(grpcCard).toHaveAttribute("aria-disabled", "true");
-
-    await expect(restCard.getByRole("button", { name: /\+ Connect/ })).toBeDisabled();
-    await expect(grpcCard.getByRole("button", { name: /\+ Connect/ })).toBeDisabled();
+    await expect.poll(() => createPayload).not.toBeNull();
+    expect(createPayload).toMatchObject({
+      server: {
+        name: "MCP backed server",
+        visibility: "public",
+        associated_tools: ["tool-from-mcp"],
+        associated_resources: ["resource-from-mcp"],
+        associated_prompts: ["prompt-from-mcp"],
+      },
+      visibility: "public",
+    });
+    await expect(page).toHaveURL(/\/app\/gateways$/);
   });
 });

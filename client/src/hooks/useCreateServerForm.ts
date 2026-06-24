@@ -86,7 +86,7 @@ export interface UseCreateServerFormReturn {
 
 const initialState: CreateServerFormValues = {
   name: "",
-  visibility: "team",
+  visibility: "public",
   oauthEnabled: false,
   tags: "",
   description: "",

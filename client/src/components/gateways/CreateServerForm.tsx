@@ -17,12 +17,12 @@ const visibilityOptions: Array<{
   labelId: string;
 }> = [
   {
-    value: "team",
-    labelId: "gateways.createServer.visibility.team",
-  },
-  {
     value: "public",
     labelId: "gateways.createServer.visibility.public",
+  },
+  {
+    value: "team",
+    labelId: "gateways.createServer.visibility.team",
   },
   {
     value: "private",

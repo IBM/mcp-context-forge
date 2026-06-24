@@ -85,9 +85,72 @@ describe("SourceSelection", () => {
 
     const githubCheckbox = screen.getByRole("checkbox", { name: "Select github-notify" });
     expect(githubCheckbox).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Skip for now" })).toBeInTheDocument();
 
     await user.click(githubCheckbox);
 
     expect(githubCheckbox).toBeChecked();
+    expect(screen.getByRole("button", { name: "Submit" })).toBeInTheDocument();
+
+    await user.click(githubCheckbox);
+
+    expect(githubCheckbox).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Skip for now" })).toBeInTheDocument();
+  });
+
+  it("shows an empty message when no MCP servers are available", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get("*/gateways", () =>
+        HttpResponse.json({
+          gateways: [],
+        }),
+      ),
+    );
+
+    renderWithProviders(
+      <SourceSelection
+        actionCards={actionCards}
+        createServerActions={{
+          onBack: vi.fn(),
+          onSkip: vi.fn(),
+        }}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Add tools, resources, and prompts from connected sources",
+      }),
+    );
+
+    expect(await screen.findByText("No MCP servers found.")).toBeInTheDocument();
+  });
+
+  it("shows an alert when MCP server loading fails", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get("*/gateways", () =>
+        HttpResponse.json({ detail: "Gateway list failed" }, { status: 500 }),
+      ),
+    );
+
+    renderWithProviders(
+      <SourceSelection
+        actionCards={actionCards}
+        createServerActions={{
+          onBack: vi.fn(),
+          onSkip: vi.fn(),
+        }}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Add tools, resources, and prompts from connected sources",
+      }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("HTTP 500");
   });
 });
