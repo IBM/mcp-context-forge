@@ -148,7 +148,7 @@ export OTEL_ENABLE_OBSERVABILITY=true
 # Service identification
 export OTEL_SERVICE_NAME=mcp-gateway
 export OTEL_SERVICE_VERSION=1.0.0-RC-3
-export OTEL_DEPLOYMENT_ENVIRONMENT=development
+export DEPLOYMENT_ENV=development
 
 # Choose your backend (otlp, jaeger, zipkin, console, none)
 export OTEL_TRACES_EXPORTER=otlp
