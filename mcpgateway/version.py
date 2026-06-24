@@ -322,6 +322,49 @@ def _current_mcp_session_auth_reuse_mode() -> str:
     return "rust" if _should_mount_public_rust_transport() else "python"
 
 
+def _current_llm_gateway_mode() -> str:
+    """Return the current external LLM gateway runtime mode label."""
+    mode = str(getattr(settings, "llm_gateway_mode", "direct") or "direct").strip().lower()
+    return "direct" if mode in {"", "off"} else mode
+
+
+def _llm_gateway_proxy_mode() -> str:
+    """Return which runtime owns public `/v1` LLM proxy traffic."""
+    return "portkey" if _current_llm_gateway_mode() in {"edge", "full"} else "python"
+
+
+def _llm_gateway_internal_mode() -> str:
+    """Return which runtime owns internal LLM provider usage."""
+    return "portkey" if _current_llm_gateway_mode() == "full" else "python"
+
+
+def _secret_text(secret_like: object) -> str:
+    """Return a string value for SecretStr-like objects or plain strings."""
+    if secret_like in (None, ""):
+        return ""
+    if hasattr(secret_like, "get_secret_value"):
+        return str(secret_like.get_secret_value())
+    return str(secret_like)
+
+
+def _llm_gateway_status_payload() -> Dict[str, Any]:
+    """Return external LLM gateway diagnostics for health, UI, and version surfaces."""
+    mode = _current_llm_gateway_mode()
+    payload: Dict[str, Any] = {
+        "mode": mode,
+        "provider": getattr(settings, "llm_gateway_provider", "portkey"),
+        "enabled": mode != "direct",
+        "managed": bool(getattr(settings, "llm_gateway_managed", True)),
+        "proxy_mode": _llm_gateway_proxy_mode(),
+        "internal_mode": _llm_gateway_internal_mode(),
+        "shadow_enabled": mode == "shadow",
+        "base_url": getattr(settings, "llm_gateway_url", "http://127.0.0.1:8787/v1"),
+        "portkey_api_key_configured": bool(_secret_text(getattr(settings, "llm_gateway_portkey_api_key", ""))),
+        "portkey_config_configured": bool(getattr(settings, "llm_gateway_portkey_config", "")),
+    }
+    return payload
+
+
 def _mcp_runtime_status_payload() -> Dict[str, Any]:
     """Return MCP runtime diagnostics for health, UI, and version surfaces.
 
@@ -741,6 +784,16 @@ def mcp_runtime_status_payload() -> Dict[str, Any]:
         Diagnostic payload describing the active MCP runtime configuration.
     """
     return _mcp_runtime_status_payload()
+
+
+def current_llm_gateway_mode() -> str:
+    """Return the current external LLM gateway runtime mode."""
+    return _current_llm_gateway_mode()
+
+
+def llm_gateway_status_payload() -> Dict[str, Any]:
+    """Return external LLM gateway diagnostics for health, UI, and version surfaces."""
+    return _llm_gateway_status_payload()
 
 
 def _is_secret(key: str) -> bool:
@@ -1204,6 +1257,7 @@ def _build_payload(
         },
         "mcp_runtime": _mcp_runtime_status_payload(),
         "a2a_runtime": _a2a_runtime_status_payload(),
+        "llm_gateway": _llm_gateway_status_payload(),
         "env": _public_env(),
         "system": _system_metrics(),
     }
@@ -1272,6 +1326,7 @@ def _render_html(payload: Dict[str, Any]) -> str:
         ...     "settings": {"cache_type": "memory"},
         ...     "mcp_runtime": {"mode": "python", "mounted": "python"},
         ...     "a2a_runtime": {"mode": "python", "invoke_mode": "python"},
+        ...     "llm_gateway": {"mode": "direct", "proxy_mode": "python"},
         ...     "system": {"cpu_count": 4},
         ...     "env": {"PATH": "/usr/bin"}
         ... }
@@ -1316,6 +1371,7 @@ def _render_html(payload: Dict[str, Any]) -> str:
         ("Settings", "settings"),
         ("MCP Runtime", "mcp_runtime"),
         ("A2A Runtime", "a2a_runtime"),
+        ("LLM Gateway", "llm_gateway"),
         ("System", "system"),
     ):
         sections += f"<h2>{title}</h2>{_html_table(payload[key])}"
