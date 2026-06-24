@@ -4655,7 +4655,7 @@ class ToolService(BaseService):
                     # Tool has reached sunset - prevent execution
                     await tool_lookup_cache.set_negative(name, "sunset")
                     raise ToolInvocationError(
-                        f"Tool '{name}' has been sunset and can no longer be executed. " f"Sunset date: {sunset_date.strftime('%Y-%m-%d')}. " f"Please update your agent to use an alternative tool."
+                        f"Tool '{name}' has been sunset and can no longer be executed. Sunset date: {sunset_date.strftime('%Y-%m-%d')}. Please update your agent to use an alternative tool."
                     )
 
             # ═══════════════════════════════════════════════════════════════════════════
