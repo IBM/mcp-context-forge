@@ -103,3 +103,24 @@ class TestResourceAuditNoDb:
             await resource_service.delete_resource(db, 1)
             assert mock_audit.log_action.called
             _assert_no_db_passed(mock_audit)
+
+    @pytest.mark.asyncio
+    async def test_register_resources_bulk(self, resource_service, db):
+        with patch("mcpgateway.services.resource_service.audit_trail") as mock_audit, \
+             patch("mcpgateway.services.resource_service.structured_logger"), \
+             patch("mcpgateway.services.resource_service.get_content_security_service") as mock_cs:
+            mock_audit.log_action = MagicMock(return_value=None)
+            mock_cs.return_value = MagicMock()  # content security that doesn't raise
+
+            # No existing resources — conflict check returns empty list
+            db.execute = Mock(return_value=_make_execute_result(scalars_list=[]))
+            db.add_all = Mock()
+            db.commit = Mock()
+            db.refresh = Mock()
+            resource_service._notify_resource_added = AsyncMock()
+
+            resources = [ResourceCreate(uri="https://example.com/bulk-1", name="bulk-1", mime_type="text/plain", content="x")]
+            await resource_service.register_resources_bulk(db, resources, created_by="tester")
+
+            assert mock_audit.log_action.called
+            _assert_no_db_passed(mock_audit)
