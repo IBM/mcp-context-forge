@@ -1073,11 +1073,22 @@ maxclients >= (num_gateway_instances × (REDIS_MAX_CONNECTIONS + RATELIMITER_RED
 
 ### Development
 
-| Setting    | Description            | Default | Options |
-| ---------- | ---------------------- | ------- | ------- |
-| `DEV_MODE` | Enable dev mode        | `false` | bool    |
-| `RELOAD`   | Auto-reload on changes | `false` | bool    |
-| `DEBUG`    | Debug logging          | `false` | bool    |
+| Setting                 | Description                            | Default | Options |
+| ----------------------- | -------------------------------------- | ------- | ------- |
+| `DEV_MODE`              | Enable dev mode                        | `false` | bool    |
+| `RELOAD`                | Auto-reload on changes                 | `false` | bool    |
+| `DEBUG`                 | Debug logging                          | `false` | bool    |
+| `EXPOSE_ERROR_DETAILS`  | Expose verbose error details to clients | `false` | bool    |
+
+!!! warning "EXPOSE_ERROR_DETAILS exposes internal error information"
+    When `false` (the default), HTTP error responses return generic, sanitized
+    messages. When verbose detail is enabled, the response includes the underlying
+    exception type and message, which can leak sensitive information (file paths,
+    SQL fragments, internal identifiers). Only enable this in development.
+
+    Verbose detail is exposed when **`EXPOSE_ERROR_DETAILS=true`** OR when
+    **`DEBUG=true` AND `DEV_MODE=true`**. Setting `DEBUG=true` on its own does
+    **not** unlock verbose responses.
 
 ### Well-Known URI Configuration
 
