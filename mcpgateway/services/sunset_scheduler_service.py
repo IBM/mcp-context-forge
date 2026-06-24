@@ -169,7 +169,7 @@ class SunsetSchedulerService:
             # Check how many tools were actually updated (for concurrent execution safety)
             actual_count = result.rowcount
             if actual_count < tool_count:
-                logger.warning(f"Only {actual_count} of {tool_count} tools were sunset. " f"This may indicate concurrent execution or tools already sunset.")
+                logger.warning(f"Only {actual_count} of {tool_count} tools were sunset. This may indicate concurrent execution or tools already sunset.")
                 # Re-query to get only the tools that were actually updated
                 tools_to_sunset = [t for t in tools_to_sunset if not t.enabled]
                 tool_count = actual_count
