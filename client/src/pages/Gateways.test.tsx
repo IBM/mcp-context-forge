@@ -55,20 +55,57 @@ describe("Gateways", () => {
     renderWithProviders(<Gateways />);
 
     expect(mockUseQuery).toHaveBeenCalledWith("/servers?limit=12&include_pagination=true");
+    expect(mockUseQuery).toHaveBeenCalledTimes(1);
   });
 
-  it("renders the source selection when no virtual servers exist", () => {
+  it("renders a loading status while virtual servers are loading", () => {
+    mockUseQuery.mockReturnValue({
+      data: undefined,
+      error: null,
+      isLoading: true,
+      execute: vi.fn(),
+      refetch: vi.fn(),
+    });
+
     renderWithProviders(<Gateways />);
 
-    expect(screen.getByRole("heading", { name: "Connect a source" })).toBeInTheDocument();
-    expect(screen.getByText("MCP server")).toBeInTheDocument();
-    expect(screen.getByText("AI agent")).toBeInTheDocument();
-    expect(screen.getByText("REST API")).toBeInTheDocument();
-    expect(screen.getByText("gRPC")).toBeInTheDocument();
+    expect(screen.getByText("Loading virtual servers, please wait...")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Connect a source" })).not.toBeInTheDocument();
+  });
+
+  it("renders an error alert when the virtual server list fails and no servers are available", () => {
+    mockUseQuery.mockReturnValue({
+      data: { servers: [] },
+      error: { message: "Unable to load virtual servers" },
+      isLoading: false,
+      execute: vi.fn(),
+      refetch: vi.fn(),
+    });
+
+    renderWithProviders(<Gateways />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Error loading virtual servers");
+    expect(screen.getByRole("alert")).toHaveTextContent("Unable to load virtual servers");
+    expect(screen.queryByRole("heading", { name: "Connect a source" })).not.toBeInTheDocument();
+  });
+
+  it("renders only the connect source card when no virtual servers exist", () => {
+    renderWithProviders(<Gateways />);
+
+    expect(screen.getByRole("heading", { name: "Virtual servers" })).toBeInTheDocument();
     expect(
-      screen.getByText("Register an endpoint implementing the Model Context Protocol"),
+      screen.getByRole("button", { name: /Create server Make external sources/i }),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Virtual servers" })).not.toBeInTheDocument();
+    expect(screen.queryAllByTestId("virtual-server-card")).toHaveLength(0);
+    expect(screen.queryByRole("heading", { name: "Connect a source" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Virtual Server")).not.toBeInTheDocument();
+    expect(screen.queryByText("MCP server")).not.toBeInTheDocument();
+    expect(screen.queryByText("AI agent")).not.toBeInTheDocument();
+    expect(screen.queryByText("REST API")).not.toBeInTheDocument();
+    expect(screen.queryByText("gRPC")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Register an endpoint implementing the Model Context Protocol"),
+    ).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Back" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Skip for now" })).not.toBeInTheDocument();
     expect(
@@ -363,7 +400,7 @@ describe("Gateways", () => {
     expect(mockNavigate).toHaveBeenCalledWith("/app/gateways/create-server");
   });
 
-  it("navigates to the create server UI when empty server add-components row is clicked", async () => {
+  it("navigates to the edit server UI when empty server add-components row is clicked", async () => {
     const user = userEvent.setup();
     const mockServer: VirtualServer = {
       id: "gateway-empty",
@@ -411,48 +448,18 @@ describe("Gateways", () => {
 
     await user.click(screen.getByRole("button", { name: "Add sources and components" }));
 
+    expect(mockNavigate).toHaveBeenCalledWith(
+      "/app/gateways/create-server?editServerId=gateway-empty",
+    );
+  });
+
+  it("navigates to the create server UI when the connect source card is clicked", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<Gateways />);
+
+    await user.click(screen.getByRole("button", { name: /Create server Make external sources/i }));
+
     expect(mockNavigate).toHaveBeenCalledWith("/app/gateways/create-server");
-  });
-
-  it("navigates to the create server UI when MCP server connect is clicked", async () => {
-    const user = userEvent.setup();
-    renderWithProviders(<Gateways />);
-
-    const buttons = screen.getAllByRole("button", { name: "+ Connect" });
-    await user.click(buttons[0]!);
-
-    expect(mockNavigate).toHaveBeenCalledWith("/app/gateways/create-server");
-  });
-
-  it("disables REST API and gRPC connect buttons until they are implemented", () => {
-    renderWithProviders(<Gateways />);
-
-    const buttons = screen.getAllByRole("button", { name: /\+ Connect/ });
-    expect(buttons).toHaveLength(4);
-    expect(buttons[0]).toBeEnabled();
-    expect(buttons[1]).toBeEnabled();
-    expect(buttons[2]).toBeDisabled();
-    expect(buttons[3]).toBeDisabled();
-  });
-
-  it("does not navigate when a disabled connect button is clicked", async () => {
-    const user = userEvent.setup();
-    renderWithProviders(<Gateways />);
-
-    const buttons = screen.getAllByRole("button", { name: /\+ Connect/ });
-    await user.click(buttons[2]!);
-
-    expect(mockNavigate).not.toHaveBeenCalled();
-  });
-
-  it("disables card-level selection on disabled action cards", async () => {
-    const user = userEvent.setup();
-    renderWithProviders(<Gateways />);
-
-    const restCard = screen.getByTestId("action-card-REST API");
-    expect(restCard).toHaveAttribute("aria-disabled", "true");
-    await user.click(restCard);
-    expect(mockNavigate).not.toHaveBeenCalled();
   });
 
   it("opens virtual server details from the actions menu", async () => {
@@ -621,7 +628,9 @@ describe("Gateways", () => {
     const drawerAddSourcesButton = screen.getByRole("button", { name: "Add source" });
     expect(drawerAddSourcesButton).toBeInTheDocument();
     await user.click(drawerAddSourcesButton);
-    expect(mockNavigate).toHaveBeenCalledWith("/app/gateways/create-server");
+    expect(mockNavigate).toHaveBeenCalledWith(
+      "/app/gateways/create-server?editServerId=gateway%2F1%3Fmode%3Ddetail",
+    );
     expect(screen.queryByRole("button", { name: "Add components" })).not.toBeInTheDocument();
     expect(screen.getByText("Get Repo Issues")).toBeInTheDocument();
     expect(screen.getByText("GITHUB_GET_REPO_ISSUES")).toBeInTheDocument();

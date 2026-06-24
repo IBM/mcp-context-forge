@@ -1,13 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { toast } from "sonner";
-import { Blocks, Bot, Code } from "lucide-react";
-import { MCPIcon } from "@/components/icons/MCPIcon";
 import { ConnectSourceCard } from "@/components/gateways/ConnectSourceCard";
-import { SourceSelection } from "@/components/gateways/SourceSelection";
 import { VirtualServerCard } from "@/components/gateways/VirtualServerCard";
 import { VirtualServerDetailsPanel } from "@/components/gateways/VirtualServerDetailsPanel";
-import type { ActionCard } from "@/components/gateways/types";
 import { hasVirtualServerComponents } from "@/components/gateways/utils";
 import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
 import { Loading } from "@/components/ui/loading";
@@ -128,44 +124,6 @@ export function Gateways() {
     navigate(`${CREATE_SERVER_PATH}?${params.toString()}`);
   };
 
-  const actionCards: ActionCard[] = useMemo(
-    () => [
-      {
-        icon: MCPIcon,
-        title: intl.formatMessage({ id: "gateways.action.mcpServer.title" }),
-        description: intl.formatMessage({ id: "gateways.action.mcpServer.description" }),
-        buttonText: intl.formatMessage({ id: "gateways.action.connect" }),
-        onAction: () => navigate(CREATE_SERVER_PATH),
-      },
-      {
-        icon: Bot,
-        title: intl.formatMessage({ id: "gateways.action.aiAgent.title" }),
-        description: intl.formatMessage({ id: "gateways.action.aiAgent.description" }),
-        buttonText: intl.formatMessage({ id: "gateways.action.connect" }),
-        onAction: () => navigate("/app/agents"),
-      },
-      {
-        icon: Code,
-        title: intl.formatMessage({ id: "gateways.action.restApi.title" }),
-        description: intl.formatMessage({ id: "gateways.action.restApi.description" }),
-        buttonText: intl.formatMessage({ id: "gateways.action.connect" }),
-        disabled: true,
-        disabledReason: intl.formatMessage({ id: "gateways.action.comingSoon" }),
-        onAction: () => undefined,
-      },
-      {
-        icon: Blocks,
-        title: intl.formatMessage({ id: "gateways.action.grpc.title" }),
-        description: intl.formatMessage({ id: "gateways.action.grpc.description" }),
-        buttonText: intl.formatMessage({ id: "gateways.action.connect" }),
-        disabled: true,
-        disabledReason: intl.formatMessage({ id: "gateways.action.comingSoon" }),
-        onAction: () => undefined,
-      },
-    ],
-    [intl, navigate],
-  );
-
   if (isLoading) {
     return (
       <div className="p-6">
@@ -197,89 +155,8 @@ export function Gateways() {
     );
   }
 
-  if (servers.length > 0) {
-    return (
-      <div className="space-y-9 p-6">
-        <div
-          ref={statusRef}
-          tabIndex={-1}
-          className="sr-only"
-          role="status"
-          aria-label={intl.formatMessage({ id: "gateways.notifications" })}
-          aria-live="polite"
-          aria-atomic="true"
-        >
-          {deleteStatus}
-        </div>
-
-        <h1 ref={headingRef} tabIndex={-1} className="text-base font-semibold text-foreground">
-          {intl.formatMessage({ id: "gateways.title" })}
-        </h1>
-
-        {error && (
-          <div
-            className="rounded-lg border border-destructive/30 bg-destructive/10 p-4"
-            role="alert"
-          >
-            <h2 className="font-semibold text-destructive">
-              {intl.formatMessage({ id: "gateways.errorLoadingVirtualServers" })}
-            </h2>
-            <p className="text-sm text-destructive">{error.message}</p>
-          </div>
-        )}
-
-        <div className="grid gap-6 lg:grid-cols-2">
-          <ConnectSourceCard onAction={() => navigate(CREATE_SERVER_PATH)} />
-          {layoutServers.map((server) => {
-            const hasComponents = hasVirtualServerComponents(server);
-
-            return (
-              <VirtualServerCard
-                key={server.id}
-                server={server}
-                onViewDetails={openDetailsPanel}
-                onAddComponents={() => navigate(CREATE_SERVER_PATH)}
-                onEdit={openEditPanel}
-                onDelete={handleDelete}
-                isDeleting={pendingDeleteServerId === server.id}
-                deleteDisabled={isDeletePending && pendingDeleteServerId !== server.id}
-                className={cn(!hasComponents && "col-span-full")}
-              />
-            );
-          })}
-        </div>
-
-        {detailsServer && (
-          <VirtualServerDetailsPanelContainer
-            server={detailsServer}
-            open={isDetailsPanelOpen}
-            onClose={() => setIsDetailsPanelOpen(false)}
-            onAddSources={() => navigate(CREATE_SERVER_PATH)}
-          />
-        )}
-
-        <ConfirmDialog
-          open={deleteDialogOpen}
-          onOpenChange={handleDeleteDialogOpenChange}
-          title={intl.formatMessage({ id: "gateways.delete.title" })}
-          description={intl.formatMessage(
-            { id: "gateways.delete.description" },
-            { name: deleteServer?.name ?? intl.formatMessage({ id: "gateways.title" }) },
-          )}
-          confirmLabel={intl.formatMessage({ id: "common.button.delete" })}
-          cancelLabel={intl.formatMessage({ id: "common.button.cancel" })}
-          variant="destructive"
-          onConfirm={confirmDelete}
-          isLoading={pendingDeleteServerId === deleteServer?.id}
-          loadingLabel={intl.formatMessage({ id: "gateways.delete.deleting" })}
-          closeOnConfirm={false}
-        />
-      </div>
-    );
-  }
-
   return (
-    <>
+    <div className="space-y-9 p-6">
       <div
         ref={statusRef}
         tabIndex={-1}
@@ -291,8 +168,67 @@ export function Gateways() {
       >
         {deleteStatus}
       </div>
-      <SourceSelection actionCards={actionCards} />
-    </>
+
+      <h1 ref={headingRef} tabIndex={-1} className="text-base font-semibold text-foreground">
+        {intl.formatMessage({ id: "gateways.title" })}
+      </h1>
+
+      {error && (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4" role="alert">
+          <h2 className="font-semibold text-destructive">
+            {intl.formatMessage({ id: "gateways.errorLoadingVirtualServers" })}
+          </h2>
+          <p className="text-sm text-destructive">{error.message}</p>
+        </div>
+      )}
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <ConnectSourceCard onAction={() => navigate(CREATE_SERVER_PATH)} />
+        {layoutServers.map((server) => {
+          const hasComponents = hasVirtualServerComponents(server);
+
+          return (
+            <VirtualServerCard
+              key={server.id}
+              server={server}
+              onViewDetails={openDetailsPanel}
+              onAddComponents={openEditPanel}
+              onEdit={openEditPanel}
+              onDelete={handleDelete}
+              isDeleting={pendingDeleteServerId === server.id}
+              deleteDisabled={isDeletePending && pendingDeleteServerId !== server.id}
+              className={cn(!hasComponents && "col-span-full")}
+            />
+          );
+        })}
+      </div>
+
+      {detailsServer && (
+        <VirtualServerDetailsPanelContainer
+          server={detailsServer}
+          open={isDetailsPanelOpen}
+          onClose={() => setIsDetailsPanelOpen(false)}
+          onAddSources={() => openEditPanel(detailsServer)}
+        />
+      )}
+
+      <ConfirmDialog
+        open={deleteDialogOpen}
+        onOpenChange={handleDeleteDialogOpenChange}
+        title={intl.formatMessage({ id: "gateways.delete.title" })}
+        description={intl.formatMessage(
+          { id: "gateways.delete.description" },
+          { name: deleteServer?.name ?? intl.formatMessage({ id: "gateways.title" }) },
+        )}
+        confirmLabel={intl.formatMessage({ id: "common.button.delete" })}
+        cancelLabel={intl.formatMessage({ id: "common.button.cancel" })}
+        variant="destructive"
+        onConfirm={confirmDelete}
+        isLoading={pendingDeleteServerId === deleteServer?.id}
+        loadingLabel={intl.formatMessage({ id: "gateways.delete.deleting" })}
+        closeOnConfirm={false}
+      />
+    </div>
   );
 }
 
