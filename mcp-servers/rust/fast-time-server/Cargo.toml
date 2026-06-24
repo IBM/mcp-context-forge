@@ -1,42 +1,39 @@
 [package]
 name = "fast-time-server"
 version = "0.1.0"
-edition = "2024"
+edition.workspace = true
+rust-version.workspace = true
 description = "Ultra-fast MCP test server with echo and time tools"
-license = "Apache-2.0"
-authors = ["ContextForge Contributors"]
-
-[workspace]
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
 
 [dependencies]
 # Async runtime
-tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread", "signal", "time"] }
+tokio.workspace = true
 
 # Web framework
-axum = "0.8.9"
+axum.workspace = true
 
 # Serialization
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.150"
+serde.workspace = true
+serde_json.workspace = true
 
 # Random number generation (normal distribution for delay jitter)
 rand = "0.10.1"
 rand_distr = "0.6.0"
 
 # Error handling
-anyhow = "1.0.102"
+anyhow.workspace = true
 
 # Logging
-tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
 
 # Time handling
-chrono = { version = "0.4.44", features = ["serde"] }
-chrono-tz = "0.10.4"
-uuid = { version = "1.18.1", features = ["v4"] }
+chrono.workspace = true
+chrono-tz.workspace = true
+uuid.workspace = true
 
-[profile.release]
-lto = true
-codegen-units = 1
-opt-level = 3
-strip = true
+[lints]
+workspace = true
