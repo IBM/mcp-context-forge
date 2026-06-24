@@ -67,7 +67,7 @@ describe("Servers", () => {
 
   it("renders a loading placeholder while the initial server fetch is pending", () => {
     const pendingRequest = new Promise(() => {});
-    vi.mocked(api.get).mockReturnValueOnce(pendingRequest as any);
+    vi.mocked(api.get).mockReturnValueOnce(pendingRequest as ReturnType<typeof api.get>);
 
     renderWithRouter(<Servers />);
 
