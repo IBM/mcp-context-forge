@@ -58,6 +58,7 @@ export function ToolDetailsPanel({
   onClose,
   onDeleteTool,
   onEditTool,
+  onToggleTool,
 }: {
   tools: Tool[];
   gatewaySlug: string;
@@ -65,6 +66,7 @@ export function ToolDetailsPanel({
   onClose: () => void;
   onDeleteTool?: (toolId: string) => void;
   onEditTool?: (tool: Tool) => void;
+  onToggleTool?: (tool: Tool) => void;
 }) {
   const intl = useIntl();
   const [selectedTool, setSelectedTool] = useState<Tool | null>(null);
@@ -85,6 +87,16 @@ export function ToolDetailsPanel({
       setSelectedTool(null);
     }
   }, [open]);
+
+  // Re-sync the selected tool when the tools list refreshes (e.g. after an
+  // activate/deactivate) so the details column reflects the latest status.
+  useEffect(() => {
+    if (!selectedTool) return;
+    const updated = tools.find((t) => t.id === selectedTool.id);
+    if (updated && updated !== selectedTool) {
+      setSelectedTool(updated);
+    }
+  }, [tools, selectedTool]);
 
   // Focus close on open; restore focus on close/unmount.
   useEffect(() => {
@@ -181,6 +193,7 @@ export function ToolDetailsPanel({
                 onSelectTool={setSelectedTool}
                 onDeleteTool={onDeleteTool}
                 onEditTool={onEditTool}
+                onToggleTool={onToggleTool}
               />
             </div>
 

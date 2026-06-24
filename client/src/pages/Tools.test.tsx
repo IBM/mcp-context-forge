@@ -108,6 +108,50 @@ describe("Tools", () => {
     expect(screen.getByText("Tool 3")).toBeInTheDocument();
   });
 
+  it("requests the tool list with include_inactive=true so deactivated tools stay listed", async () => {
+    let requestUrl: URL | null = null;
+    server.use(
+      http.get("/tools", ({ request }) => {
+        requestUrl = new URL(request.url);
+        return HttpResponse.json([]);
+      }),
+    );
+
+    renderWithRouter(<Tools />);
+
+    await waitFor(() => {
+      expect(requestUrl).not.toBeNull();
+    });
+
+    expect(requestUrl!.searchParams.get("include_inactive")).toBe("true");
+    expect(requestUrl!.searchParams.get("limit")).toBe("0");
+  });
+
+  it("lists inactive tools and shows their 'Inactive' status in the details panel", async () => {
+    // A gateway whose only tool is deactivated — it must still appear so it can be re-activated.
+    const mockTools: Tool[] = [createMockTool(1, "inactive-gateway", false, true)];
+    server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+
+    const user = userEvent.setup();
+    renderWithRouter(<Tools />);
+
+    await waitFor(() => {
+      expect(screen.getByText("inactive-gateway")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByLabelText("More options for inactive-gateway"));
+    await user.click(await screen.findByText("View Details"));
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("region", { name: /Tools for inactive-gateway/i }),
+      ).toBeInTheDocument();
+    });
+
+    // The deactivated tool's status row reads "Inactive"
+    expect(screen.getByText("Inactive")).toBeInTheDocument();
+  });
+
   it("renders Add tools card", async () => {
     server.use(http.get("/tools", () => HttpResponse.json([])));
 
@@ -1099,6 +1143,137 @@ describe("Tools", () => {
       expect(
         within(screen.getByRole("dialog")).getByText(/Are you sure you want to delete "Tool 1"/),
       ).toBeInTheDocument();
+    });
+  });
+
+  describe("Toggle Tool (Activate/Deactivate)", () => {
+    // Helper: load tools, open the details panel for a given gateway, and return userEvent
+    async function openDetailsPanel(gatewaySlug: string) {
+      const user = userEvent.setup();
+      await user.click(screen.getByLabelText(`More options for ${gatewaySlug}`));
+      await user.click(await screen.findByText("View Details"));
+      await waitFor(() => {
+        expect(
+          screen.getByRole("region", { name: new RegExp(`Tools for ${gatewaySlug}`, "i") }),
+        ).toBeInTheDocument();
+      });
+      return user;
+    }
+
+    beforeEach(() => {
+      vi.mocked(toast.success).mockClear();
+      vi.mocked(toast.error).mockClear();
+    });
+
+    it("shows Deactivate for an enabled tool and Edit, Deactivate, Delete in order", async () => {
+      const mockTools: Tool[] = [createMockTool(1, "test-gateway", true, true)];
+      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+      renderWithRouter(<Tools />);
+      await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
+
+      const user = await openDetailsPanel("test-gateway");
+      await user.click(screen.getByLabelText("More options"));
+
+      const items = await screen.findAllByRole("menuitem");
+      expect(items.map((el) => el.textContent)).toEqual(["Edit", "Deactivate", "Delete"]);
+    });
+
+    it("deactivates an active tool, patches the single tool, and shows a success toast", async () => {
+      const activeTool = createMockTool(1, "test-gateway", true, true);
+      const inactiveTool = { ...activeTool, enabled: false };
+
+      let listFetches = 0;
+      server.use(
+        // The list is fetched once on mount; the toggle must NOT trigger another list fetch.
+        http.get("/tools", () => {
+          listFetches += 1;
+          return HttpResponse.json([activeTool]);
+        }),
+        http.post("/tools/tool-1/state", ({ request }) => {
+          expect(new URL(request.url).searchParams.get("activate")).toBe("false");
+          return HttpResponse.json({ status: "success", tool: inactiveTool });
+        }),
+        // Only the affected tool is re-fetched and patched into the list.
+        http.get("/tools/tool-1", () => HttpResponse.json(inactiveTool)),
+      );
+
+      renderWithRouter(<Tools />);
+      await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
+
+      const user = await openDetailsPanel("test-gateway");
+      // Status starts as Active
+      expect(screen.getByText("Active")).toBeInTheDocument();
+
+      await user.click(screen.getByLabelText("More options"));
+      await user.click(await screen.findByText("Deactivate"));
+
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith(expect.stringContaining("Tool 1"));
+      });
+
+      // Status row reflects the patched single tool
+      await waitFor(() => {
+        expect(screen.getByText("Inactive")).toBeInTheDocument();
+      });
+
+      // The whole list was fetched only once (on mount), not again after the toggle
+      expect(listFetches).toBe(1);
+    });
+
+    it("activates an inactive tool and shows a success toast", async () => {
+      const inactiveTool = createMockTool(1, "test-gateway", false, true);
+      const activeTool = { ...inactiveTool, enabled: true };
+
+      server.use(
+        http.get("/tools", () => HttpResponse.json([inactiveTool])),
+        http.post("/tools/tool-1/state", ({ request }) => {
+          expect(new URL(request.url).searchParams.get("activate")).toBe("true");
+          return HttpResponse.json({ status: "success", tool: activeTool });
+        }),
+        http.get("/tools/tool-1", () => HttpResponse.json(activeTool)),
+      );
+
+      renderWithRouter(<Tools />);
+      await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
+
+      const user = await openDetailsPanel("test-gateway");
+      expect(screen.getByText("Inactive")).toBeInTheDocument();
+
+      await user.click(screen.getByLabelText("More options"));
+      await user.click(await screen.findByText("Activate"));
+
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith(expect.stringContaining("Tool 1"));
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("Active")).toBeInTheDocument();
+      });
+    });
+
+    it("shows an error toast and leaves status unchanged when the request fails", async () => {
+      const activeTool = createMockTool(1, "test-gateway", true, true);
+      server.use(
+        http.get("/tools", () => HttpResponse.json([activeTool])),
+        http.post("/tools/tool-1/state", () =>
+          HttpResponse.json({ detail: "Permission denied" }, { status: 403 }),
+        ),
+      );
+
+      renderWithRouter(<Tools />);
+      await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
+
+      const user = await openDetailsPanel("test-gateway");
+      await user.click(screen.getByLabelText("More options"));
+      await user.click(await screen.findByText("Deactivate"));
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith("Permission denied");
+      });
+
+      // Status is unchanged
+      expect(screen.getByText("Active")).toBeInTheDocument();
+      expect(toast.success).not.toHaveBeenCalled();
     });
   });
 

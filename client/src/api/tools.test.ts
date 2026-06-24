@@ -17,6 +17,33 @@ describe("toolsApi", () => {
     vi.restoreAllMocks();
   });
 
+  describe("get", () => {
+    it("calls GET /tools/:id and returns the tool", async () => {
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: "tool-abc-123", enabled: false }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      const tool = await toolsApi.get("tool-abc-123");
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/tools/tool-abc-123"),
+        expect.objectContaining({ method: "GET" }),
+      );
+      expect(tool).toEqual({ id: "tool-abc-123", enabled: false });
+    });
+
+    it("throws synchronously for an empty ID", () => {
+      expect(() => toolsApi.get("")).toThrow("Invalid tool ID");
+    });
+
+    it("throws synchronously for ID with path traversal characters", () => {
+      expect(() => toolsApi.get("../etc/passwd")).toThrow("Invalid tool ID format");
+    });
+  });
+
   describe("delete", () => {
     it("calls DELETE /tools/:id with CSRF token and same-origin credentials", async () => {
       mockFetch.mockResolvedValueOnce(new Response(null, { status: 204 }));
@@ -85,6 +112,77 @@ describe("toolsApi", () => {
       );
 
       await expect(toolsApi.delete("tool-abc-123")).rejects.toThrow("HTTP 500");
+    });
+  });
+
+  describe("activate", () => {
+    it("calls POST /tools/:id/state?activate=true with CSRF token and same-origin credentials", async () => {
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: "tool-abc-123", enabled: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      await toolsApi.activate("tool-abc-123");
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/tools/tool-abc-123/state?activate=true"),
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({
+            "X-CSRF-Token": "test-csrf-token",
+          }),
+          credentials: "same-origin", // pragma: allowlist secret
+        }),
+      );
+    });
+
+    it("throws synchronously for an empty ID", () => {
+      expect(() => toolsApi.activate("")).toThrow("Invalid tool ID");
+    });
+
+    it("throws synchronously for ID with path traversal characters", () => {
+      expect(() => toolsApi.activate("../etc/passwd")).toThrow("Invalid tool ID format");
+    });
+  });
+
+  describe("deactivate", () => {
+    it("calls POST /tools/:id/state?activate=false with CSRF token and same-origin credentials", async () => {
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: "tool-abc-123", enabled: false }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      await toolsApi.deactivate("tool-abc-123");
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/tools/tool-abc-123/state?activate=false"),
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({
+            "X-CSRF-Token": "test-csrf-token",
+          }),
+          credentials: "same-origin", // pragma: allowlist secret
+        }),
+      );
+    });
+
+    it("throws synchronously for an empty ID", () => {
+      expect(() => toolsApi.deactivate("")).toThrow("Invalid tool ID");
+    });
+
+    it("throws ApiError on 403 response", async () => {
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify({ detail: "Forbidden" }), {
+          status: 403,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      await expect(toolsApi.deactivate("tool-abc-123")).rejects.toThrow("HTTP 403");
     });
   });
 });
