@@ -2002,8 +2002,7 @@ class A2AAgentService(BaseService):
         # When flag is enabled, sensitive headers are allowed if whitelisted
         if not feature_flag_enabled:
             return _filter_sensitive_headers(whitelisted)
-        else:
-            return whitelisted
+        return whitelisted
 
     async def invoke_agent(
         self,
@@ -2121,6 +2120,9 @@ class A2AAgentService(BaseService):
             if not agent_row:
                 raise A2AAgentNotFoundError(f"A2A Agent not found with name: {identifier}")
 
+            # DB transaction lifecycle: get_for_update() acquires row lock within
+            # request-scoped session (Depends(get_db)). Lock released on commit/rollback
+            # at request completion. No explicit commit needed (read-only).
             agent = get_for_update(db, DbA2AAgent, agent_row)
             if not agent:
                 raise A2AAgentNotFoundError(f"A2A Agent not found with name: {identifier}")

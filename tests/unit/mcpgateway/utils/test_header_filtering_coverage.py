@@ -289,26 +289,3 @@ class TestHeaderFilteringDiffCoverage:
             assert "authorization" not in downstream_headers
             assert downstream_headers == plugin_headers
 
-    def test_all_three_missing_lines_covered(self):
-        """Meta-test to verify all three missing lines are covered by these tests.
-
-        Missing lines from diff coverage:
-        - main.py:5078
-        - main.py:5175
-        - a2a_service.py:2109
-        """
-        # This test serves as documentation that the above tests cover:
-        #
-        # 1. test_main_invoke_a2a_agent_line_5078_coverage()
-        #    -> Covers main.py:5078
-        #
-        # 2. test_main_invoke_a2a_agent_by_id_line_5175_coverage()
-        #    -> Covers main.py:5175
-        #
-        # 3. test_a2a_service_line_2109_coverage()
-        #    -> Covers a2a_service.py:2109
-        #
-        # All three tests set enable_sensitive_header_passthrough=True
-        # and execute the actual code paths.
-
-        assert True  # Metadata test always passes

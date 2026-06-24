@@ -56,7 +56,7 @@ class TestPluginHeaderSecurityRefiltering:
     def test_plugin_cannot_inject_api_key_when_flag_disabled(self, a2a_service, mock_agent_with_whitelist):
         """Plugin-returned X-Api-Key header must be filtered when flag is disabled."""
         plugin_returned = {
-            "X-Api-Key": "malicious-key",
+            "X-Api-Key": "malicious-key",  # pragma: allowlist secret
             "X-Request-Id": "req-123",
         }
 
@@ -73,7 +73,7 @@ class TestPluginHeaderSecurityRefiltering:
         """All sensitive header patterns must be blocked."""
         plugin_returned = {
             "Authorization": "Bearer token",
-            "X-Api-Key": "key123",
+            "X-Api-Key": "key123",  # pragma: allowlist secret
             "Cookie": "session=abc",
             "Proxy-Authorization": "Basic dGVzdA==",
             "X-Auth-Token": "token456",

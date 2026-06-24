@@ -1497,13 +1497,13 @@ class Settings(BaseSettings):
             self.csrf_secret_key = self.jwt_secret_key.get_secret_value()
 
         # Validate header passthrough feature flag dependencies
-        # Auto-enable base feature if sensitive passthrough is enabled
+        # Fail if sensitive passthrough is enabled without base feature
         if self.enable_sensitive_header_passthrough and not self.enable_header_passthrough:
-            logger.warning(
-                "🔓 SECURITY WARNING: ENABLE_SENSITIVE_HEADER_PASSTHROUGH is enabled but ENABLE_HEADER_PASSTHROUGH is disabled. "
-                "Auto-enabling ENABLE_HEADER_PASSTHROUGH as it is required for the sensitive header passthrough feature."
+            raise ValueError(
+                "Configuration error: ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true requires ENABLE_HEADER_PASSTHROUGH=true. "
+                "The sensitive header passthrough feature depends on the base header passthrough feature. "
+                "Please set ENABLE_HEADER_PASSTHROUGH=true in your environment or disable ENABLE_SENSITIVE_HEADER_PASSTHROUGH."
             )
-            self.enable_header_passthrough = True
 
         return self
 
