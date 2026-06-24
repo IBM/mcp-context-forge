@@ -1413,11 +1413,14 @@ async def test_refresh_token_500_retries_then_fails():
     mock_response = MagicMock()
     mock_response.status_code = 500
     mock_response.text = "Internal Server Error"
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "Internal Server Error", request=MagicMock(), response=mock_response
+    )
 
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
     with patch.object(mgr, "_get_client", new_callable=AsyncMock, return_value=mock_client):
-        with pytest.raises(OAuthError, match="Failed to refresh token after all retry"):
+        with pytest.raises(OAuthError, match="Failed to refresh token after .* attempts"):
             await mgr.refresh_token("rt", {"client_id": "cid", "token_url": "https://auth/token"})
 
 

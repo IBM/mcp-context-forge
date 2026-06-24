@@ -12,6 +12,7 @@ make many SSL connections.
 """
 
 # Standard
+from collections import OrderedDict
 from datetime import datetime, timedelta
 import hashlib
 import logging
@@ -21,15 +22,16 @@ import tempfile
 
 logger = logging.getLogger(__name__)
 
-# Cache for SSL contexts keyed by SSL parameter hash
-_ssl_context_cache: dict[str, ssl.SSLContext] = {}
-_ssl_context_cache_timestamps: dict[str, datetime] = {}
+# Cache for SSL contexts keyed by SSL parameter hash (LRU via OrderedDict)
+_ssl_context_cache: OrderedDict[str, ssl.SSLContext] = OrderedDict()
+_ssl_context_cache_timestamps: OrderedDict[str, datetime] = OrderedDict()
 
 _SSL_CONTEXT_CACHE_MAX_SIZE = int(os.getenv("SSL_CONTEXT_CACHE_MAX_SIZE", "100"))
-_SSL_CONTEXT_CACHE_TTL = os.getenv("SSL_CONTEXT_CACHE_TTL")
-if _SSL_CONTEXT_CACHE_TTL is not None and _SSL_CONTEXT_CACHE_TTL.strip() != "":
+_SSL_CONTEXT_CACHE_TTL_STR = os.getenv("SSL_CONTEXT_CACHE_TTL")
+_SSL_CONTEXT_CACHE_TTL: int | None
+if _SSL_CONTEXT_CACHE_TTL_STR is not None and _SSL_CONTEXT_CACHE_TTL_STR.strip() != "":
     try:
-        _SSL_CONTEXT_CACHE_TTL = int(_SSL_CONTEXT_CACHE_TTL)
+        _SSL_CONTEXT_CACHE_TTL = int(_SSL_CONTEXT_CACHE_TTL_STR)
     except ValueError:
         raise ValueError("SSL_CONTEXT_CACHE_TTL must be an integer number of seconds")
 else:
@@ -184,6 +186,10 @@ def get_cached_ssl_context(
     cache_key = key_hash.hexdigest()
 
     if cache_key in _ssl_context_cache and not _is_expired(cache_key):
+        # Move to end to mark as recently used (LRU)
+        _ssl_context_cache.move_to_end(cache_key)
+        if cache_key in _ssl_context_cache_timestamps:
+            _ssl_context_cache_timestamps.move_to_end(cache_key)
         return _ssl_context_cache[cache_key]
 
     # If expired, clear this entry so it is refreshed below
@@ -204,23 +210,16 @@ def get_cached_ssl_context(
     if client_cert and client_key:
         _load_client_cert_chain(ctx, client_cert, client_key)
 
-    # Cache entry creation timestamp if TTL is enabled
+    # LRU eviction: remove oldest entry if cache is at capacity
+    if len(_ssl_context_cache) >= _SSL_CONTEXT_CACHE_MAX_SIZE:
+        _ssl_context_cache.popitem(last=False)  # Remove oldest (FIFO order)
+        if _ssl_context_cache_timestamps:  # Only pop if timestamps dict is not empty
+            _ssl_context_cache_timestamps.popitem(last=False)
+
+    # Cache entry with creation timestamp if TTL is enabled
     _ssl_context_cache[cache_key] = ctx
     if _SSL_CONTEXT_CACHE_TTL is not None:
         _ssl_context_cache_timestamps[cache_key] = datetime.now()
-
-    # Evict all cache if size limit exceeded; keep this newly inserted item.
-    # This avoids growing indefinitely without requiring LRU tracking.
-    if len(_ssl_context_cache) > _SSL_CONTEXT_CACHE_MAX_SIZE:
-        current_ctx = _ssl_context_cache.pop(cache_key)
-        current_ts = _ssl_context_cache_timestamps.pop(cache_key, None)
-
-        _ssl_context_cache.clear()
-        _ssl_context_cache_timestamps.clear()
-
-        _ssl_context_cache[cache_key] = current_ctx
-        if current_ts is not None:
-            _ssl_context_cache_timestamps[cache_key] = current_ts
 
     return ctx
 
