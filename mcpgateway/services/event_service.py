@@ -205,7 +205,6 @@ class EventService:
         fallback_to_local = False
 
         if self._redis_client:
-
             try:
                 # Get shared Redis client from factory
                 # PubSub uses the client's connection pool but creates dedicated subscription

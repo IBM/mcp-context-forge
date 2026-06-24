@@ -230,24 +230,14 @@ async def test_post_resource_fetch_opapluginfilter():
     plugin = OPAPluginFilter(config)
 
     # Benign payload (allowed by OPA (rego) policy)
-    content = ResourceContent(
-        type="resource",
-        uri="test://abc",
-        text="abc",
-        id="1"
-    )
+    content = ResourceContent(type="resource", uri="test://abc", text="abc", id="1")
     payload = ResourcePostFetchPayload(uri="https://example.com/docs", content=content)
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     result = await plugin.resource_post_fetch(payload, context)
     assert result.continue_processing
 
     # Malign payload (denied by OPA (rego) policy)
-    content = ResourceContent(
-        type="resource",
-        uri="test://large",
-        text="test://abc@example.com",
-        id="1"
-    )
+    content = ResourceContent(type="resource", uri="test://large", text="test://abc@example.com", id="1")
     payload = ResourcePostFetchPayload(uri="https://example.com", content=content)
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     result = await plugin.resource_post_fetch(payload, context)

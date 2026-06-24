@@ -1760,7 +1760,6 @@ class ResourceService(BaseService):
             db.commit()
 
             if gateway:
-
                 start_time = time.monotonic()
                 success = False
                 error_message = None

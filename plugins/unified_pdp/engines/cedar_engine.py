@@ -171,22 +171,26 @@ class CedarEngineAdapter(PolicyEngineAdapter):
 
         # Role entities
         for role in subject.roles:
-            entities.append({
-                "identifier": {"type": "Role", "id": role},
-                "attrs": {},
-                "parents": [],
-            })
+            entities.append(
+                {
+                    "identifier": {"type": "Role", "id": role},
+                    "attrs": {},
+                    "parents": [],
+                }
+            )
 
         # User entity – parents are the roles
-        entities.append({
-            "identifier": {"type": "User", "id": subject.email},
-            "attrs": {
-                "team_id": subject.team_id or "",
-                "mfa_verified": subject.mfa_verified,
-                **(subject.attributes or {}),
-            },
-            "parents": [{"type": "Role", "id": r} for r in subject.roles],
-        })
+        entities.append(
+            {
+                "identifier": {"type": "User", "id": subject.email},
+                "attrs": {
+                    "team_id": subject.team_id or "",
+                    "mfa_verified": subject.mfa_verified,
+                    **(subject.attributes or {}),
+                },
+                "parents": [{"type": "Role", "id": r} for r in subject.roles],
+            }
+        )
 
         return entities
 

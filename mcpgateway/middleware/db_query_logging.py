@@ -469,4 +469,4 @@ def setup_query_logging(app: Any, engine: Engine) -> None:
     # Add middleware
     app.add_middleware(DBQueryLoggingMiddleware)
 
-    logger.info(f"Database query logging enabled: " f"format={settings.db_query_log_format}, " f"text_file={settings.db_query_log_file}, " f"json_file={settings.db_query_log_json_file}")
+    logger.info(f"Database query logging enabled: format={settings.db_query_log_format}, text_file={settings.db_query_log_file}, json_file={settings.db_query_log_json_file}")

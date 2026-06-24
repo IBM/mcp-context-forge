@@ -152,7 +152,7 @@ class CategoryConfig(BaseModel):
     providers: List[ModerationProvider] = Field(default_factory=list, description="Providers to use for this category")
     custom_patterns: List[Pattern[str]] = Field(default_factory=list, description="Custom compiled regex patterns")
 
-    @field_validator('custom_patterns', mode='before')
+    @field_validator("custom_patterns", mode="before")
     @classmethod
     def compile_patterns(cls, v: Any) -> List[Pattern[str]]:
         """Compile string patterns to regex Pattern objects.

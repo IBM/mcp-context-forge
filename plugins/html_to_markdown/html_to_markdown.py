@@ -31,10 +31,7 @@ from cpex.framework import (
 _SCRIPT_RE = re.compile(r"<script[\s\S]*?</script>", flags=re.IGNORECASE)
 _STYLE_RE = re.compile(r"<style[\s\S]*?</style>", flags=re.IGNORECASE)
 _BLOCK_ELEMENTS_RE = re.compile(r"</?(p|div|section|article|br|hr|tr|table|ul|ol|li)[^>]*>", flags=re.IGNORECASE)
-_HEADING_RE = [
-    re.compile(rf"<h{i}[^>]*>(.*?)</h{i}>", flags=re.IGNORECASE | re.DOTALL)
-    for i in range(6, 0, -1)
-]
+_HEADING_RE = [re.compile(rf"<h{i}[^>]*>(.*?)</h{i}>", flags=re.IGNORECASE | re.DOTALL) for i in range(6, 0, -1)]
 _PRE_CODE_RE = re.compile(r"<pre[^>]*>\s*<code[^>]*>([\s\S]*?)</code>\s*</pre>", flags=re.IGNORECASE)
 _PRE_FALLBACK_RE = re.compile(r"<pre[^>]*>([\s\S]*?)</pre>", flags=re.IGNORECASE)
 _TAG_IN_PRE_RE = re.compile(r"<[^>]+>")

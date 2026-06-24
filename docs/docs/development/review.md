@@ -73,7 +73,7 @@ make test           # or `pytest`
 ### 3.4 Lint & Static Analysis
 
 ```bash
-make lint           # runs ruff, mypy, black --check, eslint, etc.
+make lint           # runs ruff, mypy, eslint, etc.
 ```
 
 > **If any step fails**, request changes and paste the relevant error logs.

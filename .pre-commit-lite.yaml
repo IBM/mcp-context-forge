@@ -121,6 +121,16 @@ repos:
         exclude: ^\.pre-commit-config\.yaml$
         stages: [pre-commit, pre-merge-commit, prepare-commit-msg, commit-msg, post-checkout, post-commit, post-merge, pre-push, manual]
 
+
+  - repo: https://github.com/pycqa/bandit
+    rev: 92ae8b82fb422a639f0ed8d99e96cea769594e08 #1.8.3
+    hooks:
+      - id: bandit
+        name: 🐍 Bandit - Security Linter
+        description: Finds common security issues in Python code.
+        args: [--skip, "B101,B601", --severity-level, medium, --confidence-level, high]
+        files: ^(mcpgateway|plugins)/
+
   # 🔤 Unicode Text Normalization (via texthooks)
   - repo: https://github.com/sirosen/texthooks
     rev: c1a669453f31baa33e32761cb670aa1f10141937 #0.6.8
@@ -271,7 +281,7 @@ repos:
         types: [text]
 
   - repo: https://github.com/adrienverge/yamllint
-    rev: 79a6b2b1392eaf49cdd32ac4f14be1a809bbd8f7 #v1.37.1
+    rev: 79a6b2b1392eaf49cdd32ac4f14be1a809bbd8f7 #v1.38.0
     hooks:
       - id: yamllint
         name: ✅ YAMLlint - YAML Linter
@@ -325,19 +335,22 @@ repos:
   # -----------------------------------------------------------------------------
   # 🐍 Python Formatting Hooks (MODIFIES FILES)
   # -----------------------------------------------------------------------------
-  # - repo: https://github.com/astral-sh/ruff-pre-commit
-  #   # Ruff version.
-  #   rev: v0.11.12
-  #   hooks:
-  #     # Run the linter.
-  #     - id: ruff-check
-  #       types_or: [ python, pyi ]
-  #       args: [ --fix ]
-  #       files: ^mcpgateway/
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Ruff version.
+    rev: 0671d8ab202c4ac093b78433ae5baf74f3fc7246 #v0.15.16
+    hooks:
+      # Run the linter.
+      - id: ruff-check
+        types_or: [ python, pyi ]
+        args: [ --fix ]
+        files: ^(mcpgateway|plugins)/
+        exclude: ^.*/alembic/versions/
+
       # Run the formatter.
-      # - id: ruff-format
-      #   types_or: [ python, pyi ]
-      #   files: ^mcpgateway/
+      - id: ruff-format
+        types_or: [ python, pyi ]
+        files: ^(mcpgateway|plugins)/
+        exclude: ^.*/alembic/versions/
 
   # -----------------------------------------------------------------------------
   # 🚀 Performance and Optimization Hooks (MODIFIES FILES)
@@ -364,7 +377,7 @@ repos:
     hooks:
       - id: interrogate
         args: [--fail-under=100]
-        files: ^mcpgateway/
+        files: ^(mcpgateway|plugins)/
         exclude: _pb2(_grpc)?\.py$
 
   # -----------------------------------------------------------------------------

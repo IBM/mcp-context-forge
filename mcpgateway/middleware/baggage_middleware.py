@@ -225,7 +225,7 @@ class BaggageMiddleware:
             # Set baggage in OpenTelemetry context
             if merged_baggage:
                 baggage_token = self._set_baggage_in_context(merged_baggage)
-                logger.debug(f"Set {len(merged_baggage)} baggage entries in context " f"({len(header_baggage)} from headers, {len(existing_baggage)} from upstream)")
+                logger.debug(f"Set {len(merged_baggage)} baggage entries in context ({len(header_baggage)} from headers, {len(existing_baggage)} from upstream)")
 
         except Exception as e:
             # Log error but don't fail the request

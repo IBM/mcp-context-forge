@@ -83,7 +83,7 @@ def _validate_association_ids(v: Any, field_name: str = "associated IDs") -> Any
             try:
                 validated.append(SecurityValidator.validate_uuid(item_str, field_name))
             except ValueError:
-                raise ValueError(f"Invalid ID format: '{item_str}'. " f"{field_name} must contain UUID values, not names. " f"Use UUIDs from the respective entity listings.")
+                raise ValueError(f"Invalid ID format: '{item_str}'. {field_name} must contain UUID values, not names. Use UUIDs from the respective entity listings.")
         return validated
     return v
 
@@ -2887,7 +2887,7 @@ class GatewayCreate(BaseModelWithConfigDict):
         """
         if v is not None and v != "":
             if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_\-]*$", v):
-                raise ValueError("Query parameter key must start with a letter or underscore, " "followed by letters, numbers, underscores, or hyphens")
+                raise ValueError("Query parameter key must start with a letter or underscore, followed by letters, numbers, underscores, or hyphens")
         return v
 
     # Adding `auth_value` as an alias for better access post-validation
@@ -3304,7 +3304,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
         """
         if v is not None and v != "":
             if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_\-]*$", v):
-                raise ValueError("Query parameter key must start with a letter or underscore, " "followed by letters, numbers, underscores, or hyphens")
+                raise ValueError("Query parameter key must start with a letter or underscore, followed by letters, numbers, underscores, or hyphens")
         return v
 
     # One time auth - do not store the auth in gateway flag

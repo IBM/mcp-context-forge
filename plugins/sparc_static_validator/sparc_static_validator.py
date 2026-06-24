@@ -451,7 +451,7 @@ class SPARCStaticValidatorPlugin(Plugin):
                 )
 
             # Permissive mode - log and continue
-            logger.warning(f"SPARC Static Validator: Validation failed for tool '{payload.name}' " f"(permissive mode, continuing): {errors}")
+            logger.warning(f"SPARC Static Validator: Validation failed for tool '{payload.name}' (permissive mode, continuing): {errors}")
             return ToolPreInvokeResult(
                 continue_processing=True,
                 metadata=metadata,
@@ -460,7 +460,7 @@ class SPARCStaticValidatorPlugin(Plugin):
         except Exception as e:
             # Handle unexpected errors gracefully
             logger.error(
-                f"SPARC Static Validator: Unexpected error during validation " f"for tool '{payload.name}': {e}",
+                f"SPARC Static Validator: Unexpected error during validation for tool '{payload.name}': {e}",
                 exc_info=True,
             )
             return ToolPreInvokeResult(

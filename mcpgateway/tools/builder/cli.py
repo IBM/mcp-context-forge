@@ -101,7 +101,7 @@ def cli(
         env_text = "container" if IN_CONTAINER else "local"
 
         if verbose:
-            console.print(Panel(f"[bold]Mode:[/bold] [{mode_color}]{ctx.obj['mode']}[/{mode_color}]\n" f"[bold]Environment:[/bold] {env_text}\n", title="MCP Deploy", border_style=mode_color))
+            console.print(Panel(f"[bold]Mode:[/bold] [{mode_color}]{ctx.obj['mode']}[/{mode_color}]\n[bold]Environment:[/bold] {env_text}\n", title="MCP Deploy", border_style=mode_color))
 
 
 @app.command()
@@ -271,9 +271,7 @@ def version():
         >>> IMPL_MODE in ['plain', 'dagger']
         True
     """
-    console.print(
-        Panel(f"[bold]MCP Deploy[/bold]\n" f"Version: 1.0.0\n" f"Mode: {IMPL_MODE}\n" f"Environment: {'container' if IN_CONTAINER else 'local'}\n", title="Version Info", border_style="blue")
-    )
+    console.print(Panel(f"[bold]MCP Deploy[/bold]\nVersion: 1.0.0\nMode: {IMPL_MODE}\nEnvironment: {'container' if IN_CONTAINER else 'local'}\n", title="Version Info", border_style="blue"))
 
 
 @app.command()

@@ -445,6 +445,7 @@ target-version = "py311"
 select = ["E3", "E4", "E7", "E9", "F", "D1", "D417", "PL", "G004"]
 ignore = [
     # ---- Rules already disabled in .pylintrc (intentionally relaxed) ----
+    "PLW0717",  # Try clause contains too many statements (> 5)
     "PLR0904",  # too-many-public-methods  (pylint R0904)
     "PLR0912",  # too-many-branches        (pylint R0912)
     "PLR0913",  # too-many-arguments       (pylint R0913)

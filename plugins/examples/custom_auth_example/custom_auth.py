@@ -303,7 +303,7 @@ class CustomAuthPlugin(Plugin):
 
         # Log authentication attempt for audit
         # Note: context.global_context.request_id is the same across all hooks for this request
-        logger.info(f"[{context.global_context.request_id}] Auth request completed: " f"path={payload.path} method={payload.method} status={payload.status_code} " f"client={payload.client_host}")
+        logger.info(f"[{context.global_context.request_id}] Auth request completed: path={payload.path} method={payload.method} status={payload.status_code} client={payload.client_host}")
 
         return PluginResult(
             modified_payload=HttpHeaderPayload(root=response_headers),

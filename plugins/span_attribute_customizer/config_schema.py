@@ -41,10 +41,7 @@ class ConditionalAttribute(BaseModel):
         """
         for key, value in v.items():
             if not isinstance(value, (str, int, float, bool)):
-                raise ValueError(
-                    f"Conditional attribute '{key}' has invalid type {type(value).__name__}. "
-                    "Only str, int, float, and bool are supported by OTEL SDKs."
-                )
+                raise ValueError(f"Conditional attribute '{key}' has invalid type {type(value).__name__}. Only str, int, float, and bool are supported by OTEL SDKs.")
         return v
 
 
@@ -72,10 +69,7 @@ class ToolOverride(BaseModel):
             return v
         for key, value in v.items():
             if not isinstance(value, (str, int, float, bool)):
-                raise ValueError(
-                    f"Tool override attribute '{key}' has invalid type {type(value).__name__}. "
-                    "Only str, int, float, and bool are supported by OTEL SDKs."
-                )
+                raise ValueError(f"Tool override attribute '{key}' has invalid type {type(value).__name__}. Only str, int, float, and bool are supported by OTEL SDKs.")
         return v
 
 
@@ -83,10 +77,7 @@ class SpanAttributeCustomizerConfig(BaseModel):
     """Configuration for Span Attribute Customizer plugin."""
 
     # Global attributes
-    global_attributes: Dict[str, Union[str, int, float, bool]] = Field(
-        default_factory=dict,
-        description="Attributes to add to all spans (values must be str, int, float, or bool)"
-    )
+    global_attributes: Dict[str, Union[str, int, float, bool]] = Field(default_factory=dict, description="Attributes to add to all spans (values must be str, int, float, or bool)")
 
     # Per-tool overrides
     tool_overrides: Dict[str, ToolOverride] = Field(default_factory=dict, description="Per-tool attribute overrides")
@@ -101,18 +92,12 @@ class SpanAttributeCustomizerConfig(BaseModel):
     remove_attributes: List[str] = Field(default_factory=list, description="Attributes to remove from all spans")
 
     # Attribute name mapping (renaming)
-    attribute_mapping: Dict[str, str] = Field(
-        default_factory=dict,
-        description="Map attribute names to new names (e.g., 'tool.name' -> 'controls.artifact.name')"
-    )
+    attribute_mapping: Dict[str, str] = Field(default_factory=dict, description="Map attribute names to new names (e.g., 'tool.name' -> 'controls.artifact.name')")
 
     # Baggage span attribute emission policy
     allowed_baggage_span_attributes: List[str] = Field(
         default_factory=list,
-        description=(
-            "Allowlist of OpenTelemetry baggage keys that may be promoted to span attributes. "
-            "Configure this list to restrict baggage span attribute emission."
-        ),
+        description=("Allowlist of OpenTelemetry baggage keys that may be promoted to span attributes. Configure this list to restrict baggage span attribute emission."),
     )
     emit_baggage_prefixed_attributes: bool = Field(
         default=True,
@@ -244,10 +229,7 @@ class SpanAttributeCustomizerConfig(BaseModel):
             if len(key) > 255:
                 raise ValueError(f"Attribute key exceeds 255 characters (got {len(key)})")
             if not isinstance(value, (str, int, float, bool)):
-                raise ValueError(
-                    f"Attribute '{key}' has invalid type {type(value).__name__}. "
-                    "Only str, int, float, and bool are supported by OTEL SDKs."
-                )
+                raise ValueError(f"Attribute '{key}' has invalid type {type(value).__name__}. Only str, int, float, and bool are supported by OTEL SDKs.")
             if isinstance(value, str) and len(value) > 4096:
                 raise ValueError(f"Attribute string value exceeds 4096 characters (got {len(value)})")
 

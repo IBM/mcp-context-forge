@@ -322,11 +322,7 @@ class Settings(BaseSettings):
     )
     mcp_rust_public_proxy_upstream: str = Field(
         default="http://127.0.0.1:8787",
-        description=(
-            "Deprecated. Upstream URL the 'public' MCP ingress shape forwards to. Defaults to the "
-            "loopback address that matches docker-entrypoint.sh's "
-            "MCP_RUST_PUBLIC_LISTEN_HTTP=0.0.0.0:8787 default."
-        ),
+        description=("Upstream URL the 'public' MCP ingress shape forwards to. Defaults to the loopback address that matches docker-entrypoint.sh's MCP_RUST_PUBLIC_LISTEN_HTTP=0.0.0.0:8787 default."),
     )
     experimental_rust_a2a_runtime_enabled: bool = Field(
         default=False,
@@ -389,7 +385,7 @@ class Settings(BaseSettings):
         # RFC 7230 token = 1*tchar; tchar = "!" / "#" / "$" / "%" / "&" / "'"
         # / "*" / "+" / "-" / "." / "^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA
         if not re.fullmatch(r"[A-Za-z0-9!#$%&'*+\-.^_`|~]+", cleaned):
-            raise ValueError(f"AUTH_HEADER_NAME '{v}' is not a valid HTTP header token " "(RFC 7230). Use only ASCII letters, digits, and !#$%&'*+-.^_`|~.")
+            raise ValueError(f"AUTH_HEADER_NAME '{v}' is not a valid HTTP header token (RFC 7230). Use only ASCII letters, digits, and !#$%&'*+-.^_`|~.")
         return cleaned
 
     basic_auth_user: str = "admin"
@@ -578,10 +574,6 @@ class Settings(BaseSettings):
     sso_generic_jwks_uri: Optional[str] = Field(default=None, description="OIDC JWKS endpoint URL for token signature verification")
 
     sso_generic_scope: Optional[str] = Field(default="openid profile email", description="OAuth scopes (space-separated)")
-    sso_generic_groups_claim: str = Field(default="groups", description="JWT claim for generic OIDC groups (e.g. 'groups', 'roles')")
-    sso_generic_admin_groups: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Generic OIDC groups granting platform_admin (CSV/JSON)")
-    sso_generic_role_mappings: Dict[str, str] = Field(default_factory=dict, description="Map generic OIDC groups to ContextForge roles (JSON: {group_name: role_name})")
-    sso_generic_default_role: Optional[str] = Field(default=None, description="Default role for generic OIDC users without a matching group mapping (None = no role assigned)")
 
     sso_generic_groups_claim: str = Field(default="groups", description="JWT claim for Generic OIDC groups (groups/roles/custom)")
     sso_generic_admin_groups: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Generic OIDC groups granting platform_admin role (CSV/JSON)")
@@ -714,27 +706,25 @@ class Settings(BaseSettings):
 
     ssrf_allow_localhost: bool = Field(
         default=False,
-        description=("Allow localhost/loopback addresses (127.0.0.0/8, ::1). " "Default false for safer production behavior."),
+        description=("Allow localhost/loopback addresses (127.0.0.0/8, ::1). Default false for safer production behavior."),
     )
 
     ssrf_allow_private_networks: bool = Field(
         default=False,
         description=(
-            "Allow RFC 1918 private network addresses (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16). " "When false, private destinations are blocked unless explicitly listed in SSRF_ALLOWED_NETWORKS."
+            "Allow RFC 1918 private network addresses (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16). When false, private destinations are blocked unless explicitly listed in SSRF_ALLOWED_NETWORKS."
         ),
     )
 
     ssrf_allowed_networks: List[str] = Field(
         default_factory=list,
-        description=("Optional CIDR allowlist for internal/private destinations. " "Used when SSRF_ALLOW_PRIVATE_NETWORKS=false to allow specific internal ranges."),
+        description=("Optional CIDR allowlist for internal/private destinations. Used when SSRF_ALLOW_PRIVATE_NETWORKS=false to allow specific internal ranges."),
     )
 
     ssrf_dns_fail_closed: bool = Field(
         default=True,
         description=(
-            "Fail closed on DNS resolution errors. When true, URLs that cannot be resolved "
-            "are rejected. When false, unresolvable hostnames are allowed through "
-            "(hostname blocklist still applies)."
+            "Fail closed on DNS resolution errors. When true, URLs that cannot be resolved are rejected. When false, unresolvable hostnames are allowed through (hostname blocklist still applies)."
         ),
     )
 
@@ -777,7 +767,7 @@ class Settings(BaseSettings):
     uaid_allow_all_domains: bool = Field(
         default=False,
         description=(
-            "DANGEROUS: Allow UAID cross-gateway routing to any domain. " "This bypasses domain allowlist validation and should NEVER be used in production. " "Only enable for development/testing."
+            "DANGEROUS: Allow UAID cross-gateway routing to any domain. This bypasses domain allowlist validation and should NEVER be used in production. Only enable for development/testing."
         ),
     )
 
@@ -1094,7 +1084,7 @@ class Settings(BaseSettings):
     )
     mcpgateway_ui_hide_sections_admin: Annotated[list[str], NoDecode] = Field(
         default_factory=list,
-        description=("CSV/JSON list of UI sections to hide for admin users. " "Same valid values as MCPGATEWAY_UI_HIDE_SECTIONS. " "When unset, admins see all sections."),
+        description=("CSV/JSON list of UI sections to hide for admin users. Same valid values as MCPGATEWAY_UI_HIDE_SECTIONS. When unset, admins see all sections."),
     )
     mcpgateway_ui_hide_header_items_admin: Annotated[list[str], NoDecode] = Field(
         default_factory=list,
@@ -1234,12 +1224,12 @@ class Settings(BaseSettings):
     llmchat_enabled: bool = Field(default=True, description="Enable LLM Chat feature")
     mcpgateway_stdio_transport_enabled: bool = Field(
         default=False,
-        description=("Enable stdio transport for MCP chat client configuration. Disabled by default; " "set true only in trusted environments that intentionally need stdio process execution."),
+        description=("Enable stdio transport for MCP chat client configuration. Disabled by default; set true only in trusted environments that intentionally need stdio process execution."),
     )
     toolops_enabled: bool = Field(default=False, description="Enable ToolOps feature")
     plugins_can_override_rbac: bool = Field(
         default=False,
-        description=("Allow HTTP_AUTH_CHECK_PERMISSION plugins to short-circuit built-in RBAC grants. " "Disabled by default so plugin grant decisions are audit-only unless explicitly enabled."),
+        description=("Allow HTTP_AUTH_CHECK_PERMISSION plugins to short-circuit built-in RBAC grants. Disabled by default so plugin grant decisions are audit-only unless explicitly enabled."),
     )
     plugins_can_override_auth_headers: bool = Field(
         default=False,
@@ -1482,13 +1472,11 @@ class Settings(BaseSettings):
             val = secret_field.get_secret_value()
             if val.lower().startswith("__replace_me__"):
                 if env == "production":
-                    raise SecurityConfigurationError(f"{field_name}: Value is an unset placeholder (__REPLACE_ME__). " "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
+                    raise SecurityConfigurationError(f"{field_name}: Value is an unset placeholder (__REPLACE_ME__). Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
                 logger.warning(f"🔓 SECURITY WARNING - {field_name}: Value is an unset placeholder (__REPLACE_ME__). Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
             if val.lower() in weak_secrets:
                 if env != "development":
-                    raise SecurityConfigurationError(
-                        f"{field_name}: Weak/default secret rejected in '{env}' environment. " "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values."
-                    )
+                    raise SecurityConfigurationError(f"{field_name}: Weak/default secret rejected in '{env}' environment. Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
         # In non-production environments, unset placeholder secrets emit SECURITY WARNINGs but
         # do not block startup. Production always rejects them. Weak secrets are rejected in
         # staging and production; development allows them with warnings from the field validator.
@@ -1955,9 +1943,7 @@ class Settings(BaseSettings):
         default=None,
         ge=1,
         description=(
-            "Seconds between aggregation runs. "
-            "Defaults to metrics_aggregation_window_minutes * 60 when unset. "
-            "Set higher (e.g. 900) to reduce background DB pressure on multi-worker deployments."
+            "Seconds between aggregation runs. Defaults to metrics_aggregation_window_minutes * 60 when unset. Set higher (e.g. 900) to reduce background DB pressure on multi-worker deployments."
         ),
     )
     yield_batch_size: int = Field(
@@ -2595,7 +2581,7 @@ class Settings(BaseSettings):
     )
 
     redis_operation_timeout: float = Field(
-        default=0.5, gt=0.0, description="Timeout for individual Redis operations in seconds (get/set/delete). " "Should be lower than redis_socket_timeout for faster fallback to in-memory cache."
+        default=0.5, gt=0.0, description="Timeout for individual Redis operations in seconds (get/set/delete). Should be lower than redis_socket_timeout for faster fallback to in-memory cache."
     )
     redis_circuit_failure_threshold: int = Field(
         default=3,
@@ -2720,7 +2706,7 @@ class Settings(BaseSettings):
     )
     otel_baggage_header_mappings: str = Field(
         default="[]",
-        description=("JSON array of header-to-baggage mappings. " 'Example: [{"header_name": "X-Tenant-ID", "baggage_key": "tenant.id"}]'),
+        description=('JSON array of header-to-baggage mappings. Example: [{"header_name": "X-Tenant-ID", "baggage_key": "tenant.id"}]'),
     )
     otel_baggage_propagate_to_external: bool = Field(
         default=False,
@@ -3211,9 +3197,7 @@ Disallow: /
                 db_dir.mkdir(parents=True)
 
     # Validation patterns for safe display (configurable)
-    validation_dangerous_html_pattern: str = (
-        r"<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>"
-    )
+    validation_dangerous_html_pattern: str = r"<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>"
 
     validation_dangerous_js_pattern: str = r"(?i)(?:^|\s|[\"'`<>=])(javascript:|vbscript:|data:\s*[^,]*[;\s]*(javascript|vbscript)|\bon[a-z]+\s*=|<\s*script\b)"
 
@@ -3276,7 +3260,7 @@ Disallow: /
     # Tag validation limits (configurable via env) - Issue #5175
     validation_min_tag_length: int = Field(
         default=2,
-        description=("Minimum length for individual tags. Tags shorter than this will be rejected. " "Override with VALIDATION_MIN_TAG_LENGTH environment variable. Minimum: 1, Maximum: 10"),
+        description=("Minimum length for individual tags. Tags shorter than this will be rejected. Override with VALIDATION_MIN_TAG_LENGTH environment variable. Minimum: 1, Maximum: 10"),
         ge=1,
         le=10,
     )

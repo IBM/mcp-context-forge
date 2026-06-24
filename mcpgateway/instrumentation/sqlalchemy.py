@@ -94,7 +94,7 @@ def _write_span_to_db(span_data: dict) -> None:
             # Single commit for all operations
             db.commit()
 
-            logger.debug(f"Created span for {span_data['resource_name']} query: " f"{span_data['duration_ms']:.2f}ms, {span_data.get('row_count')} rows")
+            logger.debug(f"Created span for {span_data['resource_name']} query: {span_data['duration_ms']:.2f}ms, {span_data.get('row_count')} rows")
 
         except Exception as commit_error:
             db.rollback()
