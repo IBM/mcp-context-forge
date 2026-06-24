@@ -22,7 +22,6 @@ import hmac
 import logging
 import secrets
 import string
-from time import monotonic
 from typing import Any, Dict, List, Optional, Tuple, Union
 import urllib.parse
 
@@ -92,9 +91,7 @@ class SSOService:
         True
     """
 
-    _OIDC_METADATA_CACHE_TTL_SECONDS = 300
-    _oidc_config_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
-    _jwks_client_cache: Dict[str, jwt.PyJWKClient] = {}
+    # Shared OIDC discovery is now handled by mcpgateway.utils.oidc_discovery
     _STATE_BINDING_SEPARATOR = "."
     _STATE_BINDING_HEX_LEN = 64
     _EMAIL_VERIFIED_CLAIMS: Tuple[str, ...] = (
@@ -187,40 +184,19 @@ class SSOService:
     async def _get_oidc_provider_metadata(self, issuer: str) -> Optional[Dict[str, Any]]:
         """Discover and cache OIDC provider metadata.
 
+        Delegates to the shared oidc_discovery module which handles both
+        RFC 8414 and OIDC Discovery endpoints with robust caching.
+
         Args:
             issuer: OIDC issuer URL.
 
         Returns:
             Provider metadata dict from discovery endpoint, or None on failure.
         """
-        normalized_issuer = issuer.rstrip("/")
-        cached = self._oidc_config_cache.get(normalized_issuer)
-        if cached is not None:
-            cached_at, cached_metadata = cached
-            if monotonic() - cached_at < self._OIDC_METADATA_CACHE_TTL_SECONDS:
-                return cached_metadata
-            self._oidc_config_cache.pop(normalized_issuer, None)
-
         # First-Party
-        from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
+        from mcpgateway.utils.oidc_discovery import discover_oidc_metadata  # pylint: disable=import-outside-toplevel
 
-        discovery_url = f"{normalized_issuer}/.well-known/openid-configuration"
-        try:
-            client = await get_http_client()
-            response = await client.get(discovery_url, timeout=settings.oauth_request_timeout)
-            if response.status_code != 200:
-                logger.warning("OIDC discovery failed for issuer %s with HTTP %s", normalized_issuer, response.status_code)
-                return None
-
-            metadata = response.json()
-            if not isinstance(metadata, dict):
-                logger.warning("OIDC discovery response for issuer %s is not a JSON object", normalized_issuer)
-                return None
-            self._oidc_config_cache[normalized_issuer] = (monotonic(), metadata)
-            return metadata
-        except Exception as exc:
-            logger.warning("OIDC discovery request failed for issuer %s: %s", normalized_issuer, exc)
-            return None
+        return await discover_oidc_metadata(issuer)
 
     async def _resolve_oidc_issuer_and_jwks(self, provider: SSOProvider) -> Tuple[Optional[str], Optional[str]]:
         """Resolve issuer and JWKS URI for an OIDC provider.
@@ -249,15 +225,19 @@ class SSOService:
     def _get_jwks_client(self, jwks_uri: str) -> jwt.PyJWKClient:
         """Get or create a cached PyJWKClient instance.
 
+        Delegates to the shared oidc_discovery module for consistent
+        JWKS client caching across SSO and OAuth access token paths.
+
         Args:
             jwks_uri: JWKS endpoint URL.
 
         Returns:
             Cached or newly created `PyJWKClient`.
         """
-        if jwks_uri not in self._jwks_client_cache:
-            self._jwks_client_cache[jwks_uri] = jwt.PyJWKClient(jwks_uri)
-        return self._jwks_client_cache[jwks_uri]
+        # First-Party
+        from mcpgateway.utils.oidc_discovery import get_jwks_client  # pylint: disable=import-outside-toplevel
+
+        return get_jwks_client(jwks_uri)
 
     async def _verify_oidc_id_token(self, provider: SSOProvider, id_token: str, expected_nonce: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Verify OIDC ID token signature and claims.

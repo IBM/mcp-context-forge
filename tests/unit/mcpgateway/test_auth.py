@@ -31,12 +31,12 @@ from mcpgateway.transports.streamablehttp_transport import (
     _StreamableHttpAuthHandler,
     OAuthAuthResult,
 )
-from mcpgateway.utils.verify_credentials import (
-    _discover_oidc_metadata,
-    _oauth_jwks_client_cache,
-    _oauth_oidc_metadata_cache,
-    verify_oauth_access_token,
+from mcpgateway.utils.oidc_discovery import (
+    _jwks_client_cache as _oauth_jwks_client_cache,
+    _oidc_metadata_cache as _oauth_oidc_metadata_cache,
+    discover_oidc_metadata as _discover_oidc_metadata,
 )
+from mcpgateway.utils.verify_credentials import verify_oauth_access_token
 
 
 class TestGetDb:
@@ -4469,7 +4469,8 @@ class TestVerifyOauthAccessToken:
 
         stack = ExitStack()
         stack.enter_context(patch("mcpgateway.services.http_client_service.get_http_client", AsyncMock(return_value=mock_http)))
-        stack.enter_context(patch("mcpgateway.utils.verify_credentials._oauth_jwks_client_cache", {self.JWKS_URI: mock_jwks_client}))
+        # Patch the actual cache location in oidc_discovery module
+        stack.enter_context(patch("mcpgateway.utils.oidc_discovery._jwks_client_cache", {self.JWKS_URI: mock_jwks_client}))
         return stack
 
     @pytest.mark.asyncio
@@ -4678,7 +4679,7 @@ class TestVerifyOauthAccessToken:
     def test_build_metadata_urls_rfc8414_path_insertion(self):
         """RFC 8414 inserts the well-known segment between host and path."""
         # First-Party
-        from mcpgateway.utils.verify_credentials import _build_metadata_urls  # pylint: disable=import-outside-toplevel
+        from mcpgateway.utils.oidc_discovery import _build_metadata_urls  # pylint: disable=import-outside-toplevel
 
         urls = _build_metadata_urls("https://example.com/issuer1")
         assert "https://example.com/.well-known/oauth-authorization-server/issuer1" in urls
@@ -4687,7 +4688,7 @@ class TestVerifyOauthAccessToken:
     def test_build_metadata_urls_no_path(self):
         """With no issuer path, both well-known URLs share the root host."""
         # First-Party
-        from mcpgateway.utils.verify_credentials import _build_metadata_urls  # pylint: disable=import-outside-toplevel
+        from mcpgateway.utils.oidc_discovery import _build_metadata_urls  # pylint: disable=import-outside-toplevel
 
         urls = _build_metadata_urls("https://example.com")
         assert urls == [
@@ -4804,7 +4805,7 @@ class TestVerifyOauthAccessToken:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", AsyncMock(return_value=mock_http)),
-            patch("mcpgateway.utils.verify_credentials._oauth_jwks_client_cache", {self.JWKS_URI: mock_jwks_client}),
+            patch("mcpgateway.utils.oidc_discovery._jwks_client_cache", {self.JWKS_URI: mock_jwks_client}),
         ):
             result = await verify_oauth_access_token(id_token, [self.ISSUER], expected_audience="my-client")
 
@@ -4865,11 +4866,8 @@ class TestVerifyOauthAccessToken:
     @pytest.mark.asyncio
     async def test_expired_cache_entry_is_popped_and_reprobed(self, monkeypatch):
         """A cached entry past its TTL is evicted and rediscovery runs."""
-        # First-Party
-        from mcpgateway.utils import verify_credentials as vc  # pylint: disable=import-outside-toplevel
-
         # Seed a fake cached entry with a 0s TTL so the expiry branch fires.
-        vc._oauth_oidc_metadata_cache[self.ISSUER.rstrip("/")] = (0.0, {"stale": True}, 0.0)  # pylint: disable=protected-access
+        _oauth_oidc_metadata_cache[self.ISSUER.rstrip("/")] = (0.0, {"stale": True}, 0.0)  # pylint: disable=protected-access
 
         # Make the rediscovery produce fresh metadata.
         mock_resp = MagicMock()
@@ -4897,11 +4895,11 @@ class TestVerifyOauthAccessToken:
         # Both probes fail with the same exception, so the cache entry uses
         # the transient TTL (5s) rather than the permanent TTL (30s).
         # First-Party
-        from mcpgateway.utils import verify_credentials as vc  # pylint: disable=import-outside-toplevel
+        from mcpgateway.utils import oidc_discovery  # pylint: disable=import-outside-toplevel
 
-        cached_at, cached_metadata, ttl = vc._oauth_oidc_metadata_cache["https://unreachable.example.com"]  # pylint: disable=protected-access
+        cached_at, cached_metadata, ttl = _oauth_oidc_metadata_cache["https://unreachable.example.com"]  # pylint: disable=protected-access
         assert cached_metadata is None
-        assert ttl == vc._OAUTH_OIDC_METADATA_NEGATIVE_TTL_TRANSIENT  # pylint: disable=protected-access
+        assert ttl == oidc_discovery.DEFAULT_NEGATIVE_TTL_TRANSIENT  # pylint: disable=protected-access
         del cached_at  # silence ruff
 
     @pytest.mark.asyncio
@@ -4918,11 +4916,11 @@ class TestVerifyOauthAccessToken:
 
         assert metadata is None
         # First-Party
-        from mcpgateway.utils import verify_credentials as vc  # pylint: disable=import-outside-toplevel
+        from mcpgateway.utils import oidc_discovery  # pylint: disable=import-outside-toplevel
 
-        _, cached_metadata, ttl = vc._oauth_oidc_metadata_cache["https://badjson.example.com"]  # pylint: disable=protected-access
+        _, cached_metadata, ttl = _oauth_oidc_metadata_cache["https://badjson.example.com"]  # pylint: disable=protected-access
         assert cached_metadata is None
-        assert ttl == vc._OAUTH_OIDC_METADATA_NEGATIVE_TTL_PERMANENT  # pylint: disable=protected-access
+        assert ttl == oidc_discovery.DEFAULT_NEGATIVE_TTL_PERMANENT  # pylint: disable=protected-access
 
     @pytest.mark.asyncio
     async def test_probe_non_dict_metadata_rejected(self):
@@ -4980,7 +4978,7 @@ class TestVerifyOauthAccessToken:
         mock_http.get.return_value = mock_resp
 
         # Ensure the JWKS cache does not already contain our test JWKS URI.
-        vc._oauth_jwks_client_cache.pop(self.JWKS_URI, None)  # pylint: disable=protected-access
+        _oauth_jwks_client_cache.pop(self.JWKS_URI, None)  # pylint: disable=protected-access
 
         fake_signing_key = MagicMock()
         fake_signing_key.key = public_key
@@ -4997,7 +4995,7 @@ class TestVerifyOauthAccessToken:
         assert result["sub"] == "user@example.com"
         # The constructor was called exactly once with the discovered JWKS URI.
         mock_ctor.assert_called_once_with(self.JWKS_URI)
-        assert self.JWKS_URI in vc._oauth_jwks_client_cache  # pylint: disable=protected-access
+        assert self.JWKS_URI in _oauth_jwks_client_cache  # pylint: disable=protected-access
 
 
 class TestResolveAuthorizationServers:

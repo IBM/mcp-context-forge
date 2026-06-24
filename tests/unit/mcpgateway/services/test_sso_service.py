@@ -2709,7 +2709,10 @@ class TestOidcMetadataAndJwksHelpers:
         # Standard
         import time
 
-        sso_service._oidc_config_cache["https://issuer.example.com"] = (time.monotonic(), {"jwks_uri": "https://issuer.example.com/jwks"})
+        # First-Party
+        from mcpgateway.utils.oidc_discovery import _oidc_metadata_cache, DEFAULT_METADATA_TTL  # pylint: disable=import-outside-toplevel
+
+        _oidc_metadata_cache["https://issuer.example.com"] = (time.monotonic(), {"jwks_uri": "https://issuer.example.com/jwks"}, DEFAULT_METADATA_TTL)
 
         with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client:
             metadata = await sso_service._get_oidc_provider_metadata("https://issuer.example.com/")
@@ -2722,9 +2725,13 @@ class TestOidcMetadataAndJwksHelpers:
         # Standard
         import time
 
-        sso_service._oidc_config_cache["https://issuer.example.com"] = (
-            time.monotonic() - sso_service._OIDC_METADATA_CACHE_TTL_SECONDS - 1,
+        # First-Party
+        from mcpgateway.utils.oidc_discovery import _oidc_metadata_cache, DEFAULT_METADATA_TTL  # pylint: disable=import-outside-toplevel
+
+        _oidc_metadata_cache["https://issuer.example.com"] = (
+            time.monotonic() - DEFAULT_METADATA_TTL - 1,
             {"jwks_uri": "stale"},
+            DEFAULT_METADATA_TTL,
         )
 
         response = MagicMock()
@@ -2736,7 +2743,10 @@ class TestOidcMetadataAndJwksHelpers:
             metadata = await sso_service._get_oidc_provider_metadata("https://issuer.example.com")
 
         assert metadata is None
-        assert "https://issuer.example.com" not in sso_service._oidc_config_cache
+        # Cache entry should be updated with None and negative TTL
+        assert "https://issuer.example.com" in _oidc_metadata_cache
+        _, cached_metadata, _ = _oidc_metadata_cache["https://issuer.example.com"]
+        assert cached_metadata is None
 
     @pytest.mark.asyncio
     async def test_get_oidc_provider_metadata_rejects_non_object_json(self, sso_service):
@@ -2754,6 +2764,9 @@ class TestOidcMetadataAndJwksHelpers:
 
     @pytest.mark.asyncio
     async def test_get_oidc_provider_metadata_caches_successful_discovery(self, sso_service):
+        # First-Party
+        from mcpgateway.utils.oidc_discovery import _oidc_metadata_cache  # pylint: disable=import-outside-toplevel
+
         issuer = "https://issuer-cache-success.example.com"
         response = MagicMock()
         response.status_code = 200
@@ -2765,7 +2778,7 @@ class TestOidcMetadataAndJwksHelpers:
             metadata = await sso_service._get_oidc_provider_metadata(issuer)
 
         assert metadata == {"issuer": issuer, "jwks_uri": f"{issuer}/jwks"}
-        assert issuer in sso_service._oidc_config_cache
+        assert issuer in _oidc_metadata_cache
 
     @pytest.mark.asyncio
     async def test_get_oidc_provider_metadata_handles_request_exception(self, sso_service):
