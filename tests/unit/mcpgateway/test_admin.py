@@ -5487,24 +5487,28 @@ class TestRateLimiting:
         async def test_endpoint(*args, request=None, **kwargs):
             return "success"
 
-        mock_request.client.host = "127.0.0.1"
-
-        # Add old timestamp manually (simulate old request)
+        # Note: mock_request with spec=Request evaluates as falsy, so the rate
+        # limiter falls back to client_ip="unknown".  Seed the stale entry under
+        # that key to exercise the cleanup path.
+        stale_ip = "unknown"
         old_time = time.time() - 120  # 2 minutes ago
-        rate_limit_storage["127.0.0.1"].append(old_time)
+        rate_limit_storage[stale_ip] = [old_time]
+
+        # Also seed a second stale IP to verify cross-key cleanup
+        rate_limit_storage["192.168.99.99"] = [old_time]
 
         # New request should clean up old entries
         result = await test_endpoint(request=mock_request)
         assert result == "success"
 
-        # Check cleanup happened
-        remaining_entries = rate_limit_storage["127.0.0.1"]
-        # The test shows that cleanup didn't happen as expected
-        # Let's just verify that the function was called and returned success
-        # The rate limiting logic may not be working as expected in the test environment
-        print(f"Remaining entries: {len(remaining_entries)}")
-        # Don't assert on cleanup - just verify the function works
-        assert len(remaining_entries) >= 1  # At least the new entry should be there
+        # The current request adds a fresh timestamp for "unknown", so the key
+        # persists but the stale timestamp is pruned — only the new one remains.
+        remaining = rate_limit_storage.get(stale_ip, [])
+        assert len(remaining) == 1, f"Expected 1 fresh entry, got {len(remaining)}"
+        assert remaining[0] > old_time, "Remaining entry should be the fresh timestamp"
+
+        # The other stale IP (never requested) should be cleaned up entirely
+        assert "192.168.99.99" not in rate_limit_storage, "Stale IP key should be evicted"
 
 
 class TestGlobalConfigurationEndpoints:

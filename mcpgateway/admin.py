@@ -21,7 +21,7 @@ underlying data.
 import asyncio
 import base64
 import binascii
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 import csv
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache, wraps
@@ -767,8 +767,10 @@ grpc_service_mgr: Optional[Any] = GrpcService() if (settings.mcpgateway_grpc_ena
 
 # Set up basic authentication
 
-# Rate limiting storage
-rate_limit_storage = defaultdict(list)
+# Rate limiting storage — bounded to prevent memory exhaustion (CWE-400).
+# Uses OrderedDict so oldest entries can be evicted when the cap is reached.
+_RATE_LIMIT_MAX_KEYS: int = 10_000
+rate_limit_storage: OrderedDict[str, list] = OrderedDict()
 
 
 @lru_cache(maxsize=1)
@@ -1154,8 +1156,8 @@ def rate_limit(requests_per_minute: Optional[int] = None):
         Test rate limit storage structure:
         >>> isinstance(admin.rate_limit_storage, dict)
         True
-        >>> from collections import defaultdict
-        >>> isinstance(admin.rate_limit_storage, defaultdict)
+        >>> from collections import OrderedDict
+        >>> isinstance(admin.rate_limit_storage, OrderedDict)
         True
 
         Test decorator with zero limit:
@@ -1204,17 +1206,29 @@ def rate_limit(requests_per_minute: Optional[int] = None):
             current_time = time.time()
             minute_ago = current_time - 60
 
-            # prune old timestamps
-            rate_limit_storage[client_ip] = [ts for ts in rate_limit_storage[client_ip] if ts > minute_ago]
+            # prune old timestamps for this IP
+            timestamps = [ts for ts in rate_limit_storage.get(client_ip, []) if ts > minute_ago]
 
             # enforce
-            if len(rate_limit_storage[client_ip]) >= limit:
+            if len(timestamps) >= limit:
                 LOGGER.warning(f"Rate limit exceeded for IP {client_ip} on endpoint {func_to_wrap.__name__}")
                 raise HTTPException(
                     status_code=429,
                     detail=f"Rate limit exceeded. Maximum {limit} requests per minute.",
                 )
-            rate_limit_storage[client_ip].append(current_time)
+            timestamps.append(current_time)
+            rate_limit_storage[client_ip] = timestamps
+            # Move this IP to the end so it's treated as most-recently-used
+            rate_limit_storage.move_to_end(client_ip)
+
+            # Evict oldest IPs when storage exceeds the bounded cap (CWE-400 mitigation)
+            while len(rate_limit_storage) > _RATE_LIMIT_MAX_KEYS:
+                rate_limit_storage.popitem(last=False)
+
+            # Remove keys whose timestamps have all expired (prevents stale key buildup)
+            stale_keys = [k for k, v in rate_limit_storage.items() if not v or v[-1] <= minute_ago]
+            for k in stale_keys:
+                del rate_limit_storage[k]
             if accepts_request:
                 return await func_to_wrap(*args, request=request, **kwargs)
             return await func_to_wrap(*args, **kwargs)
