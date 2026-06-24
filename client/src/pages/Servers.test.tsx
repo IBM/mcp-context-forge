@@ -384,7 +384,7 @@ describe("Servers", () => {
     });
   });
 
-  it("shows inline error notification when testConnection fails", async () => {
+  it("opens the test connection dialog from the actions menu", async () => {
     const user = userEvent.setup();
 
     vi.mocked(api.get).mockResolvedValueOnce({
@@ -398,18 +398,14 @@ describe("Servers", () => {
       expect(screen.getByText("Test Server 0")).toBeInTheDocument();
     });
 
-    vi.mocked(api.post).mockRejectedValueOnce(new Error("500 Internal Server Error"));
-
     const actionsButtons = screen.getAllByRole("button", { name: /actions for/i });
     await user.click(actionsButtons[0]);
 
     const testItem = await screen.findByRole("menuitem", { name: /test connection/i });
     await user.click(testItem);
 
-    await waitFor(() => {
-      expect(screen.getByRole("alert")).toBeInTheDocument();
-      expect(screen.getByText(/server error/i)).toBeInTheDocument();
-    });
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("heading", { name: /test connection/i })).toBeInTheDocument();
   });
 
   it("optimistically removes server from list immediately on delete confirmation", async () => {
