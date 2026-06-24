@@ -4131,6 +4131,8 @@ async def admin_ui(
             # Password policy - pass actual requirements dict for user creation
             "password_requirements": PasswordPolicyService.get_password_requirements(is_privileged=False),
             "password_policy_enabled": getattr(settings, "password_policy_enabled", True),
+            # Gateway async lifecycle feature flag
+            "gateway_async_lifecycle_enabled": settings.gateway_async_lifecycle_enabled,
             # Token policy flags
             "require_token_expiration": getattr(settings, "require_token_expiration", True),
             "sri_hashes": load_sri_hashes(),
