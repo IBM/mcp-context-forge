@@ -1967,6 +1967,44 @@ class A2AAgentService(BaseService):
 
         return plugin_headers, downstream_headers
 
+    def _refilter_plugin_headers(
+        self,
+        plugin_headers: Dict[str, str],
+        agent: DbA2AAgent,
+        feature_flag_enabled: bool,
+    ) -> Dict[str, str]:
+        """Re-apply header filtering to plugin-returned headers.
+
+        Plugins receive sanitized headers (via _filter_sensitive_headers), but
+        when they return modified headers, those must be re-validated against
+        the same security boundaries to prevent malicious plugins from injecting
+        sensitive headers into downstream requests.
+
+        Related to issue #3621 (Phase 1) - PR #5183 security review fix.
+
+        Args:
+            plugin_headers: Headers returned by plugin in modified_payload.headers
+            agent: Target A2A agent with passthrough_headers whitelist
+            feature_flag_enabled: Value of ENABLE_SENSITIVE_HEADER_PASSTHROUGH flag
+
+        Returns:
+            Filtered and whitelisted headers safe for downstream forwarding
+        """
+        # If no whitelist configured, block all headers (matches _prepare_header_flows)
+        if not agent.passthrough_headers:
+            return {}
+
+        # Layer 1: Apply agent's passthrough whitelist
+        whitelist_lower = {h.lower() for h in agent.passthrough_headers}
+        whitelisted = {k: v for k, v in plugin_headers.items() if k.lower() in whitelist_lower}
+
+        # Layer 2: Strip sensitive headers if feature flag is disabled
+        # When flag is enabled, sensitive headers are allowed if whitelisted
+        if not feature_flag_enabled:
+            return _filter_sensitive_headers(whitelisted)
+        else:
+            return whitelisted
+
     async def invoke_agent(
         self,
         db: Session,
@@ -2268,7 +2306,27 @@ class A2AAgentService(BaseService):
                     if pre_result.modified_payload.parameters is not None:
                         parameters = pre_result.modified_payload.parameters
                     if pre_result.modified_payload.headers is not None:
-                        prepared.headers.update(pre_result.modified_payload.headers.model_dump())
+                        # Security: Re-filter plugin-returned headers to prevent malicious
+                        # plugins from injecting sensitive headers into downstream requests
+                        # (PR #5183 review fix)
+                        plugin_returned = pre_result.modified_payload.headers.model_dump()
+                        safe_headers = self._refilter_plugin_headers(
+                            plugin_headers=plugin_returned,
+                            agent=agent,
+                            feature_flag_enabled=settings.enable_sensitive_header_passthrough,
+                        )
+                        prepared.headers.update(safe_headers)
+
+                        # Log security-blocked headers for forensic awareness
+                        if plugin_returned.keys() - safe_headers.keys():
+                            removed = sorted(plugin_returned.keys() - safe_headers.keys())
+                            logger.warning(
+                                "Plugin attempted to set headers blocked by security policy: %s "
+                                "(agent=%s, flag=%s)",
+                                removed,
+                                agent.name,
+                                settings.enable_sensitive_header_passthrough,
+                            )
             except PluginViolationError as e:
                 logger.error("Plugin RBAC violation for A2A agent %s: %s", agent_id, e)
                 raise A2AAgentError(f"Plugin RBAC violation: {e}") from e
