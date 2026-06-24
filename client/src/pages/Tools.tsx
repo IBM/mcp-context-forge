@@ -166,7 +166,15 @@ export function Tools() {
   const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
   const [selectedToolName, setSelectedToolName] = useState<string | null>(null);
 
-  const { data: toolsData, error, isLoading, refetch } = useQuery<Tool[]>("/tools?limit=0");
+  // include_inactive=true so deactivated tools stay listed (and re-activatable);
+  // the backend filters them out by default.
+  const {
+    data: toolsData,
+    error,
+    isLoading,
+    refetch,
+    setData: setToolsData,
+  } = useQuery<Tool[]>("/tools?limit=0&include_inactive=true");
 
   const { data: editedToolData } = useQuery<Tool>(`/tools/${editingTool?.id}`, {
     enabled: Boolean(editingTool?.id),
@@ -178,6 +186,16 @@ export function Tools() {
   const groups = useMemo(
     () => buildGroups(toolsData ?? [], restToolsLabel),
     [toolsData, restToolsLabel],
+  );
+
+  // Keep the open details panel pointed at the latest group data so status
+  // changes (e.g. activate/deactivate) are reflected once the list is updated.
+  const activeGroup = useMemo(
+    () =>
+      selectedGroup
+        ? (groups.find((g) => g.gatewaySlug === selectedGroup.gatewaySlug) ?? selectedGroup)
+        : null,
+    [groups, selectedGroup],
   );
 
   const handleFormSuccess = () => {
@@ -200,6 +218,51 @@ export function Tools() {
   const handleCloseDetails = () => {
     setIsDetailsPanelOpen(false);
   };
+
+  const handleToggleTool = useCallback(
+    async (tool: Tool) => {
+      const name = tool.displayName || tool.name || tool.id;
+      const activate = !tool.enabled;
+
+      try {
+        await (activate ? toolsApi.activate(tool.id) : toolsApi.deactivate(tool.id));
+        // Refresh only the affected tool and patch it into the list, instead of
+        // refetching the whole catalog.
+        const updated = await toolsApi.get(tool.id);
+        setToolsData((prev) => prev?.map((t) => (t.id === updated.id ? updated : t)));
+        toast.success(
+          intl.formatMessage(
+            {
+              id: activate ? "tools.toggle.activateSuccess" : "tools.toggle.deactivateSuccess",
+            },
+            { name },
+          ),
+        );
+      } catch (err) {
+        let errorMessage = intl.formatMessage({ id: "tools.toggle.error" });
+
+        if (err instanceof ApiError) {
+          const detail = extractApiErrorDetail(err.body);
+          errorMessage =
+            detail ||
+            intl.formatMessage(
+              { id: "tools.toggle.errorWithMessage" },
+              {
+                message: err.message || intl.formatMessage({ id: "tools.toggle.errorUnknown" }),
+              },
+            );
+        } else if (err instanceof Error) {
+          errorMessage = intl.formatMessage(
+            { id: "tools.toggle.errorWithMessage" },
+            { message: err.message },
+          );
+        }
+
+        toast.error(errorMessage);
+      }
+    },
+    [setToolsData, intl],
+  );
 
   const handleDelete = useCallback(
     (id: string) => {
@@ -304,14 +367,15 @@ export function Tools() {
             </div>
           )}
 
-          {selectedGroup && (
+          {activeGroup && (
             <ToolDetailsPanel
-              tools={selectedGroup.tools}
-              gatewaySlug={selectedGroup.gatewaySlug}
+              tools={activeGroup.tools}
+              gatewaySlug={activeGroup.gatewaySlug}
               open={isDetailsPanelOpen}
               onClose={handleCloseDetails}
               onDeleteTool={handleDelete}
               onEditTool={handleEditTool}
+              onToggleTool={handleToggleTool}
             />
           )}
 
