@@ -462,7 +462,6 @@ async def test_require_admin_permission_forwards_token_teams(monkeypatch):
 # the same has_hooks_for pattern and run reliably in parallel execution.
 
 
-@pytest.mark.skip(reason="Flaky in parallel execution due to plugin manager singleton; run individually")
 @pytest.mark.asyncio
 async def test_require_permission_skips_hooks_when_has_hooks_for_false(monkeypatch):
     """Test that hook invocation is skipped when has_hooks_for returns False.
@@ -472,7 +471,6 @@ async def test_require_permission_skips_hooks_when_has_hooks_for_false(monkeypat
     and fall through directly to PermissionService.check_permission.
     """
     # Standard
-    import importlib
 
     async def dummy_func(user=None):
         return "ok"
@@ -488,12 +486,7 @@ async def test_require_permission_skips_hooks_when_has_hooks_for_false(monkeypat
     mock_pm.has_hooks_for = MagicMock(return_value=False)
     mock_pm.invoke_hook = AsyncMock()  # Should NOT be called
 
-    # Use importlib to ensure the module is loaded, then patch get_plugin_manager
-    plugin_framework = importlib.import_module("mcpgateway.plugins")
-    original_get_pm = plugin_framework.get_plugin_manager
-    try:
-        plugin_framework.get_plugin_manager = lambda: mock_pm
-
+    with patch("mcpgateway.plugins.get_plugin_manager", return_value=mock_pm):
         decorated = rbac.require_permission("tools.read")(dummy_func)
         result = await decorated(user=mock_user)
 
@@ -503,11 +496,8 @@ async def test_require_permission_skips_hooks_when_has_hooks_for_false(monkeypat
         mock_pm.invoke_hook.assert_not_called()
         # PermissionService.check_permission should have been called as fallback
         mock_perm_service.check_permission.assert_called_once()
-    finally:
-        plugin_framework.get_plugin_manager = original_get_pm
 
 
-@pytest.mark.skip(reason="Flaky in parallel execution due to plugin manager singleton; run individually")
 @pytest.mark.asyncio
 async def test_require_permission_calls_hooks_when_has_hooks_for_true(monkeypatch):
     """Test that hook invocation occurs when has_hooks_for returns True.
@@ -515,8 +505,6 @@ async def test_require_permission_calls_hooks_when_has_hooks_for_true(monkeypatc
     This test verifies that when plugins ARE registered for the permission hook,
     the invoke_hook method is called with the appropriate payload.
     """
-    # Standard
-    import importlib
 
     # First-Party
     from cpex.framework import PluginResult
@@ -537,20 +525,13 @@ async def test_require_permission_calls_hooks_when_has_hooks_for_true(monkeypatc
     mock_pm.has_hooks_for = MagicMock(return_value=True)
     mock_pm.invoke_hook = AsyncMock(return_value=(mock_plugin_result, None))
 
-    # Use importlib to ensure the module is loaded, then patch get_plugin_manager
-    plugin_framework = importlib.import_module("mcpgateway.plugins")
-    original_get_pm = plugin_framework.get_plugin_manager
-    try:
-        plugin_framework.get_plugin_manager = lambda: mock_pm
-
+    with patch("mcpgateway.plugins.get_plugin_manager", return_value=mock_pm):
         decorated = rbac.require_permission("tools.read")(dummy_func)
         result = await decorated(user=mock_user)
 
         assert result == "ok"
         # The key assertion: invoke_hook SHOULD have been called
         mock_pm.invoke_hook.assert_called_once()
-    finally:
-        plugin_framework.get_plugin_manager = original_get_pm
 
 
 # ============================================================================
@@ -561,7 +542,6 @@ async def test_require_permission_calls_hooks_when_has_hooks_for_true(monkeypatc
 # run individually with: pytest tests/unit/mcpgateway/middleware/test_rbac.py -k "team_id" -v
 
 
-@pytest.mark.skip(reason="Flaky in parallel execution due to plugin manager singleton; run individually")
 @pytest.mark.asyncio
 async def test_require_permission_uses_user_context_team_id_when_no_kwarg(monkeypatch):
     """Verify check_permission receives team_id from user_context when no team_id kwarg is passed.
@@ -570,7 +550,6 @@ async def test_require_permission_uses_user_context_team_id_when_no_kwarg(monkey
     the decorator should fall back to user_context.team_id from the JWT token.
     """
     # Standard
-    import importlib
 
     async def dummy_func(user=None):
         return "ok"
@@ -581,25 +560,17 @@ async def test_require_permission_uses_user_context_team_id_when_no_kwarg(monkey
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-    plugin_framework = importlib.import_module("mcpgateway.plugins")
-    original_get_pm = plugin_framework.get_plugin_manager
-    try:
-        plugin_framework.get_plugin_manager = lambda: None
+    with patch("mcpgateway.plugins.get_plugin_manager", return_value=None):
         decorated = rbac.require_permission("gateways.read")(dummy_func)
         result = await decorated(user=mock_user)
         assert result == "ok"
         mock_perm_service.check_permission.assert_called_once()
         assert mock_perm_service.check_permission.call_args.kwargs["team_id"] == "team-123"
-    finally:
-        plugin_framework.get_plugin_manager = original_get_pm
 
 
-@pytest.mark.skip(reason="Flaky in parallel execution due to plugin manager singleton; run individually")
 @pytest.mark.asyncio
 async def test_require_permission_prefers_kwarg_team_id(monkeypatch):
     """Verify kwarg team_id takes precedence over user_context.team_id."""
-    # Standard
-    import importlib
 
     async def dummy_func(user=None, team_id=None):
         return "ok"
@@ -610,25 +581,17 @@ async def test_require_permission_prefers_kwarg_team_id(monkeypatch):
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-    plugin_framework = importlib.import_module("mcpgateway.plugins")
-    original_get_pm = plugin_framework.get_plugin_manager
-    try:
-        plugin_framework.get_plugin_manager = lambda: None
+    with patch("mcpgateway.plugins.get_plugin_manager", return_value=None):
         decorated = rbac.require_permission("gateways.read")(dummy_func)
         result = await decorated(user=mock_user, team_id="team-B")
         assert result == "ok"
         mock_perm_service.check_permission.assert_called_once()
         assert mock_perm_service.check_permission.call_args.kwargs["team_id"] == "team-B"
-    finally:
-        plugin_framework.get_plugin_manager = original_get_pm
 
 
-@pytest.mark.skip(reason="Flaky in parallel execution due to plugin manager singleton; run individually")
 @pytest.mark.asyncio
 async def test_require_any_permission_uses_user_context_team_id_when_no_kwarg(monkeypatch):
     """Verify require_any_permission uses user_context.team_id when no team_id kwarg."""
-    # Standard
-    import importlib
 
     async def dummy_func(user=None):
         return "any-ok"
@@ -639,25 +602,18 @@ async def test_require_any_permission_uses_user_context_team_id_when_no_kwarg(mo
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-    plugin_framework = importlib.import_module("mcpgateway.plugins")
-    original_get_pm = plugin_framework.get_plugin_manager
-    try:
-        plugin_framework.get_plugin_manager = lambda: None
+    with patch("mcpgateway.plugins.get_plugin_manager", return_value=None):
         decorated = rbac.require_any_permission(["gateways.read", "gateways.list"])(dummy_func)
         result = await decorated(user=mock_user)
         assert result == "any-ok"
         assert mock_perm_service.check_permission.called
         assert mock_perm_service.check_permission.call_args.kwargs["team_id"] == "team-456"
-    finally:
-        plugin_framework.get_plugin_manager = original_get_pm
 
 
-@pytest.mark.skip(reason="Flaky in parallel execution due to plugin manager singleton; run individually")
 @pytest.mark.asyncio
 async def test_require_any_permission_prefers_kwarg_team_id(monkeypatch):
     """Verify require_any_permission prefers kwarg team_id over user_context.team_id."""
     # Standard
-    import importlib
 
     async def dummy_func(user=None, team_id=None):
         return "any-ok"
@@ -668,24 +624,16 @@ async def test_require_any_permission_prefers_kwarg_team_id(monkeypatch):
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-    plugin_framework = importlib.import_module("mcpgateway.plugins")
-    original_get_pm = plugin_framework.get_plugin_manager
-    try:
-        plugin_framework.get_plugin_manager = lambda: None
+    with patch("mcpgateway.plugins.get_plugin_manager", return_value=None):
         decorated = rbac.require_any_permission(["gateways.read"])(dummy_func)
         result = await decorated(user=mock_user, team_id="team-B")
         assert result == "any-ok"
         assert mock_perm_service.check_permission.call_args.kwargs["team_id"] == "team-B"
-    finally:
-        plugin_framework.get_plugin_manager = original_get_pm
 
 
-@pytest.mark.skip(reason="Flaky in parallel execution due to plugin manager singleton; run individually")
 @pytest.mark.asyncio
 async def test_decorators_handle_none_user_context_team_id(monkeypatch):
     """Verify decorators work when user_context.team_id is None."""
-    # Standard
-    import importlib
 
     async def dummy_func(user=None):
         return "ok"
@@ -696,19 +644,13 @@ async def test_decorators_handle_none_user_context_team_id(monkeypatch):
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-    plugin_framework = importlib.import_module("mcpgateway.plugins")
-    original_get_pm = plugin_framework.get_plugin_manager
-    try:
-        plugin_framework.get_plugin_manager = lambda: None
+    with patch("mcpgateway.plugins.get_plugin_manager", return_value=None):
         decorated_perm = rbac.require_permission("gateways.read")(dummy_func)
         result = await decorated_perm(user=mock_user)
         assert result == "ok"
         assert mock_perm_service.check_permission.call_args.kwargs["team_id"] is None
-    finally:
-        plugin_framework.get_plugin_manager = original_get_pm
 
 
-@pytest.mark.skip(reason="Flaky in parallel execution due to plugin manager singleton; run individually")
 @pytest.mark.asyncio
 async def test_plugin_permission_hook_receives_token_team_id(monkeypatch):
     """Test that plugin permission hook receives correct team_id from user_context.
@@ -719,9 +661,6 @@ async def test_plugin_permission_hook_receives_token_team_id(monkeypatch):
     - User calls endpoint without team_id param
     Expected: Plugin's HttpAuthCheckPermissionPayload.team_id equals token's team_id
     """
-    # Standard
-    import importlib
-
     # First-Party
     from cpex.framework import HttpAuthCheckPermissionPayload, PluginResult
 
@@ -748,11 +687,7 @@ async def test_plugin_permission_hook_receives_token_team_id(monkeypatch):
     mock_pm.has_hooks_for = MagicMock(return_value=True)
     mock_pm.invoke_hook = AsyncMock(side_effect=capture_invoke_hook)
 
-    plugin_framework = importlib.import_module("mcpgateway.plugins")
-    original_get_pm = plugin_framework.get_plugin_manager
-    try:
-        plugin_framework.get_plugin_manager = lambda: mock_pm
-
+    with patch("mcpgateway.plugins.get_plugin_manager", return_value=mock_pm):
         decorated = rbac.require_permission("gateways.read")(dummy_func)
         result = await decorated(user=mock_user)
 
@@ -761,11 +696,8 @@ async def test_plugin_permission_hook_receives_token_team_id(monkeypatch):
         assert captured_payload is not None
         assert isinstance(captured_payload, HttpAuthCheckPermissionPayload)
         assert captured_payload.team_id == "team-from-token"
-    finally:
-        plugin_framework.get_plugin_manager = original_get_pm
 
 
-@pytest.mark.skip(reason="Flaky in parallel execution due to plugin manager singleton; run individually")
 @pytest.mark.asyncio
 async def test_require_permission_fallback_when_plugin_manager_none(monkeypatch):
     """Test that RBAC falls back to PermissionService when plugin manager is None.
@@ -773,8 +705,6 @@ async def test_require_permission_fallback_when_plugin_manager_none(monkeypatch)
     This verifies the optimization handles the case where get_plugin_manager()
     returns None (plugins disabled).
     """
-    # Standard
-    import importlib
 
     async def dummy_func(user=None):
         return "ok"
@@ -785,20 +715,13 @@ async def test_require_permission_fallback_when_plugin_manager_none(monkeypatch)
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-    # Use importlib to ensure the module is loaded, then patch get_plugin_manager
-    plugin_framework = importlib.import_module("mcpgateway.plugins")
-    original_get_pm = plugin_framework.get_plugin_manager
-    try:
-        plugin_framework.get_plugin_manager = lambda: None
-
+    with patch("mcpgateway.plugins.get_plugin_manager", return_value=None):
         decorated = rbac.require_permission("tools.read")(dummy_func)
         result = await decorated(user=mock_user)
 
         assert result == "ok"
         # PermissionService.check_permission should have been called as fallback
         mock_perm_service.check_permission.assert_called_once()
-    finally:
-        plugin_framework.get_plugin_manager = original_get_pm
 
 
 # ============================================================================
@@ -2553,7 +2476,7 @@ def test_rbac_get_db_emits_deprecation_warning():
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         gen = rbac.get_db()
-        db = next(gen)
+        _ = next(gen)
 
         # Verify deprecation warning was issued
         assert len(w) == 1
@@ -2645,7 +2568,7 @@ def test_rbac_get_db_only_commits_owned_sessions():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
         gen = rbac.get_db(request=mock_request)
-        db = next(gen)
+        _ = next(gen)
 
         try:
             next(gen)
@@ -2664,7 +2587,7 @@ def test_rbac_get_db_only_commits_owned_sessions():
             mock_session_local.return_value = mock_new_session
 
             gen = rbac.get_db(request=None)
-            db = next(gen)
+            _ = next(gen)
 
             try:
                 next(gen)
@@ -2685,7 +2608,7 @@ def test_rbac_get_db_handles_rollback_on_exception():
             mock_session_local.return_value = mock_new_session
 
             gen = rbac.get_db(request=None)
-            db = next(gen)
+            _ = next(gen)
 
             # Simulate exception
             try:
