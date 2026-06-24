@@ -2323,8 +2323,7 @@ class A2AAgentService(BaseService):
                         if plugin_returned.keys() - safe_headers.keys():
                             removed = sorted(plugin_returned.keys() - safe_headers.keys())
                             logger.warning(
-                                "Plugin attempted to set headers blocked by security policy: %s "
-                                "(agent=%s, flag=%s)",
+                                "Plugin attempted to set headers blocked by security policy: %s (agent=%s, flag=%s)",
                                 removed,
                                 agent.name,
                                 settings.enable_sensitive_header_passthrough,

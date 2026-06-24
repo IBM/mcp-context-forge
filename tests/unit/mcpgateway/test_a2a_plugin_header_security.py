@@ -304,3 +304,29 @@ class TestPluginHeaderSecurityRefiltering:
         # Cookie allowed when flag enabled + whitelisted
         assert result.get("Cookie") == "session=abc"
         assert result.get("X-Custom-Header") == "safe"
+
+    def test_prepare_header_flows_with_flag_enabled(self, monkeypatch):
+        """Downstream headers include sensitive headers when flag enabled (line 1966 coverage)."""
+        from mcpgateway import config
+        from mcpgateway.services.a2a_service import A2AAgentService
+
+        monkeypatch.setattr(config.settings, "enable_sensitive_header_passthrough", True)
+
+        request_headers = {
+            "authorization": "Bearer token",  # Lowercase as it would be in reality
+            "x-custom-header": "value",
+        }
+        whitelist = ["Authorization", "X-Custom-Header"]
+
+        plugin_headers, downstream_headers = A2AAgentService._prepare_header_flows(
+            request_headers=request_headers,
+            agent_passthrough_headers=whitelist,
+        )
+
+        # Plugin headers never include sensitive
+        assert "authorization" not in plugin_headers
+        assert plugin_headers.get("x-custom-header") == "value"
+
+        # Downstream DOES include sensitive when flag enabled (line 1966)
+        assert downstream_headers.get("authorization") == "Bearer token"
+        assert downstream_headers.get("x-custom-header") == "value"
