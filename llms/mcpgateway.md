@@ -77,7 +77,7 @@ ContextForge: Full Project Overview
   - HTML coverage only: `make htmlcov`
 - Selective pytest: `pytest -k "fragment"`, `pytest -m "not slow"`
 - Lint & static analysis:
-  - Format & hooks: `make autoflake isort black pre-commit`
+  - Format & hooks: `make autoflake isort ruff-format pre-commit`
   - Static: `make pylint ruff`, full lint: `make lint`
   - Security/docs QA (as configured): `make bandit interrogate verify check-manifest`
 - PR readiness (recommended):

@@ -207,7 +207,7 @@ export UV_BIN
 # Targets in this Makefile deliberately split how they use `uv`:
 #
 #   * Execution: invoke tools via `$(VENV_DIR)/bin/<tool>` directly (e.g.
-#     pytest, black, ruff, pylint, python). `uv run` — even with `--active` —
+#     pytest, ruff, pylint, python). `uv run` — even with `--active` —
 #     has historically resolved against an unexpected environment when the
 #     caller has already `source`d the project venv, producing confusing
 #     "works on my machine" failures. Direct invocation removes the ambiguity:
@@ -224,7 +224,7 @@ export UV_BIN
 # If you add a new target: use `$(VENV_DIR)/bin/<tool>` to *run* something and
 # `uv pip ...` to *install* something. Do not reintroduce `uv run`.
 #
-# Exception — tools invoked via `uvx`: `black`, `isort`, `ruff`, `pylint`,
+# Exception — tools invoked via `uvx`: `isort`, `ruff`, `pylint`,
 # `vulture`, `interrogate`, `radon`, `yamllint`, `tomlcheck`, and
 # `detect-secrets` are invoked through `uv tool run <spec>` with pinned
 # versions (see the pins just below). This isolates the tool versions from
@@ -236,7 +236,7 @@ export UV_BIN
 # to PyPI — see DETECT_SECRETS_SPEC below.
 #
 # Sub-exception — pylint needs project context: unlike the pure-AST tools
-# (ruff, black, isort, vulture, interrogate, radon), pylint does deep type
+# (ruff, isort, vulture, interrogate, radon), pylint does deep type
 # inference via astroid and relies on being able to *import* the project
 # modules and their runtime dependencies (pydantic, fastapi, …) to avoid
 # false positives like E1133 (not-an-iterable) and spurious W0246
@@ -3272,11 +3272,11 @@ images:
 # help:   make lint                    - Run all linters on default targets (mcpgateway)
 # help:   make lint TARGET=myfile.py   - Run file-aware linters on specific file
 # help:   make lint myfile.py          - Run file-aware linters on a file (shortcut)
-# help:   make lint-quick myfile.py    - Fast linters only (ruff, black, isort)
+# help:   make lint-quick myfile.py    - Fast linters only (ruff, isort)
 # help:   make lint-fix myfile.py      - Auto-fix formatting issues
 # help:   make lint-changed            - Lint only git-changed files
 # help: lint                 - Run the full linting suite (see targets below)
-# help: black                - Reformat code with black (CHECK=1 for dry-run)
+# help: black                - Reformat code with black (DEPRECATED — use ruff-format)
 # help: autoflake            - Remove unused imports / variables with autoflake
 # help: isort                - Organise & sort imports with isort (CHECK=1 for dry-run)
 # help: pylint               - Pylint static analysis
@@ -3345,7 +3345,7 @@ LINTERS := isort pylint mypy bandit pydocstyle pycodestyle \
 		pytype check-manifest markdownlint vulture
 
 # Linters that work well with individual files/directories
-FILE_AWARE_LINTERS := isort black pylint mypy bandit pydocstyle \
+FILE_AWARE_LINTERS := isort pylint mypy bandit pydocstyle \
 	pycodestyle ruff pyright vulture markdownlint
 
 .PHONY: lint $(LINTERS) black black-check isort-check ruff-check ruff-fix ruff-format autoflake lint-py lint-yaml lint-json lint-md lint-strict \
@@ -3413,7 +3413,7 @@ lint-all:
 ##  Convenience targets
 ## --------------------------------------------------------------------------- ##
 
-# Quick lint - only fast linters (ruff, black, isort)
+# Quick lint - only fast linters (ruff, isort)
 .PHONY: lint-quick
 lint-quick:
 	@# Handle file arguments
@@ -3423,7 +3423,7 @@ lint-quick:
 	else \
 		actual_target="$(TARGET)"; \
 	fi; \
-	echo "⚡ Quick lint of $$actual_target (ruff + black + isort)..."; \
+	echo "⚡ Quick lint of $$actual_target (ruff + isort)..."; \
 	$(MAKE) --no-print-directory ruff RUFF_MODE=check TARGET="$$actual_target"; \
 	$(MAKE) --no-print-directory black CHECK=1 TARGET="$$actual_target"; \
 	$(MAKE) --no-print-directory isort CHECK=1 TARGET="$$actual_target"
