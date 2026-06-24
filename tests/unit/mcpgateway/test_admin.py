@@ -25542,3 +25542,145 @@ class TestAdminPersonalTeamFiltering:
             # CRITICAL: Admin should see their pending request
             assert team_data.pending_request is not None, "Admin should see their pending join request"
             assert team_data.pending_request.status == "pending", f"Pending request status should be 'pending', got '{team_data.pending_request.status}'"
+
+
+
+# ============================================================================
+# Admin Gateways Async Lifecycle Tests (Issue #5127)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_admin_gateways_partial_html_includes_async_lifecycle_flag_enabled(monkeypatch, mock_request, mock_db):
+    """Test template context includes gateway_async_lifecycle_enabled=True when feature enabled."""
+    monkeypatch.setattr("mcpgateway.admin.settings.gateway_async_lifecycle_enabled", True)
+    
+    pagination = make_pagination_meta()
+    monkeypatch.setattr(
+        "mcpgateway.admin.paginate_query",
+        AsyncMock(return_value={"data": [], "pagination": pagination, "links": None}),
+    )
+    setup_team_service(monkeypatch, [])
+    gateway_service = MagicMock()
+    monkeypatch.setattr("mcpgateway.admin.gateway_service", gateway_service)
+    
+    # Capture template context
+    original_template_response = mock_request.app.state.templates.TemplateResponse
+    captured_context = {}
+    
+    def capture_context(request, template_name, context):
+        captured_context.update(context)
+        return original_template_response(request, template_name, context)
+    
+    mock_request.app.state.templates.TemplateResponse = capture_context
+    mock_request.headers = {}
+    
+    await admin_gateways_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    
+    assert "gateway_async_lifecycle_enabled" in captured_context
+    assert captured_context["gateway_async_lifecycle_enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_admin_gateways_partial_html_includes_async_lifecycle_flag_disabled(monkeypatch, mock_request, mock_db):
+    """Test template context includes gateway_async_lifecycle_enabled=False when feature disabled."""
+    monkeypatch.setattr("mcpgateway.admin.settings.gateway_async_lifecycle_enabled", False)
+    
+    pagination = make_pagination_meta()
+    monkeypatch.setattr(
+        "mcpgateway.admin.paginate_query",
+        AsyncMock(return_value={"data": [], "pagination": pagination, "links": None}),
+    )
+    setup_team_service(monkeypatch, [])
+    gateway_service = MagicMock()
+    monkeypatch.setattr("mcpgateway.admin.gateway_service", gateway_service)
+    
+    # Capture template context
+    original_template_response = mock_request.app.state.templates.TemplateResponse
+    captured_context = {}
+    
+    def capture_context(request, template_name, context):
+        captured_context.update(context)
+        return original_template_response(request, template_name, context)
+    
+    mock_request.app.state.templates.TemplateResponse = capture_context
+    mock_request.headers = {}
+    
+    await admin_gateways_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    
+    assert "gateway_async_lifecycle_enabled" in captured_context
+    assert captured_context["gateway_async_lifecycle_enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_admin_gateways_partial_html_passes_async_lifecycle_fields_to_template(monkeypatch, mock_request, mock_db):
+    """Test async lifecycle fields from convert_gateway_to_read are passed to template."""
+    from datetime import datetime, timezone
+    
+    monkeypatch.setattr("mcpgateway.admin.settings.gateway_async_lifecycle_enabled", True)
+    
+    mock_gateway = SimpleNamespace(id="gw-pending-1", team_id="team-1")
+    pagination = make_pagination_meta()
+    monkeypatch.setattr(
+        "mcpgateway.admin.paginate_query",
+        AsyncMock(return_value={"data": [mock_gateway], "pagination": pagination, "links": None}),
+    )
+    setup_team_service(monkeypatch, ["team-1"])
+    
+    # Mock convert_gateway_to_read to return async lifecycle fields
+    gateway_service = MagicMock()
+    gateway_service.convert_gateway_to_read.return_value = {
+        "id": "gw-pending-1",
+        "name": "Pending Gateway",
+        "status": "pending",
+        "statusMessage": "Connecting to server",  # camelCase for JSON output
+        "registrationAttempts": 3,
+        "nextRetryAt": "2026-06-24T14:30:00+00:00",
+        "lastError": "Connection timeout",
+        "lifecycleClaimedBy": "worker-1",
+        "lifecycleClaimedAt": "2026-06-24T14:25:00+00:00",
+        "lifecycleClaimExpiresAt": "2026-06-24T14:35:00+00:00",
+    }
+    monkeypatch.setattr("mcpgateway.admin.gateway_service", gateway_service)
+    
+    # Capture template context
+    original_template_response = mock_request.app.state.templates.TemplateResponse
+    captured_context = {}
+    
+    def capture_context(request, template_name, context):
+        captured_context.update(context)
+        return original_template_response(request, template_name, context)
+    
+    mock_request.app.state.templates.TemplateResponse = capture_context
+    mock_request.headers = {}
+    
+    await admin_gateways_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    
+    # Verify gateway data includes async lifecycle fields (camelCase from jsonable_encoder)
+    gateway_data = captured_context["data"][0]
+    assert gateway_data["status"] == "pending"
+    assert gateway_data["statusMessage"] == "Connecting to server"
+    assert gateway_data["registrationAttempts"] == 3
+    assert gateway_data["lifecycleClaimedBy"] == "worker-1"
