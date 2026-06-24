@@ -2048,10 +2048,21 @@ async def verify_external_idp_token(token: str, db: Session) -> tuple[Optional[d
         _record_external_auth_metric("denied", getattr(provider, "id", None), reason="issuer_not_trusted")
         return None, None
 
+    # Fail-closed backstop: trusted_for_api_auth without a configured api_audience
+    # makes verify_oauth_access_token skip the aud check entirely (any relying party
+    # of this issuer would be accepted). The create/update path and the bootstrap
+    # startup check both enforce this invariant, but checking it again here means
+    # the property holds regardless of how a provider row reached this state
+    # (direct DB edit, a future importer, env seeding).
+    if not (provider.api_audience or "").strip():
+        logger.error("external-idp auth denied: provider %s is trusted_for_api_auth without api_audience configured", sanitize_for_log(getattr(provider, "id", "")))
+        _record_external_auth_metric("denied", getattr(provider, "id", None), reason="missing_audience")
+        return None, None
+
     claims = await verify_oauth_access_token(
         token,
         authorization_servers=[provider.issuer],
-        expected_audience=provider.api_audience or None,
+        expected_audience=provider.api_audience,
     )
     if claims is None:
         logger.warning("external-idp auth denied: token validation failed (iss=%s)", sanitize_for_log(issuer))
@@ -2063,9 +2074,16 @@ async def verify_external_idp_token(token: str, db: Session) -> tuple[Optional[d
 def _is_clientless_token(claims: dict) -> bool:
     """Detect a client_credentials / service token (no human user behind it).
 
-    Such tokens carry no ``email`` claim and the subject identifies the
-    OAuth client itself (``sub == azp`` or ``sub == client_id``), or the
-    token is explicitly typed as an OAuth2 access token (``typ: "at+jwt"``).
+    Such tokens carry no ``email`` claim, plus at least one of:
+      * the subject identifies the OAuth client itself (``sub == azp`` or
+        ``sub == client_id``);
+      * the token is explicitly typed as an OAuth2 access token (``typ: "at+jwt"``);
+      * Keycloak-specific service-account markers: a ``clientId`` claim (Keycloak's
+        camelCase client identifier, present only on service-account tokens) or a
+        ``preferred_username`` of the form ``service-account-<client>``. Real Keycloak
+        client_credentials tokens have ``sub`` as the service-account user's UUID
+        (distinct from ``azp``) and ``typ: "Bearer"``, so the generic checks above
+        miss them without this provider-specific signal.
 
     Args:
         claims: Signature-verified JWT claims from the external IdP.
@@ -2077,7 +2095,12 @@ def _is_clientless_token(claims: dict) -> bool:
     if claims.get("email"):
         return False
     sub = claims.get("sub")
-    return bool(sub) and (sub == claims.get("azp") or sub == claims.get("client_id") or claims.get("typ") == "at+jwt")
+    if sub and (sub == claims.get("azp") or sub == claims.get("client_id") or claims.get("typ") == "at+jwt"):
+        return True
+    if claims.get("clientId"):
+        return True
+    preferred_username = claims.get("preferred_username")
+    return bool(preferred_username) and str(preferred_username).startswith("service-account-")
 
 
 def _synthetic_service_principal_user_info(provider: SSOProvider, claims: dict) -> dict:

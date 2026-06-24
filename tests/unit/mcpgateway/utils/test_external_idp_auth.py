@@ -231,6 +231,39 @@ async def test_verify_external_idp_token_valid(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_verify_external_idp_token_denies_missing_audience(monkeypatch):
+    """G2 runtime backstop: even if a provider row somehow has
+    trusted_for_api_auth=True with no api_audience (direct DB edit, future
+    importer, env seeding -- bypassing the create/update validators and the
+    bootstrap auto-disable), verify_external_idp_token must still fail closed
+    rather than calling verify_oauth_access_token with expected_audience=None
+    (which would accept a token for any relying party of this issuer)."""
+    # Third-Party
+    import jwt as pyjwt
+
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    token = pyjwt.encode({"iss": "https://kc/realms/m", "sub": "agent"}, "k", algorithm="HS256")
+    prov = _fake_provider("https://kc/realms/m")
+    prov.api_audience = None
+    monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: prov)
+
+    called = False
+
+    async def fake_verify(*_a, **_kw):
+        nonlocal called
+        called = True
+        return {"iss": "https://kc/realms/m", "sub": "agent"}
+
+    monkeypatch.setattr(vc, "verify_oauth_access_token", fake_verify)
+    db = MagicMock()
+    result = await vc.verify_external_idp_token(token, db)
+    assert result == (None, None)
+    assert called is False  # denied before ever calling the token verifier
+
+
+@pytest.mark.asyncio
 async def test_verify_external_idp_token_no_issuer_claim(monkeypatch):
     # Third-Party
     import jwt as pyjwt
@@ -1094,6 +1127,37 @@ async def test_g3_human_token_not_clientless(monkeypatch):
     assert vc._is_clientless_token({"email": "real@corp.com", "typ": "at+jwt"}) is False
     # genuine service token (no email, sub==azp) IS clientless
     assert vc._is_clientless_token({"sub": "app", "azp": "app"}) is True
+
+
+def test_is_clientless_token_real_keycloak_service_account_shape():
+    """A real Keycloak client_credentials token has sub = the service-account
+    user's UUID (NOT equal to azp), typ = "Bearer" (not "at+jwt"), and carries
+    a Keycloak-specific clientId claim plus a preferred_username of the form
+    service-account-<client>. Neither generic heuristic (sub==azp, typ:at+jwt)
+    matches this shape, so the Keycloak-specific markers must be checked too --
+    otherwise this token falls through to the human path and gets denied for
+    having no email, even though it's a legitimate service-account token."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    keycloak_service_account_claims = {
+        "sub": "f1a2b3c4-uuid-of-service-account-user",
+        "azp": "mcp-agent",
+        "typ": "Bearer",
+        "clientId": "mcp-agent",
+        "preferred_username": "service-account-mcp-agent",
+    }
+    assert vc._is_clientless_token(keycloak_service_account_claims) is True
+
+    # clientId alone (no preferred_username) is also sufficient.
+    assert vc._is_clientless_token({"sub": "uuid", "azp": "other-client", "clientId": "mcp-agent"}) is True
+
+    # preferred_username alone (no clientId) is also sufficient.
+    assert vc._is_clientless_token({"sub": "uuid", "azp": "other-client", "preferred_username": "service-account-mcp-agent"}) is True
+
+    # A human token with a preferred_username that doesn't match the
+    # service-account-<client> convention is NOT treated as clientless.
+    assert vc._is_clientless_token({"sub": "uuid", "azp": "other-client", "preferred_username": "alice"}) is False
 
 
 @pytest.mark.asyncio
