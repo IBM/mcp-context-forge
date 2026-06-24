@@ -288,4 +288,3 @@ class TestHeaderFilteringDiffCoverage:
             # Flag OFF: downstream is same as plugin (filtered)
             assert "authorization" not in downstream_headers
             assert downstream_headers == plugin_headers
-

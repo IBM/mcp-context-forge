@@ -692,10 +692,24 @@ class TestConfigCoverage:
             database_url="sqlite:///test.db",
             jwt_secret_key="test-secret-key-long-enough-32c",  # pragma: allowlist secret
             auth_encryption_secret="test-encryption-secret-32chars",  # pragma: allowlist secret
+            enable_header_passthrough=True,  # Required for sensitive header passthrough
             enable_sensitive_header_passthrough=True
         )
 
         assert config.enable_sensitive_header_passthrough is True
+
+    def test_config_validation_requires_base_flag(self):
+        """Test that enabling sensitive passthrough without base flag raises ValueError."""
+        with pytest.raises(ValueError, match="ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true requires ENABLE_HEADER_PASSTHROUGH=true"):
+            Settings(
+                basic_auth_user="test",
+                basic_auth_password="test-password-long",  # pragma: allowlist secret
+                database_url="sqlite:///test.db",
+                jwt_secret_key="test-secret-key-long-enough-32c",  # pragma: allowlist secret
+                auth_encryption_secret="test-encryption-secret-32chars",  # pragma: allowlist secret
+                enable_header_passthrough=False,  # Base flag disabled
+                enable_sensitive_header_passthrough=True  # Sensitive flag enabled - should fail
+            )
 
     def test_config_field_description(self):
         """Test enable_sensitive_header_passthrough has proper field info."""
