@@ -87,7 +87,7 @@ jobs:
                   make serve &
 
                   echo "Waiting for gateway to start..."
-                  for i in {1..60}; do
+                  for i in {1..15}; do
                     if curl -s http://localhost:4444 >/dev/null 2>&1; then
                       echo "Gateway is up!"
                       break
