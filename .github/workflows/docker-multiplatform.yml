@@ -394,7 +394,7 @@ jobs:
     timeout-minutes: 60
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     permissions:
-      contents: write
+      contents: write # need write to push SBOM
       packages: write
       id-token: write
 
