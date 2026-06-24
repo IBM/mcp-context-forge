@@ -231,6 +231,39 @@ async def test_exempt_path_passes_without_token():
 
 
 @pytest.mark.asyncio
+async def test_internal_mcp_dispatch_is_csrf_exempt_by_default():
+    """``/_internal/mcp/*`` is CSRF-exempt by default (loopback-only, HMAC-gated).
+
+    Regression for the cross-worker forward 403: the affinity dispatch posts to
+    the trusted-internal endpoint, which must not require a CSRF token. Without
+    the exemption, custom AUTH_HEADER_NAME deployments (whose bearer the CSRF
+    short-circuit can't find) would 403 on the inner dispatch.
+    """
+    # First-Party
+    from mcpgateway.config import settings as real_settings
+
+    # The shipped default must cover the internal MCP dispatch prefix.
+    assert "/_internal/mcp/" in real_settings.csrf_exempt_paths
+
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/_internal/mcp/rpc"
+    request.headers = {}  # no CSRF token, no bearer
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings:
+        mock_settings.csrf_enabled = True
+        mock_settings.csrf_exempt_paths = real_settings.csrf_exempt_paths
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    call_next.assert_awaited_once_with(request)
+
+
+@pytest.mark.asyncio
 async def test_bearer_token_request_passes_without_csrf():
     """Test that requests with Authorization: Bearer header pass without CSRF token."""
     middleware = CSRFMiddleware(app=AsyncMock())
