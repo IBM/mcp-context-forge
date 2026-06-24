@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import type { ComponentType } from "react";
@@ -9,13 +9,12 @@ import { createVirtualServer, updateVirtualServer } from "@/api/virtualServers";
 import { ApiError } from "@/api/client";
 import { CreateServer } from "./CreateServer";
 
-const routerMock = vi.hoisted(() => ({
-  navigate: vi.fn(),
-  path: "/app/gateways/create-server",
-}));
-
 interface MockCreateServerFormProps {
   onSuccess: (details: Record<string, unknown> | null) => void;
+  initialValues?: Record<string, unknown>;
+  title?: string;
+  submitLabel?: string;
+  submitError?: string | null;
 }
 
 interface MockSourceSelectionProps {
@@ -29,6 +28,11 @@ const componentMockState = vi.hoisted(() => ({
   capturedProps: null as MockCreateServerFormProps | null,
   mockSourceSelection: false,
   capturedSourceSelectionProps: null as MockSourceSelectionProps | null,
+}));
+
+const routerMock = vi.hoisted(() => ({
+  navigate: vi.fn(),
+  path: "/app/gateways/create-server",
 }));
 
 vi.mock("@/components/gateways/CreateServerForm", async (importOriginal) => {
@@ -78,16 +82,12 @@ const mockNavigate = routerMock.navigate;
 
 describe("CreateServer", () => {
   beforeEach(() => {
-    mockForm = false;
-    capturedProps = null;
-    mockSourceSelection = false;
-    capturedSourceSelectionProps = null;
-    mockNavigate.mockClear();
-    routerMock.path = "/app/gateways/create-server";
     componentMockState.mockForm = false;
-    componentMockState.mockSourceSelection = false;
     componentMockState.capturedProps = null;
+    componentMockState.mockSourceSelection = false;
     componentMockState.capturedSourceSelectionProps = null;
+    routerMock.path = "/app/gateways/create-server";
+    mockNavigate.mockClear();
     mockCreateVirtualServer.mockReset();
     mockUpdateVirtualServer.mockReset();
     mockCreateVirtualServer.mockResolvedValue({
@@ -106,49 +106,16 @@ describe("CreateServer", () => {
     expect(screen.getByRole("heading", { name: "Create server" })).toBeInTheDocument();
     expect(screen.getByLabelText(/Name/)).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Server Name")).toHaveValue("");
-    expect(screen.getByRole("radio", { name: /Team/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /Public/ })).toBeChecked();
     expect(screen.getByRole("switch", { name: /Require OAuth/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Optional configuration" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Tags")).not.toBeInTheDocument();
   });
 
-  it("renders stored edit details and updates selected MCP server associations", async () => {
-    const user = userEvent.setup();
+  it("renders stored edit details and updates the virtual server", async () => {
+    componentMockState.mockForm = true;
+    routerMock.path = "/app/gateways/create-server?editServerId=gateway-1";
     server.use(
-      http.get("*/gateways", () =>
-        HttpResponse.json({
-          gateways: [
-            {
-              id: "mcp-connected",
-              name: "connected-source",
-              url: "http://localhost:9000",
-              transport: "SSE",
-              enabled: true,
-              reachable: true,
-              visibility: "public",
-              tool_count: 3,
-              resource_count: 1,
-              prompt_count: 2,
-              created_at: "2024-01-01T00:00:00Z",
-              updated_at: "2024-01-01T00:00:00Z",
-            },
-            {
-              id: "mcp-available",
-              name: "available-source",
-              url: "http://localhost:9001",
-              transport: "SSE",
-              enabled: true,
-              reachable: true,
-              visibility: "public",
-              tool_count: 2,
-              resource_count: 1,
-              prompt_count: 1,
-              created_at: "2024-01-01T00:00:00Z",
-              updated_at: "2024-01-01T00:00:00Z",
-            },
-          ],
-        }),
-      ),
       http.get("*/servers/gateway-1", () =>
         HttpResponse.json({
           id: "gateway-1",
@@ -187,182 +154,128 @@ describe("CreateServer", () => {
           oauthConfig: null,
         }),
       ),
-      http.get("*/servers/gateway-1/tools", () =>
-        HttpResponse.json({
-          tools: [
-            {
-              id: "existing-tool-id",
-              name: "existing-tool",
-              originalName: "existing-tool",
-            },
-          ],
-        }),
-      ),
-      http.get("*/servers/gateway-1/resources", () =>
-        HttpResponse.json({
-          resources: [
-            {
-              id: "existing-resource-id",
-              name: "existing-resource",
-              uri: "mcp://existing-resource",
-            },
-          ],
-        }),
-      ),
-      http.get("*/servers/gateway-1/prompts", () =>
-        HttpResponse.json({
-          prompts: [
-            {
-              id: "existing-prompt-id",
-              name: "existing-prompt",
-              originalName: "existing-prompt",
-            },
-          ],
-        }),
-      ),
-      http.get("*/tools", ({ request }) => {
-        const gatewayId = new URL(request.url).searchParams.get("gateway_id");
-        if (gatewayId === "mcp-connected") {
-          return HttpResponse.json([
-            {
-              id: "existing-tool-id",
-              name: "existing-tool",
-              originalName: "existing-tool",
-              gateway_id: "mcp-connected",
-            },
-          ]);
-        }
-        if (gatewayId !== "mcp-available") return HttpResponse.json([]);
-        return HttpResponse.json([
-          {
-            id: "available-tool-id",
-            name: "available-tool",
-            originalName: "available-tool",
-            gateway_id: "mcp-available",
-          },
-        ]);
-      }),
-      http.get("*/resources", ({ request }) => {
-        const gatewayId = new URL(request.url).searchParams.get("gateway_id");
-        if (gatewayId === "mcp-connected") {
-          return HttpResponse.json([
-            {
-              id: "existing-resource-id",
-              name: "existing-resource",
-              uri: "mcp://existing-resource",
-              gateway_id: "mcp-connected",
-            },
-          ]);
-        }
-        if (gatewayId !== "mcp-available") return HttpResponse.json([]);
-        return HttpResponse.json([
-          {
-            id: "available-resource-id",
-            name: "available-resource",
-            uri: "mcp://available-resource",
-            gateway_id: "mcp-available",
-          },
-        ]);
-      }),
-      http.get("*/prompts", ({ request }) => {
-        const gatewayId = new URL(request.url).searchParams.get("gateway_id");
-        if (gatewayId === "mcp-connected") {
-          return HttpResponse.json([
-            {
-              id: "existing-prompt-id",
-              name: "existing-prompt",
-              originalName: "existing-prompt",
-              gateway_id: "mcp-connected",
-            },
-          ]);
-        }
-        if (gatewayId !== "mcp-available") return HttpResponse.json([]);
-        return HttpResponse.json([
-          {
-            id: "available-prompt-id",
-            name: "available-prompt",
-            originalName: "available-prompt",
-            gateway_id: "mcp-available",
-          },
-        ]);
-      }),
     );
-    routerMock.path = "/app/gateways/create-server?editServerId=gateway-1";
 
     renderWithProviders(<CreateServer />);
 
-    expect(await screen.findByRole("heading", { name: "Edit server" })).toBeInTheDocument();
-    expect(screen.getByLabelText(/Name/)).toHaveValue("GH repo tasks");
-    expect(screen.getByLabelText("Tags")).toHaveValue("team, enabled");
-    expect(screen.getByLabelText("Virtual server description")).toHaveValue("Test server");
-    expect(screen.getByRole("button", { name: "Submit" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
-    const mcpServersSection = screen.getByRole("region", { name: "MCP server" });
-    await within(mcpServersSection).findByText("connected-source");
-    expect(within(mcpServersSection).getByText("available-source")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("heading", { name: "Connected MCP servers" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("heading", { name: "Available MCP servers" }),
-    ).not.toBeInTheDocument();
+    expect(await screen.findByTestId("mock-create-server-form")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(componentMockState.capturedProps?.title).toBe("Edit server");
+      expect(componentMockState.capturedProps?.submitLabel).toBe("Submit");
+      expect(componentMockState.capturedProps?.initialValues).toMatchObject({
+        name: "GH repo tasks",
+        description: "Test server",
+        visibility: "team",
+        oauthEnabled: false,
+        tags: ["team", "enabled"],
+        teamId: "team-1",
+      });
+    });
 
-    await user.click(screen.getByRole("button", { name: /connected-source/ }));
-    const existingToolCheckbox = await screen.findByRole("checkbox", {
-      name: "Select existing-tool",
+    await act(async () => {
+      componentMockState.capturedProps?.onSuccess({
+        name: "Updated GH repo tasks",
+        description: "Updated server",
+        visibility: "public",
+        oauthEnabled: false,
+        tags: ["updated"],
+      });
     });
-    const existingResourceCheckbox = await screen.findByRole("checkbox", {
-      name: "Select existing-resource",
-    });
-    const existingPromptCheckbox = await screen.findByRole("checkbox", {
-      name: "Select existing-prompt",
-    });
-    expect(existingToolCheckbox).toBeChecked();
-    expect(existingResourceCheckbox).toBeChecked();
-    expect(existingPromptCheckbox).toBeChecked();
-    await user.click(existingToolCheckbox);
-    await user.click(existingResourceCheckbox);
-    await user.click(existingPromptCheckbox);
-
-    await user.click(screen.getByRole("button", { name: /available-source/ }));
-    const availableToolCheckbox = await screen.findByRole("checkbox", {
-      name: "Select available-tool",
-    });
-    const availableResourceCheckbox = await screen.findByRole("checkbox", {
-      name: "Select available-resource",
-    });
-    const availablePromptCheckbox = await screen.findByRole("checkbox", {
-      name: "Select available-prompt",
-    });
-    expect(availableToolCheckbox).not.toBeChecked();
-    expect(availableResourceCheckbox).not.toBeChecked();
-    expect(availablePromptCheckbox).not.toBeChecked();
-    await user.click(availableToolCheckbox);
-    await user.click(availableResourceCheckbox);
-    await user.click(availablePromptCheckbox);
-
-    const nameInput = screen.getByLabelText(/Name/);
-    await user.clear(nameInput);
-    await user.type(nameInput, "Updated GH repo tasks");
-    await user.click(screen.getByRole("button", { name: "Submit" }));
 
     await waitFor(() => {
       expect(mockUpdateVirtualServer).toHaveBeenCalledWith(
         "gateway-1",
         expect.objectContaining({
           name: "Updated GH repo tasks",
-          description: "Test server",
-          tags: ["team", "enabled"],
-          visibility: "team",
+          description: "Updated server",
+          visibility: "public",
           oauthEnabled: false,
-          associatedTools: ["available-tool-id"],
-          associatedResources: ["available-resource-id"],
-          associatedPrompts: ["available-prompt-id"],
+          tags: ["updated"],
+          associatedTools: ["existing-tool-id"],
+          associatedResources: ["existing-resource-id"],
+          associatedPrompts: ["existing-prompt-id"],
         }),
       );
     });
     expect(mockCreateVirtualServer).not.toHaveBeenCalled();
     expect(mockNavigate).toHaveBeenCalledWith("/app/gateways");
+  });
+
+  it("shows an error when edit server details cannot be loaded", async () => {
+    routerMock.path = "/app/gateways/create-server?editServerId=missing-server";
+    server.use(
+      http.get("*/servers/missing-server", () =>
+        HttpResponse.json({ detail: "Virtual server not found" }, { status: 404 }),
+      ),
+    );
+
+    renderWithProviders(<CreateServer />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("HTTP 404");
+    expect(screen.queryByRole("heading", { name: "Edit server" })).not.toBeInTheDocument();
+  });
+
+  it("shows an error when updating an edited virtual server fails", async () => {
+    componentMockState.mockForm = true;
+    routerMock.path = "/app/gateways/create-server?editServerId=gateway-1";
+    mockUpdateVirtualServer.mockRejectedValueOnce(new Error("Update failed"));
+    server.use(
+      http.get("*/servers/gateway-1", () =>
+        HttpResponse.json({
+          id: "gateway-1",
+          name: "GH repo tasks",
+          description: "Test server",
+          icon: "",
+          createdAt: "2026-04-16T13:23:12Z",
+          updatedAt: "2026-04-16T13:23:12Z",
+          enabled: true,
+          associatedTools: [],
+          associatedToolIds: [],
+          associatedResources: [],
+          associatedPrompts: [],
+          associatedA2aAgents: [],
+          metrics: null,
+          tags: [],
+          createdBy: "admin@example.com",
+          createdFromIp: "127.0.0.1",
+          createdVia: "ui",
+          createdUserAgent: "Mozilla/5.0",
+          modifiedBy: null,
+          modifiedFromIp: null,
+          modifiedVia: null,
+          modifiedUserAgent: null,
+          importBatchId: null,
+          federationSource: null,
+          version: 1,
+          teamId: "team-1",
+          team: "Test Team",
+          ownerEmail: "admin@example.com",
+          visibility: "public",
+          oauthEnabled: false,
+          oauthConfig: null,
+        }),
+      ),
+    );
+
+    renderWithProviders(<CreateServer />);
+
+    expect(await screen.findByTestId("mock-create-server-form")).toBeInTheDocument();
+    await act(async () => {
+      componentMockState.capturedProps?.onSuccess({
+        name: "GH repo tasks",
+        description: "Test server",
+        visibility: "public",
+        oauthEnabled: false,
+        tags: [],
+      });
+    });
+
+    await waitFor(() => {
+      expect(componentMockState.capturedProps?.submitError).toBe("Update failed");
+    });
+    expect(mockUpdateVirtualServer).toHaveBeenCalledOnce();
+    expect(mockCreateVirtualServer).not.toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalledWith("/app/gateways");
   });
 
   it("shows optional configuration fields when expanded", async () => {
@@ -411,6 +324,7 @@ describe("CreateServer", () => {
   it("supports source selection actions after continuing from details", async () => {
     const user = userEvent.setup();
     let gatewaysRequestCount = 0;
+    const toolCursors: Array<string | null> = [];
     server.use(
       http.get("*/gateways", () => {
         gatewaysRequestCount += 1;
@@ -431,6 +345,35 @@ describe("CreateServer", () => {
               updated_at: "2024-01-01T00:00:00Z",
             },
           ],
+        });
+      }),
+      http.get("*/tools", ({ request }) => {
+        const url = new URL(request.url);
+        const gatewayId = url.searchParams.get("gateway_id");
+        const cursor = url.searchParams.get("cursor");
+        toolCursors.push(cursor);
+        return HttpResponse.json({
+          tools:
+            gatewayId === "github-notify" && !cursor
+              ? [{ id: "tool-alpha", name: "alpha-tool" }]
+              : gatewayId === "github-notify" && cursor === "tools-page-2"
+                ? [{ id: "tool-beta", name: "beta-tool" }]
+                : [],
+          nextCursor: gatewayId === "github-notify" && !cursor ? "tools-page-2" : null,
+        });
+      }),
+      http.get("*/resources", ({ request }) => {
+        const gatewayId = new URL(request.url).searchParams.get("gateway_id");
+        return HttpResponse.json({
+          resources:
+            gatewayId === "github-notify" ? [{ id: "resource-alpha", name: "alpha-resource" }] : [],
+        });
+      }),
+      http.get("*/prompts", ({ request }) => {
+        const gatewayId = new URL(request.url).searchParams.get("gateway_id");
+        return HttpResponse.json({
+          prompts:
+            gatewayId === "github-notify" ? [{ id: "prompt-alpha", name: "alpha-prompt" }] : [],
         });
       }),
     );
@@ -461,13 +404,20 @@ describe("CreateServer", () => {
     expect(gatewaysRequestCount).toBe(1);
     expect(mockNavigate).not.toHaveBeenCalledWith("/app/tools");
 
-    await user.click(screen.getByRole("button", { name: "Skip for now" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select github-notify" }));
+    expect(screen.getByRole("button", { name: "Submit" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Submit" }));
     await waitFor(() => {
+      expect(toolCursors).toEqual([null, "tools-page-2"]);
       expect(mockCreateVirtualServer).toHaveBeenCalledWith({
         name: "Research server",
-        visibility: "team",
+        visibility: "public",
         oauthEnabled: false,
-        associatedMCPServerIds: [],
+        associatedTools: ["tool-alpha", "tool-beta"],
+        associatedResources: ["resource-alpha"],
+        associatedPrompts: ["prompt-alpha"],
+        associatedMCPServerIds: ["github-notify"],
       });
     });
     expect(mockNavigate).toHaveBeenCalledWith("/app/gateways");
