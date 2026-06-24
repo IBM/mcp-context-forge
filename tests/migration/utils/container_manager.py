@@ -404,9 +404,9 @@ class ContainerManager:
         logger.info(f"🐙 Starting compose stack for version {version}")
         logger.info(f"📄 Using compose file: {compose_file}")
 
-        database_url = "postgresql+psycopg://test_user:test_migration_password_123@postgres:5432/mcp_test"
+        database_url = "postgresql+psycopg://test_user:test_migration_password_123@postgres:5432/mcp_test"  # pragma: allowlist secret
         if version != "latest":
-            database_url = "postgresql://test_user:test_migration_password_123@postgres:5432/mcp_test"
+            database_url = "postgresql://test_user:test_migration_password_124@postgres:5432/mcp_test"  # pragma: allowlist secret
 
         env = {
             "IMAGE_LOCAL": f"ghcr.io/ibm/mcp-context-forge:{version}",

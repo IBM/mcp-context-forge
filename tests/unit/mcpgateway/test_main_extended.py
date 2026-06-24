@@ -12566,6 +12566,20 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod.settings, "skip_ssl_verify", True, raising=False)
         main_mod.log_security_recommendations({"secure_secrets": False, "auth_enabled": False})
 
+    async def test_request_validation_exception_handler_production_suppression(self, monkeypatch):
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        monkeypatch.setattr(main_mod, "should_expose_error_details", lambda: False)
+        request = MagicMock(spec=Request)
+        request.url = SimpleNamespace(path="/tools")
+        exc = MagicMock()
+        exc.errors.return_value = [{"loc": ["body"], "msg": "bad input", "ctx": {}, "type": "value_error"}]
+
+        response = await main_mod.request_validation_exception_handler(request, exc)
+        assert response.status_code == 422
+        assert json.loads(response.body.decode()) == {"detail": "An error occurred, please try again."}
+
     async def test_request_validation_exception_handler_ctx_non_dict(self):
         # First-Party
         import mcpgateway.main as main_mod
