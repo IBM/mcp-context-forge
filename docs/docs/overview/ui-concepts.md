@@ -166,7 +166,7 @@ When asynchronous gateway lifecycle operations are enabled (`GATEWAY_ASYNC_LIFEC
     When a gateway is pending, an additional column shows:
 
     - **Attempts**: Number of connection attempts made
-    - **Next**: Timestamp of next retry attempt (exponential backoff)
+    - **Next**: Timestamp of next retry attempt in HH:MM:SS format (e.g., "14:23:45") with exponential backoff
 
     **Auto-Refresh:**
 
