@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import { api } from "@/api/client";
 
 type QueryMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -26,6 +27,11 @@ interface UseQueryResult<TData, TBody = unknown> {
   isLoading: boolean;
   execute: (overrideBody?: TBody) => Promise<TData>;
   refetch: () => Promise<TData>;
+  /**
+   * Imperatively update the cached data (e.g. to patch a single item in place
+   * after a mutation, avoiding a full refetch). Supports functional updates.
+   */
+  setData: Dispatch<SetStateAction<TData | undefined>>;
 }
 
 function sanitizeError(err: unknown): QueryError {
@@ -207,5 +213,6 @@ export function useQuery<TData, TBody = unknown>(
     isLoading,
     execute,
     refetch,
+    setData,
   };
 }
