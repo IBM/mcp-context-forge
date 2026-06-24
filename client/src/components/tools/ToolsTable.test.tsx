@@ -454,6 +454,92 @@ describe("ToolsTable", () => {
     });
   });
 
+  describe("toggle dropdown (onToggleTool provided)", () => {
+    it("shows 'Deactivate' when the tool is enabled", async () => {
+      const user = userEvent.setup();
+      const tools = [createMockTool(1, { enabled: true })];
+      render(<ToolsTable tools={tools} onSelectTool={mockOnSelectTool} onToggleTool={vi.fn()} />);
+
+      await user.click(screen.getByLabelText("More options"));
+
+      expect(await screen.findByText("Deactivate")).toBeInTheDocument();
+      expect(screen.queryByText("Activate")).not.toBeInTheDocument();
+    });
+
+    it("shows 'Activate' when the tool is disabled", async () => {
+      const user = userEvent.setup();
+      const tools = [createMockTool(1, { enabled: false })];
+      render(<ToolsTable tools={tools} onSelectTool={mockOnSelectTool} onToggleTool={vi.fn()} />);
+
+      await user.click(screen.getByLabelText("More options"));
+
+      expect(await screen.findByText("Activate")).toBeInTheDocument();
+      expect(screen.queryByText("Deactivate")).not.toBeInTheDocument();
+    });
+
+    it("calls onToggleTool with the full tool object when clicked", async () => {
+      const user = userEvent.setup();
+      const mockOnToggleTool = vi.fn();
+      const tool = createMockTool(1, { id: "tool-abc", enabled: true });
+      render(
+        <ToolsTable
+          tools={[tool]}
+          onSelectTool={mockOnSelectTool}
+          onToggleTool={mockOnToggleTool}
+        />,
+      );
+
+      await user.click(screen.getByLabelText("More options"));
+      await user.click(await screen.findByText("Deactivate"));
+
+      expect(mockOnToggleTool).toHaveBeenCalledOnce();
+      expect(mockOnToggleTool).toHaveBeenCalledWith(tool);
+    });
+
+    it("does not call onSelectTool when the toggle item is clicked", async () => {
+      const user = userEvent.setup();
+      const tools = [createMockTool(1, { enabled: true })];
+      render(<ToolsTable tools={tools} onSelectTool={mockOnSelectTool} onToggleTool={vi.fn()} />);
+
+      await user.click(screen.getByLabelText("More options"));
+      await user.click(await screen.findByText("Deactivate"));
+
+      expect(mockOnSelectTool).not.toHaveBeenCalled();
+    });
+
+    it("does not show the toggle item when onToggleTool is not provided", async () => {
+      const user = userEvent.setup();
+      const tools = [createMockTool(1)];
+      render(<ToolsTable tools={tools} onSelectTool={mockOnSelectTool} onEditTool={vi.fn()} />);
+
+      await user.click(screen.getByLabelText("More options"));
+
+      expect(await screen.findByText("Edit")).toBeInTheDocument();
+      expect(screen.queryByText("Deactivate")).not.toBeInTheDocument();
+      expect(screen.queryByText("Activate")).not.toBeInTheDocument();
+    });
+
+    it("renders actions in the order Edit, Activate/Deactivate, Delete", async () => {
+      const user = userEvent.setup();
+      const tools = [createMockTool(1, { enabled: true })];
+      render(
+        <ToolsTable
+          tools={tools}
+          onSelectTool={mockOnSelectTool}
+          onEditTool={vi.fn()}
+          onToggleTool={vi.fn()}
+          onDeleteTool={vi.fn()}
+        />,
+      );
+
+      await user.click(screen.getByLabelText("More options"));
+
+      const items = await screen.findAllByRole("menuitem");
+      const labels = items.map((el) => el.textContent);
+      expect(labels).toEqual(["Edit", "Deactivate", "Delete"]);
+    });
+  });
+
   it("handles tools with special characters in names", () => {
     const tools = [
       createMockTool(1, {
