@@ -177,7 +177,7 @@ from mcpgateway.services.team_management_service import TeamManagementService, U
 from mcpgateway.services.token_catalog_service import TokenCatalogService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
-from mcpgateway.utils.error_formatter import ErrorFormatter
+from mcpgateway.utils.error_formatter import ErrorFormatter, sanitize_validation_error_for_log
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.pagination import paginate_query
@@ -13231,7 +13231,7 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
             )
 
         if isinstance(ex, ValidationError):
-            LOGGER.error(f"ValidationError in admin_add_resource: {ErrorFormatter.format_validation_error(ex)}")
+            LOGGER.error("ValidationError in admin_add_resource: %s", sanitize_validation_error_for_log(ex))
             return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
             error_message = ErrorFormatter.format_database_error(ex)
@@ -13360,7 +13360,7 @@ async def admin_edit_resource(
             LOGGER.warning("Rollback failed (ignoring for SQLite compatibility): %s", rollback_error)
 
         if isinstance(ex, ValidationError):
-            LOGGER.error(f"ValidationError in admin_edit_resource: {ErrorFormatter.format_validation_error(ex)}")
+            LOGGER.error("ValidationError in admin_edit_resource: %s", sanitize_validation_error_for_log(ex))
             return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
             error_message = ErrorFormatter.format_database_error(ex)
@@ -13611,7 +13611,7 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
         )
     except Exception as ex:
         if isinstance(ex, ValidationError):
-            LOGGER.error(f"ValidationError in admin_add_prompt: {ErrorFormatter.format_validation_error(ex)}")
+            LOGGER.error("ValidationError in admin_add_prompt: %s", sanitize_validation_error_for_log(ex))
             return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
             error_message = ErrorFormatter.format_database_error(ex)
@@ -13742,7 +13742,7 @@ async def admin_edit_prompt(
         return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
     except Exception as ex:
         if isinstance(ex, ValidationError):
-            LOGGER.error(f"ValidationError in admin_edit_prompt: {ErrorFormatter.format_validation_error(ex)}")
+            LOGGER.error("ValidationError in admin_edit_prompt: %s", sanitize_validation_error_for_log(ex))
             return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
             error_message = ErrorFormatter.format_database_error(ex)
@@ -15072,7 +15072,7 @@ async def admin_import_tools(
             # Detailed format for frontend
             "details": {
                 "success": [item["name"] for item in created if item.get("name")],
-                "failed": [{"name": item["name"], "error": item["error"].get("message", str(item["error"]))} for item in errors],
+                "failed": [{"name": item["name"], "error": item["error"].get("message") or item["error"].get("detail", str(item["error"]))} for item in errors],
             },
         }
 

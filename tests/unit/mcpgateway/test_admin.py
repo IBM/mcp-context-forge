@@ -3368,8 +3368,9 @@ class TestAdminGatewayRoutes:
         assert result.status_code == 422
 
     @patch.object(GatewayService, "update_gateway")
-    async def test_admin_edit_gateway_url_validation(self, mock_update_gateway, mock_request, mock_db):
+    async def test_admin_edit_gateway_url_validation(self, mock_update_gateway, mock_request, mock_db, monkeypatch):
         """Test editing gateway with URL validation."""
+        monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: True)
         # Test with invalid URL
         form_data = FakeForm(
             {
@@ -7540,8 +7541,9 @@ class TestErrorHandlingPaths:
         assert "Service unavailable" in body["message"]
 
     @patch.object(GatewayService, "update_gateway")
-    async def test_admin_update_gateway_rest_validation_error(self, mock_update_gateway, mock_request, mock_db):
+    async def test_admin_update_gateway_rest_validation_error(self, mock_update_gateway, mock_request, mock_db, monkeypatch):
         """Test updating gateway with validation error (covers lines 12600-12601)."""
+        monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: True)
         from mcpgateway.admin import admin_update_gateway_rest
         from pydantic import ValidationError
 

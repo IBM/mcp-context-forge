@@ -8134,7 +8134,7 @@ class TestUpdateGatewayQueryParam:
 
         assert result is not None
         gateway_service._initialize_gateway.assert_awaited_once()
-        assert gateway_service._initialize_gateway.call_args.kwargs["auth_query_params"] == {"api_key": "decrypted_val"}
+        assert gateway_service._initialize_gateway.call_args.kwargs["auth_query_params"] == {"api_key": "decrypted_val"}  # pragma: allowlist secret
 
     @pytest.mark.asyncio
     async def test_update_one_time_auth_clears_persistent_auth_after_reinit(self, gateway_service, mock_gateway, monkeypatch):
