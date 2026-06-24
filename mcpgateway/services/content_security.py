@@ -139,7 +139,7 @@ class ContentSizeError(Exception):
         actual_formatted = _format_bytes(actual_size)
         max_formatted = _format_bytes(max_size)
 
-        super().__init__(f"{content_type} size ({actual_formatted}) exceeds " f"maximum allowed size ({max_formatted})")
+        super().__init__(f"{content_type} size ({actual_formatted}) exceeds maximum allowed size ({max_formatted})")
 
 
 class ContentTypeError(Exception):

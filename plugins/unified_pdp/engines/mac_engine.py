@@ -216,10 +216,7 @@ class MACEngineAdapter(PolicyEngineAdapter):
             return EngineDecision(
                 engine=EngineType.MAC,
                 decision=Decision.ALLOW,
-                reason=(
-                    f"MAC: write allowed (clearance {subj_level} "
-                    f"{'==' if not self._relaxed_star else '>='} classification {res_level})"
-                ),
+                reason=(f"MAC: write allowed (clearance {subj_level} {'==' if not self._relaxed_star else '>='} classification {res_level})"),
                 matching_policies=["blp.star_property"],
                 duration_ms=round(duration, 2),
                 metadata={"operation": "write", "subject_level": subj_level, "resource_level": res_level},
@@ -228,10 +225,7 @@ class MACEngineAdapter(PolicyEngineAdapter):
             return EngineDecision(
                 engine=EngineType.MAC,
                 decision=Decision.DENY,
-                reason=(
-                    f"MAC: write denied – clearance {subj_level} "
-                    f"{'!=' if not self._relaxed_star else '<'} classification {res_level} (no write-down)"
-                ),
+                reason=(f"MAC: write denied – clearance {subj_level} {'!=' if not self._relaxed_star else '<'} classification {res_level} (no write-down)"),
                 matching_policies=["blp.star_property"],
                 duration_ms=round(duration, 2),
                 metadata={"operation": "write", "subject_level": subj_level, "resource_level": res_level},

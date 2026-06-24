@@ -63,7 +63,7 @@ make serve-ssl                    # HTTPS on :4444 (creates certs if needed)
 ### Code Quality
 ```bash
 # After writing code
-make autoflake isort black pre-commit
+make pre-commit
 
 # Before committing, use ty, mypy and pyrefly to check just the new files, then run:
 make ruff bandit interrogate pylint verify
@@ -391,7 +391,7 @@ exempt.
 ## Coding Standards
 
 - **Python >= 3.11** with type hints; strict mypy
-- **Formatting**: Black (line length 200), isort (profile=black)
+- **Formatting**: Ruff (line length 200)
 - **Linting**: Ruff (`E3`,`E4`,`E7`,`E9`,`F`,`D1`), Pylint per `pyproject.toml`
 - **Naming**: `snake_case` functions/modules, `PascalCase` classes, `UPPER_CASE` constants
 - **Imports**: Group per isort sections (stdlib, third-party, first-party `mcpgateway`, local)
@@ -456,4 +456,4 @@ When posting PR reviews, issue comments, or any public-facing text on GitHub, us
 - `make` for build/test automation
 - `uv` for virtual environment management and for `uv tool run` linter invocations
 - Dev-group tools installed in the venv: `pytest`, `mypy`, `bandit`, `pre-commit`, `prospector`, etc. (see `pyproject.toml` `[dependency-groups]`)
-- Formatters and linters (`black`, `isort`, `ruff`, `pylint`, `vulture`, `interrogate`, `radon`, `yamllint`, `tomlcheck`) are pinned in the `Makefile` and invoked on demand via `uv tool run`; always prefer the Makefile targets (`make black`, `make ruff`, `make pylint`, etc.) over calling the underlying tools directly
+- Formatters and linters (`ruff`, `vulture`, `interrogate`, `radon`, `yamllint`, `tomlcheck`) are pinned in the `Makefile` and invoked on demand via `uv tool run`; always prefer the Makefile targets (`make black`, `make ruff`, etc.) over calling the underlying tools directly

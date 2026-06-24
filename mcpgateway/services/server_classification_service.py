@@ -133,7 +133,7 @@ class ServerClassificationService:
         self._running = True
         self._classification_task = asyncio.create_task(self._run_classification_loop())
         self._classification_task.add_done_callback(self._on_classification_task_done)
-        logger.info("Server classification service started (instance=%s, redis=%s)", self._instance_id, "enabled" if self._redis else "disabled")
+        logger.info(f"Server classification service started (instance={self._instance_id}, redis={'enabled' if self._redis else 'disabled'})")
 
     def _on_classification_task_done(self, task: asyncio.Task) -> None:
         """Callback when the classification background task exits unexpectedly."""

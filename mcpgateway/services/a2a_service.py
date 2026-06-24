@@ -700,7 +700,7 @@ class A2AAgentService(BaseService):
                         allowed_hosts = [h.lower() for h in settings.insecure_queryparam_auth_allowed_hosts]
                         if hostname not in allowed_hosts:
                             allowed = ", ".join(settings.insecure_queryparam_auth_allowed_hosts)
-                            raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query param auth. " f"Allowed: {allowed}")
+                            raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query param auth. Allowed: {allowed}")
 
                     # Extract and encrypt query param auth
                     param_key = getattr(agent_data, "auth_query_param_key", None)
@@ -1569,7 +1569,7 @@ class A2AAgentService(BaseService):
                     allowed_hosts = [h.lower() for h in settings.insecure_queryparam_auth_allowed_hosts]
                     if hostname not in allowed_hosts:
                         allowed = ", ".join(settings.insecure_queryparam_auth_allowed_hosts)
-                        raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query param auth. " f"Allowed: {allowed}")
+                        raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query param auth. Allowed: {allowed}")
 
             if is_switching_to_queryparam or is_updating_queryparam_creds:
                 # Get query param key and value

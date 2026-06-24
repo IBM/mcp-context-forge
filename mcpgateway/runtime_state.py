@@ -918,8 +918,7 @@ class RuntimeStateCoordinator:
                 remote_compat = _deployment_allows_override_mode(remote_runtime, remote_mode)
                 if remote_compat != MoveCompatibility.OK:
                     logger.warning(
-                        "RuntimeStateCoordinator: discarding incompatible remote override for %s (mode=%s) from pod=%s; "
-                        "reason=%s. The publishing pod's flags allow this mode but this pod's do not.",
+                        "RuntimeStateCoordinator: discarding incompatible remote override for %s (mode=%s) from pod=%s; reason=%s. The publishing pod's flags allow this mode but this pod's do not.",
                         remote_runtime.value,
                         remote_mode.value,
                         payload.get("initiator_pod", "unknown"),

@@ -185,7 +185,7 @@ class MCPIngressMount:
             send: ASGI send callable.
             missing_name: The ingress name the selector returned.
         """
-        body = (f"MCP ingress {missing_name!r} is not registered for this build; " f"available: {self.names() or '[]'}").encode("utf-8")
+        body = (f"MCP ingress {missing_name!r} is not registered for this build; available: {self.names() or '[]'}").encode("utf-8")
         await send(
             {
                 "type": "http.response.start",

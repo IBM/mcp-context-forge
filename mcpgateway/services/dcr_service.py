@@ -289,9 +289,7 @@ class DcrService:
         # Try to find existing client using normalized issuer
         existing_client = (
             db.query(RegisteredOAuthClient)
-            .filter(
-                RegisteredOAuthClient.gateway_id == gateway_id, RegisteredOAuthClient.issuer == normalized_issuer, RegisteredOAuthClient.is_active.is_(True)
-            )  # pylint: disable=singleton-comparison
+            .filter(RegisteredOAuthClient.gateway_id == gateway_id, RegisteredOAuthClient.issuer == normalized_issuer, RegisteredOAuthClient.is_active.is_(True))  # pylint: disable=singleton-comparison
             .first()
         )
 

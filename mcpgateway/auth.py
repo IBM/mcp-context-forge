@@ -844,7 +844,7 @@ def _get_ratelimiter_redis_client():
 
             # Warn if rediss:// but SSL disabled (inherits main Redis SSL settings)
             if redis_url.startswith("rediss://") and not settings.redis_ssl:
-                logger.warning("RATELIMITER_REDIS_URL uses rediss:// but REDIS_SSL=false. " "TLS settings from main Redis will be applied.")
+                logger.warning("RATELIMITER_REDIS_URL uses rediss:// but REDIS_SSL=false. TLS settings from main Redis will be applied.")
 
             ssl_kwargs = build_reatelimiter_ssl_kwargs(settings)
 
@@ -1651,7 +1651,7 @@ async def get_current_user(
                             db_user = await asyncio.to_thread(_get_user_by_email_sync, email)
                             if db_user is None:
                                 logger.warning(
-                                    f"Authentication rejected for {email}: cached user not found in database. " "REQUIRE_USER_IN_DB is enabled.",
+                                    f"Authentication rejected for {email}: cached user not found in database. REQUIRE_USER_IN_DB is enabled.",
                                     extra={"security_event": "user_not_in_db_rejected", "user_id": email},
                                 )
                                 raise HTTPException(
@@ -1764,7 +1764,7 @@ async def get_current_user(
                     # Check if strict user-in-DB mode is enabled
                     if settings.require_user_in_db:
                         logger.warning(
-                            f"Authentication rejected for {email}: user not found in database. " "REQUIRE_USER_IN_DB is enabled.",
+                            f"Authentication rejected for {email}: user not found in database. REQUIRE_USER_IN_DB is enabled.",
                             extra={"security_event": "user_not_in_db_rejected", "user_id": email},
                         )
                         raise HTTPException(
@@ -1776,7 +1776,7 @@ async def get_current_user(
                     # Platform admin bootstrap (only when REQUIRE_USER_IN_DB=false)
                     if email == getattr(settings, "platform_admin_email", "admin@example.com"):
                         logger.info(
-                            f"Platform admin bootstrap authentication for {email}. " "User authenticated via platform admin configuration.",
+                            f"Platform admin bootstrap authentication for {email}. User authenticated via platform admin configuration.",
                             extra={"security_event": "platform_admin_bootstrap", "user_id": email},
                         )
                         _batched_user = _bootstrap_platform_admin_user(email=email)
@@ -1982,7 +1982,7 @@ async def get_current_user(
         # Check if strict user-in-DB mode is enabled
         if settings.require_user_in_db:
             logger.warning(
-                f"Authentication rejected for {email}: user not found in database. " "REQUIRE_USER_IN_DB is enabled.",
+                f"Authentication rejected for {email}: user not found in database. REQUIRE_USER_IN_DB is enabled.",
                 extra={"security_event": "user_not_in_db_rejected", "user_id": email},
             )
             raise HTTPException(
@@ -1996,7 +1996,7 @@ async def get_current_user(
         # create a virtual admin user object
         if email == getattr(settings, "platform_admin_email", "admin@example.com"):
             logger.info(
-                f"Platform admin bootstrap authentication for {email}. " "User authenticated via platform admin configuration.",
+                f"Platform admin bootstrap authentication for {email}. User authenticated via platform admin configuration.",
                 extra={"security_event": "platform_admin_bootstrap", "user_id": email},
             )
             # Create a virtual admin user for authentication purposes

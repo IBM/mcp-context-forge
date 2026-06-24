@@ -150,7 +150,7 @@ class PasswordPolicyService:
             min_length = getattr(settings, "password_min_length_privileged", 22)
 
         if len(password) < min_length:
-            raise PasswordPolicyError(f"Password must be at least {min_length} characters long " f"({'privileged account' if is_privileged else 'user account'})")
+            raise PasswordPolicyError(f"Password must be at least {min_length} characters long ({'privileged account' if is_privileged else 'user account'})")
 
         # Check complexity requirements (must have 3 of 4 character types)
         complexity_count = 0
@@ -220,7 +220,7 @@ class PasswordPolicyService:
         min_length = getattr(settings, "password_min_length_service", 20)
 
         if len(password) < min_length:
-            raise PasswordPolicyError(f"Service account password must be at least {min_length} characters long " f"(recommended: use randomly generated passwords with 64-128 bits entropy)")
+            raise PasswordPolicyError(f"Service account password must be at least {min_length} characters long (recommended: use randomly generated passwords with 64-128 bits entropy)")
 
         # Service accounts should have high entropy - check for randomness
         if not self._has_sufficient_entropy(password):
@@ -269,7 +269,7 @@ class PasswordPolicyService:
         # Check if new password matches any in history
         for entry in history_entries:
             if await self.password_service.verify_password_async(new_password, entry.password_hash):
-                raise PasswordPolicyError(f"Password was used recently. Please choose a different password " f"(last {history_count} passwords cannot be reused)")
+                raise PasswordPolicyError(f"Password was used recently. Please choose a different password (last {history_count} passwords cannot be reused)")
 
         return True
 

@@ -281,7 +281,6 @@ async def test_cedarpolicyplugin_prompt_pre_fetch_rbac():
     deny_count = 0
 
     for req in requests:
-
         # Prompt pre hook input
         payload = PromptPrehookPayload(prompt_id=req["resource"], args={"text": "You are curseword"})
         context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2", user=req["user"]))
@@ -322,7 +321,6 @@ async def test_cedarpolicyplugin_prompt_pre_fetch_custom_dsl_rbac():
     deny_count = 0
 
     for req in requests:
-
         # Prompt pre hook input
         payload = PromptPrehookPayload(prompt_id=req["resource"], args={"text": "You are curseword"})
         context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2", user=req["user"]))
@@ -373,7 +371,6 @@ async def test_cedarpolicyplugin_prompt_post_fetch_cedar_rbac():
     redact_count = 0
 
     for req in requests:
-
         # Prompt post hook output
         message = Message(content=TextContent(type="text", text="abc"), role=Role.USER)
         prompt_result = PromptResult(messages=[message])
@@ -420,7 +417,6 @@ async def test_cedarpolicyplugin_prompt_post_fetch_custom_dsl_rbac():
     redact_count = 0
 
     for req in requests:
-
         # Prompt post hook output
         message = Message(content=TextContent(type="text", text="abc"), role=Role.USER)
         prompt_result = PromptResult(messages=[message])
@@ -481,7 +477,6 @@ async def test_cedarpolicyplugin_resource_pre_fetch_cedar_rbac():
     deny_count = 0
 
     for req in requests:
-
         # Prompt post hook output
         payload = ResourcePreFetchPayload(uri="https://example.com/data", metadata={})
         context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2", user=req["user"]))
@@ -522,7 +517,6 @@ async def test_cedarpolicyplugin_resource_pre_fetch_custom_dsl_rbac():
     deny_count = 0
 
     for req in requests:
-
         # Prompt post hook output
         payload = ResourcePreFetchPayload(uri="https://example.com/data", metadata={})
         context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2", user=req["user"]))
@@ -579,7 +573,6 @@ async def test_cedarpolicyplugin_resource_post_fetch_cedar_rbac():
     redact_count = 0
 
     for req in requests:
-
         # Prompt post hook output
         content = ResourceContent(type="resource", uri="test://large", text="test://abc@example.com", id="1")
         payload = ResourcePostFetchPayload(uri="https://example.com/data", content=content)
@@ -624,7 +617,6 @@ async def test_cedarpolicyplugin_resource_post_fetch_custom_dsl_rbac():
     redact_count = 0
 
     for req in requests:
-
         # Prompt post hook output
         content = ResourceContent(type="resource", uri="test://large", text="test://abc@example.com", id="1")
         payload = ResourcePostFetchPayload(uri="https://example.com/data", content=content)

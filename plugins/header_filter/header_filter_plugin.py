@@ -88,7 +88,7 @@ class HeaderFilter(Plugin):
         self._filter_headers_lower = {h.lower() for h in self._sconfig.filter_headers}
         self._passthrough_headers_lower = {h.lower() for h in self._sconfig.allow_passthrough_headers}
 
-        logger.info(f"Header filter initialized: filtering {len(self._filter_headers_lower)} headers, " f"allowing {len(self._passthrough_headers_lower)} passthrough headers")
+        logger.info(f"Header filter initialized: filtering {len(self._filter_headers_lower)} headers, allowing {len(self._passthrough_headers_lower)} passthrough headers")
 
     def _filter_headers(self, headers: dict[str, str], context_name: str) -> tuple[dict[str, str], list[str]]:
         """Filter sensitive headers from the header dictionary.

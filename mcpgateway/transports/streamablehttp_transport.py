@@ -1588,7 +1588,9 @@ def _truthy_is_error(result: Any) -> bool:
 
 
 @mcp_app.call_tool(validate_input=False)
-async def call_tool(name: str, arguments: dict) -> Union[
+async def call_tool(
+    name: str, arguments: dict
+) -> Union[
     types.CallToolResult,
     List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]],
     Tuple[List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]], Dict[str, Any]],

@@ -248,7 +248,7 @@ All tests **must** pass locally. If you add or modify functionality, ensure new 
 ### 5.5 Lint & static analysis
 
 ```bash
-make lint         # runs ruff, mypy, black --check, etc.
+make lint         # runs ruff, mypy, etc.
 ```
 
 Code should come back clean. Fix any warnings before pushing.

@@ -241,9 +241,7 @@ async def login(login_request: LoginRequest, request: Request, db: Session = Dep
                 # Generate CSRF token
                 csrf_token = generate_csrf_token(user_id=user.email, session_id=session_id, secret=settings.csrf_secret_key, expiry=settings.csrf_token_expiry)
 
-                auth_response = AuthenticationResponse(
-                    access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
-                )  # nosec B106 - OAuth2 token type, not a password
+                auth_response = AuthenticationResponse(access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user))  # nosec B106 - OAuth2 token type, not a password
                 response = JSONResponse(content=auth_response.model_dump(mode="json"))
 
                 set_csrf_cookie(response, csrf_token, settings)
@@ -254,9 +252,7 @@ async def login(login_request: LoginRequest, request: Request, db: Session = Dep
                 # Fall back to response without CSRF token (non-critical)
 
         # Return session token for UI access and API key management
-        return AuthenticationResponse(
-            access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
-        )  # nosec B106 - OAuth2 token type, not a password
+        return AuthenticationResponse(access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user))  # nosec B106 - OAuth2 token type, not a password
 
     except HTTPException:
         raise

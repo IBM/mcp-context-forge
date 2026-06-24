@@ -1256,9 +1256,7 @@ class ServerService(BaseService):
                 team_id = server_update.team_id or server.team_id
                 if visibility.lower() == "public":
                     # Check for existing public server with the same name
-                    existing_server = get_for_update(
-                        db, DbServer, where=and_(DbServer.name == server_update.name, DbServer.visibility == "public", DbServer.id != server.id)
-                    )  # pylint: disable=comparison-with-callable
+                    existing_server = get_for_update(db, DbServer, where=and_(DbServer.name == server_update.name, DbServer.visibility == "public", DbServer.id != server.id))  # pylint: disable=comparison-with-callable
                     if existing_server:
                         raise ServerNameConflictError(server_update.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
                 elif visibility.lower() == "team" and team_id:
@@ -1266,9 +1264,7 @@ class ServerService(BaseService):
                     existing_server = get_for_update(
                         db,
                         DbServer,
-                        where=and_(
-                            DbServer.name == server_update.name, DbServer.visibility == "team", DbServer.team_id == team_id, DbServer.id != server.id
-                        ),  # pylint: disable=comparison-with-callable
+                        where=and_(DbServer.name == server_update.name, DbServer.visibility == "team", DbServer.team_id == team_id, DbServer.id != server.id),  # pylint: disable=comparison-with-callable
                     )
                     if existing_server:
                         raise ServerNameConflictError(server_update.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)

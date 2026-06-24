@@ -470,9 +470,7 @@ class GrpcService:
 
         # Check name conflict if name is being changed
         if service_data.name and service_data.name != service.name:
-            existing = db.execute(
-                select(DbGrpcService).where(and_(DbGrpcService.name == service_data.name, DbGrpcService.id != service_id))
-            ).scalar_one_or_none()  # pylint: disable=comparison-with-callable
+            existing = db.execute(select(DbGrpcService).where(and_(DbGrpcService.name == service_data.name, DbGrpcService.id != service_id))).scalar_one_or_none()  # pylint: disable=comparison-with-callable
 
             if existing:
                 raise GrpcServiceNameConflictError(name=service_data.name, is_active=existing.enabled, service_id=existing.id)

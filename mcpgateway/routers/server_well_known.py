@@ -65,7 +65,7 @@ async def server_oauth_protected_resource(
     base_url = get_base_url_with_protocol(request)
     compliant_url = f"{base_url}/.well-known/oauth-protected-resource/servers/{server_id}/mcp"
 
-    logger.warning(f"Deprecated server-scoped OAuth metadata endpoint called for server {server_id}. " f"Redirecting to RFC 9728 compliant endpoint: {compliant_url}")
+    logger.warning(f"Deprecated server-scoped OAuth metadata endpoint called for server {server_id}. Redirecting to RFC 9728 compliant endpoint: {compliant_url}")
 
     # Return 301 Permanent Redirect
     raise HTTPException(status_code=301, detail="Moved Permanently", headers={"Location": compliant_url})

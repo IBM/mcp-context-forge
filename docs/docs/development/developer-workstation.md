@@ -43,11 +43,11 @@ This guide helps you to set up your local environment for contributing to the Mo
         [docs.astral.sh/uv](https://docs.astral.sh/uv/getting-started/installation/)).
     -   Once `uv` is present, `make install-dev` provisions the project venv with
         `mypy`, `bandit`, `pytest`, and the other dev dependencies.
-    -   Formatters and linters (`ruff`, `black`, `isort`, `pylint`, `vulture`,
+    -   Formatters and linters (`ruff`, `pylint`, `vulture`,
         `interrogate`, `radon`, `yamllint`, `tomlcheck`) are pinned in the
         Makefile and invoked on demand via `uv tool run` — you do not need to
         `pip install` them separately. Use the Makefile targets:
-        `make ruff`, `make black`, `make isort`, `make pylint`, `make mypy`,
+        `make ruff`, `make pylint`, `make mypy`,
         etc. See `make help` for the full list.
 
 -   **Node.js and npm** (for UI linters)

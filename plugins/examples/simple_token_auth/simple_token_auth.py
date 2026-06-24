@@ -226,7 +226,7 @@ class SimpleTokenAuthPlugin(Plugin):
 
         # Grant full permissions to token-authenticated users
         # You could add more granular logic here based on token properties, time, IP, etc.
-        logger.info(f"[SimpleTokenAuth] Granting permission '{payload.permission}' to token user {payload.user_email} " f"(admin={payload.is_admin}, resource={payload.resource_type})")
+        logger.info(f"[SimpleTokenAuth] Granting permission '{payload.permission}' to token user {payload.user_email} (admin={payload.is_admin}, resource={payload.resource_type})")
 
         result = HttpAuthCheckPermissionResultPayload(
             granted=True,

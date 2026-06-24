@@ -146,7 +146,7 @@ def build_engine() -> Engine:
         sqlite_max_overflow = min(settings.db_max_overflow, 20)  # Cap at 20 for SQLite
 
         logger.info(
-            "Configuring SQLite with pool_size=%s, max_overflow=%s. " "Note: With gunicorn multi-worker deployment, each worker gets its own pool. ",
+            "Configuring SQLite with pool_size=%s, max_overflow=%s. Note: With gunicorn multi-worker deployment, each worker gets its own pool. ",
             sqlite_pool_size,
             sqlite_max_overflow,
         )

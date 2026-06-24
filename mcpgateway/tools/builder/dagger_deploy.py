@@ -73,7 +73,7 @@ class MCPStackDagger(CICDModule):
             ImportError: If dagger is not installed
         """
         if not DAGGER_AVAILABLE:
-            raise ImportError("Dagger is not installed. Install with: pip install dagger-io\n" "Alternatively, use the plain Python deployer with --deployer=python")
+            raise ImportError("Dagger is not installed. Install with: pip install dagger-io\nAlternatively, use the plain Python deployer with --deployer=python")
         super().__init__(verbose)
 
     async def build(self, config_file: str, plugins_only: bool = False, specific_plugins: Optional[List[str]] = None, no_cache: bool = False, copy_env_templates: bool = False) -> None:
@@ -126,7 +126,6 @@ class MCPStackDagger(CICDModule):
                 return
 
             with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=self.console) as progress:
-
                 for plugin in plugins:
                     plugin_name = plugin.name
 

@@ -15,14 +15,7 @@ and started once, and further used by all test cases for policy evaluations.
 import pytest
 
 # First-Party
-from cpex.framework import (
-    GlobalContext,
-    PluginConfig,
-    PluginContext,
-    ToolPostInvokePayload,
-    ToolPreInvokePayload,
-    PluginError
-)
+from cpex.framework import GlobalContext, PluginConfig, PluginContext, ToolPostInvokePayload, ToolPreInvokePayload, PluginError
 
 from mcpgateway.services.logging_service import LoggingService
 from opapluginfilter.plugin import OPAPluginFilter, OPAPluginErrorCodes

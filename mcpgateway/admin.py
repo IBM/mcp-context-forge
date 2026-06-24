@@ -8013,9 +8013,7 @@ async def admin_create_user(
         )
 
         # If the user was created with the default password, optionally force password change
-        if (
-            settings.password_change_enforcement_enabled and getattr(settings, "require_password_change_for_default_password", True) and password == settings.default_user_password.get_secret_value()
-        ):  # nosec B105
+        if settings.password_change_enforcement_enabled and getattr(settings, "require_password_change_for_default_password", True) and password == settings.default_user_password.get_secret_value():  # nosec B105
             new_user.password_change_required = True
             db.commit()
 
@@ -8133,12 +8131,16 @@ async def admin_get_user_edit(
                     <input type="text" name="full_name" value="{user_obj.full_name or ""}" required
                            class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
                 </div>
-                {"" if is_editing_self else f'''<div>
+                {
+            ""
+            if is_editing_self
+            else f'''<div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
                         <input type="checkbox" name="is_admin" {"checked" if user_obj.is_admin else ""}
                                class="mr-2"> Administrator
                     </label>
-                </div>'''}
+                </div>'''
+        }
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
                         <input type="checkbox" name="email_verified" {"checked" if user_obj.is_email_verified() else ""}

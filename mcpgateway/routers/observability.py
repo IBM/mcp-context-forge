@@ -643,18 +643,21 @@ async def export_traces(
                     str: A JSON-encoded line (with trailing newline) for a trace.
                 """
                 for t in traces:
-                    yield orjson.dumps(
-                        {
-                            "trace_id": t.trace_id,
-                            "name": t.name,
-                            "start_time": t.start_time.isoformat() if t.start_time else None,
-                            "duration_ms": t.duration_ms,
-                            "status": t.status,
-                            "http_method": t.http_method,
-                            "http_status_code": t.http_status_code,
-                            "user_email": t.user_email,
-                        }
-                    ).decode() + "\n"
+                    yield (
+                        orjson.dumps(
+                            {
+                                "trace_id": t.trace_id,
+                                "name": t.name,
+                                "start_time": t.start_time.isoformat() if t.start_time else None,
+                                "duration_ms": t.duration_ms,
+                                "status": t.status,
+                                "http_method": t.http_method,
+                                "http_status_code": t.http_status_code,
+                                "user_email": t.user_email,
+                            }
+                        ).decode()
+                        + "\n"
+                    )
 
             return StreamingResponse(generate(), media_type="application/x-ndjson", headers={"Content-Disposition": "attachment; filename=traces.ndjson"})
 

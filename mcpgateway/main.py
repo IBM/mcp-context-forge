@@ -1642,9 +1642,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             total_pool = settings.db_pool_size + settings.db_max_overflow
             total_connections = workers * total_pool
             logger.warning(
-                "⚠️  DATABASE POOL: Running with %d gunicorn workers. "
-                "Total max DB connections = workers(%d) * (pool_size + max_overflow) = %d * %d = %d. "
-                "Ensure PostgreSQL max_connections >= %d. ",
+                "⚠️  DATABASE POOL: Running with %d gunicorn workers. Total max DB connections = workers(%d) * (pool_size + max_overflow) = %d * %d = %d. Ensure PostgreSQL max_connections >= %d. ",
                 workers,
                 workers,
                 workers,
@@ -1957,7 +1955,6 @@ def validate_security_configuration():
 
         # Warn about ephemeral storage without strict user-in-DB mode
         if not getattr(current_settings, "require_user_in_db", False):
-
             is_ephemeral = ":memory:" in current_settings.database_url or current_settings.database_url == "sqlite:///./mcp.db"
             if is_ephemeral:
                 logger.warning("Using potentially ephemeral storage with platform admin bootstrap enabled. Consider using persistent storage or setting REQUIRE_USER_IN_DB=true for production.")
@@ -1965,7 +1962,6 @@ def validate_security_configuration():
         # Warn about default JWT issuer/audience in non-development environments
         if current_settings.environment != "development":
             if current_settings.jwt_issuer == "mcpgateway":
-
                 logger.warning("Using default JWT_ISSUER in %s environment. Set a unique JWT_ISSUER per environment to prevent cross-environment token acceptance.", current_settings.environment)
             if current_settings.jwt_audience == "mcpgateway-api":
                 logger.warning("Using default JWT_AUDIENCE in %s environment. Set a unique JWT_AUDIENCE per environment to prevent cross-environment token acceptance.", current_settings.environment)
@@ -3110,10 +3106,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 if settings.header_size_validation_enabled:
     app.add_middleware(HeaderSizeMiddleware)
     logger.info(
-        f"📏 RFC 6585 header size validation enabled: "
-        f"max_total={settings.max_header_total_size_bytes}B, "
-        f"max_field={settings.max_header_field_size_bytes}B, "
-        f"max_count={settings.max_header_count}"
+        f"📏 RFC 6585 header size validation enabled: max_total={settings.max_header_total_size_bytes}B, max_field={settings.max_header_field_size_bytes}B, max_count={settings.max_header_count}"
     )
 
 # Add rate limiting middleware (after HttpAuthMiddleware for user-aware limiting)

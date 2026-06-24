@@ -3738,6 +3738,7 @@ autoflake:                          ## 🧹  Strip unused imports / vars
 
 CHECK ?=
 
+# Deprecated, replaced by Ruff
 black: uv                           ## 🎨  Reformat code with black (CHECK=1 for dry-run)
 	@if [ -n "$(call is_true,$(CHECK))" ]; then \
 		echo "🎨  black --check $(TARGET)..." && $(UV_BIN) tool run black==$(BLACK_VERSION) -l 200 --check --diff $(TARGET); \
