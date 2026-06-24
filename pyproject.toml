@@ -363,7 +363,7 @@ mcpgateway = [
 ]
 
 # --------------------------------------------------------------------
-#  🛠  Tool configurations (black, mypy, etc.)
+#  🛠  Tool configurations (ruff, mypy, etc.)
 # --------------------------------------------------------------------
 [tool.pytype]
 # Directory-specific options:
