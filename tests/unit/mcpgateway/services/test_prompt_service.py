@@ -378,6 +378,40 @@ class TestPromptService:
             await prompt_service.register_prompt(test_db, pc, visibility="team", team_id="team-1")
 
     @pytest.mark.asyncio
+    async def test_register_prompt_private_conflict_via_created_by_fallback(self, prompt_service, test_db):
+        """Private conflict is detected when owner_email is omitted and only created_by is supplied.
+
+        When a caller supplies only ``created_by`` (owner_email=None), the new
+        DbPrompt stores ``created_by`` as its ``owner_email``.  The conflict
+        check must use the same ``owner_email or created_by`` expression so that
+        a second registration attempt raises ``PromptNameConflictError`` instead
+        of silently creating a duplicate.
+        """
+        existing = MagicMock()
+        existing.enabled = True
+        existing.id = 42
+        existing.visibility = "private"
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=existing))
+        test_db.rollback = Mock()
+
+        pc = PromptCreate(name="my-prompt", description="", template="Hello!", arguments=[])
+
+        mock_cs = MagicMock()
+        mock_cs.validate_prompt_size = MagicMock()
+        mock_cs.validate_prompt_template = MagicMock()
+
+        # owner_email is intentionally omitted; only created_by is supplied.
+        with patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_cs):
+            with pytest.raises(PromptNameConflictError):
+                await prompt_service.register_prompt(
+                    test_db,
+                    pc,
+                    visibility="private",
+                    owner_email=None,
+                    created_by="alice@example.com",
+                )
+
+    @pytest.mark.asyncio
     async def test_register_prompt_slug_conflict(self, prompt_service, test_db):
         """Slug collisions should be detected as name conflicts."""
         existing = _build_db_prompt(name="hello-world")
@@ -3033,6 +3067,45 @@ class TestUpdatePromptFieldsAndExceptions:
         assert existing.version == 4
         assert existing.tags is not None
         assert existing.visibility == "public"
+
+    @pytest.mark.asyncio
+    async def test_update_template_only_recomputes_required_args(self, prompt_service):
+        """Template-only update must refresh argument_schema.required."""
+        existing = _build_db_prompt(name="my-prompt")
+        existing.visibility = "public"
+        existing.team_id = None
+        existing.custom_name = "my-prompt"
+        existing.gateway = None
+        existing.gateway_id = None
+        existing.owner_email = "owner@test.com"
+        existing.version = 1
+        existing.argument_schema = {"type": "object", "properties": {}, "required": ["name"]}
+
+        db = MagicMock()
+        mock_cs = MagicMock()
+        mock_cs.validate_prompt_size = MagicMock()
+        mock_cs.validate_prompt_template = MagicMock()
+
+        with (
+            patch("mcpgateway.services.prompt_service.get_for_update", return_value=existing),
+            patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_cs),
+            patch("mcpgateway.services.prompt_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache,
+        ):
+            mock_cache = AsyncMock()
+            mock_cache_fn.return_value = mock_cache
+            mock_admin_cache.invalidate_tags = AsyncMock()
+            db.commit = Mock()
+            db.refresh = Mock()
+            prompt_service._notify_prompt_updated = AsyncMock()
+            prompt_service.convert_prompt_to_read = Mock(return_value={"id": 1})
+
+            upd = PromptUpdate(template="Hello {{ first }} {{ last }}!")
+
+            await prompt_service.update_prompt(db, 1, upd)
+
+        assert set(existing.argument_schema["required"]) == {"first", "last"}
+        assert "name" not in existing.argument_schema["required"]
 
     @pytest.mark.asyncio
     async def test_update_permission_denied(self, prompt_service):

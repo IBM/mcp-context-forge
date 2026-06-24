@@ -18,7 +18,6 @@ It handles:
 import binascii
 from datetime import datetime, timezone
 from functools import lru_cache
-from string import Formatter
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set, Union
 import uuid
@@ -855,20 +854,27 @@ class PromptService(BaseService):
                 gateway_id=gateway_id,
             )
             # Check for existing server with the same name
-            if visibility.lower() == "public":
+            _eff_visibility = (visibility or "public").lower()
+            if _eff_visibility == "public":
                 # Check for existing public prompt with the same name and gateway_id
                 existing_prompt = db.execute(
                     select(DbPrompt).where(DbPrompt.name == computed_name, DbPrompt.visibility == "public", DbPrompt.gateway_id == gateway_id)
                 ).scalar_one_or_none()  # pylint: disable=comparison-with-callable
                 if existing_prompt:
                     raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
-            elif visibility.lower() == "team":
+            elif _eff_visibility == "team":
                 # Check for existing team prompt with the same name and gateway_id
                 existing_prompt = db.execute(
                     select(DbPrompt).where(
                         DbPrompt.name == computed_name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id, DbPrompt.gateway_id == gateway_id
                     )  # pylint: disable=comparison-with-callable
                 ).scalar_one_or_none()
+                if existing_prompt:
+                    raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
+            elif _eff_visibility == "private":
+                existing_prompt = db.execute(
+                    select(DbPrompt).where(DbPrompt.name == computed_name, DbPrompt.visibility == "private", DbPrompt.owner_email == (owner_email or created_by))
+                ).scalar_one_or_none()  # pylint: disable=comparison-with-callable
                 if existing_prompt:
                     raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
 
@@ -1134,9 +1140,10 @@ class PromptService(BaseService):
 
                 # Query for existing prompts - need to consider gateway_id in conflict detection
                 # Build base query conditions
-                if visibility.lower() == "public":
+                _bulk_visibility = (visibility or "public").lower()
+                if _bulk_visibility == "public":
                     base_conditions = [DbPrompt.name.in_(prompt_names), DbPrompt.visibility == "public"]
-                elif visibility.lower() == "team" and team_id:
+                elif _bulk_visibility == "team" and team_id:
                     base_conditions = [DbPrompt.name.in_(prompt_names), DbPrompt.visibility == "team", DbPrompt.team_id == team_id]
                 else:
                     # Private prompts - check by owner
@@ -2295,21 +2302,22 @@ class PromptService(BaseService):
 
             computed_name = self._compute_prompt_name(candidate_custom_name, prompt.gateway)
             if computed_name != prompt.name:
-                if visibility.lower() == "public":
+                _eff_visibility = (visibility or "public").lower()
+                if _eff_visibility == "public":
                     # Lock any conflicting row so concurrent updates cannot race.
                     existing_prompt = get_for_update(
                         db, DbPrompt, where=and_(DbPrompt.name == computed_name, DbPrompt.visibility == "public", DbPrompt.id != prompt.id)
                     )  # pylint: disable=comparison-with-callable
                     if existing_prompt:
                         raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
-                elif visibility.lower() == "team" and team_id:
+                elif _eff_visibility == "team" and team_id:
                     existing_prompt = get_for_update(
                         db, DbPrompt, where=and_(DbPrompt.name == computed_name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id, DbPrompt.id != prompt.id)
                     )  # pylint: disable=comparison-with-callable
                     logger.info("Existing prompt check result: %s", existing_prompt)
                     if existing_prompt:
                         raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
-                elif visibility.lower() == "private":
+                elif _eff_visibility == "private":
                     existing_prompt = get_for_update(
                         db,
                         DbPrompt,
@@ -2368,6 +2376,11 @@ class PromptService(BaseService):
                 prompt.template = prompt_update.template
                 # Clear template cache to reduce memory growth
                 _compile_jinja_template.cache_clear()
+                # Recompute required args to keep argument_schema in sync with the new template.
+                _new_required = self._get_required_arguments(prompt.template)
+                _existing_schema = prompt.argument_schema or {"type": "object", "properties": {}, "required": []}
+                _existing_schema["required"] = list(_new_required)
+                prompt.argument_schema = _existing_schema
             if prompt_update.arguments is not None:
                 required_args = self._get_required_arguments(prompt.template)
                 argument_schema = {
@@ -2993,9 +3006,7 @@ class PromptService(BaseService):
         """
         ast = self._jinja_env.parse(template)
         variables = meta.find_undeclared_variables(ast)
-        formatter = Formatter()
-        format_vars = {field_name for _, field_name, _, _ in formatter.parse(template) if field_name is not None}
-        return variables.union(format_vars)
+        return variables
 
     def _render_template(self, template: str, arguments: Dict[str, str]) -> str:
         """Render template with arguments using cached compiled templates.
