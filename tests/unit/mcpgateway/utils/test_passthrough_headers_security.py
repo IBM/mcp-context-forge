@@ -702,3 +702,184 @@ class TestInboundPassthroughDenylist:
             # Should log security warnings
             assert any("Refusing inbound passthrough of protocol-level header 'Content-Type'" in record.message for record in caplog.records)
             assert any("Refusing inbound passthrough of protocol-level header 'Host'" in record.message for record in caplog.records)
+
+    def test_denylist_in_compute_passthrough_headers_cached_with_gateway_override(self, caplog):
+        """Test denylist enforcement with gateway_passthrough_headers override."""
+        # First-Party
+        from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
+
+        with patch("mcpgateway.utils.passthrough_headers.settings") as mock_settings:
+            mock_settings.enable_header_passthrough = True
+            mock_settings.enable_overwrite_base_headers = False
+
+            request_headers = {
+                "content-type": "text/html",
+                "host": "evil.com",
+                "transfer-encoding": "chunked",
+                "x-safe-header": "safe-value",
+            }
+            base_headers = {}
+            # Gateway-specific headers (override branch)
+            gateway_passthrough_headers = ["Content-Type", "Host", "Transfer-Encoding", "X-Safe-Header"]
+
+            # Standard
+            import logging
+
+            with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
+                result = compute_passthrough_headers_cached(
+                    request_headers, base_headers, allowed_headers=[], gateway_passthrough_headers=gateway_passthrough_headers
+                )
+
+            # Denylist headers should be blocked even with gateway override
+            assert "Content-Type" not in result
+            assert "Host" not in result
+            assert "Transfer-Encoding" not in result
+
+            # Safe header should pass
+            assert result.get("X-Safe-Header") == "safe-value"
+
+            # Should log security warnings for each blocked header
+            assert any("Refusing inbound passthrough of protocol-level header 'Content-Type'" in record.message for record in caplog.records)
+            assert any("Refusing inbound passthrough of protocol-level header 'Host'" in record.message for record in caplog.records)
+            assert any("Refusing inbound passthrough of protocol-level header 'Transfer-Encoding'" in record.message for record in caplog.records)
+
+    @patch("mcpgateway.utils.passthrough_headers.settings")
+    def test_host_header_denied_via_gateway_passthrough(self, mock_settings, caplog):
+        """Test that Host header is denied via gateway-specific passthrough_headers."""
+        mock_settings.enable_header_passthrough = True
+
+        mock_db = Mock()
+        mock_db.query.return_value.first.return_value = None
+
+        mock_gateway = Mock()
+        mock_gateway.passthrough_headers = ["Host", "X-Safe-Header"]
+        mock_gateway.auth_type = "none"
+        mock_gateway.name = "test-gateway"
+
+        request_headers = {"host": "evil.example.com", "x-safe-header": "safe-value"}
+        base_headers = {}
+
+        # Standard
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
+            result = get_passthrough_headers(request_headers, base_headers, mock_db, mock_gateway)
+
+        # Host should be blocked
+        assert "Host" not in result
+        assert result.get("X-Safe-Header") == "safe-value"
+
+        # Should log security warning
+        assert any("Refusing inbound passthrough of protocol-level header 'Host'" in record.message for record in caplog.records)
+
+    @patch("mcpgateway.utils.passthrough_headers.settings")
+    def test_transfer_encoding_denied_via_gateway_passthrough(self, mock_settings, caplog):
+        """Test that Transfer-Encoding is denied via gateway-specific passthrough_headers."""
+        mock_settings.enable_header_passthrough = True
+
+        mock_db = Mock()
+        mock_db.query.return_value.first.return_value = None
+
+        mock_gateway = Mock()
+        mock_gateway.passthrough_headers = ["Transfer-Encoding", "X-Safe-Header"]
+        mock_gateway.auth_type = "none"
+        mock_gateway.name = "test-gateway"
+
+        request_headers = {"transfer-encoding": "chunked", "x-safe-header": "safe-value"}
+        base_headers = {}
+
+        # Standard
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
+            result = get_passthrough_headers(request_headers, base_headers, mock_db, mock_gateway)
+
+        # Transfer-Encoding should be blocked
+        assert "Transfer-Encoding" not in result
+        assert result.get("X-Safe-Header") == "safe-value"
+
+        # Should log security warning
+        assert any("Refusing inbound passthrough of protocol-level header 'Transfer-Encoding'" in record.message for record in caplog.records)
+
+    @patch("mcpgateway.utils.passthrough_headers.settings")
+    def test_content_length_denied_via_gateway_passthrough(self, mock_settings, caplog):
+        """Test that Content-Length is denied via gateway-specific passthrough_headers."""
+        mock_settings.enable_header_passthrough = True
+
+        mock_db = Mock()
+        mock_db.query.return_value.first.return_value = None
+
+        mock_gateway = Mock()
+        mock_gateway.passthrough_headers = ["Content-Length", "X-Safe-Header"]
+        mock_gateway.auth_type = "none"
+        mock_gateway.name = "test-gateway"
+
+        request_headers = {"content-length": "9999", "x-safe-header": "safe-value"}
+        base_headers = {}
+
+        # Standard
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
+            result = get_passthrough_headers(request_headers, base_headers, mock_db, mock_gateway)
+
+        # Content-Length should be blocked
+        assert "Content-Length" not in result
+        assert result.get("X-Safe-Header") == "safe-value"
+
+        # Should log security warning
+        assert any("Refusing inbound passthrough of protocol-level header 'Content-Length'" in record.message for record in caplog.records)
+
+    @patch("mcpgateway.utils.passthrough_headers.settings")
+    def test_hop_by_hop_headers_denied_via_gateway_passthrough(self, mock_settings, caplog):
+        """Test that hop-by-hop headers are denied via gateway-specific passthrough_headers."""
+        mock_settings.enable_header_passthrough = True
+
+        mock_db = Mock()
+        mock_db.query.return_value.first.return_value = None
+
+        mock_gateway = Mock()
+        mock_gateway.passthrough_headers = [
+            "Connection",
+            "Keep-Alive",
+            "Proxy-Connection",
+            "TE",
+            "Trailer",
+            "Upgrade",
+            "X-Safe-Header",
+        ]
+        mock_gateway.auth_type = "none"
+        mock_gateway.name = "test-gateway"
+
+        request_headers = {
+            "connection": "keep-alive",
+            "keep-alive": "timeout=5",
+            "proxy-connection": "keep-alive",
+            "te": "trailers",
+            "trailer": "Expires",
+            "upgrade": "websocket",
+            "x-safe-header": "safe-value",
+        }
+        base_headers = {}
+
+        # Standard
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
+            result = get_passthrough_headers(request_headers, base_headers, mock_db, mock_gateway)
+
+        # All hop-by-hop headers should be blocked
+        assert "Connection" not in result
+        assert "Keep-Alive" not in result
+        assert "Proxy-Connection" not in result
+        assert "TE" not in result
+        assert "Trailer" not in result
+        assert "Upgrade" not in result
+
+        # Safe header should pass
+        assert result.get("X-Safe-Header") == "safe-value"
+
+        # Should log security warnings for each
+        hop_by_hop_headers = ["Connection", "Keep-Alive", "Proxy-Connection", "TE", "Trailer", "Upgrade"]
+        for header in hop_by_hop_headers:
+            assert any(f"Refusing inbound passthrough of protocol-level header '{header}'" in record.message for record in caplog.records)
