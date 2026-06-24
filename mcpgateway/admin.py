@@ -9593,6 +9593,12 @@ async def admin_gateways_partial_html(
     for g in gateways_db:
         try:
             gateways_pydantic.append(gateway_service.convert_gateway_to_read(g))
+        # Exception handling for gateway conversion and auth credential decryption:
+        # - ValidationError: Pydantic schema mismatch in gateway data
+        # - ValueError/KeyError/TypeError: Malformed gateway data structure
+        # - binascii.Error: Invalid base64 encoding in encrypted fields
+        # - InvalidTag: AES-GCM decryption failure for encrypted auth secrets
+        # - AttributeError: Missing gateway attributes during conversion
         except (ValidationError, ValueError, KeyError, TypeError, AttributeError, binascii.Error, InvalidTag) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert gateway {getattr(g, 'id', 'unknown')} ({getattr(g, 'name', 'unknown')}): {e}")

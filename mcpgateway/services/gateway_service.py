@@ -5119,14 +5119,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway_dict["team"] = getattr(gateway, "team", None)
 
         # Include async lifecycle fields (Issue #5127)
-        gateway_dict["status"] = getattr(gateway, "status", "active")
-        gateway_dict["status_message"] = getattr(gateway, "status_message", None)
-        gateway_dict["registration_attempts"] = getattr(gateway, "registration_attempts", 0)
-        gateway_dict["next_retry_at"] = getattr(gateway, "next_retry_at", None)
-        gateway_dict["last_error"] = getattr(gateway, "last_error", None)
-        gateway_dict["lifecycle_claimed_by"] = getattr(gateway, "lifecycle_claimed_by", None)
-        gateway_dict["lifecycle_claimed_at"] = getattr(gateway, "lifecycle_claimed_at", None)
-        gateway_dict["lifecycle_claim_expires_at"] = getattr(gateway, "lifecycle_claim_expires_at", None)
+        gateway_dict["status"] = getattr(gateway, "status", "active")  # str: "pending"|"active"|"deleting"
+        gateway_dict["status_message"] = getattr(gateway, "status_message", None)  # Optional[str]: user-facing status text
+        gateway_dict["registration_attempts"] = getattr(gateway, "registration_attempts", 0)  # int: retry count
+        gateway_dict["next_retry_at"] = getattr(gateway, "next_retry_at", None)  # Optional[datetime]: next retry timestamp
+        gateway_dict["last_error"] = getattr(gateway, "last_error", None)  # Optional[str]: internal error details (not displayed in UI)
+        gateway_dict["lifecycle_claimed_by"] = getattr(gateway, "lifecycle_claimed_by", None)  # Optional[str]: worker claim ID
+        gateway_dict["lifecycle_claimed_at"] = getattr(gateway, "lifecycle_claimed_at", None)  # Optional[datetime]: claim timestamp
+        gateway_dict["lifecycle_claim_expires_at"] = getattr(gateway, "lifecycle_claim_expires_at", None)  # Optional[datetime]: claim expiry
 
         # Populate tool count from the eagerly-loaded tools relationship when available
         tools_rel = gateway.__dict__.get("tools")
