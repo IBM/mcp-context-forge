@@ -394,7 +394,7 @@ jobs:
     timeout-minutes: 60
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     permissions:
-      contents: read
+      contents: write
       packages: write
       id-token: write
 
