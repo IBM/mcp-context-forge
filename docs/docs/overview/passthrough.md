@@ -206,16 +206,19 @@ Passthrough headers are forwarded consistently across all transports:
 | SSE `/servers/{id}/sse` | Loopback | Headers captured at connection time, forwarded in internal `/rpc` calls |
 | WebSocket `/ws` | Loopback | Headers captured at WebSocket handshake, forwarded in internal `/rpc` calls |
 | Streamable HTTP (affinity) | Loopback | Headers extracted per request and forwarded to the affinity target |
+| A2A tools | Direct | Headers filtered by global defaults and the agent `passthrough_headers` allowlist before `TOOL_PRE_INVOKE` and outbound A2A invocation |
 
 For loopback transports (SSE, WebSocket, Streamable HTTP affinity), gateway-internal headers (`Authorization`, `Content-Type`, session IDs, proxy-user identity) are never forwarded — they are filtered at both extraction and merge time for defense-in-depth.
 
 ### Configuration Hierarchy
 
-The system follows this priority order:
+For gateways, the system follows this priority order:
 
 1. **Gateway-specific headers** (highest priority)
 2. **Global configuration** (from database)
 3. **Environment variable defaults** (lowest priority)
+
+For A2A agents, the agent's `passthrough_headers` acts as the per-agent allowlist on top of the global/default passthrough configuration. Only headers allowed by the effective passthrough configuration are exposed to A2A tool plugin hooks and outbound A2A requests.
 
 ### Example Flow
 
@@ -328,6 +331,21 @@ DEFAULT_PASSTHROUGH_HEADERS=["X-Tenant-Id", "X-Trace-Id", "X-Request-Id"]
 }
 ```
 
+### A2A Agent Override
+
+```json
+// Via the A2A agent registration API
+{
+  "name": "hello_world_agent",
+  "endpoint_url": "http://localhost:9999/",
+  "agent_type": "jsonrpc",
+  "passthrough_headers": ["Authorization", "X-Tenant-Id"],
+  "auth_type": "api_key",
+  "auth_value": "your-api-key"
+}
+```
+
+A2A `passthrough_headers` is evaluated with the global passthrough settings. The filtered request headers are available to `TOOL_PRE_INVOKE` plugins as `payload.headers` and are also used as the base headers for the outbound A2A call. If `auth_type` is `api_key`, the configured API key supplies the outbound `Authorization` header and takes precedence over a base or passthrough `Authorization` value.
 
 ## Usage with One-Time Auth
 

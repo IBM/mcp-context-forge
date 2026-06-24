@@ -46,11 +46,18 @@ curl -X POST "http://localhost:4444/a2a" \
     "endpoint_url": "http://localhost:9999/",
     "agent_type": "jsonrpc",
     "description": "External AI agent for hello world functionality",
+    "passthrough_headers": ["Authorization", "X-Tenant-Id"],
     "auth_type": "api_key",
     "auth_value": "your-api-key",
     "tags": ["ai", "hello-world"]
   }'
 ```
+
+Optional request fields:
+
+| Field | Description | Example |
+| --- | --- | --- |
+| `passthrough_headers` | Header names allowed to pass from the incoming request to this A2A agent and to the `TOOL_PRE_INVOKE` plugin payload | `["Authorization", "X-Tenant-Id"]` |
 
 ### 3. Test the Agent
 
@@ -165,6 +172,8 @@ For agents that expect standard JSONRPC format:
 | `bearer` | Bearer token authentication | `Authorization: Bearer your-token` |
 | `oauth` | OAuth 2.0 flow (stored tokens) | Handled automatically |
 | `none` | No authentication required | - |
+
+When `auth_type` is `api_key`, the configured API key is sent as the outbound `Authorization` header. If a base or passthrough request header also contains `Authorization`, the configured A2A agent API key takes precedence for the outbound agent call.
 
 ## Protocol Detection
 
