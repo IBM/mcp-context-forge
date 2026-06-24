@@ -223,3 +223,51 @@ class TestAuditTrailNoDbSession:
 
             assert mock_audit.log_action.called, "audit_trail.log_action was not called"
             _assert_no_db_passed(mock_audit)
+
+    @pytest.mark.asyncio
+    async def test_set_prompt_state_audit_no_db_kwarg(self, prompt_service, test_db):
+        """set_prompt_state must call audit_trail.log_action without db=."""
+        with patch("mcpgateway.services.prompt_service.audit_trail") as mock_audit, \
+             patch("mcpgateway.services.prompt_service.structured_logger"), \
+             patch("mcpgateway.services.prompt_service.get_for_update") as mock_gfu:
+            mock_audit.log_action = MagicMock(return_value=None)
+
+            fake_prompt = _build_db_prompt(pid=5, name="state-test")
+            fake_prompt.enabled = False  # starting deactivated so activate=True triggers audit
+            mock_gfu.return_value = fake_prompt
+
+            test_db.commit = Mock()
+            test_db.refresh = Mock()
+            prompt_service._notify_prompt_activated = AsyncMock()
+            prompt_service._get_team_name = Mock(return_value=None)
+            prompt_service.convert_prompt_to_read = Mock(return_value={})
+
+            await prompt_service.set_prompt_state(
+                db=test_db,
+                prompt_id=5,
+                activate=True,
+            )
+
+            assert mock_audit.log_action.called, "audit_trail.log_action was not called"
+            _assert_no_db_passed(mock_audit)
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_details_audit_no_db_kwarg(self, prompt_service, test_db):
+        """get_prompt_details must call audit_trail.log_action without db=."""
+        with patch("mcpgateway.services.prompt_service.audit_trail") as mock_audit, \
+             patch("mcpgateway.services.prompt_service.structured_logger"):
+            mock_audit.log_action = MagicMock(return_value=None)
+
+            fake_prompt = _build_db_prompt(pid=7, name="details-test")
+            test_db.get = Mock(return_value=fake_prompt)
+            prompt_service._check_prompt_access = AsyncMock(return_value=True)
+            prompt_service._get_team_name = Mock(return_value=None)
+            prompt_service.convert_prompt_to_read = Mock(return_value={})
+
+            await prompt_service.get_prompt_details(
+                db=test_db,
+                prompt_id=7,
+            )
+
+            assert mock_audit.log_action.called, "audit_trail.log_action was not called"
+            _assert_no_db_passed(mock_audit)
