@@ -242,7 +242,7 @@ jobs:
                       }
                     }")
                   echo "Server response: $SERVER_RESPONSE"
-                  
+
                   # Export for next step
                   echo "SERVER_ID=$SERVER_ID" >> "${GITHUB_ENV}"
 
