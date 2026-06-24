@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { MCPServerForm } from "@/components/mcp-servers/MCPServerForm";
 import { ServersTable } from "@/components/servers/ServersTable";
 import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
+import { TestConnectionDialog } from "@/components/servers/TestConnectionDialog";
 import { MCPServerDetailsPanel } from "@/components/servers/MCPServerDetailsPanel";
 import { useQuery } from "@/hooks/useQuery";
 import { api } from "@/api/client";
@@ -28,9 +29,8 @@ export function Servers() {
   const [testDialogOpen, setTestDialogOpen] = useState(false);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
   const [updateServerId, setUpdateServerId] = useState<string | null>(null);
-  const [testResult, setTestResult] = useState<string | null>(null);
+  const [testServerId, setTestServerId] = useState<string | null>(null);
   const [toggleError, setToggleError] = useState<string | null>(null);
-  const [testError, setTestError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [selectedServerIdForDetails, setSelectedServerIdForDetails] = useState<string | null>(null);
   const [isDetailsDrawerOpen, setIsDetailsDrawerOpen] = useState(false);
@@ -151,17 +151,9 @@ export function Servers() {
     intl,
   ]);
 
-  const handleTest = async (id: string) => {
-    setTestError(null);
-    try {
-      const result = await serversApi.testConnection(id);
-      setTestResult(result.message);
-      setTestDialogOpen(true);
-    } catch (err) {
-      const errorMsg = sanitizeError(err);
-      setTestError(errorMsg);
-      console.error("Failed to test connection:", errorMsg);
-    }
+  const handleTest = (id: string) => {
+    setTestServerId(id);
+    setTestDialogOpen(true);
   };
 
   const handleToggleEnabled = useCallback(
@@ -272,16 +264,6 @@ export function Servers() {
             </div>
           )}
 
-          {testError && (
-            <div className="mb-6">
-              <InlineNotification
-                type="error"
-                message={testError}
-                onDismiss={() => setTestError(null)}
-              />
-            </div>
-          )}
-
           {servers.length > 0 ? (
             <>
               <div className="flex justify-between items-center mb-6">
@@ -385,14 +367,15 @@ export function Servers() {
         onConfirm={confirmDelete}
       />
 
-      <ConfirmDialog
+      <TestConnectionDialog
         open={testDialogOpen}
         onOpenChange={setTestDialogOpen}
-        title="Connection Test Result"
-        description={testResult || "Testing connection..."}
-        confirmLabel="OK"
-        cancelLabel=""
-        onConfirm={() => setTestDialogOpen(false)}
+        serverName={
+          testServerId
+            ? servers.find((s) => s.id === testServerId)?.name || "Unknown Server"
+            : "Unknown Server"
+        }
+        serverUrl={testServerId ? servers.find((s) => s.id === testServerId)?.url || "" : ""}
       />
 
       <MCPServerDetailsPanel
