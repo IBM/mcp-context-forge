@@ -303,6 +303,28 @@ class ServerService(BaseService):
         self._audit_trail = get_audit_trail_service()
         self._performance_tracker = get_performance_tracker()
 
+    def resolve_server_id(self, db: Session, server_id_or_name: str) -> Optional[str]:
+        """Resolve a server identifier (UUID or name) to a canonical UUID.
+
+        Accepts either a hex UUID or a server name. Returns the server's primary
+        key if found, or None if no matching server exists.
+
+        Args:
+            db: Database session.
+            server_id_or_name: UUID hex string or server name.
+
+        Returns:
+            The server UUID string, or None if not found.
+        """
+        # Try direct PK lookup first (fast path)
+        server = db.get(DbServer, server_id_or_name)
+        if server:
+            return server.id
+
+        # Fallback: lookup by name
+        server = db.query(DbServer).filter(DbServer.name == server_id_or_name).first()
+        return server.id if server else None
+
     async def initialize(self) -> None:
         """Initialize the server service."""
         logger.info("Initializing server service")
@@ -1968,7 +1990,11 @@ class ServerService(BaseService):
             >>> callable(service.get_oauth_protected_resource_metadata)
             True
         """
-        server = db.get(DbServer, server_id)
+        # Resolve server by UUID or name
+        resolved_id = self.resolve_server_id(db, server_id)
+        if not resolved_id:
+            raise ServerNotFoundError(f"Server not found: {server_id}")
+        server = db.get(DbServer, resolved_id)
 
         # Return not found for non-existent, disabled, or non-public servers
         # (avoids leaking information about private/team servers)

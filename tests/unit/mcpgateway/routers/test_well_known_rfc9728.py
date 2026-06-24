@@ -123,8 +123,10 @@ class TestRFC9728CompliantEndpoint:
         app.dependency_overrides.pop(get_db, None)
 
     def test_rfc9728_endpoint_invalid_uuid(self, app):
-        """Test RFC 9728 endpoint rejects non-UUID server IDs."""
+        """Test RFC 9728 endpoint rejects invalid identifiers and resolves names."""
         mock_db = MagicMock()
+        # Name lookups return no results (server not found)
+        mock_db.query.return_value.filter.return_value.first.return_value = None
 
         def override_get_db():
             yield mock_db
@@ -132,12 +134,12 @@ class TestRFC9728CompliantEndpoint:
         app.dependency_overrides[get_db] = override_get_db
         client = TestClient(app)
 
-        # Not a valid UUID
+        # Valid name format but server does not exist => 404 Server not found
         response = client.get("/.well-known/oauth-protected-resource/servers/not-a-uuid/mcp")
         assert response.status_code == 404
-        assert "Invalid server_id format" in response.json()["detail"]
+        assert "Server not found" in response.json()["detail"]
 
-        # Path traversal attempt
+        # Path traversal attempt (invalid name format)
         response = client.get("/.well-known/oauth-protected-resource/servers/../admin/mcp")
         assert response.status_code == 404
 

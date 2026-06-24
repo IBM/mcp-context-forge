@@ -1073,12 +1073,15 @@ async def _check_server_oauth_enforcement(server_id: str, user_context: Optional
 
     try:
         async with get_db() as db:
+            # Support both UUID and name resolution
             server = db.execute(select(DbServer).where(DbServer.id == server_id)).scalar_one_or_none()
+            if not server:
+                server = db.execute(select(DbServer).where(DbServer.name == server_id)).scalar_one_or_none()
             if server and server.oauth_enabled:
                 logger.warning("OAuth required for server %s but caller is unauthenticated", server_id)
                 raise OAuthRequiredError(
                     "This server requires OAuth authentication. Please provide a valid access token.",
-                    server_id=server_id,
+                    server_id=server.id,
                 )
             _oauth_checked_var.set(True)
     except SQLAlchemyError as exc:
@@ -3843,18 +3846,19 @@ class SessionManagerWrapper:
             server_id = match.group("server_id")
             # SECURITY: Validate that the server_id exists in the database
             # to prevent unauthorized access via invalid server IDs.
-            # Uses the shared BaseService.entity_exists() for a lightweight
-            # EXISTS check — no row data is loaded.
+            # Supports both UUID and server name resolution.
             try:
                 # First-Party
                 from mcpgateway.services.server_service import server_service as _server_svc  # pylint: disable=import-outside-toplevel,no-name-in-module
 
                 async with get_db() as db:
-                    if not await _server_svc.entity_exists(db, server_id):
+                    resolved_id = _server_svc.resolve_server_id(db, server_id)
+                    if not resolved_id:
                         logger.warning("Invalid server ID in MCP request path: %s", server_id)
                         response = ORJSONResponse({"detail": "Server not found"}, status_code=404)
                         await response(scope, receive, send)
                         return _REJECT
+                    server_id = resolved_id
             except Exception as e:
                 logger.error("Failed to validate server ID %s: %s", server_id, e)
                 response = ORJSONResponse({"detail": "Service unavailable — unable to verify server"}, status_code=503)
