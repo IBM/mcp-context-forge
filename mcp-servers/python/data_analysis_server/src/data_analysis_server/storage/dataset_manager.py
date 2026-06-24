@@ -194,7 +194,7 @@ class DatasetManager:
         if source:
             content += f"_{source}"
 
-        hash_obj = hashlib.md5(content.encode())
+        hash_obj = hashlib.sha256(content.encode())
         return f"dataset_{hash_obj.hexdigest()[:8]}"
 
     def _evict_if_necessary(self) -> None:
