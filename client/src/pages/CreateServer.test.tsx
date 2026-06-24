@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
-import type { ComponentType } from "react";
+import { createElement, type ComponentType } from "react";
 import { server } from "@/test/mocks/server";
 import { renderWithProviders } from "@/test/test-utils";
 import { createVirtualServer, updateVirtualServer } from "@/api/virtualServers";
@@ -44,7 +44,10 @@ vi.mock("@/components/gateways/CreateServerForm", async (importOriginal) => {
         componentMockState.capturedProps = props;
         return <div data-testid="mock-create-server-form" />;
       }
-      return (actual.CreateServerForm as ComponentType<MockCreateServerFormProps>)(props);
+      return createElement(
+        actual.CreateServerForm as ComponentType<MockCreateServerFormProps>,
+        props,
+      );
     },
   };
 });
@@ -58,7 +61,10 @@ vi.mock("@/components/gateways/SourceSelection", async (importOriginal) => {
         componentMockState.capturedSourceSelectionProps = props;
         return <div data-testid="mock-source-selection" />;
       }
-      return (actual.SourceSelection as ComponentType<MockSourceSelectionProps>)(props);
+      return createElement(
+        actual.SourceSelection as ComponentType<MockSourceSelectionProps>,
+        props,
+      );
     },
   };
 });
