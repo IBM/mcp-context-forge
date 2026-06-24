@@ -25954,7 +25954,7 @@ class TestAdminPersonalTeamFiltering:
 async def test_admin_gateways_partial_html_includes_async_lifecycle_flag_enabled(monkeypatch, mock_request, mock_db):
     """Test template context includes gateway_async_lifecycle_enabled=True when feature enabled."""
     monkeypatch.setattr("mcpgateway.admin.settings.gateway_async_lifecycle_enabled", True)
-    
+
     pagination = make_pagination_meta()
     monkeypatch.setattr(
         "mcpgateway.admin.paginate_query",
@@ -25963,18 +25963,18 @@ async def test_admin_gateways_partial_html_includes_async_lifecycle_flag_enabled
     setup_team_service(monkeypatch, [])
     gateway_service = MagicMock()
     monkeypatch.setattr("mcpgateway.admin.gateway_service", gateway_service)
-    
+
     # Capture template context
     original_template_response = mock_request.app.state.templates.TemplateResponse
     captured_context = {}
-    
+
     def capture_context(request, template_name, context):
         captured_context.update(context)
         return original_template_response(request, template_name, context)
-    
+
     mock_request.app.state.templates.TemplateResponse = capture_context
     mock_request.headers = {}
-    
+
     await admin_gateways_partial_html(
         mock_request,
         page=1,
@@ -25983,7 +25983,7 @@ async def test_admin_gateways_partial_html_includes_async_lifecycle_flag_enabled
         db=mock_db,
         user={"email": "user@example.com", "db": mock_db},
     )
-    
+
     assert "gateway_async_lifecycle_enabled" in captured_context
     assert captured_context["gateway_async_lifecycle_enabled"] is True
 
@@ -25992,7 +25992,7 @@ async def test_admin_gateways_partial_html_includes_async_lifecycle_flag_enabled
 async def test_admin_gateways_partial_html_includes_async_lifecycle_flag_disabled(monkeypatch, mock_request, mock_db):
     """Test template context includes gateway_async_lifecycle_enabled=False when feature disabled."""
     monkeypatch.setattr("mcpgateway.admin.settings.gateway_async_lifecycle_enabled", False)
-    
+
     pagination = make_pagination_meta()
     monkeypatch.setattr(
         "mcpgateway.admin.paginate_query",
@@ -26001,18 +26001,18 @@ async def test_admin_gateways_partial_html_includes_async_lifecycle_flag_disable
     setup_team_service(monkeypatch, [])
     gateway_service = MagicMock()
     monkeypatch.setattr("mcpgateway.admin.gateway_service", gateway_service)
-    
+
     # Capture template context
     original_template_response = mock_request.app.state.templates.TemplateResponse
     captured_context = {}
-    
+
     def capture_context(request, template_name, context):
         captured_context.update(context)
         return original_template_response(request, template_name, context)
-    
+
     mock_request.app.state.templates.TemplateResponse = capture_context
     mock_request.headers = {}
-    
+
     await admin_gateways_partial_html(
         mock_request,
         page=1,
@@ -26021,7 +26021,7 @@ async def test_admin_gateways_partial_html_includes_async_lifecycle_flag_disable
         db=mock_db,
         user={"email": "user@example.com", "db": mock_db},
     )
-    
+
     assert "gateway_async_lifecycle_enabled" in captured_context
     assert captured_context["gateway_async_lifecycle_enabled"] is False
 
@@ -26030,9 +26030,9 @@ async def test_admin_gateways_partial_html_includes_async_lifecycle_flag_disable
 async def test_admin_gateways_partial_html_passes_async_lifecycle_fields_to_template(monkeypatch, mock_request, mock_db):
     """Test async lifecycle fields from convert_gateway_to_read are passed to template."""
     from datetime import datetime, timezone
-    
+
     monkeypatch.setattr("mcpgateway.admin.settings.gateway_async_lifecycle_enabled", True)
-    
+
     mock_gateway = SimpleNamespace(id="gw-pending-1", team_id="team-1")
     pagination = make_pagination_meta()
     monkeypatch.setattr(
@@ -26040,7 +26040,7 @@ async def test_admin_gateways_partial_html_passes_async_lifecycle_fields_to_temp
         AsyncMock(return_value={"data": [mock_gateway], "pagination": pagination, "links": None}),
     )
     setup_team_service(monkeypatch, ["team-1"])
-    
+
     # Mock convert_gateway_to_read to return async lifecycle fields
     gateway_service = MagicMock()
     gateway_service.convert_gateway_to_read.return_value = {
@@ -26056,18 +26056,18 @@ async def test_admin_gateways_partial_html_passes_async_lifecycle_fields_to_temp
         "lifecycleClaimExpiresAt": "2026-06-24T14:35:00+00:00",
     }
     monkeypatch.setattr("mcpgateway.admin.gateway_service", gateway_service)
-    
+
     # Capture template context
     original_template_response = mock_request.app.state.templates.TemplateResponse
     captured_context = {}
-    
+
     def capture_context(request, template_name, context):
         captured_context.update(context)
         return original_template_response(request, template_name, context)
-    
+
     mock_request.app.state.templates.TemplateResponse = capture_context
     mock_request.headers = {}
-    
+
     await admin_gateways_partial_html(
         mock_request,
         page=1,
@@ -26077,7 +26077,7 @@ async def test_admin_gateways_partial_html_passes_async_lifecycle_fields_to_temp
         db=mock_db,
         user={"email": "user@example.com", "db": mock_db},
     )
-    
+
     # Verify gateway data includes async lifecycle fields (camelCase from jsonable_encoder)
     gateway_data = captured_context["data"][0]
     assert gateway_data["status"] == "pending"
@@ -26096,13 +26096,13 @@ async def test_admin_gateways_partial_html_passes_async_lifecycle_fields_to_temp
 async def test_admin_gateways_handles_invalidtag_exception_gracefully(monkeypatch, mock_request, mock_db):
     """Test admin endpoint handles InvalidTag exception during gateway conversion."""
     from cryptography.exceptions import InvalidTag
-    
+
     monkeypatch.setattr("mcpgateway.admin.settings.gateway_async_lifecycle_enabled", True)
-    
+
     # Create two gateways - one will fail with InvalidTag, one will succeed
     mock_gw_bad = SimpleNamespace(id="gw-bad", team_id="team-1")
     mock_gw_good = SimpleNamespace(id="gw-good", team_id="team-1")
-    
+
     pagination = make_pagination_meta(page=1, per_page=10, total_items=2)
     monkeypatch.setattr(
         "mcpgateway.admin.paginate_query",
@@ -26113,7 +26113,7 @@ async def test_admin_gateways_handles_invalidtag_exception_gracefully(monkeypatc
         }),
     )
     setup_team_service(monkeypatch, ["team-1"])
-    
+
     # Mock gateway_service to raise InvalidTag for first gateway, succeed for second
     gateway_service = MagicMock()
     def convert_side_effect(gateway):
@@ -26125,12 +26125,12 @@ async def test_admin_gateways_handles_invalidtag_exception_gracefully(monkeypatc
             "status": "active",
             "enabled": True,
         }
-    
+
     gateway_service.convert_gateway_to_read.side_effect = convert_side_effect
     monkeypatch.setattr("mcpgateway.admin.gateway_service", gateway_service)
-    
+
     mock_request.headers = {}
-    
+
     # Should not raise exception - handles InvalidTag gracefully
     response = await admin_gateways_partial_html(
         mock_request,
@@ -26141,7 +26141,7 @@ async def test_admin_gateways_handles_invalidtag_exception_gracefully(monkeypatc
         db=mock_db,
         user={"email": "user@example.com", "db": mock_db},
     )
-    
+
     # Response should succeed (fail-open behavior)
     # The bad gateway with InvalidTag exception is logged and filtered out
     # The good gateway conversion should succeed
@@ -26153,10 +26153,10 @@ async def test_admin_gateways_handles_invalidtag_exception_gracefully(monkeypatc
 async def test_admin_gateways_handles_attributeerror_exception_gracefully(monkeypatch, mock_request, mock_db):
     """Test admin endpoint handles AttributeError exception during gateway conversion."""
     monkeypatch.setattr("mcpgateway.admin.settings.gateway_async_lifecycle_enabled", True)
-    
+
     mock_gw_bad = SimpleNamespace(id="gw-attr-error", team_id="team-1")
     mock_gw_good = SimpleNamespace(id="gw-ok", team_id="team-1")
-    
+
     pagination = make_pagination_meta(page=1, per_page=10, total_items=2)
     monkeypatch.setattr(
         "mcpgateway.admin.paginate_query",
@@ -26167,7 +26167,7 @@ async def test_admin_gateways_handles_attributeerror_exception_gracefully(monkey
         }),
     )
     setup_team_service(monkeypatch, ["team-1"])
-    
+
     gateway_service = MagicMock()
     def convert_side_effect(gateway):
         if gateway.id == "gw-attr-error":
@@ -26178,12 +26178,12 @@ async def test_admin_gateways_handles_attributeerror_exception_gracefully(monkey
             "status": "active",
             "enabled": True,
         }
-    
+
     gateway_service.convert_gateway_to_read.side_effect = convert_side_effect
     monkeypatch.setattr("mcpgateway.admin.gateway_service", gateway_service)
-    
+
     mock_request.headers = {}
-    
+
     # Should not raise exception
     response = await admin_gateways_partial_html(
         mock_request,
@@ -26194,7 +26194,7 @@ async def test_admin_gateways_handles_attributeerror_exception_gracefully(monkey
         db=mock_db,
         user={"email": "user@example.com", "db": mock_db},
     )
-    
+
     # Response should succeed (fail-open behavior)
     # The bad gateway with AttributeError is logged and filtered out
     assert response.status_code == 200
