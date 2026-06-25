@@ -365,7 +365,7 @@ describe("Users", () => {
   });
 
 
-  
+
   it("removes user from list and shows success toast after API responds", async () => {
     const user = userEvent.setup();
 
@@ -614,7 +614,7 @@ describe("Users", () => {
   });
 
 
-  
+
   it("cancelling the delete dialog keeps user in list", async () => {
     const user = userEvent.setup();
 

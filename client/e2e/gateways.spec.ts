@@ -214,7 +214,7 @@ test.describe("Gateways page", () => {
     await page.route(`**/servers/${MOCK_VIRTUAL_SERVER.id}`, async (route) => {
       expect(route.request().method()).toBe("DELETE");
       deleteRequestCount += 1;
-      await deleteCanFinish; 
+      await deleteCanFinish;
       await route.fulfill({ status: 204 });
     });
 
@@ -523,7 +523,7 @@ test.describe("Gateways page", () => {
   });
 
   test("closes the details panel immediately when its virtual server is deleted", async ({ page }) => {
-    
+
     let releaseDelete!: () => void;
     const deleteCanFinish = new Promise<void>((resolve) => {
       releaseDelete = resolve;
@@ -560,10 +560,10 @@ test.describe("Gateways page", () => {
     const detailsPanel = page.getByRole("region", { name: "testVS details" });
     await expect(detailsPanel).toBeVisible();
 
-   
+
     await page.keyboard.press("Escape");
-    await expect(detailsPanel).toHaveCount(0); 
-    await page.waitForLoadState("networkidle"); 
+    await expect(detailsPanel).toHaveCount(0);
+    await page.waitForLoadState("networkidle");
 
     await page.getByRole("button", { name: "Actions for testVS" }).click();
     await page.getByRole("menuitem", { name: "Delete" }).click();
@@ -571,7 +571,7 @@ test.describe("Gateways page", () => {
     const dialog = page.getByRole("dialog", { name: "Delete virtual server" });
     await dialog.getByRole("button", { name: "Delete" }).click();
 
- 
+
     await expect(
       page.getByTestId("virtual-server-card").filter({ hasText: "testVS" }),
     ).toHaveCount(0);

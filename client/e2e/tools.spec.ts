@@ -211,7 +211,7 @@ test.describe("Tools page", () => {
   });
 
 
-  
+
   test("optimistically removes tool on delete confirmation and shows success toast", async ({
     page,
   }) => {
@@ -344,7 +344,7 @@ test.describe("Tools page", () => {
   });
 
 
-  
+
   test("details panel closes immediately when the only tool in a group is deleted", async ({
     page,
   }) => {
