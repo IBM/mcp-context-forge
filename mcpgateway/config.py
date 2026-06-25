@@ -1235,7 +1235,7 @@ class Settings(BaseSettings):
         default=False,
         description=(
             "DANGEROUS: Allow pre-request plugin hooks to override auth-sensitive headers "
-            "(authorization, cookie, x-api-key, proxy-authorization) that the client already sent. "
+            "(authorization, cookie, X-API-Key, proxy-authorization) that the client already sent."
             "Disabled by default because a malicious or misconfigured plugin could impersonate any "
             "user by rewriting the Authorization header. Only enable when all loaded plugins are "
             "fully trusted and the deployment requires token exchange (e.g. WXO auth). "
@@ -1495,6 +1495,16 @@ class Settings(BaseSettings):
         # CSRF secret key fallback to JWT secret key
         if not self.csrf_secret_key:
             self.csrf_secret_key = self.jwt_secret_key.get_secret_value()
+
+        # Validate header passthrough feature flag dependencies
+        # Fail if sensitive passthrough is enabled without base feature
+        if self.enable_sensitive_header_passthrough and not self.enable_header_passthrough:
+            raise ValueError(
+                "Configuration error: ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true requires ENABLE_HEADER_PASSTHROUGH=true. "
+                "The sensitive header passthrough feature depends on the base header passthrough feature. "
+                "Please set ENABLE_HEADER_PASSTHROUGH=true in your environment or disable ENABLE_SENSITIVE_HEADER_PASSTHROUGH. "
+                "See .env.example for configuration examples."
+            )
 
         return self
 
@@ -3328,6 +3338,12 @@ Disallow: /
     # Header passthrough feature (disabled by default for security)
     enable_header_passthrough: bool = Field(default=False, description="Enable HTTP header passthrough feature (WARNING: Security implications - only enable if needed)")
     enable_overwrite_base_headers: bool = Field(default=False, description="Enable overwriting of base headers")
+    enable_sensitive_header_passthrough: bool = Field(
+        default=False,
+        description="Enable passthrough of sensitive headers (Authorization, X-API-Key, etc.) when explicitly whitelisted. "
+        "Requires enable_header_passthrough=true. Default: false for security. "
+        "When enabled, whitelisted sensitive headers bypass router-level filtering.",
+    )
 
     # Passthrough headers configuration
     default_passthrough_headers: List[str] = Field(default_factory=list)

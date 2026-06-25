@@ -4791,6 +4791,30 @@ class A2AAgentCreate(BaseModel):
     version: Optional[str] = Field(default="1.0.0", description="Agent version for UAID generation")
     uaid_native_id_override: Optional[str] = Field(None, description="Override nativeId in UAID for cross-gateway routing (defaults to endpoint_url if not provided)")
 
+    @field_validator("passthrough_headers")
+    @classmethod
+    def validate_passthrough_headers(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        """Validate passthrough_headers contain valid HTTP header names.
+
+        Args:
+            v: Optional list of header name strings to validate
+
+        Returns:
+            List of validated header names or None
+
+        Raises:
+            ValueError: If any header name is invalid
+        """
+        if v is None:
+            return None
+        # HTTP header name must be a token per RFC 7230 section 3.2
+        # Token chars: alphanumeric, !, #, $, %, &, ', *, +, -, ., ^, _, `, |, ~
+        header_name_pattern = re.compile(r"^[a-zA-Z0-9!#$%&'*+\-.^_`|~]+$")
+        invalid_headers = [h for h in v if not header_name_pattern.match(h)]
+        if invalid_headers:
+            raise ValueError(f"Invalid header names: {', '.join(invalid_headers)}. Header names must contain only valid token characters (RFC 7230).")
+        return v
+
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
@@ -5120,6 +5144,30 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
     uaid_protocol: Optional[str] = Field(default=None, description="Protocol for UAID (a2a, mcp, rest, grpc)")
     version: Optional[str] = Field(default=None, description="Agent version for UAID generation")
     uaid_native_id_override: Optional[str] = Field(None, description="Override nativeId in UAID for cross-gateway routing (defaults to endpoint_url if not provided)")
+
+    @field_validator("passthrough_headers")
+    @classmethod
+    def validate_passthrough_headers(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        """Validate passthrough_headers contain valid HTTP header names.
+
+        Args:
+            v: Optional list of header name strings to validate
+
+        Returns:
+            List of validated header names or None
+
+        Raises:
+            ValueError: If any header name is invalid
+        """
+        if v is None:
+            return None
+        # HTTP header name must be a token per RFC 7230 section 3.2
+        # Token chars: alphanumeric, !, #, $, %, &, ', *, +, -, ., ^, _, `, |, ~
+        header_name_pattern = re.compile(r"^[a-zA-Z0-9!#$%&'*+\-.^_`|~]+$")
+        invalid_headers = [h for h in v if not header_name_pattern.match(h)]
+        if invalid_headers:
+            raise ValueError(f"Invalid header names: {', '.join(invalid_headers)}. Header names must contain only valid token characters (RFC 7230).")
+        return v
 
     @field_validator("auth_type")
     @classmethod

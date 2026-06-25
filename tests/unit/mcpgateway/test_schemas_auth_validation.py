@@ -537,3 +537,25 @@ def test_a2a_agent_update_process_auth_fields_none_auth_type():
     # Empty string should also return None (clear auth sentinel)
     info.data = {"auth_type": ""}
     assert A2AAgentUpdate._process_auth_fields(info) is None
+
+
+def test_a2a_agent_create_invalid_passthrough_header_with_space():
+    """A2AAgentCreate should reject invalid RFC 7230 header names in passthrough_headers (line 4815)."""
+    with pytest.raises(ValidationError) as exc_info:
+        A2AAgentCreate(
+            name="test-agent",
+            endpoint_url="http://example.com",
+            passthrough_headers=["Invalid Header"],  # Space is invalid
+        )
+    error_str = str(exc_info.value)
+    assert "Invalid header names" in error_str or "RFC 7230" in error_str
+
+
+def test_a2a_agent_update_invalid_passthrough_header_with_colon():
+    """A2AAgentUpdate should reject invalid RFC 7230 header names in passthrough_headers (line 5169)."""
+    with pytest.raises(ValidationError) as exc_info:
+        A2AAgentUpdate(
+            passthrough_headers=["X:Invalid"],  # Colon is invalid
+        )
+    error_str = str(exc_info.value)
+    assert "Invalid header names" in error_str or "RFC 7230" in error_str
