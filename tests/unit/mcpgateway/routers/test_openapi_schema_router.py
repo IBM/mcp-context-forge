@@ -375,3 +375,63 @@ async def test_generate_schemas_403_when_permission_denied(monkeypatch: pytest.M
     from tests.utils.rbac_mocks import patch_rbac_decorators
     patch_rbac_decorators()
     importlib.reload(router_mod)
+
+
+# ---------------------------------------------------------------------------
+# TestClient Integration Tests
+# ---------------------------------------------------------------------------
+
+
+def test_endpoint_via_testclient_validates_route_registration():
+    """Verify route is registered and accessible via ASGI app without CSRF token.
+
+    This test confirms:
+    1. Route registration works when the router is mounted on a FastAPI app
+    2. Pydantic validation returns 422 for invalid input (not 400)
+    3. No CSRF token is required (unlike admin endpoint)
+    4. Valid request with mocked service returns 200
+    """
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from mcpgateway.middleware.rbac import get_current_user_with_permissions
+    from mcpgateway.routers.openapi_schema_router import router as schema_router
+
+    test_app = FastAPI()
+    test_app.include_router(schema_router)
+
+    async def mock_user():
+        return {"email": "test@example.com", "is_admin": False}
+
+    test_app.dependency_overrides[get_current_user_with_permissions] = mock_user
+
+    client = TestClient(test_app, raise_server_exceptions=False)
+
+    # Test 1: Invalid request body (missing required 'url') should return 422 (Pydantic validation)
+    response = client.post(
+        "/v1/tools/generate-schemas-from-openapi",
+        json={"invalid": "data"},
+    )
+    assert response.status_code == 422, f"Expected 422, got {response.status_code}"
+    assert "detail" in response.json()
+
+    # Test 2: Valid request returns 200 without CSRF token
+    with patch("mcpgateway.routers.openapi_schema_router.fetch_and_extract_schemas", new_callable=AsyncMock) as mock_fetch:
+        mock_fetch.return_value = (
+            {"type": "object", "properties": {"a": {"type": "number"}}},
+            {"type": "object", "properties": {"result": {"type": "number"}}},
+            "http://api.example.com/openapi.json",
+        )
+        with patch("mcpgateway.routers.openapi_schema_router.SecurityValidator.validate_url"):
+            response = client.post(
+                "/v1/tools/generate-schemas-from-openapi",
+                json={
+                    "url": "http://api.example.com/calculate",
+                    "request_type": "GET",
+                    "openapi_url": "http://api.example.com/openapi.json",
+                },
+            )
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+        data = response.json()
+        assert data["success"] is True
+        assert data["message"] == "Schemas generated successfully from OpenAPI spec"
+        # Confirm no CSRF token was needed (request succeeded without X-CSRF-Token header)
