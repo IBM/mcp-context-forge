@@ -51,17 +51,22 @@ Type-only import of :class:`A2AAgentService` avoids a circular import at
 module-load time (the service module imports this policy module).
 """
 
+# Future
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Optional
+# Standard
+from typing import List, Optional, TYPE_CHECKING
 
+# Third-Party
 from sqlalchemy.orm import Session
 
+# First-Party
 from mcpgateway.db import Server as DbServer
 from mcpgateway.services.a2a_hooks import A2AAgentSnapshot
 from mcpgateway.services.a2a_server_service import _check_server_access
 
 if TYPE_CHECKING:  # pragma: no cover - import-time-only
+    # First-Party
     from mcpgateway.services.a2a_service import A2AAgentService
 
 

@@ -29,9 +29,9 @@ from __future__ import annotations
 # Standard
 import asyncio
 import logging
-import warnings
 from typing import Any, Dict, Optional
 from urllib.parse import urlsplit, urlunsplit
+import warnings
 
 # Third-Party
 import httpx

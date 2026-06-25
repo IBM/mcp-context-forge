@@ -42,10 +42,12 @@ deferral note swaps the bodies for real firing once the cpex fork
 is resolved — see ``docs/docs/architecture/a2a-cpex-hook-proposal.md``.
 """
 
+# Future
 from __future__ import annotations
 
-import logging
+# Standard
 from dataclasses import dataclass, field
+import logging
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)

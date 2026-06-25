@@ -818,6 +818,7 @@ class ImportService:
             # Safe ONLY because the import endpoint is admin-only at the route
             # level. If import ever opens to non-admin users, switch to
             # CallerContext.for_user(imported_by, <resolved_teams>).
+            # First-Party
             from mcpgateway.services.caller_context import CallerContext  # noqa: E402  pylint: disable=import-outside-toplevel
 
             try:

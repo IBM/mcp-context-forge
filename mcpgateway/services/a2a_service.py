@@ -33,16 +33,17 @@ from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, A2ATask, EmailTeam
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
-from mcpgateway.db import fresh_db_session, get_for_update, server_a2a_association
+from mcpgateway.db import fresh_db_session, get_for_update
 from mcpgateway.db import Server as DbServer
+from mcpgateway.db import server_a2a_association
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.observability import create_span, set_span_attribute, set_span_error
+from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
+from mcpgateway.schemas_a2a_native import AgentCapabilities, AgentCard, AgentSkill, SupportedInterface
 from mcpgateway.services.a2a_access_policy import (
     can_view_a2a_agent_directly,
     can_view_a2a_agent_in_server_context,
 )
-from mcpgateway.observability import create_span, set_span_attribute, set_span_error
-from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
-from mcpgateway.schemas_a2a_native import AgentCapabilities, AgentCard, AgentSkill, SupportedInterface
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
@@ -1097,6 +1098,7 @@ class A2AAgentService(BaseService):
             if not server:
                 raise AgentNotInServerError(agent_name, server_id)
 
+            # First-Party
             from mcpgateway.services.a2a_hooks import A2AAgentSnapshot  # pylint: disable=import-outside-toplevel
 
             agent_snapshot = A2AAgentSnapshot.from_orm(agent)
@@ -1117,6 +1119,7 @@ class A2AAgentService(BaseService):
         # to the centralized policy module. Visibility miss surfaces as
         # A2AAgentNotFoundError per plan D11 / Oracle v2 #3 to prevent
         # existence-leak side channels.
+        # First-Party
         from mcpgateway.services.a2a_hooks import A2AAgentSnapshot  # pylint: disable=import-outside-toplevel
 
         agent_snapshot = A2AAgentSnapshot.from_orm(agent)
@@ -1212,6 +1215,7 @@ class A2AAgentService(BaseService):
         if not agent:
             return None
 
+        # First-Party
         from mcpgateway.services.a2a_hooks import A2AAgentSnapshot  # pylint: disable=import-outside-toplevel
 
         agent_snapshot = A2AAgentSnapshot.from_orm(agent)

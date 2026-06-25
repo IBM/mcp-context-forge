@@ -1331,9 +1331,7 @@ def _warn_if_rust_a2a_runtime_deprecated() -> None:
     release).
     """
     if getattr(settings, "experimental_rust_a2a_runtime_enabled", False):
-        logger.warning(
-            "EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED=true is DEPRECATED. " "The Rust A2A runtime is removed in the next release; " "Python dispatcher is the only path. This flag is now ignored."
-        )
+        logger.warning("EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED=true is DEPRECATED. The Rust A2A runtime is removed in the next release; Python dispatcher is the only path. This flag is now ignored.")
 
 
 @asynccontextmanager
@@ -4169,6 +4167,7 @@ async def create_server(
             team_id = team_id or token_team_id
 
         logger.debug(f"User {SecurityValidator.sanitize_log_message(user_email)} is creating a new server for team {team_id}")
+        # First-Party
         from mcpgateway.services.caller_context import CallerContext  # noqa: E402  pylint: disable=import-outside-toplevel
 
         result = await server_service.register_server(
@@ -4230,6 +4229,7 @@ async def update_server(
 
         user_email: str = get_user_email(user)
         caller_token_teams = getattr(request.state, "token_teams", None)
+        # First-Party
         from mcpgateway.services.caller_context import CallerContext  # noqa: E402  pylint: disable=import-outside-toplevel
 
         result = await server_service.update_server(

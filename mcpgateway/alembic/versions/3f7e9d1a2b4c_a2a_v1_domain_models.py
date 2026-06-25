@@ -153,7 +153,7 @@ def upgrade() -> None:
 
         conn = op.get_bind()
         agents_with_auth = conn.execute(
-            sa.text("SELECT id, auth_type, auth_value, auth_query_params " "FROM a2a_agents " "WHERE auth_type IS NOT NULL " "AND id NOT IN (SELECT a2a_agent_id FROM a2a_agent_auth)")
+            sa.text("SELECT id, auth_type, auth_value, auth_query_params FROM a2a_agents WHERE auth_type IS NOT NULL AND id NOT IN (SELECT a2a_agent_id FROM a2a_agent_auth)")
         ).fetchall()
         for agent in agents_with_auth:
             # auth_query_params may be a Python dict (from a JSON column);

@@ -3100,6 +3100,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         # Ensure default visibility is private and assign to personal team when available
         team_id_cast = typing_cast(Optional[str], team_id)
         caller_token_teams = getattr(request.state, "token_teams", None)
+        # First-Party
         from mcpgateway.services.caller_context import CallerContext  # noqa: E402  pylint: disable=import-outside-toplevel
 
         await server_service.register_server(
@@ -3258,6 +3259,7 @@ async def admin_edit_server(
         )
 
         caller_token_teams = getattr(request.state, "token_teams", None)
+        # First-Party
         from mcpgateway.services.caller_context import CallerContext  # noqa: E402  pylint: disable=import-outside-toplevel
 
         await server_service.update_server(
