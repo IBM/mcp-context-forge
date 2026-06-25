@@ -5119,7 +5119,8 @@ async def invoke_a2a_agent(
             bearer_token = None
 
         # Extract inbound request metadata for plugin context
-        # Strip sensitive/credential headers before passing to plugins.
+        # When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=false: strip sensitive headers at router level
+        # When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true: pass all headers; service layer filters after whitelist check
         content_type = request.headers.get("content-type")
         request_headers = _prepare_request_headers(request.headers)
 
@@ -5211,7 +5212,8 @@ async def invoke_a2a_agent_by_id(
             bearer_token = None
 
         # Extract inbound request metadata for plugin context
-        # Strip sensitive/credential headers before passing to plugins.
+        # When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=false: strip sensitive headers at router level
+        # When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true: pass all headers; service layer filters after whitelist check
         content_type = request.headers.get("content-type")
         request_headers = _prepare_request_headers(request.headers)
 

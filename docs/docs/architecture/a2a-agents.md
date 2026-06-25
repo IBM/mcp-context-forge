@@ -294,7 +294,6 @@ This is **expected behavior** for sensitive headers. Plugin hooks are intentiona
 
 ## Related Documentation
 
-- [Agent Configuration](../manage/agent-configuration.md)
-- [Header Handling Security](../security/header-handling.md)
+- [Security Features](security-features.md)
 - [RBAC](../manage/rbac.md)
 - [Multi-Tenancy](multitenancy.md)

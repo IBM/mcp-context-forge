@@ -1235,7 +1235,7 @@ class Settings(BaseSettings):
         default=False,
         description=(
             "DANGEROUS: Allow pre-request plugin hooks to override auth-sensitive headers "
-            "(authorization, cookie, x-api-key, proxy-authorization) that the client already sent. "
+            "(authorization, cookie, X-API-Key, proxy-authorization) that the client already sent."
             "Disabled by default because a malicious or misconfigured plugin could impersonate any "
             "user by rewriting the Authorization header. Only enable when all loaded plugins are "
             "fully trusted and the deployment requires token exchange (e.g. WXO auth). "
