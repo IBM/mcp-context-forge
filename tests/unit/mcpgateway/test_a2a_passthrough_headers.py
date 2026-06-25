@@ -1318,7 +1318,7 @@ class TestAuthenticationBeforeHeaderProcessing:
             headers={
                 # Include sensitive headers that should NEVER reach downstream
                 "Authorization": "Bearer malicious-token",
-                "X-API-Key": "secret-key",
+                "X-API-Key": "secret-key",  # pragma: allowlist secret
                 "Cookie": "session=abc123",
             },
         )
@@ -1332,7 +1332,7 @@ class TestAuthenticationBeforeHeaderProcessing:
         "sensitive_header,value",
         [
             ("Authorization", "Bearer malicious-token"),
-            ("X-API-Key", "secret-key"),
+            ("X-API-Key", "secret-key"),  # pragma: allowlist secret
             ("Cookie", "session=hijacked"),
             ("X-Auth-Token", "stolen-token"),
         ],
@@ -1377,7 +1377,7 @@ class TestAuthenticationBeforeHeaderProcessing:
             json={"parameters": {"query": "test"}},
             headers={
                 "Authorization": "Bearer malicious-token",
-                "X-API-Key": "secret-key",
+                "X-API-Key": "secret-key",  # pragma: allowlist secret
             },
         )
 
