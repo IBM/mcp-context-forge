@@ -42,12 +42,14 @@ from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
+from mcpgateway.services.observability_service import ObservabilityService
 from mcpgateway.services.rust_a2a_runtime import get_rust_a2a_runtime_client, RustA2ARuntimeError
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.admin_check import is_user_admin
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filter_sensitive_headers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
@@ -1929,6 +1931,80 @@ class A2AAgentService(BaseService):
                 db.rollback()
                 raise
 
+    @staticmethod
+    def _prepare_header_flows(
+        request_headers: Optional[Dict[str, str]],
+        agent_passthrough_headers: Optional[List[str]],
+    ) -> tuple[Dict[str, str], Dict[str, str]]:
+        """
+        Prepare header flows for plugin hooks vs downstream agent invocation.
+
+        SECURITY: Plugin hooks ALWAYS receive sanitized headers (prevents credential leaks).
+        Downstream headers respect the ENABLE_SENSITIVE_HEADER_PASSTHROUGH flag.
+
+        Args:
+            request_headers: Inbound request headers (already lowercased)
+            agent_passthrough_headers: Whitelist of header names to forward
+
+        Returns:
+            Tuple of (plugin_headers, downstream_headers)
+        """
+        if not request_headers or not agent_passthrough_headers:
+            return {}, {}
+
+        whitelist_lower = {h.lower() for h in agent_passthrough_headers}
+        whitelisted_headers = {k: v for k, v in request_headers.items() if k in whitelist_lower}
+
+        # Plugin hooks ALWAYS get sanitized headers (no sensitive headers ever)
+        plugin_headers = _filter_sensitive_headers(whitelisted_headers)
+
+        # Downstream headers respect the feature flag
+        # Phase 1 (Issue #3621): When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=false (default),
+        # filter out sensitive headers even if whitelisted (backward compatible)
+        if not settings.enable_sensitive_header_passthrough:
+            downstream_headers = plugin_headers  # Same as plugins when flag OFF
+        else:
+            downstream_headers = whitelisted_headers  # Include sensitive when flag ON
+
+        return plugin_headers, downstream_headers
+
+    def _refilter_plugin_headers(
+        self,
+        plugin_headers: Dict[str, str],
+        agent: DbA2AAgent,
+        feature_flag_enabled: bool,
+    ) -> Dict[str, str]:
+        """Re-apply header filtering to plugin-returned headers.
+
+        Plugins receive sanitized headers (via _filter_sensitive_headers), but
+        when they return modified headers, those must be re-validated against
+        the same security boundaries to prevent malicious plugins from injecting
+        sensitive headers into downstream requests.
+
+        Related to issue #3621 (Phase 1) - PR #5183 security review fix.
+
+        Args:
+            plugin_headers: Headers returned by plugin in modified_payload.headers
+            agent: Target A2A agent with passthrough_headers whitelist
+            feature_flag_enabled: Value of ENABLE_SENSITIVE_HEADER_PASSTHROUGH flag
+
+        Returns:
+            Filtered and whitelisted headers safe for downstream forwarding
+        """
+        # If no whitelist configured, block all headers (matches _prepare_header_flows)
+        if not agent.passthrough_headers:
+            return {}
+
+        # Layer 1: Apply agent's passthrough whitelist
+        whitelist_lower = {h.lower() for h in agent.passthrough_headers}
+        whitelisted = {k: v for k, v in plugin_headers.items() if k.lower() in whitelist_lower}
+
+        # Layer 2: Strip sensitive headers if feature flag is disabled
+        # When flag is enabled, sensitive headers are allowed if whitelisted
+        if not feature_flag_enabled:
+            return _filter_sensitive_headers(whitelisted)
+        return whitelisted
+
     async def invoke_agent(
         self,
         db: Session,
@@ -2045,6 +2121,9 @@ class A2AAgentService(BaseService):
             if not agent_row:
                 raise A2AAgentNotFoundError(f"A2A Agent not found with name: {identifier}")
 
+            # DB transaction lifecycle: get_for_update() acquires row lock within
+            # request-scoped session (Depends(get_db)). Lock released on commit/rollback
+            # at request completion. No explicit commit needed (read-only).
             agent = get_for_update(db, DbA2AAgent, agent_row)
             if not agent:
                 raise A2AAgentNotFoundError(f"A2A Agent not found with name: {identifier}")
@@ -2086,13 +2165,35 @@ class A2AAgentService(BaseService):
         agent_oauth_config = getattr(agent, "oauth_config", None)
         agent_passthrough_headers = getattr(agent, "passthrough_headers", None)
 
-        # Filter request_headers to only whitelisted passthrough headers
-        # before they reach plugin hooks (prevents credential leak to plugins).
-        if request_headers and agent_passthrough_headers:
-            whitelist_lower = {h.lower() for h in agent_passthrough_headers}
-            request_headers = {k: v for k, v in request_headers.items() if k in whitelist_lower}
-        elif request_headers:
-            request_headers = {}  # No whitelist = no headers reach plugins
+        # SECURITY: Split header flows for plugin hooks vs downstream agent
+        # Plugin hooks ALWAYS receive sanitized headers (prevents credential leaks)
+        # Downstream headers respect the ENABLE_SENSITIVE_HEADER_PASSTHROUGH flag
+        plugin_headers, downstream_headers = self._prepare_header_flows(request_headers, agent_passthrough_headers)
+
+        # SECURITY AUDIT: Record metrics for downstream header forwarding (Issue #3621 Phase 1)
+        # Counter metric enables alerting/aggregation without log volume explosion.
+        # Startup warning (setup_passthrough_headers) provides one-time visibility.
+        if downstream_headers and settings.observability_enabled:
+            try:
+                obs_service = ObservabilityService()
+                # Record counter metric with attributes for aggregation/filtering
+                obs_service.record_metric(
+                    name="a2a.downstream_headers.forwarded",
+                    value=len(downstream_headers),
+                    metric_type="counter",
+                    unit="count",
+                    resource_type="a2a_agent",
+                    resource_id=agent_id,
+                    attributes={
+                        "agent_name": agent_name,
+                        "agent_id": agent_id,
+                        "user_email": user_email or "anonymous",
+                        "sensitive_passthrough_enabled": settings.enable_sensitive_header_passthrough,
+                    },
+                )
+            except Exception as metric_error:  # pragma: no cover
+                # Best-effort metric recording - don't fail request on metric errors
+                logger.debug("Failed to record downstream headers metric: %s", metric_error)
 
         # ═══════════════════════════════════════════════════════════════════════════
         # SECURITY: Validate UAID endpoint domain before invocation
@@ -2147,6 +2248,7 @@ class A2AAgentService(BaseService):
                 auth_type=agent_auth_type,
                 auth_value=agent_auth_value,
                 auth_query_params=agent_auth_query_params,
+                base_headers=downstream_headers,
                 correlation_id=correlation_id,
             )
         except Exception as e:
@@ -2211,7 +2313,7 @@ class A2AAgentService(BaseService):
                     payload=AgentPreInvokePayload(
                         agent_id=agent_id,
                         messages=[{"role": "user", "content": parameters}] if parameters else [],
-                        headers=HttpHeaderPayload(root=request_headers or {}),
+                        headers=HttpHeaderPayload(root=plugin_headers),
                         parameters=parameters if isinstance(parameters, dict) else {},
                     ),
                     global_context=global_context,
@@ -2222,7 +2324,26 @@ class A2AAgentService(BaseService):
                     if pre_result.modified_payload.parameters is not None:
                         parameters = pre_result.modified_payload.parameters
                     if pre_result.modified_payload.headers is not None:
-                        prepared.headers.update(pre_result.modified_payload.headers.model_dump())
+                        # Security: Re-filter plugin-returned headers to prevent malicious
+                        # plugins from injecting sensitive headers into downstream requests
+                        # (PR #5183 review fix)
+                        plugin_returned = pre_result.modified_payload.headers.model_dump()
+                        safe_headers = self._refilter_plugin_headers(
+                            plugin_headers=plugin_returned,
+                            agent=agent,
+                            feature_flag_enabled=settings.enable_sensitive_header_passthrough,
+                        )
+                        prepared.headers.update(safe_headers)
+
+                        # Log security-blocked headers for forensic awareness
+                        if plugin_returned.keys() - safe_headers.keys():
+                            removed = sorted(plugin_returned.keys() - safe_headers.keys())
+                            logger.warning(
+                                "Plugin attempted to set headers blocked by security policy: %s (agent=%s, flag=%s)",
+                                removed,
+                                agent.name,
+                                settings.enable_sensitive_header_passthrough,
+                            )
             except PluginViolationError as e:
                 logger.error("Plugin RBAC violation for A2A agent %s: %s", agent_id, e)
                 raise A2AAgentError(f"Plugin RBAC violation: {e}") from e

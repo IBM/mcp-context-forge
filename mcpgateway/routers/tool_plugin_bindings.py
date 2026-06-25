@@ -47,7 +47,7 @@ def _allowed_teams_from_ctx(ctx: Dict[str, Any]) -> Optional[set[str]]:
     """
     is_admin: bool = ctx.get("is_admin", False)
     token_teams = ctx.get("token_teams")
-    
+
     if is_admin and token_teams is None:
         return None
     return set(token_teams or [])
