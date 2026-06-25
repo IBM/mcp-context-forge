@@ -565,6 +565,25 @@ _LOOPBACK_SKIP_HEADERS: frozenset[str] = frozenset(
         "upgrade",
         "x-mcp-session-id",
         "x-forwarded-internally",
+        # Gateway-internal trust headers for the /_internal/mcp/* dispatch: the
+        # server-established auth context, runtime marker, and HMAC. A client
+        # passthrough header must never overwrite them, or a caller could spoof
+        # the trusted identity while the server's valid HMAC still rides along.
+        "x-contextforge-auth-context",
+        "x-contextforge-mcp-runtime",
+        "x-contextforge-mcp-runtime-auth",
+        "x-contextforge-session-validated",
+        # Forwarded / client-IP headers: strip so a caller cannot spoof the loopback
+        # client address that ProxyHeaders(trusted_hosts="*") would otherwise trust.
+        "forwarded",
+        "x-forwarded-for",
+        "x-forwarded-host",
+        "x-forwarded-proto",
+        "x-forwarded-port",
+        "x-forwarded-prefix",
+        "x-real-ip",
+        "cf-connecting-ip",
+        "true-client-ip",
     }
 )
 
