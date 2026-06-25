@@ -5,11 +5,18 @@
 import logging
 from typing import Optional
 
+# First-Party
+from mcpgateway.services.structured_logger import get_structured_logger
+
 # Module logger. IMPORTANT (L2): do NOT set propagate=False here — the event must reach the
-# application's configured handlers (incl. the structured-logging / DB sink when
-# STRUCTURED_LOGGING_DATABASE_ENABLED) via propagation to the root logger. The structured
-# payload is attached as `extra={"token_exchange": ...}` so structured handlers can index it.
+# application's configured handlers via propagation to the root logger. The structured
+# payload is attached as `extra={"token_exchange": ...}` so log-record-based consumers
+# (e.g. caplog in tests) can index it.
 logger = logging.getLogger("mcpgateway.audit.token_exchange")
+
+# Separate DB-backed structured logger: the stdlib `logger` above has no handler that
+# persists to StructuredLogEntry, so the DB audit trail is written explicitly here.
+_db_logger = get_structured_logger("token_exchange")
 
 
 def audit_token_exchange(
@@ -61,3 +68,13 @@ def audit_token_exchange(
             error,
             extra={"token_exchange": event},
         )
+
+    _db_logger.log(
+        "INFO" if success else "WARNING",
+        f"token-exchange {'succeeded' if success else 'failed'} for gateway {gateway_id}",
+        user_email=user_email,
+        correlation_id=correlation_id,
+        request_id=request_id,
+        is_security_event=True,
+        custom_fields=event,
+    )
