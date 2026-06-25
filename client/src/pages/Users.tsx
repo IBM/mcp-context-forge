@@ -10,6 +10,7 @@ import { useUsersList } from "@/hooks/useUsersList";
 import { usersApi } from "@/api/users";
 import { ApiError } from "@/api/client";
 import { createOptimisticUser } from "@/hooks/useUserForm";
+import { useAuthContext } from "@/auth/AuthContext";
 import type { User, CreateUserRequest, UpdateUserRequest } from "@/types/user";
 
 const DEFAULT_PAGE_SIZE = 10;
@@ -23,6 +24,7 @@ const ERROR_MESSAGES = {
 
 export function Users() {
   const intl = useIntl();
+  const { user: currentUser } = useAuthContext();
   const [limit, setLimit] = useState(DEFAULT_PAGE_SIZE);
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -30,7 +32,6 @@ export function Users() {
   const [userToEdit, setUserToEdit] = useState<User | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
   const {
     data: response,
     error: queryError,
@@ -90,21 +91,33 @@ export function Users() {
   const handleDeleteConfirm = useCallback(async () => {
     if (!userToDelete) return;
 
-    setIsDeleting(true);
+    const emailToDelete = userToDelete.email;
 
-    // Optimistic update: remove from list immediately
-    const previousUsers = allUsers;
-    setAllUsers((prev) => prev.filter((u) => u.email !== userToDelete.email));
-
-    try {
-      await usersApi.delete(userToDelete.email);
-      toast.success(
-        intl.formatMessage({ id: "users.delete.success" }, { email: userToDelete.email }),
-      );
+    // Client-side guard: never send the request if the user is deleting themselves.
+    // The backend enforces the same rule, but this avoids a wasted round-trip and any
+    if (currentUser?.email === emailToDelete) {
       setDeleteDialogOpen(false);
       setUserToDelete(null);
+      toast.error(intl.formatMessage({ id: "users.delete.error.self" }));
+      return;
+    }
+
+    // Optimistic update: snapshot current list, remove immediately, close dialog
+    let previousUsers: User[] = [];
+    setAllUsers((prev) => {
+      previousUsers = prev;
+      return prev.filter((u) => u.email !== emailToDelete);
+    });
+    setDeleteDialogOpen(false);
+    setUserToDelete(null);
+
+    try {
+      await usersApi.delete(emailToDelete);
+      toast.success(
+        intl.formatMessage({ id: "users.delete.success" }, { email: emailToDelete }),
+      );
     } catch (err) {
-      // Rollback optimistic update
+      // Rollback: restore the list as it was before the optimistic removal
       setAllUsers(previousUsers);
 
       let errorMessage = intl.formatMessage(
@@ -126,10 +139,8 @@ export function Users() {
       }
 
       toast.error(errorMessage);
-    } finally {
-      setIsDeleting(false);
     }
-  }, [userToDelete, allUsers, intl]);
+  }, [userToDelete, currentUser, intl]);
 
   const handleDeleteCancel = useCallback(() => {
     setDeleteDialogOpen(false);
@@ -274,7 +285,6 @@ export function Users() {
           userName={userToDelete.full_name || userToDelete.email}
           onConfirm={handleDeleteConfirm}
           onCancel={handleDeleteCancel}
-          isDeleting={isDeleting}
         />
       )}
     </main>
