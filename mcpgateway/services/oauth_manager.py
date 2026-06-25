@@ -202,7 +202,9 @@ class OAuthManager:
 
         return audience
 
-    async def get_access_token(self, credentials: Dict[str, Any], ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None, subject_token: Optional[str] = None) -> str:
+    async def get_access_token(
+        self, credentials: Dict[str, Any], ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None, subject_token: Optional[str] = None
+    ) -> str:
         """Get access token based on grant type.
 
         Args:

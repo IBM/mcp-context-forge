@@ -3991,6 +3991,7 @@ class ToolService(BaseService):
         await self._invalidate_token_exchange_on_unauthorized(401, oauth_config, gateway_id, app_user_email)
         fresh = await self._resolve_token_exchange_header(oauth_config, gateway_id, gateway_name, app_user_email, request_headers)
         return await send(fresh)  # single retry; no loop
+
     # pylint: enable=duplicate-code
 
     async def prepare_rust_mcp_tool_execution(
