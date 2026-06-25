@@ -273,9 +273,9 @@ ENABLE_SENSITIVE_HEADER_PASSTHROUGH=false
 When `ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true`, ContextForge logs a security audit warning at startup:
 
 ```
-🔐 SECURITY AUDIT: Sensitive Header Passthrough ENABLED - whitelisted sensitive headers 
-(Authorization, X-API-Key, etc.) will be forwarded to downstream A2A agents. Monitor metric 
-'a2a.downstream_headers.forwarded' for visibility (requires OBSERVABILITY_ENABLED=true). 
+🔐 SECURITY AUDIT: Sensitive Header Passthrough ENABLED - whitelisted sensitive headers
+(Authorization, X-API-Key, etc.) will be forwarded to downstream A2A agents. Monitor metric
+'a2a.downstream_headers.forwarded' for visibility (requires OBSERVABILITY_ENABLED=true).
 Only enable when trusted A2A agents require upstream credentials.
 ```
 
