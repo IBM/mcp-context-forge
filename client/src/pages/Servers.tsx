@@ -104,7 +104,6 @@ export function Servers() {
 
     const idToDelete = selectedServerId;
 
-
     let previousServers: MCPServer[] = [];
     setAllServers((prev) => {
       previousServers = prev;
@@ -125,11 +124,16 @@ export function Servers() {
 
     try {
       await serversApi.delete(idToDelete);
-      toast.success(intl.formatMessage({ id: "mcpServer.delete.success" }, { name: serverToDelete?.name ?? idToDelete }));
+      toast.success(
+        intl.formatMessage(
+          { id: "mcpServer.delete.success" },
+          { name: serverToDelete?.name ?? idToDelete },
+        ),
+      );
       try {
         await refetch();
       } catch (refreshErr) {
-        const errorMsg= sanitizeError(refreshErr)
+        const errorMsg = sanitizeError(refreshErr);
         console.error("Failed to refresh servers after deletion:", errorMsg);
       }
     } catch (err) {
@@ -278,7 +282,9 @@ export function Servers() {
           {servers.length > 0 ? (
             <>
               <div className="flex justify-between items-center mb-6">
-                <h1 className="text-base font-semibold text-foreground">{ intl.formatMessage({id:"mcpServer.title"})}</h1>
+                <h1 className="text-base font-semibold text-foreground">
+                  {intl.formatMessage({ id: "mcpServer.title" })}
+                </h1>
                 <Button
                   variant="default"
                   className="h-7 rounded-sm px-4"
