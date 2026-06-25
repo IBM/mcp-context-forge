@@ -241,6 +241,20 @@ Forwards application-specific metadata for downstream decision-making.
 - All forwarded headers are logged (keys only, not values)
 - Format: `A2A passthrough headers forwarded to downstream agent '<name>': ['x-tenant-id', 'x-request-id'] (user: <email>, agent_id: <id>)`
 
+**Observability Metrics:**
+When `OBSERVABILITY_ENABLED=true`, ContextForge records a counter metric for each A2A request with forwarded headers:
+
+- **Metric Name:** `a2a.downstream_headers.forwarded`
+- **Type:** Counter
+- **Value:** Count of headers forwarded in the request
+- **Attributes:**
+  - `agent_name`: Name of the downstream A2A agent
+  - `agent_id`: UUID of the downstream A2A agent
+  - `user_email`: Email of the requesting user (or "anonymous")
+  - `sensitive_passthrough_enabled`: Boolean indicating if sensitive header passthrough is enabled
+
+Use these attributes for alerting, dashboards, and security auditing.
+
 **Defense-in-Depth:**
 - Router-level filtering (first line of defense)
 - Service-level filtering (second line of defense)
@@ -254,6 +268,18 @@ Forwards application-specific metadata for downstream decision-making.
 # Enable sensitive header passthrough (default: false)
 ENABLE_SENSITIVE_HEADER_PASSTHROUGH=false
 ```
+
+**Startup Warning:**
+When `ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true`, ContextForge logs a security audit warning at startup:
+
+```
+🔐 SECURITY AUDIT: Sensitive Header Passthrough ENABLED - whitelisted sensitive headers 
+(Authorization, X-API-Key, etc.) will be forwarded to downstream A2A agents. Monitor metric 
+'a2a.downstream_headers.forwarded' for visibility (requires OBSERVABILITY_ENABLED=true). 
+Only enable when trusted A2A agents require upstream credentials.
+```
+
+This warning reminds operators that sensitive credentials can flow to downstream agents.
 
 **Agent Schema:**
 
@@ -270,6 +296,7 @@ ENABLE_SENSITIVE_HEADER_PASSTHROUGH=false
 - `passthrough_headers`: Array of strings or null
 - Empty array `[]` = explicit "no headers"
 - `null` = no passthrough configuration
+- Header names must be valid RFC 7230 tokens (alphanumeric plus `!#$%&'*+-.^_` + "`" + `|~`)
 
 ### Troubleshooting
 

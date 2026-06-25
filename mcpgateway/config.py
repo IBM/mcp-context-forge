@@ -1502,7 +1502,8 @@ class Settings(BaseSettings):
             raise ValueError(
                 "Configuration error: ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true requires ENABLE_HEADER_PASSTHROUGH=true. "
                 "The sensitive header passthrough feature depends on the base header passthrough feature. "
-                "Please set ENABLE_HEADER_PASSTHROUGH=true in your environment or disable ENABLE_SENSITIVE_HEADER_PASSTHROUGH."
+                "Please set ENABLE_HEADER_PASSTHROUGH=true in your environment or disable ENABLE_SENSITIVE_HEADER_PASSTHROUGH. "
+                "See .env.example for configuration examples."
             )
 
         return self
@@ -3206,7 +3207,9 @@ Disallow: /
                 db_dir.mkdir(parents=True)
 
     # Validation patterns for safe display (configurable)
-    validation_dangerous_html_pattern: str = r"<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>"
+    validation_dangerous_html_pattern: str = (
+        r"<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>"
+    )
 
     validation_dangerous_js_pattern: str = r"(?i)(?:^|\s|[\"'`<>=])(javascript:|vbscript:|data:\s*[^,]*[;\s]*(javascript|vbscript)|\bon[a-z]+\s*=|<\s*script\b)"
 
