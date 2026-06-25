@@ -10,7 +10,7 @@ import pytest
 
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.schemas import ResourceCreate, ResourceRead, ResourceUpdate
-from mcpgateway.services.resource_service import ResourceService
+from mcpgateway.services.resource_service import ResourceError, ResourceService
 
 _R = TypeVar("_R")
 
@@ -25,10 +25,17 @@ def _make_execute_result(*, scalar: _R | None = None, scalars_list: list[_R] | N
     return result
 
 
-def _assert_no_db_passed(mock_audit: MagicMock) -> None:
-    for call in mock_audit.log_action.call_args_list:
+def _assert_no_db_passed(mock_audit: MagicMock, *, expected_action: str | None = None, resource_type: str | None = None) -> None:
+    calls = mock_audit.log_action.call_args_list
+    for call in calls:
         assert "db" not in call.kwargs, f"audit_trail.log_action() was called with db= keyword argument: {call}"
         assert len(call.args) < 23, f"audit_trail.log_action() received too many positional args (db may be positional): {call}"
+    if expected_action is not None:
+        actions = [call.kwargs.get("action") for call in calls]
+        assert expected_action in actions, f"expected action {expected_action!r} not found in calls: {actions}"
+    if resource_type is not None:
+        for call in calls:
+            assert call.kwargs.get("resource_type") == resource_type, f"unexpected resource_type in call: {call}"
 
 
 @pytest.fixture(autouse=True)
@@ -72,7 +79,19 @@ class TestResourceAuditNoDb:
             resource_service._notify_resource_added = AsyncMock()
             await resource_service.register_resource(db, ResourceCreate(uri="https://example.com/resource-1", name="resource-1", mime_type="text/plain", content="x"))
             assert mock_audit.log_action.called
-            _assert_no_db_passed(mock_audit)
+            _assert_no_db_passed(mock_audit, expected_action="create_resource", resource_type="resource")
+
+    @pytest.mark.asyncio
+    async def test_register_resource_audit_failure_does_not_block_already_committed_resource(self, resource_service, db):
+        """If audit_trail.log_action() raises, the resource row is already committed (db.commit ran first)."""
+        with patch("mcpgateway.services.resource_service.audit_trail") as mock_audit, patch("mcpgateway.services.resource_service.structured_logger"):
+            mock_audit.log_action = MagicMock(side_effect=Exception("audit backend unavailable"))
+            db.execute = Mock(side_effect=[_make_execute_result(scalar=None), _make_execute_result(scalar=None)])
+            db.add = Mock(); db.commit = Mock(); db.refresh = Mock(); db.flush = Mock(); db.rollback = Mock()
+            resource_service._notify_resource_added = AsyncMock()
+            with pytest.raises(ResourceError):
+                await resource_service.register_resource(db, ResourceCreate(uri="https://example.com/resource-1", name="resource-1", mime_type="text/plain", content="x"))
+            db.commit.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_update_resource(self, resource_service, db, resource_db):
@@ -82,7 +101,7 @@ class TestResourceAuditNoDb:
             db.commit = Mock(); db.refresh = Mock(); db.rollback = Mock(); db.expire = Mock()
             await resource_service.update_resource(db, 1, ResourceUpdate(description="updated"))
             assert mock_audit.log_action.called
-            _assert_no_db_passed(mock_audit)
+            _assert_no_db_passed(mock_audit, expected_action="update_resource", resource_type="resource")
 
     @pytest.mark.asyncio
     async def test_set_resource_state(self, resource_service, db, resource_db):
@@ -92,7 +111,7 @@ class TestResourceAuditNoDb:
             db.commit = Mock(); db.refresh = Mock(); db.rollback = Mock()
             await resource_service.set_resource_state(db, 1, activate=False)
             assert mock_audit.log_action.called
-            _assert_no_db_passed(mock_audit)
+            _assert_no_db_passed(mock_audit, expected_action="set_resource_state", resource_type="resource")
 
     @pytest.mark.asyncio
     async def test_delete_resource(self, resource_service, db, resource_db):
@@ -102,7 +121,7 @@ class TestResourceAuditNoDb:
             db.delete = Mock(); db.commit = Mock(); db.rollback = Mock(); db.expire = Mock()
             await resource_service.delete_resource(db, 1)
             assert mock_audit.log_action.called
-            _assert_no_db_passed(mock_audit)
+            _assert_no_db_passed(mock_audit, expected_action="delete_resource", resource_type="resource")
 
     @pytest.mark.asyncio
     async def test_register_resources_bulk(self, resource_service, db):
@@ -123,4 +142,4 @@ class TestResourceAuditNoDb:
             await resource_service.register_resources_bulk(db, resources, created_by="tester")
 
             assert mock_audit.log_action.called
-            _assert_no_db_passed(mock_audit)
+            _assert_no_db_passed(mock_audit, expected_action="bulk_create_resources", resource_type="resource")

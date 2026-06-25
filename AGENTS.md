@@ -194,6 +194,18 @@ Observability write operations use **independent database sessions** that commit
 
 **Pattern**: Follows existing SQL instrumentation approach in `instrumentation/sqlalchemy.py:58-87`
 
+## Audit Trail Transaction Behavior
+
+**Issue #2871 - Separate Session Pattern**
+
+`AuditTrailService.log_action()` (`mcpgateway/services/audit_trail_service.py`) always opens its own `SessionLocal()` when no `db` is supplied, and closes/rolls back that session itself. Callers in `tool_service.py`, `resource_service.py`, `gateway_service.py`, `prompt_service.py`, and `server_service.py` must **never** pass `db=db` (the caller's request-scoped session) to `log_action()`.
+
+Passing the shared session caused **"This transaction is inactive"** errors: the main CRUD operation already calls `db.commit()` before the audit call, and reusing that same session for a second commit after it has already committed leaves the session in a state that breaks rollback on subsequent errors.
+
+- `log_action()` swallows its own exceptions internally and returns `None` on failure — it does not propagate them to the caller in production.
+- The main resource (tool/gateway/resource/prompt/server) is committed **before** `log_action()` runs, so an audit-logging failure never rolls back already-persisted data — but callers' generic `except Exception` handlers still call `db.rollback()` and surface an error to the API caller even though the underlying row was already committed.
+- Do not add `db: Session` back to a `log_action()` call site. If a service needs the audit entry guaranteed within the same transaction as the main write, that is a deliberate design change requiring review, not a default.
+
 **Middleware**: `ObservabilityMiddleware` no longer creates `request.state.db`. Each observability operation creates its own short-lived session.
 
 **Security**: Query operations use request-scoped sessions for RBAC/token scoping. Write operations are not RBAC-protected (observability visibility is platform-wide).

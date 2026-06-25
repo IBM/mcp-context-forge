@@ -29,7 +29,7 @@ import pytest
 # First-Party
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate
-from mcpgateway.services.prompt_service import PromptService
+from mcpgateway.services.prompt_service import PromptError, PromptService
 
 
 # ---------------------------------------------------------------------------
@@ -79,9 +79,10 @@ def _build_db_prompt(
     return p
 
 
-def _assert_no_db_passed(mock_audit: MagicMock) -> None:
+def _assert_no_db_passed(mock_audit: MagicMock, *, expected_action: str | None = None, resource_type: str | None = None) -> None:
     """Assert that none of the log_action calls received a ``db`` argument."""
-    for call in mock_audit.log_action.call_args_list:
+    calls = mock_audit.log_action.call_args_list
+    for call in calls:
         assert "db" not in call.kwargs, (
             f"audit_trail.log_action() was called with db= keyword argument: {call}"
         )
@@ -90,6 +91,12 @@ def _assert_no_db_passed(mock_audit: MagicMock) -> None:
         assert len(call.args) < 23, (
             f"audit_trail.log_action() received too many positional args (db may be positional): {call}"
         )
+    if expected_action is not None:
+        actions = [call.kwargs.get("action") for call in calls]
+        assert expected_action in actions, f"expected action {expected_action!r} not found in calls: {actions}"
+    if resource_type is not None:
+        for call in calls:
+            assert call.kwargs.get("resource_type") == resource_type, f"unexpected resource_type in call: {call}"
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +157,29 @@ class TestAuditTrailNoDbSession:
             await prompt_service.register_prompt(db=test_db, prompt=pc, created_by="tester")
 
             assert mock_audit.log_action.called, "audit_trail.log_action was not called"
-            _assert_no_db_passed(mock_audit)
+            _assert_no_db_passed(mock_audit, expected_action="create_prompt", resource_type="prompt")
+
+    @pytest.mark.asyncio
+    async def test_register_prompt_audit_failure_does_not_block_already_committed_prompt(self, prompt_service, test_db):
+        """If audit_trail.log_action() raises, the prompt row is already committed (db.commit ran first)."""
+        with patch("mcpgateway.services.prompt_service.audit_trail") as mock_audit, \
+             patch("mcpgateway.services.prompt_service.structured_logger"):
+            mock_audit.log_action = MagicMock(side_effect=Exception("audit backend unavailable"))
+
+            prompt_service._notify_prompt_added = AsyncMock()
+
+            pc = PromptCreate(
+                name="audit-failure-test",
+                description="regression test",
+                template="Hello {{ name }}!",
+                arguments=[],
+            )
+
+            with pytest.raises(PromptError):
+                await prompt_service.register_prompt(db=test_db, prompt=pc, created_by="tester")
+
+            committed = test_db.query(DbPrompt).filter(DbPrompt.name == "audit-failure-test").one_or_none()
+            assert committed is not None, "prompt row should already be committed before audit_trail.log_action() runs"
 
     @pytest.mark.asyncio
     async def test_get_prompt_audit_no_db_kwarg(self, prompt_service, test_db):
@@ -169,7 +198,7 @@ class TestAuditTrailNoDbSession:
             )
 
             assert mock_audit.log_action.called, "audit_trail.log_action was not called"
-            _assert_no_db_passed(mock_audit)
+            _assert_no_db_passed(mock_audit, expected_action="view_prompt", resource_type="prompt")
 
     @pytest.mark.asyncio
     async def test_update_prompt_audit_no_db_kwarg(self, prompt_service, test_db):
@@ -201,7 +230,7 @@ class TestAuditTrailNoDbSession:
             )
 
             assert mock_audit.log_action.called, "audit_trail.log_action was not called"
-            _assert_no_db_passed(mock_audit)
+            _assert_no_db_passed(mock_audit, expected_action="update_prompt", resource_type="prompt")
 
     @pytest.mark.asyncio
     async def test_delete_prompt_audit_no_db_kwarg(self, prompt_service, test_db):
@@ -222,7 +251,7 @@ class TestAuditTrailNoDbSession:
             )
 
             assert mock_audit.log_action.called, "audit_trail.log_action was not called"
-            _assert_no_db_passed(mock_audit)
+            _assert_no_db_passed(mock_audit, expected_action="delete_prompt", resource_type="prompt")
 
     @pytest.mark.asyncio
     async def test_set_prompt_state_audit_no_db_kwarg(self, prompt_service, test_db):
@@ -249,7 +278,7 @@ class TestAuditTrailNoDbSession:
             )
 
             assert mock_audit.log_action.called, "audit_trail.log_action was not called"
-            _assert_no_db_passed(mock_audit)
+            _assert_no_db_passed(mock_audit, expected_action="set_prompt_state", resource_type="prompt")
 
     @pytest.mark.asyncio
     async def test_get_prompt_details_audit_no_db_kwarg(self, prompt_service, test_db):
@@ -270,4 +299,4 @@ class TestAuditTrailNoDbSession:
             )
 
             assert mock_audit.log_action.called, "audit_trail.log_action was not called"
-            _assert_no_db_passed(mock_audit)
+            _assert_no_db_passed(mock_audit, expected_action="view_prompt_details", resource_type="prompt")
