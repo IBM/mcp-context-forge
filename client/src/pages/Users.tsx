@@ -113,9 +113,7 @@ export function Users() {
 
     try {
       await usersApi.delete(emailToDelete);
-      toast.success(
-        intl.formatMessage({ id: "users.delete.success" }, { email: emailToDelete }),
-      );
+      toast.success(intl.formatMessage({ id: "users.delete.success" }, { email: emailToDelete }));
     } catch (err) {
       // Rollback: restore the list as it was before the optimistic removal
       setAllUsers(previousUsers);

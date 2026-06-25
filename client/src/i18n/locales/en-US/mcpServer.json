@@ -1,5 +1,5 @@
 {
- "mcpServer.title": "MCP Servers",
- "mcpServer.delete.success": "{name} deleted.",
- "mcpServer.delete.errorTitle": "Error deleting mcp server"
+  "mcpServer.title": "MCP Servers",
+  "mcpServer.delete.success": "{name} deleted.",
+  "mcpServer.delete.errorTitle": "Error deleting mcp server"
 }

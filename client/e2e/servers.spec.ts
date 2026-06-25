@@ -45,7 +45,6 @@ test.describe("MCP Servers page", () => {
     });
   });
 
-
   test("shows empty state panel when no servers exist", async ({ page }) => {
     await page.route("**/gateways?*", async (route) => {
       await route.fulfill({
@@ -64,8 +63,6 @@ test.describe("MCP Servers page", () => {
     ).toBeVisible();
     await expect(page.getByRole("button", { name: /Connect/i })).toBeVisible();
   });
-
-
 
   test("shows servers list with title and Connect button when servers exist", async ({ page }) => {
     await page.route("**/gateways?*", async (route) => {
@@ -116,8 +113,6 @@ test.describe("MCP Servers page", () => {
     await expect(page.getByRole("row").filter({ hasText: "Slack MCP Server" })).toBeVisible();
   });
 
-
-
   test("shows Load More button when nextCursor is present", async ({ page }) => {
     await page.route("**/gateways?*", async (route) => {
       const url = new URL(route.request().url());
@@ -164,7 +159,6 @@ test.describe("MCP Servers page", () => {
     await expect(page.getByRole("button", { name: /Load More/i })).not.toBeVisible();
   });
 
-
   test("opens server actions dropdown menu", async ({ page }) => {
     await page.route("**/gateways?*", async (route) => {
       await route.fulfill({
@@ -185,7 +179,6 @@ test.describe("MCP Servers page", () => {
     await expect(page.getByRole("menuitem", { name: "Deactivate" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "Delete" })).toBeVisible();
   });
-
 
   test("optimistically removes server on delete confirmation and shows success toast", async ({
     page,
@@ -217,7 +210,9 @@ test.describe("MCP Servers page", () => {
     const dialog = page.getByRole("dialog", { name: "Delete MCP Server" });
     await expect(dialog).toBeVisible();
     await expect(
-      dialog.getByText("Are you sure you want to delete this MCP server? This action cannot be undone."),
+      dialog.getByText(
+        "Are you sure you want to delete this MCP server? This action cannot be undone.",
+      ),
     ).toBeVisible();
 
     await dialog.getByRole("button", { name: "Delete" }).click();
@@ -286,12 +281,16 @@ test.describe("MCP Servers page", () => {
 
     await expect.poll(() => deleteRequestCount).toBe(1);
 
-    await expect(page.locator("[data-sonner-toast]").filter({ hasText: "Error deleting mcp server" })).toBeVisible();
+    await expect(
+      page.locator("[data-sonner-toast]").filter({ hasText: "Error deleting mcp server" }),
+    ).toBeVisible();
 
     await expect(page.getByRole("row").filter({ hasText: "GitHub MCP Server" })).toBeVisible();
   });
 
-  test("closes details drawer optimistically when the viewed server is deleted", async ({ page }) => {
+  test("closes details drawer optimistically when the viewed server is deleted", async ({
+    page,
+  }) => {
     await page.route("**/gateways?*", async (route) => {
       await route.fulfill({
         status: 200,
@@ -311,18 +310,29 @@ test.describe("MCP Servers page", () => {
       await route.fulfill({ status: 204 });
     });
     await page.route(`**/gateways/${MOCK_SERVER.id}/tools*`, (route) =>
-      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ tools: [] }) }),
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ tools: [] }),
+      }),
     );
     await page.route(`**/gateways/${MOCK_SERVER.id}/resources*`, (route) =>
-      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ resources: [] }) }),
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ resources: [] }),
+      }),
     );
     await page.route(`**/gateways/${MOCK_SERVER.id}/prompts*`, (route) =>
-      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ prompts: [] }) }),
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ prompts: [] }),
+      }),
     );
 
     await page.goto(APP.SERVERS);
     await page.waitForLoadState("networkidle");
-
 
     await page.getByRole("button", { name: "Actions for GitHub MCP Server" }).click();
     await page.getByRole("menuitem", { name: "View Details" }).click();
@@ -332,7 +342,10 @@ test.describe("MCP Servers page", () => {
 
     await page.getByRole("button", { name: "Actions for GitHub MCP Server" }).click();
     await page.getByRole("menuitem", { name: "Delete" }).click();
-    await page.getByRole("dialog", { name: "Delete MCP Server" }).getByRole("button", { name: "Delete" }).click();
+    await page
+      .getByRole("dialog", { name: "Delete MCP Server" })
+      .getByRole("button", { name: "Delete" })
+      .click();
 
     await expect(page.getByRole("row").filter({ hasText: "GitHub MCP Server" })).not.toBeVisible();
     await expect(page.getByRole("button", { name: /close mcp server details/i })).not.toBeVisible();
@@ -363,18 +376,29 @@ test.describe("MCP Servers page", () => {
       });
     });
     await page.route(`**/gateways/${MOCK_SERVER.id}/tools*`, (route) =>
-      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ tools: [] }) }),
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ tools: [] }),
+      }),
     );
     await page.route(`**/gateways/${MOCK_SERVER.id}/resources*`, (route) =>
-      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ resources: [] }) }),
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ resources: [] }),
+      }),
     );
     await page.route(`**/gateways/${MOCK_SERVER.id}/prompts*`, (route) =>
-      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ prompts: [] }) }),
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ prompts: [] }),
+      }),
     );
 
     await page.goto(APP.SERVERS);
     await page.waitForLoadState("networkidle");
-
 
     await page.getByRole("button", { name: "Actions for GitHub MCP Server" }).click();
     await page.getByRole("menuitem", { name: "View Details" }).click();
@@ -384,12 +408,17 @@ test.describe("MCP Servers page", () => {
 
     await page.getByRole("button", { name: "Actions for GitHub MCP Server" }).click();
     await page.getByRole("menuitem", { name: "Delete" }).click();
-    await page.getByRole("dialog", { name: "Delete MCP Server" }).getByRole("button", { name: "Delete" }).click();
+    await page
+      .getByRole("dialog", { name: "Delete MCP Server" })
+      .getByRole("button", { name: "Delete" })
+      .click();
 
     await expect(page.getByRole("row").filter({ hasText: "GitHub MCP Server" })).toBeVisible();
     await expect(page.getByRole("button", { name: /close mcp server details/i })).not.toBeVisible();
 
-    await expect(page.locator("[data-sonner-toast]").filter({ hasText: "Error deleting mcp server" })).toBeVisible();
+    await expect(
+      page.locator("[data-sonner-toast]").filter({ hasText: "Error deleting mcp server" }),
+    ).toBeVisible();
   });
 
   test("does not close details drawer when a different server is deleted", async ({ page }) => {
@@ -413,13 +442,25 @@ test.describe("MCP Servers page", () => {
       await route.fulfill({ status: 204 });
     });
     await page.route(`**/gateways/${MOCK_SERVER.id}/tools*`, (route) =>
-      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ tools: [] }) }),
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ tools: [] }),
+      }),
     );
     await page.route(`**/gateways/${MOCK_SERVER.id}/resources*`, (route) =>
-      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ resources: [] }) }),
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ resources: [] }),
+      }),
     );
     await page.route(`**/gateways/${MOCK_SERVER.id}/prompts*`, (route) =>
-      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ prompts: [] }) }),
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ prompts: [] }),
+      }),
     );
 
     await page.goto(APP.SERVERS);
@@ -433,7 +474,10 @@ test.describe("MCP Servers page", () => {
 
     await page.getByRole("button", { name: "Actions for Slack MCP Server" }).click();
     await page.getByRole("menuitem", { name: "Delete" }).click();
-    await page.getByRole("dialog", { name: "Delete MCP Server" }).getByRole("button", { name: "Delete" }).click();
+    await page
+      .getByRole("dialog", { name: "Delete MCP Server" })
+      .getByRole("button", { name: "Delete" })
+      .click();
 
     await expect(page.getByRole("row").filter({ hasText: "Slack MCP Server" })).not.toBeVisible();
 
@@ -441,7 +485,6 @@ test.describe("MCP Servers page", () => {
     await page.getByRole("menuitem", { name: "View Details" }).click();
     await expect(page.getByRole("heading", { name: "GitHub MCP Server" })).toBeVisible();
   });
-
 
   test("opens server details panel from actions menu", async ({ page }) => {
     await page.route("**/gateways?*", async (route) => {
@@ -492,7 +535,6 @@ test.describe("MCP Servers page", () => {
     await expect(page.getByRole("heading", { name: "GitHub MCP Server" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Components" })).toBeVisible();
   });
-
 
   test("shows per-page selector in the servers footer", async ({ page }) => {
     await page.route("**/gateways?*", async (route) => {

@@ -40,7 +40,6 @@ test.describe("Tools page", () => {
     });
   });
 
-
   test("shows Add tools card when no tools exist", async ({ page }) => {
     await page.route("**/tools?*", async (route) => {
       await route.fulfill({
@@ -77,8 +76,6 @@ test.describe("Tools page", () => {
     await expect(page.getByRole("heading", { name: "Add tool" })).toBeVisible();
   });
 
-
-
   test("shows tools grouped by gateway slug", async ({ page }) => {
     await page.route("**/tools?*", async (route) => {
       await route.fulfill({
@@ -92,7 +89,6 @@ test.describe("Tools page", () => {
     await page.waitForLoadState("networkidle");
 
     await expect(page.getByRole("heading", { name: "Tools" })).toBeVisible();
-
 
     await expect(page.getByText("github-server")).toBeVisible();
     await expect(page.getByText("slack-server")).toBeVisible();
@@ -210,8 +206,6 @@ test.describe("Tools page", () => {
     await expect(panel).not.toBeVisible();
   });
 
-
-
   test("optimistically removes tool on delete confirmation and shows success toast", async ({
     page,
   }) => {
@@ -236,7 +230,6 @@ test.describe("Tools page", () => {
     await page.goto(APP.TOOLS);
     await page.waitForLoadState("networkidle");
 
-
     await page.getByRole("button", { name: "More options for github-server" }).click();
     await page.getByRole("menuitem", { name: "View Details" }).click();
 
@@ -245,15 +238,12 @@ test.describe("Tools page", () => {
 
     await expect(panel.getByText("get_issues").first()).toBeVisible();
 
-
     await panel.getByRole("button", { name: "More options" }).first().click();
     await page.getByRole("menuitem", { name: "Delete" }).click();
 
     const dialog = page.getByRole("dialog", { name: "Delete tool" });
     await expect(dialog).toBeVisible();
-    await expect(
-      dialog.getByText(/Are you sure you want to delete "get_issues"/i),
-    ).toBeVisible();
+    await expect(dialog.getByText(/Are you sure you want to delete "get_issues"/i)).toBeVisible();
 
     await dialog.getByRole("button", { name: "Delete" }).click();
 
@@ -305,11 +295,9 @@ test.describe("Tools page", () => {
 
     await expect.poll(() => deleteRequestCount).toBe(1);
 
-
     await expect(
       page.locator("[data-sonner-toast]").filter({ hasText: /Forbidden/i }),
     ).toBeVisible();
-
 
     await expect(panel.getByText("get_issues").first()).toBeVisible();
   });
@@ -338,12 +326,9 @@ test.describe("Tools page", () => {
 
     await dialog.getByRole("button", { name: "Cancel" }).click();
 
-
     await expect(dialog).not.toBeVisible();
     await expect(panel.getByText("get_issues").first()).toBeVisible();
   });
-
-
 
   test("details panel closes immediately when the only tool in a group is deleted", async ({
     page,
@@ -377,8 +362,10 @@ test.describe("Tools page", () => {
     await panel.getByRole("button", { name: "More options" }).first().click();
     await page.getByRole("menuitem", { name: "Delete" }).click();
 
-    await page.getByRole("dialog", { name: "Delete tool" }).getByRole("button", { name: "Delete" }).click();
-
+    await page
+      .getByRole("dialog", { name: "Delete tool" })
+      .getByRole("button", { name: "Delete" })
+      .click();
 
     await expect(panel).not.toBeVisible();
   });
@@ -423,12 +410,13 @@ test.describe("Tools page", () => {
 
     await panel.getByRole("button", { name: "More options" }).first().click();
     await page.getByRole("menuitem", { name: "Delete" }).click();
-    await page.getByRole("dialog", { name: "Delete tool" }).getByRole("button", { name: "Delete" }).click();
-
+    await page
+      .getByRole("dialog", { name: "Delete tool" })
+      .getByRole("button", { name: "Delete" })
+      .click();
 
     await expect(panel.getByText("alpha_tool")).not.toBeVisible();
     await expect(panel.getByText("beta_tool").first()).toBeVisible();
-
 
     resolveDelete();
     await expect(
@@ -470,13 +458,14 @@ test.describe("Tools page", () => {
 
     await panel.getByRole("button", { name: "More options" }).first().click();
     await page.getByRole("menuitem", { name: "Delete" }).click();
-    await page.getByRole("dialog", { name: "Delete tool" }).getByRole("button", { name: "Delete" }).click();
-
+    await page
+      .getByRole("dialog", { name: "Delete tool" })
+      .getByRole("button", { name: "Delete" })
+      .click();
 
     await expect(
       page.locator("[data-sonner-toast]").filter({ hasText: /Forbidden/i }),
     ).toBeVisible();
-
 
     await expect(panel).toBeVisible();
     await expect(panel.getByText("rollback_tool_1").first()).toBeVisible();
@@ -515,14 +504,15 @@ test.describe("Tools page", () => {
 
     await panel.getByRole("button", { name: "More options" }).first().click();
     await page.getByRole("menuitem", { name: "Delete" }).click();
-    await page.getByRole("dialog", { name: "Delete tool" }).getByRole("button", { name: "Delete" }).click();
-
+    await page
+      .getByRole("dialog", { name: "Delete tool" })
+      .getByRole("button", { name: "Delete" })
+      .click();
 
     await expect(page.getByText("lone-gateway")).not.toBeVisible();
 
     await expect(page.getByText("github-server")).toBeVisible();
   });
-
 
   test("Add tools card is keyboard accessible via Enter", async ({ page }) => {
     await page.route("**/tools?*", async (route) => {
