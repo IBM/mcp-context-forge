@@ -42,6 +42,7 @@ from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
+from mcpgateway.services.observability_service import ObservabilityService
 from mcpgateway.services.rust_a2a_runtime import get_rust_a2a_runtime_client, RustA2ARuntimeError
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
@@ -2169,15 +2170,30 @@ class A2AAgentService(BaseService):
         # Downstream headers respect the ENABLE_SENSITIVE_HEADER_PASSTHROUGH flag
         plugin_headers, downstream_headers = self._prepare_header_flows(request_headers, agent_passthrough_headers)
 
-        # SECURITY AUDIT: Log headers forwarded to downstream agent for compliance
-        if downstream_headers:
-            logger.info(
-                "A2A passthrough headers forwarded to downstream agent '%s': %s (user: %s, agent_id: %s)",
-                agent_name,
-                list(downstream_headers.keys()),
-                user_email or "anonymous",
-                agent_id,
-            )
+        # SECURITY AUDIT: Record metrics for downstream header forwarding (Issue #3621 Phase 1)
+        # Counter metric enables alerting/aggregation without log volume explosion.
+        # Startup warning (setup_passthrough_headers) provides one-time visibility.
+        if downstream_headers and settings.observability_enabled:
+            try:
+                obs_service = ObservabilityService()
+                # Record counter metric with attributes for aggregation/filtering
+                obs_service.record_metric(
+                    name="a2a.downstream_headers.forwarded",
+                    value=len(downstream_headers),
+                    metric_type="counter",
+                    unit="count",
+                    resource_type="a2a_agent",
+                    resource_id=agent_id,
+                    attributes={
+                        "agent_name": agent_name,
+                        "agent_id": agent_id,
+                        "user_email": user_email or "anonymous",
+                        "sensitive_passthrough_enabled": settings.enable_sensitive_header_passthrough,
+                    },
+                )
+            except Exception as metric_error:  # pragma: no cover
+                # Best-effort metric recording - don't fail request on metric errors
+                logger.debug("Failed to record downstream headers metric: %s", metric_error)
 
         # ═══════════════════════════════════════════════════════════════════════════
         # SECURITY: Validate UAID endpoint domain before invocation

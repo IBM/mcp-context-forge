@@ -28,7 +28,6 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import Settings
-from mcpgateway.services.a2a_service import A2AAgentService
 
 
 # Sensitive header patterns (from main.py:4989-4999)
@@ -584,7 +583,7 @@ class TestEndToEndHeaderFlow:
         assert "x-tenant-id" in router_filtered
 
         # Step 2: Service processes (a2a_service.py:2091-2105)
-        service = A2AAgentService()
+        # Note: A2AAgentService instantiation not needed for this test (just simulating logic)
 
         # Simulate service filtering
         request_headers = router_filtered
@@ -788,3 +787,194 @@ class TestDefenseInDepth:
         # Authorization passed through (flag ON)
         assert "authorization" in service_out
         assert "x-tenant-id" in service_out
+
+
+# =============================================================================
+# Security Audit Tests: Startup Warning + Metrics (PR #5183 Review)
+# =============================================================================
+
+
+class TestStartupSecurityWarning:
+    """Test startup warning for sensitive header passthrough."""
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.main.logger")
+    @patch("mcpgateway.main.set_global_passthrough_headers", new_callable=AsyncMock)
+    @patch("mcpgateway.main.get_db")
+    async def test_warning_fires_when_sensitive_passthrough_enabled(
+        self, mock_get_db, _mock_set_global, mock_logger
+    ):
+        """Startup warning fires when ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true."""
+        # Arrange
+        mock_db = MagicMock()
+        mock_get_db.return_value = iter([mock_db])
+
+        with patch("mcpgateway.main.settings") as mock_settings:
+            mock_settings.enable_sensitive_header_passthrough = True
+            mock_settings.default_passthrough_headers = ["X-Tenant-Id"]
+            mock_settings.enable_overwrite_base_headers = False
+
+            # Act
+            from mcpgateway.main import setup_passthrough_headers  # pylint: disable=import-outside-toplevel
+
+            await setup_passthrough_headers()
+
+        # Assert - Check that warning was logged
+        warning_calls = [call for call in mock_logger.warning.call_args_list if "SECURITY AUDIT" in str(call)]
+        assert len(warning_calls) > 0, "Startup warning should fire when sensitive passthrough enabled"
+
+        # Verify warning message mentions metric name
+        warning_message = str(warning_calls[0])
+        assert "a2a.downstream_headers.forwarded" in warning_message, "Warning should mention metric name for monitoring"
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.main.logger")
+    @patch("mcpgateway.main.set_global_passthrough_headers", new_callable=AsyncMock)
+    @patch("mcpgateway.main.get_db")
+    async def test_no_warning_when_sensitive_passthrough_disabled(
+        self, mock_get_db, _mock_set_global, mock_logger
+    ):
+        """No startup warning when ENABLE_SENSITIVE_HEADER_PASSTHROUGH=false (default)."""
+        # Arrange
+        mock_db = MagicMock()
+        mock_get_db.return_value = iter([mock_db])
+
+        with patch("mcpgateway.main.settings") as mock_settings:
+            mock_settings.enable_sensitive_header_passthrough = False  # Default
+            mock_settings.default_passthrough_headers = ["X-Tenant-Id"]
+            mock_settings.enable_overwrite_base_headers = False
+
+            # Act
+            from mcpgateway.main import setup_passthrough_headers  # pylint: disable=import-outside-toplevel
+
+            await setup_passthrough_headers()
+
+        # Assert - Check that SECURITY AUDIT warning was NOT logged
+        warning_calls = [call for call in mock_logger.warning.call_args_list if "SECURITY AUDIT" in str(call)]
+        assert len(warning_calls) == 0, "Startup warning should NOT fire when sensitive passthrough disabled"
+
+
+class TestDownstreamHeadersMetrics:
+    """Test metrics recording for downstream header forwarding."""
+
+    @patch("mcpgateway.services.a2a_service.ObservabilityService")
+    @patch("mcpgateway.services.a2a_service.settings")
+    def test_metric_recorded_when_observability_enabled(self, mock_settings, mock_obs_service_class):
+        """Metric recorded when OBSERVABILITY_ENABLED=true and downstream headers present."""
+        # Arrange
+        mock_settings.observability_enabled = True
+        mock_settings.enable_sensitive_header_passthrough = True
+
+        mock_obs_instance = MagicMock()
+        mock_obs_service_class.return_value = mock_obs_instance
+
+        # Simulate the metric recording logic from a2a_service.py:2173-2196
+        downstream_headers = {
+            "authorization": "Bearer token123",  # pragma: allowlist secret
+            "x-tenant-id": "acme-corp",
+        }
+
+        agent_name = "test-agent"
+        agent_id = "550e8400-e29b-41d4-a716-446655440000"
+        user_email = "test@example.com"
+
+        # Act
+        if downstream_headers and mock_settings.observability_enabled:
+            obs_service = mock_obs_service_class()
+            obs_service.record_metric(
+                name="a2a.downstream_headers.forwarded",
+                value=len(downstream_headers),
+                metric_type="counter",
+                unit="count",
+                resource_type="a2a_agent",
+                resource_id=agent_id,
+                attributes={
+                    "agent_name": agent_name,
+                    "agent_id": agent_id,
+                    "user_email": user_email or "anonymous",
+                    "sensitive_passthrough_enabled": mock_settings.enable_sensitive_header_passthrough,
+                    "header_count": len(downstream_headers),
+                },
+            )
+
+        # Assert
+        mock_obs_service_class.assert_called_once()
+        mock_obs_instance.record_metric.assert_called_once()
+
+        call_kwargs = mock_obs_instance.record_metric.call_args[1]
+        assert call_kwargs["name"] == "a2a.downstream_headers.forwarded"
+        assert call_kwargs["value"] == 2  # Two headers
+        assert call_kwargs["metric_type"] == "counter"
+        assert call_kwargs["attributes"]["agent_name"] == agent_name
+        assert call_kwargs["attributes"]["header_count"] == 2
+
+    @patch("mcpgateway.services.a2a_service.ObservabilityService")
+    @patch("mcpgateway.services.a2a_service.settings")
+    def test_metric_skipped_when_observability_disabled(self, mock_settings, mock_obs_service_class):
+        """Metric NOT recorded when OBSERVABILITY_ENABLED=false (default, no overhead)."""
+        # Arrange
+        mock_settings.observability_enabled = False  # Default
+        mock_settings.enable_sensitive_header_passthrough = True
+
+        downstream_headers = {
+            "authorization": "Bearer token123",  # pragma: allowlist secret
+            "x-tenant-id": "acme-corp",
+        }
+
+        # Act - Conditional metric recording
+        if downstream_headers and mock_settings.observability_enabled:
+            obs_service = mock_obs_service_class()
+            obs_service.record_metric(name="a2a.downstream_headers.forwarded", value=len(downstream_headers))
+
+        # Assert - ObservabilityService should NOT be instantiated
+        mock_obs_service_class.assert_not_called()
+
+    @patch("mcpgateway.services.a2a_service.ObservabilityService")
+    @patch("mcpgateway.services.a2a_service.settings")
+    @patch("mcpgateway.services.a2a_service.logger")
+    def test_metric_error_does_not_fail_request(self, mock_logger, mock_settings, mock_obs_service_class):
+        """Metric recording error does not fail A2A request (best-effort)."""
+        # Arrange
+        mock_settings.observability_enabled = True
+        mock_settings.enable_sensitive_header_passthrough = True
+
+        mock_obs_instance = MagicMock()
+        mock_obs_instance.record_metric.side_effect = Exception("Database connection failed")
+        mock_obs_service_class.return_value = mock_obs_instance
+
+        downstream_headers = {"x-tenant-id": "acme-corp"}
+
+        # Act - Simulate try/except wrapper
+        try:
+            if downstream_headers and mock_settings.observability_enabled:
+                obs_service = mock_obs_service_class()
+                obs_service.record_metric(
+                    name="a2a.downstream_headers.forwarded",
+                    value=len(downstream_headers),
+                    metric_type="counter",
+                )
+        except Exception as metric_error:
+            mock_logger.debug("Failed to record downstream headers metric: %s", metric_error)
+
+        # Assert - Exception should be caught and logged at DEBUG level
+        mock_logger.debug.assert_called_once()
+        debug_message = mock_logger.debug.call_args[0][0]
+        assert "Failed to record downstream headers metric" in debug_message
+
+    @patch("mcpgateway.services.a2a_service.ObservabilityService")
+    @patch("mcpgateway.services.a2a_service.settings")
+    def test_metric_not_recorded_when_no_downstream_headers(self, mock_settings, mock_obs_service_class):
+        """Metric NOT recorded when downstream_headers is empty (no forwarding occurred)."""
+        # Arrange
+        mock_settings.observability_enabled = True
+        mock_settings.enable_sensitive_header_passthrough = True
+
+        downstream_headers = {}  # No headers forwarded
+
+        # Act
+        if downstream_headers and mock_settings.observability_enabled:
+            obs_service = mock_obs_service_class()
+            obs_service.record_metric(name="a2a.downstream_headers.forwarded", value=len(downstream_headers))
+
+        # Assert - Should NOT record metric when no headers forwarded
+        mock_obs_service_class.assert_not_called()

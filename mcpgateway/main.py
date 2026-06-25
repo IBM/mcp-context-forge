@@ -1899,6 +1899,16 @@ async def setup_passthrough_headers():
         logger.warning("⚠️  Base Header Override: ENABLED - Client headers can override gateway headers")
     else:
         logger.info("🔒 Base Header Override: DISABLED - Gateway headers take precedence")
+
+    # SECURITY AUDIT: Startup warning for sensitive header forwarding (Issue #3621 Phase 1)
+    if settings.enable_sensitive_header_passthrough:
+        logger.warning(
+            "🔐 SECURITY AUDIT: Sensitive Header Passthrough ENABLED - "
+            "whitelisted sensitive headers (Authorization, X-API-Key, etc.) will be forwarded to downstream A2A agents. "
+            "Monitor metric 'a2a.downstream_headers.forwarded' for visibility (requires OBSERVABILITY_ENABLED=true). "
+            "Only enable when trusted A2A agents require upstream credentials."
+        )
+
     db_gen = get_db()
     db = next(db_gen)  # pylint: disable=stop-iteration-return
     try:
