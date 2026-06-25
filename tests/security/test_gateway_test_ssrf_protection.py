@@ -234,18 +234,22 @@ class TestGatewayTestSSRFProtection:
             mock_settings.ssrf_protection_enabled = True
             mock_settings.gateway_test_dns_timeout = 5.0
 
-            # Real DNS resolution - this is an integration test
-            result = await SecurityValidator.validate_gateway_test_url(
-                "https://api.example.com/v1",
-                allowed_hosts=["*.example.com"],
-                field_name="Gateway test URL"
-            )
+            # Mock DNS resolution to return a public IP
+            with patch("socket.getaddrinfo") as mock_getaddrinfo:
+                mock_getaddrinfo.return_value = [
+                    (2, 1, 6, "", ("93.184.216.34", 0))  # example.com public IP
+                ]
 
-            assert result["validated_url"] == "https://api.example.com/v1"
-            assert result["hostname"] == "api.example.com"
-            # Verify that a resolved IP was captured (actual IP may vary)
-            assert result["resolved_ip"]
-            assert len(result["resolved_ip"]) > 0
+                result = await SecurityValidator.validate_gateway_test_url(
+                    "https://api.example.com/v1",
+                    allowed_hosts=["*.example.com"],
+                    field_name="Gateway test URL"
+                )
+
+                assert result["validated_url"] == "https://api.example.com/v1"
+                assert result["hostname"] == "api.example.com"
+                # Verify that resolved IP was captured
+                assert result["resolved_ip"] == "93.184.216.34"
 
     @pytest.mark.asyncio
     async def test_ipv6_loopback_blocked_when_ssrf_enabled(self):
@@ -282,17 +286,21 @@ class TestGatewayTestSSRFProtection:
             mock_settings.ssrf_protection_enabled = True
             mock_settings.gateway_test_dns_timeout = 5.0
 
-            # Real DNS resolution - this is an integration test
-            result = await SecurityValidator.validate_gateway_test_url(
-                "https://example.com/api",
-                allowed_hosts=["example.com"],
-                field_name="Gateway test URL"
-            )
+            # Mock DNS resolution to return a public IP
+            with patch("socket.getaddrinfo") as mock_getaddrinfo:
+                mock_getaddrinfo.return_value = [
+                    (2, 1, 6, "", ("93.184.216.34", 0))  # example.com public IP
+                ]
 
-            # Verify that resolved IP is captured for pinning
-            assert result["resolved_ip"]
-            assert len(result["resolved_ip"]) > 0
-            assert result["hostname"] == "example.com"
+                result = await SecurityValidator.validate_gateway_test_url(
+                    "https://example.com/api",
+                    allowed_hosts=["example.com"],
+                    field_name="Gateway test URL"
+                )
+
+                # Verify that resolved IP is captured for pinning
+                assert result["resolved_ip"] == "93.184.216.34"
+                assert result["hostname"] == "example.com"
 
     @pytest.mark.asyncio
     async def test_fqdn_normalization_prevents_bypass(self):
@@ -301,18 +309,22 @@ class TestGatewayTestSSRFProtection:
             mock_settings.ssrf_protection_enabled = True
             mock_settings.gateway_test_dns_timeout = 5.0
 
-            # Real DNS resolution - this is an integration test
-            # Trailing dot should be normalized and match allowlist
-            result = await SecurityValidator.validate_gateway_test_url(
-                "https://example.com./api",
-                allowed_hosts=["example.com"],
-                field_name="Gateway test URL"
-            )
+            # Mock DNS resolution to return a public IP
+            with patch("socket.getaddrinfo") as mock_getaddrinfo:
+                mock_getaddrinfo.return_value = [
+                    (2, 1, 6, "", ("93.184.216.34", 0))  # example.com public IP
+                ]
 
-            assert result["hostname"] == "example.com."
-            # Verify that a resolved IP was captured (actual IP may vary)
-            assert result["resolved_ip"]
-            assert len(result["resolved_ip"]) > 0
+                # Trailing dot should be normalized and match allowlist
+                result = await SecurityValidator.validate_gateway_test_url(
+                    "https://example.com./api",
+                    allowed_hosts=["example.com"],
+                    field_name="Gateway test URL"
+                )
+
+                assert result["hostname"] == "example.com."
+                # Verify that resolved IP was captured
+                assert result["resolved_ip"] == "93.184.216.34"
 
     @pytest.mark.asyncio
     async def test_consistency_with_standard_validate_url(self):
