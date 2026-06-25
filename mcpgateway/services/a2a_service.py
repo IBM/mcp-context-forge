@@ -2088,9 +2088,10 @@ class A2AAgentService(BaseService):
 
         # Filter request_headers to only whitelisted passthrough headers
         # before they reach plugin hooks (prevents credential leak to plugins).
+        # Normalize header keys to lowercase to prevent duplicate headers with different casings.
         if request_headers and agent_passthrough_headers:
             whitelist_lower = {h.lower() for h in agent_passthrough_headers}
-            request_headers = {k: v for k, v in request_headers.items() if k in whitelist_lower}
+            request_headers = {k.lower(): v for k, v in request_headers.items() if k.lower() in whitelist_lower}
         elif request_headers:
             request_headers = {}  # No whitelist = no headers reach plugins
 
@@ -2203,7 +2204,16 @@ class A2AAgentService(BaseService):
             except Exception as e:
                 logger.warning("Failed to build A2A agent metadata for plugins: %s", e)
 
+        # Merge filtered passthrough headers BEFORE plugin hooks
+        # This ensures plugins see the full set of headers that will be sent and can modify/remove them.
+        # Plugin modifications take precedence (security: plugins have final authority over headers).
+        if request_headers:
+            prepared.headers.update(request_headers)
+            logger.debug(f"A2A agent '{agent_name}': Merged {len(request_headers)} passthrough headers into prepared headers (whitelist: {agent_passthrough_headers})")
+
         # Fire pre-invoke hook — can modify parameters, headers, and agent metadata
+        # IMPORTANT: Plugin header modifications must take precedence over passthrough headers.
+        # Plugins may remove/modify headers for security (e.g., header_filter plugin).
         if plugin_manager and plugin_manager.has_hooks_for(AgentHookType.AGENT_PRE_INVOKE):
             try:
                 pre_result, context_table = await plugin_manager.invoke_hook(
@@ -2211,7 +2221,7 @@ class A2AAgentService(BaseService):
                     payload=AgentPreInvokePayload(
                         agent_id=agent_id,
                         messages=[{"role": "user", "content": parameters}] if parameters else [],
-                        headers=HttpHeaderPayload(root=request_headers or {}),
+                        headers=HttpHeaderPayload(root=prepared.headers),
                         parameters=parameters if isinstance(parameters, dict) else {},
                     ),
                     global_context=global_context,
@@ -2222,7 +2232,11 @@ class A2AAgentService(BaseService):
                     if pre_result.modified_payload.parameters is not None:
                         parameters = pre_result.modified_payload.parameters
                     if pre_result.modified_payload.headers is not None:
-                        prepared.headers.update(pre_result.modified_payload.headers.model_dump())
+                        # Plugin modifications REPLACE prepared.headers (not merge)
+                        # This ensures plugins can remove headers (e.g., for security filtering)
+                        plugin_headers = pre_result.modified_payload.headers.model_dump()
+                        prepared.headers.clear()
+                        prepared.headers.update(plugin_headers)
             except PluginViolationError as e:
                 logger.error("Plugin RBAC violation for A2A agent %s: %s", agent_id, e)
                 raise A2AAgentError(f"Plugin RBAC violation: {e}") from e

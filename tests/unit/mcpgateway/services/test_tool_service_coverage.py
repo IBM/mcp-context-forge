@@ -7716,7 +7716,7 @@ class TestInvokeToolRestPost:
 # ---------------------------------------------------------------------------
 
 
-def _make_a2a_agent(*, enabled=True, agent_type="jsonrpc", auth_type=None, auth_value=None, auth_query_params=None):
+def _make_a2a_agent(*, enabled=True, agent_type="jsonrpc", auth_type=None, auth_value=None, auth_query_params=None, passthrough_headers=None):
     """Create a mock A2A agent."""
     agent = MagicMock()
     agent.id = "agent-uuid-1"
@@ -7728,6 +7728,7 @@ def _make_a2a_agent(*, enabled=True, agent_type="jsonrpc", auth_type=None, auth_
     agent.auth_type = auth_type
     agent.auth_value = auth_value
     agent.auth_query_params = auth_query_params
+    agent.passthrough_headers = passthrough_headers
     return agent
 
 
@@ -8515,6 +8516,118 @@ class TestInvokeToolA2A:
 
         ctx.set_state.assert_called_with("cb_timeout_failure", True)
         plugin_manager.invoke_hook.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a2a_with_passthrough_headers_whitelist(self, tool_service):
+        """A2A tool with passthrough_headers filters and forwards whitelisted headers."""
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent()
+        a2a_agent.passthrough_headers = ["x-tenant-id", "x-user-id"]
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        captured_headers = {}
+        mock_http_response = MagicMock()
+        mock_http_response.status_code = 200
+        mock_http_response.json = MagicMock(return_value={"response": "ok"})
+
+        async def fake_post(url, json=None, headers=None):
+            captured_headers.update(headers or {})
+            return mock_http_response
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.post = fake_post
+
+            request_headers = {
+                "X-Tenant-ID": "tenant-123",
+                "X-User-ID": "user-456",
+                "Authorization": "Bearer secret",
+                "X-Secret": "should-not-forward",
+            }
+
+            await tool_service.invoke_tool(db, "test_tool", {"query": "test"}, request_headers=request_headers)
+
+        # Only whitelisted headers should be forwarded (normalized to lowercase)
+        assert "x-tenant-id" in captured_headers
+        assert "x-user-id" in captured_headers
+        assert captured_headers["x-tenant-id"] == "tenant-123"
+        assert captured_headers["x-user-id"] == "user-456"
+        # Non-whitelisted headers should NOT be forwarded
+        assert "authorization" not in captured_headers
+        assert "Authorization" not in captured_headers
+        assert "x-secret" not in captured_headers
+
+    @pytest.mark.asyncio
+    async def test_a2a_without_passthrough_headers_blocks_all(self, tool_service):
+        """A2A tool without passthrough_headers configured blocks all request headers (fail-closed)."""
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent()
+        a2a_agent.passthrough_headers = None  # No whitelist configured
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        captured_headers = {}
+        mock_http_response = MagicMock()
+        mock_http_response.status_code = 200
+        mock_http_response.json = MagicMock(return_value={"response": "ok"})
+
+        async def fake_post(url, json=None, headers=None):
+            captured_headers.update(headers or {})
+            return mock_http_response
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.post = fake_post
+
+            request_headers = {
+                "X-Tenant-ID": "tenant-123",
+                "X-User-ID": "user-456",
+            }
+
+            await tool_service.invoke_tool(db, "test_tool", {"query": "test"}, request_headers=request_headers)
+
+        # No request headers should be forwarded (only base headers like Content-Type)
+        assert "x-tenant-id" not in captured_headers
+        assert "x-user-id" not in captured_headers
+        # Base headers from prepare_a2a_invocation should still be present
+        assert "Content-Type" in captured_headers or "content-type" in captured_headers
 
 
 # ---------------------------------------------------------------------------
@@ -9880,3 +9993,87 @@ class TestInvokeToolLookupLogic:
             # Even though user_email matches owner, public-only token should deny access
             with pytest.raises(ToolNotFoundError, match="not found"):
                 await tool_service.invoke_tool(db, "test_tool", {}, user_email="me@test.com", token_teams=[])
+
+
+# ---------------------------------------------------------------------------
+# Plugin header removal override protection (Issue #5004)
+# ---------------------------------------------------------------------------
+
+
+class TestPluginHeaderRemovalNotOverridden:
+    """Tests that plugin header modifications are respected and not overridden by passthrough logic."""
+
+    @pytest.mark.asyncio
+    async def test_plugin_can_remove_passthrough_headers_a2a_path(self, tool_service):
+        """When a plugin removes a passthrough header, it should stay removed (A2A tool path)."""
+        # First-Party
+        from cpex.framework import ToolHookType
+
+        # Setup A2A tool with passthrough headers
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        gp = _make_gateway_payload()
+        db = MagicMock()
+
+        # A2A agent with passthrough_headers whitelist
+        a2a_agent = _make_a2a_agent(passthrough_headers=["x-secret"])
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        # Plugin that removes a passthrough header
+        plugin_manager = MagicMock()
+
+        def _has_hooks_for(hook_type):
+            return hook_type == ToolHookType.TOOL_PRE_INVOKE
+
+        plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
+
+        # Plugin receives headers including x-secret from passthrough, but removes it
+        def _invoke_hook(hook_type, payload, **kwargs):
+            # Plugin removes x-secret header
+            modified_headers = {k: v for k, v in payload.headers.root.items() if k != "x-secret"}
+            return (
+                SimpleNamespace(
+                    modified_payload=SimpleNamespace(
+                        name=payload.name,
+                        args=payload.args,
+                        headers=SimpleNamespace(model_dump=lambda: modified_headers),
+                    )
+                ),
+                {},
+            )
+
+        plugin_manager.invoke_hook = AsyncMock(side_effect=_invoke_hook)
+
+        # Mock HTTP client to capture headers sent downstream
+        captured_headers = {}
+
+        async def fake_post(url, **kwargs):
+            captured_headers.update(kwargs.get("headers", {}))
+            return MagicMock(status_code=200, json=MagicMock(return_value={"jsonrpc": "2.0", "id": 1, "result": {"status": "ok"}}))
+
+        tool_service._http_client = AsyncMock()
+        tool_service._http_client.post = AsyncMock(side_effect=fake_post)
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=plugin_manager)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=["x-secret"])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            # Call with request_headers containing x-secret
+            await tool_service.invoke_tool(db, "test_tool", {}, request_headers={"x-secret": "sensitive-token"})
+
+            # Verify x-secret was NOT forwarded downstream (plugin removed it)
+            assert "x-secret" not in captured_headers, "Plugin-removed header should not be re-added by passthrough logic"
