@@ -590,7 +590,7 @@ describe("Gateways", () => {
 
     expect(mockDeleteVirtualServer).toHaveBeenCalledOnce();
 
-  
+
     await waitFor(() => {
       expect(screen.queryByRole("button", { name: "Actions for Server A" })).not.toBeInTheDocument();
     });
@@ -599,7 +599,7 @@ describe("Gateways", () => {
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
 
-   
+
     await user.click(screen.getByRole("button", { name: "Actions for Server B" }));
     const deleteBItem = await screen.findByRole("menuitem", { name: "Delete" });
     expect(deleteBItem).toHaveAttribute("data-disabled");
@@ -679,7 +679,7 @@ describe("Gateways", () => {
   });
 
   it("rolls back the details panel when the delete API call fails", async () => {
-   
+
     const user = userEvent.setup();
     let rejectDelete!: (err: Error) => void;
     const deletePromise = new Promise<void>((_, reject) => {
@@ -718,7 +718,7 @@ describe("Gateways", () => {
     await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
     await user.click(screen.getByRole("button", { name: "Delete" }));
 
-    
+
     await waitFor(() =>
       expect(screen.queryByTestId("virtual-server-card")).not.toBeInTheDocument(),
     );
@@ -733,7 +733,7 @@ describe("Gateways", () => {
     );
   });
 
-  
+
   it("renders virtual server card without crashing when array fields are missing", () => {
     const partialServer: VirtualServer = {
       id: "gateway-2",

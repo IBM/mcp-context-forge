@@ -375,7 +375,7 @@ test.describe("MCP Servers page", () => {
     await page.goto(APP.SERVERS);
     await page.waitForLoadState("networkidle");
 
-    
+
     await page.getByRole("button", { name: "Actions for GitHub MCP Server" }).click();
     await page.getByRole("menuitem", { name: "View Details" }).click();
     await expect(page.getByRole("heading", { name: "GitHub MCP Server" })).toBeVisible();
@@ -493,7 +493,7 @@ test.describe("MCP Servers page", () => {
     await expect(page.getByRole("heading", { name: "Components" })).toBeVisible();
   });
 
-  
+
   test("shows per-page selector in the servers footer", async ({ page }) => {
     await page.route("**/gateways?*", async (route) => {
       await route.fulfill({
