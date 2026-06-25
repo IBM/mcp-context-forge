@@ -32,10 +32,7 @@ interface UseQueryResult<TData, TBody = unknown> {
   execute: (overrideBody?: TBody) => Promise<TData>;
   /** Re-runs the last query with the same parameters. Resolves with the fetched data. */
   refetch: () => Promise<TData>;
-  /**
-   * Imperatively updates the cached data (e.g. to patch a single item in place
-   * after a mutation, avoiding a full refetch). Supports functional updates.
-   */
+  /** Imperatively patches the cached data in place after a mutation (avoiding a full refetch). Supports functional updates. */
   setData: Dispatch<SetStateAction<TData | undefined>>;
 }
 
