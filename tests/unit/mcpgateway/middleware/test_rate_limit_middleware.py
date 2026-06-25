@@ -16,6 +16,30 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
+def _trusted_internal_request(path, *, marker="rust", hmac_value=None, ctx="ctx", client="127.0.0.1"):
+    """Build a real loopback internal request for trust-gate exemption tests."""
+    from starlette.requests import Request
+
+    from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header
+
+    headers = [
+        (b"x-contextforge-mcp-runtime", marker.encode()),
+        (b"x-contextforge-mcp-runtime-auth", (hmac_value or _expected_internal_mcp_runtime_auth_header()).encode()),
+    ]
+    if ctx is not None:
+        headers.append((b"x-contextforge-auth-context", ctx.encode()))
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "headers": headers,
+        "client": (client, 12345),
+    }
+    return Request(scope)
+
+
 class TestRateLimitMiddleware:
     """Tests for RateLimitMiddleware."""
 
@@ -57,6 +81,29 @@ class TestRateLimitMiddleware:
         request.state = MagicMock()
         request.scope = {"client": ("192.168.1.100", 12345)}
         return request
+
+    @pytest.mark.asyncio
+    async def test_trusted_internal_dispatch_skips_rate_limiting(self, middleware):
+        """A trusted-internal hop is not rate-limited; the edge request already was."""
+        request = _trusted_internal_request("/_internal/mcp/rpc")
+        call_next = AsyncMock(return_value="passthrough")
+        # If the exemption fires, tier computation is never reached.
+        middleware.get_endpoint_tier = MagicMock(side_effect=AssertionError("trusted internal must not be rate-limited"))
+
+        result = await middleware.dispatch(request, call_next)
+
+        assert result == "passthrough"
+        call_next.assert_awaited_once_with(request)
+
+    @pytest.mark.asyncio
+    async def test_forged_internal_request_is_still_rate_limited(self, middleware):
+        """A forged HMAC fails the trust gate, so the rate-limit path runs."""
+        request = _trusted_internal_request("/_internal/mcp/rpc", hmac_value="forged")
+        call_next = AsyncMock(return_value="passthrough")
+        middleware.get_endpoint_tier = MagicMock(side_effect=RuntimeError("reached rate-limit path"))
+
+        with pytest.raises(RuntimeError, match="reached rate-limit path"):
+            await middleware.dispatch(request, call_next)
 
     def test_endpoint_tier_critical(self, middleware):
         """Test CRITICAL tier detection for auth endpoints."""
