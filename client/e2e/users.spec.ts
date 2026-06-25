@@ -321,7 +321,9 @@ test.describe("Users page", () => {
     });
   });
 
-  test("optimistically removes user on delete confirmation and shows success toast", async ({ page }) => {
+  test("optimistically removes user on delete confirmation and shows success toast", async ({
+    page,
+  }) => {
     let deleteRequestCount = 0;
 
     await page.route("**/auth/email/admin/users?*", async (route) => {
@@ -391,7 +393,9 @@ test.describe("Users page", () => {
     await expect(page.getByText("John Doe")).toBeVisible();
   });
 
-  test("rolls back optimistic delete and shows error toast when delete API fails", async ({ page }) => {
+  test("rolls back optimistic delete and shows error toast when delete API fails", async ({
+    page,
+  }) => {
     let deleteRequestCount = 0;
 
     await page.route("**/auth/email/admin/users?*", async (route) => {
@@ -433,7 +437,9 @@ test.describe("Users page", () => {
     ).toBeVisible();
   });
 
-  test("blocks self-delete client-side: no API call fires, dialog closes, error toast shown", async ({ page }) => {
+  test("blocks self-delete client-side: no API call fires, dialog closes, error toast shown", async ({
+    page,
+  }) => {
     // DEFAULT_TEST_USER (logged-in user) has email "test@example.com"
     const selfUser: User = { ...MOCK_USER, email: "test@example.com", full_name: "Test User" };
 
@@ -452,7 +458,11 @@ test.describe("Users page", () => {
         deleteCallCount++;
       }
       // Fulfill just in case, but we assert it's never reached
-      await route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ detail: "Cannot delete your own account" }) });
+      await route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Cannot delete your own account" }),
+      });
     });
 
     await page.goto(APP.USERS);

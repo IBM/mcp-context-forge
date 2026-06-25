@@ -227,19 +227,20 @@ test.describe("Gateways page", () => {
     const dialog = page.getByRole("dialog", { name: "Delete virtual server" });
     await dialog.getByRole("button", { name: "Delete" }).click();
 
-    await expect(
-      page.getByTestId("virtual-server-card").filter({ hasText: "testVS" }),
-    ).toHaveCount(0);
+    await expect(page.getByTestId("virtual-server-card").filter({ hasText: "testVS" })).toHaveCount(
+      0,
+    );
 
     await expect.poll(() => deleteRequestCount).toBe(1);
-    await expect(page.locator("[data-sonner-toast]").filter({ hasText: "testVS deleted." })).toHaveCount(0);
+    await expect(
+      page.locator("[data-sonner-toast]").filter({ hasText: "testVS deleted." }),
+    ).toHaveCount(0);
 
     releaseDelete();
     await expect(
       page.locator("[data-sonner-toast]").filter({ hasText: "testVS deleted." }),
     ).toBeVisible();
   });
-
 
   test("dialog and form state are cleared immediately on confirm", async ({ page }) => {
     let releaseDelete!: () => void;
@@ -311,9 +312,9 @@ test.describe("Gateways page", () => {
 
     await dialog.getByRole("button", { name: "Delete" }).click();
 
-    await expect(
-      page.getByTestId("virtual-server-card").filter({ hasText: "testVS" }),
-    ).toHaveCount(0);
+    await expect(page.getByTestId("virtual-server-card").filter({ hasText: "testVS" })).toHaveCount(
+      0,
+    );
 
     await expect.poll(() => deleteRequestCount).toBe(1);
     await expect.poll(() => listRequestCount).toBeGreaterThan(1);
@@ -351,9 +352,9 @@ test.describe("Gateways page", () => {
     await dialog.getByRole("button", { name: "Delete" }).click();
 
     await expect(dialog).toHaveCount(0);
-    await expect(
-      page.getByTestId("virtual-server-card").filter({ hasText: "testVS" }),
-    ).toHaveCount(0);
+    await expect(page.getByTestId("virtual-server-card").filter({ hasText: "testVS" })).toHaveCount(
+      0,
+    );
 
     await expect.poll(() => deleteRequestCount).toBe(1);
     await expect(
@@ -401,9 +402,9 @@ test.describe("Gateways page", () => {
     const dialog = page.getByRole("dialog", { name: "Delete virtual server" });
     await dialog.getByRole("button", { name: "Delete" }).click();
 
-    await expect(
-      page.getByTestId("virtual-server-card").filter({ hasText: "testVS" }),
-    ).toHaveCount(0);
+    await expect(page.getByTestId("virtual-server-card").filter({ hasText: "testVS" })).toHaveCount(
+      0,
+    );
 
     releaseDelete();
     await expect.poll(() => deleteRequestCount).toBe(1);
@@ -450,7 +451,9 @@ test.describe("Gateways page", () => {
     await expect(page.getByText("Error deleting virtual server")).toBeVisible();
     await expect(page.getByText("You don't have permission to perform this action.")).toBeVisible();
     await expect(page.getByRole("main").getByText("Error deleting virtual server")).toHaveCount(0);
-    await expect(page.getByTestId("virtual-server-card").filter({ hasText: "testVS" })).toBeVisible();
+    await expect(
+      page.getByTestId("virtual-server-card").filter({ hasText: "testVS" }),
+    ).toBeVisible();
   });
 
   test("cancels delete dialog and keeps the virtual server card visible", async ({ page }) => {
@@ -465,7 +468,9 @@ test.describe("Gateways page", () => {
     await page.goto(APP.GATEWAYS);
     await page.waitForLoadState("networkidle");
 
-    await expect(page.getByTestId("virtual-server-card").filter({ hasText: "testVS" })).toBeVisible();
+    await expect(
+      page.getByTestId("virtual-server-card").filter({ hasText: "testVS" }),
+    ).toBeVisible();
 
     await page.getByRole("button", { name: "Actions for testVS" }).click();
     await page.getByRole("menuitem", { name: "Delete" }).click();
@@ -476,7 +481,9 @@ test.describe("Gateways page", () => {
     await dialog.getByRole("button", { name: "Cancel" }).click();
 
     await expect(dialog).not.toBeVisible();
-    await expect(page.getByTestId("virtual-server-card").filter({ hasText: "testVS" })).toBeVisible();
+    await expect(
+      page.getByTestId("virtual-server-card").filter({ hasText: "testVS" }),
+    ).toBeVisible();
   });
 
   test("removes only the deleted card while sibling servers remain visible", async ({ page }) => {
@@ -503,8 +510,12 @@ test.describe("Gateways page", () => {
     await page.goto(APP.GATEWAYS);
     await page.waitForLoadState("networkidle");
 
-    await expect(page.getByTestId("virtual-server-card").filter({ hasText: "testVS" })).toBeVisible();
-    await expect(page.getByTestId("virtual-server-card").filter({ hasText: "siblingVS" })).toBeVisible();
+    await expect(
+      page.getByTestId("virtual-server-card").filter({ hasText: "testVS" }),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("virtual-server-card").filter({ hasText: "siblingVS" }),
+    ).toBeVisible();
 
     await page.getByRole("button", { name: "Actions for testVS" }).click();
     await page.getByRole("menuitem", { name: "Delete" }).click();
@@ -514,16 +525,21 @@ test.describe("Gateways page", () => {
 
     await expect.poll(() => deleteRequestCount).toBe(1);
 
-    await expect(page.getByTestId("virtual-server-card").filter({ hasText: "testVS" })).toHaveCount(0);
-    await expect(page.getByTestId("virtual-server-card").filter({ hasText: "siblingVS" })).toBeVisible();
+    await expect(page.getByTestId("virtual-server-card").filter({ hasText: "testVS" })).toHaveCount(
+      0,
+    );
+    await expect(
+      page.getByTestId("virtual-server-card").filter({ hasText: "siblingVS" }),
+    ).toBeVisible();
 
     await expect(
       page.locator("[data-sonner-toast]").filter({ hasText: "testVS deleted." }),
     ).toBeVisible();
   });
 
-  test("closes the details panel immediately when its virtual server is deleted", async ({ page }) => {
-
+  test("closes the details panel immediately when its virtual server is deleted", async ({
+    page,
+  }) => {
     let releaseDelete!: () => void;
     const deleteCanFinish = new Promise<void>((resolve) => {
       releaseDelete = resolve;
@@ -560,7 +576,6 @@ test.describe("Gateways page", () => {
     const detailsPanel = page.getByRole("region", { name: "testVS details" });
     await expect(detailsPanel).toBeVisible();
 
-
     await page.keyboard.press("Escape");
     await expect(detailsPanel).toHaveCount(0);
     await page.waitForLoadState("networkidle");
@@ -571,10 +586,9 @@ test.describe("Gateways page", () => {
     const dialog = page.getByRole("dialog", { name: "Delete virtual server" });
     await dialog.getByRole("button", { name: "Delete" }).click();
 
-
-    await expect(
-      page.getByTestId("virtual-server-card").filter({ hasText: "testVS" }),
-    ).toHaveCount(0);
+    await expect(page.getByTestId("virtual-server-card").filter({ hasText: "testVS" })).toHaveCount(
+      0,
+    );
     await expect(dialog).toHaveCount(0);
 
     releaseDelete();
@@ -635,9 +649,9 @@ test.describe("Gateways page", () => {
     const dialog = page.getByRole("dialog", { name: "Delete virtual server" });
     await dialog.getByRole("button", { name: "Delete" }).click();
 
-    await expect(
-      page.getByTestId("virtual-server-card").filter({ hasText: "testVS" }),
-    ).toHaveCount(0);
+    await expect(page.getByTestId("virtual-server-card").filter({ hasText: "testVS" })).toHaveCount(
+      0,
+    );
 
     releaseDelete();
     await expect.poll(() => deleteRequestCount).toBe(1);
@@ -647,9 +661,9 @@ test.describe("Gateways page", () => {
     await expect(page.getByText("Error deleting virtual server")).toBeVisible();
   });
 
-
-
-  test("closes the details panel when its virtual server is deleted (via escape)", async ({ page }) => {
+  test("closes the details panel when its virtual server is deleted (via escape)", async ({
+    page,
+  }) => {
     let deleteRequestCount = 0;
 
     await page.route("**/servers?*", async (route) => {
@@ -695,7 +709,9 @@ test.describe("Gateways page", () => {
 
     await expect.poll(() => deleteRequestCount).toBe(1);
 
-    await expect(page.getByTestId("virtual-server-card").filter({ hasText: "testVS" })).toHaveCount(0);
+    await expect(page.getByTestId("virtual-server-card").filter({ hasText: "testVS" })).toHaveCount(
+      0,
+    );
     await expect(
       page.locator("[data-sonner-toast]").filter({ hasText: "testVS deleted." }),
     ).toBeVisible();
