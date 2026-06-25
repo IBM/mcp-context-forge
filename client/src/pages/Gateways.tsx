@@ -72,6 +72,7 @@ export function Gateways() {
     if (!deleteServer || pendingDeleteServerIdRef.current) return;
 
     const serverToDelete = deleteServer;
+    const previousDetailsServer = detailsServer;
     const deletedMessage = intl.formatMessage(
       { id: "gateways.delete.success" },
       { name: serverToDelete.name },
@@ -79,19 +80,25 @@ export function Gateways() {
 
     pendingDeleteServerIdRef.current = serverToDelete.id;
     setPendingDeleteServerId(serverToDelete.id);
+    // Close dialog and clear form state immediately
     setDeleteStatus(null);
+    setDeleteDialogOpen(false);
+    setDeleteServer(null);
+    // Remove the card from the grid right away for a snappy feel
+    setDetailsServer((current) => (current?.id === serverToDelete.id ? null : current));
+    setDeletedServerIds((previous) => {
+      const next = new Set(previous);
+      next.add(serverToDelete.id);
+      return next;
+    });
 
     try {
       await deleteVirtualServer(serverToDelete.id);
-      setDeletedServerIds((previous) => {
-        const next = new Set(previous);
-        next.add(serverToDelete.id);
-        return next;
-      });
-      setDetailsServer((current) => (current?.id === serverToDelete.id ? null : current));
+
       setDeleteStatus(deletedMessage);
-      setDeleteDialogOpen(false);
-      setDeleteServer(null);
+      toast.success(
+        intl.formatMessage({ id: "gateways.delete.success" }, { name: serverToDelete.name }),
+      );
       try {
         await refetch();
       } catch (refreshErr) {
@@ -101,18 +108,23 @@ export function Gateways() {
         );
       }
     } catch (err) {
+      // ROLLBACK on failure 
+      setDeletedServerIds((previous) => {
+        const next = new Set(previous);
+        next.delete(serverToDelete.id);
+        return next;
+      });
+      setDetailsServer(previousDetailsServer);
       const errorMessage = sanitizeError(err);
       toast.error(intl.formatMessage({ id: "gateways.delete.errorTitle" }), {
         description: errorMessage,
       });
-      setDeleteDialogOpen(false);
-      setDeleteServer(null);
       console.error("Failed to delete virtual server:", errorMessage);
     } finally {
       pendingDeleteServerIdRef.current = null;
       setPendingDeleteServerId(null);
     }
-  }, [deleteServer, intl, refetch]);
+  }, [deleteServer, detailsServer, intl, refetch]);
 
   const openDetailsPanel = (server: VirtualServer) => {
     setDetailsServer(server);
