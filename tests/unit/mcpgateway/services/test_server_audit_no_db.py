@@ -10,7 +10,7 @@ import pytest
 
 from mcpgateway.db import Server as DbServer
 from mcpgateway.schemas import ServerCreate, ServerRead, ServerUpdate
-from mcpgateway.services.server_service import ServerService
+from mcpgateway.services.server_service import ServerError, ServerService
 
 _R = TypeVar("_R")
 
@@ -25,10 +25,17 @@ def _make_execute_result(*, scalar: _R | None = None, scalars_list: list[_R] | N
     return result
 
 
-def _assert_no_db_passed(mock_audit: MagicMock) -> None:
-    for call in mock_audit.log_action.call_args_list:
+def _assert_no_db_passed(mock_audit: MagicMock, *, expected_action: str | None = None, resource_type: str | None = None) -> None:
+    calls = mock_audit.log_action.call_args_list
+    for call in calls:
         assert "db" not in call.kwargs, f"audit_trail.log_action() was called with db= keyword argument: {call}"
         assert len(call.args) < 23, f"audit_trail.log_action() received too many positional args (db may be positional): {call}"
+    if expected_action is not None:
+        actions = [call.kwargs.get("action") for call in calls]
+        assert expected_action in actions, f"expected action {expected_action!r} not found in calls: {actions}"
+    if resource_type is not None:
+        for call in calls:
+            assert call.kwargs.get("resource_type") == resource_type, f"unexpected resource_type in call: {call}"
 
 
 @pytest.fixture(autouse=True)
@@ -78,7 +85,18 @@ class TestServerAuditNoDb:
         server_service._notify_server_added = AsyncMock()
         await server_service.register_server(db, ServerCreate(name="server-1", description="x"))
         assert server_service._audit_trail.log_action.called
-        _assert_no_db_passed(server_service._audit_trail)
+        _assert_no_db_passed(server_service._audit_trail, expected_action="create_server", resource_type="server")
+
+    @pytest.mark.asyncio
+    async def test_register_server_audit_failure_does_not_block_already_committed_server(self, server_service, db):
+        """If audit_trail.log_action() raises, the server row is already committed (db.commit ran first)."""
+        server_service._audit_trail.log_action = MagicMock(side_effect=Exception("audit backend unavailable"))
+        db.execute = Mock(side_effect=[_make_execute_result(scalar=None), _make_execute_result(scalar=None)])
+        db.add = Mock(); db.commit = Mock(); db.refresh = Mock(); db.flush = Mock(); db.rollback = Mock()
+        server_service._notify_server_added = AsyncMock()
+        with pytest.raises(ServerError):
+            await server_service.register_server(db, ServerCreate(name="server-1", description="x"))
+        db.commit.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_update_server(self, server_service, db, server_db):
@@ -88,7 +106,7 @@ class TestServerAuditNoDb:
         with patch("mcpgateway.services.server_service.get_for_update", return_value=server_db):
             await server_service.update_server(db, "srv-1", ServerUpdate(description="updated"), user_email="tester@example.com")
         assert server_service._audit_trail.log_action.called
-        _assert_no_db_passed(server_service._audit_trail)
+        _assert_no_db_passed(server_service._audit_trail, expected_action="update_server", resource_type="server")
 
     @pytest.mark.asyncio
     async def test_delete_server(self, server_service, db, server_db):
@@ -98,4 +116,4 @@ class TestServerAuditNoDb:
         server_service._notify_server_deleted = AsyncMock()
         await server_service.delete_server(db, "srv-1")
         assert server_service._audit_trail.log_action.called
-        _assert_no_db_passed(server_service._audit_trail)
+        _assert_no_db_passed(server_service._audit_trail, expected_action="delete_server", resource_type="server")

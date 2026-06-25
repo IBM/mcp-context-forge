@@ -25,11 +25,18 @@ def _make_execute_result(*, scalar: _R | None = None, scalars_list: list[_R] | N
     return result
 
 
-def _assert_no_db_passed(mock_audit: MagicMock) -> None:
+def _assert_no_db_passed(mock_audit: MagicMock, *, expected_action: str | None = None, resource_type: str | None = None) -> None:
     """Assert that none of the log_action calls received a ``db`` argument."""
-    for call in mock_audit.log_action.call_args_list:
+    calls = mock_audit.log_action.call_args_list
+    for call in calls:
         assert "db" not in call.kwargs, f"audit_trail.log_action() was called with db= keyword argument: {call}"
         assert len(call.args) < 23, f"audit_trail.log_action() received too many positional args (db may be positional): {call}"
+    if expected_action is not None:
+        actions = [call.kwargs.get("action") for call in calls]
+        assert expected_action in actions, f"expected action {expected_action!r} not found in calls: {actions}"
+    if resource_type is not None:
+        for call in calls:
+            assert call.kwargs.get("resource_type") == resource_type, f"unexpected resource_type in call: {call}"
 
 
 @pytest.fixture(autouse=True)
@@ -82,7 +89,20 @@ class TestGatewayAuditNoDb:
             gateway_service._notify_gateway_added = AsyncMock()
             await gateway_service.register_gateway(db, GatewayCreate(name="g", url="https://example.com", transport="SSE"))
             assert mock_audit.log_action.called
-            _assert_no_db_passed(mock_audit)
+            _assert_no_db_passed(mock_audit, expected_action="create_gateway", resource_type="gateway")
+
+    @pytest.mark.asyncio
+    async def test_register_gateway_audit_failure_does_not_block_already_committed_gateway(self, gateway_service, db):
+        """If audit_trail.log_action() raises, the gateway row is already committed (db.commit ran first)."""
+        with patch("mcpgateway.services.gateway_service.audit_trail") as mock_audit, patch("mcpgateway.services.gateway_service.structured_logger"):
+            mock_audit.log_action = MagicMock(side_effect=Exception("audit backend unavailable"))
+            db.execute = Mock(side_effect=[_make_execute_result(scalar=None), _make_execute_result(scalars_list=[])])
+            db.add = Mock(); db.commit = Mock(); db.refresh = Mock(); db.flush = Mock(); db.add_all = Mock()
+            gateway_service._initialize_gateway = AsyncMock(return_value=({"prompts": {}, "resources": {}, "tools": {}}, [], [], [], []))
+            gateway_service._notify_gateway_added = AsyncMock()
+            with pytest.raises(Exception, match="audit backend unavailable"):
+                await gateway_service.register_gateway(db, GatewayCreate(name="g", url="https://example.com", transport="SSE"))
+            db.commit.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_update_gateway(self, gateway_service, db, gateway_db):
@@ -96,7 +116,7 @@ class TestGatewayAuditNoDb:
             gateway_service._update_or_create_prompts = AsyncMock(return_value=[])
             await gateway_service.update_gateway(db, "gw-1", GatewayUpdate(description="updated"))
             assert mock_audit.log_action.called
-            _assert_no_db_passed(mock_audit)
+            _assert_no_db_passed(mock_audit, expected_action="update_gateway", resource_type="gateway")
 
     @pytest.mark.asyncio
     async def test_set_gateway_state(self, gateway_service, db, gateway_db):
@@ -108,7 +128,7 @@ class TestGatewayAuditNoDb:
             gateway_service._notify_gateway_activated = AsyncMock(); gateway_service._notify_gateway_deactivated = AsyncMock(); gateway_service._notify_gateway_offline = AsyncMock()
             await gateway_service.set_gateway_state(db, "gw-1", activate=False, reachable=True)
             assert mock_audit.log_action.called
-            _assert_no_db_passed(mock_audit)
+            _assert_no_db_passed(mock_audit, expected_action="set_gateway_state", resource_type="gateway")
 
     @pytest.mark.asyncio
     async def test_delete_gateway(self, gateway_service, db, gateway_db):
@@ -119,4 +139,4 @@ class TestGatewayAuditNoDb:
             gateway_service._notify_gateway_deleted = AsyncMock()
             await gateway_service.delete_gateway(db, "gw-1")
             assert mock_audit.log_action.called
-            _assert_no_db_passed(mock_audit)
+            _assert_no_db_passed(mock_audit, expected_action="delete_gateway", resource_type="gateway")
