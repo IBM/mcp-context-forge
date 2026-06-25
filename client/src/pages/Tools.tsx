@@ -1,11 +1,11 @@
-import { useMemo, useState, useCallback } from "react";
+import { useMemo, useState, useCallback, useEffect } from "react";
 import { useIntl } from "react-intl";
 import { Plus, MoreHorizontal, Wrench } from "lucide-react";
 import { toast } from "sonner";
 import { useQuery } from "@/hooks/useQuery";
 import { toolsApi } from "@/api/tools";
 import { ApiError } from "@/api/client";
-import { extractApiErrorDetail } from "@/utils/errors";
+import { extractApiErrorDetail, sanitizeError } from "@/utils/errors";
 import type { Tool, ToolGroup } from "@/types/tool";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -165,6 +165,7 @@ export function Tools() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
   const [selectedToolName, setSelectedToolName] = useState<string | null>(null);
+  const [allTools, setAllTools] = useState<Tool[]>([]);
 
   // include_inactive=true so deactivated tools stay listed (and re-activatable);
   // the backend filters them out by default.
@@ -176,6 +177,10 @@ export function Tools() {
     setData: setToolsData,
   } = useQuery<Tool[]>("/tools?limit=0&include_inactive=true");
 
+  useEffect(() => {
+    if (toolsData) setAllTools(toolsData);
+  }, [toolsData]);
+
   const { data: editedToolData } = useQuery<Tool>(`/tools/${editingTool?.id}`, {
     enabled: Boolean(editingTool?.id),
   });
@@ -184,8 +189,8 @@ export function Tools() {
 
   const restToolsLabel = intl.formatMessage({ id: "tools.restToolsGroup" });
   const groups = useMemo(
-    () => buildGroups(toolsData ?? [], restToolsLabel),
-    [toolsData, restToolsLabel],
+    () => buildGroups(allTools, restToolsLabel),
+    [allTools, restToolsLabel],
   );
 
   // Keep the open details panel pointed at the latest group data so status
@@ -266,28 +271,57 @@ export function Tools() {
 
   const handleDelete = useCallback(
     (id: string) => {
-      const tool = toolsData?.find((t) => t.id === id);
+      const tool = allTools.find((t) => t.id === id);
       setSelectedToolId(id);
       setSelectedToolName(tool?.displayName || tool?.name || id);
       setDeleteDialogOpen(true);
     },
-    [toolsData],
+    [allTools],
   );
 
   const confirmDelete = useCallback(async () => {
     if (!selectedToolId || !selectedToolName) return;
 
+    const idToDelete = selectedToolId;
+    const nameToDelete = selectedToolName;
+
+    let previousTools: Tool[] = [];
+    const previousGroup = selectedGroup
+      ? { ...selectedGroup, tools: selectedGroup.tools.map((t) => ({ ...t })) }
+      : null;
+
+
+    setAllTools((prev) => {
+      previousTools = prev;
+      return prev.filter((t) => t.id !== idToDelete);
+    });
+
+    const remainingGroupTools = selectedGroup?.tools.filter((t) => t.id !== idToDelete) ?? [];
+    const nextGroup =
+      selectedGroup && remainingGroupTools.length > 0
+        ? { ...selectedGroup, tools: remainingGroupTools }
+        : null;
+    setSelectedGroup(nextGroup);
+    if (!nextGroup) setIsDetailsPanelOpen(false);
+
     setDeleteDialogOpen(false);
+    setSelectedToolId(null);
+    setSelectedToolName(null);
 
     try {
-      await toolsApi.delete(selectedToolId);
-      toast.success(intl.formatMessage({ id: "tools.delete.success" }, { name: selectedToolName }));
-      setSelectedToolId(null);
-      setSelectedToolName(null);
-      setIsDetailsPanelOpen(false);
-      setSelectedGroup(null);
-      await refetch();
+      await toolsApi.delete(idToDelete);
+      toast.success(intl.formatMessage({ id: "tools.delete.success" }, { name: nameToDelete }));
+
+      try {
+        await refetch();
+      } catch (refreshErr) {
+        console.error("Failed to refresh tools after deletion:", sanitizeError(refreshErr));
+      }
     } catch (err) {
+      setAllTools(previousTools);
+      setSelectedGroup(previousGroup);
+      if (previousGroup) setIsDetailsPanelOpen(true);
+
       let errorMessage = intl.formatMessage({ id: "tools.delete.error" });
 
       if (err instanceof ApiError) {
@@ -309,7 +343,7 @@ export function Tools() {
 
       toast.error(errorMessage);
     }
-  }, [selectedToolId, selectedToolName, refetch, intl]);
+  }, [selectedToolId, selectedToolName, selectedGroup, refetch, intl]);
 
   return (
     <div className="p-6">
