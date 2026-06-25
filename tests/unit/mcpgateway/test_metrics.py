@@ -361,6 +361,7 @@ def test_metrics_prometheus_requires_auth_when_enabled(monkeypatch):
     from mcpgateway.config import settings
 
     monkeypatch.setattr(settings, "ENABLE_METRICS", True)
+    monkeypatch.setattr(settings, "auth_required", True)
 
     from prometheus_client import REGISTRY
 
@@ -392,6 +393,7 @@ def test_metrics_prometheus_requires_auth_when_disabled(monkeypatch):
     from mcpgateway.config import settings
 
     monkeypatch.setattr(settings, "ENABLE_METRICS", False)
+    monkeypatch.setattr(settings, "auth_required", True)
 
     from fastapi import FastAPI
     from mcpgateway.services.metrics import setup_metrics

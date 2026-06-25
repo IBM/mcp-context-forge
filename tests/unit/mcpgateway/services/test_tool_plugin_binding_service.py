@@ -483,6 +483,62 @@ class TestListBindings:
         """Returns empty list when no bindings exist for the specified team."""
         results = service.list_bindings(db_session, team_id="team-unknown")
         assert results == []
+    def test_list_bindings_filters_by_allowed_teams(self, service, db_session):
+        """Verify that allowed_teams parameter filters results at SQL level.
+
+        Note: The seed fixture creates bindings for team-a and team-b.
+        This test adds team-c and verifies filtering works correctly.
+        """
+        r = ToolPluginBindingRequest(
+            teams={
+                "team-c": TeamPolicies(policies=[PluginPolicyItem(tool_names=["tool_c"], plugin_id="OutputLengthGuardPlugin", config=dict(_OLG))]),
+            }
+        )
+        service.upsert_bindings(db_session, r, caller_email="admin@example.com")
+
+        # Query with allowed_teams={"team-a", "team-c"} (should exclude team-b from seed)
+        results = service.list_bindings(db_session, allowed_teams={"team-a", "team-c"})
+
+        assert len(results) == 2
+        team_ids = {r.team_id for r in results}
+        assert team_ids == {"team-a", "team-c"}
+        # team-b should not be in results
+        assert "team-b" not in team_ids
+
+    def test_list_bindings_admin_bypass_sees_all_teams(self, service, db_session):
+        """Verify that allowed_teams=None (admin bypass) returns all bindings.
+
+        Note: The seed fixture creates bindings for team-a and team-b.
+        """
+        # Admin bypass: allowed_teams=None should see all teams (from seed)
+        results = service.list_bindings(db_session, allowed_teams=None)
+
+        assert len(results) == 2
+        team_ids = {r.team_id for r in results}
+        assert team_ids == {"team-a", "team-b"}
+
+    def test_list_bindings_empty_allowed_teams_returns_nothing(self, service, db_session):
+        """Verify that allowed_teams=set() (empty set) returns no bindings.
+
+        Note: The seed fixture creates bindings for team-a and team-b,
+        but empty allowed_teams should filter them all out.
+        """
+        # Empty allowed_teams should return nothing (public-only caller)
+        results = service.list_bindings(db_session, allowed_teams=set())
+
+        assert len(results) == 0
+
+    def test_list_bindings_with_team_id_and_allowed_teams(self, service, db_session):
+        """Verify that both team_id and allowed_teams filters work together.
+
+        Note: The seed fixture creates bindings for team-a and team-b.
+        """
+        # Request team-b but only allowed to see team-a
+        results = service.list_bindings(db_session, team_id="team-b", allowed_teams={"team-a"})
+
+        # Should return empty because team-b is not in allowed_teams
+        assert len(results) == 0
+
 
 
 # ---------------------------------------------------------------------------

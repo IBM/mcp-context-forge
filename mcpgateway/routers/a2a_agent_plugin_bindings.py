@@ -40,7 +40,7 @@ _service = A2AAgentPluginBindingService()
 
 
 def _allowed_teams_from_ctx(ctx: Dict[str, Any]) -> Optional[set[str]]:
-    """Derive the set of teams a caller is allowed to mutate.
+    """Derive the set of teams a caller is allowed to access (read/write).
 
     Returns ``None`` for unrestricted admins (full bypass).
     Returns an empty set for public-only callers (nothing allowed).
@@ -172,7 +172,8 @@ async def list_a2a_agent_plugin_bindings(
     """
     limit_val = limit if isinstance(limit, int) else 100
     offset_val = offset if isinstance(offset, int) else 0
-    bindings, total = _service.list_bindings(db, team_id=None, binding_reference_id=binding_reference_id, limit=limit_val, offset=offset_val)
+    allowed_teams = _allowed_teams_from_ctx(current_user_ctx)
+    bindings, total = _service.list_bindings(db, team_id=None, binding_reference_id=binding_reference_id, limit=limit_val, offset=offset_val, allowed_teams=allowed_teams)
     return A2AAgentPluginBindingListResponse(bindings=bindings, total=total)
 
 
@@ -209,9 +210,10 @@ async def list_a2a_agent_plugin_bindings_for_team(
         >>> asyncio.iscoroutinefunction(list_a2a_agent_plugin_bindings_for_team)
         True
     """
+    allowed_teams = _allowed_teams_from_ctx(current_user_ctx)
     limit_val = limit if isinstance(limit, int) else 100
     offset_val = offset if isinstance(offset, int) else 0
-    bindings, total = _service.list_bindings(db, team_id=team_id, binding_reference_id=binding_reference_id, limit=limit_val, offset=offset_val)
+    bindings, total = _service.list_bindings(db, team_id=team_id, binding_reference_id=binding_reference_id, limit=limit_val, offset=offset_val, allowed_teams=allowed_teams)
     return A2AAgentPluginBindingListResponse(bindings=bindings, total=total)
 
 

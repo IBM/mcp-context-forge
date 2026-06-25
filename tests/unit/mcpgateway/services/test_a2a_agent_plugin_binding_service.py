@@ -412,6 +412,137 @@ class TestListBindings:
         assert len(result) == 1
         assert total == 1
         assert result[0].team_id == "team-a"
+    def test_list_bindings_filters_by_allowed_teams(self, service, db_session):
+        """Verify that allowed_teams parameter filters results at SQL level."""
+        service.upsert_binding(
+            db=db_session,
+            team_id="team-a",
+            agent_name="agent_a",
+            plugin_id="OutputLengthGuardPlugin",
+            mode="enforce",
+            priority=50,
+            config={},
+            on_error=None,
+            caller_email="admin@example.com",
+        )
+        service.upsert_binding(
+            db=db_session,
+            team_id="team-b",
+            agent_name="agent_b",
+            plugin_id="RateLimiterPlugin",
+            mode="permissive",
+            priority=30,
+            config={},
+            on_error=None,
+            caller_email="admin@example.com",
+        )
+        service.upsert_binding(
+            db=db_session,
+            team_id="team-c",
+            agent_name="agent_c",
+            plugin_id="SecretsDetection",
+            mode="enforce",
+            priority=40,
+            config={},
+            on_error=None,
+            caller_email="admin@example.com",
+        )
+
+        # Query with allowed_teams={"team-a", "team-c"}
+        result, total = service.list_bindings(db_session, allowed_teams={"team-a", "team-c"})
+
+        assert len(result) == 2
+        assert total == 2
+        team_ids = {r.team_id for r in result}
+        assert team_ids == {"team-a", "team-c"}
+        # team-b should not be in results
+        assert "team-b" not in team_ids
+
+    def test_list_bindings_admin_bypass_sees_all_teams(self, service, db_session):
+        """Verify that allowed_teams=None (admin bypass) returns all bindings."""
+        service.upsert_binding(
+            db=db_session,
+            team_id="team-a",
+            agent_name="agent_a",
+            plugin_id="OutputLengthGuardPlugin",
+            mode="enforce",
+            priority=50,
+            config={},
+            on_error=None,
+            caller_email="admin@example.com",
+        )
+        service.upsert_binding(
+            db=db_session,
+            team_id="team-b",
+            agent_name="agent_b",
+            plugin_id="RateLimiterPlugin",
+            mode="permissive",
+            priority=30,
+            config={},
+            on_error=None,
+            caller_email="admin@example.com",
+        )
+
+        # Admin bypass: allowed_teams=None should see all teams
+        result, total = service.list_bindings(db_session, allowed_teams=None)
+
+        assert len(result) == 2
+        assert total == 2
+        team_ids = {r.team_id for r in result}
+        assert team_ids == {"team-a", "team-b"}
+
+    def test_list_bindings_empty_allowed_teams_returns_nothing(self, service, db_session):
+        """Verify that allowed_teams=set() (empty set) returns no bindings."""
+        service.upsert_binding(
+            db=db_session,
+            team_id="team-a",
+            agent_name="agent_a",
+            plugin_id="OutputLengthGuardPlugin",
+            mode="enforce",
+            priority=50,
+            config={},
+            on_error=None,
+            caller_email="admin@example.com",
+        )
+
+        # Empty allowed_teams should return nothing (public-only caller)
+        result, total = service.list_bindings(db_session, allowed_teams=set())
+
+        assert len(result) == 0
+        assert total == 0
+
+    def test_list_bindings_with_team_id_and_allowed_teams(self, service, db_session):
+        """Verify that both team_id and allowed_teams filters work together."""
+        service.upsert_binding(
+            db=db_session,
+            team_id="team-a",
+            agent_name="agent_a",
+            plugin_id="OutputLengthGuardPlugin",
+            mode="enforce",
+            priority=50,
+            config={},
+            on_error=None,
+            caller_email="admin@example.com",
+        )
+        service.upsert_binding(
+            db=db_session,
+            team_id="team-b",
+            agent_name="agent_b",
+            plugin_id="RateLimiterPlugin",
+            mode="permissive",
+            priority=30,
+            config={},
+            on_error=None,
+            caller_email="admin@example.com",
+        )
+
+        # Request team-b but only allowed to see team-a
+        result, total = service.list_bindings(db_session, team_id="team-b", allowed_teams={"team-a"})
+
+        # Should return empty because team-b is not in allowed_teams
+        assert len(result) == 0
+        assert total == 0
+
 
 
 class TestGetBindingsForAgent:

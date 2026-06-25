@@ -331,27 +331,23 @@ class TestToolPluginBindingsRouter:
         assert result.total == 2
 
     @pytest.mark.asyncio
-    async def test_upsert_admin_with_empty_token_teams_can_target_any_team(self, db_session):
-        """
-        ``mcpgateway.auth.normalize_token_teams`` returns ``[]`` (not ``None``)
-        when the JWT lacks a ``teams`` claim — which is the case for every
-        normal admin token mint. The bypass must also fire when
-        ``token_teams`` is falsy (empty list).
-        """
+    async def test_upsert_admin_with_empty_token_teams_is_public_only(self, db_session):
+        """Admin with ``token_teams=[]`` is scoped to public-only and cannot target team bindings."""
         admin_no_teams_claim_ctx = {
             "email": "admin@example.com",
             "full_name": "Admin User",
             "is_admin": True,
-            "token_teams": [],  # JWT had no "teams" claim → secure default []
+            "token_teams": [],
             "db": db_session,
             "permissions": ["tools.manage_plugins", "tools.read"],
         }
-        result = await upsert_tool_plugin_bindings(
-            request=_two_team_request(),
-            current_user_ctx=admin_no_teams_claim_ctx,
-            db=db_session,
-        )
-        assert result.total == 2
+        with pytest.raises(HTTPException) as exc_info:
+            await upsert_tool_plugin_bindings(
+                request=_two_team_request(),
+                current_user_ctx=admin_no_teams_claim_ctx,
+                db=db_session,
+            )
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
 
     @pytest.mark.asyncio
     async def test_upsert_narrowed_admin_still_restricted(self, db_session):
