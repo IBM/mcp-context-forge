@@ -13,6 +13,9 @@ self-calls to local endpoints like /rpc.
 # Standard
 import os
 
+# Third-Party
+import httpx
+
 # First-Party
 from mcpgateway.config import settings
 
@@ -48,3 +51,33 @@ def internal_loopback_verify() -> bool:
         bool: ``False`` when the loopback URL is HTTPS, ``True`` otherwise.
     """
     return not _is_ssl_enabled()
+
+
+async def post_rpc_in_process(*, content: bytes, headers: dict, timeout: float) -> httpx.Response:
+    """POST to the local ``/rpc`` route via an in-process ASGI transport.
+
+    Affinity-owned requests must execute on the worker that actually holds the
+    bound upstream session. A real loopback to ``127.0.0.1`` hits the shared
+    gunicorn socket, and the kernel routes it to an arbitrary worker that does
+    not hold the session — which breaks upstream-session reuse (and the #4205
+    isolation invariant for stateful upstreams). ``httpx.ASGITransport`` invokes
+    the FastAPI app in *this* process instead, so ``/rpc`` resolves the session
+    from this worker's ``UpstreamSessionRegistry``.
+
+    ``app`` is imported lazily to avoid a circular import at module load.
+
+    Args:
+        content: Serialized JSON-RPC request body.
+        headers: Request headers. Must include ``x-forwarded-internally: true``
+            so the re-entered handler does not forward again.
+        timeout: Per-call timeout in seconds.
+
+    Returns:
+        httpx.Response: The response from the in-process ``/rpc`` dispatch.
+    """
+    # First-Party
+    from mcpgateway.main import app  # pylint: disable=import-outside-toplevel,cyclic-import
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url=internal_loopback_base_url()) as client:
+        return await client.post("/rpc", content=content, headers=headers, timeout=timeout)
