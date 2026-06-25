@@ -15,9 +15,11 @@ all workers in the container (24x broadcast amplification observed in
 #4557). The ``post_fork`` hook recomputes WORKER_ID per worker to restore
 single-executor forwarding.
 
-The hook also wraps the rebind in a broad ``except Exception`` that logs
-a ``warning`` referencing #4557 — the F2 follow-up. Silent fallback would
-let production drift back into the amplification state without any signal.
+The hook is gated by ``MCPGATEWAY_SESSION_AFFINITY_ENABLED`` so the PR can be
+merged safely while keeping the fix inactive by default. When enabled, the hook
+also wraps the rebind in a broad ``except Exception`` that logs a ``warning``.
+Silent fallback would let production drift back into the amplification state
+without any signal.
 """
 
 # Future
@@ -64,7 +66,32 @@ def fake_worker() -> SimpleNamespace:
     return SimpleNamespace(pid=4242)
 
 
-def test_post_fork_rebinds_worker_id_per_worker(fake_worker):
+def test_post_fork_does_not_rebind_worker_id_when_affinity_disabled(fake_worker, monkeypatch):
+    """Disabled flag: ``post_fork`` leaves ``WORKER_ID`` untouched.
+
+    This is the rollout guard for PR #4981. The hook may still reset the Redis
+    client after forking, but the session-affinity worker identity behavior must
+    remain inactive unless ``MCPGATEWAY_SESSION_AFFINITY_ENABLED`` is true.
+    """
+    # First-Party
+    from mcpgateway.config import settings
+    from mcpgateway.services import session_affinity
+
+    monkeypatch.setattr(settings, "mcpgateway_session_affinity_enabled", False)
+
+    cfg = _load_gunicorn_config()
+    server = _make_fake_server()
+    original = session_affinity.WORKER_ID
+    try:
+        cfg.post_fork(server, fake_worker)
+        assert session_affinity.WORKER_ID == original
+    finally:
+        session_affinity.WORKER_ID = original
+
+    assert not server.log.warning.called
+
+
+def test_post_fork_rebinds_worker_id_per_worker_when_affinity_enabled(fake_worker, monkeypatch):
     """Happy path: ``post_fork`` overrides the master-frozen ``WORKER_ID`` with ``{hostname}:{worker.pid}``.
 
     Without this, every forked gunicorn worker carries the master's
@@ -72,7 +99,10 @@ def test_post_fork_rebinds_worker_id_per_worker(fake_worker):
     pub/sub channel reaches every worker in the container.
     """
     # First-Party
+    from mcpgateway.config import settings
     from mcpgateway.services import session_affinity
+
+    monkeypatch.setattr(settings, "mcpgateway_session_affinity_enabled", True)
 
     cfg = _load_gunicorn_config()
     original = session_affinity.WORKER_ID
@@ -97,8 +127,10 @@ def test_post_fork_logs_warning_when_rebind_fails(fake_worker, monkeypatch):
     the try block) to raise.
     """
     # First-Party
+    from mcpgateway.config import settings
     from mcpgateway.services import session_affinity
 
+    monkeypatch.setattr(settings, "mcpgateway_session_affinity_enabled", True)
     original_worker_id = session_affinity.WORKER_ID
 
     def _boom() -> str:

@@ -127,7 +127,8 @@ def post_fork(server, worker):
     except ImportError:
         pass
 
-    # Recompute the session-affinity WORKER_ID per worker. Captured at import time,
+    # Recompute the session-affinity WORKER_ID per worker only when the
+    # cross-worker affinity feature flag is enabled. Captured at import time,
     # so under --preload every worker would otherwise inherit the master's id
     # ({hostname}:1) and subscribe to the same Redis channel — collapsing point-to-point
     # forwarding into a per-container broadcast that fans every request out to all
@@ -135,9 +136,11 @@ def post_fork(server, worker):
     try:
         import socket
 
+        from mcpgateway.config import settings
         from mcpgateway.services import session_affinity
 
-        session_affinity.WORKER_ID = f"{socket.gethostname()}:{worker.pid}"
+        if settings.mcpgateway_session_affinity_enabled:
+            session_affinity.WORKER_ID = f"{socket.gethostname()}:{worker.pid}"
     except Exception as exc:  # noqa: BLE001 - fail loud, never crash the worker
         # Silent fallback would re-introduce the per-container broadcast amplification.
         server.log.warning(
