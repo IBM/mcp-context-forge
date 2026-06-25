@@ -72,7 +72,15 @@ const mockToastError = vi.mocked(toast.error);
 
 function makeAuthContext(email = "admin@example.com") {
   return {
-    user: { email, full_name: "Admin", is_admin: true, is_active: true, auth_provider: "local", email_verified: true, password_change_required: false },
+    user: {
+      email,
+      full_name: "Admin",
+      is_admin: true,
+      is_active: true,
+      auth_provider: "local",
+      email_verified: true,
+      password_change_required: false,
+    },
     isAuthenticated: true,
     isLoading: false,
     selectedTeamId: null,
@@ -352,7 +360,6 @@ describe("Users", () => {
     expect(screen.queryByRole("button", { name: /load more users/i })).not.toBeInTheDocument();
   });
 
-
   it("shows the Create User button", async () => {
     vi.mocked(api.get).mockResolvedValueOnce({
       users: createMockUsers(0, 3),
@@ -363,8 +370,6 @@ describe("Users", () => {
 
     expect(screen.getByRole("button", { name: /create user/i })).toBeInTheDocument();
   });
-
-
 
   it("removes user from list and shows success toast after API responds", async () => {
     const user = userEvent.setup();
@@ -382,22 +387,17 @@ describe("Users", () => {
 
     vi.mocked(api.delete).mockResolvedValueOnce({ success: true, message: "Deleted" });
 
-
     await user.click(screen.getByRole("button", { name: "Actions for User 0" }));
     await user.click(await screen.findByRole("menuitem", { name: /^delete$/i }));
 
-
     await user.click(await screen.findByRole("button", { name: /delete user/i }));
-
 
     await waitFor(() => {
       expect(screen.queryByText("user0@example.com")).not.toBeInTheDocument();
     });
 
     expect(screen.getByText("user1@example.com")).toBeInTheDocument();
-    expect(mockToastSuccess).toHaveBeenCalledWith(
-      expect.stringContaining("user0@example.com"),
-    );
+    expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringContaining("user0@example.com"));
   });
 
   it("optimistically removes user from list immediately on delete confirmation", async () => {
@@ -414,16 +414,17 @@ describe("Users", () => {
       expect(screen.getByText("user0@example.com")).toBeInTheDocument();
     });
 
-
     let resolveDelete!: (val: unknown) => void;
     vi.mocked(api.delete).mockImplementationOnce(
-      () => new Promise((resolve) => { resolveDelete = resolve; }),
+      () =>
+        new Promise((resolve) => {
+          resolveDelete = resolve;
+        }),
     );
 
     await user.click(screen.getByRole("button", { name: "Actions for User 0" }));
     await user.click(await screen.findByRole("menuitem", { name: /^delete$/i }));
     await user.click(await screen.findByRole("button", { name: /delete user/i }));
-
 
     await waitFor(() => {
       expect(screen.queryByText("user0@example.com")).not.toBeInTheDocument();
@@ -433,9 +434,7 @@ describe("Users", () => {
     resolveDelete({ success: true, message: "Deleted" });
 
     await waitFor(() => {
-      expect(mockToastSuccess).toHaveBeenCalledWith(
-        expect.stringContaining("user0@example.com"),
-      );
+      expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringContaining("user0@example.com"));
     });
   });
 
@@ -464,14 +463,11 @@ describe("Users", () => {
     const confirmButton = await screen.findByRole("button", { name: /delete user/i });
     await user.click(confirmButton);
 
-
     await waitFor(() => {
       expect(screen.getByText("user0@example.com")).toBeInTheDocument();
     });
 
-    expect(mockToastError).toHaveBeenCalledWith(
-      expect.stringContaining("Failed to delete user"),
-    );
+    expect(mockToastError).toHaveBeenCalledWith(expect.stringContaining("Failed to delete user"));
   });
 
   it("blocks self-delete client-side: no API call, dialog closes, error toast shown immediately", async () => {
@@ -499,12 +495,10 @@ describe("Users", () => {
     const confirmButton = await screen.findByRole("button", { name: /delete user/i });
     await user.click(confirmButton);
 
-
     await waitFor(() => {
       expect(mockToastError).toHaveBeenCalledWith("You cannot delete your own account");
     });
     expect(api.delete).not.toHaveBeenCalled();
-
 
     expect(screen.queryByRole("button", { name: /delete user/i })).not.toBeInTheDocument();
     expect(screen.getByText("admin@example.com")).toBeInTheDocument();
@@ -524,8 +518,11 @@ describe("Users", () => {
       expect(screen.getByText("user0@example.com")).toBeInTheDocument();
     });
 
-
-    const selfDeleteError = new ApiError(400, { detail: "Cannot delete your own account" }, "HTTP 400");
+    const selfDeleteError = new ApiError(
+      400,
+      { detail: "Cannot delete your own account" },
+      "HTTP 400",
+    );
     vi.mocked(api.delete).mockRejectedValueOnce(selfDeleteError);
 
     const actionsButton = screen.getByRole("button", { name: "Actions for User 0" });
@@ -538,11 +535,8 @@ describe("Users", () => {
     await user.click(confirmButton);
 
     await waitFor(() => {
-      expect(mockToastError).toHaveBeenCalledWith(
-        "You cannot delete your own account",
-      );
+      expect(mockToastError).toHaveBeenCalledWith("You cannot delete your own account");
     });
-
 
     expect(screen.getByText("user0@example.com")).toBeInTheDocument();
   });
@@ -561,7 +555,11 @@ describe("Users", () => {
       expect(screen.getByText("user0@example.com")).toBeInTheDocument();
     });
 
-    const lastAdminError = new ApiError(400, { detail: "Cannot delete the last remaining admin" }, "HTTP 400");
+    const lastAdminError = new ApiError(
+      400,
+      { detail: "Cannot delete the last remaining admin" },
+      "HTTP 400",
+    );
     vi.mocked(api.delete).mockRejectedValueOnce(lastAdminError);
 
     const actionsButton = screen.getByRole("button", { name: "Actions for User 0" });
@@ -574,9 +572,7 @@ describe("Users", () => {
     await user.click(confirmButton);
 
     await waitFor(() => {
-      expect(mockToastError).toHaveBeenCalledWith(
-        "Cannot delete the last remaining admin user",
-      );
+      expect(mockToastError).toHaveBeenCalledWith("Cannot delete the last remaining admin user");
     });
 
     expect(screen.getByText("user0@example.com")).toBeInTheDocument();
@@ -613,8 +609,6 @@ describe("Users", () => {
     });
   });
 
-
-
   it("cancelling the delete dialog keeps user in list", async () => {
     const user = userEvent.setup();
 
@@ -635,15 +629,12 @@ describe("Users", () => {
     const deleteItem = await screen.findByRole("menuitem", { name: /^delete$/i });
     await user.click(deleteItem);
 
-
     expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
 
     const cancelButton = screen.getByRole("button", { name: /cancel/i });
     await user.click(cancelButton);
 
-
     expect(screen.getByText("user0@example.com")).toBeInTheDocument();
-
 
     expect(api.delete).not.toHaveBeenCalled();
     expect(mockToastSuccess).not.toHaveBeenCalled();
