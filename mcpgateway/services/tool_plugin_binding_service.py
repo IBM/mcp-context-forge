@@ -264,6 +264,7 @@ class ToolPluginBindingService:
         db: Session,
         team_id: Optional[str] = None,
         binding_reference_id: Optional[str] = None,
+        allowed_teams: Optional[set[str]] = None,
     ) -> List[ToolPluginBindingResponse]:
         """Return all bindings, optionally filtered by team or binding_reference_id.
 
@@ -277,11 +278,19 @@ class ToolPluginBindingService:
                 only bindings for this team.
             binding_reference_id: If provided, return only bindings with this
                 reference ID (``team_id`` is ignored).
+            allowed_teams: When non-None, only bindings whose ``team_id`` is in
+                this set are returned. Pass ``None`` for admin callers (unrestricted).
+                This enforces multi-tenant isolation at the data layer.
 
         Returns:
             List[ToolPluginBindingResponse]: Matching bindings.
         """
         query = db.query(ToolPluginBinding)
+
+        # Filter by allowed_teams first (multi-tenant isolation)
+        if allowed_teams is not None:
+            query = query.filter(ToolPluginBinding.team_id.in_(allowed_teams))
+
         if binding_reference_id:
             if team_id:
                 logger.warning(
