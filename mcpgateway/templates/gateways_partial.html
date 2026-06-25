@@ -3,7 +3,7 @@
        class="min-w-full divide-y divide-gray-200"
        hx-get="{{ root_path }}/admin/gateways/partial"
        hx-swap="outerHTML"
-       hx-vals='js:{"include_inactive": (document.getElementById("show-inactive-gateways") && document.getElementById("show-inactive-gateways").checked) || false, "q": (document.getElementById("gateways-search-input") && document.getElementById("gateways-search-input").value) || "", "tags": (document.getElementById("gateways-tag-filter") && document.getElementById("gateways-tag-filter").value) || ""}'
+        hx-vals="js:{'include_inactive': (document.getElementById('show-inactive-gateways') && document.getElementById('show-inactive-gateways').checked) || false, 'q': (document.getElementById('gateways-search-input') && document.getElementById('gateways-search-input').value) || '', 'tags': (document.getElementById('gateways-tag-filter') && document.getElementById('gateways-tag-filter').value) || ''}"
        {% if gateway_async_lifecycle_enabled|default(false) %}
        hx-trigger="refresh from:body, every 10s [!!document.querySelector('[data-gateway-status=pending], [data-gateway-status=deleting]')]"
        hx-indicator="#gateway-polling-indicator"
