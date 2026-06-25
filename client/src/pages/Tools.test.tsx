@@ -1289,7 +1289,7 @@ describe("Tools", () => {
     });
   });
 
-  // Optimistic delete 
+  // Optimistic delete
 
   describe("Optimistic delete", () => {
 
@@ -1383,7 +1383,7 @@ describe("Tools", () => {
       await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
       await user.click(screen.getByRole("button", { name: /^delete$/i }));
 
-  
+
       await waitFor(() => {
         expect(toast.error).toHaveBeenCalledWith("Server error");
       });
@@ -1560,7 +1560,7 @@ describe("Tools", () => {
       await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
       await user.click(screen.getByRole("button", { name: /^delete$/i }));
 
-     
+
       await waitFor(() => {
         expect(toast.error).toHaveBeenCalledWith("Conflict");
       });
@@ -1576,7 +1576,7 @@ describe("Tools", () => {
     });
 
     it("optimistic removal happens before API resolves even when delete is delayed", async () => {
-  
+
       const mockTools = [
         createMockTool(10, "delayed-gateway"),
         createMockTool(11, "delayed-gateway"),

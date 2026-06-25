@@ -545,7 +545,7 @@ describe("Servers", () => {
       expect(screen.getByRole("button", { name: /close mcp server details/i })).toBeInTheDocument();
     });
 
-    
+
     const table = screen.getByRole("table");
     expect(within(table).getByText("Test Server 0")).toBeInTheDocument();
   });
