@@ -4998,9 +4998,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 elif grant_type == "token-exchange":
                     # Token-exchange (RFC 8693) requires an inbound end-user JWT as the subject
                     # token. Gateway initialization/registration has no associated user request,
-                    # so this grant cannot be satisfied here. Fail closed rather than silently
-                    # falling through to client_credentials or connecting unauthenticated.
-                    raise GatewayConnectionError(f"Token exchange requires an inbound user JWT; not available on this connection path for gateway '{url}'.")
+                    # so the discovery probe cannot be satisfied here. Mirror the
+                    # authorization_code flow above: skip the connection attempt and persist
+                    # the gateway with an empty tool list rather than failing the registration
+                    # call outright. Tool/capability discovery for token-exchange gateways is
+                    # deferred to a later authenticated trigger (e.g. an explicit refresh).
+                    logger.info("Token-exchange gateway configured for '%s'. Skipping discovery probe; tools will be populated on a later authenticated refresh.", url)
+                    return {}, [], [], [], []
 
             capabilities = {}
             tools = []
