@@ -104,7 +104,7 @@ export function Servers() {
 
     const idToDelete = selectedServerId;
 
-  
+
     let previousServers: MCPServer[] = [];
     setAllServers((prev) => {
       previousServers = prev;
