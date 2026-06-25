@@ -43,11 +43,11 @@ class TestPassthroughHeaders:
         mock_db.query.return_value.first.return_value = mock_global_config
 
         request_headers = {"x-tenant-id": "acme-corp", "x-trace-id": "trace-456", "user-agent": "TestClient/1.0"}  # Not in allowed headers
-        base_headers = {"Content-Type": "application/json"}
+        base_headers = {"X-Custom-Type": "application/json"}
 
         result = get_passthrough_headers(request_headers, base_headers, mock_db)
 
-        expected = {"Content-Type": "application/json", "X-Tenant-Id": "acme-corp", "X-Trace-Id": "trace-456"}
+        expected = {"X-Custom-Type": "application/json", "X-Tenant-Id": "acme-corp", "X-Trace-Id": "trace-456"}
         assert result == expected
 
     @patch("mcpgateway.utils.passthrough_headers.settings")
@@ -66,11 +66,11 @@ class TestPassthroughHeaders:
         mock_gateway.auth_type = None
 
         request_headers = {"x-custom-header": "custom-value", "x-tenant-id": "should-be-ignored", "x-trace-id": "also-ignored"}  # Not in gateway config
-        base_headers = {"Content-Type": "application/json"}
+        base_headers = {"X-Custom-Type": "application/json"}
 
         result = get_passthrough_headers(request_headers, base_headers, mock_db, mock_gateway)
 
-        expected = {"Content-Type": "application/json", "X-Custom-Header": "custom-value"}
+        expected = {"X-Custom-Type": "application/json", "X-Custom-Header": "custom-value"}
         assert result == expected
 
     @patch("mcpgateway.utils.passthrough_headers.settings")
@@ -89,13 +89,13 @@ class TestPassthroughHeaders:
         mock_gateway.name = "test-gateway"
 
         request_headers = {"authorization": "Bearer should-be-blocked", "x-tenant-id": "acme-corp"}
-        base_headers = {"Content-Type": "application/json"}
+        base_headers = {"X-Custom-Type": "application/json"}
 
         with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
             result = get_passthrough_headers(request_headers, base_headers, mock_db, mock_gateway)
 
         # Authorization should be blocked, X-Tenant-Id should pass through
-        expected = {"Content-Type": "application/json", "X-Tenant-Id": "acme-corp"}
+        expected = {"X-Custom-Type": "application/json", "X-Tenant-Id": "acme-corp"}
         assert result == expected
 
         # Check warning was logged
@@ -117,13 +117,13 @@ class TestPassthroughHeaders:
         mock_gateway.name = "bearer-gateway"
 
         request_headers = {"authorization": "Bearer should-be-blocked"}
-        base_headers = {"Content-Type": "application/json"}
+        base_headers = {"X-Custom-Type": "application/json"}
 
         with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
             result = get_passthrough_headers(request_headers, base_headers, mock_db, mock_gateway)
 
         # Only base headers should remain
-        expected = {"Content-Type": "application/json"}
+        expected = {"X-Custom-Type": "application/json"}
         assert result == expected
 
         # Check warning was logged
@@ -137,17 +137,17 @@ class TestPassthroughHeaders:
 
         mock_db = Mock()
         mock_global_config = Mock(spec=GlobalConfig)
-        mock_global_config.passthrough_headers = ["Content-Type", "X-Tenant-Id"]
+        mock_global_config.passthrough_headers = ["X-Custom-Type", "X-Tenant-Id"]
         mock_db.query.return_value.first.return_value = mock_global_config
 
-        request_headers = {"content-type": "text/plain", "x-tenant-id": "acme-corp"}  # Conflicts with base header  # Should pass through
-        base_headers = {"Content-Type": "application/json"}
+        request_headers = {"x-custom-type": "text/plain", "x-tenant-id": "acme-corp"}  # Conflicts with base header  # Should pass through
+        base_headers = {"X-Custom-Type": "application/json"}
 
         with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
             result = get_passthrough_headers(request_headers, base_headers, mock_db)
 
         # Base header preserved, tenant ID added
-        expected = {"Content-Type": "application/json", "X-Tenant-Id": "acme-corp"}
+        expected = {"X-Custom-Type": "application/json", "X-Tenant-Id": "acme-corp"}
         assert result == expected
 
         # Check conflict warning was logged
@@ -184,13 +184,13 @@ class TestPassthroughHeaders:
         mock_db.query.return_value.first.return_value = mock_global_config
 
         request_headers = {"x-present": "present-value"}
-        base_headers = {"Content-Type": "application/json"}
+        base_headers = {"X-Custom-Type": "application/json"}
 
         with caplog.at_level(logging.WARNING):
             result = get_passthrough_headers(request_headers, base_headers, mock_db)
 
         # Only present header should be included
-        expected = {"Content-Type": "application/json", "X-Present": "present-value"}
+        expected = {"X-Custom-Type": "application/json", "X-Present": "present-value"}
         assert result == expected
 
         # Check debug message for missing header
@@ -211,12 +211,12 @@ class TestPassthroughHeaders:
         mock_db.query.return_value.first.return_value = mock_global_config
 
         request_headers = {"x-tenant-id": "should-be-ignored"}
-        base_headers = {"Content-Type": "application/json"}
+        base_headers = {"X-Custom-Type": "application/json"}
 
         result = get_passthrough_headers(request_headers, base_headers, mock_db)
 
         # Only base headers should remain
-        expected = {"Content-Type": "application/json"}
+        expected = {"X-Custom-Type": "application/json"}
         assert result == expected
 
     def test_none_allowed_headers(self):
@@ -227,7 +227,7 @@ class TestPassthroughHeaders:
         mock_db.query.return_value.first.return_value = mock_global_config
 
         request_headers = {"x-tenant-id": "should-be-ignored"}
-        base_headers = {"Content-Type": "application/json"}
+        base_headers = {"X-Custom-Type": "application/json"}
 
         # Mock settings fallback
         with patch("mcpgateway.utils.passthrough_headers.settings") as mock_settings:
@@ -236,7 +236,7 @@ class TestPassthroughHeaders:
             result = get_passthrough_headers(request_headers, base_headers, mock_db)
 
         # Should fall back to settings, but request doesn't have X-Default
-        expected = {"Content-Type": "application/json"}
+        expected = {"X-Custom-Type": "application/json"}
         assert result == expected
 
     def test_no_global_config_fallback_to_settings(self):
@@ -245,7 +245,7 @@ class TestPassthroughHeaders:
         mock_db.query.return_value.first.return_value = None  # No global config
 
         request_headers = {"x-default": "default-value"}
-        base_headers = {"Content-Type": "application/json"}
+        base_headers = {"X-Custom-Type": "application/json"}
 
         # Mock settings fallback
         with patch("mcpgateway.utils.passthrough_headers.settings") as mock_settings:
@@ -253,7 +253,7 @@ class TestPassthroughHeaders:
 
             result = get_passthrough_headers(request_headers, base_headers, mock_db)
 
-        expected = {"Content-Type": "application/json", "X-Default": "default-value"}
+        expected = {"X-Custom-Type": "application/json", "X-Default": "default-value"}
         assert result == expected
 
     def test_empty_request_headers(self):
@@ -264,12 +264,12 @@ class TestPassthroughHeaders:
         mock_db.query.return_value.first.return_value = mock_global_config
 
         request_headers: dict[str, str] = {}
-        base_headers = {"Content-Type": "application/json"}
+        base_headers = {"X-Custom-Type": "application/json"}
 
         result = get_passthrough_headers(request_headers, base_headers, mock_db)
 
         # Only base headers should remain
-        expected = {"Content-Type": "application/json"}
+        expected = {"X-Custom-Type": "application/json"}
         assert result == expected
 
     @patch("mcpgateway.utils.passthrough_headers.settings")
@@ -305,12 +305,12 @@ class TestPassthroughHeaders:
         mock_db.query.return_value.first.return_value = mock_global_config
 
         request_headers = None
-        base_headers = {"Content-Type": "application/json"}
+        base_headers = {"X-Custom-Type": "application/json"}
 
         result = get_passthrough_headers(request_headers, base_headers, mock_db)  # type: ignore[arg-type]
 
         # Only base headers should remain
-        expected = {"Content-Type": "application/json"}
+        expected = {"X-Custom-Type": "application/json"}
         assert result == expected
 
     @patch("mcpgateway.utils.passthrough_headers.settings")
@@ -324,7 +324,7 @@ class TestPassthroughHeaders:
         mock_db.query.return_value.first.return_value = mock_global_config
 
         request_headers = {"x-tenant-id": "acme-corp"}
-        base_headers = {"Content-Type": "application/json"}
+        base_headers = {"X-Custom-Type": "application/json"}
         original_base = base_headers.copy()
 
         result = get_passthrough_headers(request_headers, base_headers, mock_db)
@@ -333,7 +333,7 @@ class TestPassthroughHeaders:
         assert base_headers == original_base
 
         # Result should include both base and passthrough headers
-        assert "Content-Type" in result
+        assert "X-Custom-Type" in result
         assert "X-Tenant-Id" in result
 
     @patch("mcpgateway.utils.passthrough_headers.settings")
@@ -394,11 +394,11 @@ class TestPassthroughHeaders:
             "x-conflict": "conflict-value",  # Should pass through (in both configs)
             "x-random": "random-value",  # Not configured, ignored
         }
-        base_headers = {"Content-Type": "application/json", "User-Agent": "MCPGateway/1.0"}
+        base_headers = {"X-Custom-Type": "application/json", "User-Agent": "MCPGateway/1.0"}
 
         result = get_passthrough_headers(request_headers, base_headers, mock_db, mock_gateway)
 
-        expected = {"Content-Type": "application/json", "User-Agent": "MCPGateway/1.0", "X-Gateway": "gateway-value", "X-Conflict": "conflict-value"}
+        expected = {"X-Custom-Type": "application/json", "User-Agent": "MCPGateway/1.0", "X-Gateway": "gateway-value", "X-Conflict": "conflict-value"}
         assert result == expected
 
     @patch("mcpgateway.utils.passthrough_headers.settings")
@@ -457,19 +457,19 @@ class TestPassthroughHeaders:
         """Test that enable_overwrite_base_headers allows overriding base headers."""
         mock_settings.enable_header_passthrough = True
         mock_settings.enable_overwrite_base_headers = True  # Enable override
-        mock_settings.default_passthrough_headers = ["Content-Type", "X-Tenant-Id"]
+        mock_settings.default_passthrough_headers = ["X-Custom-Type", "X-Tenant-Id"]
 
         mock_db = Mock()
         mock_db.query.return_value.first.return_value = None
 
-        request_headers = {"content-type": "text/plain", "x-tenant-id": "acme-corp"}
-        base_headers = {"Content-Type": "application/json", "User-Agent": "MCPGateway"}
+        request_headers = {"x-custom-type": "text/plain", "x-tenant-id": "acme-corp"}
+        base_headers = {"X-Custom-Type": "application/json", "User-Agent": "MCPGateway"}
 
         with patch("mcpgateway.utils.passthrough_headers.logger") as mock_logger:
             result = get_passthrough_headers(request_headers, base_headers, mock_db)
 
         # Should override Content-Type and add X-Tenant-Id
-        expected = {"Content-Type": "text/plain", "User-Agent": "MCPGateway", "X-Tenant-Id": "acme-corp"}
+        expected = {"X-Custom-Type": "text/plain", "User-Agent": "MCPGateway", "X-Tenant-Id": "acme-corp"}
         assert result == expected
 
         # Should log debug message about override being enabled
@@ -480,19 +480,19 @@ class TestPassthroughHeaders:
         """Test that when overwrite is disabled, base header conflicts are prevented."""
         mock_settings.enable_header_passthrough = True
         mock_settings.enable_overwrite_base_headers = False  # Disable override (default)
-        mock_settings.default_passthrough_headers = ["Content-Type", "X-Tenant-Id"]
+        mock_settings.default_passthrough_headers = ["X-Custom-Type", "X-Tenant-Id"]
 
         mock_db = Mock()
         mock_db.query.return_value.first.return_value = None
 
-        request_headers = {"content-type": "text/plain", "x-tenant-id": "acme-corp"}
-        base_headers = {"Content-Type": "application/json", "User-Agent": "MCPGateway"}
+        request_headers = {"x-custom-type": "text/plain", "x-tenant-id": "acme-corp"}
+        base_headers = {"X-Custom-Type": "application/json", "User-Agent": "MCPGateway"}
 
         with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
             result = get_passthrough_headers(request_headers, base_headers, mock_db)
 
         # Should preserve base Content-Type and add X-Tenant-Id
-        expected = {"Content-Type": "application/json", "User-Agent": "MCPGateway", "X-Tenant-Id": "acme-corp"}
+        expected = {"X-Custom-Type": "application/json", "User-Agent": "MCPGateway", "X-Tenant-Id": "acme-corp"}
         assert result == expected
 
         # Should log warning about conflict
