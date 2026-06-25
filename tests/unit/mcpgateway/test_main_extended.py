@@ -844,7 +844,11 @@ class TestInternalTrustedMcpTransportBridge:
 
         await bridge.handle_streamable_http(scope, receive, send)
 
-        assert events[0]["status"] == 400
+        # A missing auth context now fails the internal trust gate itself
+        # (require_auth_context is folded into is_trusted_internal_mcp_request),
+        # so the request is rejected as untrusted (403) before reaching the
+        # "missing auth context" (400) branch.
+        assert events[0]["status"] == 403
 
     def test_build_internal_mcp_auth_scope_uses_public_request_shape(self):
         """Synthetic auth scope should preserve the public MCP path and client IP."""
