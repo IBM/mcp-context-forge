@@ -152,7 +152,7 @@ class TestSessionAdminBypassRealPipeline:
         # Step 1: Real login via /auth/login - get a real session JWT
         login_resp = client.post(
             "/auth/login",
-            json={"email": "admin-bypass@example.com", "password": "TestPass123!"},
+            json={"email": "admin-bypass@example.com", "password": "TestPass123!"},  # pragma: allowlist secret
         )
         assert login_resp.status_code == 200, f"Login failed: {login_resp.text}"
         token = login_resp.json()["access_token"]
