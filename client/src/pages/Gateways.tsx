@@ -108,7 +108,7 @@ export function Gateways() {
         );
       }
     } catch (err) {
-      // ROLLBACK on failure 
+      // ROLLBACK on failure
       setDeletedServerIds((previous) => {
         const next = new Set(previous);
         next.delete(serverToDelete.id);
