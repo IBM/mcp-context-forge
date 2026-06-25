@@ -7,7 +7,9 @@ on:
     types: [opened, synchronize, ready_for_review]
     branches: [main, develop]
     paths:
+      - "a2a-agents/rust/**"
       - "crates/**"
+      - "mcp-servers/rust/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
@@ -87,6 +89,9 @@ jobs:
         run: |
           rustup toolchain install stable
           rustup default stable
+
+      - name: Check Cargo.lock is current
+        run: cargo metadata --locked --format-version 1 >/dev/null
 
       - name: Cache Cargo
         uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4

@@ -9,6 +9,7 @@ dependencies = [
  "anyhow",
  "axum",
  "chrono",
+ "futures",
  "serde",
  "serde_json",
  "tokio",
