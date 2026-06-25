@@ -180,10 +180,7 @@ export function Tools() {
   const toolForForm = editedToolData?.id === editingTool?.id ? editedToolData : editingTool;
 
   const restToolsLabel = intl.formatMessage({ id: "tools.restToolsGroup" });
-  const groups = useMemo(
-    () => buildGroups(allTools, restToolsLabel),
-    [allTools, restToolsLabel],
-  );
+  const groups = useMemo(() => buildGroups(allTools, restToolsLabel), [allTools, restToolsLabel]);
 
   const handleFormSuccess = () => {
     setIsFormOpen(false);
@@ -226,7 +223,6 @@ export function Tools() {
     const previousGroup = selectedGroup
       ? { ...selectedGroup, tools: selectedGroup.tools.map((t) => ({ ...t })) }
       : null;
-
 
     setAllTools((prev) => {
       previousTools = prev;
