@@ -17,3 +17,13 @@ export interface PromptArgument {
 }
 
 export type PromptsResponse = Prompt[] | { prompts?: Prompt[] };
+
+export interface PromptFormData {
+  name: string;
+  visibility: string;
+  template: string;
+  arguments: string;
+  description?: string;
+  tags?: string;
+  teamId?: string;
+}

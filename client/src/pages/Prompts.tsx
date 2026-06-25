@@ -3,6 +3,7 @@ import { useIntl } from "react-intl";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useQuery } from "@/hooks/useQuery";
+import { useRouter } from "@/router";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,6 +14,7 @@ import type { Prompt, PromptsResponse } from "@/types/prompts";
 
 export function Prompts() {
   const intl = useIntl();
+  const { navigate } = useRouter();
   const {
     data: promptsData,
     error,
@@ -70,7 +72,20 @@ export function Prompts() {
 
       {!isLoading && (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 2xl:grid-cols-3">
-          <Card size="sm" className="cursor-pointer transition-opacity hover:opacity-90">
+          <Card
+            size="sm"
+            role="button"
+            tabIndex={0}
+            aria-label={intl.formatMessage({ id: "prompts.add.title" })}
+            className="cursor-pointer transition-opacity hover:opacity-90"
+            onClick={() => navigate("/app/prompts/add")}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                navigate("/app/prompts/add");
+              }
+            }}
+          >
             <CardHeader>
               <div className="flex items-center gap-3">
                 <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded bg-tool-add-icon-bg shadow-sm">
