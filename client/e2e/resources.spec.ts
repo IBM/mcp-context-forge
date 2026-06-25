@@ -1,8 +1,8 @@
 import { test, expect } from "./fixtures/api-mock";
 import { APP } from "./utils/paths";
-import type { Resource } from "../src/types/resource";
+import type { ResourceRead } from "../src/generated/types";
 
-const MOCK_RESOURCE: Resource = {
+const MOCK_RESOURCE: NonNullable<ResourceRead> = {
   id: "res-123abc456def789", // pragma: allowlist secret
   uri: "resource://test/document.txt",
   name: "Test Document",
@@ -11,7 +11,6 @@ const MOCK_RESOURCE: Resource = {
   size: 1024,
   tags: ["test", "document"],
   enabled: true,
-  content: null,
   createdAt: "2026-04-28T15:41:31.233166",
   updatedAt: "2026-04-28T15:41:31.233168",
   createdBy: "admin@example.com",
@@ -19,11 +18,10 @@ const MOCK_RESOURCE: Resource = {
   team: "Platform Administrator's Team",
   ownerEmail: "admin@example.com",
   visibility: "public",
-  gatewaySlug: "test-gateway",
   gatewayId: "gw-123",
 };
 
-const MOCK_RESOURCE_JSON: Resource = {
+const MOCK_RESOURCE_JSON: NonNullable<ResourceRead> = {
   id: "res-json-789xyz", // pragma: allowlist secret
   uri: "resource://api/config.json",
   name: "API Configuration",
@@ -32,7 +30,6 @@ const MOCK_RESOURCE_JSON: Resource = {
   size: 2048,
   tags: ["config", "api"],
   enabled: true,
-  content: null,
   createdAt: "2026-04-28T16:00:00.000000",
   updatedAt: "2026-04-28T16:00:00.000000",
   createdBy: "admin@example.com",
@@ -40,7 +37,6 @@ const MOCK_RESOURCE_JSON: Resource = {
   team: "Platform Administrator's Team",
   ownerEmail: "admin@example.com",
   visibility: "team",
-  gatewaySlug: "api-gateway",
   gatewayId: "gw-456",
 };
 
@@ -175,8 +171,8 @@ test.describe("Resources page", () => {
   });
 
   test("displays resources from different gateways as individual cards", async ({ page }) => {
-    const resource1 = { ...MOCK_RESOURCE, gatewaySlug: "gateway-a", name: "Resource A" };
-    const resource2 = { ...MOCK_RESOURCE_JSON, gatewaySlug: "gateway-b", name: "Resource B" };
+    const resource1 = { ...MOCK_RESOURCE, gatewayId: "gateway-a", name: "Resource A" };
+    const resource2 = { ...MOCK_RESOURCE_JSON, gatewayId: "gateway-b", name: "Resource B" };
 
     await page.route("**/resources?*", async (route) => {
       await route.fulfill({

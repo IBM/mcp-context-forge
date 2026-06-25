@@ -59,7 +59,7 @@ jobs:
               env:
                   GUNICORN_WORKERS: 1
                   MCPGATEWAY_UI_ENABLED: false
-                  MCPGATEWAY_ADMIN_API_ENABLED: true
+                  MCPGATEWAY_ADMIN_API_ENABLED: false
                   SSRF_PROTECTION_ENABLED: false
                   JWT_SECRET_KEY: ${{ env.DYNAMIC_JWT_SECRET }}
                   ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP: false

@@ -17,7 +17,9 @@ import { RouterProvider } from "@/router";
 import { I18nProvider } from "@/i18n";
 import { AuthProvider } from "@/auth/AuthContext";
 import type { ReactElement } from "react";
-import type { Resource } from "@/types/resource";
+import type { ResourceRead } from "@/generated/types";
+
+type Resource = NonNullable<ResourceRead>;
 
 // Helper: create mock resource
 function createMockResource(id: number, gatewaySlug: string, enabled = true): Resource {
@@ -36,7 +38,7 @@ function createMockResource(id: number, gatewaySlug: string, enabled = true): Re
     tags: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-  };
+  } as unknown as Resource;
 }
 
 // Helper: render with router + auth
@@ -300,7 +302,6 @@ describe("Resources", () => {
     const mockResources: Resource[] = [
       {
         ...createMockResource(1, ""),
-        gatewaySlug: "",
       },
     ];
 

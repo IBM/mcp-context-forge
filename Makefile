@@ -16,6 +16,9 @@ SHELL := /bin/bash
 # Read values from .env.make
 -include .env.make
 
+# Read MCPGATEWAY_ADMIN_API_ENABLED from environment, falling back to .env
+MCPGATEWAY_ADMIN_API_ENABLED ?= $(shell grep -s '^MCPGATEWAY_ADMIN_API_ENABLED=' .env | cut -d= -f2 | tr -d '[:space:]"'"'"')
+
 # Rust build configuration (set to 1 to enable Rust builds, 0 to disable)
 # Default is disabled to avoid requiring Rust toolchain for standard builds
 ENABLE_RUST_BUILD ?= 0
@@ -379,7 +382,9 @@ init-secrets: ## Generate secure secrets for the gateway (US-3)
 
 ## --- JS build ----------------------------------------------------------------
 js-build:                        ## Install npm dependencies and build JS bundle with Vite (includes client React app)
-	@if command -v npm >/dev/null 2>&1; then \
+	@if [ "$(MCPGATEWAY_ADMIN_API_ENABLED)" != "true" ]; then \
+		echo "⏭️  MCPGATEWAY_ADMIN_API_ENABLED != true — skipping JS build"; \
+	elif command -v npm >/dev/null 2>&1; then \
 		npm install --no-audit --no-fund && npm run build:css && npm run vite:build && \
 		cd client && npm install --no-audit --no-fund && npm run build; \
 	else \
@@ -414,8 +419,10 @@ dev:
 	@trap 'echo "🛑 Stopping background processes..."; jobs -p | xargs $(XARGS_FLAGS) kill 2>/dev/null || true' EXIT; \
 	$(MAKE) js-build watch-css & \
 	WATCH_CSS_PID=$$!; \
-	(cd client && npm install --no-audit --no-fund && npm run build:watch > /dev/null 2>&1) & \
-	echo $$! > /tmp/mcpgateway-client-watch.pid; \
+	if [ "$(MCPGATEWAY_ADMIN_API_ENABLED)" = "true" ]; then \
+		(cd client && npm install --no-audit --no-fund && npm run build:watch > /dev/null 2>&1) & \
+		echo $$! > /tmp/mcpgateway-client-watch.pid; \
+	fi; \
 	TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/' || { kill $$WATCH_CSS_PID 2>/dev/null || true; exit 1; }
 
 .PHONY: dev-echo

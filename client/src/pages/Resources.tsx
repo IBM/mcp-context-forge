@@ -2,8 +2,7 @@ import { useState, useMemo, memo } from "react";
 import { useIntl } from "react-intl";
 import { Plus, MoreHorizontal, FileText } from "lucide-react";
 import { useQuery } from "@/hooks/useQuery";
-import type { Resource } from "@/types/resource";
-import type { MCPServer, ServersResponse } from "@/types/server";
+import type { ResourceRead, GatewayRead, CursorPaginatedGatewaysResponse } from "@/generated/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import {
@@ -35,8 +34,8 @@ const ResourceCard = memo(function ResourceCard({
   resource,
   onViewResource,
 }: {
-  resource: Resource;
-  onViewResource: (resource: Resource) => void;
+  resource: NonNullable<ResourceRead>;
+  onViewResource: (resource: NonNullable<ResourceRead>) => void;
 }) {
   const intl = useIntl();
 
@@ -156,10 +155,10 @@ function AddResourcesCard({ onAddResource }: { onAddResource: () => void }) {
 export function Resources() {
   const intl = useIntl();
   const [showForm, setShowForm] = useState(false);
-  const [selectedResource, setSelectedResource] = useState<Resource | null>(null);
+  const [selectedResource, setSelectedResource] = useState<NonNullable<ResourceRead> | null>(null);
 
-  const { data, isLoading, error, refetch } = useQuery<Resource[]>("/resources?limit=0");
-  const { data: gatewaysData } = useQuery<ServersResponse>(
+  const { data, isLoading, error, refetch } = useQuery<ResourceRead[]>("/resources?limit=0");
+  const { data: gatewaysData } = useQuery<CursorPaginatedGatewaysResponse>(
     "/gateways?limit=0&include_pagination=true",
     {
       enabled: !isLoading,
@@ -167,7 +166,9 @@ export function Resources() {
   );
 
   const gatewayNameById = useMemo(() => {
-    const gateways: MCPServer[] = gatewaysData?.gateways ?? [];
+    const gateways: NonNullable<GatewayRead>[] = (gatewaysData?.gateways ?? []).filter(
+      (g): g is NonNullable<GatewayRead> => g !== null,
+    );
     return new Map(
       gateways.map((gateway) => [
         gateway.id,
@@ -181,7 +182,7 @@ export function Resources() {
     await refetch();
   };
 
-  const handleResourceClick = (resource: Resource) => {
+  const handleResourceClick = (resource: NonNullable<ResourceRead>) => {
     setSelectedResource(resource);
   };
 
@@ -237,13 +238,15 @@ export function Resources() {
           {!isLoading && (
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 2xl:grid-cols-3">
               <AddResourcesCard onAddResource={() => setShowForm(true)} />
-              {data?.map((resource) => (
-                <ResourceCard
-                  key={resource.id}
-                  resource={resource}
-                  onViewResource={handleResourceClick}
-                />
-              ))}
+              {data
+                ?.filter((r): r is NonNullable<ResourceRead> => r !== null)
+                .map((resource) => (
+                  <ResourceCard
+                    key={resource.id}
+                    resource={resource}
+                    onViewResource={handleResourceClick}
+                  />
+                ))}
             </div>
           )}
 
