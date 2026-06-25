@@ -1694,9 +1694,8 @@ class SecurityValidator:
                     is_cgnat = ip_addr in cgnat_network
 
                 if ip_addr.is_private or ip_addr.is_loopback or ip_addr.is_link_local or is_cgnat:
-                    logger = logging.getLogger(__name__)
                     logger.warning(
-                        "Gateway test URL validation: SSRF protection bypass - private/internal IP allowed " "(ssrf_protection_enabled=false). target=%s ip_type=%s",
+                        "Gateway test URL validation: SSRF protection bypass - private/internal IP allowed (ssrf_protection_enabled=false). target=%s ip_type=%s",
                         hostname_normalized,
                         "private" if ip_addr.is_private else "loopback" if ip_addr.is_loopback else "link-local" if ip_addr.is_link_local else "cgnat",
                     )
@@ -1751,10 +1750,8 @@ class SecurityValidator:
                             is_cgnat = resolved_ip in cgnat_network
 
                         if resolved_ip.is_private or resolved_ip.is_loopback or resolved_ip.is_link_local or is_cgnat:
-                            logger = logging.getLogger(__name__)
                             logger.warning(
-                                "Gateway test URL validation: SSRF protection bypass - hostname resolves to private/internal IP "
-                                "(ssrf_protection_enabled=false). hostname=%s resolved_ip=%s ip_type=%s",
+                                "Gateway test URL validation: SSRF protection bypass - hostname resolves to private/internal IP (ssrf_protection_enabled=false). hostname=%s resolved_ip=%s ip_type=%s",
                                 hostname_normalized,
                                 str(resolved_ip),
                                 "private" if resolved_ip.is_private else "loopback" if resolved_ip.is_loopback else "link-local" if resolved_ip.is_link_local else "cgnat",
