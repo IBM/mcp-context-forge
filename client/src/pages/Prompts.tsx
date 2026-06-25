@@ -1,16 +1,17 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { MessageSquareCode, MoreHorizontal, Plus } from "lucide-react";
 import { useIntl } from "react-intl";
+import { PromptForm } from "@/components/prompts/PromptForm";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { CardTag } from "@/components/ui/card-tag";
-import { Button } from "@/components/ui/button";
-import { useQuery } from "@/hooks/useQuery";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useQuery } from "@/hooks/useQuery";
 import type { Prompt, PromptGroup, PromptsResponse } from "@/types/prompts";
 
 const MAX_VISIBLE_PROMPTS = 8;
@@ -127,11 +128,24 @@ function PromptGroupCard({ group }: { group: PromptGroup }) {
   );
 }
 
-function AddPromptsCard() {
+function AddPromptsCard({ onActivate }: { onActivate: () => void }) {
   const intl = useIntl();
 
   return (
-    <Card size="sm" className="cursor-pointer transition-opacity hover:opacity-90">
+    <Card
+      size="sm"
+      role="button"
+      tabIndex={0}
+      aria-label={intl.formatMessage({ id: "prompts.add.title" })}
+      className="cursor-pointer transition-opacity hover:opacity-90"
+      onClick={onActivate}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onActivate();
+        }
+      }}
+    >
       <CardHeader>
         <div className="flex items-center gap-3">
           <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded bg-tool-add-icon-bg shadow-sm">
@@ -153,10 +167,12 @@ function AddPromptsCard() {
 
 export function Prompts() {
   const intl = useIntl();
+  const [showForm, setShowForm] = useState(false);
   const {
     data: promptsData,
     error,
     isLoading,
+    refetch,
   } = useQuery<PromptsResponse>("/prompts?limit=1000&include_inactive=true");
 
   const restPromptsLabel = intl.formatMessage({ id: "prompts.restPromptsGroup" });
@@ -165,44 +181,59 @@ export function Prompts() {
     [promptsData, restPromptsLabel],
   );
 
+  const handleFormSuccess = async () => {
+    setShowForm(false);
+    await refetch();
+  };
+
   return (
     <div className="p-6">
-      <h1 className="mb-6 text-base font-semibold text-neutral-900 dark:text-white">
-        {intl.formatMessage({ id: "prompts.title" })}
-      </h1>
+      {showForm ? (
+        <PromptForm
+          isOpen={showForm}
+          onToggle={() => setShowForm(false)}
+          onSuccess={handleFormSuccess}
+        />
+      ) : (
+        <>
+          <h1 className="mb-6 text-base font-semibold text-neutral-900 dark:text-white">
+            {intl.formatMessage({ id: "prompts.title" })}
+          </h1>
 
-      {isLoading && (
-        <div
-          role="status"
-          aria-live="polite"
-          aria-busy="true"
-          className="flex items-center justify-center p-12"
-        >
-          <span className="sr-only">{intl.formatMessage({ id: "prompts.loading" })}</span>
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-blue-600 dark:border-gray-700 dark:border-t-blue-400" />
-        </div>
-      )}
+          {isLoading && (
+            <div
+              role="status"
+              aria-live="polite"
+              aria-busy="true"
+              className="flex items-center justify-center p-12"
+            >
+              <span className="sr-only">{intl.formatMessage({ id: "prompts.loading" })}</span>
+              <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-blue-600 dark:border-gray-700 dark:border-t-blue-400" />
+            </div>
+          )}
 
-      {error && (
-        <div
-          className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-800 dark:bg-red-900/20"
-          role="alert"
-          aria-live="assertive"
-        >
-          <h3 className="mb-1 font-semibold">
-            {intl.formatMessage({ id: "prompts.error.loading" })}
-          </h3>
-          <p className="text-red-800 dark:text-red-200">{error.message}</p>
-        </div>
-      )}
+          {error && (
+            <div
+              className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-800 dark:bg-red-900/20"
+              role="alert"
+              aria-live="assertive"
+            >
+              <h3 className="mb-1 font-semibold">
+                {intl.formatMessage({ id: "prompts.error.loading" })}
+              </h3>
+              <p className="text-red-800 dark:text-red-200">{error.message}</p>
+            </div>
+          )}
 
-      {!isLoading && (
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 2xl:grid-cols-3">
-          <AddPromptsCard />
-          {groups.map((group) => (
-            <PromptGroupCard key={group.key} group={group} />
-          ))}
-        </div>
+          {!isLoading && (
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 2xl:grid-cols-3">
+              <AddPromptsCard onActivate={() => setShowForm(true)} />
+              {groups.map((group) => (
+                <PromptGroupCard key={group.key} group={group} />
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
