@@ -330,3 +330,4 @@ class TestPluginHeaderSecurityRefiltering:
         # Downstream DOES include sensitive when flag enabled (line 1966)
         assert downstream_headers.get("authorization") == "Bearer token"
         assert downstream_headers.get("x-custom-header") == "value"
+
