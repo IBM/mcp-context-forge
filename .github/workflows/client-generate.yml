@@ -120,4 +120,4 @@ jobs:
 
             - name: Verify generated types compile
               working-directory: client
-              run: npx tsc --noEmit
+              run: npx tsc -b --noEmit
