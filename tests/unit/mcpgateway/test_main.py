@@ -769,22 +769,22 @@ class TestProtocolEndpoints:
         assert response.status_code == 200
         mock_notify.assert_called_once()
 
-    @patch("mcpgateway.main.get_rpc_filter_context")
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
     @patch("mcpgateway.main.completion_service.handle_completion")
     def test_handle_completion_endpoint(self, mock_completion, mock_filter_context, test_client, auth_headers):
         """Test completion handling endpoint."""
-        mock_filter_context.return_value = ("scoped@example.com", ["team-1"], False)
+        mock_filter_context.return_value = ("scoped@example.com", ["team-1"])
         mock_completion.return_value = {"result": "completion_result"}
         req = {"ref": {"type": "ref/prompt", "name": "test"}}
         response = test_client.post("/protocol/completion/complete", json=req, headers=auth_headers)
         assert response.status_code == 200
         mock_completion.assert_called_once_with(ANY, req, user_email="scoped@example.com", token_teams=["team-1"])
 
-    @patch("mcpgateway.main.get_rpc_filter_context")
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
     @patch("mcpgateway.main.completion_service.handle_completion")
     def test_handle_completion_endpoint_admin_bypass(self, mock_completion, mock_filter_context, test_client, auth_headers):
         """Protocol completion should preserve admin user_email for private resource access (issue #4694)."""
-        mock_filter_context.return_value = ("admin@example.com", None, True)
+        mock_filter_context.return_value = ("admin@example.com", None)
         mock_completion.return_value = {"result": "completion_result"}
 
         req = {"ref": {"type": "ref/prompt", "name": "test"}}
@@ -793,11 +793,11 @@ class TestProtocolEndpoints:
         assert response.status_code == 200
         mock_completion.assert_called_once_with(ANY, req, user_email="admin@example.com", token_teams=None)
 
-    @patch("mcpgateway.main.get_rpc_filter_context")
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
     @patch("mcpgateway.main.completion_service.handle_completion")
     def test_handle_completion_endpoint_defaults_to_public_scope_when_token_teams_none(self, mock_completion, mock_filter_context, test_client, auth_headers):
         """Protocol completion should treat token_teams=None as public-only for non-admin context."""
-        mock_filter_context.return_value = ("viewer@example.com", None, False)
+        mock_filter_context.return_value = ("viewer@example.com", [])
         mock_completion.return_value = {"result": "completion_result"}
 
         req = {"ref": {"type": "ref/prompt", "name": "test"}}
@@ -2206,11 +2206,11 @@ class TestGatewayEndpoints:
 # Tag Endpoints Tests                                   #
 # ----------------------------------------------------- #
 class TestTagEndpoints:
-    @patch("mcpgateway.main.get_rpc_filter_context")
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
     @patch("mcpgateway.main.tag_service.get_all_tags", new_callable=AsyncMock)
     def test_list_tags_passes_token_scope(self, mock_get_tags, mock_filter_context, test_client, auth_headers):
         """Tag list endpoint should pass scoped visibility context to service."""
-        mock_filter_context.return_value = ("scoped@example.com", ["team-1"], False)
+        mock_filter_context.return_value = ("scoped@example.com", ["team-1"])
         mock_get_tags.return_value = []
 
         response = test_client.get("/tags", headers=auth_headers)
@@ -2224,11 +2224,11 @@ class TestTagEndpoints:
             token_teams=["team-1"],
         )
 
-    @patch("mcpgateway.main.get_rpc_filter_context")
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
     @patch("mcpgateway.main.tag_service.get_entities_by_tag", new_callable=AsyncMock)
     def test_get_entities_by_tag_passes_public_only_scope(self, mock_get_entities, mock_filter_context, test_client, auth_headers):
         """Tag entity lookup should preserve public-only token semantics."""
-        mock_filter_context.return_value = ("admin@example.com", [], False)
+        mock_filter_context.return_value = ("admin@example.com", [])
         mock_get_entities.return_value = []
 
         response = test_client.get("/tags/test/entities", headers=auth_headers)
@@ -2242,11 +2242,11 @@ class TestTagEndpoints:
             token_teams=[],
         )
 
-    @patch("mcpgateway.main.get_rpc_filter_context")
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
     @patch("mcpgateway.main.tag_service.get_all_tags", new_callable=AsyncMock)
     def test_list_tags_admin_bypass_passes_unrestricted_scope(self, mock_get_tags, mock_filter_context, test_client, auth_headers):
         """Explicit admin bypass token should pass unrestricted scope to tag service."""
-        mock_filter_context.return_value = ("admin@example.com", None, True)
+        mock_filter_context.return_value = (None, None)
         mock_get_tags.return_value = []
 
         response = test_client.get("/tags", headers=auth_headers)
@@ -2260,11 +2260,11 @@ class TestTagEndpoints:
             token_teams=None,
         )
 
-    @patch("mcpgateway.main.get_rpc_filter_context")
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
     @patch("mcpgateway.main.tag_service.get_all_tags", new_callable=AsyncMock)
     def test_list_tags_defaults_to_public_scope_when_token_teams_none(self, mock_get_tags, mock_filter_context, test_client, auth_headers):
         """Non-admin token_teams=None should be normalized to public-only scope."""
-        mock_filter_context.return_value = ("viewer@example.com", None, False)
+        mock_filter_context.return_value = ("viewer@example.com", [])
         mock_get_tags.return_value = []
 
         response = test_client.get("/tags", headers=auth_headers)
@@ -2278,11 +2278,11 @@ class TestTagEndpoints:
             token_teams=[],
         )
 
-    @patch("mcpgateway.main.get_rpc_filter_context")
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
     @patch("mcpgateway.main.tag_service.get_entities_by_tag", new_callable=AsyncMock)
     def test_get_entities_by_tag_admin_bypass_passes_unrestricted_scope(self, mock_get_entities, mock_filter_context, test_client, auth_headers):
         """Admin bypass context should pass unrestricted scope to tag entity lookup."""
-        mock_filter_context.return_value = ("admin@example.com", None, True)
+        mock_filter_context.return_value = (None, None)
         mock_get_entities.return_value = []
 
         response = test_client.get("/tags/test/entities", headers=auth_headers)
@@ -2296,11 +2296,11 @@ class TestTagEndpoints:
             token_teams=None,
         )
 
-    @patch("mcpgateway.main.get_rpc_filter_context")
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
     @patch("mcpgateway.main.tag_service.get_entities_by_tag", new_callable=AsyncMock)
     def test_get_entities_by_tag_defaults_to_public_scope_when_token_teams_none(self, mock_get_entities, mock_filter_context, test_client, auth_headers):
         """Non-admin token_teams=None should be normalized to public-only for tag entity lookup."""
-        mock_filter_context.return_value = ("viewer@example.com", None, False)
+        mock_filter_context.return_value = ("viewer@example.com", [])
         mock_get_entities.return_value = []
 
         response = test_client.get("/tags/test/entities", headers=auth_headers)
@@ -3048,11 +3048,11 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         assert response.json()["result"] == {}
 
-    @patch("mcpgateway.main.get_rpc_filter_context")
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
     @patch("mcpgateway.main.completion_service.handle_completion", new_callable=AsyncMock)
     def test_rpc_completion_complete(self, mock_completion, mock_filter_context, test_client, auth_headers):
         """Test completion/complete JSON-RPC method."""
-        mock_filter_context.return_value = ("rpc-user@example.com", ["team-2"], False)
+        mock_filter_context.return_value = ("rpc-user@example.com", ["team-2"])
         mock_completion.return_value = {"result": "done"}
         req = {"jsonrpc": "2.0", "id": "test-id", "method": "completion/complete", "params": {"ref": {"type": "ref/prompt", "name": "p1"}}}
         response = test_client.post("/rpc/", json=req, headers=auth_headers)
@@ -3061,11 +3061,11 @@ class TestRPCEndpoints:
         assert response.json()["result"]["result"] == "done"
         mock_completion.assert_awaited_once_with(ANY, req["params"], user_email="rpc-user@example.com", token_teams=["team-2"])
 
-    @patch("mcpgateway.main.get_rpc_filter_context")
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
     @patch("mcpgateway.main.completion_service.handle_completion", new_callable=AsyncMock)
     def test_rpc_completion_complete_admin_bypass(self, mock_completion, mock_filter_context, test_client, auth_headers):
         """RPC completion should preserve explicit admin bypass context."""
-        mock_filter_context.return_value = ("admin@example.com", None, True)
+        mock_filter_context.return_value = (None, None)
         mock_completion.return_value = {"result": "done"}
         req = {"jsonrpc": "2.0", "id": "test-id", "method": "completion/complete", "params": {"ref": {"type": "ref/prompt", "name": "p1"}}}
 
@@ -3075,11 +3075,11 @@ class TestRPCEndpoints:
         assert response.json()["result"]["result"] == "done"
         mock_completion.assert_awaited_once_with(ANY, req["params"], user_email=None, token_teams=None)
 
-    @patch("mcpgateway.main.get_rpc_filter_context")
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
     @patch("mcpgateway.main.completion_service.handle_completion", new_callable=AsyncMock)
     def test_rpc_completion_complete_defaults_to_public_scope_when_token_teams_none(self, mock_completion, mock_filter_context, test_client, auth_headers):
         """RPC completion should normalize non-admin token_teams=None to public-only."""
-        mock_filter_context.return_value = ("viewer@example.com", None, False)
+        mock_filter_context.return_value = ("viewer@example.com", [])
         mock_completion.return_value = {"result": "done"}
         req = {"jsonrpc": "2.0", "id": "test-id", "method": "completion/complete", "params": {"ref": {"type": "ref/prompt", "name": "p1"}}}
 
@@ -5306,6 +5306,54 @@ class TestGetRpcFilterContext:
         assert teams == ["t1"]
         assert is_admin is False
         assert any("internal_auth_context email non-string type" in record.message for record in caplog.records)
+
+    def test_get_scoped_resource_access_context_basic_auth_admin_bypass(self):
+        """
+        Regression test: get_scoped_resource_access_context enables Layer-1 admin bypass
+        for basic-auth/dev-mode admins (non-JWT contexts).
+
+        This is a latent bug-fix: the inline derivation pattern missed this case because
+        it only checked is_admin from the JWT payload. The centralized helper correctly
+        handles non-JWT admin contexts (basic-auth, dev-mode) by checking the user object
+        directly via get_rpc_filter_context.
+
+        Before refactoring: basic-auth admins got public-only scope (bug)
+        After refactoring: basic-auth admins get admin bypass (correct)
+        """
+        # First-Party
+        from mcpgateway.main import get_scoped_resource_access_context
+
+        # Simulate basic-auth admin: no JWT payload, but user has is_admin=True
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = None  # No JWT (basic-auth/dev-mode)
+        user = {"email": "admin@example.com", "is_admin": True}
+
+        user_email, token_teams = get_scoped_resource_access_context(mock_request, user)
+
+        # Admin bypass: token_teams=None for unrestricted access, email preserved for owner matching (PR #4341)
+        assert user_email == "admin@example.com", "Basic-auth admin should preserve email for owner matching"
+        assert token_teams is None, "Basic-auth admin should get admin bypass (token_teams=None)"
+
+    def test_get_scoped_resource_access_context_basic_auth_non_admin_public_only(self):
+        """
+        Regression test: non-admin basic-auth users get public-only scope.
+
+        This ensures the secure default is maintained for non-admin contexts
+        without JWT tokens.
+        """
+        # First-Party
+        from mcpgateway.main import get_scoped_resource_access_context
+
+        # Simulate basic-auth non-admin: no JWT payload, user has is_admin=False
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = None  # No JWT
+        user = {"email": "user@example.com", "is_admin": False}
+
+        user_email, token_teams = get_scoped_resource_access_context(mock_request, user)
+
+        # Public-only scope: email preserved, teams=[]
+        assert user_email == "user@example.com", "Non-admin should preserve email"
+        assert token_teams == [], "Non-admin without JWT should get public-only scope (teams=[])"
 
 
 # --------------------------------------------------------------------------- #
