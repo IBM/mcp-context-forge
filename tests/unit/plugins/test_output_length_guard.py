@@ -3185,11 +3185,16 @@ class TestLoggingPerformance:
         # Standard
         import time
 
-        # Test with logging
+        plugin_logger = logging.getLogger("plugins.output_length_guard.guards")
+        previous_level = plugin_logger.level
+        plugin_logger.setLevel(logging.INFO)
         start = time.time()
-        for _ in range(1000):
-            _estimate_tokens(text="test", chars_per_token=4)
-        with_logging = time.time() - start
+        try:
+            for _ in range(1000):
+                _estimate_tokens(text="test", chars_per_token=4)
+            with_logging = time.time() - start
+        finally:
+            plugin_logger.setLevel(previous_level)
 
         # Logging should not add significant overhead
         assert with_logging < 1.0  # Should complete in less than 1 second
