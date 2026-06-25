@@ -91,6 +91,7 @@ License: Apache-2.0
 import argparse
 import os
 import sys
+import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
 
@@ -263,6 +264,8 @@ def fetch_all_issues(repo: str, token: str = None, state: str = "all") -> List[D
     base_url = f"https://api.github.com/repos/{repo}/issues"
     issues = []
     page = 1
+    max_retries = 3
+    retry_delay = 5  # seconds between retries
 
     print(f"Fetching all {state} issues...")
 
@@ -273,24 +276,36 @@ def fetch_all_issues(repo: str, token: str = None, state: str = "all") -> List[D
             "page": page,
         }
 
-        try:
-            response = requests.get(base_url, headers=headers, params=params, timeout=30)
-            response.raise_for_status()
-            page_issues = response.json()
-
-            if not page_issues:
+        last_error = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = requests.get(base_url, headers=headers, params=params, timeout=30)
+                response.raise_for_status()
+                last_error = None
                 break
+            except requests.exceptions.RequestException as e:
+                last_error = e
+                if attempt < max_retries:
+                    print(f"  Error fetching issues page {page} (attempt {attempt}/{max_retries}): {e}. Retrying in {retry_delay}s...")
+                    time.sleep(retry_delay)
+                else:
+                    print(f"  Error fetching issues page {page} (attempt {attempt}/{max_retries}): {e}. No more retries.")
 
-            # Filter out PRs (they have a 'pull_request' key)
-            page_issues = [issue for issue in page_issues if "pull_request" not in issue]
-            issues.extend(page_issues)
+        if last_error is not None:
+            print(f"ERROR: Failed to fetch issues page {page} after {max_retries} attempts: {last_error}")
+            sys.exit(1)
 
-            print(f"  Fetched page {page}: {len(page_issues)} issues (total: {len(issues)})")
-            page += 1
+        page_issues = response.json()
 
-        except requests.exceptions.RequestException as e:
-            print(f"Error fetching issues page {page}: {e}")
+        if not page_issues:
             break
+
+        # Filter out PRs (they have a 'pull_request' key)
+        page_issues = [issue for issue in page_issues if "pull_request" not in issue]
+        issues.extend(page_issues)
+
+        print(f"  Fetched page {page}: {len(page_issues)} issues (total: {len(issues)})")
+        page += 1
 
     print(f"Total issues fetched: {len(issues)}")
     return issues
@@ -319,6 +334,8 @@ def fetch_all_prs(repo: str, token: str = None, state: str = "all") -> List[Dict
     base_url = f"https://api.github.com/repos/{repo}/pulls"
     prs = []
     page = 1
+    max_retries = 3
+    retry_delay = 5  # seconds between retries
 
     print(f"Fetching all {state} pull requests...")
 
@@ -329,21 +346,33 @@ def fetch_all_prs(repo: str, token: str = None, state: str = "all") -> List[Dict
             "page": page,
         }
 
-        try:
-            response = requests.get(base_url, headers=headers, params=params, timeout=30)
-            response.raise_for_status()
-            page_prs = response.json()
-
-            if not page_prs:
+        last_error = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = requests.get(base_url, headers=headers, params=params, timeout=30)
+                response.raise_for_status()
+                last_error = None
                 break
+            except requests.exceptions.RequestException as e:
+                last_error = e
+                if attempt < max_retries:
+                    print(f"  Error fetching PRs page {page} (attempt {attempt}/{max_retries}): {e}. Retrying in {retry_delay}s...")
+                    time.sleep(retry_delay)
+                else:
+                    print(f"  Error fetching PRs page {page} (attempt {attempt}/{max_retries}): {e}. No more retries.")
 
-            prs.extend(page_prs)
-            print(f"  Fetched page {page}: {len(page_prs)} PRs (total: {len(prs)})")
-            page += 1
+        if last_error is not None:
+            print(f"ERROR: Failed to fetch PRs page {page} after {max_retries} attempts: {last_error}")
+            sys.exit(1)
 
-        except requests.exceptions.RequestException as e:
-            print(f"Error fetching PRs page {page}: {e}")
+        page_prs = response.json()
+
+        if not page_prs:
             break
+
+        prs.extend(page_prs)
+        print(f"  Fetched page {page}: {len(page_prs)} PRs (total: {len(prs)})")
+        page += 1
 
     print(f"Total PRs fetched: {len(prs)}")
     return prs
