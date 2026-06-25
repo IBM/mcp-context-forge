@@ -16,6 +16,10 @@ tokio-stream = "0.1.17"
 # Web framework
 axum.workspace = true
 
+# MCP SDK (official Rust SDK) — drives the /mcp Streamable HTTP transport and
+# tool schemas. The legacy SSE transport is a hand-rolled shim (see transports/sse.rs).
+rmcp = { workspace = true, features = ["server", "macros", "transport-streamable-http-server"] }
+
 # Serialization
 serde.workspace = true
 serde_json.workspace = true

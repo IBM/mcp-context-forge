@@ -6,8 +6,8 @@
 mod app;
 mod config;
 mod delay;
-mod mcp;
 mod rest;
+mod server;
 mod time;
 mod transports;
 

@@ -1,10 +1,25 @@
 // Copyright 2026
 // SPDX-License-Identifier: Apache-2.0
 
+//! Legacy MCP HTTP+SSE transport (`/sse` + `/messages` / `/message`).
+//!
+//! DOCUMENTED EXCEPTION: this transport is hand-rolled rather than provided by
+//! `rmcp`. The official SDK targets the modern Streamable HTTP transport (served
+//! at `/mcp`); it does not reproduce the bespoke ContextForge legacy-SSE
+//! semantics that existing clients depend on — the `endpoint` event, the
+//! `sessionId`/`session_id` query aliases, and the exact `202`/`404`/`410`
+//! status codes. To avoid drift, the JSON-RPC handling below still delegates all
+//! tool work to [`FastTimeServer`]: schemas come from
+//! [`FastTimeServer::tool_definitions`] and execution from
+//! [`FastTimeServer::dispatch_tool`]. Only the JSON-RPC envelope, the protocol
+//! version echo, and the SSE session registry are bespoke.
+
 use axum::extract::Query;
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
+use rmcp::ErrorData as McpError;
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::pin::Pin;
@@ -15,8 +30,15 @@ use tokio_stream::Stream;
 use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 
-use crate::config::{MAX_ACTIVE_SESSIONS, SSE_CHANNEL_CAPACITY};
-use crate::mcp;
+use crate::config::{
+    APP_NAME, APP_VERSION, MAX_ACTIVE_SESSIONS, MCP_PROTOCOL_VERSION, SSE_CHANNEL_CAPACITY,
+    SUPPORTED_PROTOCOL_VERSIONS,
+};
+use crate::server::FastTimeServer;
+
+/// Shared server instance backing the legacy SSE transport. Tool schemas and
+/// execution are owned by `rmcp`; this shim only frames JSON-RPC around them.
+static SERVER: LazyLock<FastTimeServer> = LazyLock::new(FastTimeServer::new);
 
 static SSE_SESSIONS: LazyLock<RwLock<HashMap<String, mpsc::Sender<String>>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
@@ -87,7 +109,7 @@ pub(crate) async fn handler() -> Response {
 
 pub(crate) async fn message_handler(
     Query(query): Query<MessageQuery>,
-    axum::Json(req): axum::Json<serde_json::Value>,
+    axum::Json(req): axum::Json<Value>,
 ) -> Response {
     let Some(session_id) = query.session_id() else {
         return StatusCode::BAD_REQUEST.into_response();
@@ -96,7 +118,7 @@ pub(crate) async fn message_handler(
         return StatusCode::NOT_FOUND.into_response();
     };
 
-    if let Some(message) = mcp::sse_message_response(&req).await
+    if let Some(message) = handle_jsonrpc(&req).await
         && sender.send(message).await.is_err()
     {
         remove_session(session_id);
@@ -104,6 +126,77 @@ pub(crate) async fn message_handler(
     }
 
     StatusCode::ACCEPTED.into_response()
+}
+
+/// Frame a single JSON-RPC request into its serialized response, or `None` for
+/// notifications (no `id`), which receive no reply.
+async fn handle_jsonrpc(req: &Value) -> Option<String> {
+    let id = req.get("id")?;
+
+    let method = req
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let body = match method {
+        "initialize" => success_envelope(id, initialize_result(negotiate_protocol_version(req))),
+        "ping" => success_envelope(id, json!({})),
+        "tools/list" => success_envelope(id, json!({ "tools": SERVER.tool_definitions() })),
+        "tools/call" => match dispatch_call(req).await {
+            Ok(result) => success_envelope(
+                id,
+                serde_json::to_value(result).unwrap_or_else(|_| json!({})),
+            ),
+            Err(err) => error_envelope(id, &err),
+        },
+        _ => error_envelope_code(id, -32601, "Method not found"),
+    };
+
+    Some(body)
+}
+
+async fn dispatch_call(req: &Value) -> Result<rmcp::model::CallToolResult, McpError> {
+    let params = req.get("params").cloned().unwrap_or(Value::Null);
+    let name = params
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
+    SERVER.dispatch_tool(name, &arguments).await
+}
+
+fn initialize_result(protocol_version: &str) -> Value {
+    json!({
+        "protocolVersion": protocol_version,
+        "capabilities": { "tools": {} },
+        "serverInfo": { "name": APP_NAME, "version": APP_VERSION },
+        "instructions": "Ultra-fast MCP test server."
+    })
+}
+
+/// Echo back the client's requested protocol version when supported, otherwise
+/// advertise the latest version this server speaks.
+fn negotiate_protocol_version(req: &Value) -> &'static str {
+    let requested = req
+        .get("params")
+        .and_then(|params| params.get("protocolVersion"))
+        .and_then(Value::as_str);
+    SUPPORTED_PROTOCOL_VERSIONS
+        .iter()
+        .copied()
+        .find(|&supported| Some(supported) == requested)
+        .unwrap_or(MCP_PROTOCOL_VERSION)
+}
+
+fn success_envelope(id: &Value, result: Value) -> String {
+    json!({ "jsonrpc": "2.0", "id": id, "result": result }).to_string()
+}
+
+fn error_envelope(id: &Value, err: &McpError) -> String {
+    json!({ "jsonrpc": "2.0", "id": id, "error": err }).to_string()
+}
+
+fn error_envelope_code(id: &Value, code: i32, message: &str) -> String {
+    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } }).to_string()
 }
 
 fn remember_session(session_id: String, sender: mpsc::Sender<String>) -> bool {
@@ -135,7 +228,6 @@ fn remove_session(session_id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[tokio::test]
     async fn test_sse_message_handler_sends_initialize_response() {
@@ -154,10 +246,7 @@ mod tests {
                 "params": {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {},
-                    "clientInfo": {
-                        "name": "sse-smoke",
-                        "version": "1.0"
-                    }
+                    "clientInfo": { "name": "sse-smoke", "version": "1.0" }
                 },
                 "id": 1
             })),
@@ -169,33 +258,26 @@ mod tests {
             .recv()
             .await
             .expect("initialize response should be sent as SSE data");
-        let body: serde_json::Value =
-            serde_json::from_str(&message).expect("SSE message should be JSON-RPC");
+        let body: Value = serde_json::from_str(&message).expect("SSE message should be JSON-RPC");
         assert_eq!(body["result"]["protocolVersion"], "2024-11-05");
-        assert_eq!(
-            body["result"]["serverInfo"]["name"],
-            crate::config::APP_NAME
-        );
+        assert_eq!(body["result"]["serverInfo"]["name"], APP_NAME);
         assert!(body["result"]["capabilities"]["tools"].is_object());
         assert!(remove_session(&session_id));
     }
 
     #[tokio::test]
-    async fn test_sse_message_handler_accepts_session_id_alias() {
+    async fn test_sse_message_handler_lists_tools_via_rmcp_schemas() {
         let session_id = Uuid::new_v4().to_string();
         let (sender, mut receiver) = mpsc::channel(1);
         assert!(remember_session(session_id.clone(), sender));
 
+        // session_id (snake_case) alias is accepted alongside sessionId.
         let response = message_handler(
             Query(MessageQuery {
                 session_id_camel: None,
                 session_id: Some(session_id.clone()),
             }),
-            axum::Json(json!({
-                "jsonrpc": "2.0",
-                "method": "tools/list",
-                "id": 2
-            })),
+            axum::Json(json!({ "jsonrpc": "2.0", "method": "tools/list", "id": 2 })),
         )
         .await;
 
@@ -204,9 +286,42 @@ mod tests {
             .recv()
             .await
             .expect("tools/list response should be sent as SSE data");
-        let body: serde_json::Value =
-            serde_json::from_str(&message).expect("SSE message should be JSON-RPC");
-        assert_eq!(body["result"]["tools"][0]["name"], "echo");
+        let body: Value = serde_json::from_str(&message).expect("SSE message should be JSON-RPC");
+        let names: Vec<&str> = body["result"]["tools"]
+            .as_array()
+            .expect("tools should be an array")
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect();
+        assert!(names.contains(&"echo"));
+        assert!(names.contains(&"convert_time"));
+        assert!(remove_session(&session_id));
+    }
+
+    #[tokio::test]
+    async fn test_sse_message_handler_calls_tool() {
+        let session_id = Uuid::new_v4().to_string();
+        let (sender, mut receiver) = mpsc::channel(1);
+        assert!(remember_session(session_id.clone(), sender));
+
+        let response = message_handler(
+            Query(MessageQuery {
+                session_id_camel: Some(session_id.clone()),
+                session_id: None,
+            }),
+            axum::Json(json!({
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": { "name": "echo", "arguments": { "message": "hi there" } },
+                "id": 3
+            })),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let message = receiver.recv().await.expect("tool response should be sent");
+        let body: Value = serde_json::from_str(&message).expect("SSE message should be JSON-RPC");
+        assert_eq!(body["result"]["content"][0]["text"], "hi there");
         assert!(remove_session(&session_id));
     }
 
@@ -217,11 +332,7 @@ mod tests {
                 session_id_camel: Some("missing-sse-session".to_string()),
                 session_id: None,
             }),
-            axum::Json(json!({
-                "jsonrpc": "2.0",
-                "method": "tools/list",
-                "id": 3
-            })),
+            axum::Json(json!({ "jsonrpc": "2.0", "method": "tools/list", "id": 4 })),
         )
         .await;
 
