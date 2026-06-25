@@ -38,6 +38,7 @@ from starlette.responses import JSONResponse
 
 # First-Party
 from mcpgateway import auth
+from mcpgateway.auth_context import is_trusted_internal_mcp_request
 from mcpgateway.config import settings
 from mcpgateway.services.security_logger import SecurityEventType, SecurityLogger, SecuritySeverity
 
@@ -197,6 +198,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         """Process request with rate limiting."""
         if not self.enabled:
+            return await call_next(request)
+
+        # Skip rate limiting for the trusted-internal dispatch; the edge request was already counted.
+        if is_trusted_internal_mcp_request(request):
             return await call_next(request)
 
         tier = self.get_endpoint_tier(request.url.path)
