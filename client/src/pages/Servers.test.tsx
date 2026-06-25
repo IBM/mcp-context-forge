@@ -195,7 +195,6 @@ describe("Servers", () => {
     expect(screen.getByText("Error loading servers")).toBeInTheDocument();
   });
 
-
   it("loads more servers when Load More button is clicked", async () => {
     const user = userEvent.setup();
 
@@ -241,7 +240,6 @@ describe("Servers", () => {
 
     expect(screen.queryByRole("button", { name: /load more/i })).not.toBeInTheDocument();
   });
-
 
   it("opens details panel when View Details is clicked", async () => {
     const user = userEvent.setup();
@@ -525,7 +523,10 @@ describe("Servers", () => {
 
     let rejectDelete!: (err: Error) => void;
     vi.mocked(api.delete).mockImplementationOnce(
-      () => new Promise<void>((_, reject) => { rejectDelete = reject; }),
+      () =>
+        new Promise<void>((_, reject) => {
+          rejectDelete = reject;
+        }),
     );
 
     await user.click(actionsButtons[0]);
@@ -536,7 +537,9 @@ describe("Servers", () => {
     await user.click(confirmButton);
 
     await waitFor(() => {
-      expect(screen.queryByRole("button", { name: /close mcp server details/i })).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: /close mcp server details/i }),
+      ).not.toBeInTheDocument();
     });
 
     rejectDelete(new Error("403 Forbidden"));
@@ -544,7 +547,6 @@ describe("Servers", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /close mcp server details/i })).toBeInTheDocument();
     });
-
 
     const table = screen.getByRole("table");
     expect(within(table).getByText("Test Server 0")).toBeInTheDocument();
@@ -624,9 +626,7 @@ describe("Servers", () => {
 
     // Success toast should fire
     await waitFor(() => {
-      expect(mockToastSuccess).toHaveBeenCalledWith(
-        expect.stringContaining("Test Server 0"),
-      );
+      expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringContaining("Test Server 0"));
     });
 
     expect(mockToastError).not.toHaveBeenCalled();
@@ -674,5 +674,4 @@ describe("Servers", () => {
     // Only the initial fetch should have happened
     expect(api.get).toHaveBeenCalledTimes(1);
   });
-
 });

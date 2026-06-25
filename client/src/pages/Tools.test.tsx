@@ -1467,7 +1467,6 @@ describe("Tools", () => {
   // Optimistic delete
 
   describe("Optimistic delete", () => {
-
     async function setup(mockTools: Tool[], gatewaySlug: string) {
       server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
       renderWithRouter(<Tools />);
@@ -1496,10 +1495,12 @@ describe("Tools", () => {
       let resolveDelete!: () => void;
       server.use(
         http.get("/tools", () => HttpResponse.json(mockTools)),
-        http.delete("/tools/tool-1", () =>
-          new Promise<Response>((resolve) => {
-            resolveDelete = () => resolve(new Response(null, { status: 204 }));
-          }),
+        http.delete(
+          "/tools/tool-1",
+          () =>
+            new Promise<Response>((resolve) => {
+              resolveDelete = () => resolve(new Response(null, { status: 204 }));
+            }),
         ),
       );
 
@@ -1512,9 +1513,7 @@ describe("Tools", () => {
       await user.click(screen.getByLabelText("More options for opt-gateway"));
       await user.click(await screen.findByText("View Details"));
       await waitFor(() =>
-        expect(
-          screen.getByRole("region", { name: /Tools for opt-gateway/i }),
-        ).toBeInTheDocument(),
+        expect(screen.getByRole("region", { name: /Tools for opt-gateway/i })).toBeInTheDocument(),
       );
 
       await user.click(screen.getByLabelText("More options"));
@@ -1558,7 +1557,6 @@ describe("Tools", () => {
       await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
       await user.click(screen.getByRole("button", { name: /^delete$/i }));
 
-
       await waitFor(() => {
         expect(toast.error).toHaveBeenCalledWith("Server error");
       });
@@ -1590,10 +1588,7 @@ describe("Tools", () => {
     });
 
     it("details panel stays open when one tool is deleted from a multi-tool group", async () => {
-      const mockTools = [
-        createMockTool(1, "multi-gateway"),
-        createMockTool(2, "multi-gateway"),
-      ];
+      const mockTools = [createMockTool(1, "multi-gateway"), createMockTool(2, "multi-gateway")];
       server.use(
         http.get("/tools", () => HttpResponse.json(mockTools)),
         http.delete("/tools/tool-1", () => new HttpResponse(null, { status: 204 })),
@@ -1619,18 +1614,17 @@ describe("Tools", () => {
     });
 
     it("deleted tool row is removed from panel immediately while remaining tool stays visible", async () => {
-      const mockTools = [
-        createMockTool(1, "panel-gateway"),
-        createMockTool(2, "panel-gateway"),
-      ];
+      const mockTools = [createMockTool(1, "panel-gateway"), createMockTool(2, "panel-gateway")];
 
       let resolveDelete!: () => void;
       server.use(
         http.get("/tools", () => HttpResponse.json(mockTools)),
-        http.delete("/tools/tool-1", () =>
-          new Promise<Response>((resolve) => {
-            resolveDelete = () => resolve(new Response(null, { status: 204 }));
-          }),
+        http.delete(
+          "/tools/tool-1",
+          () =>
+            new Promise<Response>((resolve) => {
+              resolveDelete = () => resolve(new Response(null, { status: 204 }));
+            }),
         ),
       );
 
@@ -1659,10 +1653,7 @@ describe("Tools", () => {
     });
 
     it("details panel re-opens after rollback when group had multiple tools", async () => {
-      const mockTools = [
-        createMockTool(1, "reopen-gateway"),
-        createMockTool(2, "reopen-gateway"),
-      ];
+      const mockTools = [createMockTool(1, "reopen-gateway"), createMockTool(2, "reopen-gateway")];
       server.use(
         http.get("/tools", () => HttpResponse.json(mockTools)),
         http.delete("/tools/tool-1", () =>
@@ -1708,9 +1699,7 @@ describe("Tools", () => {
       await user.click(screen.getByRole("button", { name: /^delete$/i }));
 
       await waitFor(() => {
-        expect(toast.error).toHaveBeenCalledWith(
-          expect.stringContaining("Failed to delete tool"),
-        );
+        expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("Failed to delete tool"));
       });
     });
 
@@ -1735,7 +1724,6 @@ describe("Tools", () => {
       await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
       await user.click(screen.getByRole("button", { name: /^delete$/i }));
 
-
       await waitFor(() => {
         expect(toast.error).toHaveBeenCalledWith("Conflict");
       });
@@ -1751,7 +1739,6 @@ describe("Tools", () => {
     });
 
     it("optimistic removal happens before API resolves even when delete is delayed", async () => {
-
       const mockTools = [
         createMockTool(10, "delayed-gateway"),
         createMockTool(11, "delayed-gateway"),
@@ -1760,10 +1747,12 @@ describe("Tools", () => {
       let resolveDelete!: () => void;
       server.use(
         http.get("/tools", () => HttpResponse.json(mockTools)),
-        http.delete("/tools/tool-10", () =>
-          new Promise<Response>((resolve) => {
-            resolveDelete = () => resolve(new Response(null, { status: 204 }));
-          }),
+        http.delete(
+          "/tools/tool-10",
+          () =>
+            new Promise<Response>((resolve) => {
+              resolveDelete = () => resolve(new Response(null, { status: 204 }));
+            }),
         ),
       );
 
@@ -1785,7 +1774,6 @@ describe("Tools", () => {
       expect(within(panel).getAllByText("Tool 11").length).toBeGreaterThan(0);
 
       expect(toast.success).not.toHaveBeenCalled();
-
 
       resolveDelete();
       await waitFor(() => {

@@ -479,7 +479,6 @@ describe("Gateways", () => {
     expect(screen.getAllByText("summarize_pull_request").length).toBeGreaterThan(0);
   });
 
-
   it("removes the card from the grid immediately on confirm (optimistic)", async () => {
     const user = userEvent.setup();
     let resolveDelete!: () => void;
@@ -499,9 +498,7 @@ describe("Gateways", () => {
     await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
     await user.click(screen.getByRole("button", { name: "Delete" }));
 
-    await waitFor(() =>
-      expect(screen.queryByText("GH repo tasks")).not.toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.queryByText("GH repo tasks")).not.toBeInTheDocument());
 
     expect(mockDeleteVirtualServer).toHaveBeenCalledWith("gateway/1?mode=delete");
     expect(refetch).not.toHaveBeenCalled();
@@ -558,9 +555,7 @@ describe("Gateways", () => {
 
     await user.click(screen.getByRole("button", { name: "Delete" }));
 
-    await waitFor(() =>
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     // API promise is still pending at this point — resolve to unblock the test
     resolveDelete();
   });
@@ -572,7 +567,11 @@ describe("Gateways", () => {
       resolveDelete = resolve;
     });
     const refetch = vi.fn().mockResolvedValue({ servers: [] });
-    const serverA = makeServer({ id: "gateway-a", name: "Server A", associatedToolIds: ["tool-1"] });
+    const serverA = makeServer({
+      id: "gateway-a",
+      name: "Server A",
+      associatedToolIds: ["tool-1"],
+    });
     const serverB: VirtualServer = { ...serverA, id: "gateway-b", name: "Server B" };
 
     mockDeleteVirtualServer.mockReturnValue(deletePromise);
@@ -590,15 +589,15 @@ describe("Gateways", () => {
 
     expect(mockDeleteVirtualServer).toHaveBeenCalledOnce();
 
-
     await waitFor(() => {
-      expect(screen.queryByRole("button", { name: "Actions for Server A" })).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Actions for Server A" }),
+      ).not.toBeInTheDocument();
     });
 
     await waitFor(() => {
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
-
 
     await user.click(screen.getByRole("button", { name: "Actions for Server B" }));
     const deleteBItem = await screen.findByRole("menuitem", { name: "Delete" });
@@ -664,9 +663,7 @@ describe("Gateways", () => {
     await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
     await user.click(screen.getByRole("button", { name: "Delete" }));
 
-    await waitFor(() =>
-      expect(screen.queryByText("Rollback Server")).not.toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.queryByText("Rollback Server")).not.toBeInTheDocument());
 
     rejectDelete(new Error("HTTP 500"));
     await waitFor(() => expect(screen.getByText("Rollback Server")).toBeInTheDocument());
@@ -679,7 +676,6 @@ describe("Gateways", () => {
   });
 
   it("rolls back the details panel when the delete API call fails", async () => {
-
     const user = userEvent.setup();
     let rejectDelete!: (err: Error) => void;
     const deletePromise = new Promise<void>((_, reject) => {
@@ -718,21 +714,17 @@ describe("Gateways", () => {
     await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
     await user.click(screen.getByRole("button", { name: "Delete" }));
 
-
     await waitFor(() =>
       expect(screen.queryByTestId("virtual-server-card")).not.toBeInTheDocument(),
     );
 
     rejectDelete(new Error("HTTP 500"));
-    await waitFor(() =>
-      expect(screen.getByTestId("virtual-server-card")).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByTestId("virtual-server-card")).toBeInTheDocument());
     expect(mockToastError).toHaveBeenCalledWith(
       "Error deleting virtual server",
       expect.objectContaining({ description: expect.any(String) }),
     );
   });
-
 
   it("renders virtual server card without crashing when array fields are missing", () => {
     const partialServer: VirtualServer = {

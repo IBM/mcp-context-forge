@@ -21,5 +21,5 @@ export default {
   ...users,
   ...tools,
   ...resources,
-  ...mcpServer
+  ...mcpServer,
 };
