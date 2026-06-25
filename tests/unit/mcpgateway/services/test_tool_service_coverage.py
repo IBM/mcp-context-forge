@@ -5503,6 +5503,7 @@ class TestUpdateToolBranches:
         rows = [
             {
                 "name": "open_widget",
+                "title": None,
                 "description": "Open widget",
                 "input_schema": {"type": "object"},
                 "output_schema": None,
@@ -5511,6 +5512,7 @@ class TestUpdateToolBranches:
             },
             {
                 "name": "widget_helper",
+                "title": None,
                 "description": "Helper",
                 "input_schema": None,
                 "output_schema": None,
