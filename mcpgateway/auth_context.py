@@ -341,6 +341,14 @@ def get_token_teams_from_request(request: Request) -> Optional[List[str]]:
     if cached and isinstance(cached, tuple) and len(cached) == 2:
         _, payload = cached
         if payload:
+            # KNOWN LIMITATION: This fallback path uses normalize_token_teams()
+            # which doesn't understand session semantics. A session token
+            # reaching here would never produce token_teams=None, so the
+            # session admin bypass in get_rpc_filter_context() wouldn't fire.
+            # This is fail-secure (denies bypass rather than wrongly granting
+            # it) but is uncovered and undocumented as a design constraint.
+            # If auth.py ever stops setting request.state.token_teams before
+            # this code runs, session admin bypass would silently stop working.
             return normalize_token_teams(payload)
 
     # No JWT payload - return [] for public-only (secure default).
@@ -420,8 +428,14 @@ def get_rpc_filter_context(request: Request, user) -> tuple[Optional[str], Optio
     # Session token admin bypass: resolve_session_teams() confirmed admin from DB,
     # but JWT payload lacks is_admin claim (by design — DB is the authority for
     # session tokens so revocations take effect immediately).
-    if not is_admin and token_teams is None and getattr(request.state, "token_use", None) == "session":
+    if not is_admin and token_teams is None and getattr(request.state, "token_use", None) == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
         is_admin = True
+        logger.debug(
+            "Session admin bypass: token_use=%s, email=%s path=%s",
+            getattr(request.state, "token_use", None),
+            user_email,
+            getattr(getattr(request, "url", None), "path", "unknown"),
+        )
 
     return user_email, token_teams, is_admin
 
