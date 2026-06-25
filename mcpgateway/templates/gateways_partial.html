@@ -5,7 +5,7 @@
        hx-swap="outerHTML"
        hx-vals='js:{"include_inactive": (document.getElementById("show-inactive-gateways") && document.getElementById("show-inactive-gateways").checked) || false, "q": (document.getElementById("gateways-search-input") && document.getElementById("gateways-search-input").value) || "", "tags": (document.getElementById("gateways-tag-filter") && document.getElementById("gateways-tag-filter").value) || ""}'
        {% if gateway_async_lifecycle_enabled|default(false) %}
-       hx-trigger="refresh from:body, every 10s [!!document.querySelector('#gateways-table-body .bg-yellow-100, #gateways-table-body .bg-orange-100')]"
+       hx-trigger="refresh from:body, every 10s [!!document.querySelector('[data-gateway-status=pending], [data-gateway-status=deleting]')]"
        hx-indicator="#gateway-polling-indicator"
        {% else %}
        hx-indicator="#gateways-loading"
@@ -179,30 +179,32 @@
         <td class="px-6 py-4 {% if not async_enabled %}whitespace-nowrap{% endif %} text-sm">
           {% if async_enabled and gw_status == 'pending' %}
           <div class="flex flex-col gap-1">
-            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400" role="status" aria-live="polite">
+            <span data-gateway-status="pending" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400" role="status" aria-live="polite">
               <span class="sr-only">Gateway status:</span>
               🔄 Pending
             </span>
             {% if gateway.statusMessage %}
+            {# Auto-escaped by Jinja2 (XSS-safe) #}
             <span class="block text-xs text-gray-600 dark:text-gray-400 break-words line-clamp-2">{{ gateway.statusMessage }}</span>
             {% endif %}
           </div>
           {% elif async_enabled and gw_status == 'deleting' %}
           <div class="flex flex-col gap-1">
-            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400" role="status" aria-live="polite">
+            <span data-gateway-status="deleting" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400" role="status" aria-live="polite">
               <span class="sr-only">Gateway status:</span>
               🗑️ Deleting
             </span>
             {% if gateway.statusMessage %}
+            {# Auto-escaped by Jinja2 (XSS-safe) #}
             <span class="block text-xs text-gray-600 dark:text-gray-400 break-words line-clamp-2">{{ gateway.statusMessage }}</span>
             {% endif %}
           </div>
           {% elif async_enabled and gw_status == 'active' and gateway.enabled %}
-          <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400">Active</span>
+          <span data-gateway-status="active" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400">Active</span>
           {% elif gateway.enabled %}
-          <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">Active</span>
+          <span data-gateway-status="active" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">Active</span>
           {% else %}
-          <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">Inactive</span>
+          <span data-gateway-status="inactive" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">Inactive</span>
           {% endif %}
         </td>
         {% if async_enabled %}
@@ -212,7 +214,7 @@
             <span class="text-xs">Attempts: {{ gateway.registrationAttempts }}</span>
             {% if gateway.nextRetryAt %}
             <span class="text-xs text-gray-400 dark:text-gray-500">
-              Next: {{ gateway.nextRetryAt[:19] if gateway.nextRetryAt is string else gateway.nextRetryAt.strftime('%H:%M:%S') }}
+              Next: {{ gateway.nextRetryAt[11:19] if gateway.nextRetryAt is string else gateway.nextRetryAt.strftime('%H:%M:%S') }}
             </span>
             {% endif %}
           </div>
