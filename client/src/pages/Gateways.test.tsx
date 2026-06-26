@@ -218,7 +218,45 @@ describe("Gateways", () => {
 
   it("navigates to the create-server form with edit details when edit is clicked", async () => {
     const user = userEvent.setup();
-    setupWithServer(makeServer());
+
+    setupWithServer(
+      makeServer({
+        id: "gateway-1",
+        name: "GH repo tasks",
+        description: "Test server",
+        icon: "",
+        createdAt: "2026-04-16T13:23:12Z",
+        updatedAt: "2026-04-16T13:23:12Z",
+        enabled: true,
+        associatedTools: [],
+        associatedToolIds: [],
+        associatedResources: [],
+        associatedPrompts: [],
+        associatedA2aAgents: [],
+        metrics: null,
+        tags: [
+          { id: "tag-team", label: "team" },
+          { id: "tag-enabled", label: "enabled" },
+        ],
+        createdBy: "admin@example.com",
+        createdFromIp: "127.0.0.1",
+        createdVia: "ui",
+        createdUserAgent: "Mozilla/5.0",
+        modifiedBy: null,
+        modifiedFromIp: null,
+        modifiedVia: null,
+        modifiedUserAgent: null,
+        importBatchId: null,
+        federationSource: null,
+        version: 1,
+        teamId: "team-1",
+        team: "Test Team",
+        ownerEmail: "admin@example.com",
+        visibility: "team",
+        oauthEnabled: false,
+        oauthConfig: null,
+      }),
+    );
     renderWithProviders(<Gateways />);
 
     await user.click(screen.getByRole("button", { name: "Actions for GH repo tasks" }));
@@ -290,7 +328,43 @@ describe("Gateways", () => {
 
   it("navigates to the create server UI when the create server card is clicked", async () => {
     const user = userEvent.setup();
-    setupWithServer(makeServer());
+
+    setupWithServer(
+      makeServer({
+        id: "gateway-1",
+        name: "GH repo tasks",
+        description: "Test server",
+        icon: "",
+        createdAt: "2026-04-16T13:23:12Z",
+        updatedAt: "2026-04-16T13:23:12Z",
+        enabled: true,
+        associatedTools: [],
+        associatedToolIds: [],
+        associatedResources: [],
+        associatedPrompts: [],
+        associatedA2aAgents: [],
+        metrics: null,
+        tags: [],
+        createdBy: "admin@example.com",
+        createdFromIp: "127.0.0.1",
+        createdVia: "ui",
+        createdUserAgent: "Mozilla/5.0",
+        modifiedBy: null,
+        modifiedFromIp: null,
+        modifiedVia: null,
+        modifiedUserAgent: null,
+        importBatchId: null,
+        federationSource: null,
+        version: 1,
+        teamId: "team-1",
+        team: "Test Team",
+        ownerEmail: "admin@example.com",
+        visibility: "team",
+        oauthEnabled: false,
+        oauthConfig: null,
+      }),
+    );
+
     renderWithProviders(<Gateways />);
 
     await user.click(screen.getByRole("button", { name: /Create server Make external sources/i }));
@@ -300,15 +374,43 @@ describe("Gateways", () => {
 
   it("navigates to the edit server UI when empty server add-components row is clicked", async () => {
     const user = userEvent.setup();
+
     setupWithServer(
       makeServer({
         id: "gateway-empty",
         name: "peach-thistle-shark",
         description: "",
+        icon: "",
+        createdAt: "2026-04-16T13:23:12Z",
+        updatedAt: "2026-04-16T13:23:12Z",
         enabled: false,
+        associatedTools: [],
         associatedToolIds: [],
+        associatedResources: [],
+        associatedPrompts: [],
+        associatedA2aAgents: [],
+        metrics: null,
+        tags: [],
+        createdBy: "admin@example.com",
+        createdFromIp: "127.0.0.1",
+        createdVia: "ui",
+        createdUserAgent: "Mozilla/5.0",
+        modifiedBy: null,
+        modifiedFromIp: null,
+        modifiedVia: null,
+        modifiedUserAgent: null,
+        importBatchId: null,
+        federationSource: null,
+        version: 1,
+        teamId: "team-1",
+        team: "Test Team",
+        ownerEmail: "admin@example.com",
+        visibility: "team",
+        oauthEnabled: false,
+        oauthConfig: null,
       }),
     );
+
     renderWithProviders(<Gateways />);
 
     await user.click(screen.getByRole("button", { name: "Add sources and components" }));
@@ -522,7 +624,41 @@ describe("Gateways", () => {
   it("confirms and deletes a virtual server", async () => {
     const user = userEvent.setup();
     const refetch = vi.fn().mockResolvedValue({ servers: [] });
-    const mockServer = makeServer({ id: "gateway/1?mode=delete", name: "GH repo tasks" });
+
+    const mockServer = makeServer({
+      id: "gateway/1?mode=delete",
+      name: "GH repo tasks",
+      description: "Test server",
+      icon: "",
+      createdAt: "2026-04-16T13:23:12Z",
+      updatedAt: "2026-04-16T13:23:12Z",
+      enabled: true,
+      associatedTools: [],
+      associatedToolIds: [],
+      associatedResources: [],
+      associatedPrompts: [],
+      associatedA2aAgents: [],
+      metrics: null,
+      tags: [],
+      createdBy: "admin@example.com",
+      createdFromIp: "127.0.0.1",
+      createdVia: "ui",
+      createdUserAgent: "Mozilla/5.0",
+      modifiedBy: null,
+      modifiedFromIp: null,
+      modifiedVia: null,
+      modifiedUserAgent: null,
+      importBatchId: null,
+      federationSource: null,
+      version: 1,
+      teamId: "team-1",
+      team: "Test Team",
+      ownerEmail: "admin@example.com",
+      visibility: "team",
+      oauthEnabled: false,
+      oauthConfig: null,
+    });
+
     setupWithServer(mockServer, { refetch });
 
     renderWithProviders(<Gateways />);
