@@ -714,6 +714,16 @@ async def _ensure_rpc_permission(user, db: Session, permission: str, method: str
     Raises:
         JSONRPCError: If the requester lacks the required permission.
     """
+    # Trusted-internal public-only dispatch: the originating edge already applied public-only
+    # visibility (and per-server OAuth), so an unauthenticated internal hop must not be re-denied
+    # by RBAC. Mirrors _authorize_internal_mcp_request(). This only fires for HMAC-trusted internal
+    # requests (the auth context is set on request.state only after the trust gate passes); the
+    # public /rpc path and authenticated internal callers (is_authenticated True) fall through.
+    if request is not None:
+        _internal_ctx = get_internal_mcp_auth_context(request)
+        if isinstance(_internal_ctx, dict) and _internal_ctx.get("is_authenticated", True) is False:
+            return
+
     # Layer 1: Token scope cap
     if request is not None:
         scoped = _extract_scoped_permissions(request)
