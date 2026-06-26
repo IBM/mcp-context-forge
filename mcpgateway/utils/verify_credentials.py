@@ -68,6 +68,7 @@ import uuid
 from fastapi import Cookie, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBasic, HTTPBasicCredentials, HTTPBearer
 from fastapi.security.utils import get_authorization_scheme_param
+import httpx
 import jwt
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -1750,7 +1751,29 @@ _oauth_oidc_metadata_cache: dict[str, tuple[float, Optional[dict[str, Any]], flo
 _OAUTH_OIDC_METADATA_TTL = 300  # seconds — successful discovery
 _OAUTH_OIDC_METADATA_NEGATIVE_TTL_PERMANENT = 30  # seconds — 404/malformed
 _OAUTH_OIDC_METADATA_NEGATIVE_TTL_TRANSIENT = 5  # seconds — timeouts / 5xx / network
-_oauth_jwks_client_cache: dict[str, jwt.PyJWKClient] = {}
+
+
+class _NoRedirectPyJWKClient(jwt.PyJWKClient):
+    """PyJWKClient that fetches JWKS via httpx with follow_redirects=False.
+
+    PyJWT's default fetch_data() uses urllib.request.urlopen which follows HTTP
+    redirects transparently, bypassing the same-origin check enforced on the
+    jwks_uri before this client is constructed.  Overriding with httpx
+    (follow_redirects=False) closes the SSRF redirect bypass across the full
+    fetch chain.
+    """
+
+    def fetch_data(self) -> Any:
+        try:
+            with httpx.Client(follow_redirects=False, timeout=self.timeout) as _client:
+                resp = _client.get(self.uri, headers=self.headers)
+                resp.raise_for_status()
+                return resp.json()
+        except httpx.HTTPError as exc:
+            raise jwt.exceptions.PyJWKClientConnectionError(f'Fail to fetch data from the url, err: "{exc}"') from exc
+
+
+_oauth_jwks_client_cache: dict[str, _NoRedirectPyJWKClient] = {}
 
 
 def _build_metadata_urls(issuer: str) -> list[str]:
@@ -1983,7 +2006,7 @@ async def verify_oauth_access_token(
     try:
         jwks_uri = jwks_uri.strip()
         if jwks_uri not in _oauth_jwks_client_cache:
-            _oauth_jwks_client_cache[jwks_uri] = jwt.PyJWKClient(jwks_uri)
+            _oauth_jwks_client_cache[jwks_uri] = _NoRedirectPyJWKClient(jwks_uri)
         jwks_client = _oauth_jwks_client_cache[jwks_uri]
 
         signing_key = await asyncio.to_thread(jwks_client.get_signing_key_from_jwt, token)
@@ -2092,7 +2115,10 @@ def _is_clientless_token(claims: dict) -> bool:
         True if the token represents a service/client principal rather than
         a human user, False otherwise.
     """
-    if claims.get("email"):
+    # Standard OIDC human-identity claims — any one present means a real user.
+    # Checked before sub==azp to avoid misclassifying auth-code tokens where
+    # the IdP happens to set azp equal to the user's sub (rare but valid).
+    if claims.get("email") or claims.get("given_name") or claims.get("family_name") or claims.get("name"):
         return False
     sub = claims.get("sub")
     if sub and (sub == claims.get("azp") or sub == claims.get("client_id") or claims.get("typ") == "at+jwt"):

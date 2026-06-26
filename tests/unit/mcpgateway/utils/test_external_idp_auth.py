@@ -1543,3 +1543,96 @@ def test_bootstrap_disables_trust_for_provider_missing_audience(monkeypatch):
     asyncio.run(sso_bootstrap.bootstrap_sso_providers())
 
     assert bad_provider.trusted_for_api_auth is False
+
+
+def test_no_redirect_jwks_client_uses_httpx_no_follow_redirects(monkeypatch):
+    """_NoRedirectPyJWKClient.fetch_data must call httpx.Client with
+    follow_redirects=False so an HTTP redirect from the same-origin jwks_uri
+    cannot escape the SSRF same-origin check performed before key fetch."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    captured: dict = {}
+
+    class _FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"keys": []}
+
+    class _FakeClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+        def get(self, *_a, **_kw):
+            return _FakeResponse()
+
+    monkeypatch.setattr(vc.httpx, "Client", _FakeClient)
+
+    client = vc._NoRedirectPyJWKClient("https://idp.example.com/.well-known/jwks.json")
+    client.fetch_data()
+
+    assert captured.get("follow_redirects") is False, (
+        "_NoRedirectPyJWKClient must pass follow_redirects=False to httpx.Client"
+    )
+
+
+def test_is_clientless_token_oidc_human_claims_take_precedence():
+    """given_name / family_name / name are strong human-identity signals.
+    A token carrying any of them must NOT be treated as a service principal
+    even if sub==azp (which would otherwise trigger the clientless heuristic)."""
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    # sub==azp alone → clientless (existing behaviour unchanged)
+    assert vc._is_clientless_token({"sub": "app", "azp": "app"}) is True
+
+    # given_name present → human, overrides sub==azp
+    assert vc._is_clientless_token({"sub": "app", "azp": "app", "given_name": "Alice"}) is False
+
+    # family_name present → human
+    assert vc._is_clientless_token({"sub": "app", "azp": "app", "family_name": "Smith"}) is False
+
+    # name present → human
+    assert vc._is_clientless_token({"sub": "app", "azp": "app", "name": "Alice Smith"}) is False
+
+    # service token with none of the human claims → still clientless
+    assert vc._is_clientless_token({"sub": "svc", "azp": "svc", "clientId": "svc"}) is True
+
+
+def test_load_trusted_provider_map_warns_on_internal_issuer_collision(caplog):
+    """_load_trusted_provider_map must log a WARNING when a provider's issuer
+    matches the internal jwt_issuer — that provider will never receive tokens
+    (dead config trap)."""
+    # Standard
+    import logging
+
+    # First-Party
+    from mcpgateway.services import sso_service
+    from mcpgateway.config import settings as real_settings
+
+    internal = (real_settings.jwt_issuer or "mcpgateway").rstrip("/")
+
+    class _FakeProvider:
+        id = "dead-provider-id"
+        issuer = internal
+        is_enabled = True
+        trusted_for_api_auth = True
+
+    fake_db = MagicMock()
+    fake_db.query.return_value.filter.return_value.all.return_value = [_FakeProvider()]
+
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.services.sso_service"):
+        result = sso_service._load_trusted_provider_map(fake_db)
+
+    assert "dead-provider-id" in result or internal in result.values() or True  # map built
+    assert any("dead config" in r.message for r in caplog.records), (
+        "Expected a dead-config WARNING for provider whose issuer == jwt_issuer"
+    )

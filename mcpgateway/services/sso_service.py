@@ -2517,7 +2517,21 @@ def _load_trusted_provider_map(db: "Session") -> "dict[str, str]":
         API-trusted providers.
     """
     rows = db.query(SSOProvider).filter(SSOProvider.is_enabled.is_(True), SSOProvider.trusted_for_api_auth.is_(True)).all()
-    return {p.issuer.rstrip("/"): p.id for p in rows if p.issuer}
+    internal_issuer = settings.jwt_issuer.rstrip("/") if settings.jwt_issuer else None
+    result = {}
+    for p in rows:
+        if not p.issuer:
+            continue
+        normalized = p.issuer.rstrip("/")
+        if internal_issuer and normalized == internal_issuer:
+            logger.warning(
+                "SSOProvider id=%s has issuer matching internal jwt_issuer (%s) — "
+                "its tokens will never reach the external-IdP path (dead config)",
+                p.id,
+                normalized,
+            )
+        result[normalized] = p.id
+    return result
 
 
 def resolve_trusted_provider_by_issuer(issuer: str, db: "Session") -> "Optional[SSOProvider]":
