@@ -7,7 +7,7 @@ Authors: Mihai Criveti
 Integration tests for session token admin bypass (PR #5232, issue #5232).
 
 Exercises the real auth pipeline end-to-end: session login via /auth/email/login
-followed by a request that triggers get_rpc_filter_context. Catches regressions
+followed by requests that trigger get_rpc_filter_context. Catches regressions
 where auth.py stops setting request.state.token_use, which unit-level tests
 (which mock request.state directly) would not catch.
 """
@@ -28,7 +28,11 @@ from sqlalchemy.pool import StaticPool
 import mcpgateway.db as db_mod
 import mcpgateway.main as main_mod
 from mcpgateway.auth import get_current_user
-from mcpgateway.auth_context import get_rpc_filter_context
+from mcpgateway.auth_context import (
+    get_rpc_filter_context,
+    get_scoped_resource_access_context,
+    get_user_email,
+)
 from mcpgateway.config import settings
 from mcpgateway.db import Base, EmailUser
 from mcpgateway.middleware.rbac import get_current_user_with_permissions
@@ -41,6 +45,10 @@ def app_and_client():
     Uses the real auth pipeline (require_auth, get_current_user) but overrides
     get_current_user_with_permissions to bypass complex RBAC while preserving
     request.state setup from the real auth chain.
+
+    The app registers a synthetic admin bypass check endpoint
+    (_test_session_admin_bypass_check) that returns get_rpc_filter_context
+    results and can look up a private tool by ID.
     """
     from _pytest.monkeypatch import MonkeyPatch
 
@@ -85,9 +93,11 @@ def app_and_client():
         finally:
             db.close()
 
+    from mcpgateway.db import get_db as mcpgateway_get_db
     from mcpgateway.routers.auth import get_db as auth_get_db
     from mcpgateway.middleware.rbac import get_db as rbac_get_db
 
+    main_mod.app.dependency_overrides[mcpgateway_get_db] = override_get_db
     main_mod.app.dependency_overrides[auth_get_db] = override_get_db
     main_mod.app.dependency_overrides[rbac_get_db] = override_get_db
 
@@ -105,17 +115,19 @@ def app_and_client():
 
     main_mod.app.dependency_overrides[get_current_user_with_permissions] = mock_user_with_permissions
 
-    # Seed an admin user with a valid UUID for the id field
+    # Seed users and a private tool
     import uuid
 
     from mcpgateway.services.argon2_service import Argon2PasswordService
 
     argon2 = Argon2PasswordService()
     db = TestSessionLocal()
+
+    # Admin user
     admin_user = EmailUser(
         id=str(uuid.uuid4()),
         email="admin-bypass@example.com",
-        password_hash=argon2.hash_password("TestPass123!"),
+        password_hash=argon2.hash_password("TestPass123!"),  # pragma: allowlist secret
         full_name="Admin Bypass Test",
         is_admin=True,
         is_active=True,
@@ -123,11 +135,85 @@ def app_and_client():
         email_verified_at=datetime.now(timezone.utc),
     )
     db.add(admin_user)
+
+    # Non-admin user (negative control)
+    non_admin_user = EmailUser(
+        id=str(uuid.uuid4()),
+        email="nonadmin@example.com",
+        password_hash=argon2.hash_password("NonAdminPass1!"),  # pragma: allowlist secret
+        full_name="Non Admin User",
+        is_admin=False,
+        is_active=True,
+        auth_provider="local",
+        email_verified_at=datetime.now(timezone.utc),
+    )
+    db.add(non_admin_user)
     db.commit()
+
+    # Seed a private tool owned by the admin
+    tool_id = uuid.uuid4().hex
+    admin_tool = db_mod.Tool(
+        id=tool_id,
+        original_name="admin-private-tool",
+        url="http://example.com/tool",
+        owner_email=admin_user.email,
+        visibility="private",
+        integration_type="REST",
+        request_type="GET",
+        input_schema={},
+        output_schema={},
+        enabled=True,
+        deprecated=False,
+        created_by=admin_user.email,
+        tags=[],
+    )
+    db.add(admin_tool)
+    db.commit()
+
+    # Capture emails before session closes (objects become detached)
+    admin_email = admin_user.email
+    non_admin_email = non_admin_user.email
     db.close()
 
+    # Register synthetic check endpoint
+    from fastapi import APIRouter
+
+    _test_router = APIRouter()
+
+    @_test_router.get("/_test_session_admin_bypass_check/{tool_id}")
+    @_test_router.get("/_test_session_admin_bypass_check")  # no tool_id = probe only
+    async def _bypass_check(
+        request: FastAPIRequest,
+        tool_id: str = "",
+        db: db_mod.Session = Depends(override_get_db),  # noqa: B008
+        user=Depends(get_current_user_with_permissions),
+    ):
+        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
+        result = {
+            "user_email": user_email,
+            "token_teams": token_teams,
+            "is_admin": is_admin,
+            "token_use": getattr(request.state, "token_use", None),
+        }
+        if tool_id:
+            from mcpgateway.utils.admin_check import is_user_admin
+
+            tool = db.get(db_mod.Tool, tool_id)
+            result["tool_found"] = tool is not None
+            if tool:
+                result["tool_owner"] = tool.owner_email
+                result["is_user_admin_db"] = is_user_admin(db, user_email)
+        return result
+
+    main_mod.app.include_router(_test_router)
+
     client = TestClient(main_mod.app)
-    yield client
+    yield {
+        "client": client,
+        "tool_id": tool_id,
+        "admin_email": admin_email,
+        "non_admin_email": non_admin_email,
+    }
 
     # Teardown
     main_mod.app.dependency_overrides.clear()
@@ -140,41 +226,74 @@ def app_and_client():
 class TestSessionAdminBypassRealPipeline:
     """Exercises the real auth pipeline for session token admin bypass."""
 
+    def _login(self, client, email, password):
+        resp = client.post(
+            "/auth/login",
+            json={"email": email, "password": password},
+        )
+        assert resp.status_code == 200, f"Login failed for {email}: {resp.text}"
+        return resp.json()["access_token"]
+
     def test_admin_bypass_via_real_session_login(self, app_and_client):
-        """Full pipeline: real login → authenticated request → admin bypass fires.
+        """Full pipeline: real login -> admin bypass fires -> non-admin denied.
 
         This catches regressions where auth.py stops setting
         request.state.token_use, which unit tests (mocking request.state
         directly) would silently pass.
         """
-        client = app_and_client
+        ctx = app_and_client
+        client = ctx["client"]
+        tool_id = ctx["tool_id"]
 
-        # Step 1: Real login via /auth/login - get a real session JWT
-        login_resp = client.post(
-            "/auth/login",
-            json={"email": "admin-bypass@example.com", "password": "TestPass123!"},  # pragma: allowlist secret
+        # Step 1: Admin login - get a real session JWT
+        admin_token = self._login(
+            client,
+            "admin-bypass@example.com",
+            "TestPass123!",  # pragma: allowlist secret
         )
-        assert login_resp.status_code == 200, f"Login failed: {login_resp.text}"
-        token = login_resp.json()["access_token"]
 
-        # Step 2: Verify the token is a session token
+        # Step 2: Verify the token is a session token (no is_admin claim)
         payload = jwt.decode(
-            token,
+            admin_token,
             settings.jwt_secret_key.get_secret_value(),
             algorithms=[settings.jwt_algorithm],
             options={"verify_signature": False},
         )
         assert payload.get("token_use") == "session", "Expected session token"
+        # Session JWTs intentionally omit is_admin — DB is the authority
+        assert payload.get("is_admin") is None, "Session JWT should not carry is_admin"
 
-        # Step 3: Use the session JWT to call /servers/ endpoint
-        # This exercises the real auth pipeline:
-        #   require_auth → get_current_user → _inject_userinfo_instate
-        #   → request.state.token_use = "session"
-        #   → get_rpc_filter_context → admin bypass fires
-        headers = {"Authorization": f"Bearer {token}"}
-        resp = client.get("/servers/", headers=headers)
+        # Step 3: Probe the bypass check endpoint (no tool_id) to verify
+        # get_rpc_filter_context returns admin bypass for session admin
+        headers = {"Authorization": f"Bearer {admin_token}"}
+        resp = client.get("/_test_session_admin_bypass_check", headers=headers)
+        assert resp.status_code == 200, f"Bypass probe failed: {resp.text}"
+        data = resp.json()
+        assert data["is_admin"] is True, f"Admin should get is_admin=True, got: {data}"
+        assert data["token_use"] == "session"
+        assert data["token_teams"] is None, f"Admin bypass requires token_teams=None, got: {data}"
 
-        # The endpoint should succeed (empty list is fine - no servers exist)
-        # The key assertion is that we get 200, not 401/403
-        assert resp.status_code == 200, f"Request failed: {resp.text}"
-        assert resp.json() == []  # No servers in DB
+        # Step 4: Admin fetches their own private tool via the bypass check endpoint
+        resp = client.get(f"/_test_session_admin_bypass_check/{tool_id}", headers=headers)
+        assert resp.status_code == 200, f"Admin tool fetch failed: {resp.text}"
+        data = resp.json()
+        assert data["tool_found"] is True
+        assert data["tool_owner"] == "admin-bypass@example.com"
+        assert data["is_admin"] is True
+        assert data["is_user_admin_db"] is True
+
+        # Step 5: Non-admin login and attempt the same
+        non_admin_token = self._login(
+            client,
+            "nonadmin@example.com",
+            "NonAdminPass1!",  # pragma: allowlist secret
+        )
+        non_admin_headers = {"Authorization": f"Bearer {non_admin_token}"}
+        resp = client.get(f"/_test_session_admin_bypass_check/{tool_id}", headers=non_admin_headers)
+        assert resp.status_code == 200, f"Non-admin probe failed: {resp.text}"
+        data = resp.json()
+        assert data["is_admin"] is False
+        assert data["is_user_admin_db"] is False
+        # Non-admin should still see the tool exists (the check endpoint just looks it up)
+        # but token_teams should not be None (no bypass for non-admins)
+        assert data["token_teams"] is not None
