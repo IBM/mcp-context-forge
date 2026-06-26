@@ -66,6 +66,35 @@ describe("TestConnectionDialog", () => {
     });
   });
 
+  it("requires a URL before running", async () => {
+    const user = userEvent.setup();
+    render(<TestConnectionDialog {...defaultProps} />);
+
+    const urlField = screen.getByLabelText(/^url/i);
+    await user.clear(urlField);
+
+    await user.click(screen.getByRole("button", { name: /^test connection$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/url is required/i)).toBeInTheDocument();
+    });
+  });
+
+  it("rejects an invalid URL before running", async () => {
+    const user = userEvent.setup();
+    render(<TestConnectionDialog {...defaultProps} />);
+
+    const urlField = screen.getByLabelText(/^url/i);
+    await user.clear(urlField);
+    await user.type(urlField, "not-a-url");
+
+    await user.click(screen.getByRole("button", { name: /^test connection$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/url must start with http/i)).toBeInTheDocument();
+    });
+  });
+
   it("validates JSON in headers field before running", async () => {
     const user = userEvent.setup();
     render(<TestConnectionDialog {...defaultProps} />);
