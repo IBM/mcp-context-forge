@@ -13165,6 +13165,45 @@ class TestHardeningHelperCoverage:
         with patch("mcpgateway.auth_context.get_rpc_filter_context", return_value=("user@example.com", None, False)):
             assert main_mod.get_scoped_resource_access_context(request, {"email": "user@example.com"}) == ("user@example.com", [])
 
+    def test_get_scoped_resource_access_context_session_admin_bypass(self):
+        """Test that session admin token gets admin bypass (email, None) from get_scoped_resource_access_context.
+
+        Session tokens do not embed is_admin in the JWT payload; resolve_session_teams()
+        sets token_teams=None via DB lookup. Both guards in auth_context.py (get_rpc_filter_context
+        and get_scoped_resource_access_context) must recognize this as admin bypass.
+        """
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        request.state = MagicMock()
+        request.state._jwt_verified_payload = ("tok", {"sub": "admin@example.com"})
+        request.state.token_teams = None
+        request.state.token_use = "session"
+
+        result = main_mod.get_scoped_resource_access_context(request, {"email": "admin@example.com"})
+        assert result == ("admin@example.com", None), f"Expected admin bypass, got {result}"
+
+    def test_get_scoped_resource_access_context_session_admin_guard_directly(self):
+        """Test the defense-in-depth session admin guard in get_scoped_resource_access_context directly.
+
+        This mocks get_rpc_filter_context to simulate the pre-fix behavior
+        (is_admin=False despite token_teams=None) to verify that the session-token
+        guard at lines 509-510 still catches the case.
+        """
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        request.state = MagicMock()
+        request.state._jwt_verified_payload = ("tok", {"sub": "admin@example.com"})
+        request.state.token_teams = None
+        request.state.token_use = "session"
+
+        with patch("mcpgateway.auth_context.get_rpc_filter_context", return_value=("admin@example.com", None, False)):
+            result = main_mod.get_scoped_resource_access_context(request, {"email": "admin@example.com"})
+        assert result == ("admin@example.com", None), f"Expected admin bypass, got {result}"
+
     @pytest.mark.asyncio
     async def test_assert_session_owner_or_admin_returns_404_for_missing_session(self):
         # First-Party

@@ -417,6 +417,12 @@ def get_rpc_filter_context(request: Request, user) -> tuple[Optional[str], Optio
     if token_teams is not None and len(token_teams) == 0:
         is_admin = False
 
+    # Session tokens do not embed is_admin in the JWT payload; resolve_session_teams()
+    # queries the DB and sets token_teams=None only when the user is a confirmed DB
+    # admin. Trust that DB-backed resolution to set is_admin correctly here.
+    if not is_admin and token_teams is None and getattr(request.state, "token_use", None) == "session":
+        is_admin = True
+
     return user_email, token_teams, is_admin
 
 
@@ -496,6 +502,12 @@ def get_scoped_resource_access_context(request: Request, user) -> tuple[Optional
 
     if is_admin and token_teams is None:
         return user_email, None  # Keep user_email for owner matching (PR #4341 / issue #4694)
+    # Session tokens do not embed is_admin in the JWT payload; instead,
+    # resolve_session_teams() queries the DB and stores token_teams=None when
+    # the user is confirmed as admin. Trust that DB-backed resolution here so
+    # that admin session-cookie users can see team-visibility resources.
+    if token_teams is None and getattr(request.state, "token_use", None) == "session":
+        return user_email, None
     if token_teams is None:
         return user_email, []
     return user_email, token_teams
