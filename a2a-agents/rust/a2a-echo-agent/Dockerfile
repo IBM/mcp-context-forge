@@ -12,7 +12,9 @@ COPY a2a-agents/rust/a2a-echo-agent ./a2a-agents/rust/a2a-echo-agent
 RUN cargo build --release -p a2a-echo-agent
 
 FROM docker.io/library/debian:trixie-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+RUN apt-get update \
+    && apt-get install -y --only-upgrade dpkg \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -r -s /bin/false mcpuser
 WORKDIR /app

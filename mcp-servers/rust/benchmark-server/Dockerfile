@@ -13,7 +13,9 @@ RUN touch mcp-servers/rust/benchmark-server/src/main.rs \
     && cargo build --release -p benchmark-server
 
 FROM docker.io/library/debian:trixie-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+RUN apt-get update \
+    && apt-get install -y --only-upgrade dpkg \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -r -s /bin/false mcpuser
 WORKDIR /app
