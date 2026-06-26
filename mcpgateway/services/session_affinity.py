@@ -301,7 +301,7 @@ class SessionAffinity:
         else:
             user_hash = hashlib.sha256(user_identity.encode()).hexdigest()
 
-        logger.debug(f"Session affinity pre-registering: {mcp_session_id[:8]}... → {url}, " f"user={SecurityValidator.sanitize_log_message(user_identity)}")
+        logger.debug(f"Session affinity pre-registering: {mcp_session_id[:8]}... → {url}, user={SecurityValidator.sanitize_log_message(user_identity)}")
 
         # Store in Redis for multi-worker support AND register ownership atomically
         # Registering ownership HERE (during mapping) instead of in acquire() prevents

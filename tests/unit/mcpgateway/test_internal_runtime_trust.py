@@ -19,16 +19,17 @@ from mcpgateway.auth_context import (
     is_trusted_internal_runtime_request,
 )
 
-VALID_HMAC = _expected_internal_mcp_runtime_auth_header()
-
-
 def _req(path, *, marker="rust", hmac="valid", ctx="ctx", client="127.0.0.1", extra=None):
     """Build a synthetic internal request."""
     headers = []
     if marker is not None:
         headers.append((b"x-contextforge-mcp-runtime", marker.encode()))
     if hmac is not None:
-        headers.append((b"x-contextforge-mcp-runtime-auth", (VALID_HMAC if hmac == "valid" else hmac).encode()))
+        # Derive the expected HMAC at call time, not module-import time. Other tests in the suite
+        # mutate ``settings.auth_encryption_secret`` (the HMAC's input), so a value captured at import
+        # would go stale and the gate would correctly reject the now-mismatched header.
+        valid_hmac = _expected_internal_mcp_runtime_auth_header()
+        headers.append((b"x-contextforge-mcp-runtime-auth", (valid_hmac if hmac == "valid" else hmac).encode()))
     if ctx is not None:
         headers.append((b"x-contextforge-auth-context", ctx.encode()))
     for k, v in (extra or []):

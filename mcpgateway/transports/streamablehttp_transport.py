@@ -4330,7 +4330,7 @@ class SessionManagerWrapper:
                         # re-authenticating against public /rpc (JWTs/cookies only).
                         # First-Party
                         from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header, encode_internal_mcp_auth_context  # pylint: disable=import-outside-toplevel,protected-access
-                        from mcpgateway.main import app  # pylint: disable=import-outside-toplevel
+                        from mcpgateway.main import app  # pylint: disable=import-outside-toplevel,cyclic-import
                         from mcpgateway.utils.internal_http import internal_loopback_base_url  # pylint: disable=import-outside-toplevel
                         from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
 
