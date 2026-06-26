@@ -163,7 +163,7 @@ export function Prompts() {
                         {promptBadges.map((badge) => (
                           <span
                             key={badge.id}
-                            className="inline-flex items-center rounded bg-tool-badge-bg px-1.5 py-1 text-[10px] font-medium leading-none text-white"
+                            className="inline-flex items-center rounded bg-tool-badge-bg px-1.5 py-1 text-[10px] font-medium leading-none text-tool-badge-fg"
                           >
                             {badge.label}
                           </span>

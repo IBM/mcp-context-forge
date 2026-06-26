@@ -98,7 +98,7 @@ function ToolGroupCard({
           {visibleTools.map((tool) => (
             <span
               key={tool.id}
-              className="inline-flex items-center rounded bg-tool-badge-bg px-1.5 py-1 text-[10px] font-medium leading-none text-white"
+              className="inline-flex items-center rounded bg-tool-badge-bg px-1.5 py-1 text-[10px] font-medium leading-none text-tool-badge-fg"
               title={tool.description}
             >
               {tool.name}
@@ -106,7 +106,7 @@ function ToolGroupCard({
           ))}
           {remainingCount > 0 && (
             <span
-              className="inline-flex items-center rounded bg-tool-badge-bg px-1.5 py-1 text-[10px] font-medium leading-none text-white"
+              className="inline-flex items-center rounded bg-tool-badge-bg px-1.5 py-1 text-[10px] font-medium leading-none text-tool-badge-fg"
               title={intl.formatMessage(
                 { id: "tools.card.moreToolsTitle" },
                 { count: remainingCount },
