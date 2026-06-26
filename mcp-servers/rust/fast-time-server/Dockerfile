@@ -27,7 +27,9 @@ RUN touch src/main.rs && cargo build --release
 # Runtime stage - minimal image
 FROM docker.io/library/debian:trixie-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update \
+    && apt-get install -y --only-upgrade dpkg \
+    && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     && rm -rf /var/lib/apt/lists/*
