@@ -5535,7 +5535,7 @@ async def invoke_a2a_agent_jsonrpc(
         if params is not None and not isinstance(params, dict):
             raise HTTPException(status_code=400, detail="JSON-RPC 'params' field must be an object or null")
 
-        logger.debug(f"User {safe_log_user(user)} invoking A2A agent '{agent_name}' " f"via JSON-RPC passthrough with method '{method}'")
+        logger.debug(f"User {safe_log_user(user)} invoking A2A agent '{agent_name}' via JSON-RPC passthrough with method '{method}'")
 
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
