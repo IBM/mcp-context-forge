@@ -27,7 +27,7 @@ from typing import Optional
 from pydantic import Field
 
 # First-Party
-from mcpgateway.plugins.framework.models import PluginPayload, PluginResult
+from cpex.framework import PluginPayload, PluginResult
 
 
 class GatewayHookType(str, Enum):
