@@ -191,6 +191,11 @@ class TestPasswordPolicyService:
         assert result["score"] <= 40  # Common passwords get penalized but still have some base score
         assert any("common" in fb.lower() for fb in result["feedback"])
 
+    def test_get_password_strength_score_sequential(self, policy_service):
+        """Test that sequential char detection in strength score adds feedback."""
+        result = policy_service.get_password_strength_score("Pass123word!")
+        assert any("sequential" in fb.lower() for fb in result["feedback"])
+
     # Helper Method Tests
 
     def test_has_sequential_chars_numbers(self, policy_service):
