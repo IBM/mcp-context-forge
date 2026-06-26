@@ -34,6 +34,9 @@ from typing import Dict, Optional
 # Third-Party
 from fastapi import Request
 
+# First-Party
+from mcpgateway.auth_context import get_user_email
+
 
 class MetadataCapture:
     """Utilities for capturing comprehensive metadata during entity operations."""
@@ -114,7 +117,7 @@ class MetadataCapture:
             return user
         elif isinstance(user, dict):
             # Try to extract username from JWT payload or user context
-            return user.get("username") or user.get("sub") or user.get("email") or "unknown"
+            return user.get("username") or get_user_email(user)
         else:
             return "unknown"
 

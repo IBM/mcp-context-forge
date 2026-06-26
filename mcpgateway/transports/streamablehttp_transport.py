@@ -795,8 +795,11 @@ def get_user_email_from_context() -> str:
     """
     user = user_context_var.get()
     if isinstance(user, dict):
-        # First try 'email', then 'sub' (JWT standard claim)
-        return user.get("email") or user.get("sub") or "unknown"
+        # Use canonical email extraction
+        # First-Party
+        from mcpgateway.auth_context import get_user_email
+
+        return get_user_email(user)
     return str(user) if user else "unknown"
 
 
