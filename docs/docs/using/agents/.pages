@@ -5,7 +5,7 @@ nav:
   - langchain.md
   - langgraph.md
   - crewai.md
-  - bee.md
+  - beeai.md
   - autogen.md
   - semantic-kernel.md
   - openai-sdk.md

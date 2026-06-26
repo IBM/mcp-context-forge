@@ -10,7 +10,7 @@ This section provides guidance on integrating various AI agent frameworks with t
 - [LangChain](langchain.md): Utilize MCP tools within LangChain agents using the `langchain-mcp-adapters` package.
 - [LangGraph](langgraph.md): Integrate MCP tools into LangGraph agents for advanced workflow orchestration.
 - [CrewAI](crewai.md): Connect CrewAI agents to MCP servers using the `crewai-tools` library.
-- [Bee Agent Framework](bee.md): Leverage MCP tools within the Bee Agent Framework for scalable agent deployments.
+- [BeeAI Framework](beeai.md): Leverage MCP tools within BeeAI Framework for Python and TypeScript agent workflows.
 - [AutoGen](autogen.md): Integrate MCP tools with AutoGen agents using the `autogen-ext-mcp` package.
 - [LlamaIndex](llamaindex.md): Incorporate MCP tools into LlamaIndex workflows for enhanced data retrieval and question answering.
 - [OpenAI Agents SDK](openai-sdk.md): Utilize MCP tools within OpenAI's Agents SDK for building AI agents with standardized tool access.
