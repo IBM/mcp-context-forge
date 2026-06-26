@@ -161,12 +161,15 @@ class TestLogin:
         with (
             patch("mcpgateway.routers.auth.EmailAuthService") as mock_auth_service,
             patch("mcpgateway.routers.auth.create_access_token", new_callable=AsyncMock) as mock_create_token,
+            patch("mcpgateway.routers.auth.settings") as mock_settings,
         ):
             mock_service = MagicMock()
             mock_service.authenticate_user = AsyncMock(return_value=mock_user)
             mock_auth_service.return_value = mock_service
 
             mock_create_token.return_value = ("test_token", 3600)
+            mock_settings.sso_enabled = False
+            mock_settings.csrf_rotate_on_login = False
 
             login_request = LoginRequest(email="test@example.com", password="password123")  # pragma: allowlist secret
 
@@ -228,12 +231,15 @@ class TestLogin:
         with (
             patch("mcpgateway.routers.auth.EmailAuthService") as mock_auth_service,
             patch("mcpgateway.routers.auth.create_access_token", new_callable=AsyncMock) as mock_create_token,
+            patch("mcpgateway.routers.auth.settings") as mock_settings,
         ):
             mock_service = MagicMock()
             mock_service.authenticate_user = AsyncMock(return_value=mock_user)
             mock_auth_service.return_value = mock_service
 
             mock_create_token.return_value = ("test_token", 3600)
+            mock_settings.sso_enabled = False
+            mock_settings.csrf_rotate_on_login = False
 
             login_request = LoginRequest(username="user@domain.com", password="password123")  # pragma: allowlist secret
 
@@ -248,7 +254,7 @@ class TestLogin:
         with (
             patch("mcpgateway.routers.auth.EmailAuthService") as mock_auth_service,
             patch("mcpgateway.routers.auth.create_access_token", new_callable=AsyncMock) as mock_create_token,
-            patch("mcpgateway.config.settings") as mock_settings,
+            patch("mcpgateway.routers.auth.settings") as mock_settings,
             patch("jwt.decode", return_value={"jti": "session-123"}),
             patch("mcpgateway.services.csrf_service.generate_csrf_token", return_value="csrf-token-123") as mock_generate,
             patch("mcpgateway.services.csrf_service.set_csrf_cookie") as mock_set_cookie,
@@ -258,6 +264,7 @@ class TestLogin:
             mock_auth_service.return_value = mock_service
 
             mock_create_token.return_value = ("test_token", 3600)
+            mock_settings.sso_enabled = False
             mock_settings.csrf_rotate_on_login = True
             mock_settings.csrf_secret_key = "secret"
             mock_settings.csrf_token_expiry = 60
