@@ -16,7 +16,7 @@ import pytest
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.schemas import A2AAgentCreate, A2AAgentUpdate, AdminCreateUserRequest, EmailRegistrationRequest, GatewayCreate, GatewayUpdate, PublicRegistrationRequest, ToolCreate, ToolUpdate
+from mcpgateway.schemas import _encode_auth_headers_list, A2AAgentCreate, A2AAgentUpdate, AdminCreateUserRequest, EmailRegistrationRequest, GatewayCreate, GatewayUpdate, PublicRegistrationRequest, ToolCreate, ToolUpdate
 from mcpgateway.utils.services_auth import decode_auth
 
 
@@ -696,3 +696,44 @@ def test_tool_update_authheaders_array_all_empty_keys_gives_null_value():
     )
     assert update.auth is not None
     assert update.auth.auth_value is None
+
+
+def test_tool_update_authheaders_empty_array_gives_null_value():
+    """ToolUpdate with an empty auth_headers list produces auth_value=None (symmetry with ToolCreate)."""
+    update = ToolUpdate(
+        auth_type="authheaders",
+        auth_headers=[],
+    )
+    assert update.auth is not None
+    assert update.auth.auth_value is None
+
+
+def test_encode_auth_headers_list_skips_non_dict_and_keyless_entries():
+    """The shared helper skips non-dict and keyless entries instead of raising AttributeError."""
+    # Non-dict entries and entries without a key are ignored (no AttributeError).
+    encoded = _encode_auth_headers_list(["not-a-dict", {"value": "no-key"}, {"key": "X-API-Key", "value": "secret"}])
+    assert decode_auth(encoded) == {"X-API-Key": "secret"}
+
+    # An all-invalid list yields None rather than encoding an empty header set.
+    assert _encode_auth_headers_list(["not-a-dict", {"value": "no-key"}, {"key": ""}]) is None
+
+
+def test_tool_create_authheaders_non_dict_entry_rejected_cleanly():
+    """A non-dict auth_headers entry produces a clean ValidationError, not a 500 AttributeError."""
+    with pytest.raises(ValidationError):
+        ToolCreate(
+            name="my_tool",
+            url="https://api.example.com/endpoint",
+            request_type="POST",
+            auth_type="authheaders",
+            auth_headers=["not-a-dict"],
+        )
+
+
+def test_tool_update_authheaders_non_dict_entry_rejected_cleanly():
+    """A non-dict auth_headers entry produces a clean ValidationError, not a 500 AttributeError (ToolUpdate)."""
+    with pytest.raises(ValidationError):
+        ToolUpdate(
+            auth_type="authheaders",
+            auth_headers=["not-a-dict"],
+        )
