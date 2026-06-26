@@ -1095,6 +1095,74 @@ After Keycloak SSO is working:
 8. **Implement group-based team mapping** in ContextForge
 9. **Document your configuration** for team reference
 
+## Machine-to-Machine (Service Account) API Access
+
+In addition to interactive browser login, ContextForge can accept Keycloak access tokens directly as `Bearer` credentials on API/MCP endpoints — letting automation clients authenticate with `client_credentials` tokens, without a browser. See [SSO: Machine-to-machine API auth with external IdP tokens](sso.md#machine-to-machine-api-auth-with-external-idp-tokens) for the overall design and security caveats.
+
+### 1. Create a Confidential Client with Service Accounts Enabled
+
+1. In the Keycloak admin console, go to **Clients** > **Create client**.
+2. Set **Client ID** to something like `mcp-agent` and **Client authentication** to `On` (confidential client).
+3. Under **Capability config**, enable **Service accounts roles** (this allows the `client_credentials` grant).
+4. Save the client and note its **Client secret** under the **Credentials** tab.
+
+### 2. Add an Audience Mapper
+
+Keycloak does not include the client itself in `aud` by default. Add a mapper so tokens issued to `mcp-agent` carry the audience ContextForge expects:
+
+1. Go to **Clients** > `mcp-agent` > **Client scopes** > `mcp-agent-dedicated` > **Mappers** > **Add mapper** > **By configuration**.
+2. Choose **Audience**.
+3. Set **Included Client Audience** (or **Included Custom Audience**) to the value you will configure as `api_audience` for this provider, e.g. `mcp-gateway`.
+4. Set **Add to access token** to `On`. Save.
+
+### 3. Assign Roles/Groups to the Service Account
+
+1. Go to **Clients** > `mcp-agent` > **Service accounts roles**.
+2. Assign realm or client roles (or add the service account user to a group under **Users** > `service-account-mcp-agent` > **Groups**).
+3. These roles/groups map to ContextForge teams/roles via the same `SSO_KEYCLOAK_ROLE_MAPPINGS` configuration used for browser SSO (see [Step 6.6 reference](#66-configuration-variables-reference)).
+
+### 4. Configure ContextForge
+
+```bash
+# Enable the global M2M switch
+SSO_API_TOKEN_AUTH_ENABLED=true
+```
+
+Then opt this provider in via the provider API, setting `api_audience` to match the audience mapper from step 2:
+
+```bash
+curl -X PUT https://gateway.yourcompany.com/auth/sso/admin/providers/keycloak \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "trusted_for_api_auth": true,
+    "api_audience": "mcp-gateway"
+  }'
+```
+
+### 5. Fetch a Token and Call the API
+
+```bash
+# Fetch a client_credentials access token from Keycloak
+TOKEN=$(curl -s -X POST \
+  https://keycloak.yourcompany.com/realms/master/protocol/openid-connect/token \
+  -d "grant_type=client_credentials" \
+  -d "client_id=mcp-agent" \
+  -d "client_secret=$MCP_AGENT_CLIENT_SECRET" \
+  | jq -r '.access_token')
+
+# Call ContextForge using the Keycloak access token directly
+curl -H "Authorization: Bearer $TOKEN" \
+  https://gateway.yourcompany.com/tools
+```
+
+### 6. Service Principal Identity
+
+Since service account tokens have no `email` claim, ContextForge provisions a synthetic local user `svc-mcp-agent@keycloak.service.local` for this client, with teams/roles derived from the role/group mappings configured in step 3.
+
+!!! warning "Revocation"
+    ContextForge cannot revoke this token before its Keycloak-issued expiry. Configure a short access token lifespan for the `mcp-agent` client (Keycloak: **Clients** > `mcp-agent` > **Advanced** > **Access Token Lifespan**) if the service account may need to be revoked quickly.
+
 ## Related Documentation
 
 - [Complete SSO Guide](sso.md) - Full SSO documentation

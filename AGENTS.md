@@ -113,6 +113,7 @@ ContextForge implements a **two-layer security model**:
 - **API/legacy tokens**: Missing `teams` key = public-only access (secure default). Admin bypass requires BOTH `teams: null` AND `is_admin: true`. `normalize_token_teams()` in `mcpgateway/auth.py` is the single source of truth.
 - **Session tokens**: Admin bypass is determined by the DB `is_admin` flag, not the JWT `teams` claim. Non-admin sessions can be narrowed via JWT `teams`. `resolve_session_teams()` in `mcpgateway/auth.py` is the single policy point.
 - **Layer 1 only**: Token scoping controls visibility (what you can see). RBAC (Layer 2) is evaluated independently — session-token narrowing does not restrict which team roles are checked for permissions.
+- **External IdP tokens**: identities provisioned from trusted external SSO providers (see `SSO_API_TOKEN_AUTH_ENABLED`) are dispatched through the session-token table above (`resolve_session_teams()`), not the API/legacy table — `is_admin`/`teams` come from the persisted local user record, never from the external token's claims.
 
 ### Security Invariants (Required)
 

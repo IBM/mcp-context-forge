@@ -774,6 +774,8 @@ async def test_list_all_sso_providers(monkeypatch: pytest.MonkeyPatch):
         is_enabled=True,
         trusted_domains=["example.com"],
         auto_create_users=True,
+        trusted_for_api_auth=False,
+        api_audience=None,
         created_at="created",
         updated_at="updated",
     )
@@ -820,6 +822,8 @@ async def test_get_sso_provider_success(monkeypatch: pytest.MonkeyPatch):
         scope="openid",
         trusted_domains=["example.com"],
         auto_create_users=True,
+        trusted_for_api_auth=False,
+        api_audience=None,
         team_mapping={},
         provider_metadata={},
         is_enabled=True,
