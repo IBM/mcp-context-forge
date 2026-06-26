@@ -40,6 +40,8 @@ pub(crate) fn routes() -> Router {
         .route("/api/v1/test/echo", get(test_echo))
         .route("/api/v1/test/validate", post(test_validate))
         .route("/api/v1/test/performance", get(test_performance))
+        .route("/api/v1/openapi.json", get(openapi_json))
+        .route("/api/v1/docs", get(api_docs))
 }
 
 /// CORS middleware mirroring the Go server: permissive headers and a `204`
@@ -492,6 +494,23 @@ async fn test_validate(body: Bytes) -> Response {
         "received": received,
         "timestamp": now_rfc3339(),
     }))
+}
+
+// ---------------------------------------------------------------------------
+// documentation
+// ---------------------------------------------------------------------------
+
+async fn openapi_json() -> Response {
+    json_ok(crate::openapi::spec())
+}
+
+async fn api_docs() -> Response {
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        crate::openapi::DOCS_HTML,
+    )
+        .into_response()
 }
 
 async fn test_performance() -> Response {

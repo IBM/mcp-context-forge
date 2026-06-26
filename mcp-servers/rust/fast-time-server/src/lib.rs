@@ -7,6 +7,7 @@ mod app;
 mod cli;
 mod config;
 mod delay;
+mod openapi;
 mod prompts;
 mod resources;
 mod rest;
