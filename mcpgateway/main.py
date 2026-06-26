@@ -12241,8 +12241,7 @@ def _warn_llm_prefix_collision(llm_prefix: str, gateway_prefix: str = "/v1") -> 
     """Warn when llm_api_prefix collides with the gateway versioned prefix."""
     if llm_prefix == gateway_prefix:
         logger.warning(
-            "LLM_API_PREFIX=%r conflicts with the gateway %r prefix — "
-            "set LLM_API_PREFIX to a distinct path (e.g. /llm/v1)",
+            "LLM_API_PREFIX=%r conflicts with the gateway %r prefix — set LLM_API_PREFIX to a distinct path (e.g. /llm/v1)",
             llm_prefix,
             gateway_prefix,
         )

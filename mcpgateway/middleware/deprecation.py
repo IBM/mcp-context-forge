@@ -250,7 +250,7 @@ class DeprecationHeadersMiddleware:
             (b"link", f'<{canonical}>; rel="successor-version"'.encode()),
             (
                 b"x-deprecated-endpoint",
-                (f"This endpoint is deprecated. " f"Use {canonical} instead. " f"It will be removed after {sunset}.").encode(),
+                (f"This endpoint is deprecated. Use {canonical} instead. It will be removed after {sunset}.").encode(),
             ),
         ]
 
