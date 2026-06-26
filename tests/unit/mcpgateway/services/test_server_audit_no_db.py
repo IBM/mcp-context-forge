@@ -84,7 +84,7 @@ class TestServerAuditNoDb:
         db.add = Mock(); db.commit = Mock(); db.refresh = Mock(); db.flush = Mock()
         server_service._notify_server_added = AsyncMock()
         await server_service.register_server(db, ServerCreate(name="server-1", description="x"))
-        assert server_service._audit_trail.log_action.called
+        server_service._audit_trail.log_action.assert_called_once()
         _assert_no_db_passed(server_service._audit_trail, expected_action="create_server", resource_type="server")
 
     @pytest.mark.asyncio
@@ -105,7 +105,7 @@ class TestServerAuditNoDb:
         server_service._notify_server_updated = AsyncMock()
         with patch("mcpgateway.services.server_service.get_for_update", return_value=server_db):
             await server_service.update_server(db, "srv-1", ServerUpdate(description="updated"), user_email="tester@example.com")
-        assert server_service._audit_trail.log_action.called
+        server_service._audit_trail.log_action.assert_called_once()
         _assert_no_db_passed(server_service._audit_trail, expected_action="update_server", resource_type="server")
 
     @pytest.mark.asyncio
@@ -115,5 +115,21 @@ class TestServerAuditNoDb:
         db.delete = Mock(); db.commit = Mock(); db.rollback = Mock(); db.expire = Mock()
         server_service._notify_server_deleted = AsyncMock()
         await server_service.delete_server(db, "srv-1")
-        assert server_service._audit_trail.log_action.called
+        server_service._audit_trail.log_action.assert_called_once()
         _assert_no_db_passed(server_service._audit_trail, expected_action="delete_server", resource_type="server")
+
+    @pytest.mark.asyncio
+    async def test_get_server_audit_uses_system_user_id(self, server_service, db, server_db):
+        """get_server hardcodes user_id='system' for view_server audit — pin this to catch accidental changes."""
+        server_service._audit_trail.log_action = MagicMock(return_value=None)
+        db.execute = Mock(return_value=_make_execute_result(scalar=server_db))
+        server_service._check_server_access = AsyncMock(return_value=True)
+        server_service.convert_server_to_read = Mock(return_value=MagicMock())
+        await server_service.get_server(db, "srv-1")
+        server_service._audit_trail.log_action.assert_called_once()
+        call_kwargs = server_service._audit_trail.log_action.call_args.kwargs
+        assert call_kwargs["user_id"] == "system", (
+            "get_server audit must use user_id='system' (intentional system read attribution)"
+        )
+        assert call_kwargs["action"] == "view_server"
+        assert call_kwargs["resource_type"] == "server"

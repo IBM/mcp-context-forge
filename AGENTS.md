@@ -198,7 +198,7 @@ Observability write operations use **independent database sessions** that commit
 
 **Issue #2871 - Separate Session Pattern**
 
-`AuditTrailService.log_action()` (`mcpgateway/services/audit_trail_service.py`) always opens its own `SessionLocal()` when no `db` is supplied, and closes/rolls back that session itself. Callers in `tool_service.py`, `resource_service.py`, `gateway_service.py`, `prompt_service.py`, and `server_service.py` must **never** pass `db=db` (the caller's request-scoped session) to `log_action()`.
+`AuditTrailService.log_action()` (`mcpgateway/services/audit_trail_service.py`) always opens its own `SessionLocal()` when no `db` is supplied, and closes/rolls back that session itself. Callers in `tool_service.py`, `resource_service.py`, `gateway_service.py`, `prompt_service.py`, `server_service.py`, and `admin.py` must **never** pass `db=db` (the caller's request-scoped session) to `log_action()`. In `admin.py`, plugin-view audit logging goes through `log_audit()`, which is a thin wrapper over `log_action()` and inherits the same optional-session behavior.
 
 Passing the shared session caused **"This transaction is inactive"** errors: the main CRUD operation already calls `db.commit()` before the audit call, and reusing that same session for a second commit after it has already committed leaves the session in a state that breaks rollback on subsequent errors.
 
