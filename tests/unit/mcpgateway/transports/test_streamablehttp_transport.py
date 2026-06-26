@@ -604,6 +604,27 @@ async def test_mint_internal_jwt_for_rpc_ttl():
         tr.user_context_var.reset(token)
 
 
+@pytest.mark.asyncio
+async def test_mint_internal_jwt_for_rpc_create_jwt_failure_returns_none():
+    """Should return None when create_jwt_token raises an exception."""
+    token = tr.user_context_var.set(
+        {
+            "email": "user@example.com",
+            "teams": ["team-a"],
+            "is_authenticated": True,
+            "is_admin": False,
+            "auth_method": "oauth_access_token",
+            "token_use": "session",
+        }
+    )
+    try:
+        with patch("mcpgateway.transports.streamablehttp_transport.create_jwt_token", side_effect=RuntimeError("JWT signing failed")):
+            result = await tr._mint_internal_jwt_for_rpc()
+            assert result is None
+    finally:
+        tr.user_context_var.reset(token)
+
+
 def test_record_mcp_auth_cache_event_swallows_metrics_errors(monkeypatch):
     """Metrics failures must not break MCP auth cache instrumentation."""
 
