@@ -1673,10 +1673,9 @@ class SecurityValidator:
                 if ip_addr.is_private or ip_addr.is_loopback or ip_addr.is_link_local or ip_addr.is_unspecified or ip_addr.is_multicast or ip_addr.is_reserved or is_cgnat:
                     raise ValueError(f"{field_name} is not allowed")
             except ValueError as e:
-                # If it's our security error, re-raise it
+                # Re-raise if it's our security error, otherwise it's not a valid IP (continue to hostname check)
                 if "is not allowed" in str(e):
                     raise
-                # Otherwise it's not a valid IP, continue to hostname check
         else:
             # SSRF protection is disabled - log when direct IP addresses to private/internal
             # networks are allowed through for forensic visibility
@@ -1728,7 +1727,8 @@ class SecurityValidator:
                             cgnat_network = ipaddress.IPv4Network("100.64.0.0/10")
                             is_cgnat = resolved_ip in cgnat_network
 
-                        if (
+                        # Check for dangerous network ranges
+                        is_dangerous = (
                             resolved_ip.is_private
                             or resolved_ip.is_loopback
                             or resolved_ip.is_link_local
@@ -1736,7 +1736,9 @@ class SecurityValidator:
                             or resolved_ip.is_multicast
                             or resolved_ip.is_reserved
                             or is_cgnat
-                        ):
+                        )
+
+                        if is_dangerous:
                             raise ValueError(f"{field_name} is not allowed")
                     else:
                         # SSRF protection is disabled - log when DNS resolves to private/internal IPs
@@ -1756,8 +1758,10 @@ class SecurityValidator:
 
                     resolved_ips.append(str(resolved_ip))
                 except ValueError as e:
+                    # Re-raise if it's our security error, otherwise skip this address record
                     if "is not allowed" in str(e):
                         raise
+                    # ValueError from ipaddress.ip_address() - invalid format, skip this record
                     continue
         except (TimeoutError, asyncio.TimeoutError, socket.gaierror, socket.herror):
             # DNS resolution failed - reject with generic message
