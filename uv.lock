@@ -8,24 +8,25 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-06-14T08:52:22.113688Z"
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P10D"
 
 [options.exclude-newer-package]
-cpex-encoded-exfil-detection = "2026-06-24T23:59:59Z"
-langsmith = "2026-06-20T23:59:59Z"
+tornado = "2026-06-10T23:59:59Z"
 sqlalchemy = "2026-06-18T23:59:59Z"
-grpcio-reflection = "2026-06-18T23:59:59Z"
 cpex = "2026-06-18T23:59:59Z"
 cpex-retry-with-backoff = "2026-06-24T23:59:59Z"
-msgpack = "2026-06-18T23:59:59Z"
 starlette = "2026-06-18T23:59:59Z"
 cpex-url-reputation = "2026-06-24T23:59:59Z"
 cpex-rate-limiter = "2026-06-24T23:59:59Z"
 cpex-pii-filter = "2026-06-24T23:59:59Z"
+langsmith = "2026-06-20T23:59:59Z"
+prometheus-fastapi-instrumentator = "2026-06-22T23:59:59Z"
+grpcio-reflection = "2026-06-18T23:59:59Z"
+msgpack = "2026-06-18T23:59:59Z"
 cpex-secrets-detection = "2026-06-24T23:59:59Z"
 granian = "2026-06-18T23:59:59Z"
-tornado = "2026-06-10T23:59:59Z"
+cpex-encoded-exfil-detection = "2026-06-24T23:59:59Z"
 
 [[package]]
 name = "a2a-sdk"
@@ -3279,7 +3280,7 @@ requires-dist = [
     { name = "orjson", specifier = ">=3.11.9" },
     { name = "parse", specifier = ">=1.22.1" },
     { name = "prometheus-client", specifier = ">=0.25.0" },
-    { name = "prometheus-fastapi-instrumentator", specifier = ">=8.0.0" },
+    { name = "prometheus-fastapi-instrumentator", specifier = ">=8.0.1" },
     { name = "protobuf", marker = "extra == 'grpc'", specifier = ">=6.33.6" },
     { name = "psutil", specifier = ">=7.2.2" },
     { name = "psycopg", extras = ["c", "binary"], marker = "extra == 'postgres'", specifier = ">=3.3.4" },
@@ -4189,15 +4190,15 @@ wheels = [
 
 [[package]]
 name = "prometheus-fastapi-instrumentator"
-version = "8.0.0"
+version = "8.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "prometheus-client" },
     { name = "starlette" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/98/7a/fe49b7060e585e2cfa28cc1d13ebfe9c2904dcd80cf11071d5de0f622ff2/prometheus_fastapi_instrumentator-8.0.0.tar.gz", hash = "sha256:c31ed192db077e75467b28b2fe5055362517f53369b798cb8dac9ff85f3f1c38", size = 20357, upload-time = "2026-05-29T13:04:43.327Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/89/8a/c78d184a6d8fc2f17cb8ec13b6fd7519ca575aeb5de198d08d309330a351/prometheus_fastapi_instrumentator-8.0.1.tar.gz", hash = "sha256:da495a52da38ac5cfae0f88103306199fd14ba552a549839b3abc7bd0db192d1", size = 21464, upload-time = "2026-06-22T19:22:46.589Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/73/ad/b14ed2fe73bb1d37bcc947e75afae018f795526415d5b849aeb99c403cd1/prometheus_fastapi_instrumentator-8.0.0-py3-none-any.whl", hash = "sha256:e3c967c402124dfe81cf5aad35208d9f96db5452c6cb752350d9358ca0a96198", size = 19411, upload-time = "2026-05-29T13:04:44.17Z" },
+    { url = "https://files.pythonhosted.org/packages/73/c9/9614284a2641d38a65b3b2d8bae0b9d2fb659308e3b4dcb599b9724703cd/prometheus_fastapi_instrumentator-8.0.1-py3-none-any.whl", hash = "sha256:eeb16cde7446f15bf0260da042da8dbcb70ec4c9ceaa154a2c5409bd6a7f9b8d", size = 20618, upload-time = "2026-06-22T19:22:47.564Z" },
 ]
 
 [[package]]
