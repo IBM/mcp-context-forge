@@ -36,3 +36,5 @@ export interface PromptFormData {
   tags?: string;
   teamId?: string;
 }
+
+export type PromptFormErrors = Partial<Record<keyof PromptFormData, string>>;
