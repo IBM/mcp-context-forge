@@ -337,7 +337,7 @@ test.describe("MCP Servers page", () => {
     await page.getByRole("button", { name: "Actions for GitHub MCP Server" }).click();
     await page.getByRole("menuitem", { name: "View Details" }).click();
     await expect(page.getByRole("heading", { name: "GitHub MCP Server" })).toBeVisible();
-    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape"); // drawer is a full-height overlay; must close it before clicking table row actions
     await expect(page.getByRole("button", { name: /close mcp server details/i })).not.toBeVisible();
 
     await page.getByRole("button", { name: "Actions for GitHub MCP Server" }).click();
@@ -403,9 +403,10 @@ test.describe("MCP Servers page", () => {
     await page.getByRole("button", { name: "Actions for GitHub MCP Server" }).click();
     await page.getByRole("menuitem", { name: "View Details" }).click();
     await expect(page.getByRole("heading", { name: "GitHub MCP Server" })).toBeVisible();
-    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape"); // drawer is a full-height overlay; must close it before clicking table row actions
     await expect(page.getByRole("button", { name: /close mcp server details/i })).not.toBeVisible();
 
+    // snapshot: selectedServerIdForDetails = srv-abc123, isDetailsDrawerOpen = false
     await page.getByRole("button", { name: "Actions for GitHub MCP Server" }).click();
     await page.getByRole("menuitem", { name: "Delete" }).click();
     await page
@@ -469,7 +470,7 @@ test.describe("MCP Servers page", () => {
     await page.getByRole("button", { name: "Actions for GitHub MCP Server" }).click();
     await page.getByRole("menuitem", { name: "View Details" }).click();
     await expect(page.getByRole("heading", { name: "GitHub MCP Server" })).toBeVisible();
-    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape"); // drawer is a full-height overlay; must close it before clicking table row actions
     await expect(page.getByRole("button", { name: /close mcp server details/i })).not.toBeVisible();
 
     await page.getByRole("button", { name: "Actions for Slack MCP Server" }).click();

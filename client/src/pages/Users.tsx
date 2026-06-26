@@ -94,7 +94,8 @@ export function Users() {
     const emailToDelete = userToDelete.email;
 
     // Client-side guard: never send the request if the user is deleting themselves.
-    // The backend enforces the same rule, but this avoids a wasted round-trip and any
+    // We check this client-side to save a network call and avoid showing a
+    // confusing error message after the API rejects the request and the UI reverts.
     if (currentUser?.email === emailToDelete) {
       setDeleteDialogOpen(false);
       setUserToDelete(null);
