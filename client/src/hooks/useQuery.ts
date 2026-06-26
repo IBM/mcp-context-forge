@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import { api } from "@/api/client";
 
 type QueryMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -21,11 +22,18 @@ interface UseQueryOptions<TData, TBody = unknown> {
 }
 
 interface UseQueryResult<TData, TBody = unknown> {
+  /** Most recently fetched data, or `undefined` before the first successful load. */
   data: TData | undefined;
+  /** Error from the last failed request, or `null` if the last request succeeded. */
   error: QueryError | null;
+  /** Whether a request is currently in flight. */
   isLoading: boolean;
+  /** Runs the query, optionally overriding the request body. Resolves with the fetched data. */
   execute: (overrideBody?: TBody) => Promise<TData>;
+  /** Re-runs the last query with the same parameters. Resolves with the fetched data. */
   refetch: () => Promise<TData>;
+  /** Imperatively patches the cached data in place after a mutation (avoiding a full refetch). Supports functional updates. */
+  setData: Dispatch<SetStateAction<TData | undefined>>;
 }
 
 function sanitizeError(err: unknown): QueryError {
@@ -207,5 +215,6 @@ export function useQuery<TData, TBody = unknown>(
     isLoading,
     execute,
     refetch,
+    setData,
   };
 }
