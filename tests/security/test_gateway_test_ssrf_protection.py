@@ -348,11 +348,11 @@ class TestGatewayTestSSRFProtection:
             mock_settings.ssrf_protection_enabled = True
             mock_settings.gateway_test_dns_timeout = 0.1  # Very short timeout
 
-            # Mock slow DNS resolution
+            # Mock slow DNS resolution - socket.getaddrinfo is synchronous, so we mock it with time.sleep
             with patch("socket.getaddrinfo") as mock_getaddrinfo:
-                import asyncio
-                async def slow_dns(*args, **kwargs):
-                    await asyncio.sleep(1)  # Longer than timeout
+                import time
+                def slow_dns(*args, **kwargs):
+                    time.sleep(1)  # Longer than timeout (0.1s)
                     return [(2, 1, 6, "", ("203.0.113.1", 0))]
 
                 mock_getaddrinfo.side_effect = slow_dns
