@@ -5310,7 +5310,7 @@ class TestGetRpcFilterContext:
     # ── Session token admin bypass tests (issue #5232) ────────────────────── #
 
     def test_session_token_admin_bypass(self):
-        """Session token with token_teams=None (DB admin bypass) returns is_admin=True."""
+        """Session token with token_teams=None and admin DB user returns is_admin=True."""
         from mcpgateway.main import get_rpc_filter_context
 
         mock_request = MagicMock()
@@ -5319,11 +5319,39 @@ class TestGetRpcFilterContext:
         mock_request.state.token_use = "session"
         user = {"email": "admin@example.com"}
 
-        email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+        with patch("mcpgateway.db.SessionLocal") as mock_session_local:
+            mock_db = MagicMock()
+            mock_db_user = MagicMock()
+            mock_db_user.is_admin = True
+            mock_db.query.return_value.filter.return_value.first.return_value = mock_db_user
+            mock_session_local.return_value = mock_db
+
+            email, teams, is_admin = get_rpc_filter_context(mock_request, user)
 
         assert email == "admin@example.com"
         assert teams is None
         assert is_admin is True
+
+    def test_session_token_admin_bypass_missing_user(self):
+        """Session token with token_teams=None but no DB user record does NOT grant bypass."""
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"sub": "ghost@example.com", "token_use": "session"})
+        mock_request.state.token_teams = None
+        mock_request.state.token_use = "session"
+        user = {"email": "ghost@example.com"}
+
+        with patch("mcpgateway.db.SessionLocal") as mock_session_local:
+            mock_db = MagicMock()
+            mock_db.query.return_value.filter.return_value.first.return_value = None
+            mock_session_local.return_value = mock_db
+
+            email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        assert email == "ghost@example.com"
+        assert teams is None
+        assert is_admin is False
 
     def test_session_token_non_admin(self):
         """Session token with token_teams=["team1"] (DB non-admin) returns is_admin=False."""

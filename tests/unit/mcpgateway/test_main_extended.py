@@ -13179,7 +13179,14 @@ class TestHardeningHelperCoverage:
         request.state.token_teams = None
         request.state.token_use = "session"
 
-        result = main_mod.get_scoped_resource_access_context(request, {"email": "admin@example.com"})
+        with patch("mcpgateway.db.SessionLocal") as mock_session_local:
+            mock_db = MagicMock()
+            mock_db_user = MagicMock()
+            mock_db_user.is_admin = True
+            mock_db.query.return_value.filter.return_value.first.return_value = mock_db_user
+            mock_session_local.return_value = mock_db
+
+            result = main_mod.get_scoped_resource_access_context(request, {"email": "admin@example.com"})
         assert result == ("admin@example.com", None), f"Expected admin bypass, got {result}"
 
     @pytest.mark.asyncio

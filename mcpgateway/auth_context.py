@@ -449,11 +449,11 @@ def get_rpc_filter_context(request: Request, user) -> tuple[Optional[str], Optio
                 db_user_is_admin = bool(_db_user and _db_user.is_admin) if _db_user else None
             finally:
                 _db.close()
-        # Grant bypass when DB confirms admin, OR when DB is unavailable/db_user_is_admin is None:
-        # fall back to the cached token_teams=None signal (set by auth.py resolve_session_teams).
-        # The DB check is defense-in-depth against cache staleness, not a gate — if the DB
-        # session fails or the user row is missing, trust the pipeline that set request.state.
-        if db_user_is_admin is not False:
+        # Grant bypass only when the fresh DB check positively confirms admin.
+        # db_user_is_admin is None (user missing from DB or query error) must
+        # fail-closed — a deleted or missing user should not inherit bypass
+        # even if the cached token_teams=None signal persists.
+        if db_user_is_admin is True:
             is_admin = True
             logger.debug(
                 "Session admin bypass: token_use=%s, email=%s path=%s (db_check=%s)",
