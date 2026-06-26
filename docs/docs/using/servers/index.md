@@ -8,27 +8,27 @@ The **ContextForge Gateway** includes a collection of **high-performance sample 
 
 ## 🌟 Available Servers
 
-### 🦫 Fast Time Server (Go)
-**`mcp-servers/go/fast-time-server`** - Ultra-fast timezone and time conversion tools
+### 🦀 Fast Time Server (Rust)
+**`mcp-servers/rust/fast-time-server`** - Ultra-fast timezone and time conversion tools
 
-- **Language:** Go 1.21+
-- **Performance:** Sub-millisecond response times
-- **Transport:** stdio, HTTP, SSE, dual-mode
-- **Tools:** `get_system_time`, timezone conversions with DST support
-- **Container:** `ghcr.io/ibm/fast-time-server:latest`
+- **Language:** Rust (Cargo workspace member)
+- **Performance:** Native compiled, sub-millisecond response times
+- **Transport:** Streamable HTTP at `/mcp`
+- **Tools:** `echo`, `get_system_time`, `get_stats`
+- **Container:** Built from the repo root with `mcp-servers/rust/fast-time-server/Containerfile`
 
-**[📖 Full Documentation →](go/fast-time-server.md)**
+> The previous Go implementation at `mcp-servers/go/fast-time-server` has been removed. The Rust crate replaces it.
 
 #### Quick Start
 ```bash
-# Docker (recommended)
-docker run --rm -it -p 8888:8080 \
-  ghcr.io/ibm/fast-time-server:latest \
-  -transport=dual -log-level=debug
+# Container (built from the repo root so Cargo workspace inheritance resolves)
+docker build -f mcp-servers/rust/fast-time-server/Containerfile \
+  -t mcpgateway/fast-time-server:latest .
+docker run --rm -p 8888:9080 mcpgateway/fast-time-server:latest
 
 # From source
-cd mcp-servers/go/fast-time-server
-make build && make run
+cd mcp-servers/rust/fast-time-server
+make run
 ```
 
 ---

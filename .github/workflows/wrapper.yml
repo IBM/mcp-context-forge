@@ -6,7 +6,7 @@ on:
         types: [opened, synchronize, reopened]
         paths:
             - "crates/wrapper/**"
-            - "mcp-servers/go/fast-time-server/**"
+            - "mcp-servers/rust/fast-time-server/**"
             - "Cargo.toml"
             - "Cargo.lock"
             - "rust-toolchain.toml"
