@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import normalize_token_teams
+from mcpgateway.auth_context import get_user_email
 from mcpgateway.common.query_params import QueryErrorCode
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
@@ -258,8 +259,8 @@ def _extract_user_email(current_user: EmailUserResponse | dict) -> str | None:
         if isinstance(email, str) and email.strip():
             return email.strip().lower()
     if isinstance(current_user, dict):
-        email = current_user.get("email") or current_user.get("user", {}).get("email")
-        if isinstance(email, str) and email.strip():
+        email = get_user_email(current_user)
+        if isinstance(email, str) and email.strip() and email != "unknown":
             return email.strip().lower()
     return None
 
@@ -956,7 +957,7 @@ async def fetch_tools_after_oauth(
         if not gateway:
             raise HTTPException(status_code=404, detail=f"Gateway not found: {gateway_id}")
 
-        requester_email = current_user.get("email") if isinstance(current_user, dict) else getattr(current_user, "email", None)
+        requester_email = get_user_email(current_user)
         await _enforce_gateway_access(gateway_id, gateway, current_user, db, request=request)
 
         # First-Party
