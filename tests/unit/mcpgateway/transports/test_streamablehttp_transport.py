@@ -530,6 +530,80 @@ async def test_mint_internal_jwt_for_rpc_round_trip():
         tr.user_context_var.reset(token)
 
 
+@pytest.mark.asyncio
+async def test_mint_internal_jwt_for_rpc_omits_is_admin_claim():
+    """Minted JWT must not include is_admin claim (security invariant)."""
+    token = tr.user_context_var.set(
+        {
+            "email": "admin@example.com",
+            "teams": None,
+            "is_authenticated": True,
+            "is_admin": True,
+            "auth_method": "oauth_access_token",
+            "token_use": "session",
+        }
+    )
+    try:
+        jwt_str = await tr._mint_internal_jwt_for_rpc()
+        import jwt as pyjwt
+
+        claims = pyjwt.decode(jwt_str, options={"verify_signature": False})
+        assert "is_admin" not in claims
+        assert claims["sub"] == "admin@example.com"
+    finally:
+        tr.user_context_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_mint_internal_jwt_for_rpc_admin_bypass_teams_none():
+    """Admin users with teams=None should get JWT with teams=None (admin bypass)."""
+    token = tr.user_context_var.set(
+        {
+            "email": "admin@example.com",
+            "teams": None,
+            "is_authenticated": True,
+            "is_admin": True,
+            "auth_method": "oauth_access_token",
+            "token_use": "session",
+        }
+    )
+    try:
+        jwt_str = await tr._mint_internal_jwt_for_rpc()
+        import jwt as pyjwt
+
+        claims = pyjwt.decode(jwt_str, options={"verify_signature": False})
+        assert claims["teams"] is None
+        assert claims["sub"] == "admin@example.com"
+    finally:
+        tr.user_context_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_mint_internal_jwt_for_rpc_ttl():
+    """Minted JWT should have 1-minute TTL."""
+    import time
+
+    token = tr.user_context_var.set(
+        {
+            "email": "user@example.com",
+            "teams": ["team-a"],
+            "is_authenticated": True,
+            "is_admin": False,
+            "auth_method": "oauth_access_token",
+            "token_use": "session",
+        }
+    )
+    try:
+        before = time.time()
+        jwt_str = await tr._mint_internal_jwt_for_rpc()
+        import jwt as pyjwt
+
+        claims = pyjwt.decode(jwt_str, options={"verify_signature": False})
+        assert 55 <= (claims["exp"] - before) <= 65
+    finally:
+        tr.user_context_var.reset(token)
+
+
 def test_record_mcp_auth_cache_event_swallows_metrics_errors(monkeypatch):
     """Metrics failures must not break MCP auth cache instrumentation."""
 

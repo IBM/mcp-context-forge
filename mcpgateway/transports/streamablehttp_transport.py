@@ -4157,18 +4157,7 @@ class SessionManagerWrapper:
                         "x-mcp-session-id": mcp_session_id,  # Pass session for upstream affinity
                         "x-forwarded-internally": "true",  # Prevent infinite forwarding loops
                     }
-                    # If the request was authenticated via an external IdP OAuth
-                    # token, exchange it for a short-lived internal JWT that
-                    # /rpc's verify_jwt_token() accepts.  Minting is cheap and
-                    # the 1-minute TTL limits blast radius if the token leaks.
-                    # The raw IdP token would fail at /rpc because it is signed
-                    # with the IdP's key, not the gateway's jwt_secret_key.
-                    internal_jwt = await _mint_internal_jwt_for_rpc()
-                    _gw_auth_lower = _resolve_auth_header_name(settings).lower()
-                    if internal_jwt:
-                        rpc_headers[_gw_auth_lower] = f"Bearer {internal_jwt}"
-                    elif _gw_auth_lower in headers:
-                        rpc_headers[_gw_auth_lower] = headers[_gw_auth_lower]
+                    await _set_rpc_auth_header(rpc_headers, headers)
                     # Forward passthrough headers for upstream MCP servers (see #3640).
                     # First-Party
                     from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
@@ -4333,12 +4322,7 @@ class SessionManagerWrapper:
                                 "x-mcp-session-id": mcp_session_id,
                                 "x-forwarded-internally": "true",
                             }
-                            internal_jwt = await _mint_internal_jwt_for_rpc()
-                            _gw_auth_lower = _resolve_auth_header_name(settings).lower()
-                            if internal_jwt:
-                                rpc_headers[_gw_auth_lower] = f"Bearer {internal_jwt}"
-                            elif _gw_auth_lower in headers:
-                                rpc_headers[_gw_auth_lower] = headers[_gw_auth_lower]
+                            await _set_rpc_auth_header(rpc_headers, headers)
                             # Forward passthrough headers for upstream MCP servers (see #3640).
                             # First-Party
                             from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
@@ -4836,12 +4820,27 @@ async def _mint_internal_jwt_for_rpc() -> str | None:
         "email": email,
         "auth_provider": "oauth_delegated",
     }
-    return await create_jwt_token(
-        payload,
-        expires_in_minutes=1,
-        teams=ctx.get("teams"),
-        user_data=user_data,
-    )
+    try:
+        return await create_jwt_token(
+            payload,
+            expires_in_minutes=1,
+            teams=ctx.get("teams"),
+            user_data=user_data,
+        )
+    except Exception as e:
+        logger.error("Failed to mint internal JWT for /rpc forwarding: %s", e)
+        return None
+
+
+async def _set_rpc_auth_header(rpc_headers: dict[str, str], headers: Headers) -> None:
+    """Set the auth header on RPC-forwarded requests, exchanging OAuth tokens
+    for internal JWTs when applicable."""
+    internal_jwt = await _mint_internal_jwt_for_rpc()
+    _gw_auth_lower = _resolve_auth_header_name(settings).lower()
+    if internal_jwt:
+        rpc_headers[_gw_auth_lower] = f"Bearer {internal_jwt}"
+    elif _gw_auth_lower in headers:
+        rpc_headers[_gw_auth_lower] = headers[_gw_auth_lower]
 
 
 class _StreamableHttpAuthHandler:
