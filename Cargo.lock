@@ -993,6 +993,7 @@ dependencies = [
  "axum",
  "chrono",
  "chrono-tz",
+ "clap",
  "rand 0.10.1",
  "rand_distr",
  "rmcp",

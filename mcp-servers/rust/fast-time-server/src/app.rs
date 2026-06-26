@@ -65,6 +65,7 @@ async fn serve_http(cli: &Cli) -> anyhow::Result<()> {
         });
 
     info!("MCP endpoint:   http://{}/mcp", bind_address);
+    info!("MCP HTTP alias: http://{}/http", bind_address);
     info!("MCP SSE:        http://{}/sse", bind_address);
     info!(
         "REST API:       http://{}/api/v1/time (GET), /api/v1/convert (POST)",
@@ -158,6 +159,7 @@ fn router(auth_token: Option<String>) -> Router {
         .route("/sse", axum::routing::get(sse::handler))
         .route("/messages", axum::routing::post(sse::message_handler))
         .route("/message", axum::routing::post(sse::message_handler))
+        .nest("/http", mcp.clone())
         .nest("/mcp", mcp);
 
     let app = match auth_token {
