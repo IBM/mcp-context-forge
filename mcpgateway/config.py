@@ -1016,6 +1016,7 @@ class Settings(BaseSettings):
     require_password_change_for_default_password: bool = Field(default=True, description="Require password change when user is created with the default password")
     password_policy_enabled: bool = Field(default=True, description="Enable password complexity validation for new/changed passwords")
     password_prevent_reuse: bool = Field(default=True, description="Prevent reusing the current password when changing")
+    password_prevent_sequential_chars: bool = Field(default=True, description="Prevent sequential characters like '123' or 'abc' in passwords. Set false to allow sequential characters.")
     password_max_age_days: int = Field(default=90, description="Password maximum age in days before expiry forces a change")
     password_error_message_max_length: int = Field(default=200, description="Maximum length for password validation error messages in URL redirects (prevents URL overflow)")
     # Account Security Configuration

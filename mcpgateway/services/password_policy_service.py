@@ -184,9 +184,10 @@ class PasswordPolicyService:
                 raise PasswordPolicyError("Password must not be based on your username")
 
         # Check for sequential characters (e.g., "123", "abc")
-        has_sequential = self._has_sequential_chars(password)
-        if has_sequential:
-            raise PasswordPolicyError("Password contains too many sequential characters")
+        if getattr(settings, "password_prevent_sequential_chars", True):
+            has_sequential = self._has_sequential_chars(password)
+            if has_sequential:
+                raise PasswordPolicyError("Password contains too many sequential characters")
 
         return True
 
@@ -447,10 +448,11 @@ class PasswordPolicyService:
             score = min(score, 30)  # Cap score for common passwords
 
         # Check for sequential characters
-        if not self._has_sequential_chars(password):
-            score += 10
-        else:
-            feedback.append("Avoid sequential characters (e.g., '123', 'abc')")
+        if getattr(settings, "password_prevent_sequential_chars", True):
+            if not self._has_sequential_chars(password):
+                score += 10
+            else:
+                feedback.append("Avoid sequential characters (e.g., '123', 'abc')")
 
         # Entropy check
         if self._has_sufficient_entropy(password):
@@ -506,7 +508,7 @@ class PasswordPolicyService:
                 {"name": "special", "description": "Special characters (!@#$%^&*()_+-=[]{};:'\"\\|,.<>?)"},
             ],
             "restrictions": [
-                "Cannot contain more than 3 sequential characters (e.g., '123', 'abc')",
+                *(("Cannot contain more than 3 sequential characters (e.g., '123', 'abc')",) if getattr(settings, "password_prevent_sequential_chars", True) else ()),
                 "Cannot be a common password",
                 "Cannot contain your username",
             ],

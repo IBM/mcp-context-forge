@@ -870,6 +870,7 @@ mcpContextForge:
     REQUIRE_PASSWORD_CHANGE_FOR_DEFAULT_PASSWORD: "true" # require change for default password
     PASSWORD_POLICY_ENABLED: "true"         # enable password policy enforcement
     PASSWORD_PREVENT_REUSE: "true"          # prevent reuse of recent passwords
+    PASSWORD_PREVENT_SEQUENTIAL_CHARS: "true" # prevent sequential characters like '123' or 'abc'
     PASSWORD_MAX_AGE_DAYS: "90"             # maximum password age in days
     MAX_FAILED_LOGIN_ATTEMPTS: "5"         # maximum failed login attempts before lockout
     ACCOUNT_LOCKOUT_DURATION_MINUTES: "30" # account lockout duration in minutes
