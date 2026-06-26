@@ -21,6 +21,7 @@ on:
     types: [opened, synchronize, ready_for_review]
     branches: ["main"]
     paths-ignore:
+      - '.dockerignore'
       - 'Containerfile.lite'
       - 'mcpgateway/**'
       - 'plugins/**'
