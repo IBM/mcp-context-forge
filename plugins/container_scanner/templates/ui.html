@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html
+  lang="en"
+  x-data="{ darkMode: JSON.parse(localStorage.getItem('darkMode') || 'false') }"
+  x-bind:class="darkMode ? 'dark' : ''"
+  x-init="$watch('darkMode', val => localStorage.setItem('darkMode', val))"
+>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Container Scanner — ContextForge</title>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = { darkMode: "class" };
+  </script>
+
+  <!-- Alpine.js -->
+  <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+
+  <!-- Font Awesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+</head>
+
+<body class="bg-gray-100 dark:bg-gray-900 min-h-screen">
+
+  <!-- ── Header ─────────────────────────────────────────────────────────── -->
+  <header class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 h-16 flex items-center px-6 gap-4 sticky top-0 z-10">
+    <div class="flex items-center gap-3 flex-1">
+      <i class="fas fa-shield-halved text-indigo-600 text-xl"></i>
+      <span class="font-semibold text-gray-900 dark:text-white text-base">Container Scanner</span>
+      <span class="text-xs text-gray-400 dark:text-gray-500 ml-1" id="last-updated"></span>
+    </div>
+
+    <button
+      onclick="load()"
+      class="flex items-center gap-2 px-3 py-1.5 text-sm bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
+    >
+      <i class="fas fa-rotate-right text-xs"></i>
+      Refresh
+    </button>
+
+    <!-- Dark-mode toggle -->
+    <button
+      @click="darkMode = !darkMode"
+      class="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+      title="Toggle dark mode"
+    >
+      <i class="fas fa-moon" x-show="!darkMode"></i>
+      <i class="fas fa-sun text-yellow-400" x-show="darkMode" style="display:none"></i>
+    </button>
+  </header>
+
+  <!-- ── Stats bar ──────────────────────────────────────────────────────── -->
+  <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4">
+    <div class="flex gap-10">
+      <div>
+        <p class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Total Scans</p>
+        <p class="text-2xl font-bold text-gray-900 dark:text-white mt-1" id="stat-total">—</p>
+      </div>
+      <div>
+        <p class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Blocked</p>
+        <p class="text-2xl font-bold text-red-600 dark:text-red-400 mt-1" id="stat-blocked">—</p>
+      </div>
+      <div>
+        <p class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Allowed</p>
+        <p class="text-2xl font-bold text-green-600 dark:text-green-400 mt-1" id="stat-allowed">—</p>
+      </div>
+      <div>
+        <p class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Errors</p>
+        <p class="text-2xl font-bold text-yellow-600 dark:text-yellow-400 mt-1" id="stat-errors">—</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Scan form ─────────────────────────────────────────────────────── -->
+  <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4">
+    <p class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-3">Scan an Image</p>
+    <div class="flex gap-3 flex-wrap items-end">
+      <div class="flex-1 min-w-48">
+        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1" for="scan-image-ref">Image reference</label>
+        <input
+          id="scan-image-ref"
+          type="text"
+          placeholder="e.g. ghcr.io/org/app:v1"
+          class="w-full px-3 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+          onkeydown="if(event.key==='Enter') triggerScan()"
+        />
+      </div>
+      <div class="w-72">
+        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1" for="scan-digest">Digest <span class="text-gray-400 dark:text-gray-600">(optional)</span></label>
+        <input
+          id="scan-digest"
+          type="text"
+          placeholder="sha256:abc123…"
+          class="w-full px-3 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+          onkeydown="if(event.key==='Enter') triggerScan()"
+        />
+      </div>
+      <button
+        id="scan-btn"
+        onclick="triggerScan()"
+        class="flex items-center gap-2 px-4 py-1.5 text-sm font-medium rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        <i class="fas fa-magnifying-glass text-xs"></i>
+        Scan
+      </button>
+    </div>
+
+    <!-- Inline scan result -->
+    <div id="scan-result" style="display:none" class="mt-4 rounded-lg border p-4 text-sm"></div>
+  </div>
+
+  <!-- ── Main content ───────────────────────────────────────────────────── -->
+  <main class="p-6">
+    <div id="message" class="flex flex-col items-center justify-center py-20 text-gray-500 dark:text-gray-400 gap-3">
+      <i class="fas fa-spinner fa-spin text-2xl text-indigo-600"></i>
+      <span class="text-sm">Loading scan results…</span>
+    </div>
+
+    <div id="results-container" style="display:none" class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
+            <th class="px-4 py-3 w-8"></th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Image</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 whitespace-nowrap">Scanned At</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Scanner</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Status</th>
+            <th class="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-red-600 dark:text-red-400">C</th>
+            <th class="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-orange-600 dark:text-orange-400">H</th>
+            <th class="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-yellow-600 dark:text-yellow-500">M</th>
+            <th class="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">L</th>
+          </tr>
+        </thead>
+        <tbody id="results-body"></tbody>
+      </table>
+    </div>
+  </main>
+
+  <!-- ── JavaScript ─────────────────────────────────────────────────────── -->
+  <script>
+    let _expanded = new Set();
+
+    async function load() {
+      const msg = document.getElementById("message");
+      const container = document.getElementById("results-container");
+      msg.style.display = "flex";
+      msg.innerHTML = `
+        <i class="fas fa-spinner fa-spin text-2xl text-indigo-600"></i>
+        <span class="text-sm mt-3">Loading scan results…</span>`;
+      container.style.display = "none";
+
+      try {
+        const res = await fetch("/scans");
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const scans = await res.json();
+        render(scans);
+        document.getElementById("last-updated").textContent =
+          "· Last updated " + new Date().toLocaleTimeString();
+      } catch (e) {
+        msg.innerHTML = `
+          <i class="fas fa-triangle-exclamation text-2xl text-yellow-500"></i>
+          <span class="text-sm mt-3">Failed to load scan results: ${esc(e.message)}</span>`;
+      }
+    }
+
+    function render(scans) {
+      const body = document.getElementById("results-body");
+      body.innerHTML = "";
+
+      document.getElementById("stat-total").textContent   = scans.length;
+      document.getElementById("stat-blocked").textContent = scans.filter(s => s.blocked).length;
+      document.getElementById("stat-allowed").textContent = scans.filter(s => !s.blocked && !s.scan_error).length;
+      document.getElementById("stat-errors").textContent  = scans.filter(s => s.scan_error).length;
+
+      const msg = document.getElementById("message");
+      if (scans.length === 0) {
+        msg.style.display = "flex";
+        msg.innerHTML = `
+          <i class="fas fa-inbox text-3xl text-gray-400 dark:text-gray-600"></i>
+          <span class="text-sm mt-3">No scan results yet.</span>`;
+        return;
+      }
+
+      msg.style.display = "none";
+      document.getElementById("results-container").style.display = "block";
+
+      scans.forEach((scan, i) => {
+        const open = _expanded.has(i);
+        const s = scan.summary;
+
+        /* ── Summary row ── */
+        const tr = document.createElement("tr");
+        tr.className =
+          "border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/40 cursor-pointer transition-colors";
+        tr.innerHTML = `
+          <td class="px-4 py-3 text-gray-400 dark:text-gray-500 text-xs text-center w-8">
+            <i class="fas fa-chevron-${open ? "down" : "right"} expand-icon transition-transform"></i>
+          </td>
+          <td class="px-4 py-3 max-w-xs">
+            <span class="font-mono text-sm text-gray-900 dark:text-white break-all">${esc(scan.image_ref)}</span>
+            ${scan.image_digest
+              ? `<div class="text-xs text-gray-400 dark:text-gray-500 font-mono mt-0.5">${esc(scan.image_digest.slice(0, 19))}…</div>`
+              : ""}
+          </td>
+          <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap">${fmtTime(scan.scan_time)}</td>
+          <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">${esc(scan.scanners)}</td>
+          <td class="px-4 py-3">${statusBadge(scan)}</td>
+          <td class="px-4 py-3 text-center">${sevBadge("CRITICAL", s.critical_count)}</td>
+          <td class="px-4 py-3 text-center">${sevBadge("HIGH", s.high_count)}</td>
+          <td class="px-4 py-3 text-center">${sevBadge("MEDIUM", s.medium_count)}</td>
+          <td class="px-4 py-3 text-center">${sevBadge("LOW", s.low_count)}</td>
+        `;
+        tr.onclick = () => toggle(i, scans);
+        body.appendChild(tr);
+
+        /* ── Detail row ── */
+        const detail = document.createElement("tr");
+        detail.id = "detail-" + i;
+        detail.style.display = open ? "" : "none";
+        detail.innerHTML = `
+          <td colspan="9" class="bg-gray-50 dark:bg-gray-900/60 px-8 py-4 border-b border-gray-100 dark:border-gray-700">
+            ${detailHtml(scan)}
+          </td>`;
+        body.appendChild(detail);
+      });
+    }
+
+    function toggle(i) {
+      const row  = document.getElementById("detail-" + i);
+      const icon = row.previousElementSibling.querySelector(".expand-icon");
+      if (_expanded.has(i)) {
+        _expanded.delete(i);
+        row.style.display = "none";
+        icon.className = "fas fa-chevron-right expand-icon transition-transform";
+      } else {
+        _expanded.add(i);
+        row.style.display = "";
+        icon.className = "fas fa-chevron-down expand-icon transition-transform";
+      }
+    }
+
+    function detailHtml(scan) {
+      if (scan.scan_error) {
+        return `<div class="flex items-center gap-2 text-sm text-yellow-700 dark:text-yellow-400">
+          <i class="fas fa-triangle-exclamation"></i>
+          <span>Scanner error: ${esc(scan.scan_error)}</span>
+        </div>`;
+      }
+      if (!scan.vulnerabilities || scan.vulnerabilities.length === 0) {
+        return `<div class="flex items-center gap-2 text-sm text-green-700 dark:text-green-400">
+          <i class="fas fa-circle-check"></i>
+          <span>No vulnerabilities found</span>
+        </div>`;
+      }
+
+      const rows = scan.vulnerabilities.map(v => `
+        <tr class="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/60">
+          <td class="px-3 py-2 font-mono text-xs text-indigo-600 dark:text-indigo-400 whitespace-nowrap">${esc(v.cve_id)}</td>
+          <td class="px-3 py-2">${sevBadge(v.severity, v.severity)}</td>
+          <td class="px-3 py-2 text-sm text-gray-800 dark:text-gray-200">${esc(v.package_name)}</td>
+          <td class="px-3 py-2 font-mono text-xs text-gray-500 dark:text-gray-400">${esc(v.installed_version)}</td>
+          <td class="px-3 py-2 font-mono text-xs text-gray-500 dark:text-gray-400">
+            ${v.fixed_version ? esc(v.fixed_version) : '<span class="text-gray-300 dark:text-gray-600">—</span>'}
+          </td>
+          <td class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400 max-w-xs leading-relaxed">
+            ${v.description ? esc(v.description) : ""}
+          </td>
+        </tr>`).join("");
+
+      return `<div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-100 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+            <tr>
+              <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">CVE</th>
+              <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Severity</th>
+              <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Package</th>
+              <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Installed</th>
+              <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Fixed In</th>
+              <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Description</th>
+            </tr>
+          </thead>
+          <tbody class="bg-white dark:bg-gray-900">${rows}</tbody>
+        </table>
+      </div>`;
+    }
+
+    function statusBadge(scan) {
+      if (scan.scan_error) {
+        return `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold
+          bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400
+          border border-yellow-200 dark:border-yellow-800">
+          <i class="fas fa-triangle-exclamation text-xs"></i> error
+        </span>`;
+      }
+      if (scan.blocked) {
+        return `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold
+          bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400
+          border border-red-200 dark:border-red-800"
+          title="${esc(scan.reason || '')}">
+          <i class="fas fa-ban text-xs"></i> blocked
+        </span>`;
+      }
+      return `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold
+        bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400
+        border border-green-200 dark:border-green-800">
+        <i class="fas fa-circle-check text-xs"></i> allowed
+      </span>`;
+    }
+
+    function sevBadge(sev, label) {
+      const cls = {
+        CRITICAL: "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400",
+        HIGH:     "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400",
+        MEDIUM:   "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-500",
+        LOW:      "bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400",
+        UNKNOWN:  "bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500",
+      }[sev] || "bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500";
+      return `<span class="inline-block px-1.5 py-0.5 rounded text-xs font-semibold ${cls}">${label}</span>`;
+    }
+
+    function fmtTime(iso) {
+      const d = new Date(iso);
+      return d.toLocaleDateString() + " " + d.toLocaleTimeString();
+    }
+
+    function esc(s) {
+      return String(s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
+    async function triggerScan() {
+      const imageRef = document.getElementById("scan-image-ref").value.trim();
+      const digest   = document.getElementById("scan-digest").value.trim() || null;
+      const btn      = document.getElementById("scan-btn");
+      const resultEl = document.getElementById("scan-result");
+
+      if (!imageRef) {
+        document.getElementById("scan-image-ref").focus();
+        return;
+      }
+
+      btn.disabled = true;
+      btn.innerHTML = `<i class="fas fa-spinner fa-spin text-xs"></i> Scanning…`;
+      resultEl.style.display = "none";
+
+      try {
+        const res = await fetch("/scan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image_ref: imageRef, image_digest: digest }),
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+          resultEl.className = "mt-4 rounded-lg border border-yellow-200 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-900/20 p-4 text-sm text-yellow-700 dark:text-yellow-400";
+          resultEl.innerHTML = `<i class="fas fa-triangle-exclamation mr-2"></i>${esc(data.error || "Unknown error")}`;
+        } else if (data.scan_error) {
+          resultEl.className = "mt-4 rounded-lg border border-yellow-200 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-900/20 p-4 text-sm";
+          resultEl.innerHTML = `<div class="flex items-center gap-2 text-yellow-700 dark:text-yellow-400 font-medium mb-1">
+            <i class="fas fa-triangle-exclamation"></i> Scanner error
+          </div>
+          <div class="text-yellow-600 dark:text-yellow-500">${esc(data.scan_error)}</div>`;
+        } else if (data.blocked) {
+          resultEl.className = "mt-4 rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 p-4 text-sm";
+          resultEl.innerHTML = `<div class="flex items-center gap-2 text-red-700 dark:text-red-400 font-medium mb-1">
+            <i class="fas fa-ban"></i> Blocked
+          </div>
+          <div class="text-red-600 dark:text-red-400 mb-2">${esc(data.reason || "Policy violation")}</div>
+          ${scanSummaryHtml(data)}`;
+        } else {
+          resultEl.className = "mt-4 rounded-lg border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 p-4 text-sm";
+          resultEl.innerHTML = `<div class="flex items-center gap-2 text-green-700 dark:text-green-400 font-medium mb-1">
+            <i class="fas fa-circle-check"></i> Allowed
+          </div>
+          ${scanSummaryHtml(data)}`;
+        }
+        resultEl.style.display = "block";
+
+        // Reload the history table to show the new result
+        load();
+      } catch (e) {
+        resultEl.className = "mt-4 rounded-lg border border-yellow-200 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-900/20 p-4 text-sm text-yellow-700 dark:text-yellow-400";
+        resultEl.innerHTML = `<i class="fas fa-triangle-exclamation mr-2"></i>Request failed: ${esc(e.message)}`;
+        resultEl.style.display = "block";
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<i class="fas fa-magnifying-glass text-xs"></i> Scan`;
+      }
+    }
+
+    function scanSummaryHtml(data) {
+      const s = data.summary;
+      if (!s) return "";
+      return `<div class="flex gap-4 mt-2">
+        ${sevBadge("CRITICAL", "C: " + s.critical_count)}
+        ${sevBadge("HIGH",     "H: " + s.high_count)}
+        ${sevBadge("MEDIUM",   "M: " + s.medium_count)}
+        ${sevBadge("LOW",      "L: " + s.low_count)}
+        <span class="text-gray-500 dark:text-gray-400 text-xs self-center">${s.critical_count + s.high_count + s.medium_count + s.low_count} total vulnerabilities</span>
+      </div>`;
+    }
+
+    load();
+  </script>
+</body>
+</html>

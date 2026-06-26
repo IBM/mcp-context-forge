@@ -1,0 +1,37 @@
+# plugin_config.yaml — Container Scanner Plugin (external MCP server)
+# SPDX-License-Identifier: Apache-2.0
+#
+# Loaded by ExternalPluginServer in server.py.
+# Run server.py from the repo root so that `plugins` is importable.
+
+plugins:
+  - name: "ContainerScannerPlugin"
+    kind: "plugins.container_scanner.container_scanner.ContainerScannerPlugin"
+    hooks:
+      - "server_pre_register"
+      - "runtime_pre_deploy"
+    mode: "enforce"       # enforce | audit | disabled
+    priority: 5
+    conditions: []
+    config:
+      scanner: "trivy"              # trivy | grype
+      severity_threshold: "HIGH"    # CRITICAL | HIGH | MEDIUM | LOW
+      fail_on_unfixed: false
+      ignore_cves: []
+      timeout_seconds: 300
+      cache_enabled: true
+      cache_ttl_hours: 24
+      on_scan_error: "fail_closed"  # fail_closed | fail_open
+      registries: []
+
+# "." ensures the repo root is on sys.path so `plugins.container_scanner`
+# is importable when the server is started from the repo root.
+plugin_dirs:
+  - "."
+
+plugin_settings:
+  parallel_execution_within_band: true
+  plugin_timeout: 300
+  fail_on_plugin_error: false
+  enable_plugin_api: false
+  plugin_health_check_interval: 120
