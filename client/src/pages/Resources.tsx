@@ -84,13 +84,13 @@ const ResourceCard = memo(function ResourceCard({
       <CardContent>
         <div className="flex flex-wrap gap-1">
           {resource.mimeType && (
-            <span className="inline-flex items-center rounded bg-tool-badge-bg px-1.5 py-1 text-[10px] font-medium leading-none text-tool-badge-fg">
+            <span className="inline-flex items-center rounded bg-tool-badge-bg px-1.5 py-1 text-[10px] font-medium leading-none text-white">
               {resource.mimeType}
             </span>
           )}
           {resource.uri && (
             <span
-              className="inline-flex items-center rounded bg-tool-badge-bg px-1.5 py-1 text-[10px] font-medium leading-none text-tool-badge-fg"
+              className="inline-flex items-center rounded bg-tool-badge-bg px-1.5 py-1 text-[10px] font-medium leading-none text-white"
               title={resource.uri}
             >
               {getUriLabel(resource.uri)}
