@@ -282,7 +282,7 @@ test.describe("MCP Servers page", () => {
     await expect.poll(() => deleteRequestCount).toBe(1);
 
     await expect(
-      page.locator("[data-sonner-toast]").filter({ hasText: "Error deleting mcp server" }),
+      page.locator("[data-sonner-toast]").filter({ hasText: "Error deleting MCP server" }),
     ).toBeVisible();
 
     await expect(page.getByRole("row").filter({ hasText: "GitHub MCP Server" })).toBeVisible();
@@ -418,7 +418,7 @@ test.describe("MCP Servers page", () => {
     await expect(page.getByRole("button", { name: /close mcp server details/i })).not.toBeVisible();
 
     await expect(
-      page.locator("[data-sonner-toast]").filter({ hasText: "Error deleting mcp server" }),
+      page.locator("[data-sonner-toast]").filter({ hasText: "Error deleting MCP server" }),
     ).toBeVisible();
   });
 
