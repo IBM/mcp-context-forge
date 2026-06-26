@@ -245,25 +245,6 @@ def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUs
     return token_teams
 
 
-def _extract_user_email(current_user: EmailUserResponse | dict) -> str | None:
-    """Extract requester email from typed or dict user contexts.
-
-    Args:
-        current_user: Authenticated user context.
-
-    Returns:
-        Lowercased email when available, otherwise ``None``.
-    """
-    if hasattr(current_user, "email"):
-        email = getattr(current_user, "email", None)
-        if isinstance(email, str) and email.strip():
-            return email.strip().lower()
-    if isinstance(current_user, dict):
-        # Direct extraction following canonical email-over-sub precedence
-        email = current_user.get("email") or current_user.get("sub")
-        if isinstance(email, str) and email.strip():
-            return email.strip().lower()
-    return None
 
 
 def _extract_is_admin(current_user: EmailUserResponse | dict) -> bool:
@@ -301,8 +282,8 @@ async def _enforce_gateway_access(
     Raises:
         HTTPException: If authentication is missing or access is not permitted.
     """
-    requester_email = _extract_user_email(current_user)
-    if not requester_email:
+    requester_email = get_user_email(current_user)
+    if requester_email == "unknown":
         raise HTTPException(status_code=401, detail="User authentication required")
 
     requester_is_admin = _extract_is_admin(current_user)
@@ -496,7 +477,10 @@ async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: E
             raise HTTPException(status_code=400, detail="OAuth configuration missing client_id")
 
         # Initiate OAuth flow with user context (now includes PKCE from existing implementation)
-        requester_email = _extract_user_email(current_user)
+        requester_email = get_user_email(current_user)
+        # Filter out "unknown" sentinel - OAuth requires a real user identity
+        if requester_email == "unknown":
+            requester_email = None
         oauth_manager = OAuthManager(token_storage=TokenStorageService(db))
         auth_data = await oauth_manager.initiate_authorization_code_flow(gateway_id, oauth_config, app_user_email=requester_email)
 
@@ -959,6 +943,9 @@ async def fetch_tools_after_oauth(
             raise HTTPException(status_code=404, detail=f"Gateway not found: {gateway_id}")
 
         requester_email = get_user_email(current_user)
+        # Filter out "unknown" sentinel - OAuth requires a real user identity
+        if requester_email == "unknown":
+            requester_email = None
         await _enforce_gateway_access(gateway_id, gateway, current_user, db, request=request)
 
         # First-Party

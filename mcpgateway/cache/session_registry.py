@@ -2329,6 +2329,9 @@ class SessionRegistry(SessionBackend):
                 # This is gateway-internal only; the pool strips it before contacting upstream MCP servers.
                 if settings.mcpgateway_session_affinity_enabled:
                     user_email = get_user_email(user) if user else None
+                    # Filter out "unknown" sentinel - treat as unauthenticated
+                    if user_email == "unknown":
+                        user_email = None
                     await self._register_session_mapping(transport.session_id, message, user_email)
 
                 # Internal /rpc auth must be sent under the configured AUTH_HEADER_NAME
