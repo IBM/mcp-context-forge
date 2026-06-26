@@ -490,7 +490,7 @@ describe("Servers", () => {
     });
 
     expect(mockToastError).toHaveBeenCalledWith(
-      "Error deleting mcp server",
+      "Error deleting MCP server",
       expect.objectContaining({ description: expect.any(String) }),
     );
   });
