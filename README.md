@@ -294,10 +294,6 @@ python3 -m mcpgateway.translate \
 pip install uv # to install uvx, if not already installed
 python3 -m mcpgateway.translate --stdio "uvx mcp-server-git" --expose-sse --port 9000
 
-# Alternative: running the local binary
-# cd mcp-servers/go/fast-time-server; make build
-# python3 -m mcpgateway.translate --stdio "./dist/fast-time-server -transport=stdio" --expose-sse --port 8002
-
 # NEW: Expose via multiple protocols simultaneously!
 python3 -m mcpgateway.translate \
      --stdio "uvx mcp-server-git" \
