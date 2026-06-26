@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- New REST API endpoint `POST /v1/tools/generate-schemas-from-openapi` for generating MCP tool schemas from OpenAPI specifications without admin UI dependencies (#5142)
+
 ### Deprecation Notice
 
 - Rust MCP runtime sidecar, Rust A2A runtime sidecar, and ValidationMiddleware are deprecated as of 2026-06-11 and will sunset on 2026-07-07. Use the Python MCP transport path, the Python A2A invocation path, and endpoint-level Pydantic or protocol-specific validation instead. See [Deprecations](docs/docs/deprecations.md).

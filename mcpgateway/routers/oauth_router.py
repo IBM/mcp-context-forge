@@ -379,6 +379,7 @@ async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: E
         request: The FastAPI request object.
         current_user: The authenticated user initiating the OAuth flow.
         db: The database session dependency.
+        popup: Indicates if the OAuth flow is initiated in a popup window.
 
     Returns:
         A redirect response to the OAuth provider's authorization URL.
