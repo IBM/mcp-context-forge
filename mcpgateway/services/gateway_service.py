@@ -2783,10 +2783,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             safe_msg = sanitize_exception_message(str(init_err), auth_query_params_decrypted)
                             raise GatewayConnectionError(f"Failed to initialize gateway at {safe_url}: {safe_msg}") from init_err
                         raise
-                    new_tool_names = [tool.name for tool in tools]
-                    new_resource_uris = [resource.uri for resource in resources]
-                    new_prompt_names = [prompt.name for prompt in prompts]
-
                     if gateway_update.one_time_auth:
                         # For one-time auth, clear auth_type and auth_value after initialization
                         gateway.auth_type = "one_time_auth"

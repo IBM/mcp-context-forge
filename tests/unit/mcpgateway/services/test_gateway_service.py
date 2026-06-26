@@ -1549,6 +1549,35 @@ class TestGatewayService:
         test_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_update_gateway_url_generic_exception_wraps_and_sanitizes(self, gateway_service, mock_gateway, test_db):
+        """Generic Exception on re-init with connection-affecting change wraps into GatewayConnectionError.
+
+        Covers sanitize_url_for_logging / sanitize_exception_message path (#5188).
+        """
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        test_db.commit = Mock()
+        test_db.rollback = Mock()
+        test_db.refresh = Mock()
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
+
+        gateway_service._initialize_gateway = AsyncMock(
+            side_effect=Exception("Connection refused: http://example.com?api_key=secret123")  # pragma: allowlist secret
+        )
+        gateway_service._notify_gateway_updated = AsyncMock()
+        url = GatewayService.normalize_url("http://example.com/new-url")
+        gateway_update = GatewayUpdate(url=url)
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            with pytest.raises(GatewayConnectionError):
+                await gateway_service.update_gateway(test_db, 1, gateway_update)
+
+        test_db.commit.assert_not_called()
+        test_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_update_gateway_visibility_propagates_when_init_fails(self, gateway_service, mock_gateway, test_db):
         """Visibility change must propagate to linked tools/prompts/resources even when gateway init fails."""
         # Set up linked items with old visibility
