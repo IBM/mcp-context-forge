@@ -29,6 +29,10 @@ cpex-secrets-detection = "2026-06-24T23:59:59Z"
 granian = "2026-06-18T23:59:59Z"
 tornado = "2026-06-10T23:59:59Z"
 langsmith = "2026-06-20T23:59:59Z"
+# 8.0.1 fixes AttributeError: '_IncludedRouter' object has no attribute 'path'
+# raised on every request once FastAPI 0.137 / Starlette 0.42+ introduced
+# _IncludedRouter (upstream issue trallnag/prometheus-fastapi-instrumentator#370).
+prometheus-fastapi-instrumentator = "2026-06-22T23:59:59Z"
 
 
 [tool.uv.sources]
@@ -96,7 +100,7 @@ dependencies = [
     "msgpack>=1.2.1",
     "orjson>=3.11.9",
     "parse>=1.22.1",
-    "prometheus-fastapi-instrumentator>=8.0.0",
+    "prometheus-fastapi-instrumentator>=8.0.1",  # 8.0.1: fix _IncludedRouter crash (issue #370)
     "prometheus_client>=0.25.0", # 0.25.0 exceeds 10-day min-release-age policy
     "psutil>=7.2.2",
     "pydantic>=2.13.4",
