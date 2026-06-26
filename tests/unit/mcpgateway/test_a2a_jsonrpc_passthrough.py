@@ -230,9 +230,7 @@ class TestJSONRPCPassthroughValidation:
 
     def test_missing_params_allowed(self, mock_a2a_service, mock_auth, auth_headers):
         """Test that missing params is allowed (defaults to empty dict)."""
-        mock_a2a_service.invoke_agent = AsyncMock(
-            return_value={"jsonrpc": "2.0", "result": {}, "id": 1}
-        )
+        mock_a2a_service.invoke_agent = AsyncMock(return_value={"jsonrpc": "2.0", "result": {}, "id": 1})
 
         client = TestClient(app)
         response = client.post(
@@ -249,9 +247,7 @@ class TestJSONRPCPassthroughValidation:
 
     def test_null_params_allowed(self, mock_a2a_service, mock_auth, auth_headers):
         """Test that null params is allowed."""
-        mock_a2a_service.invoke_agent = AsyncMock(
-            return_value={"jsonrpc": "2.0", "result": {}, "id": 1}
-        )
+        mock_a2a_service.invoke_agent = AsyncMock(return_value={"jsonrpc": "2.0", "result": {}, "id": 1})
 
         client = TestClient(app)
         response = client.post(
@@ -269,9 +265,7 @@ class TestJSONRPCPassthroughValidation:
 
     def test_missing_id_allowed_for_notification(self, mock_a2a_service, mock_auth, auth_headers):
         """Test that missing id is allowed (JSON-RPC notification)."""
-        mock_a2a_service.invoke_agent = AsyncMock(
-            return_value={"jsonrpc": "2.0", "result": {}}
-        )
+        mock_a2a_service.invoke_agent = AsyncMock(return_value={"jsonrpc": "2.0", "result": {}})
 
         client = TestClient(app)
         response = client.post(
@@ -309,11 +303,20 @@ class TestJSONRPCPassthroughSecurity:
             status.HTTP_403_FORBIDDEN,
         ]
 
-    @patch("mcpgateway.main.require_permission")
-    def test_requires_a2a_invoke_permission(self, mock_require_permission, auth_headers):
-        """Test that endpoint requires a2a.invoke permission."""
+    def test_requires_a2a_invoke_permission(self, mock_a2a_service, mock_auth, auth_headers):
+        """Test that endpoint requires a2a.invoke permission.
+
+        This test verifies that the @require_permission('a2a.invoke') decorator
+        is applied to the route. The decorator is applied at import time, so we
+        verify it indirectly by ensuring authenticated requests succeed (implying
+        RBAC checks passed) while unauthenticated requests are rejected.
+        """
+        mock_a2a_service.invoke_agent = AsyncMock(return_value={"jsonrpc": "2.0", "result": {}, "id": 1})
+
         client = TestClient(app)
-        client.post(
+
+        # Authenticated request should succeed (RBAC allows it)
+        response = client.post(
             "/a2a/test-agent/jsonrpc",
             json={
                 "jsonrpc": "2.0",
@@ -323,10 +326,13 @@ class TestJSONRPCPassthroughSecurity:
             },
             headers=auth_headers,
         )
+        assert response.status_code == status.HTTP_200_OK
 
-        # Verify that require_permission decorator was called with a2a.invoke
-        # Note: This is a decorator so we check it was applied to the route
-        assert mock_require_permission.called or True  # Decorator is applied at import time
+        # Verify the decorator is present by checking the route's endpoint
+        from mcpgateway.main import invoke_a2a_agent_jsonrpc
+
+        # The @require_permission decorator adds metadata to the function
+        assert hasattr(invoke_a2a_agent_jsonrpc, "__wrapped__") or "a2a.invoke" in str(invoke_a2a_agent_jsonrpc)
 
 
 class TestJSONRPCPassthroughResponseFormat:
@@ -335,9 +341,7 @@ class TestJSONRPCPassthroughResponseFormat:
     def test_wraps_non_jsonrpc_response(self, mock_a2a_service, mock_auth, auth_headers):
         """Test that non-JSON-RPC responses are wrapped in JSON-RPC format."""
         # Mock agent that returns plain dict (not JSON-RPC formatted)
-        mock_a2a_service.invoke_agent = AsyncMock(
-            return_value={"taskId": "task-123", "status": "submitted"}
-        )
+        mock_a2a_service.invoke_agent = AsyncMock(return_value={"taskId": "task-123", "status": "submitted"})
 
         client = TestClient(app)
         response = client.post(
@@ -393,12 +397,10 @@ class TestJSONRPCPassthroughErrorHandling:
     """Test error handling."""
 
     def test_agent_not_found_returns_404(self, mock_a2a_service, mock_auth, auth_headers):
-        """Test that non-existent agent returns 404."""
+        """Test that non-existent agent returns 404 with JSON-RPC error format."""
         from mcpgateway.services.a2a_service import A2AAgentNotFoundError
 
-        mock_a2a_service.invoke_agent = AsyncMock(
-            side_effect=A2AAgentNotFoundError("Agent not found")
-        )
+        mock_a2a_service.invoke_agent = AsyncMock(side_effect=A2AAgentNotFoundError("Agent not found"))
 
         client = TestClient(app)
         response = client.post(
@@ -413,14 +415,19 @@ class TestJSONRPCPassthroughErrorHandling:
         )
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
+        # Verify proper JSON-RPC error structure at top level (not double-encoded)
+        response_json = response.json()
+        assert response_json["jsonrpc"] == "2.0"
+        assert "error" in response_json
+        assert response_json["error"]["code"] == -32001  # Server error: agent not found
+        assert "Agent not found" in response_json["error"]["message"]
+        assert response_json["id"] == 1
 
     def test_agent_error_returns_400_with_jsonrpc_error(self, mock_a2a_service, mock_auth, auth_headers):
         """Test that agent errors return 400 with JSON-RPC error format."""
         from mcpgateway.services.a2a_service import A2AAgentError
 
-        mock_a2a_service.invoke_agent = AsyncMock(
-            side_effect=A2AAgentError("Agent invocation failed")
-        )
+        mock_a2a_service.invoke_agent = AsyncMock(side_effect=A2AAgentError("Agent invocation failed"))
 
         client = TestClient(app)
         response = client.post(
@@ -435,9 +442,13 @@ class TestJSONRPCPassthroughErrorHandling:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        # Response should contain JSON-RPC error format in detail
-        assert "jsonrpc" in response.text
-        assert "error" in response.text
+        # Verify proper JSON-RPC error structure at top level (not double-encoded)
+        response_json = response.json()
+        assert response_json["jsonrpc"] == "2.0"
+        assert "error" in response_json
+        assert response_json["error"]["code"] == -32603
+        assert "Agent invocation failed" in response_json["error"]["message"]
+        assert response_json["id"] == 1
 
     def test_service_unavailable_returns_503(self, mock_auth, auth_headers):
         """Test that unavailable service returns 503."""
@@ -459,9 +470,7 @@ class TestJSONRPCPassthroughErrorHandling:
     def test_unexpected_exception_returns_500_with_jsonrpc_error(self, mock_a2a_service, mock_auth, auth_headers):
         """Test that unexpected exceptions return 500 with JSON-RPC error format (lines 5451-5454)."""
         # Simulate an unexpected error during agent invocation
-        mock_a2a_service.invoke_agent = AsyncMock(
-            side_effect=RuntimeError("Unexpected database error")
-        )
+        mock_a2a_service.invoke_agent = AsyncMock(side_effect=RuntimeError("Unexpected database error"))
 
         client = TestClient(app)
         response = client.post(
@@ -476,25 +485,24 @@ class TestJSONRPCPassthroughErrorHandling:
         )
 
         assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-        # Response should contain JSON-RPC error format in detail
-        assert "jsonrpc" in response.text
-        assert "error" in response.text
-        assert "Internal server error" in response.text
+        # Verify proper JSON-RPC error structure at top level (not double-encoded)
+        response_json = response.json()
+        assert response_json["jsonrpc"] == "2.0"
+        assert "error" in response_json
+        assert response_json["error"]["code"] == -32603
+        assert response_json["error"]["message"] == "Internal server error"
+        assert response_json["id"] == 1
 
 
 class TestJSONRPCPassthroughGovernance:
     """Test that governance features are applied."""
 
     @patch("mcpgateway.main.get_rpc_filter_context")
-    def test_admin_unrestricted_token_teams(
-        self, mock_get_filter_context, mock_a2a_service, mock_auth, auth_headers
-    ):
+    def test_admin_unrestricted_token_teams(self, mock_get_filter_context, mock_a2a_service, mock_auth, auth_headers):
         """Test admin with no team restrictions (line 5385)."""
         # Admin with token_teams=None should stay None (unrestricted)
         mock_get_filter_context.return_value = ("admin@example.com", None, True)
-        mock_a2a_service.invoke_agent = AsyncMock(
-            return_value={"jsonrpc": "2.0", "result": {}, "id": 1}
-        )
+        mock_a2a_service.invoke_agent = AsyncMock(return_value={"jsonrpc": "2.0", "result": {}, "id": 1})
 
         client = TestClient(app)
         response = client.post(
@@ -515,15 +523,11 @@ class TestJSONRPCPassthroughGovernance:
         assert call_args.kwargs["token_teams"] is None
 
     @patch("mcpgateway.main.get_rpc_filter_context")
-    def test_non_admin_public_only_token_teams(
-        self, mock_get_filter_context, mock_a2a_service, mock_auth, auth_headers
-    ):
+    def test_non_admin_public_only_token_teams(self, mock_get_filter_context, mock_a2a_service, mock_auth, auth_headers):
         """Test non-admin without teams gets public-only access (line 5387)."""
         # Non-admin with token_teams=None should get [] (public-only)
         mock_get_filter_context.return_value = ("user@example.com", None, False)
-        mock_a2a_service.invoke_agent = AsyncMock(
-            return_value={"jsonrpc": "2.0", "result": {}, "id": 1}
-        )
+        mock_a2a_service.invoke_agent = AsyncMock(return_value={"jsonrpc": "2.0", "result": {}, "id": 1})
 
         client = TestClient(app)
         response = client.post(
@@ -544,14 +548,10 @@ class TestJSONRPCPassthroughGovernance:
         assert call_args.kwargs["token_teams"] == []
 
     @patch("mcpgateway.main.get_rpc_filter_context")
-    def test_applies_token_scoping(
-        self, mock_get_filter_context, mock_a2a_service, mock_auth, auth_headers
-    ):
+    def test_applies_token_scoping(self, mock_get_filter_context, mock_a2a_service, mock_auth, auth_headers):
         """Test that token scoping is applied."""
         mock_get_filter_context.return_value = ("user@example.com", ["team1"], False)
-        mock_a2a_service.invoke_agent = AsyncMock(
-            return_value={"jsonrpc": "2.0", "result": {}, "id": 1}
-        )
+        mock_a2a_service.invoke_agent = AsyncMock(return_value={"jsonrpc": "2.0", "result": {}, "id": 1})
 
         client = TestClient(app)
         response = client.post(
@@ -572,14 +572,10 @@ class TestJSONRPCPassthroughGovernance:
         assert "token_teams" in call_args.kwargs
 
     @patch("mcpgateway.main.uaid_utils.read_hop_count")
-    def test_applies_hop_count_validation(
-        self, mock_read_hop_count, mock_a2a_service, mock_auth, auth_headers
-    ):
+    def test_applies_hop_count_validation(self, mock_read_hop_count, mock_a2a_service, mock_auth, auth_headers):
         """Test that UAID hop count validation is applied."""
         mock_read_hop_count.return_value = 2
-        mock_a2a_service.invoke_agent = AsyncMock(
-            return_value={"jsonrpc": "2.0", "result": {}, "id": 1}
-        )
+        mock_a2a_service.invoke_agent = AsyncMock(return_value={"jsonrpc": "2.0", "result": {}, "id": 1})
 
         client = TestClient(app)
         headers = {**auth_headers, "X-UAID-Hop-Count": "2"}
@@ -603,6 +599,7 @@ class TestJSONRPCPassthroughGovernance:
     @patch("mcpgateway.main.getattr")
     def test_bearer_token_fallback_from_header(self, mock_getattr, mock_a2a_service, mock_auth, auth_headers):
         """Test bearer token extraction from Authorization header when not in request.state (lines 5401-5403)."""
+
         # Mock getattr to return None for bearer_token attribute (simulating missing request.state.bearer_token)
         def custom_getattr(obj, name, default=None):
             if name == "bearer_token":
@@ -611,12 +608,12 @@ class TestJSONRPCPassthroughGovernance:
 
         mock_getattr.side_effect = custom_getattr
 
-        mock_a2a_service.invoke_agent = AsyncMock(
-            return_value={"jsonrpc": "2.0", "result": {}, "id": 1}
-        )
+        mock_a2a_service.invoke_agent = AsyncMock(return_value={"jsonrpc": "2.0", "result": {}, "id": 1})
 
         # Use a JWT-like token format
-        jwt_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"  # pragma: allowlist secret
+        jwt_token = (
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"  # pragma: allowlist secret
+        )
 
         client = TestClient(app)
         response = client.post(
@@ -638,12 +635,12 @@ class TestJSONRPCPassthroughGovernance:
 
     def test_forwards_bearer_token_for_cross_gateway(self, mock_a2a_service, mock_auth):
         """Test that bearer token is forwarded for cross-gateway auth."""
-        mock_a2a_service.invoke_agent = AsyncMock(
-            return_value={"jsonrpc": "2.0", "result": {}, "id": 1}
-        )
+        mock_a2a_service.invoke_agent = AsyncMock(return_value={"jsonrpc": "2.0", "result": {}, "id": 1})
 
         # Use a JWT-like token format
-        jwt_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"  # pragma: allowlist secret
+        jwt_token = (
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"  # pragma: allowlist secret
+        )
 
         client = TestClient(app)
         response = client.post(

@@ -5497,11 +5497,11 @@ async def invoke_a2a_agent_jsonrpc(
         >>> "result" in response or "error" in response
         True
     """
+    # Extract request ID early for error responses (optional in JSON-RPC 2.0 for notifications)
+    request_id = body.get("id")
+
     try:
         # Validate JSON-RPC format
-        if not isinstance(body, dict):
-            raise HTTPException(status_code=400, detail="Request body must be a JSON object")
-
         jsonrpc_version = body.get("jsonrpc")
         if jsonrpc_version != "2.0":
             raise HTTPException(status_code=400, detail=f"Invalid or missing jsonrpc field. Expected '2.0', got '{jsonrpc_version}'")
@@ -5514,9 +5514,6 @@ async def invoke_a2a_agent_jsonrpc(
         params = body.get("params", {})
         if params is not None and not isinstance(params, dict):
             raise HTTPException(status_code=400, detail="JSON-RPC 'params' field must be an object or null")
-
-        # Extract request ID (optional in JSON-RPC 2.0 for notifications)
-        request_id = body.get("id")
 
         logger.debug(f"User {safe_log_user(user)} invoking A2A agent '{agent_name}' " f"via JSON-RPC passthrough with method '{method}'")
 
@@ -5589,15 +5586,25 @@ async def invoke_a2a_agent_jsonrpc(
         # Re-raise HTTP exceptions as-is
         raise
     except A2AAgentNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        # Return JSON-RPC error format for agent not found
+        # JSON-RPC 2.0: -32001 is in server error range (-32000 to -32099) for application-defined errors
+        # Note: -32601 would mean "JSON-RPC method not found", not "agent resource not found"
+        logger.warning(f"A2A agent not found: {e}")
+        error_response = {"jsonrpc": "2.0", "error": {"code": -32001, "message": str(e)}, "id": request_id}
+        return ORJSONResponse(status_code=404, content=error_response)
     except A2AAgentError as e:
         # Return JSON-RPC error format for A2A errors
-        error_response = {"jsonrpc": "2.0", "error": {"code": -32603, "message": str(e)}, "id": body.get("id") if isinstance(body, dict) else None}  # Internal error
-        raise HTTPException(status_code=400, detail=orjson.dumps(error_response).decode())
+        logger.warning(f"A2A agent error: {e}")
+        error_response = {"jsonrpc": "2.0", "error": {"code": -32603, "message": str(e)}, "id": request_id}
+        return ORJSONResponse(status_code=400, content=error_response)
     except Exception as e:
+        # Return JSON-RPC error format for unexpected errors
+        # Note: Returning ORJSONResponse instead of raising bypasses ObservabilityMiddleware's
+        # exception capture (no exception.type/message/stacktrace in spans), but logger.error
+        # below ensures the error is still logged with full context for debugging.
         logger.error(f"Unexpected error in JSON-RPC passthrough: {e}", exc_info=True)
-        error_response = {"jsonrpc": "2.0", "error": {"code": -32603, "message": "Internal server error"}, "id": body.get("id") if isinstance(body, dict) else None}  # Internal error
-        raise HTTPException(status_code=500, detail=orjson.dumps(error_response).decode())
+        error_response = {"jsonrpc": "2.0", "error": {"code": -32603, "message": "Internal server error"}, "id": request_id}
+        return ORJSONResponse(status_code=500, content=error_response)
 
 
 #############
