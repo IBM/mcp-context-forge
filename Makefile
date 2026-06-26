@@ -30,13 +30,6 @@ DOCS_DIR          = docs
 HANDSDOWN_PARAMS  = -o $(DOCS_DIR)/ -n $(PROJECT_NAME) --name "ContextForge" --cleanup
 
 TEST_DOCS_DIR ?= $(DOCS_DIR)/docs/test
-MCP_2025_TEST_DIR ?= tests/compliance/mcp_2025_11_25
-MCP_2025_ARTIFACTS_DIR ?= artifacts/mcp-2025-11-25
-MCP_2025_MARKER ?= mcp20251125
-MCP_2025_PYTEST_ARGS ?=
-MCP_2025_BASE_URL ?=
-MCP_2025_RPC_PATH ?= /mcp/
-MCP_2025_BEARER_TOKEN ?=
 
 # Virtual-environment variables
 VENV_DIR ?= $(CURDIR)/.venv
@@ -753,6 +746,11 @@ clean:
 # help: test-protocol-compliance-reference - Protocol compliance harness, reference server only (fast, always-on)
 # help: test-protocol-compliance-gateway - Protocol compliance harness, gateway-proxy + gateway-virtual targets (requires working gateway boot)
 # help: test-protocol-compliance-matrix - Protocol compliance matrix across every runnable engine; summary table (pass MATRIX_ARGS='--format markdown --out X' to override)
+# help: test-protocol-compliance-a2a - A2A protocol compliance harness: full (target, transport) matrix across all versions (K=<filter> to pick one)
+# help: test-protocol-compliance-a2a-v1-0-0 - A2A 1.0.0 compliance harness only (K=<filter> to pick one)
+# help: test-protocol-compliance-a2a-v0-3-0 - A2A 0.3.0 (legacy) compliance harness only (K=<filter> to pick one)
+# help: test-protocol-compliance-a2a-reference - A2A compliance harness, reference echo agent + raw-httpx tests (gateway cells xfail via A2A-GAP-001)
+# help: test-protocol-compliance-a2a-gateway - A2A compliance harness, gateway-proxy + gateway-virtual targets (all xfail via A2A-GAP-001 until native passthrough lands)
 # help: test-mcp-protocol-e2e - MCP protocol E2E via FastMCP client against live gateway (K=<filter> to pick one; MCP_E2E_CLIENT_TIMEOUT env to extend the 5s client timeout)
 # help: test-mcp-cli         - [DEPRECATED] Alias for test-mcp-protocol-e2e (accepts same K=<filter>)
 # help: test-mcp-rbac        - RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
@@ -777,17 +775,12 @@ clean:
 # help: doctest-check        - Check doctest coverage percentage (fail if < 100%)
 # help: test-db-perf         - Run database performance and N+1 query detection tests
 # help: test-db-perf-verbose - Run database performance tests with full SQL query output
-# help: 2025-11-25        - Run full MCP 2025-11-25 compliance suite (manual)
-# help: 2025-11-25-core   - Run MCP core compliance subset
-# help: 2025-11-25-tasks  - Run MCP tasks compliance subset
-# help: 2025-11-25-auth   - Run MCP authorization compliance subset
-# help: 2025-11-25-report - Run MCP suite and emit JUnit XML + Markdown reports
 # help: dev-query-log        - Run dev server with query logging to file (N+1 detection)
 # help: query-log-tail       - Tail the database query log file
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
 # help: query-log-clear      - Clear database query log files
 
-.PHONY: smoketest test-mcp-cli test-mcp-rbac test-mcp-plugin-parity test-mcp-access-matrix test-mcp-session-isolation test-mcp-session-isolation-load test-e2e-sso test-live-gateway test test-verbose test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
+.PHONY: smoketest test-mcp-cli test-mcp-rbac test-mcp-plugin-parity test-mcp-access-matrix test-mcp-session-isolation test-mcp-session-isolation-load test-e2e-sso test-live-gateway test test-verbose test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
 
 # Dirs/files always excluded from standard pytest runs.
 # tests/live_gateway/ — see tests/live_gateway/README.md. Subsuites need
@@ -845,6 +838,48 @@ test-protocol-compliance-gateway: uv  ## Protocol compliance harness — gateway
 
 test-protocol-compliance-matrix: uv  ## MCP compliance matrix across every runnable engine (reference, python, rust_edge, rust_full) with aggregated summary
 	@$(UV_BIN) run python scripts/compliance_matrix.py $(MATRIX_ARGS)
+
+# A2A compliance harness env extraction. The compose stack signs JWTs with
+# the JWT_SECRET_KEY injected into the gateway container; test JWTs must
+# use the same value or every request 401s. Override the container name
+# via `A2A_DOCKER_CONTAINER=<name> make test-protocol-compliance-a2a` if
+# your stack uses a non-default replica name. Empty fallback => tests will
+# 401 with the existing diagnostic warnings; bring the stack up first.
+A2A_DOCKER_CONTAINER ?= mcp-context-forge-gateway-1
+A2A_DOCKER_JWT_KEY = $$(docker exec $(A2A_DOCKER_CONTAINER) printenv JWT_SECRET_KEY 2>/dev/null || echo "")
+
+test-protocol-compliance-a2a: uv  ## A2A protocol compliance harness — full (target, transport) matrix across all versions (K=<filter> to pick one)
+	@echo "📜 Running A2A protocol compliance harness (tests/live_gateway/a2a_compliance)..."
+	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
+	@JWT_SECRET_KEY="$(A2A_DOCKER_JWT_KEY)" $(UV_BIN) run pytest tests/live_gateway/a2a_compliance $(if $(K),-k "$(K)") -v --tb=short \
+		|| { echo "❌ A2A compliance harness failed!"; exit 1; }
+	@echo "✅ A2A compliance harness passed!"
+
+test-protocol-compliance-a2a-v1-0-0: uv  ## A2A 1.0.0 compliance harness only (K=<filter> to pick one)
+	@echo "📜 Running A2A 1.0.0 compliance harness..."
+	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
+	@JWT_SECRET_KEY="$(A2A_DOCKER_JWT_KEY)" $(UV_BIN) run pytest tests/live_gateway/a2a_compliance/v1_0_0 $(if $(K),-k "$(K)") -v --tb=short \
+		|| { echo "❌ A2A 1.0.0 compliance harness failed!"; exit 1; }
+	@echo "✅ A2A 1.0.0 compliance harness passed!"
+
+test-protocol-compliance-a2a-v0-3-0: uv  ## A2A 0.3.0 (legacy) compliance harness only (K=<filter> to pick one)
+	@echo "📜 Running A2A 0.3.0 (legacy) compliance harness..."
+	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
+	@JWT_SECRET_KEY="$(A2A_DOCKER_JWT_KEY)" $(UV_BIN) run pytest tests/live_gateway/a2a_compliance/v0_3_0 $(if $(K),-k "$(K)") -v --tb=short \
+		|| { echo "❌ A2A 0.3.0 compliance harness failed!"; exit 1; }
+	@echo "✅ A2A 0.3.0 compliance harness passed!"
+
+test-protocol-compliance-a2a-reference: uv  ## A2A compliance harness — reference echo agent + raw-httpx tests (gateway cells xfail via A2A-GAP-001)
+	@echo "📜 Running A2A compliance harness (reference target + raw-httpx tests)..."
+	@JWT_SECRET_KEY="$(A2A_DOCKER_JWT_KEY)" $(UV_BIN) run pytest tests/live_gateway/a2a_compliance -k "not gateway_" -v --tb=short \
+		|| { echo "❌ A2A reference compliance harness failed!"; exit 1; }
+	@echo "✅ A2A reference compliance harness passed!"
+
+test-protocol-compliance-a2a-gateway: uv  ## A2A compliance harness — gateway-proxy + gateway-virtual targets (all xfail via A2A-GAP-001 until native passthrough lands)
+	@echo "📜 Running A2A compliance harness (gateway targets — expected to xfail per A2A-GAP-001)..."
+	@JWT_SECRET_KEY="$(A2A_DOCKER_JWT_KEY)" $(UV_BIN) run pytest tests/live_gateway/a2a_compliance -k "gateway_proxy or gateway_virtual" -v --tb=short \
+		|| { echo "❌ A2A gateway compliance harness failed!"; exit 1; }
+	@echo "✅ A2A gateway compliance harness finished (expected XFAILs per A2A-GAP-001)."
 
 test-mcp-rbac: uv  ## RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
 	@echo "🔐 Running RBAC + multi-transport MCP protocol tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
@@ -1065,55 +1100,6 @@ test-db-perf-verbose: uv  ## Run database performance tests with full SQL query 
 	 TEST_DATABASE_URL='sqlite:///:memory:' \
 	 SQLALCHEMY_ECHO=true \
 	 $(UV_BIN) run pytest tests/performance/test_db_query_patterns.py -v -s --tb=short
-
-# Shared env-var prefix for the 2025-11-25 compliance series.
-# Defined as a make variable so each target stays compact while keeping
-# the env identical across subset runs (-core / -tasks / -auth / -report).
-MCP_2025_TEST_ENV := \
-	DATABASE_URL='sqlite:///:memory:' \
-	TEST_DATABASE_URL='sqlite:///:memory:' \
-	ARGON2ID_TIME_COST=1 \
-	ARGON2ID_MEMORY_COST=1024 \
-	MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' \
-	MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' \
-	MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)'
-
-2025-11-25: uv  ## Run full MCP 2025-11-25 compliance suite
-	@echo "🧪 Running MCP 2025-11-25 compliance suite..."
-	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
-	@$(MCP_2025_TEST_ENV) \
-	 $(UV_BIN) run pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER)" $(MCP_2025_PYTEST_ARGS)
-
-2025-11-25-core: uv  ## Run MCP core compliance subset
-	@echo "🧪 Running MCP 2025-11-25 core compliance subset..."
-	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
-	@$(MCP_2025_TEST_ENV) \
-	 $(UV_BIN) run pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER) and mcp_core" $(MCP_2025_PYTEST_ARGS)
-
-2025-11-25-tasks: uv  ## Run MCP tasks compliance subset
-	@echo "🧪 Running MCP 2025-11-25 tasks compliance subset..."
-	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
-	@$(MCP_2025_TEST_ENV) \
-	 $(UV_BIN) run pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER) and mcp_tasks" $(MCP_2025_PYTEST_ARGS)
-
-2025-11-25-auth: uv  ## Run MCP authorization compliance subset
-	@echo "🧪 Running MCP 2025-11-25 authorization compliance subset..."
-	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
-	@$(MCP_2025_TEST_ENV) \
-	 $(UV_BIN) run pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER) and mcp_auth" $(MCP_2025_PYTEST_ARGS)
-
-2025-11-25-report: uv  ## Run MCP suite and emit JUnit XML + Markdown reports
-	@echo "🧪 Running MCP 2025-11-25 suite with report artifacts..."
-	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
-	@mkdir -p "$(MCP_2025_ARTIFACTS_DIR)"
-	@$(MCP_2025_TEST_ENV) \
-	 $(UV_BIN) run pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER)" \
-		--junitxml=$(MCP_2025_ARTIFACTS_DIR)/junit.xml \
-		--md-report --md-report-output=$(MCP_2025_ARTIFACTS_DIR)/report.md \
-		$(MCP_2025_PYTEST_ARGS)
-	@echo "✅ Compliance artifacts:"
-	@echo "   - $(MCP_2025_ARTIFACTS_DIR)/junit.xml"
-	@echo "   - $(MCP_2025_ARTIFACTS_DIR)/report.md"
 
 dev-query-log:                   ## Run dev server with query logging to file
 	@echo "📊 Starting dev server with database query logging"
@@ -3844,7 +3830,7 @@ pre-commit: uv                     ## 🪄  Run pre-commit tool
 		GOPATH='$(CURDIR)/.cache/go-cache' \
 		GOMODCACHE='$(CURDIR)/.cache/go-mod' \
 		GOCACHE='$(CURDIR)/.cache/go-build' \
-		$(VENV_DIR)/bin/pre-commit run --config .pre-commit-lite.yaml --all-files --show-diff-on-failure"
+		$(VENV_DIR)/bin/pre-commit run --config .pre-commit-config.yaml --all-files --show-diff-on-failure"
 
 RUFF_MODE   ?= check
 RUFF_SELECT ?=
