@@ -73,7 +73,52 @@ make ruff bandit interrogate pylint verify
 cd tools_rust/mcp_runtime && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 ```
 
-#### Secret Detection (detect-secrets)
+## PR Review Workflow
+
+Standard prompt: *"Rebase against main, then conduct an in-depth PR Review."* It runs as a **fixed-point loop** terminating when a full pass surfaces no blocking findings. Each cycle clears blocking and functionally-impacting findings (within reason — escalate edge cases). Cosmetic suggestions can be deferred.
+
+### Review State: `todo/NOTES.md`
+
+`todo/NOTES.md` is the **ephemeral per-review cycle tracker** — gitignored, lives only in the current worktree, persists across cycles within one review but never across reviews. It holds the cycle counter, the `Conducting review` / `Implementing suggestions` phase toggles, and per-gate checkboxes; update as you advance. The canonical, committed source is `todo/NOTES.template.md`. When starting a review, instantiate from the template:
+
+```bash
+cp todo/NOTES.template.md todo/NOTES.md
+```
+
+If `todo/NOTES.md` is missing or stale, reset from the template; never assume prior cycle state carries over.
+
+### Rebase
+
+```bash
+(cd ../mcp-context-forge && git pull)
+git rebase main
+```
+
+For each conflict, apply the resolution that best preserves both intents using the PR diff and recent main commits as context. Escalate when the conflict is semantic (logic intent on both sides), would silently weaken a test / security check / migration, or when you're not confident the fix matches the PR author's intent. Preserve sign-off (`git commit -s`) on any new commits.
+
+### Cycle: review → fix → loop
+
+1. **Verify scope.** Cross-reference the PR description against any linked issues (`gh pr view`, `gh issue view`) and confirm the changes deliver what the PR claims. Partial coverage of an issue is acceptable when the PR documentation explicitly says so; unstated gaps or scope drift are blocking findings.
+2. **Review.** Default categorization: **blocking / functionally-impacting / suggestions / minor** (matches *Tone for GitHub Comments*). Output format and delivery channel (file, agent toolkit, `gh pr review`) decided per-PR — confirm before posting externally.
+3. **Fix.** Address every blocking and functionally-impacting finding this cycle. Update `todo/NOTES.md` to advance state.
+4. **Loop.** Repeat until a full pass yields zero blocking findings, then run the validation gate.
+
+### Pre-Merge Validation Gate
+
+Run from the worktree root, in order. Each must pass (or have a documented waiver) before the PR is ready:
+
+| # | Command | Validates |
+|---|---------|-----------|
+| 1 | `make ruff interrogate pylint` | Lint, docstring coverage, deeper static analysis |
+| 2 | `make test` | Full pytest suite |
+| 3 | `make coverage diff-cover` | Coverage of changed lines vs. base |
+| 4 | `make docker-nuke docker-prod-rust testing-up RUST_MCP_MODE=` | Rebuilds and launches the production-style gateway stack |
+| 5 | `make test-mcp-protocol-e2e test-mcp-rbac test-protocol-compliance` | MCP protocol E2E, RBAC, and compliance against the live gateway |
+| 6 | `make detect-secrets-scan` | No new secrets leaked |
+
+Distinct from the per-edit hygiene chain in *Essential Commands → Code Quality* (`make autoflake isort black pre-commit`, then `make ruff bandit interrogate pylint verify`): hygiene runs continuously; this gate runs once before declaring a PR ready.
+
+### Secret Detection (detect-secrets)
 
 When `detect-secrets` identifies false positives:
 
@@ -403,7 +448,7 @@ exempt.
 - **Link issues**: `Closes #123`
 - Include tests for behavior changes
 - Require green lint and tests before PR
-- Don't push until asked, and if it's an external contributor, see todo/force-push.md first to push to the contributor's branch.
+- Don't push until asked.
 
 ### Tone for GitHub Comments
 
@@ -427,7 +472,7 @@ When posting PR reviews, issue comments, or any public-facing text on GitHub, us
 ## Maintenance Guardrails (Brief)
 
 - Source of truth precedence: `mcpgateway/config.py` and runtime code > `Makefile` targets/dependencies > `.env.example` (dev overrides) > docs/comments.
-- When auditing repo state, prioritize active source directories and ignore transient/workbench content unless explicitly requested: `todo/`, `tmp/`, `artifacts/`, `logs/`, `coverage/`.
+- When auditing repo state, prioritize active source directories and ignore transient/workbench content unless explicitly requested: `todo/` (except `todo/NOTES.md` and `todo/NOTES.template.md` — see *PR Review Workflow*), `tmp/`, `artifacts/`, `logs/`, `coverage/`.
 - Issue lifecycle labels: use `awaiting-user` when blocked on reporter feedback, `blocked` for dependency blockers, `planned` when accepted but deferred, and `fixed` only after the resolving change is merged.
 - Avoid brittle numeric claims (counts of services/routers/middleware/plugins) unless you are actively validating and updating them in the same change; otherwise describe with approximate wording.
 

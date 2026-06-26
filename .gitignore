@@ -300,7 +300,8 @@ cookies*
 llms-full.txt
 
 # Task tracking
-todo/
+todo/*
+!todo/NOTES.template.md
 TODO.md
 FIXMEs
 
