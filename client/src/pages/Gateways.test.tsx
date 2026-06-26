@@ -560,7 +560,7 @@ describe("Gateways", () => {
     resolveDelete();
   });
 
-  it.skip("blocks repeated delete requests while a deletion is pending", async () => {
+  it("blocks repeated delete requests while a deletion is pending", async () => {
     const user = userEvent.setup();
     let resolveDelete!: () => void;
     const deletePromise = new Promise<void>((resolve) => {
