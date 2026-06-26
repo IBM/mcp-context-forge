@@ -32,7 +32,7 @@ Prepare the ContextForge connection values used in the examples:
 
 ```bash
 export MCPGATEWAY_BEARER_TOKEN="<gateway-token>"
-export MCP_AUTH="Bearer ${MCPGATEWAY_BEARER_TOKEN}"
+export MCP_AUTH="Bearer ${MCPGATEWAY_BEARER_TOKEN}" # pragma: allowlist secret
 
 # Virtual server endpoint used by mcpgateway-wrapper.
 export MCP_SERVER_URL="http://localhost:4444/servers/UUID_OF_SERVER_1/mcp"
@@ -200,7 +200,7 @@ await client.connect(
     args: ["-m", "mcpgateway.wrapper"],
     env: {
       MCP_SERVER_URL: process.env.MCP_SERVER_URL!,
-      MCP_AUTH: process.env.MCP_AUTH!,
+      MCP_AUTH: process.env.MCP_AUTH!, # pragma: allowlist secret
       MCP_WRAPPER_LOG_LEVEL: "OFF",
     },
   })
