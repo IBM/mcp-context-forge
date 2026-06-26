@@ -81,6 +81,7 @@ from mcpgateway.auth_context import (
     get_internal_mcp_auth_context,
     get_request_identity,
     get_rpc_filter_context,
+    get_user_email,
     get_scoped_resource_access_context,
     get_token_teams_from_request,
     get_user_email,
@@ -4411,7 +4412,7 @@ async def set_server_state(
         HTTPException: If the server is not found or there is an error.
     """
     try:
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         logger.debug(f"User {safe_log_user(user)} is setting server with ID {server_id} to {'active' if activate else 'inactive'}")
         return await server_service.set_server_state(db, server_id, activate, user_email=user_email)
     except PermissionError as e:
@@ -4477,7 +4478,7 @@ async def delete_server(
     """
     try:
         logger.debug(f"User {safe_log_user(user)} is deleting server with ID {server_id}")
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
         await server_service.get_server(db, server_id, user_email=auth_user_email, token_teams=auth_token_teams)
         await server_service.delete_server(db, server_id, user_email=user_email, purge_metrics=purge_metrics)
@@ -5077,7 +5078,7 @@ async def update_a2a_agent(
 
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         return await a2a_service.update_agent(
             db,
             agent_id,
@@ -5128,7 +5129,7 @@ async def set_a2a_agent_state(
         HTTPException: If the agent is not found or there is an error.
     """
     try:
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         logger.debug(f"User {safe_log_user(user)} is toggling A2A agent with ID {agent_id} to {'active' if activate else 'inactive'}")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
@@ -5194,7 +5195,7 @@ async def delete_a2a_agent(
         logger.debug(f"User {safe_log_user(user)} is deleting A2A agent with ID {agent_id}")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         await a2a_service.delete_agent(db, agent_id, user_email=user_email, purge_metrics=purge_metrics)
         return {
             "status": "success",
@@ -5962,7 +5963,7 @@ async def update_tool(
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, current_version)
 
         logger.debug(f"User {safe_log_user(user)} is updating tool with ID {tool_id}")
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         result = await tool_service.update_tool(
             db,
             tool_id,
@@ -6018,7 +6019,7 @@ async def delete_tool(
     """
     try:
         logger.debug(f"User {safe_log_user(user)} is deleting tool with ID {tool_id}")
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         await tool_service.delete_tool(db, tool_id, user_email=user_email, purge_metrics=purge_metrics)
         db.commit()
         db.close()
@@ -6056,7 +6057,7 @@ async def set_tool_state(
     """
     try:
         logger.debug(f"User {safe_log_user(user)} is setting tool state for ID {tool_id} to {'active' if activate else 'inactive'}")
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         tool = await tool_service.set_tool_state(db, tool_id, activate, reachable=activate, user_email=user_email)
         return {
             "status": "success",
@@ -6176,7 +6177,7 @@ async def set_resource_state(
     """
     logger.debug(f"User {safe_log_user(user)} is toggling resource with ID {resource_id} to {'active' if activate else 'inactive'}")
     try:
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         resource = await resource_service.set_resource_state(db, resource_id, activate, user_email=user_email)
         return {
             "status": "success",
@@ -6604,7 +6605,7 @@ async def update_resource(
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         result = await resource_service.update_resource(
             db,
             resource_id,
@@ -6667,7 +6668,7 @@ async def delete_resource(
     """
     try:
         logger.debug(f"User {safe_log_user(user)} is deleting resource with id {resource_id}")
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         await resource_service.delete_resource(db, resource_id, user_email=user_email, purge_metrics=purge_metrics)
         db.commit()
         db.close()
@@ -6744,7 +6745,7 @@ async def set_prompt_state(
     """
     logger.debug(f"User: {safe_log_user(user)} requested state change for prompt {prompt_id}, activate={activate}")
     try:
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         prompt = await prompt_service.set_prompt_state(db, prompt_id, activate, user_email=user_email)
         return {
             "status": "success",
@@ -7138,7 +7139,7 @@ async def update_prompt(
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         result = await prompt_service.update_prompt(
             db,
             prompt_id,
@@ -7208,7 +7209,7 @@ async def delete_prompt(
     """
     logger.debug(f"User: {safe_log_user(user)} requested deletion of prompt {prompt_id}")
     try:
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         await prompt_service.delete_prompt(db, prompt_id, user_email=user_email, purge_metrics=purge_metrics)
         db.commit()
         db.close()
@@ -7257,7 +7258,7 @@ async def set_gateway_state(
     """
     logger.debug(f"User '{safe_log_user(user)}' requested state change for gateway {gateway_id}, activate={activate}")
     try:
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         gateway = await gateway_service.set_gateway_state(
             db,
             gateway_id,
@@ -7538,7 +7539,7 @@ async def update_gateway(
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         result = await gateway_service.update_gateway(
             db,
             gateway_id,
@@ -7607,7 +7608,7 @@ async def delete_gateway(
     """
     logger.debug(f"User '{safe_log_user(user)}' requested deletion of gateway {gateway_id}")
     try:
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
         current = await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
         has_resources = bool(current.capabilities.get("resources"))
@@ -7676,7 +7677,7 @@ async def refresh_gateway_tools(
         await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
         _enforce_scoped_resource_access(request, db, user, f"/gateways/{gateway_id}")
 
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         result = await gateway_service.refresh_gateway_manually(
             gateway_id=gateway_id,
             include_resources=include_resources,
