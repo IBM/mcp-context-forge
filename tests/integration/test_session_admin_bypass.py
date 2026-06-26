@@ -28,11 +28,7 @@ from sqlalchemy.pool import StaticPool
 import mcpgateway.db as db_mod
 import mcpgateway.main as main_mod
 from mcpgateway.auth import get_current_user
-from mcpgateway.auth_context import (
-    get_rpc_filter_context,
-    get_scoped_resource_access_context,
-    get_user_email,
-)
+from mcpgateway.auth_context import get_rpc_filter_context
 from mcpgateway.config import settings
 from mcpgateway.db import Base, EmailUser
 from mcpgateway.middleware.rbac import get_current_user_with_permissions
