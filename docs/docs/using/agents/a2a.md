@@ -177,7 +177,7 @@ curl -X POST "http://localhost:4444/a2a/{agent_name}/jsonrpc" \
   }'
 ```
 
-**Response format:**
+**Success response:**
 ```json
 {
   "jsonrpc": "2.0",
@@ -192,6 +192,40 @@ curl -X POST "http://localhost:4444/a2a/{agent_name}/jsonrpc" \
   "id": 1
 }
 ```
+
+**Error response example:**
+
+When an agent is not found or an error occurs, the response follows JSON-RPC error format:
+
+```bash
+# Request to nonexistent agent
+curl -X POST "http://localhost:4444/a2a/nonexistent-agent/jsonrpc" \
+  -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "SendMessage",
+    "params": {"query": "Hello"},
+    "id": 1
+  }'
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "error": {
+    "code": -32001,
+    "message": "A2A Agent not found with name: nonexistent-agent"
+  },
+  "id": 1
+}
+```
+
+Common error codes:
+- `-32001`: Agent not found
+- `-32002`: Agent execution error (forwarded from backend agent)
+- `-32600`: Invalid JSON-RPC request format
+- `-32700`: Parse error
 
 **Use when:**
 - Using standard A2A SDKs (Google ADK, etc.)

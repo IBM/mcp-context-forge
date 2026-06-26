@@ -5049,6 +5049,82 @@ def _prepare_request_headers(request_headers: Dict[str, str]) -> Dict[str, str]:
     return _filter_sensitive_headers({k.lower(): v for k, v in request_headers.items()})
 
 
+def _extract_a2a_request_context(
+    request: Request,
+    user: Any,
+) -> Dict[str, Any]:
+    """
+    Extract authentication and request context for A2A agent invocation.
+
+    This helper consolidates token scoping, admin bypass, hop count reading,
+    bearer token extraction, and header filtering logic shared between
+    /invoke and /jsonrpc endpoints to prevent code drift.
+
+    Args:
+        request: FastAPI Request object
+        user: Authenticated user (from get_current_user_with_permissions)
+
+    Returns:
+        Dict containing:
+        - user_id: str
+        - user_email: str
+        - token_teams: Optional[List[str]]
+        - hop_count: int
+        - bearer_token: Optional[str]
+        - content_type: Optional[str]
+        - request_headers: Dict[str, str]
+    """
+    # Get filtering context from token (respects token scope)
+    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
+
+    # Admin bypass - only when token has NO team restrictions
+    if is_admin and token_teams is None:
+        token_teams = None  # Admin unrestricted
+    elif token_teams is None:
+        token_teams = []  # Non-admin without teams = public-only
+
+    # Extract user ID
+    user_id = None
+    if isinstance(user, dict):
+        user_id = str(user.get("id") or user.get("sub") or user_email)
+    else:
+        user_id = str(user)
+
+    # Read federation hop counter from request headers
+    hop_count = uaid_utils.read_hop_count(request.headers)
+
+    # Extract bearer token for cross-gateway forwarding
+    # Prefer token extracted by auth middleware (validated and normalized)
+    bearer_token = getattr(request.state, "bearer_token", None)
+
+    # Fallback: extract from Authorization header if middleware didn't set it
+    if not bearer_token:
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            bearer_token = auth_header[7:]  # Remove "Bearer " prefix
+
+    # Only forward JWT-shaped tokens; local opaque tokens cannot be validated by remote gateways
+    if bearer_token and not _is_jwt_token(bearer_token):
+        logger.info("Non-JWT token detected, not forwarding for cross-gateway auth")
+        bearer_token = None
+
+    # Extract inbound request metadata for plugin context
+    # When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=false: strip sensitive headers at router level
+    # When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true: pass all headers; service layer filters after whitelist check
+    content_type = request.headers.get("content-type")
+    request_headers = _prepare_request_headers(request.headers)
+
+    return {
+        "user_id": user_id,
+        "user_email": user_email,
+        "token_teams": token_teams,
+        "hop_count": hop_count,
+        "bearer_token": bearer_token,
+        "content_type": content_type,
+        "request_headers": request_headers,
+    }
+
+
 @a2a_router.post("/{agent_name}/invoke", response_model=Dict[str, Any])
 @require_permission("a2a.invoke")
 async def invoke_a2a_agent(
@@ -5081,71 +5157,15 @@ async def invoke_a2a_agent(
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
 
-        # Get filtering context from token (respects token scope)
-        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-
-        # Admin bypass - only when token has NO team restrictions
-        if is_admin and token_teams is None:
-            token_teams = None  # Admin unrestricted
-        elif token_teams is None:
-            token_teams = []  # Non-admin without teams = public-only
-
-        user_id = None
-        if isinstance(user, dict):
-            user_id = str(user.get("id") or user.get("sub") or user_email)
-        else:
-            user_id = str(user)
-
-        # Read the federation hop counter from the request header using
-        # the shared parser so Python and Rust behave identically: strict
-        # ASCII-digit decoding with saturation on overflow, warn on
-        # malformed input.  `invoke_agent` rejects at `uaid_max_federation_hops`
-        # before any UAID or agent dispatch, breaking both A→B→A loops
-        # and self-referential `endpoint_url` loops.
-        hop_count = uaid_utils.read_hop_count(request.headers)
-
-        # Extract bearer token for cross-gateway forwarding
-        # Prefer token extracted by auth middleware (validated and normalized)
-        bearer_token = getattr(request.state, "bearer_token", None)
-
-        # Fallback: extract from Authorization header if middleware didn't set it
-        # (e.g., when auth middleware is disabled or skipped for certain paths)
-        #
-        # Security Note: This fallback extracts the token without local validation,
-        # but security is preserved because:
-        # 1. Remote gateway MUST validate the token (AUTH_REQUIRED enforcement)
-        # 2. Invalid/expired tokens will be rejected by remote gateway's auth middleware
-        # 3. This enables token forwarding even when local auth is disabled for A2A endpoints
-        #
-        # If the token is invalid, remote gateway returns 401, and we propagate error to caller.
-        if not bearer_token:
-            auth_header = request.headers.get("authorization", "")
-            if auth_header.lower().startswith("bearer "):
-                bearer_token = auth_header[7:]  # Remove "Bearer " prefix
-
-        # Only forward JWT-shaped tokens; local opaque tokens cannot be validated by remote gateways
-        if bearer_token and not _is_jwt_token(bearer_token):
-            logger.info("Non-JWT token detected, not forwarding for cross-gateway auth")
-            bearer_token = None
-
-        # Extract inbound request metadata for plugin context
-        # When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=false: strip sensitive headers at router level
-        # When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true: pass all headers; service layer filters after whitelist check
-        content_type = request.headers.get("content-type")
-        request_headers = _prepare_request_headers(request.headers)
+        # Extract authentication and request context (shared with /jsonrpc endpoint)
+        context = _extract_a2a_request_context(request, user)
 
         return await a2a_service.invoke_agent(
             db,
             agent_name,
             parameters,
             interaction_type,
-            user_id=user_id,
-            user_email=user_email,
-            token_teams=token_teams,
-            hop_count=hop_count,
-            bearer_token=bearer_token,
-            content_type=content_type,
-            request_headers=request_headers,
+            **context,  # Unpack: user_id, user_email, token_teams, hop_count, bearer_token, content_type, request_headers
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -5387,39 +5407,8 @@ async def invoke_a2a_agent_jsonrpc(
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
 
-        # Get filtering context from token (respects token scope) - same as /invoke endpoint
-        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-
-        # Admin bypass - only when token has NO team restrictions
-        if is_admin and token_teams is None:
-            token_teams = None  # Admin unrestricted
-        elif token_teams is None:
-            token_teams = []  # Non-admin without teams = public-only
-
-        user_id = None
-        if isinstance(user, dict):
-            user_id = str(user.get("id") or user.get("sub") or user_email)
-        else:
-            user_id = str(user)
-
-        # Read federation hop counter - same as /invoke endpoint
-        hop_count = uaid_utils.read_hop_count(request.headers)
-
-        # Extract bearer token for cross-gateway forwarding - same as /invoke endpoint
-        bearer_token = getattr(request.state, "bearer_token", None)
-        if not bearer_token:
-            auth_header = request.headers.get("authorization", "")
-            if auth_header.lower().startswith("bearer "):
-                bearer_token = auth_header[7:]
-
-        # Only forward JWT-shaped tokens
-        if bearer_token and not _is_jwt_token(bearer_token):
-            logger.info("Non-JWT token detected, not forwarding for cross-gateway auth")
-            bearer_token = None
-
-        # Extract inbound request metadata for plugin context
-        content_type = request.headers.get("content-type")
-        request_headers = _filter_sensitive_headers({k.lower(): v for k, v in request.headers.items()})
+        # Extract authentication and request context (shared with /invoke endpoint)
+        context = _extract_a2a_request_context(request, user)
 
         # Wrap the JSON-RPC request in ContextForge's internal format
         # The full JSON-RPC request becomes the parameters
@@ -5431,13 +5420,7 @@ async def invoke_a2a_agent_jsonrpc(
             agent_name,
             parameters,
             interaction_type="query",  # Default for JSON-RPC requests
-            user_id=user_id,
-            user_email=user_email,
-            token_teams=token_teams,
-            hop_count=hop_count,
-            bearer_token=bearer_token,
-            content_type=content_type,
-            request_headers=request_headers,
+            **context,  # Unpack: user_id, user_email, token_teams, hop_count, bearer_token, content_type, request_headers
         )
 
         # Return raw JSON-RPC response format
