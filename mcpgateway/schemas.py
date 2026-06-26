@@ -552,6 +552,37 @@ def _extract_rest_url_components(values: dict) -> dict:
     return values
 
 
+def _encode_auth_headers_list(auth_headers: list) -> Optional[str]:
+    """Encode a multi-header ``auth_headers`` list into a stored auth value.
+
+    Shared by :class:`ToolCreate` and :class:`ToolUpdate` so the ``authheaders``
+    multi-header encoding stays consistent across the create and update paths.
+    Each element is expected to be a ``{"key": ..., "value": ...}`` dict; non-dict
+    elements and entries without a key are skipped (last value wins on duplicate
+    keys).
+
+    Args:
+        auth_headers: List of header dicts to encode.
+
+    Returns:
+        Optional[str]: The encoded auth value, or ``None`` when no entry carries a
+        usable key.
+
+    Examples:
+        >>> from mcpgateway.utils.services_auth import decode_auth
+        >>> decode_auth(_encode_auth_headers_list([{'key': 'X-API-Key', 'value': 'secret'}]))
+        {'X-API-Key': 'secret'}
+        >>> _encode_auth_headers_list([{'value': 'no-key'}]) is None
+        True
+        >>> _encode_auth_headers_list(['not-a-dict']) is None
+        True
+    """
+    header_dict = {h.get("key"): h.get("value", "") for h in auth_headers if isinstance(h, dict) and h.get("key")}
+    if header_dict:
+        return encode_auth(header_dict)
+    return None
+
+
 class ToolCreate(BaseModel):
     """
     Represents the configuration for creating a tool with various attributes and settings.
@@ -592,6 +623,8 @@ class ToolCreate(BaseModel):
     extension_metadata: Optional[Dict[str, Any]] = Field(default=None, alias="extensionMetadata", description="Extension-specific metadata keyed by extension identifier")
     jsonpath_filter: Optional[str] = Field(default="", description="JSON modification filter")
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
+    # Declared for OpenAPI discoverability; consumed by the ``assemble_auth`` validator to build ``auth`` for the "authheaders" type.
+    auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for 'authheaders' authentication (array of {'key': ..., 'value': ...} entries)")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
     tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the tool")
     deprecated: Optional[bool] = Field(default=False, description="Whether the tool is deprecated (visible but non-executable)")
@@ -900,6 +933,8 @@ class ToolCreate(BaseModel):
             >>> result = ToolCreate.assemble_auth(values)
             >>> result['auth']['auth_type']
             'authheaders'
+            >>> result['auth']['auth_value'] is not None
+            True
 
             >>> # Test authheaders with legacy single-header fallback
             >>> values = {'auth_type': 'authheaders', 'auth_header_key': 'X-API-Key', 'auth_header_value': 'secret'}
@@ -935,12 +970,8 @@ class ToolCreate(BaseModel):
             elif auth_type.lower() == "authheaders":
                 auth_headers = values.get("auth_headers")
                 if auth_headers and isinstance(auth_headers, list):
-                    header_dict = {h.get("key"): h.get("value", "") for h in auth_headers if h.get("key")}
-                    if header_dict:
-                        encoded_auth = encode_auth(header_dict)
-                        values["auth"] = {"auth_type": "authheaders", "auth_value": encoded_auth}
-                    else:
-                        values["auth"] = {"auth_type": "authheaders", "auth_value": None}
+                    # New multi-header array format takes precedence over the legacy pair.
+                    values["auth"] = {"auth_type": "authheaders", "auth_value": _encode_auth_headers_list(auth_headers)}
                 else:
                     header_key = values.get("auth_header_key", "")
                     header_value = values.get("auth_header_value", "")
@@ -948,6 +979,7 @@ class ToolCreate(BaseModel):
                         encoded_auth = encode_auth({header_key: header_value})
                         values["auth"] = {"auth_type": "authheaders", "auth_value": encoded_auth}
                     else:
+                        # Don't encode empty headers - leave auth empty
                         values["auth"] = {"auth_type": "authheaders", "auth_value": None}
         return values
 
@@ -1177,6 +1209,8 @@ class ToolUpdate(BaseModelWithConfigDict):
     extension_metadata: Optional[Dict[str, Any]] = Field(default=None, alias="extensionMetadata", description="Extension-specific metadata keyed by extension identifier")
     jsonpath_filter: Optional[str] = Field(None, description="JSON path filter for rpc tool calls")
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
+    # Declared for OpenAPI discoverability; consumed by the ``assemble_auth`` validator to build ``auth`` for the "authheaders" type.
+    auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for 'authheaders' authentication (array of {'key': ..., 'value': ...} entries)")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the tool")
     deprecated: Optional[bool] = Field(None, description="Whether the tool is deprecated (visible but non-executable)")
@@ -1390,12 +1424,8 @@ class ToolUpdate(BaseModelWithConfigDict):
             elif auth_type.lower() == "authheaders":
                 auth_headers = values.get("auth_headers")
                 if auth_headers and isinstance(auth_headers, list):
-                    header_dict = {h.get("key"): h.get("value", "") for h in auth_headers if h.get("key")}
-                    if header_dict:
-                        encoded_auth = encode_auth(header_dict)
-                        values["auth"] = {"auth_type": "authheaders", "auth_value": encoded_auth}
-                    else:
-                        values["auth"] = {"auth_type": "authheaders", "auth_value": None}
+                    # New multi-header array format takes precedence over the legacy pair.
+                    values["auth"] = {"auth_type": "authheaders", "auth_value": _encode_auth_headers_list(auth_headers)}
                 else:
                     header_key = values.get("auth_header_key", "")
                     header_value = values.get("auth_header_value", "")
@@ -1403,6 +1433,7 @@ class ToolUpdate(BaseModelWithConfigDict):
                         encoded_auth = encode_auth({header_key: header_value})
                         values["auth"] = {"auth_type": "authheaders", "auth_value": encoded_auth}
                     else:
+                        # Don't encode empty headers - leave auth empty
                         values["auth"] = {"auth_type": "authheaders", "auth_value": None}
         return values
 
