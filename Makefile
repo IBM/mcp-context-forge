@@ -8463,8 +8463,8 @@ rust-lint: rust-ensure-deps             ## Lint Rust code (cargo clippy)
 
 rust-unused-deps: rust-ensure-deps      ## Detect unused Rust dependencies with cargo-shear
 	@echo "🦀 Checking Rust dependency usage..."
-	@command -v cargo-shear >/dev/null 2>&1 || { echo "Installing cargo-shear..."; cargo install --locked cargo-shear --version 1.13.1; }
-	@cargo shear --locked --deny-warnings
+	@command -v cargo-shear >/dev/null 2>&1 || { echo "Installing cargo-shear..."; CARGO_NET_RETRY=$${CARGO_NET_RETRY:-10} CARGO_HTTP_MULTIPLEXING=$${CARGO_HTTP_MULTIPLEXING:-false} cargo install --locked cargo-shear --version 1.13.1; }
+	@CARGO_NET_RETRY=$${CARGO_NET_RETRY:-10} CARGO_HTTP_MULTIPLEXING=$${CARGO_HTTP_MULTIPLEXING:-false} cargo shear --locked --deny-warnings
 	@echo "✅ Rust dependency usage check passed"
 
 rust-check: rust-build-check rust-fmt-check rust-lint rust-unused-deps rust-test  ## Run all Rust checks (build, fmt, clippy, unused deps, test)
