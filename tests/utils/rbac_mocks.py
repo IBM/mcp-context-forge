@@ -265,7 +265,7 @@ class RBACMockManager:
             self.app.dependency_overrides.update(self.original_overrides)
 
 
-def mock_require_permission_decorator(permission: str, resource_type: Optional[str] = None):
+def mock_require_permission_decorator(permission: str, resource_type: Optional[str] = None, allow_admin_bypass: bool = True):
     """Mock version of the require_permission decorator that always allows access.
 
     This decorator bypasses all permission checks and simply executes the
@@ -274,6 +274,7 @@ def mock_require_permission_decorator(permission: str, resource_type: Optional[s
     Args:
         permission: Required permission (ignored in mock)
         resource_type: Optional resource type (ignored in mock)
+        allow_admin_bypass: Whether to allow admin bypass (ignored in mock)
 
     Returns:
         Callable: A decorator that doesn't perform any permission checks
@@ -301,12 +302,13 @@ def mock_require_admin_permission():
     return decorator
 
 
-def mock_require_any_permission(permissions, resource_type: Optional[str] = None):
+def mock_require_any_permission(permissions, resource_type: Optional[str] = None, allow_admin_bypass: bool = True):
     """Mock version of require_any_permission that always allows access.
 
     Args:
         permissions: List of permissions (ignored in mock)
         resource_type: Optional resource type (ignored in mock)
+        allow_admin_bypass: Whether to allow admin bypass (ignored in mock)
 
     Returns:
         Callable: A decorator that doesn't perform any permission checks
