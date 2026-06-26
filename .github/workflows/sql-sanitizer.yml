@@ -78,8 +78,8 @@ jobs:
             - name: Install Rust stable 1
               run: |
                 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-                echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-                source $HOME/.cargo/env
+                echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+                source "$HOME/.cargo/env"
                 rustc --version
 
 
@@ -171,6 +171,7 @@ jobs:
                   sleep 1
 
                   nohup target/debug/fast-time-server \
+                    -transport=dual -listen=0.0.0.0 -port=9080 -log-level=info \
                     > fast-time-server.log 2>&1 &
                   echo $! > fast-time-server.pid
 
@@ -268,10 +269,10 @@ jobs:
 
             - name: Local Node 22 Install
               run: |
-                mkdir -p $GITHUB_WORKSPACE/node22
+                mkdir -p "$GITHUB_WORKSPACE/node22"
                 curl -fsSL https://nodejs.org/dist/v22.22.0/node-v22.22.0-linux-x64.tar.xz -o node22.tar.xz
-                tar -xJf node22.tar.xz --strip-components=1 -C $GITHUB_WORKSPACE/node22
-                $GITHUB_WORKSPACE/node22/bin/node -v
+                tar -xJf node22.tar.xz --strip-components=1 -C "$GITHUB_WORKSPACE/node22"
+                "$GITHUB_WORKSPACE/node22/bin/node" -v
 
             - name: Test sql-sanitizer
               run: |
