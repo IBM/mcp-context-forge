@@ -8004,6 +8004,7 @@ class TestInvokeToolA2A:
         )
         db = MagicMock()
         a2a_agent = _make_a2a_agent(agent_type="custom")
+        a2a_agent.passthrough_headers = ["X-Test"]
         a2a_agent.endpoint_url = "http://a2a-agent:9000"  # no trailing slash -> forces custom-format path
         db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
 
@@ -8061,7 +8062,7 @@ class TestInvokeToolA2A:
 
     @pytest.mark.asyncio
     async def test_a2a_pre_invoke_payload_receives_passthrough_headers(self, tool_service):
-        """A2A tool pre-invoke hooks receive allowlisted request headers."""
+        """A2A tool pre-invoke hooks receive only non-sensitive passthrough headers."""
         # Third-Party
         from cpex.framework import PluginResult, ToolHookType
 
@@ -8082,8 +8083,10 @@ class TestInvokeToolA2A:
         mock_http_response = MagicMock()
         mock_http_response.status_code = 200
         mock_http_response.json = MagicMock(return_value={"response": "ok"})
+        captured_headers = {}
 
         async def fake_post(url, json=None, headers=None):
+            captured_headers.update(headers or {})
             return mock_http_response
 
         with (
@@ -8096,6 +8099,7 @@ class TestInvokeToolA2A:
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch.object(settings, "enable_header_passthrough", True),
             patch.object(settings, "enable_overwrite_base_headers", False),
+            patch.object(settings, "enable_sensitive_header_passthrough", True),
             patch.object(tool_service, "_pydantic_tool_from_payload", return_value=MagicMock()),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=["X-Global-Id"])
@@ -8122,11 +8126,157 @@ class TestInvokeToolA2A:
         payload = plugin_manager.invoke_hook.await_args.kwargs["payload"]
         assert payload.headers.root == {
             "Content-Type": "application/json",
-            "Authorization": "Bearer client-token",
             "X-Tenant-Id": "tenant-123",
         }
+        assert "Authorization" not in payload.headers.root
         assert "X-Global-Id" not in payload.headers.root
         assert "X-Blocked" not in payload.headers.root
+        assert captured_headers["Authorization"] == "Bearer client-token"
+        assert captured_headers["X-Tenant-Id"] == "tenant-123"
+
+    @pytest.mark.asyncio
+    async def test_a2a_pre_invoke_blocks_sensitive_headers_by_default(self, tool_service):
+        """A2A tool invocation blocks sensitive downstream passthrough by default."""
+        # Third-Party
+        from cpex.framework import PluginResult, ToolHookType
+
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent(agent_type="custom")
+        a2a_agent.passthrough_headers = ["Authorization", "X-Tenant-Id"]
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        plugin_manager = MagicMock()
+        plugin_manager.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
+        plugin_manager.invoke_hook = AsyncMock(return_value=(PluginResult(modified_payload=None, continue_processing=True), {}))
+
+        captured_headers = {}
+        mock_http_response = MagicMock()
+        mock_http_response.status_code = 200
+        mock_http_response.json = MagicMock(return_value={"response": "ok"})
+
+        async def fake_post(url, json=None, headers=None):
+            captured_headers.update(headers or {})
+            return mock_http_response
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=plugin_manager)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch.object(settings, "enable_header_passthrough", True),
+            patch.object(settings, "enable_overwrite_base_headers", False),
+            patch.object(settings, "enable_sensitive_header_passthrough", False),
+            patch.object(tool_service, "_pydantic_tool_from_payload", return_value=MagicMock()),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.post = fake_post
+
+            result = await tool_service.invoke_tool(
+                db,
+                "test_tool",
+                {"interaction_type": "query"},
+                request_headers={
+                    "Authorization": "Bearer client-token",
+                    "X-Tenant-Id": "tenant-123",
+                },
+            )
+
+        assert result is not None
+        payload = plugin_manager.invoke_hook.await_args.kwargs["payload"]
+        assert payload.headers.root == {
+            "Content-Type": "application/json",
+            "X-Tenant-Id": "tenant-123",
+        }
+        assert "Authorization" not in payload.headers.root
+        assert "Authorization" not in captured_headers
+        assert captured_headers["X-Tenant-Id"] == "tenant-123"
+
+    @pytest.mark.asyncio
+    async def test_a2a_pre_invoke_modified_headers_are_refiltered(self, tool_service):
+        """A2A tool pre-invoke modified headers cannot bypass downstream filtering."""
+        # Third-Party
+        from cpex.framework import ToolHookType
+
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent(agent_type="custom")
+        a2a_agent.passthrough_headers = ["Authorization", "X-Tenant-Id"]
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        plugin_manager = MagicMock()
+        plugin_manager.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
+        modified_payload = SimpleNamespace(
+            name="test_tool",
+            args={"interaction_type": "query"},
+            headers=SimpleNamespace(
+                model_dump=lambda: {
+                    "Authorization": "Bearer plugin-token",
+                    "X-Tenant-Id": "tenant-from-plugin",
+                    "X-Other": "drop-me",
+                }
+            ),
+        )
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload), {}))
+
+        captured_headers = {}
+        mock_http_response = MagicMock()
+        mock_http_response.status_code = 200
+        mock_http_response.json = MagicMock(return_value={"response": "ok"})
+
+        async def fake_post(url, json=None, headers=None):
+            captured_headers.update(headers or {})
+            return mock_http_response
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=plugin_manager)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch.object(settings, "enable_header_passthrough", True),
+            patch.object(settings, "enable_overwrite_base_headers", False),
+            patch.object(settings, "enable_sensitive_header_passthrough", False),
+            patch.object(tool_service, "_pydantic_tool_from_payload", return_value=MagicMock()),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.post = fake_post
+
+            await tool_service.invoke_tool(
+                db,
+                "test_tool",
+                {"interaction_type": "query"},
+                request_headers={"X-Tenant-Id": "tenant-from-request"},
+            )
+
+        assert captured_headers["X-Tenant-Id"] == "tenant-from-plugin"
+        assert "Authorization" not in captured_headers
+        assert "X-Other" not in captured_headers
 
     @pytest.mark.asyncio
     async def test_a2a_with_api_key_auth(self, tool_service):
