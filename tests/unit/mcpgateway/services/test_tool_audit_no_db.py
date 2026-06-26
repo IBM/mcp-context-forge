@@ -84,7 +84,7 @@ class TestToolAuditNoDb:
             db.execute = Mock(side_effect=[_make_execute_result(scalar=None), _make_execute_result(scalar=None)])
             db.add = Mock(); db.commit = Mock(); db.refresh = Mock(); db.flush = Mock()
             await tool_service.register_tool(db, ToolCreate(name="tool-1", url="https://example.com", request_type="POST", input_schema={"type": "object"}))
-            assert mock_audit.log_action.called
+            mock_audit.log_action.assert_called_once()
             _assert_no_db_passed(mock_audit, expected_action="create_tool", resource_type="tool")
 
     @pytest.mark.asyncio
@@ -108,7 +108,7 @@ class TestToolAuditNoDb:
             db.commit = Mock(); db.refresh = Mock(); db.rollback = Mock(); db.expire = Mock()
             tool_service._notify_tool_updated = AsyncMock()
             await tool_service.update_tool(db, "tool-1", ToolUpdate(description="updated"), user_email="tester@example.com")
-            assert mock_audit.log_action.called
+            mock_audit.log_action.assert_called_once()
             _assert_no_db_passed(mock_audit, expected_action="update_tool", resource_type="tool")
 
     @pytest.mark.asyncio
@@ -119,7 +119,7 @@ class TestToolAuditNoDb:
             db.commit = Mock(); db.refresh = Mock(); db.rollback = Mock()
             tool_service._notify_tool_state_changed = AsyncMock()
             await tool_service.set_tool_state(db, "tool-1", activate=False, reachable=True)
-            assert mock_audit.log_action.called
+            mock_audit.log_action.assert_called_once()
             _assert_no_db_passed(mock_audit, expected_action="set_tool_state", resource_type="tool")
 
     @pytest.mark.asyncio
@@ -131,5 +131,5 @@ class TestToolAuditNoDb:
             db.delete = Mock(); db.commit = Mock(); db.rollback = Mock(); db.expire = Mock()
             tool_service._notify_tool_deleted = AsyncMock()
             await tool_service.delete_tool(db, "tool-1")
-            assert mock_audit.log_action.called
+            mock_audit.log_action.assert_called_once()
             _assert_no_db_passed(mock_audit, expected_action="delete_tool", resource_type="tool")

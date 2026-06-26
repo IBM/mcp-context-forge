@@ -156,7 +156,7 @@ class TestAuditTrailNoDbSession:
 
             await prompt_service.register_prompt(db=test_db, prompt=pc, created_by="tester")
 
-            assert mock_audit.log_action.called, "audit_trail.log_action was not called"
+            mock_audit.log_action.assert_called_once()
             _assert_no_db_passed(mock_audit, expected_action="create_prompt", resource_type="prompt")
 
     @pytest.mark.asyncio
@@ -197,7 +197,7 @@ class TestAuditTrailNoDbSession:
                 user="viewer",
             )
 
-            assert mock_audit.log_action.called, "audit_trail.log_action was not called"
+            mock_audit.log_action.assert_called_once()
             _assert_no_db_passed(mock_audit, expected_action="view_prompt", resource_type="prompt")
 
     @pytest.mark.asyncio
@@ -229,7 +229,7 @@ class TestAuditTrailNoDbSession:
                 modified_by="updater",
             )
 
-            assert mock_audit.log_action.called, "audit_trail.log_action was not called"
+            mock_audit.log_action.assert_called_once()
             _assert_no_db_passed(mock_audit, expected_action="update_prompt", resource_type="prompt")
 
     @pytest.mark.asyncio
@@ -250,7 +250,7 @@ class TestAuditTrailNoDbSession:
                 prompt_id=99,
             )
 
-            assert mock_audit.log_action.called, "audit_trail.log_action was not called"
+            mock_audit.log_action.assert_called_once()
             _assert_no_db_passed(mock_audit, expected_action="delete_prompt", resource_type="prompt")
 
     @pytest.mark.asyncio
@@ -277,7 +277,7 @@ class TestAuditTrailNoDbSession:
                 activate=True,
             )
 
-            assert mock_audit.log_action.called, "audit_trail.log_action was not called"
+            mock_audit.log_action.assert_called_once()
             _assert_no_db_passed(mock_audit, expected_action="set_prompt_state", resource_type="prompt")
 
     @pytest.mark.asyncio
@@ -298,5 +298,5 @@ class TestAuditTrailNoDbSession:
                 prompt_id=7,
             )
 
-            assert mock_audit.log_action.called, "audit_trail.log_action was not called"
+            mock_audit.log_action.assert_called_once()
             _assert_no_db_passed(mock_audit, expected_action="view_prompt_details", resource_type="prompt")

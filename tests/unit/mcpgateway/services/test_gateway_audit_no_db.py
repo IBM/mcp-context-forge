@@ -88,7 +88,7 @@ class TestGatewayAuditNoDb:
             gateway_service._initialize_gateway = AsyncMock(return_value=({"prompts": {}, "resources": {}, "tools": {}}, [], [], [], []))
             gateway_service._notify_gateway_added = AsyncMock()
             await gateway_service.register_gateway(db, GatewayCreate(name="g", url="https://example.com", transport="SSE"))
-            assert mock_audit.log_action.called
+            mock_audit.log_action.assert_called_once()
             _assert_no_db_passed(mock_audit, expected_action="create_gateway", resource_type="gateway")
 
     @pytest.mark.asyncio
@@ -115,7 +115,7 @@ class TestGatewayAuditNoDb:
             gateway_service._update_or_create_resources = AsyncMock(return_value=[])
             gateway_service._update_or_create_prompts = AsyncMock(return_value=[])
             await gateway_service.update_gateway(db, "gw-1", GatewayUpdate(description="updated"))
-            assert mock_audit.log_action.called
+            mock_audit.log_action.assert_called_once()
             _assert_no_db_passed(mock_audit, expected_action="update_gateway", resource_type="gateway")
 
     @pytest.mark.asyncio
@@ -127,7 +127,7 @@ class TestGatewayAuditNoDb:
             gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], []))
             gateway_service._notify_gateway_activated = AsyncMock(); gateway_service._notify_gateway_deactivated = AsyncMock(); gateway_service._notify_gateway_offline = AsyncMock()
             await gateway_service.set_gateway_state(db, "gw-1", activate=False, reachable=True)
-            assert mock_audit.log_action.called
+            mock_audit.log_action.assert_called_once()
             _assert_no_db_passed(mock_audit, expected_action="set_gateway_state", resource_type="gateway")
 
     @pytest.mark.asyncio
@@ -138,5 +138,5 @@ class TestGatewayAuditNoDb:
             db.delete = Mock(); db.commit = Mock(); db.rollback = Mock(); db.expire = Mock()
             gateway_service._notify_gateway_deleted = AsyncMock()
             await gateway_service.delete_gateway(db, "gw-1")
-            assert mock_audit.log_action.called
+            mock_audit.log_action.assert_called_once()
             _assert_no_db_passed(mock_audit, expected_action="delete_gateway", resource_type="gateway")

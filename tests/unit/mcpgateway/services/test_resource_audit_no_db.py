@@ -78,7 +78,7 @@ class TestResourceAuditNoDb:
             db.add = Mock(); db.commit = Mock(); db.refresh = Mock(); db.flush = Mock()
             resource_service._notify_resource_added = AsyncMock()
             await resource_service.register_resource(db, ResourceCreate(uri="https://example.com/resource-1", name="resource-1", mime_type="text/plain", content="x"))
-            assert mock_audit.log_action.called
+            mock_audit.log_action.assert_called_once()
             _assert_no_db_passed(mock_audit, expected_action="create_resource", resource_type="resource")
 
     @pytest.mark.asyncio
@@ -100,7 +100,7 @@ class TestResourceAuditNoDb:
             db.execute = Mock(return_value=_make_execute_result(scalar=resource_db))
             db.commit = Mock(); db.refresh = Mock(); db.rollback = Mock(); db.expire = Mock()
             await resource_service.update_resource(db, 1, ResourceUpdate(description="updated"))
-            assert mock_audit.log_action.called
+            mock_audit.log_action.assert_called_once()
             _assert_no_db_passed(mock_audit, expected_action="update_resource", resource_type="resource")
 
     @pytest.mark.asyncio
@@ -110,7 +110,7 @@ class TestResourceAuditNoDb:
             db.execute = Mock(return_value=_make_execute_result(scalar=resource_db))
             db.commit = Mock(); db.refresh = Mock(); db.rollback = Mock()
             await resource_service.set_resource_state(db, 1, activate=False)
-            assert mock_audit.log_action.called
+            mock_audit.log_action.assert_called_once()
             _assert_no_db_passed(mock_audit, expected_action="set_resource_state", resource_type="resource")
 
     @pytest.mark.asyncio
@@ -120,7 +120,7 @@ class TestResourceAuditNoDb:
             db.execute = Mock(return_value=_make_execute_result(scalar=resource_db, rowcount=1))
             db.delete = Mock(); db.commit = Mock(); db.rollback = Mock(); db.expire = Mock()
             await resource_service.delete_resource(db, 1)
-            assert mock_audit.log_action.called
+            mock_audit.log_action.assert_called_once()
             _assert_no_db_passed(mock_audit, expected_action="delete_resource", resource_type="resource")
 
     @pytest.mark.asyncio
@@ -141,5 +141,5 @@ class TestResourceAuditNoDb:
             resources = [ResourceCreate(uri="https://example.com/bulk-1", name="bulk-1", mime_type="text/plain", content="x")]
             await resource_service.register_resources_bulk(db, resources, created_by="tester")
 
-            assert mock_audit.log_action.called
+            mock_audit.log_action.assert_called_once()
             _assert_no_db_passed(mock_audit, expected_action="bulk_create_resources", resource_type="resource")
