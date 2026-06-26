@@ -767,6 +767,64 @@ curl -I https://github.com/login/oauth/access_token
 curl -I https://api.github.com/user
 ```
 
+## Machine-to-machine API auth with external IdP tokens
+
+In addition to browser-based SSO login, ContextForge can accept access tokens issued directly by a trusted external SSO provider as `Bearer` credentials on API and MCP endpoints — alongside the internally-minted JWTs from `/auth/login` and the SSO callback flows. This lets service accounts and automation clients authenticate to ContextForge using tokens obtained directly from the IdP (typically via `client_credentials`), without ever performing a browser login.
+
+This is opt-in at two levels:
+
+1. **Global switch**: `SSO_API_TOKEN_AUTH_ENABLED=true` (default `false`). When disabled, external tokens are never inspected and unrecognized bearer tokens fail normal internal JWT validation as before.
+2. **Per-provider opt-in**: each `SSOProvider` must set `trusted_for_api_auth=true` via the provider admin API (`PUT /auth/sso/admin/providers/{id}` or `POST /auth/sso/admin/providers`, see `mcpgateway/routers/sso.py`).
+
+```bash
+curl -X PUT https://gateway.example.com/auth/sso/admin/providers/keycloak \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "trusted_for_api_auth": true,
+    "api_audience": "mcp-gateway"
+  }'
+```
+
+### `api_audience` is mandatory
+
+When `trusted_for_api_auth=true`, `api_audience` **must** also be set — the request to enable it is rejected otherwise. ContextForge enforces that the token's `aud` claim equals this value before accepting it, which prevents a token issued for a different relying party of the same IdP from being replayed against this gateway (confused-deputy).
+
+- **Microsoft Entra ID**: use the App ID URI you exposed for the API, e.g. `api://your-app-id-uri`. Note that access tokens minted for your own API typically carry `aud` = the App ID URI, not the application's client ID.
+- **Keycloak**: use the audience your realm's client/audience mapper issues for this gateway (commonly the client ID, e.g. `mcp-gateway`).
+
+### How the request is authenticated
+
+1. The unverified token's `iss` claim is read to identify the issuing provider.
+2. If no enabled provider has `trusted_for_api_auth=true`, external tokens are never considered — the request falls through to internal JWT validation only.
+3. If the issuer matches a trusted provider, the token is fully verified against that provider's JWKS: signature, expiry, issuer, and `aud` == `api_audience`.
+4. ID tokens are rejected — only `access_token`s are accepted.
+5. The token's identity is JIT-provisioned/looked up as a local user (the same provisioning path used by browser SSO).
+6. The resulting principal is a **session-semantics** identity (`token_use="session"`): `is_admin` is read from the persisted local user record, and `teams` are resolved via `resolve_session_teams()` — both are DB-authoritative, never derived directly from the external token's claims.
+
+### Role and group mapping
+
+Role/group → team mapping for externally-authenticated principals reuses the same provider configuration as browser SSO (e.g. `SSO_KEYCLOAK_ROLE_MAPPINGS`, `SSO_ENTRA_ROLE_MAPPINGS`, `SSO_GENERIC_ROLE_MAPPINGS`). If role-sync is enabled for the provider, teams and admin status are re-derived from the token's claims into the local DB on each provisioning pass — see the role-sync caveat below.
+
+### Service principals (no-email `client_credentials` tokens)
+
+`client_credentials` tokens typically carry no `email` claim. ContextForge detects these "clientless" tokens and provisions a synthetic local user `svc-<client_id>@<provider-id>.service.local` for the service account. Grant this principal teams/roles via the IdP's existing role/group → team mapping, just as you would for a human user.
+
+### Identity caching
+
+A successful external-identity resolution is cached per-token (keyed by a hash of the raw token) for `EXTERNAL_IDENTITY_CACHE_TTL` seconds (default `60`, clamped to the token's own `exp`) to avoid re-provisioning on every M2M call. The cache is shared across workers when `CACHE_TYPE=redis`. Set `EXTERNAL_IDENTITY_CACHE_TTL=0` to disable caching for deployments that need immediate team/role remapping.
+
+!!! warning "Revocation caveat"
+    ContextForge cannot revoke an external token early — it remains valid until the IdP's own expiry, regardless of `EXTERNAL_IDENTITY_CACHE_TTL`. Only local user-deactivation and team-membership changes (checked against the local DB on every request) take effect immediately. Use short-lived tokens at the IdP for service accounts that may need to be revoked quickly.
+
+!!! warning "Role-sync caveat"
+    If role-sync/group-mapping is enabled for the provider, a loose group/role → team or admin mapping at the IdP grants broad access to ContextForge continuously, for every token that IdP issues with that claim. Keep mappings conservative and audit them regularly.
+
+!!! note "ID tokens are rejected"
+    Only OAuth2 access tokens are accepted for API/MCP auth. ID tokens (which assert authentication, not authorization) fail validation with `external-idp auth denied: token validation failed`.
+
+See also: [Keycloak M2M setup](sso-keycloak-tutorial.md#machine-to-machine-service-account-api-access), [Entra ID M2M setup](sso-microsoft-entra-id-tutorial.md), [Generic OIDC](sso-generic-oidc-tutorial.md), and [OAuth troubleshooting](oauth-troubleshooting.md#external-idp-bearer-token-rejected-on-apimcp).
+
 ## Migration Guide
 
 ### From Local Auth Only
