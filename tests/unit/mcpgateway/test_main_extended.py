@@ -13551,12 +13551,33 @@ class TestRpcScopedPermissions:
         assert "Access denied" in result["error"]["message"]
 
     async def test_logging_set_level_allowed_with_admin_system_config(self):
-        """Token scoped to admin.system_config should be allowed logging/setLevel."""
-        payload = {"jsonrpc": "2.0", "id": 1, "method": "logging/setLevel", "params": {"level": "error"}}
-        request = self._make_request(payload, scoped_permissions=["admin.system_config"])
+        """Token scoped to admin.system_config should be allowed logging/setLevel.
 
-        result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
-        assert "error" not in result
+        This exercises the real (unmocked) ``logging_service.set_level()``, which
+        mutates global logging state (root + every registered logger's level,
+        including the "mcpgateway" parent logger) for the lifetime of the process.
+        Restore it afterwards so this test doesn't leak ERROR-level filtering into
+        unrelated tests later in the same worker (e.g. caplog-based deny-reason
+        assertions on "mcpgateway.*" child loggers would otherwise silently break,
+        since caplog.at_level only overrides the root logger, not an explicitly
+        leveled intermediate logger like "mcpgateway").
+        """
+        # Standard
+        import logging
+
+        mcpgateway_logger = logging.getLogger("mcpgateway")
+        root_logger = logging.getLogger()
+        orig_mcpgateway_level = mcpgateway_logger.level
+        orig_root_level = root_logger.level
+        try:
+            payload = {"jsonrpc": "2.0", "id": 1, "method": "logging/setLevel", "params": {"level": "error"}}
+            request = self._make_request(payload, scoped_permissions=["admin.system_config"])
+
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            assert "error" not in result
+        finally:
+            mcpgateway_logger.setLevel(orig_mcpgateway_level)
+            root_logger.setLevel(orig_root_level)
 
     async def test_logging_set_level_denied_without_admin_system_config(self):
         """Token scoped without admin.system_config should be denied logging/setLevel."""

@@ -5667,6 +5667,10 @@ class SSOProvider(Base):
     userinfo_url: Mapped[str] = mapped_column(String(500), nullable=False)
     issuer: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # For OIDC
     jwks_uri: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # OIDC JWKS endpoint for token signature verification
+    trusted_for_api_auth: Mapped[bool] = mapped_column(Boolean, default=False, nullable=True)  # Accept this IdP's access tokens as API/MCP bearer creds (issue #3567)
+    api_audience: Mapped[Optional[str]] = mapped_column(
+        String(500), nullable=True
+    )  # Expected `aud` to enforce on inbound access tokens (e.g. Entra api://<app-id-uri>); must be non-empty when trusted_for_api_auth is set
 
     # Provider Settings
     trusted_domains: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)

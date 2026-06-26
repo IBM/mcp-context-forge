@@ -4989,7 +4989,7 @@ class TestVerifyOauthAccessToken:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", AsyncMock(return_value=mock_http)),
-            patch("mcpgateway.utils.verify_credentials.jwt.PyJWKClient", return_value=fake_jwks_client) as mock_ctor,
+            patch("mcpgateway.utils.verify_credentials._NoRedirectPyJWKClient", return_value=fake_jwks_client) as mock_ctor,
         ):
             result = await verify_oauth_access_token(token, [self.ISSUER])
 

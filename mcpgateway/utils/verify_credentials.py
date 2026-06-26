@@ -55,6 +55,10 @@ Examples:
 import asyncio
 from base64 import b64decode
 import binascii
+import hashlib
+import json
+import re
+import time
 from time import monotonic
 from typing import Any, Optional, Union
 from urllib.parse import urlsplit, urlunsplit
@@ -64,14 +68,20 @@ import uuid
 from fastapi import Cookie, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBasic, HTTPBasicCredentials, HTTPBearer
 from fastapi.security.utils import get_authorization_scheme_param
+import httpx
 import jwt
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.db import SSOProvider
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.sso_service import resolve_trusted_provider_by_issuer
 from mcpgateway.utils.jwt_config_helper import validate_jwt_algo_and_keys
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.paths import resolve_root_path
+from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.utils.time_restrictions import validate_time_restrictions
 
 basic_security = HTTPBasic(auto_error=False)
@@ -452,11 +462,241 @@ async def verify_credentials(token: str) -> dict:
     return payload
 
 
+# P2/P5/A: cross-request, cross-worker cache of synthesized external identities,
+# keyed by SHA-256 of the raw token. Revocation is NOT weakened: require_auth still
+# runs _enforce_revocation_and_active_user on every request, outside this cache.
+_EXTERNAL_IDENTITY_TTL = 60  # seconds -- also clamped to the token's own exp
+_EXTERNAL_IDENTITY_MAX = 10_000  # in-memory fallback cap only
+_EXTERNAL_IDENTITY_REDIS_PREFIX = "mcpgw:extauth:identity:"
+_external_identity_cache: "dict[str, tuple[dict, float]]" = {}  # fallback: token_hash -> (payload, expires_at)
+
+
+def _token_hash(token: str) -> str:
+    """Return a SHA-256 hex digest of the token for use as a cache key (raw token never cached).
+
+    Args:
+        token: The raw bearer token string.
+
+    Returns:
+        Hex-encoded SHA-256 digest of the token.
+    """
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _effective_ttl(token_exp: Optional[int]) -> int:
+    """Clamp the cache TTL to the token's own expiry so a cached identity never outlives the token.
+
+    Args:
+        token_exp: The token's `exp` claim (Unix timestamp), or None.
+
+    Returns:
+        The number of seconds the cache entry should remain valid (>= 0).
+    """
+    ttl = getattr(settings, "external_identity_cache_ttl", _EXTERNAL_IDENTITY_TTL)
+    if token_exp:
+        ttl = min(ttl, max(0, int(token_exp) - int(time.time())))
+    return int(ttl)
+
+
+async def invalidate_external_identity_cache() -> None:
+    """Clear the in-memory fallback identity cache (test hook / admin reset).
+
+    Redis entries expire by their own TTL; this clears only the local map.
+    """
+    _external_identity_cache.clear()
+
+
+async def _external_identity_cache_get(token_hash: str) -> Optional[dict]:
+    """Fetch a cached external identity payload by token hash, from Redis or the in-memory fallback.
+
+    Args:
+        token_hash: SHA-256 hex digest of the raw bearer token.
+
+    Returns:
+        The cached identity payload dict, or None if not present/expired.
+    """
+    redis = await get_redis_client()
+    if redis is not None:
+        try:
+            raw = await redis.get(_EXTERNAL_IDENTITY_REDIS_PREFIX + token_hash)
+        except Exception as exc:  # noqa: BLE001 - best-effort cache, never fail auth on Redis errors
+            logger.warning("External identity cache Redis GET failed, treating as cache miss: %s", exc)
+            return None
+        if raw is None:
+            logger.debug("external-idp identity cache miss")
+            return None
+        try:
+            cached_payload = json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+        logger.debug("external-idp identity cache hit")
+        return cached_payload
+    entry = _external_identity_cache.get(token_hash)
+    if entry is None:
+        logger.debug("external-idp identity cache miss")
+        return None
+    payload, expires_at = entry
+    if monotonic() >= expires_at:
+        _external_identity_cache.pop(token_hash, None)
+        logger.debug("external-idp identity cache miss")
+        return None
+    logger.debug("external-idp identity cache hit")
+    return dict(payload)
+
+
+async def _external_identity_cache_put(token_hash: str, payload: dict, token_exp: Optional[int]) -> None:
+    """Store an external identity payload in the (Redis-shared or in-memory) cache.
+
+    Args:
+        token_hash: SHA-256 hex digest of the raw bearer token.
+        payload: The synthesized identity payload to cache (the raw token is stripped before storage).
+        token_exp: The token's `exp` claim (Unix timestamp), used to clamp the TTL.
+    """
+    ttl = _effective_ttl(token_exp)
+    if ttl <= 0:
+        return
+    safe_payload = {k: v for k, v in payload.items() if k != "token"}
+
+    redis = await get_redis_client()
+    if redis is not None:
+        try:
+            await redis.set(_EXTERNAL_IDENTITY_REDIS_PREFIX + token_hash, json.dumps(safe_payload), ex=ttl)
+        except Exception as exc:  # noqa: BLE001 - best-effort cache write, never fail auth on Redis errors
+            logger.warning("External identity cache Redis SET failed, skipping cache write: %s", exc)
+        return
+    if len(_external_identity_cache) >= _EXTERNAL_IDENTITY_MAX:
+        _external_identity_cache.clear()
+    _external_identity_cache[token_hash] = (safe_payload, monotonic() + ttl)
+
+
+def _has_trusted_providers(db: Optional[Session]) -> bool:
+    """P3: cheap check whether ANY provider is opted into API auth.
+
+    Uses the Task 4 resolver's cached issuer->provider-id map so that, once warm,
+    this is a dict-truthiness check with zero DB queries. On a cold cache it performs
+    one resolver lookup (which populates the cache as a side effect).
+
+    Args:
+        db: A SQLAlchemy session to use if the resolver cache needs (re)loading, or None.
+
+    Returns:
+        True if at least one enabled provider has trusted_for_api_auth=True.
+    """
+    # First-Party
+    from mcpgateway.services import sso_service  # pylint: disable=import-outside-toplevel
+
+    if sso_service._trusted_provider_cache_loaded_at != 0.0:  # pylint: disable=protected-access
+        # cache already warm (within TTL) -- pure dict check, no DB
+        if (monotonic() - sso_service._trusted_provider_cache_loaded_at) <= sso_service._TRUSTED_PROVIDER_CACHE_TTL:  # pylint: disable=protected-access
+            return bool(sso_service._trusted_provider_cache)  # pylint: disable=protected-access
+
+    own_session = db is None
+    if own_session:
+        # First-Party
+        from mcpgateway.db import SessionLocal  # pylint: disable=import-outside-toplevel
+
+        db = SessionLocal()
+    try:
+        sso_service.resolve_trusted_provider_by_issuer("\x00warm", db)
+        return bool(sso_service._trusted_provider_cache)  # pylint: disable=protected-access
+    finally:
+        if own_session:
+            db.close()
+
+
+def _record_external_auth_metric(outcome: str, provider_id, reason: str = "") -> None:
+    """Record a best-effort per-provider external-IdP auth counter (D3).
+
+    Args:
+        outcome: "success" or "denied".
+        provider_id: The SSO provider identifier (or None).
+        reason: A short, stable deny-reason string (e.g. "issuer_not_trusted"); empty for success.
+
+    Never raises -- a metrics-backend failure must not affect authentication.
+    """
+    try:
+        # First-Party
+        from mcpgateway.services.observability_service import ObservabilityService  # pylint: disable=import-outside-toplevel
+
+        ObservabilityService().record_metric(
+            name=f"auth.external_idp.{outcome}",
+            value=1,
+            metric_type="counter",
+            unit="count",
+            attributes={"provider": str(provider_id), "reason": reason},
+        )
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.debug("external-idp auth metric skipped: %s", exc)
+
+
+async def _maybe_verify_external(token: str, request: Optional[Request]) -> Optional[dict]:
+    """Attempt external-IdP (trusted OIDC issuer) verification for a bearer token.
+
+    Args:
+        token: The raw bearer token string.
+        request: Optional FastAPI/Starlette request, used for a request-scoped DB session.
+
+    Returns:
+        A session-semantics identity payload (see build_external_identity) if the
+        token's issuer matches a trusted external provider and verification succeeds,
+        or None to fall through to internal JWT verification.
+    """
+    if not getattr(settings, "sso_api_token_auth_enabled", False):
+        return None
+
+    # P4: fetch the request-scoped DB session once, up front, so it can be reused
+    # by both _has_trusted_providers (cold-cache path) and the verification below.
+    db = getattr(getattr(request, "state", None), "db", None)
+
+    # P3: short-circuit before even decoding the token if no provider has opted in.
+    if not _has_trusted_providers(db):
+        return None
+
+    # P2/A: serve from the short-TTL identity cache if this exact token was seen recently.
+    th = _token_hash(token)
+    cached = await _external_identity_cache_get(th)
+    if cached is not None:
+        cached["token"] = token  # re-attach raw token (never cached)
+        return cached
+
+    try:
+        unverified = jwt.decode(token, options={"verify_signature": False})
+    except jwt.PyJWTError:
+        return None
+    iss = unverified.get("iss")
+    if not isinstance(iss, str) or not iss or iss.rstrip("/") == (settings.jwt_issuer or "").rstrip("/"):
+        return None  # internal issuer (or no/invalid iss) -> internal path, zero JWKS cost
+
+    # First-Party
+    from mcpgateway.db import SessionLocal  # pylint: disable=import-outside-toplevel
+
+    own_session = db is None
+    if own_session:
+        db = SessionLocal()
+        db.info["external_owned"] = True  # M1: signals build_external_identity to commit provisioning
+    try:
+        claims, provider = await verify_external_idp_token(token, db)
+        if claims is None:
+            return None  # untrusted issuer / invalid sig -> fall through -> internal path 401s
+        payload = await build_external_identity(provider, claims, token, db)
+        if payload is not None:
+            await _external_identity_cache_put(th, payload, claims.get("exp"))
+        return payload
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning("external-idp auth error, falling through to internal (401): %s", sanitize_for_log(str(exc)))
+        return None
+    finally:
+        if own_session:
+            db.close()
+
+
 async def verify_credentials_cached(token: str, request: Optional[Request] = None) -> dict:
     """Verify credentials using a JWT token with request-level caching.
 
     A wrapper around verify_jwt_token_cached that adds the original token
-    to the decoded payload for reference.
+    to the decoded payload for reference. Trusted external-IdP bearer tokens
+    (per-provider opt-in, see Task 1/H2) are dispatched to session-semantics
+    identity resolution before falling back to internal JWT verification.
 
     Args:
         token: The JWT token string to verify.
@@ -466,6 +706,12 @@ async def verify_credentials_cached(token: str, request: Optional[Request] = Non
         dict: The validated token payload with the original token added
             under the 'token' key. Returns a copy to avoid mutating cached payload.
     """
+    external_payload = await _maybe_verify_external(token, request)
+    if external_payload is not None:
+        if request is not None and hasattr(request, "state"):
+            request.state._jwt_verified_payload = (token, external_payload)
+        return external_payload
+
     payload = await verify_jwt_token_cached(token, request)
     # Return a copy with token added to avoid mutating the cached payload
     return {**payload, "token": token}
@@ -1505,7 +1751,29 @@ _oauth_oidc_metadata_cache: dict[str, tuple[float, Optional[dict[str, Any]], flo
 _OAUTH_OIDC_METADATA_TTL = 300  # seconds — successful discovery
 _OAUTH_OIDC_METADATA_NEGATIVE_TTL_PERMANENT = 30  # seconds — 404/malformed
 _OAUTH_OIDC_METADATA_NEGATIVE_TTL_TRANSIENT = 5  # seconds — timeouts / 5xx / network
-_oauth_jwks_client_cache: dict[str, jwt.PyJWKClient] = {}
+
+
+class _NoRedirectPyJWKClient(jwt.PyJWKClient):
+    """PyJWKClient that fetches JWKS via httpx with follow_redirects=False.
+
+    PyJWT's default fetch_data() uses urllib.request.urlopen which follows HTTP
+    redirects transparently, bypassing the same-origin check enforced on the
+    jwks_uri before this client is constructed.  Overriding with httpx
+    (follow_redirects=False) closes the SSRF redirect bypass across the full
+    fetch chain.
+    """
+
+    def fetch_data(self) -> Any:
+        try:
+            with httpx.Client(follow_redirects=False, timeout=self.timeout) as _client:
+                resp = _client.get(self.uri, headers=self.headers)
+                resp.raise_for_status()
+                return resp.json()
+        except httpx.HTTPError as exc:
+            raise jwt.exceptions.PyJWKClientConnectionError(f'Fail to fetch data from the url, err: "{exc}"') from exc
+
+
+_oauth_jwks_client_cache: dict[str, _NoRedirectPyJWKClient] = {}
 
 
 def _build_metadata_urls(issuer: str) -> list[str]:
@@ -1738,7 +2006,7 @@ async def verify_oauth_access_token(
     try:
         jwks_uri = jwks_uri.strip()
         if jwks_uri not in _oauth_jwks_client_cache:
-            _oauth_jwks_client_cache[jwks_uri] = jwt.PyJWKClient(jwks_uri)
+            _oauth_jwks_client_cache[jwks_uri] = _NoRedirectPyJWKClient(jwks_uri)
         jwks_client = _oauth_jwks_client_cache[jwks_uri]
 
         signing_key = await asyncio.to_thread(jwks_client.get_signing_key_from_jwt, token)
@@ -1770,3 +2038,257 @@ async def verify_oauth_access_token(
     except jwt.PyJWTError as exc:
         logger.warning("OAuth access token verification failed (issuer=%s): %s", sanitize_for_log(normalized_issuer), exc)
         return None
+
+
+async def verify_external_idp_token(token: str, db: Session) -> tuple[Optional[dict[str, Any]], Optional[SSOProvider]]:
+    """Validate an external IdP access token against a trusted SSO provider.
+
+    Resolves the provider by the token's unverified ``iss``, then delegates to
+    :func:`verify_oauth_access_token` for signature/issuer/audience/expiry checks
+    (JWKS discovery, SSRF defense and ID-token rejection are inherited).
+
+    Args:
+        token: Raw Bearer token.
+        db: Request-scoped SQLAlchemy session for provider lookup.
+
+    Returns:
+        ``(verified_claims, provider)`` on success, ``(None, None)`` on any failure.
+    """
+    try:
+        unverified = jwt.decode(token, options={"verify_signature": False})
+    except jwt.PyJWTError:
+        return None, None
+
+    issuer = unverified.get("iss")
+    if not isinstance(issuer, str) or not issuer:
+        logger.warning("external-idp auth denied: missing or invalid issuer claim")
+        _record_external_auth_metric("denied", None, reason="missing_issuer")
+        return None, None
+
+    provider = resolve_trusted_provider_by_issuer(issuer, db)
+    if provider is None or not provider.issuer:
+        logger.warning("external-idp auth denied: issuer not trusted (iss=%s)", sanitize_for_log(issuer))
+        _record_external_auth_metric("denied", getattr(provider, "id", None), reason="issuer_not_trusted")
+        return None, None
+
+    # Fail-closed backstop: trusted_for_api_auth without a configured api_audience
+    # makes verify_oauth_access_token skip the aud check entirely (any relying party
+    # of this issuer would be accepted). The create/update path and the bootstrap
+    # startup check both enforce this invariant, but checking it again here means
+    # the property holds regardless of how a provider row reached this state
+    # (direct DB edit, a future importer, env seeding).
+    if not (provider.api_audience or "").strip():
+        logger.error("external-idp auth denied: provider %s is trusted_for_api_auth without api_audience configured", sanitize_for_log(getattr(provider, "id", "")))
+        _record_external_auth_metric("denied", getattr(provider, "id", None), reason="missing_audience")
+        return None, None
+
+    claims = await verify_oauth_access_token(
+        token,
+        authorization_servers=[provider.issuer],
+        expected_audience=provider.api_audience,
+    )
+    if claims is None:
+        logger.warning("external-idp auth denied: token validation failed (iss=%s)", sanitize_for_log(issuer))
+        _record_external_auth_metric("denied", getattr(provider, "id", None), reason="validation_failed")
+        return None, None
+    return claims, provider
+
+
+def _is_clientless_token(claims: dict) -> bool:
+    """Detect a client_credentials / service token (no human user behind it).
+
+    Such tokens carry no ``email`` claim, plus at least one of:
+      * the subject identifies the OAuth client itself (``sub == azp`` or
+        ``sub == client_id``);
+      * the token is explicitly typed as an OAuth2 access token (``typ: "at+jwt"``);
+      * Keycloak-specific service-account markers: a ``clientId`` claim (Keycloak's
+        camelCase client identifier, present only on service-account tokens) or a
+        ``preferred_username`` of the form ``service-account-<client>``. Real Keycloak
+        client_credentials tokens have ``sub`` as the service-account user's UUID
+        (distinct from ``azp``) and ``typ: "Bearer"``, so the generic checks above
+        miss them without this provider-specific signal.
+
+    Args:
+        claims: Signature-verified JWT claims from the external IdP.
+
+    Returns:
+        True if the token represents a service/client principal rather than
+        a human user, False otherwise.
+    """
+    # Standard OIDC human-identity claims — any one present means a real user.
+    # Checked before sub==azp to avoid misclassifying auth-code tokens where
+    # the IdP happens to set azp equal to the user's sub (rare but valid).
+    if claims.get("email") or claims.get("given_name") or claims.get("family_name") or claims.get("name"):
+        return False
+    sub = claims.get("sub")
+    if sub and (sub == claims.get("azp") or sub == claims.get("client_id") or claims.get("typ") == "at+jwt"):
+        return True
+    if claims.get("clientId"):
+        return True
+    preferred_username = claims.get("preferred_username")
+    return bool(preferred_username) and str(preferred_username).startswith("service-account-")
+
+
+def _synthetic_service_principal_user_info(provider: SSOProvider, claims: dict) -> dict:
+    """Build a normalized user_info for a service principal from a clientless token.
+
+    The synthetic email is non-routable (``.service.local``) and marked verified
+    because it is internally minted -- this does NOT relax the human email-verified
+    gate, which still applies to real email claims.
+
+    Args:
+        provider: The matched, trusted SSOProvider.
+        claims: Signature-verified JWT claims from the external IdP.
+
+    Returns:
+        A normalized user_info dict suitable for ``authenticate_or_create_user``,
+        carrying through any group/role claims so role/team mapping still applies.
+    """
+    client = str(claims.get("azp") or claims.get("client_id") or claims.get("sub"))
+    # IdP-controlled value: strip anything that could break out of the email
+    # local-part (e.g. an embedded "@") and produce a malformed/spoofed address.
+    client = re.sub(r"[^a-zA-Z0-9._-]", "_", client)
+    pid = getattr(provider, "id", "ext")
+    return {
+        "email": f"svc-{client}@{pid}.service.local",
+        "email_verified": True,
+        "full_name": f"service:{client}",
+        "provider": pid,
+        "is_admin": False,
+        # carry through any group/role claims so mapping still applies
+        **{k: v for k, v in claims.items() if k in ("groups", "realm_access", "resource_access", "roles")},
+    }
+
+
+def _get_sso_service(db: Session):
+    """Factory wrapper so tests can patch SSOService construction.
+
+    Args:
+        db: Request-scoped SQLAlchemy session.
+
+    Returns:
+        A new :class:`~mcpgateway.services.sso_service.SSOService` instance.
+    """
+    # First-Party
+    from mcpgateway.services.sso_service import SSOService  # pylint: disable=import-outside-toplevel
+
+    return SSOService(db)
+
+
+async def build_external_identity(provider: SSOProvider, verified_claims: dict, token: str, db: Session) -> Optional[dict[str, Any]]:
+    """Map verified external-IdP claims to a ContextForge identity payload.
+
+    Reuses browser-SSO normalization + provisioning so role/group -> team mapping
+    is identical. Team scoping uses SESSION semantics (DB authority) because an
+    external access token carries no internal ``teams`` claim.
+
+    SECURITY:
+        * ``token_use="session"`` so downstream dispatchers route via
+          ``resolve_session_teams`` (DB authority), NOT ``normalize_token_teams``
+          (claim authority).
+        * ``is_admin`` is read from the persisted ``EmailUser``, never the mapped
+          claim.
+        * ``authenticate_or_create_user`` returns a JWT token, not an identity --
+          used only for its provisioning side-effect; identity comes from
+          ``get_user_by_email``.
+
+    Args:
+        provider: The matched, trusted SSOProvider (from resolve_trusted_provider_by_issuer).
+        verified_claims: Signature-verified claims from verify_external_idp_token.
+        token: The raw external bearer token (carried through for downstream use).
+        db: Request-scoped SQLAlchemy session.
+
+    Returns:
+        The enriched session-semantics identity payload, or None when the user
+        cannot be provisioned/resolved.
+    """
+    # First-Party
+    from mcpgateway.auth import resolve_session_teams  # pylint: disable=import-outside-toplevel
+
+    svc = _get_sso_service(db)
+    is_synthetic = _is_clientless_token(verified_claims)
+    if is_synthetic:
+        user_info = _synthetic_service_principal_user_info(provider, verified_claims)
+    else:
+        user_info = svc._normalize_user_info(provider, verified_claims)  # pylint: disable=protected-access
+
+    provider_id = getattr(provider, "id", None)
+
+    # Provisioning side-effect only (creates/links user, role-sync, enforces
+    # trusted_domains + email-verified). Return value is a JWT token -- discard it.
+    try:
+        provisioned = await svc.authenticate_or_create_user(user_info)
+    except IntegrityError:
+        # E2: lost a concurrent provisioning race -- the winner already created
+        # the user, so roll back our half-applied insert and re-look-up by email.
+        # Rollback is required (not just for owned sessions): SQLAlchemy leaves the
+        # session in a failed-transaction state after IntegrityError, and the
+        # re-lookup below would fail without it. Safe even for a request-scoped
+        # session: external-IdP auth dispatch runs during request authentication,
+        # before route handlers stage any writes on that session.
+        db.rollback()
+        provisioned = True
+        logger.info("external-idp: provisioning race resolved via re-lookup")
+
+    if not provisioned:
+        logger.warning("external-idp auth denied: user not provisionable (iss=%s, provider=%s)", sanitize_for_log(verified_claims.get("iss")), sanitize_for_log(provider_id))
+        _record_external_auth_metric("denied", provider_id, reason="not_provisionable")
+        return None
+
+    email = str(user_info.get("email") or "").strip().lower()
+    if not email:
+        logger.warning("external-idp auth denied: empty email claim (iss=%s, provider=%s)", sanitize_for_log(verified_claims.get("iss")), sanitize_for_log(provider_id))
+        _record_external_auth_metric("denied", provider_id, reason="empty_email")
+        return None
+
+    db_user = await svc.auth_service.get_user_by_email(email)
+    if db_user is None:
+        logger.warning("external-idp auth denied: user not found after provisioning (iss=%s, provider=%s)", sanitize_for_log(verified_claims.get("iss")), sanitize_for_log(provider_id))
+        _record_external_auth_metric("denied", provider_id, reason="user_not_found")
+        return None
+
+    is_admin = bool(db_user.is_admin)  # DB authority, not the mapped claim
+
+    # token_use="session" payload routed via resolve_session_teams(payload, email, db_user).
+    payload: dict = {
+        "sub": email,
+        "email": email,
+        "token": token,
+        "token_use": "session",  # nosec B105 - JWT claim type, not a password
+        "source": "external_idp",  # audit/telemetry only -- never drives authz
+        "iss": verified_claims.get("iss"),
+        "auth_provider": provider_id,
+    }
+    teams = await resolve_session_teams(payload, email, db_user)
+    payload["teams"] = teams
+    payload["is_admin"] = is_admin
+
+    # Persist provisioning if we own the session (set by a future dispatcher).
+    if db.info.get("external_owned"):
+        try:
+            db.commit()
+        except Exception as exc:  # pylint: disable=broad-except
+            db.rollback()
+            logger.error("external-idp: provisioning commit failed: %s", sanitize_for_log(str(exc)))
+            return None
+
+    if is_synthetic:
+        # NOTE: simplification -- we log "provisioned" unconditionally on the
+        # synthetic service-principal path rather than only on first creation,
+        # since authenticate_or_create_user's return value does not distinguish
+        # "created" from "already existed".
+        logger.info("external-idp: provisioned service principal %s", sanitize_for_log(email))
+
+    # First-Party
+    from mcpgateway.auth_context import get_user_email  # pylint: disable=import-outside-toplevel
+
+    logger.info(
+        "external-idp auth ok: provider=%s principal=%s is_admin=%s teams=%d",
+        sanitize_for_log(provider_id),
+        sanitize_for_log(get_user_email({"email": email})),
+        is_admin,
+        (0 if teams is None else len(teams)),
+    )
+    _record_external_auth_metric("success", provider_id)
+
+    return payload

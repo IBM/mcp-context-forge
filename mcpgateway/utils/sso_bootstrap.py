@@ -431,6 +431,23 @@ async def bootstrap_sso_providers() -> None:
                 else:
                     print(f"ℹ️  SSO provider unchanged: {existing_provider.display_name} (ID: {existing_provider.id})")
 
+        # Fail closed on providers trusted for API auth without a configured audience.
+        # Without an audience restriction, any token issued by this provider's issuer
+        # for any relying party would be accepted (confused-deputy risk), so this is
+        # not merely logged -- the unsafe trust grant is revoked at startup.
+        for provider in sso_service.list_all_providers():
+            if getattr(provider, "trusted_for_api_auth", False) and not (getattr(provider, "api_audience", None) or "").strip():
+                logger.error(
+                    "SSO provider '%s' (%s) is trusted_for_api_auth=True but has no api_audience configured. "
+                    "This allows confused-deputy token acceptance from any relying party of this issuer. "
+                    "Disabling trusted_for_api_auth for this provider until api_audience is set.",
+                    provider.id,
+                    provider.display_name,
+                )
+                provider.trusted_for_api_auth = False
+                db.add(provider)
+        db.flush()
+
     except Exception as e:
         db.rollback()  # Rollback on error
         print(f"❌ Failed to bootstrap SSO providers: {e}")

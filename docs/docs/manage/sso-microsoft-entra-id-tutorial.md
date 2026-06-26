@@ -1100,6 +1100,31 @@ Ensure you're using v2.0 tokens (default). If using v1.0 tokens, the issuer form
 3. Set up **Alerts** for suspicious sign-ins
 4. Review **Audit logs** for configuration changes
 
+## M2M API Access
+
+ContextForge can also accept Entra ID access tokens directly as `Bearer` credentials on API/MCP endpoints for service-to-service calls — see [SSO: Machine-to-machine API auth with external IdP tokens](sso.md#machine-to-machine-api-auth-with-external-idp-tokens) for the full design.
+
+1. **Register an app** (or reuse the one from this tutorial) and grant it permission to call your API, or expose its own API under **App registrations** > your app > **Expose an API**, noting the **Application ID URI** (e.g. `api://your-app-id-uri`).
+2. **Acquire a token** with the `client_credentials` grant against your tenant's token endpoint, requesting the `api://your-app-id-uri/.default` scope.
+3. **Set `api_audience`** for the Entra provider to that exact App ID URI value, then opt the provider in:
+
+   ```bash
+   curl -X PUT https://gateway.yourcompany.com/auth/sso/admin/providers/entra \
+     -H "Authorization: Bearer $ADMIN_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "trusted_for_api_auth": true,
+       "api_audience": "api://your-app-id-uri"
+     }'
+   ```
+
+   Also set `SSO_API_TOKEN_AUTH_ENABLED=true`.
+
+!!! note "Entra `aud` quirk"
+    Access tokens minted for your own API typically carry `aud` = the App ID URI (`api://your-app-id-uri`), **not** the application's client ID (GUID). Use the App ID URI for `api_audience`, and verify by decoding a sample token.
+
+Role/group mappings (`SSO_ENTRA_ROLE_MAPPINGS`, `SSO_ENTRA_ADMIN_GROUPS`) apply the same way as for browser SSO. App-only tokens with no `email` claim are provisioned as a service principal (`svc-<client_id>@entra.service.local`).
+
 ## Next Steps
 
 After Microsoft Entra ID SSO is working:

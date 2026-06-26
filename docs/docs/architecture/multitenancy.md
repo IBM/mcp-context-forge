@@ -359,6 +359,9 @@ Session tokens use `resolve_session_teams()` — the **database** is the authori
 !!! note "Session Token Membership Staleness"
     Session tokens skip the `_check_team_membership` re-validation in the token scoping middleware because `resolve_session_teams()` already resolved membership from the database. Membership staleness is bounded by the `auth_cache` TTL. The cache stores the full DB membership (not the per-session narrowed intersection) so that multiple sessions for the same user narrow independently.
 
+!!! note "External IdP tokens resolve via the session table"
+    Access tokens accepted from trusted external SSO providers (`SSO_API_TOKEN_AUTH_ENABLED`) are JIT-provisioned into a `token_use="session"` identity and follow the **Session Tokens** row above: `is_admin` and `teams` come from the persisted local user record via `resolve_session_teams()`, not from claims in the external token. See [SSO: Machine-to-machine API auth with external IdP tokens](../manage/sso.md#machine-to-machine-api-auth-with-external-idp-tokens).
+
 ### Multi-Team Token Behavior
 
 When a token contains multiple teams (`teams: ["team-1", "team-2"]`):

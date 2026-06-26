@@ -144,6 +144,21 @@ This OAuth flow is **separate** from user authentication to ContextForge itself:
 
 For user authentication details, see [RBAC Configuration](../manage/rbac.md).
 
+## Inbound External-Token Validation (M2M API Auth)
+
+The flows above describe ContextForge as an OAuth **client** delegating to upstream MCP servers. ContextForge can also act as a **resource server** for its own API/MCP endpoints, accepting access tokens minted by a trusted external SSO provider directly as `Bearer` credentials — see [SSO: Machine-to-machine API auth with external IdP tokens](../manage/sso.md#machine-to-machine-api-auth-with-external-idp-tokens) for operator-facing setup.
+
+This path is gated by `SSO_API_TOKEN_AUTH_ENABLED` (global) and `SSOProvider.trusted_for_api_auth` + `SSOProvider.api_audience` (per provider), and is dispatched from `mcpgateway/utils/verify_credentials.py`:
+
+1. **Issuer discrimination** (`_maybe_verify_external`): the inbound bearer token is unsigned-decoded to read its `iss` claim. If no enabled provider has `trusted_for_api_auth=True`, this path is skipped entirely and the token is evaluated only as an internal JWT. Otherwise `resolve_trusted_provider_by_issuer(iss, db)` looks up the matching `SSOProvider`.
+2. **Token validation** (`verify_external_idp_token`): the token is fully verified against the matched provider's JWKS — signature, expiry, issuer, and `aud == provider.api_audience`. ID tokens are rejected; only access tokens are accepted.
+3. **JIT provisioning** (`build_external_identity`): the validated token is used to provision/look up a local `EmailUser` via the same SSO service used for browser logins. `client_credentials` tokens with no `email` claim are detected (`_is_clientless_token`) and provisioned as synthetic service principals (`svc-<client_id>@<provider-id>.service.local`); both human and service principals receive teams via the provider's existing role/group → team mapping.
+4. **Session-semantics payload**: the resulting identity is returned with `token_use="session"` and `source="external_idp"`. `is_admin` is read from the persisted local user record (`db_user.is_admin`), and `teams` are resolved via `resolve_session_teams()` — both DB-authoritative, never derived directly from the external token's claims. This identity then flows through the normal Layer 1 (token scoping) / Layer 2 (RBAC) pipeline exactly like any other session token.
+5. **Caching**: successful resolutions are cached per-token (SHA-256 of the raw token) for `EXTERNAL_IDENTITY_CACHE_TTL` seconds (clamped to the token's `exp`), shared via Redis when `CACHE_TYPE=redis`, to avoid re-provisioning on every M2M call.
+
+!!! note "Revocation and role-sync caveats"
+    ContextForge cannot revoke an externally-issued token before its own expiry — only local user-deactivation/team-membership changes take effect immediately. If role-sync is enabled for the provider, teams/admin status are re-derived from token claims into the local DB on each provisioning pass. See the [SSO documentation](../manage/sso.md#machine-to-machine-api-auth-with-external-idp-tokens) for details.
+
 ## Future Enhancements
 
 -   Wire UI toggles for token storage and auto-refresh to backend logic.

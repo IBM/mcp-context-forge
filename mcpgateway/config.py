@@ -606,6 +606,26 @@ class Settings(BaseSettings):
         default=None, description="Default email domain for ADFS when UPN is plain username (e.g., 'company.com' converts 'user123' to 'user123@company.com')"
     )
 
+    # External OIDC Bearer Token API Authentication (issue #3567)
+    sso_api_token_auth_enabled: bool = Field(
+        default=False,
+        description=(
+            "Accept access tokens issued by trusted external SSO providers as Bearer "
+            "credentials on API/MCP endpoints, in addition to internally-minted JWTs. "
+            "Each provider must ALSO be opted in via SSOProvider.trusted_for_api_auth. "
+            "Default false preserves internal-JWT-only behavior."
+        ),
+    )
+    external_identity_cache_ttl: int = Field(
+        default=60,
+        description=(
+            "Seconds to cache a provisioned external-IdP identity (per token) to avoid "
+            "re-provisioning on every M2M request. Clamped to the token's own exp. Shared "
+            "across workers via Redis when cache_type=redis. Set 0 to disable caching "
+            "(strict deployments that need immediate team/role remapping)."
+        ),
+    )
+
     # MCP Client Authentication
     mcp_client_auth_enabled: bool = Field(default=True, description="Enable JWT authentication for MCP client operations")
     mcp_require_auth: Optional[bool] = Field(
