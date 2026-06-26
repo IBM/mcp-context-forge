@@ -35,6 +35,7 @@ attic/
 !mcp-servers/rust/fast-time-server/Cargo.toml
 !mcp-servers/rust/fast-time-server/src/
 !mcp-servers/rust/fast-time-server/src/**
+!mcp-servers/rust/fast-time-server/Containerfile
 !mcp-servers/rust/filesystem-server/
 !mcp-servers/rust/filesystem-server/Cargo.toml
 !mcp-servers/rust/filesystem-server/src/

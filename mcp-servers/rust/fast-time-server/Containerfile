@@ -1,41 +1,43 @@
 # syntax=docker/dockerfile:1
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # fast-time-server - Ultra-fast MCP server in Rust for performance testing
-# Multi-stage build for minimal image size (~15MB)
+#
+# This image is built from the workspace root so the crate's `Cargo.toml`
+# can resolve `.workspace = true` inheritance from the root manifest.
+#
+# Build (from the repo root):
+#   docker build -f mcp-servers/rust/fast-time-server/Containerfile -t IMG .
+#
+# Or via the crate's Makefile (handles the relative path automatically):
+#   cd mcp-servers/rust/fast-time-server && make container-build
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 # =============================================================================
-# Build stage - Rust compilation
+# Build stage - Rust compilation against the full Cargo workspace
 # =============================================================================
 FROM docker.io/rustlang/rust:nightly-slim AS builder
 
 WORKDIR /app
 
-# Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    pkg-config \
+        pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy manifests first for dependency caching
-COPY Cargo.toml Cargo.lock* ./
+# Copy the Cargo workspace. All members declared in the root manifest must
+# exist on disk for `cargo build -p ...` to parse the workspace, even though
+# only fast-time-server and its transitive deps actually get compiled.
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+COPY a2a-agents ./a2a-agents
+COPY mcp-servers/rust ./mcp-servers/rust
 
-# Create dummy src to cache dependencies (Docker layer caching optimization)
-RUN mkdir src && echo "fn main() {}" > src/main.rs
-RUN cargo build --release && rm -rf src target/release/deps/fast_time_server* target/release/.fingerprint/fast-time-server*
-
-# Copy actual source
-COPY src ./src
-
-# Build release binary (touch to ensure mtime is newer than cached artifacts)
-RUN touch src/main.rs && cargo build --release
+RUN cargo build --release -p fast-time-server
 
 # =============================================================================
-# Runtime stage - Minimal distroless-like image
+# Runtime stage - Minimal Debian image with just the compiled binary
 # =============================================================================
 FROM docker.io/library/debian:trixie-slim
 
-# Install runtime deps (ca-certificates + curl for health checks) and create
-# the non-root mcpuser in a single layer.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
@@ -45,26 +47,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Copy binary from builder
 COPY --from=builder /app/target/release/fast-time-server /app/fast-time-server
 
 USER mcpuser
 
-# Expose default port
 EXPOSE 9080
 
-# Environment configuration
 ENV BIND_ADDRESS=0.0.0.0:9080
 ENV RUST_LOG=info
 
-# Labels for container registry
 LABEL org.opencontainers.image.title="fast-time-server"
 LABEL org.opencontainers.image.description="Ultra-fast MCP server in Rust for performance testing"
 LABEL org.opencontainers.image.source="https://github.com/IBM/mcp-context-forge"
 LABEL org.opencontainers.image.vendor="IBM"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
-# Health check using curl (more reliable than wget in slim images)
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -sf http://localhost:9080/health || exit 1
 
