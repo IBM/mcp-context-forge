@@ -3112,10 +3112,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 if settings.header_size_validation_enabled:
     app.add_middleware(HeaderSizeMiddleware)
     logger.info(
-        f"📏 RFC 6585 header size validation enabled: "
-        f"max_total={settings.max_header_total_size_bytes}B, "
-        f"max_field={settings.max_header_field_size_bytes}B, "
-        f"max_count={settings.max_header_count}"
+        f"📏 RFC 6585 header size validation enabled: max_total={settings.max_header_total_size_bytes}B, max_field={settings.max_header_field_size_bytes}B, max_count={settings.max_header_count}"
     )
 
 # Add rate limiting middleware (after HttpAuthMiddleware for user-aware limiting)

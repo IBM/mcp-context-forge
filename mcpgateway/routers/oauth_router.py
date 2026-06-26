@@ -245,8 +245,6 @@ def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUs
     return token_teams
 
 
-
-
 def _extract_is_admin(current_user: EmailUserResponse | dict) -> bool:
     """Extract admin flag from typed or dict user contexts.
 
