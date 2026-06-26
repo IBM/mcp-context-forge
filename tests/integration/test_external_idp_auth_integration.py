@@ -78,7 +78,7 @@ async def test_g1_real_signature_valid_and_tampered(monkeypatch, rsa_keypair):
         def get_signing_key_from_jwt(self, tok):
             return FakeKey()
 
-    monkeypatch.setattr(vc.jwt, "PyJWKClient", FakeJWKClient)
+    monkeypatch.setattr(vc, "_NoRedirectPyJWKClient", FakeJWKClient)
     vc._oauth_jwks_client_cache.clear()
 
     db = MagicMock()
@@ -106,7 +106,7 @@ async def test_g1_real_signature_valid_and_tampered(monkeypatch, rsa_keypair):
         def get_signing_key_from_jwt(self, tok):
             return FakeKey()
 
-    monkeypatch.setattr(vc.jwt, "PyJWKClient", FakeJWKClientWrongKey)
+    monkeypatch.setattr(vc, "_NoRedirectPyJWKClient", FakeJWKClientWrongKey)
     vc._oauth_jwks_client_cache.clear()
 
     bad_claims, _ = await vc.verify_external_idp_token(bad_token, db)
@@ -149,7 +149,7 @@ async def test_g6_wrong_audience_rejected(monkeypatch, rsa_keypair):
         def get_signing_key_from_jwt(self, tok):
             return FakeKey()
 
-    monkeypatch.setattr(vc.jwt, "PyJWKClient", FakeJWKClient)
+    monkeypatch.setattr(vc, "_NoRedirectPyJWKClient", FakeJWKClient)
     vc._oauth_jwks_client_cache.clear()
 
     claims, prov_out = await vc.verify_external_idp_token(token, MagicMock())
