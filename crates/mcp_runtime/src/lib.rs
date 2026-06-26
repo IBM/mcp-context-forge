@@ -394,6 +394,8 @@ struct InternalAuthContext {
     #[serde(default)]
     auth_method: Option<String>,
     #[serde(default)]
+    exp: Option<u64>,
+    #[serde(default)]
     permission_is_admin: Option<bool>,
     #[serde(default)]
     is_admin: bool,
@@ -4079,12 +4081,19 @@ fn maybe_bind_session_auth_context(
         return;
     };
 
-    record.encoded_auth_context = Some(encoded_auth_context);
-    record.auth_binding_fingerprint = Some(fingerprint);
     let auth_context_ttl_ms =
         u64::try_from(state.session_auth_reuse_ttl().as_millis()).unwrap_or(u64::MAX);
-    record.auth_context_expires_at_epoch_ms =
-        Some(unix_epoch_millis().saturating_add(auth_context_ttl_ms));
+    let ttl_expires_at = unix_epoch_millis().saturating_add(auth_context_ttl_ms);
+    let expires_at = auth_context
+        .exp
+        .and_then(|exp| exp.checked_mul(1_000))
+        .map_or(ttl_expires_at, |token_expires_at| {
+            ttl_expires_at.min(token_expires_at)
+        });
+
+    record.encoded_auth_context = Some(encoded_auth_context);
+    record.auth_binding_fingerprint = Some(fingerprint);
+    record.auth_context_expires_at_epoch_ms = Some(expires_at);
 }
 
 fn inject_session_header(incoming_headers: &mut HeaderMap, session_id: &str) {
@@ -12198,6 +12207,7 @@ mod unit_tests {
             teams: Some(vec!["team-1".to_string()]),
             team_name: Some("Team 1".to_string()),
             auth_method: Some("jwt".to_string()),
+            exp: None,
             permission_is_admin: Some(false),
             is_admin: false,
             is_authenticated: true,
@@ -12245,6 +12255,35 @@ mod unit_tests {
                 > super::unix_epoch_millis()
         );
         assert!(runtime_session_access_outcome(&record, Some(&auth_context), &headers).is_ok());
+
+        let token_exp = (super::unix_epoch_millis() / 1_000).saturating_add(1);
+        let expiring_auth_context = InternalAuthContext {
+            exp: Some(token_exp),
+            ..auth_context.clone()
+        };
+        let mut expiring_record = RuntimeSessionRecord {
+            owner_email: Some("owner@example.com".to_string()),
+            server_id: Some("server-1".to_string()),
+            protocol_version: None,
+            client_capabilities: None,
+            encoded_auth_context: None,
+            auth_binding_fingerprint: None,
+            auth_context_expires_at_epoch_ms: None,
+            created_at: std::time::Instant::now(),
+            last_used: std::time::Instant::now(),
+        };
+        maybe_bind_session_auth_context(
+            &state,
+            &mut expiring_record,
+            &headers,
+            Some(&expiring_auth_context),
+        );
+        assert!(
+            expiring_record
+                .auth_context_expires_at_epoch_ms
+                .expect("ttl is set")
+                <= token_exp.saturating_mul(1_000)
+        );
 
         upsert_runtime_session(&state, "session-validate".to_string(), record.clone()).await;
 
@@ -12613,6 +12652,7 @@ mod unit_tests {
             teams: Some(vec!["team-1".to_string()]),
             team_name: Some("Team 1".to_string()),
             auth_method: Some("jwt".to_string()),
+            exp: None,
             permission_is_admin: Some(false),
             is_admin: false,
             is_authenticated: true,

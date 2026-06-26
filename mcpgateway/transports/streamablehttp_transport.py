@@ -2156,6 +2156,8 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "is_authenticated": True,
         "token_use": token_use,
     }
+    if payload.get("exp") is not None:
+        user_ctx["exp"] = payload.get("exp")
     # Extract scoped permissions from JWT for per-method enforcement
     scopes = payload.get("scopes") or {}
     scoped_perms = scopes.get("permissions") or [] if isinstance(scopes, dict) else []
@@ -4728,6 +4730,7 @@ async def _set_proxy_user_context(proxy_user: str) -> dict[str, Any] | None:
             else:
                 return {"detail": "User not found in database", "headers": {"WWW-Authenticate": "Bearer"}}
 
+        # Trusted proxy auth is DB/header-derived, not JWT-derived, so there is no token exp claim to clamp.
         _proxy_ctx: dict[str, Any] = {
             "email": proxy_user,
             "teams": token_teams,  # None for admin bypass, [] for public-only, or list of team IDs
@@ -4768,6 +4771,7 @@ def get_streamable_http_auth_context() -> dict[str, Any]:
         "is_authenticated",
         "is_admin",
         "auth_method",
+        "exp",
         "token_use",
         "permission_is_admin",
         "scoped_permissions",
@@ -5201,6 +5205,7 @@ class _StreamableHttpAuthHandler:
                 "is_authenticated": True,
                 "is_admin": effective_is_admin,
                 "auth_method": "jwt",
+                "exp": user_payload.get("exp"),
                 "permission_is_admin": effective_is_admin,
                 "token_use": token_use,  # propagated for downstream RBAC (check_any_team)
             }
@@ -5509,6 +5514,7 @@ class _StreamableHttpAuthHandler:
                 "is_authenticated": True,
                 "is_admin": is_admin,
                 "permission_is_admin": is_admin,
+                "exp": claims.get("exp"),
                 "token_use": "session",  # nosec B105 - JWT claim type marker, not a password
                 "auth_method": "oauth_access_token",
             }
