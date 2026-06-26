@@ -96,6 +96,7 @@ from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers
+from mcpgateway.utils.header_filtering import filter_sensitive_headers
 from mcpgateway.utils.identity_propagation import build_identity_headers, build_identity_meta
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -5835,13 +5836,16 @@ class ToolService(BaseService):
                             gateway_auth_type=None,
                             gateway_passthrough_headers=a2a_agent_passthrough_headers,
                         )
+                        if not settings.enable_sensitive_header_passthrough:
+                            headers = filter_sensitive_headers(headers)
+                    plugin_headers = filter_sensitive_headers(headers)
 
                     # Plugin hook: tool pre-invoke for A2A
                     plugin_manager = await self._get_plugin_manager(plugin_context_id)
                     if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) and not skip_pre_invoke:
                         if tool_metadata:
                             global_context.metadata[TOOL_METADATA] = tool_metadata
-                        pre_invoke_headers = HttpHeaderPayload(root=headers)
+                        pre_invoke_headers = HttpHeaderPayload(root=plugin_headers)
                         pre_result, context_table = await plugin_manager.invoke_hook(
                             ToolHookType.TOOL_PRE_INVOKE,
                             payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
@@ -5855,7 +5859,13 @@ class ToolService(BaseService):
                             name = payload.name
                             arguments = payload.args
                             if payload.headers is not None:
-                                headers = payload.headers.model_dump()
+                                plugin_returned_headers = payload.headers.model_dump()
+                                if a2a_agent_passthrough_headers:
+                                    a2a_allowlist = {h.lower() for h in a2a_agent_passthrough_headers}
+                                    safe_headers = {k: v for k, v in plugin_returned_headers.items() if k.lower() in a2a_allowlist}
+                                    if not settings.enable_sensitive_header_passthrough:
+                                        safe_headers = filter_sensitive_headers(safe_headers)
+                                    headers.update(safe_headers)
 
                     prepared = prepare_a2a_invocation(
                         agent_type=a2a_agent_type,
