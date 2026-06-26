@@ -4,6 +4,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod app;
+mod cli;
 mod config;
 mod delay;
 mod prompts;

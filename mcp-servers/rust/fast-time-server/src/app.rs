@@ -3,32 +3,54 @@
 
 use axum::Router;
 use axum::extract::{Request, State};
-use axum::http::StatusCode;
+use axum::http::{StatusCode, header};
 use axum::middleware::{Next, from_fn_with_state};
 use axum::response::{IntoResponse, Response};
 use axum::serve::ListenerExt;
+use clap::Parser;
+use rmcp::ServiceExt;
 use rmcp::transport::streamable_http_server::StreamableHttpService;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use serde_json::json;
-use std::env;
 use std::sync::Arc;
 use tracing::info;
 use tracing::trace;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use crate::cli::{Cli, Transport};
 use crate::config::{
-    APP_NAME, APP_VERSION, DEFAULT_BIND_ADDRESS, MAX_ACTIVE_SESSIONS, MCP_PROTOCOL_VERSION,
-    SESSION_HEADER,
+    APP_NAME, APP_VERSION, MAX_ACTIVE_SESSIONS, MCP_PROTOCOL_VERSION, SESSION_HEADER,
 };
 use crate::rest;
 use crate::server::FastTimeServer;
 use crate::transports::sse;
 
 pub async fn run() -> anyhow::Result<()> {
-    init_logging();
+    let cli = Cli::parse();
+    init_logging(cli.log_directive());
 
-    let bind_address =
-        env::var("BIND_ADDRESS").unwrap_or_else(|_| DEFAULT_BIND_ADDRESS.to_string());
+    match cli.transport {
+        Transport::Stdio => serve_stdio().await,
+        Transport::Sse | Transport::Http | Transport::Dual | Transport::Rest => {
+            serve_http(&cli).await
+        }
+    }
+}
+
+/// Serve MCP over stdin/stdout (`--transport stdio`).
+async fn serve_stdio() -> anyhow::Result<()> {
+    info!("{} v{} serving via stdio transport", APP_NAME, APP_VERSION);
+    let service = FastTimeServer::new()
+        .serve(rmcp::transport::stdio())
+        .await?;
+    service.waiting().await?;
+    Ok(())
+}
+
+/// Serve the full HTTP router (every route) on the resolved address.
+async fn serve_http(cli: &Cli) -> anyhow::Result<()> {
+    let bind_address = cli.effective_addr();
+    let auth_token = cli.auth_token();
 
     info!("{} v{} starting...", APP_NAME, APP_VERSION);
     info!("Binding to: {}", bind_address);
@@ -44,20 +66,19 @@ pub async fn run() -> anyhow::Result<()> {
     info!("MCP endpoint:   http://{}/mcp", bind_address);
     info!("MCP SSE:        http://{}/sse", bind_address);
     info!(
-        "REST API:       http://{}/api/echo (POST), /api/time (GET)",
+        "REST API:       http://{}/api/v1/time (GET), /api/v1/convert (POST)",
         bind_address
     );
     info!("Health check:   http://{}/health", bind_address);
     info!("Version info:   http://{}/version", bind_address);
-    info!("");
-    info!("Benchmark with:");
-    info!("  hey -n 1000000 -c 200 -m POST -T 'application/json' \\");
-    info!(
-        "      -d '{{\"message\":\"hello\"}}' http://{}/api/echo",
-        bind_address
-    );
+    if auth_token.is_some() {
+        info!("Auth:           Bearer token required (except /health, /version)");
+    }
+    if !cli.public_url.is_empty() {
+        info!("Public URL:     {}", cli.public_url);
+    }
 
-    axum::serve(tcp_listener, router())
+    axum::serve(tcp_listener, router(auth_token))
         .with_graceful_shutdown(async move {
             tokio::signal::ctrl_c().await.unwrap();
             info!("Shutting down...");
@@ -67,17 +88,49 @@ pub async fn run() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn init_logging() {
+fn init_logging(directive: &str) {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".to_string().into()),
+                .unwrap_or_else(|_| directive.into()),
         )
-        .with(tracing_subscriber::fmt::layer())
+        // Log to stderr so the stdio transport keeps stdout as a pure JSON-RPC
+        // stream; harmless for the HTTP transports.
+        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .init();
 }
 
-fn router() -> Router {
+/// Reject requests without a valid `Authorization: Bearer <token>` header.
+/// `/health` and `/version` are always exempt so health checks keep working.
+async fn auth_gate(State(token): State<Arc<String>>, request: Request, next: Next) -> Response {
+    let path = request.uri().path();
+    if path == "/health" || path == "/version" {
+        return next.run(request).await;
+    }
+    let header_value = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok());
+    match header_value {
+        None => (
+            StatusCode::UNAUTHORIZED,
+            [(header::WWW_AUTHENTICATE, "Bearer realm=\"MCP Server\"")],
+            "Authorization required",
+        )
+            .into_response(),
+        Some(value) if value.strip_prefix("Bearer ") != Some(token.as_str()) => {
+            let message = if value.starts_with("Bearer ") {
+                "Invalid token"
+            } else {
+                "Invalid authorization format"
+            };
+            (StatusCode::UNAUTHORIZED, message).into_response()
+        }
+        Some(_) => next.run(request).await,
+    }
+}
+
+fn router(auth_token: Option<String>) -> Router {
     // Modern Streamable HTTP transport, served by the rmcp SDK. We hold a handle
     // to the session manager so a lightweight gate can cap concurrent sessions —
     // rmcp's LocalSessionManager has no built-in cap. Existing sessions are
@@ -92,7 +145,7 @@ fn router() -> Router {
         .fallback_service(mcp)
         .layer(from_fn_with_state(session_manager, session_cap_gate));
 
-    Router::new()
+    let app = Router::new()
         .route("/health", axum::routing::get(health_handler))
         .route("/version", axum::routing::get(version_handler))
         .route("/api/echo", axum::routing::post(rest::echo_handler))
@@ -101,7 +154,12 @@ fn router() -> Router {
         .route("/sse", axum::routing::get(sse::handler))
         .route("/messages", axum::routing::post(sse::message_handler))
         .route("/message", axum::routing::post(sse::message_handler))
-        .nest("/mcp", mcp)
+        .nest("/mcp", mcp);
+
+    match auth_token {
+        Some(token) => app.layer(from_fn_with_state(Arc::new(token), auth_gate)),
+        None => app,
+    }
 }
 
 /// Cap concurrent Streamable HTTP sessions at `MAX_ACTIVE_SESSIONS`. Requests

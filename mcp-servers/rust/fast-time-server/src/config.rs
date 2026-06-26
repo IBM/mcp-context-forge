@@ -1,7 +1,6 @@
 // Copyright 2026
 // SPDX-License-Identifier: Apache-2.0
 
-pub(crate) const DEFAULT_BIND_ADDRESS: &str = "0.0.0.0:9080";
 pub(crate) const APP_NAME: &str = "fast-time-server";
 pub(crate) const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Latest protocol version advertised by the legacy SSE shim and `/version`.
