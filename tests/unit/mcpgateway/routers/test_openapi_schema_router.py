@@ -15,7 +15,6 @@ Tests cover:
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
-from fastapi import HTTPException
 import httpx
 import pytest
 
@@ -334,18 +333,27 @@ async def test_generate_schema_url_parsing():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_generate_schemas_403_when_permission_denied(monkeypatch: pytest.MonkeyPatch):
-    """Endpoint returns 403 when user lacks tools.create permission.
+def test_generate_schemas_403_when_permission_denied(monkeypatch: pytest.MonkeyPatch):
+    """Endpoint returns 403 via ASGI when user lacks tools.create permission.
 
-    This test temporarily restores the real RBAC decorators to verify
-    the endpoint correctly enforces the tools.create permission.
+    Drives the request through TestClient (ASGI routing) rather than calling
+    the function directly, so it verifies that @require_permission is wired
+    correctly on the registered route — not just on the bare function.
     """
-    # Restore real decorators for this test
-    from tests.utils.rbac_mocks import restore_rbac_decorators
+    import importlib
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from mcpgateway.middleware.rbac import get_current_user_with_permissions
+    from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorators
+
+    # Restore real decorators so the route is decorated with the real @require_permission
     restore_rbac_decorators(_originals)
 
-    # Patch PermissionService to deny all permissions
+    # Reload router to pick up the real decorator
+    importlib.reload(router_mod)
+
+    # Monkeypatch PermissionService to deny all permissions
     class DenyAll:
         def __init__(self, _db):
             pass
@@ -355,24 +363,27 @@ async def test_generate_schemas_403_when_permission_denied(monkeypatch: pytest.M
 
     monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", DenyAll)
 
-    # Re-import the router module to pick up the restored decorators
-    import importlib
-    importlib.reload(router_mod)
+    # Mount the freshly-reloaded router on a throwaway app
+    test_app = FastAPI()
+    test_app.include_router(router_mod.router)
 
-    # Create test data
-    body = router_mod.GenerateSchemaRequest(url="http://api.example.com/calculate")
-    non_admin_user = {"email": "user@example.com", "is_admin": False, "ip_address": "127.0.0.1", "user_agent": "tests"}
+    # Override auth dependency to return an unprivileged user (no DB lookup)
+    async def unprivileged_user():
+        return {"email": "user@example.com", "is_admin": False, "ip_address": "127.0.0.1", "user_agent": "tests"}
 
-    # The @require_permission decorator should raise HTTPException with 403
-    # when PermissionService.check_permission returns False
-    with pytest.raises(HTTPException) as exc:
-        await router_mod.generate_schemas_from_openapi(body, _user=non_admin_user)
+    test_app.dependency_overrides[get_current_user_with_permissions] = unprivileged_user
 
-    assert exc.value.status_code == 403
-    assert "access denied" in str(exc.value.detail).lower()
+    client = TestClient(test_app, raise_server_exceptions=False)
 
-    # Re-patch decorators for remaining tests
-    from tests.utils.rbac_mocks import patch_rbac_decorators
+    response = client.post(
+        "/v1/tools/generate-schemas-from-openapi",
+        json={"url": "http://api.example.com/calculate"},
+    )
+
+    assert response.status_code == 403, f"Expected 403, got {response.status_code}: {response.text}"
+    assert "access denied" in response.json().get("detail", "").lower()
+
+    # Re-patch decorators and reload for remaining tests
     patch_rbac_decorators()
     importlib.reload(router_mod)
 
