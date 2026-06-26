@@ -619,6 +619,7 @@ class TestGetManager:
     @pytest.mark.asyncio
     async def test_get_manager_rebuilds_expired(self, factory):
         old_manager = AsyncMock()
+        old_manager.shutdown = AsyncMock()
         factory._managers["ctx"] = _CachedManager(manager=old_manager, created_at=0)
 
         new_manager = AsyncMock()
@@ -631,6 +632,8 @@ class TestGetManager:
         ):
             result = await factory.get_manager("ctx")
         assert result is new_manager
+        old_manager.shutdown.assert_awaited_once()
+
 
     @pytest.mark.asyncio
     async def test_get_manager_race_returns_cached_entry(self, factory):
