@@ -576,7 +576,7 @@ test.describe("Gateways page", () => {
     const detailsPanel = page.getByRole("region", { name: "testVS details" });
     await expect(detailsPanel).toBeVisible();
 
-    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape"); // drawer is a full-height overlay; must close it before clicking table row actions
     await expect(detailsPanel).toHaveCount(0);
     await page.waitForLoadState("networkidle");
 
@@ -639,7 +639,7 @@ test.describe("Gateways page", () => {
     const detailsPanel = page.getByRole("region", { name: "testVS details" });
     await expect(detailsPanel).toBeVisible();
 
-    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape"); // drawer is a full-height overlay; must close it before clicking table row actions
     await expect(detailsPanel).toHaveCount(0);
     await page.waitForLoadState("networkidle");
 
@@ -695,7 +695,7 @@ test.describe("Gateways page", () => {
     const detailsPanel = page.getByRole("region", { name: "testVS details" });
     await expect(detailsPanel).toBeVisible();
 
-    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape"); // drawer is a full-height overlay; must close it before clicking table row actions
 
     await expect(detailsPanel).toHaveCount(0);
 
