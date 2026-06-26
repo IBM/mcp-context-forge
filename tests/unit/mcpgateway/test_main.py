@@ -5307,6 +5307,100 @@ class TestGetRpcFilterContext:
         assert is_admin is False
         assert any("internal_auth_context email non-string type" in record.message for record in caplog.records)
 
+    # ── Session token admin bypass tests (issue #5232) ────────────────────── #
+
+    def test_session_token_admin_bypass(self):
+        """Session token with token_teams=None and admin DB user returns is_admin=True."""
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"sub": "admin@example.com", "token_use": "session"})
+        mock_request.state.token_teams = None
+        mock_request.state.token_use = "session"
+        user = {"email": "admin@example.com"}
+
+        with patch("mcpgateway.db.SessionLocal") as mock_session_local:
+            mock_db = MagicMock()
+            mock_db_user = MagicMock()
+            mock_db_user.is_admin = True
+            mock_db.query.return_value.filter.return_value.first.return_value = mock_db_user
+            mock_session_local.return_value = mock_db
+
+            email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        assert email == "admin@example.com"
+        assert teams is None
+        assert is_admin is True
+
+    def test_session_token_admin_bypass_missing_user(self):
+        """Session token with token_teams=None but no DB user record does NOT grant bypass."""
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"sub": "ghost@example.com", "token_use": "session"})
+        mock_request.state.token_teams = None
+        mock_request.state.token_use = "session"
+        user = {"email": "ghost@example.com"}
+
+        with patch("mcpgateway.db.SessionLocal") as mock_session_local:
+            mock_db = MagicMock()
+            mock_db.query.return_value.filter.return_value.first.return_value = None
+            mock_session_local.return_value = mock_db
+
+            email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        assert email == "ghost@example.com"
+        assert teams is None
+        assert is_admin is False
+
+    def test_session_token_non_admin(self):
+        """Session token with token_teams=["team1"] (DB non-admin) returns is_admin=False."""
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"sub": "user@example.com", "token_use": "session"})
+        mock_request.state.token_teams = ["team1"]
+        mock_request.state.token_use = "session"
+        user = {"email": "user@example.com"}
+
+        email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        assert email == "user@example.com"
+        assert teams == ["team1"]
+        assert is_admin is False
+
+    def test_session_token_public_only(self):
+        """Session token with token_teams=[] (public-only) returns is_admin=False."""
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"sub": "user@example.com", "token_use": "session"})
+        mock_request.state.token_teams = []
+        mock_request.state.token_use = "session"
+        user = {"email": "user@example.com"}
+
+        email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        assert email == "user@example.com"
+        assert teams == []
+        assert is_admin is False
+
+    def test_api_token_admin_bypass_regression(self):
+        """API token with is_admin=true, teams=null still gets is_admin=True (regression guard)."""
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"teams": None, "is_admin": True})
+        mock_request.state.token_teams = None
+        mock_request.state.token_use = None
+        user = {"email": "admin@example.com"}
+
+        email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        assert email == "admin@example.com"
+        assert teams is None
+        assert is_admin is True
+
 
 # --------------------------------------------------------------------------- #
 # ASGI middleware helper for injecting request.state in tests                  #

@@ -13165,6 +13165,30 @@ class TestHardeningHelperCoverage:
         with patch("mcpgateway.auth_context.get_rpc_filter_context", return_value=("user@example.com", None, False)):
             assert main_mod.get_scoped_resource_access_context(request, {"email": "user@example.com"}) == ("user@example.com", [])
 
+    def test_get_scoped_resource_access_context_session_token_admin_bypass(self):
+        """Session token with DB admin bypass flows through without patching.
+
+        Verifies the fix for issue #5232: get_scoped_resource_access_context
+        returns (email, None) for session tokens where resolve_session_teams()
+        confirmed admin from DB, even though the JWT lacks an is_admin claim.
+        """
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        request.state._jwt_verified_payload = ("token", {"sub": "admin@example.com", "token_use": "session"})
+        request.state.token_teams = None
+        request.state.token_use = "session"
+
+        with patch("mcpgateway.db.SessionLocal") as mock_session_local:
+            mock_db = MagicMock()
+            mock_db_user = MagicMock()
+            mock_db_user.is_admin = True
+            mock_db.query.return_value.filter.return_value.first.return_value = mock_db_user
+            mock_session_local.return_value = mock_db
+
+            result = main_mod.get_scoped_resource_access_context(request, {"email": "admin@example.com"})
+        assert result == ("admin@example.com", None), f"Expected admin bypass, got {result}"
+
     @pytest.mark.asyncio
     async def test_assert_session_owner_or_admin_returns_404_for_missing_session(self):
         # First-Party
