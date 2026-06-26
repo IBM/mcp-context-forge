@@ -247,10 +247,11 @@ async fn list_timezones(Query(query): Query<FilterQuery>) -> Response {
 }
 
 async fn timezone_info(Path(timezone): Path<String>) -> Response {
+    let timezone = timezone.strip_suffix("/info").unwrap_or(&timezone);
     if timezone.is_empty() {
         return bad_request("Timezone not specified");
     }
-    let zone = match parse_timezone(&timezone) {
+    let zone = match parse_timezone(timezone) {
         Ok(zone) => zone,
         Err(_) => return bad_request(&format!("Invalid timezone: {timezone}")),
     };
@@ -627,5 +628,11 @@ mod tests {
             .filter(|tz| tz.to_lowercase().contains("asia"))
             .count();
         assert_eq!(asia, 12);
+    }
+
+    #[tokio::test]
+    async fn test_timezone_info_accepts_go_info_suffix() {
+        let response = timezone_info(Path("Asia/Tokyo/info".to_string())).await;
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }

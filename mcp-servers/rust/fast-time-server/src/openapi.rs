@@ -87,7 +87,7 @@ pub(crate) fn spec() -> Value {
                     "responses": ok("List of timezones")
                 }
             },
-            "/api/v1/timezones/{timezone}": {
+            "/api/v1/timezones/{timezone}/info": {
                 "get": {
                     "summary": "Get information about a timezone",
                     "tags": ["Timezones"],

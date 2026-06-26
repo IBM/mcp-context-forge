@@ -3,14 +3,14 @@
 
 use axum::Router;
 use axum::extract::{Request, State};
-use axum::http::{StatusCode, header};
+use axum::http::{StatusCode, Uri, header};
 use axum::middleware::{Next, from_fn_with_state};
 use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
 use axum::serve::ListenerExt;
-use clap::Parser;
 use rmcp::ServiceExt;
-use rmcp::transport::streamable_http_server::StreamableHttpService;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use serde_json::json;
 use std::sync::Arc;
 use tracing::info;
@@ -26,8 +26,16 @@ use crate::rest_v1;
 use crate::server::FastTimeServer;
 use crate::transports::sse;
 
+const DEFAULT_ALLOWED_HOSTS: &[&str] = &[
+    "localhost",
+    "127.0.0.1",
+    "::1",
+    "fast_time_server",
+    "fast_test_server",
+];
+
 pub async fn run() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    let cli = Cli::parse_compat();
     init_logging(cli.log_directive());
 
     match cli.transport {
@@ -48,10 +56,11 @@ async fn serve_stdio() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Serve the full HTTP router (every route) on the resolved address.
+/// Serve the selected HTTP transport on the resolved address.
 async fn serve_http(cli: &Cli) -> anyhow::Result<()> {
     let bind_address = cli.effective_addr();
     let auth_token = cli.auth_token();
+    let allowed_hosts = mcp_allowed_hosts(cli);
 
     info!("{} v{} starting...", APP_NAME, APP_VERSION);
     info!("Binding to: {}", bind_address);
@@ -64,30 +73,65 @@ async fn serve_http(cli: &Cli) -> anyhow::Result<()> {
             }
         });
 
-    info!("MCP endpoint:   http://{}/mcp", bind_address);
-    info!("MCP HTTP alias: http://{}/http", bind_address);
-    info!("MCP SSE:        http://{}/sse", bind_address);
-    info!(
-        "REST API:       http://{}/api/v1/time (GET), /api/v1/convert (POST)",
-        bind_address
-    );
-    info!("Health check:   http://{}/health", bind_address);
-    info!("Version info:   http://{}/version", bind_address);
+    log_endpoints(cli.transport, &bind_address);
     if auth_token.is_some() {
         info!("Auth:           Bearer token required (except /health, /version)");
     }
     if !cli.public_url.is_empty() {
         info!("Public URL:     {}", cli.public_url);
     }
+    if matches!(cli.transport, Transport::Http | Transport::Dual) {
+        info!("MCP hosts:      {}", allowed_hosts.join(", "));
+    }
 
-    axum::serve(tcp_listener, router(auth_token))
-        .with_graceful_shutdown(async move {
-            tokio::signal::ctrl_c().await.unwrap();
-            info!("Shutting down...");
-        })
-        .await?;
+    axum::serve(
+        tcp_listener,
+        router(
+            cli.transport,
+            cli.public_url.as_str(),
+            auth_token,
+            &allowed_hosts,
+        ),
+    )
+    .with_graceful_shutdown(async move {
+        tokio::signal::ctrl_c().await.unwrap();
+        info!("Shutting down...");
+    })
+    .await?;
 
     Ok(())
+}
+
+fn log_endpoints(transport: Transport, bind_address: &str) {
+    match transport {
+        Transport::Stdio => {}
+        Transport::Sse => {
+            info!("MCP SSE:        http://{}/sse", bind_address);
+            info!("MCP messages:   http://{}/messages", bind_address);
+        }
+        Transport::Http => {
+            info!("MCP endpoint:   http://{}/", bind_address);
+            info!("Info:           http://{}/info", bind_address);
+        }
+        Transport::Dual => {
+            info!("MCP SSE:        http://{}/sse", bind_address);
+            info!("MCP HTTP:       http://{}/http", bind_address);
+            info!("MCP HTTP alias: http://{}/mcp", bind_address);
+            info!(
+                "REST API:       http://{}/api/v1/time (GET), /api/v1/convert (POST)",
+                bind_address
+            );
+        }
+        Transport::Rest => {
+            info!(
+                "REST API:       http://{}/api/v1/time (GET), /api/v1/convert (POST)",
+                bind_address
+            );
+            info!("API docs:       http://{}/api/v1/docs", bind_address);
+        }
+    }
+    info!("Health check:   http://{}/health", bind_address);
+    info!("Version info:   http://{}/version", bind_address);
 }
 
 fn init_logging(directive: &str) {
@@ -100,6 +144,34 @@ fn init_logging(directive: &str) {
         // stream; harmless for the HTTP transports.
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .init();
+}
+
+fn mcp_allowed_hosts(cli: &Cli) -> Vec<String> {
+    let mut hosts = Vec::with_capacity(DEFAULT_ALLOWED_HOSTS.len() + 4);
+    for host in DEFAULT_ALLOWED_HOSTS {
+        push_unique_host(&mut hosts, *host);
+    }
+    for host in cli.allowed_hosts.split(',').map(str::trim) {
+        push_unique_host(&mut hosts, host);
+    }
+    if let Some(host) = public_url_host(&cli.public_url) {
+        push_unique_host(&mut hosts, host);
+    }
+    hosts
+}
+
+fn push_unique_host(hosts: &mut Vec<String>, host: impl AsRef<str>) {
+    let host = host.as_ref().trim();
+    if !host.is_empty() && !hosts.iter().any(|existing| existing == host) {
+        hosts.push(host.to_owned());
+    }
+}
+
+fn public_url_host(public_url: &str) -> Option<String> {
+    public_url
+        .parse::<Uri>()
+        .ok()
+        .and_then(|uri| uri.host().map(str::to_owned))
 }
 
 /// Reject requests without a valid `Authorization: Bearer <token>` header.
@@ -132,7 +204,7 @@ async fn auth_gate(State(token): State<Arc<String>>, request: Request, next: Nex
     }
 }
 
-fn router(auth_token: Option<String>) -> Router {
+fn mcp_router(allowed_hosts: &[String]) -> Router {
     // Modern Streamable HTTP transport, served by the rmcp SDK. We hold a handle
     // to the session manager so a lightweight gate can cap concurrent sessions —
     // rmcp's LocalSessionManager has no built-in cap. Existing sessions are
@@ -141,26 +213,48 @@ fn router(auth_token: Option<String>) -> Router {
     let mcp = StreamableHttpService::new(
         || Ok(FastTimeServer::new()),
         session_manager.clone(),
-        Default::default(),
+        StreamableHttpServerConfig::default().with_allowed_hosts(allowed_hosts.iter().cloned()),
     );
-    let mcp = Router::new()
+    Router::new()
         .fallback_service(mcp)
-        .layer(from_fn_with_state(session_manager, session_cap_gate));
+        .layer(from_fn_with_state(session_manager, session_cap_gate))
+}
 
-    let app = Router::new()
-        .route("/health", axum::routing::get(health_handler))
-        .route("/version", axum::routing::get(version_handler))
-        // High-throughput benchmark endpoints (Rust-specific).
-        .route("/api/echo", axum::routing::post(rest::echo_handler))
-        .route("/api/time", axum::routing::get(rest::time_handler))
-        // Full Go-parity REST surface.
-        .merge(rest_v1::routes())
-        // Legacy HTTP+SSE transport — hand-rolled shim (see transports/sse.rs).
-        .route("/sse", axum::routing::get(sse::handler))
-        .route("/messages", axum::routing::post(sse::message_handler))
-        .route("/message", axum::routing::post(sse::message_handler))
-        .nest("/http", mcp.clone())
-        .nest("/mcp", mcp);
+fn common_router() -> Router {
+    Router::new()
+        .route("/health", get(health_handler))
+        .route("/version", get(version_handler))
+}
+
+fn benchmark_router() -> Router {
+    Router::new()
+        .route("/api/echo", post(rest::echo_handler))
+        .route("/api/time", get(rest::time_handler))
+}
+
+fn router(
+    transport: Transport,
+    public_url: &str,
+    auth_token: Option<String>,
+    allowed_hosts: &[String],
+) -> Router {
+    let app = match transport {
+        Transport::Stdio => common_router(),
+        Transport::Sse => common_router().merge(sse::routes(public_url)),
+        Transport::Http => common_router()
+            .route("/info", get(info_handler))
+            .fallback_service(mcp_router(allowed_hosts)),
+        Transport::Dual => common_router()
+            // High-throughput benchmark endpoints (Rust-specific).
+            .merge(benchmark_router())
+            // Full Go-parity REST surface.
+            .merge(rest_v1::routes())
+            // Legacy HTTP+SSE transport — hand-rolled shim (see transports/sse.rs).
+            .merge(sse::routes(public_url))
+            .nest("/http", mcp_router(allowed_hosts))
+            .nest("/mcp", mcp_router(allowed_hosts)),
+        Transport::Rest => common_router().merge(rest_v1::routes()),
+    };
 
     let app = match auth_token {
         Some(token) => app.layer(from_fn_with_state(Arc::new(token), auth_gate)),
@@ -206,6 +300,14 @@ async fn version_handler() -> axum::Json<serde_json::Value> {
     }))
 }
 
+async fn info_handler() -> axum::Json<serde_json::Value> {
+    axum::Json(json!({
+        "message": "MCP HTTP server ready",
+        "instructions": "Use POST requests with JSON-RPC 2.0 payloads",
+        "example": { "jsonrpc": "2.0", "method": "tools/list", "id": 1 }
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,5 +316,37 @@ mod tests {
     async fn test_version_endpoint_advertises_latest_protocol() {
         let version = version_handler().await;
         assert_eq!(version.0["mcp_version"], MCP_PROTOCOL_VERSION);
+    }
+
+    #[test]
+    fn test_mcp_allowed_hosts_includes_defaults_custom_and_public_url() {
+        let cli = Cli {
+            transport: Transport::Dual,
+            addr: String::new(),
+            listen: "0.0.0.0".into(),
+            port: 8080,
+            public_url: "https://public.example.com/base".into(),
+            allowed_hosts: "time.example.com, fast_time_server".into(),
+            auth_token: String::new(),
+            log_level: "info".into(),
+        };
+
+        let hosts = mcp_allowed_hosts(&cli);
+
+        assert!(hosts.contains(&"localhost".to_owned()));
+        assert!(hosts.contains(&"time.example.com".to_owned()));
+        assert!(hosts.contains(&"public.example.com".to_owned()));
+        assert_eq!(
+            hosts
+                .iter()
+                .filter(|host| host.as_str() == "fast_time_server")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_public_url_host_ignores_invalid_url() {
+        assert_eq!(public_url_host("not a url"), None);
     }
 }

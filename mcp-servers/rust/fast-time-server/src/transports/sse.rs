@@ -14,16 +14,18 @@
 //! [`FastTimeServer::dispatch_tool`]. Only the JSON-RPC envelope, the protocol
 //! version echo, and the SSE session registry are bespoke.
 
-use axum::extract::Query;
+use axum::Router;
+use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
 use rmcp::ErrorData as McpError;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::pin::Pin;
-use std::sync::{LazyLock, RwLock};
+use std::sync::{Arc, LazyLock, RwLock};
 use std::task::{Context, Poll};
 use tokio::sync::mpsc;
 use tokio_stream::Stream;
@@ -43,6 +45,19 @@ static SERVER: LazyLock<FastTimeServer> = LazyLock::new(FastTimeServer::new);
 
 static SSE_SESSIONS: LazyLock<RwLock<HashMap<String, mpsc::Sender<String>>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
+
+#[derive(Clone)]
+struct SseState {
+    public_url: Arc<str>,
+}
+
+impl SseState {
+    fn new(public_url: &str) -> Self {
+        Self {
+            public_url: Arc::from(public_url.trim_end_matches('/')),
+        }
+    }
+}
 
 #[derive(Debug, serde::Deserialize)]
 pub(crate) struct MessageQuery {
@@ -66,8 +81,8 @@ struct SessionStream {
 }
 
 impl SessionStream {
-    fn new(session_id: String, receiver: mpsc::Receiver<String>) -> Self {
-        let endpoint = Some(format!("/messages?sessionId={session_id}"));
+    fn new(session_id: String, receiver: mpsc::Receiver<String>, public_url: &str) -> Self {
+        let endpoint = Some(endpoint_url(public_url, &session_id));
         Self {
             session_id,
             endpoint,
@@ -96,14 +111,22 @@ impl Drop for SessionStream {
     }
 }
 
-pub(crate) async fn handler() -> Response {
+pub(crate) fn routes(public_url: &str) -> Router {
+    Router::new()
+        .route("/sse", get(handler))
+        .route("/messages", post(message_handler))
+        .route("/message", post(message_handler))
+        .with_state(SseState::new(public_url))
+}
+
+async fn handler(State(state): State<SseState>) -> Response {
     let session_id = Uuid::new_v4().to_string();
     let (sender, receiver) = mpsc::channel(SSE_CHANNEL_CAPACITY);
     if !remember_session(session_id.clone(), sender) {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
 
-    Sse::new(SessionStream::new(session_id, receiver))
+    Sse::new(SessionStream::new(session_id, receiver, &state.public_url))
         .keep_alive(KeepAlive::default())
         .into_response()
 }
@@ -232,6 +255,15 @@ fn error_envelope(id: &Value, err: &McpError) -> String {
 
 fn error_envelope_code(id: &Value, code: i32, message: &str) -> String {
     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } }).to_string()
+}
+
+fn endpoint_url(public_url: &str, session_id: &str) -> String {
+    let path = format!("/messages?sessionId={session_id}");
+    if public_url.is_empty() {
+        path
+    } else {
+        format!("{public_url}{path}")
+    }
 }
 
 fn remember_session(session_id: String, sender: mpsc::Sender<String>) -> bool {
@@ -372,5 +404,14 @@ mod tests {
         .await;
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_endpoint_url_honors_public_url() {
+        assert_eq!(
+            endpoint_url("https://time.example.com/base", "abc"),
+            "https://time.example.com/base/messages?sessionId=abc"
+        );
+        assert_eq!(endpoint_url("", "abc"), "/messages?sessionId=abc");
     }
 }
