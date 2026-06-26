@@ -2779,7 +2779,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         # and decide (via init_affecting_changed) whether to propagate as a 502
                         # or swallow as a best-effort cosmetic update (see visibility note ~2256).
                         if init_affecting_changed and not isinstance(init_err, GatewayConnectionError):
-                            raise GatewayConnectionError(f"Failed to initialize gateway at {gateway.url}: {init_err}") from init_err
+                            safe_url = sanitize_url_for_logging(gateway.url, auth_query_params_decrypted)
+                            safe_msg = sanitize_exception_message(str(init_err), auth_query_params_decrypted)
+                            raise GatewayConnectionError(f"Failed to initialize gateway at {safe_url}: {safe_msg}") from init_err
                         raise
                     new_tool_names = [tool.name for tool in tools]
                     new_resource_uris = [resource.uri for resource in resources]
@@ -2825,7 +2827,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         # rolls back (nothing committed) and the API returns 502, matching
                         # POST /gateways behavior.
                         raise
-                    logger.warning(f"Failed to initialize updated gateway: {gce}")
+                    logger.warning("Failed to initialize updated gateway: %s", gce)
                     reinit_succeeded = False
                 except Exception as e:
                     logger.warning("Failed to initialize updated gateway: %s", e)
@@ -2983,9 +2985,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             )
             raise gnfe
         except GatewayConnectionError as gce:
-            logger.error(f"GatewayConnectionError during gateway update: {gce}")
+            logger.error("GatewayConnectionError during gateway update: %s", gce)
             db.rollback()
-            raise gce
+            raise
         except IntegrityError as ie:
             logger.error("IntegrityErrors in group: %s", ie)
             db.rollback()
