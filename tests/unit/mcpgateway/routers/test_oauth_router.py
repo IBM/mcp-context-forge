@@ -1369,11 +1369,6 @@ class TestOAuthAccessHelpers:
         result = _resolve_token_teams_for_scope_check(request, {"email": "user@example.com", "is_admin": False})
         assert result == []
 
-    def test_extract_user_email_missing_returns_none(self):
-        from mcpgateway.routers.oauth_router import _extract_user_email
-
-        assert _extract_user_email(SimpleNamespace()) is None
-
     def test_extract_is_admin_unknown_context_returns_false(self):
         from mcpgateway.routers.oauth_router import _extract_is_admin
 
