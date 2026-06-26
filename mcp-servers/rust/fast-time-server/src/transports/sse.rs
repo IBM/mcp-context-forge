@@ -35,6 +35,7 @@ use crate::config::{
     SUPPORTED_PROTOCOL_VERSIONS,
 };
 use crate::server::FastTimeServer;
+use crate::{prompts, resources};
 
 /// Shared server instance backing the legacy SSE transport. Tool schemas and
 /// execution are owned by `rmcp`; this shim only frames JSON-RPC around them.
@@ -142,16 +143,27 @@ async fn handle_jsonrpc(req: &Value) -> Option<String> {
         "ping" => success_envelope(id, json!({})),
         "tools/list" => success_envelope(id, json!({ "tools": SERVER.tool_definitions() })),
         "tools/call" => match dispatch_call(req).await {
-            Ok(result) => success_envelope(
-                id,
-                serde_json::to_value(result).unwrap_or_else(|_| json!({})),
-            ),
+            Ok(result) => success_envelope(id, to_value(result)),
+            Err(err) => error_envelope(id, &err),
+        },
+        "resources/list" => success_envelope(id, json!({ "resources": resources::list() })),
+        "resources/read" => match read_resource(req) {
+            Ok(result) => success_envelope(id, to_value(result)),
+            Err(err) => error_envelope(id, &err),
+        },
+        "prompts/list" => success_envelope(id, json!({ "prompts": prompts::list() })),
+        "prompts/get" => match get_prompt(req) {
+            Ok(result) => success_envelope(id, to_value(result)),
             Err(err) => error_envelope(id, &err),
         },
         _ => error_envelope_code(id, -32601, "Method not found"),
     };
 
     Some(body)
+}
+
+fn to_value<T: serde::Serialize>(value: T) -> Value {
+    serde_json::to_value(value).unwrap_or_else(|_| json!({}))
 }
 
 async fn dispatch_call(req: &Value) -> Result<rmcp::model::CallToolResult, McpError> {
@@ -164,10 +176,33 @@ async fn dispatch_call(req: &Value) -> Result<rmcp::model::CallToolResult, McpEr
     SERVER.dispatch_tool(name, &arguments).await
 }
 
+fn read_resource(req: &Value) -> Result<rmcp::model::ReadResourceResult, McpError> {
+    let uri = req
+        .get("params")
+        .and_then(|params| params.get("uri"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    resources::read(uri)
+}
+
+fn get_prompt(req: &Value) -> Result<rmcp::model::GetPromptResult, McpError> {
+    let params = req.get("params").cloned().unwrap_or(Value::Null);
+    let name = params
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
+    prompts::get(name, &arguments)
+}
+
 fn initialize_result(protocol_version: &str) -> Value {
     json!({
         "protocolVersion": protocol_version,
-        "capabilities": { "tools": {} },
+        "capabilities": {
+            "tools": {},
+            "resources": { "listChanged": true },
+            "prompts": { "listChanged": true }
+        },
         "serverInfo": { "name": APP_NAME, "version": APP_VERSION },
         "instructions": "Ultra-fast MCP test server."
     })

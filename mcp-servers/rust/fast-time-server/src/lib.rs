@@ -6,6 +6,8 @@
 mod app;
 mod config;
 mod delay;
+mod prompts;
+mod resources;
 mod rest;
 mod server;
 mod time;

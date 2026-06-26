@@ -14,11 +14,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::Utc;
 use rmcp::ErrorData as McpError;
+use rmcp::service::RequestContext;
 use rmcp::{
-    ServerHandler,
+    RoleServer, ServerHandler,
     handler::server::{tool::ToolRouter, wrapper::Parameters},
     model::{
-        CallToolResult, Content, Implementation, JsonObject, ProtocolVersion, ServerCapabilities,
+        CallToolResult, Content, GetPromptRequestParams, GetPromptResult, Implementation,
+        JsonObject, ListPromptsResult, ListResourcesResult, PaginatedRequestParams,
+        ProtocolVersion, ReadResourceRequestParams, ReadResourceResult, ServerCapabilities,
         ServerInfo, Tool,
     },
     schemars, tool, tool_handler, tool_router,
@@ -26,6 +29,8 @@ use rmcp::{
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
+
+use crate::{prompts, resources};
 
 use crate::config::{APP_NAME, APP_VERSION};
 use crate::delay::{compute_delay, validate_delay};
@@ -94,7 +99,16 @@ impl FastTimeServer {
         Ok(CallToolResult::success(vec![Content::text(params.message)]))
     }
 
-    #[tool(description = "Get current system time in the specified IANA timezone.")]
+    #[tool(
+        description = "Get current system time in the specified IANA timezone.",
+        annotations(
+            title = "Get System Time",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
     async fn get_system_time(
         &self,
         Parameters(params): Parameters<GetSystemTimeParams>,
@@ -113,7 +127,14 @@ impl FastTimeServer {
     }
 
     #[tool(
-        description = "Convert a time value from a source IANA timezone to a target IANA timezone."
+        description = "Convert a time value from a source IANA timezone to a target IANA timezone.",
+        annotations(
+            title = "Convert Time",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
     )]
     async fn convert_time(
         &self,
@@ -225,10 +246,51 @@ impl ServerHandler for FastTimeServer {
     fn get_info(&self) -> ServerInfo {
         // `Implementation::from_build_env()` reports rmcp's own crate identity, so
         // build it explicitly to match the legacy SSE shim's serverInfo.
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_protocol_version(ProtocolVersion::V_2025_11_25)
-            .with_server_info(Implementation::new(APP_NAME, APP_VERSION))
-            .with_instructions("Ultra-fast MCP test server.")
+        ServerInfo::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_prompts()
+                .enable_prompts_list_changed()
+                .enable_resources()
+                .enable_resources_list_changed()
+                .build(),
+        )
+        .with_protocol_version(ProtocolVersion::V_2025_11_25)
+        .with_server_info(Implementation::new(APP_NAME, APP_VERSION))
+        .with_instructions("Ultra-fast MCP test server.")
+    }
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, McpError> {
+        Ok(ListResourcesResult::with_all_items(resources::list()))
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResult, McpError> {
+        resources::read(&request.uri)
+    }
+
+    async fn list_prompts(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, McpError> {
+        Ok(ListPromptsResult::with_all_items(prompts::list()))
+    }
+
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<GetPromptResult, McpError> {
+        let arguments = request.arguments.map(Value::Object).unwrap_or(Value::Null);
+        prompts::get(&request.name, &arguments)
     }
 }
 

@@ -23,6 +23,16 @@ impl ParsedTimezone {
         }
     }
 
+    /// Format an instant in this zone using a chrono `strftime` pattern
+    /// (e.g. `"%Y-%m-%d %H:%M:%S %Z"`). `%Z` yields the zone abbreviation for
+    /// named zones and the numeric offset for fixed offsets.
+    pub(crate) fn format_local(self, utc: DateTime<Utc>, fmt: &str) -> String {
+        match self {
+            Self::Fixed(offset) => utc.with_timezone(&offset).format(fmt).to_string(),
+            Self::Named(tz) => utc.with_timezone(&tz).format(fmt).to_string(),
+        }
+    }
+
     fn local_datetime_to_utc(self, naive: &chrono::NaiveDateTime) -> Option<DateTime<Utc>> {
         match self {
             Self::Fixed(offset) => offset
