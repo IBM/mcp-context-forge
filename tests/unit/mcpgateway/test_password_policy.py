@@ -87,6 +87,19 @@ class TestPasswordPolicyService:
         with pytest.raises(PasswordPolicyError, match="sequential characters"):
             policy_service.validate_user_password("Abcd!Password1", "user@example.com")
 
+    def test_validate_user_password_sequential_chars_disabled(self, policy_service):
+        """Test that sequential character check can be disabled via settings."""
+        from mcpgateway.config import settings
+
+        original_value = getattr(settings, "password_prevent_sequential_chars", True)
+        try:
+            settings.password_prevent_sequential_chars = False
+            # These passwords contain sequential chars but should pass when check is disabled
+            assert policy_service.validate_user_password("Pass123word!", "user@example.com")
+            assert policy_service.validate_user_password("Abcd!Password1", "user@example.com")
+        finally:
+            settings.password_prevent_sequential_chars = original_value
+
     def test_validate_privileged_password_length(self, policy_service):
         """Test that privileged accounts require 22+ characters."""
         # 22 characters - should pass
