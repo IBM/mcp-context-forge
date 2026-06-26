@@ -81,8 +81,8 @@ from mcpgateway.auth_context import (
     get_scoped_resource_access_context,
     get_token_teams_from_request,
     get_user_email,
-    has_valid_internal_mcp_runtime_auth_header,
     INTERNAL_MCP_SESSION_VALIDATED_HEADER,
+    is_trusted_internal_mcp_request,
 )
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult
@@ -277,26 +277,26 @@ _INTERNAL_MCP_AUTH_CONTEXT_HEADER = "x-contextforge-auth-context"
 
 
 def _is_trusted_internal_mcp_runtime_request(request: Request) -> bool:
-    """Return whether the request came from the local Rust runtime sidecar.
+    """Return whether the request came from a trusted local internal source.
+
+    Two callers are trusted today:
+
+    - ``"rust"`` — the local Rust runtime sidecar (over loopback).
+    - ``"affinity"`` — the in-process dispatch used by session-affinity
+      forwarding to reach the owner worker, carrying the identity the edge
+      already validated.
+
+    Both share the same gates: a shared-secret HMAC header AND a loopback client
+    address. Only the ``x-contextforge-mcp-runtime`` marker value differs.
 
     Args:
         request: Incoming request to inspect.
 
     Returns:
-        ``True`` when the request carries the trusted Rust runtime marker from
-        loopback, otherwise ``False``.
+        ``True`` when the request carries a trusted internal-runtime marker
+        from loopback, otherwise ``False``.
     """
-    runtime_marker = request.headers.get("x-contextforge-mcp-runtime")
-    client_host = getattr(getattr(request, "client", None), "host", None)
-    if runtime_marker != "rust" or not has_valid_internal_mcp_runtime_auth_header(request) or client_host not in ("127.0.0.1", "::1"):
-        return False
-    # Defense-in-depth: /_internal/a2a/* endpoints must refuse requests when
-    # A2A support is disabled, even from an otherwise-trusted local sidecar.
-    # A legitimate sidecar should not be running when the feature is off.
-    path = getattr(getattr(request, "url", None), "path", "") or ""
-    if path.startswith("/_internal/a2a/") and not settings.mcpgateway_a2a_enabled:
-        return False
-    return True
+    return is_trusted_internal_mcp_request(request)
 
 
 def _is_jwt_token(token: str) -> bool:
