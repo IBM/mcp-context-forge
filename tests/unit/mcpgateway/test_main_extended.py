@@ -5920,7 +5920,7 @@ class TestUtilityFunctions:
         monkeypatch.setattr(main_mod.session_registry, "set_session_owner", AsyncMock())
         monkeypatch.setattr(main_mod.session_registry, "respond", AsyncMock(return_value=None))
         monkeypatch.setattr(main_mod.session_registry, "register_respond_task", MagicMock())
-        monkeypatch.setattr(main_mod.asyncio, "create_task", MagicMock(return_value=MagicMock()))
+        monkeypatch.setattr(main_mod.asyncio, "create_task", MagicMock(return_value=AsyncMock()))
 
         remove_session = AsyncMock(side_effect=Exception("boom"))
         monkeypatch.setattr(main_mod.session_registry, "remove_session", remove_session)

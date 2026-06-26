@@ -719,7 +719,7 @@ class TestGatewayService:
     async def test_register_gateway_encrypts_oauth_sensitive_values(self, gateway_service, test_db, monkeypatch):
         """register_gateway encrypts oauth_config secrets before persistence."""
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
-        test_db.flush = Mock()
+        test_db.commit = Mock()
         test_db.refresh = Mock()
         test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(all=Mock(return_value=[])))))
         gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], [], []))

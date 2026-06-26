@@ -880,7 +880,6 @@ async def test_process_deleting_gateway_hard_deletes_and_finalizes():
     service._hard_delete_gateway.assert_called_once_with(db, gateway)
     db.commit.assert_called_once()
     service._finalize_gateway_deletion.assert_awaited_once_with(
-        db=db,
         gateway_id="gw-1",
         gateway_info={"id": "gw-1", "name": "gw-name", "url": "http://example.com"},
         gateway_name="gw-name",
@@ -1123,7 +1122,6 @@ async def test_finalize_gateway_deletion_runs_cache_event_and_audit_finalizers(m
     gateway_info = {"id": "gw-1", "name": "gw-name", "url": "http://example.com"}
 
     await service._finalize_gateway_deletion(
-        db=db,
         gateway_id="gw-1",
         gateway_info=gateway_info,
         gateway_name="gw-name",

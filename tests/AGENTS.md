@@ -202,6 +202,10 @@ async def test_with_mock():
         assert result["status"] == "ok"
 ```
 
+### Asserting on Mocked Call Arguments
+
+For regression tests that assert a specific keyword argument was (or was not) passed to a mocked call, add a small module-level `_assert_*` helper instead of repeating the inspection logic in every test. See `test_*_audit_no_db.py` under `tests/unit/mcpgateway/services/` for the pattern (`_assert_no_db_passed`), which checks `call_args_list` for an absent `db=` kwarg and validates `action`/`resource_type` correctness.
+
 ## Coverage Workflow
 
 1. Run coverage: `make coverage` or `make htmlcov`

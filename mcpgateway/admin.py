@@ -17759,7 +17759,7 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
 
         # Create audit trail for plugin access
         audit_service.log_audit(
-            user_id=get_user_id(user), user_email=get_user_email(user), resource_type="plugin", resource_id=name, action="view", description=f"Viewed plugin '{name}' details in marketplace", db=db
+            user_id=get_user_id(user), user_email=get_user_email(user), resource_type="plugin", resource_id=name, action="view", description=f"Viewed plugin '{name}' details in marketplace"
         )
 
         return PluginDetail(**plugin)
