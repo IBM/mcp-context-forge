@@ -2525,8 +2525,7 @@ def _load_trusted_provider_map(db: "Session") -> "dict[str, str]":
         normalized = p.issuer.rstrip("/")
         if internal_issuer and normalized == internal_issuer:
             logger.warning(
-                "SSOProvider id=%s has issuer matching internal jwt_issuer (%s) — "
-                "its tokens will never reach the external-IdP path (dead config)",
+                "SSOProvider id=%s has issuer matching internal jwt_issuer (%s) — its tokens will never reach the external-IdP path (dead config)",
                 p.id,
                 normalized,
             )
