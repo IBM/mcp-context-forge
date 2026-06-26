@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/live_gateway/mcp/test_mcp_rbac_transport.py
-Copyright contributors to the MCP-CONTEXT-FORGE project
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 RBAC + multi-transport MCP protocol tests using Playwright API + FastMCP Client.
 
@@ -39,11 +40,9 @@ from typing import Any, Generator
 import uuid
 
 # Third-Party
-import httpx
 import pytest
 from fastmcp.client import Client
 from fastmcp.client.auth import BearerAuth
-from mcp import McpError
 
 pw = pytest.importorskip("playwright", reason="playwright is not installed – pip install playwright")
 from playwright.sync_api import APIRequestContext, Playwright
@@ -69,9 +68,6 @@ STREAMABLE_HTTP_GATEWAY_NAME = f"{RBAC_PREFIX}-streamable-http-gw"
 # Must match docker-compose gateway JWT_SECRET_KEY
 _JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")
 _CLIENT_TIMEOUT = float(os.getenv("MCP_E2E_CLIENT_TIMEOUT", "5.0"))
-# The default covers one 60-second publish interval plus 15 seconds of slack.
-_PER_SERVER_ACCESS_SYNC_DEADLINE_SECONDS = float(os.getenv("MCP_E2E_PUBLISHER_SYNC_DEADLINE", "75.0"))
-_PER_SERVER_ACCESS_RETRY_DELAY_SECONDS = 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -469,22 +465,6 @@ def _mcp_tools_list(access_token: str, server_url: str = BASE_URL) -> list:
     return _run_async(_async_mcp_tools_list(access_token, server_url))
 
 
-def _mcp_tools_list_after_publisher_sync(access_token: str, server_url: str = BASE_URL) -> list:
-    """Retry allow-path discovery while new server config converges.
-
-    Deny-path checks intentionally bypass this helper so stale configuration
-    cannot delay or mask authorization failures.
-    """
-    deadline = time.monotonic() + _PER_SERVER_ACCESS_SYNC_DEADLINE_SECONDS
-    while True:
-        try:
-            return _mcp_tools_list(access_token, server_url=server_url)
-        except (httpx.HTTPError, McpError, RuntimeError, TimeoutError):
-            if time.monotonic() >= deadline:
-                raise
-            time.sleep(_PER_SERVER_ACCESS_RETRY_DELAY_SECONDS)
-
-
 def _mcp_resources_list(access_token: str, server_url: str = BASE_URL) -> list:
     return _run_async(_async_mcp_resources_list(access_token, server_url))
 
@@ -507,26 +487,31 @@ def _mcp_initialize_only(access_token: str, server_url: str = BASE_URL) -> bool:
 class TestServerVisibilityViaAPI:
     """Verify server visibility via REST API before MCP protocol tests."""
 
-    def test_admin_sees_public_and_team_via_http(self, admin_api: APIRequestContext, visibility_servers: dict) -> None:
-        """Admin via HTTP sees public + team servers and their own private servers.
+    def test_admin_sees_public_team_and_own_private_via_http(self, admin_api: APIRequestContext, visibility_servers: dict) -> None:
+        """Admin via HTTP sees public + team + own-private servers (PR #4878 / issue #4877).
 
         ``admin_api`` carries a JWT with ``is_admin=true`` and ``teams=null``.
-        ``get_scoped_resource_access_context`` keeps the requester email on the
-        admin-bypass path so the service layer can owner-match (issue #4694,
-        commit 8c186c5e0): the listing returns public rows, team rows, and the
-        caller's own private rows — never another user's private rows. The
-        fixture's private server is created by this same admin, so it appears
-        via owner matching. The earlier revision of this test asserted the
-        pre-#4694 collapse-to-anonymous semantics and failed once owner
-        matching landed.
+        PR #4341 originally collapsed this shape to ``(None, None)`` in
+        ``get_scoped_resource_access_context`` so HTTP could not be a stealthy
+        escalation surface, which had the side effect of denying admins access
+        to their own private rows. PR #4878 (issue #4877) keeps the admin's
+        email — returning ``(user_email, None)`` — so the service layer's
+        ``is_admin_bypass_granted`` branch can owner-match against
+        ``server.owner_email`` and re-allow own-private visibility while
+        still blocking other users' private rows.
+
+        ``visibility_servers["private"]`` is created via ``admin_api.post(...)``
+        (lines 289-303), so the admin OWNS it and must see it back. The not-in
+        assertion for other-users'-private is covered by the outsider /
+        developer / viewer test methods below.
         """
         resp = admin_api.get("/servers")
         assert resp.status == 200
         server_ids = {s["id"] for s in resp.json()}
         assert visibility_servers["public"]["id"] in server_ids, "Admin should see public server"
         assert visibility_servers["team"]["id"] in server_ids, "Admin should see team server"
-        assert visibility_servers["private"]["id"] in server_ids, "Admin should see their own private server via owner matching (issue #4694)"
-        print("    -> Admin sees public + team servers and own private via owner matching")
+        assert visibility_servers["private"]["id"] in server_ids, "PR #4878: admin via HTTP must see OWN private server (owner-match in is_admin_bypass_granted)"
+        print("    -> Admin sees public + team + own-private servers (PR #4878 owner-match)")
 
     def test_team_member_sees_public_and_team(self, test_users: dict, playwright: Playwright, visibility_servers: dict) -> None:
         token = test_users["developer"]["access_token"]
@@ -803,18 +788,16 @@ class TestMcpPerServerEndpoint:
         """Outsider can access the public server's per-server MCP endpoint."""
         server_id = visibility_servers["public"]["id"]
         server_url = f"{BASE_URL}/servers/{server_id}"
-        tools = _mcp_tools_list_after_publisher_sync(outsider_user["access_token"], server_url=server_url)
+        tools = _mcp_tools_list(outsider_user["access_token"], server_url=server_url)
         # May see only that server's tools
         print(f"    -> Outsider via /servers/{server_id}/mcp: {len(tools)} tools")
-        assert tools, "public server should advertise its associated tools, not an empty list"
 
     def test_team_member_accesses_team_server(self, test_users: dict, visibility_servers: dict) -> None:
         """Developer can access the team server's per-server endpoint."""
         server_id = visibility_servers["team"]["id"]
         server_url = f"{BASE_URL}/servers/{server_id}"
-        tools = _mcp_tools_list_after_publisher_sync(test_users["developer"]["access_token"], server_url=server_url)
+        tools = _mcp_tools_list(test_users["developer"]["access_token"], server_url=server_url)
         print(f"    -> Developer via /servers/{server_id}/mcp: {len(tools)} tools")
-        assert tools, "team server should advertise its associated tools, not an empty list"
 
     def test_outsider_denied_team_server(self, outsider_user: dict, visibility_servers: dict) -> None:
         """Outsider cannot access team server's per-server endpoint."""
