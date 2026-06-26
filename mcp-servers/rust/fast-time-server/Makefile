@@ -1,11 +1,11 @@
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#   🦀 FAST-TEST-SERVER - Makefile
+#   🦀 FAST-TIME-SERVER - Makefile
 #   Ultra-fast MCP server in Rust for performance testing
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #
 # Usage: make <target>  or just `make help`
 #
-# help: 🦀 FAST-TEST-SERVER (Rust build & automation helpers)
+# help: 🦀 FAST-TIME-SERVER (Rust build & automation helpers)
 # ─────────────────────────────────────────────────────────────────────────
 
 # =============================================================================

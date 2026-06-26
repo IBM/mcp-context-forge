@@ -200,7 +200,7 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 ??? example "End-to-end demo (register a local MCP server)"
 
     ```bash
-    # 1️⃣  Spin up the sample GO MCP time server using mcpgateway.translate & docker
+    # 1️⃣  Spin up the sample MCP time server using mcpgateway.translate & docker
     python3 -m mcpgateway.translate \
          --stdio "docker run --rm -i ghcr.io/ibm/fast-time-server:latest -transport=stdio" \
          --expose-sse \
