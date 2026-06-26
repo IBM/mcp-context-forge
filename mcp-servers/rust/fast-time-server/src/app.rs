@@ -22,6 +22,7 @@ use crate::config::{
     APP_NAME, APP_VERSION, MAX_ACTIVE_SESSIONS, MCP_PROTOCOL_VERSION, SESSION_HEADER,
 };
 use crate::rest;
+use crate::rest_v1;
 use crate::server::FastTimeServer;
 use crate::transports::sse;
 
@@ -148,18 +149,23 @@ fn router(auth_token: Option<String>) -> Router {
     let app = Router::new()
         .route("/health", axum::routing::get(health_handler))
         .route("/version", axum::routing::get(version_handler))
+        // High-throughput benchmark endpoints (Rust-specific).
         .route("/api/echo", axum::routing::post(rest::echo_handler))
         .route("/api/time", axum::routing::get(rest::time_handler))
+        // Full Go-parity REST surface.
+        .merge(rest_v1::routes())
         // Legacy HTTP+SSE transport — hand-rolled shim (see transports/sse.rs).
         .route("/sse", axum::routing::get(sse::handler))
         .route("/messages", axum::routing::post(sse::message_handler))
         .route("/message", axum::routing::post(sse::message_handler))
         .nest("/mcp", mcp);
 
-    match auth_token {
+    let app = match auth_token {
         Some(token) => app.layer(from_fn_with_state(Arc::new(token), auth_gate)),
         None => app,
-    }
+    };
+    // CORS is the outermost layer so preflight OPTIONS is answered without auth.
+    app.layer(axum::middleware::from_fn(rest_v1::cors))
 }
 
 /// Cap concurrent Streamable HTTP sessions at `MAX_ACTIVE_SESSIONS`. Requests

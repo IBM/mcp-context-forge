@@ -1,10 +1,9 @@
 // Copyright 2026
 // SPDX-License-Identifier: Apache-2.0
 
-#[cfg(test)]
 use chrono::Offset;
 use chrono::{DateTime, FixedOffset, SecondsFormat, TimeZone, Utc};
-use chrono_tz::Tz;
+use chrono_tz::{OffsetComponents, OffsetName, Tz};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ParsedTimezone {
@@ -33,6 +32,24 @@ impl ParsedTimezone {
         }
     }
 
+    /// Offset (seconds east of UTC), whether DST is currently active, and the
+    /// zone abbreviation at the given instant. Used by `/api/v1/timezones/{tz}`.
+    pub(crate) fn zone_details(self, utc: DateTime<Utc>) -> (i32, bool, String) {
+        match self {
+            Self::Fixed(offset) => {
+                let secs = offset.local_minus_utc();
+                (secs, false, format_fixed_offset(secs))
+            }
+            Self::Named(tz) => {
+                let offset = tz.offset_from_utc_datetime(&utc.naive_utc());
+                let secs = offset.fix().local_minus_utc();
+                let is_dst = !offset.dst_offset().is_zero();
+                let abbreviation = offset.abbreviation().unwrap_or_default().to_string();
+                (secs, is_dst, abbreviation)
+            }
+        }
+    }
+
     fn local_datetime_to_utc(self, naive: &chrono::NaiveDateTime) -> Option<DateTime<Utc>> {
         match self {
             Self::Fixed(offset) => offset
@@ -53,6 +70,13 @@ impl ParsedTimezone {
             Self::Named(tz) => utc.with_timezone(&tz).offset().fix().local_minus_utc(),
         }
     }
+}
+
+/// Format a fixed UTC offset (in seconds) as `+HH:MM` / `-HH:MM`.
+fn format_fixed_offset(secs: i32) -> String {
+    let sign = if secs < 0 { '-' } else { '+' };
+    let abs = secs.abs();
+    format!("{sign}{:02}:{:02}", abs / 3600, (abs % 3600) / 60)
 }
 
 /// Parse an IANA timezone name or fixed UTC offset.

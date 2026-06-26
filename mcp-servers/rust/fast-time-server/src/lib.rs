@@ -10,6 +10,7 @@ mod delay;
 mod prompts;
 mod resources;
 mod rest;
+mod rest_v1;
 mod server;
 mod time;
 mod transports;
