@@ -66,6 +66,7 @@
   --color-tool-status-active: var(--tool-status-active);
   --color-tool-status-inactive: var(--tool-status-inactive);
   --color-tool-badge-bg: var(--tool-badge-bg);
+  --color-tool-badge-fg: var(--tool-badge-fg);
   --color-tool-add-icon-bg: var(--tool-add-icon-bg);
   --color-tool-add-icon-fg: var(--tool-add-icon-fg);
   --radius-xl: calc(var(--radius) * 1.4);
@@ -118,7 +119,8 @@
   --prompt-icon-bg: #6fff9f;
   --tool-status-active: var(--color-emerald-500);
   --tool-status-inactive: var(--color-gray-500);
-  --tool-badge-bg: var(--color-neutral-800);
+  --tool-badge-bg: var(--color-neutral-200);
+  --tool-badge-fg: var(--color-neutral-800);
   --tool-add-icon-bg: var(--color-neutral-900);
   --tool-add-icon-fg: var(--color-white);
   --chart-1: oklch(0.87 0 0);
@@ -163,6 +165,8 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+  --tool-badge-bg: var(--color-neutral-800);
+  --tool-badge-fg: var(--color-white);
   --tool-add-icon-bg: var(--color-white);
   --tool-add-icon-fg: var(--color-neutral-900);
 }
