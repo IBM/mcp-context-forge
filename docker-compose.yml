@@ -695,13 +695,15 @@ services:
       - MCP_SESSION_POOL_CLEANUP_TIMEOUT=0.5                    # Session __aexit__ timeout (default: 5.0)
       - SSE_TASK_GROUP_CLEANUP_TIMEOUT=0.5                      # SSE task group timeout (default: 5.0)
       # ─────────────────────────────────────────────────────────────────────────
-      # Layer 3: EXPERIMENTAL - anyio Monkey-Patch
+      # Layer 3: EXPERIMENTAL - anyio Monkey-Patch (DISABLED)
       # ─────────────────────────────────────────────────────────────────────────
-      # Last resort: patches anyio to limit _deliver_cancellation iterations.
-      # Enable only if Layers 1-2 don't fully resolve the issue.
-      # WARNING: May be removed when anyio/MCP SDK fix upstream issue.
-      - ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=true              # Enable workaround - TESTING
-      - ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS=500              # Max iterations before giving up (~60ms recovery)
+      # The patch in mcpgateway/transports/sse_transport.py sets a custom
+      # attribute on anyio's CancelScope, which fails with AttributeError on
+      # newer anyio versions that added __slots__ to CancelScope. Keep this
+      # disabled until the patch is rewritten to use external iteration
+      # tracking (e.g. WeakKeyDictionary) instead of attribute assignment.
+      - ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=false
+      - ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS=500              # Only used when patch is enabled
 
       # ═══════════════════════════════════════════════════════════════════════════
       # Execution Metrics Recording
@@ -1528,21 +1530,30 @@ services:
 ###############################################################################
 
   ###############################################################################
-  # Fast Time Server - High-performance time/timezone service for MCP
-  # Uses pre-built image by default. On ARM64, build locally:
-  #   FAST_TIME_IMAGE=mcpgateway/fast-time-server:local docker compose build fast_time_server
+  # Fast Time Server - High-performance MCP time/timezone service.
+  # The legacy Go implementation was removed upstream; this service now builds
+  # the Rust crate at mcp-servers/rust/fast-time-server (same Containerfile as
+  # fast_test_server). Build context is the workspace root so the crate can
+  # resolve its Cargo workspace inheritance.
   ###############################################################################
   fast_time_server:
-    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/fast-time-server:latest}
     build:
-      context: ./mcp-servers/go/fast-time-server
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: mcp-servers/rust/fast-time-server/Containerfile
+    image: mcpgateway/fast-time-server:latest
     restart: unless-stopped
     networks: [mcpnet]
     ports:
       - "8888:8080"    # Map host port 8888 to container port 8080
-    # Use dual mode for both SSE (/sse) and Streamable HTTP (/http) endpoints
-    command: ["-transport=dual", "-listen=0.0.0.0", "-port=8080", "-log-level=info"]
+    environment:
+      - BIND_ADDRESS=0.0.0.0:8080
+      - RUST_LOG=info
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
 
   ###############################################################################
   # Auto-registration service - registers fast_time_server with gateway
@@ -1709,7 +1720,7 @@ services:
             try:
                 result = api_request_with_retry('POST', '/gateways', {
                     'name': 'fast_time',
-                    'url': 'http://fast_time_server:8080/http',
+                    'url': 'http://fast_time_server:8080/mcp',
                     'transport': 'STREAMABLEHTTP'
                 })
                 print(f'Registration response: {result}')
@@ -1818,144 +1829,6 @@ services:
         echo "Token written to /tmp/gateway-token.txt"
 
         echo "✅ Setup complete!"
-
-  ###############################################################################
-  # Auto-registration service - registers fast_time_server SSE with gateway
-  # Provides always-available SSE transport for manual testing and E2E RBAC tests.
-  # RBAC tests (test_mcp_rbac_transport.py) create additional team/private servers
-  # dynamically; this service only registers the base public SSE gateway + server.
-  ###############################################################################
-  register_fast_time_sse:
-    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
-    networks: [mcpnet]
-    depends_on:
-      register_fast_time:
-        condition: service_completed_successfully
-    environment:
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
-    restart: "no"
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -e
-        echo "Registering fast_time_server SSE transport with gateway..."
-
-        # Generate JWT token
-        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret $$JWT_SECRET_KEY --algo HS256 2>/dev/null)
-
-        python3 -c "
-        import json
-        import os
-        import sys
-        import time
-        import urllib.request
-
-        token = os.environ.get('MCPGATEWAY_BEARER_TOKEN', '')
-
-        def api_request(method, path, data=None):
-            url = f'http://gateway:4444{path}'
-            req = urllib.request.Request(url, method=method)
-            req.add_header('Authorization', f'Bearer {token}')
-            req.add_header('Content-Type', 'application/json')
-            if data:
-                req.data = json.dumps(data).encode('utf-8')
-            with urllib.request.urlopen(req) as response:
-                return json.loads(response.read().decode('utf-8'))
-
-        # Delete existing SSE gateway if present
-        try:
-            gateways = api_request('GET', '/gateways')
-            for gw in gateways:
-                if gw.get('name') == 'fast_time_sse':
-                    print(f'Found existing SSE gateway {gw[\"id\"]}, deleting...')
-                    api_request('DELETE', f'/gateways/{gw[\"id\"]}')
-        except Exception as e:
-            print(f'Note: {e}')
-
-        # Delete existing SSE virtual server if present (using fixed ID)
-        SSE_VIRTUAL_SERVER_ID = 'a88e2c3f5d7b4a9e8f1c6d2e3b4a5f6e'
-        try:
-            api_request('DELETE', f'/servers/{SSE_VIRTUAL_SERVER_ID}')
-            print(f'Deleted existing SSE virtual server {SSE_VIRTUAL_SERVER_ID}')
-        except Exception as e:
-            print(f'Note: No existing SSE virtual server to delete (or error: {e})')
-
-        # Register SSE gateway
-        print('Registering SSE gateway...')
-        try:
-            result = api_request('POST', '/gateways', {
-                'name': 'fast_time_sse',
-                'url': 'http://fast_time_server:8080/sse',
-                'transport': 'SSE'
-            })
-            gateway_id = result.get('id')
-            print(f'SSE gateway registered (id: {gateway_id})')
-        except Exception as e:
-            print(f'Failed to register SSE gateway: {e}')
-            sys.exit(1)
-
-        # Wait for tool sync
-        print('Waiting for SSE tools to sync...')
-        for i in range(30):
-            time.sleep(1)
-            try:
-                tools = api_request('GET', '/tools')
-                sse_tools = [t for t in tools if t.get('gatewayId') == gateway_id]
-                if sse_tools:
-                    print(f'Found {len(sse_tools)} SSE tools')
-                    break
-            except Exception:
-                pass
-            print(f'Waiting for SSE sync... ({i+1}/30)')
-        else:
-            print('Warning: No SSE tools synced, continuing anyway...')
-
-        # Fetch SSE tools/resources/prompts
-        tool_ids = []
-        resource_ids = []
-        prompt_ids = []
-
-        try:
-            tools = api_request('GET', '/tools')
-            tool_ids = [t['id'] for t in tools if t.get('gatewayId') == gateway_id]
-            print(f'SSE tools: {[t[\"name\"] for t in tools if t.get(\"gatewayId\") == gateway_id]}')
-        except Exception as e:
-            print(f'Failed to fetch SSE tools: {e}')
-
-        try:
-            resources = api_request('GET', '/resources')
-            resource_ids = [r['id'] for r in resources if r.get('gatewayId') == gateway_id]
-        except Exception as e:
-            print(f'Failed to fetch SSE resources: {e}')
-
-        try:
-            prompts = api_request('GET', '/prompts')
-            prompt_ids = [p['id'] for p in prompts if p.get('gatewayId') == gateway_id]
-        except Exception as e:
-            print(f'Failed to fetch SSE prompts: {e}')
-
-        # Create virtual server
-        print('Creating SSE virtual server...')
-        try:
-            server_payload = {
-                'server': {
-                    'id': SSE_VIRTUAL_SERVER_ID,
-                    'name': 'Fast Time SSE Server',
-                    'description': 'Virtual server exposing Fast Time MCP tools via SSE transport',
-                    'associated_tools': tool_ids,
-                    'associated_resources': resource_ids,
-                    'associated_prompts': prompt_ids
-                }
-            }
-            result = api_request('POST', '/servers', server_payload)
-            print(f'SSE virtual server created: {result}')
-            print(f'Successfully created SSE virtual server with {len(tool_ids)} tools')
-        except Exception as e:
-            print(f'Failed to create SSE virtual server: {e}')
-            sys.exit(1)
-        "
-
-        echo "SSE registration complete!"
 
   ###############################################################################
   # Slow Time Server - Configurable-latency MCP server for timeout/resilience testing

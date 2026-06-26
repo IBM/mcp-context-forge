@@ -449,13 +449,15 @@ services:
       - MCP_SESSION_POOL_CLEANUP_TIMEOUT=0.5                    # Session __aexit__ timeout (default: 5.0)
       - SSE_TASK_GROUP_CLEANUP_TIMEOUT=0.5                      # SSE task group timeout (default: 5.0)
       # ─────────────────────────────────────────────────────────────────────────
-      # Layer 3: EXPERIMENTAL - anyio Monkey-Patch
+      # Layer 3: EXPERIMENTAL - anyio Monkey-Patch (DISABLED)
       # ─────────────────────────────────────────────────────────────────────────
-      # Last resort: patches anyio to limit _deliver_cancellation iterations.
-      # Enable only if Layers 1-2 don't fully resolve the issue.
-      # WARNING: May be removed when anyio/MCP SDK fix upstream issue.
-      - ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=true              # Enable workaround - TESTING
-      - ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS=500              # Max iterations before giving up (~60ms recovery)
+      # The patch in mcpgateway/transports/sse_transport.py sets a custom
+      # attribute on anyio's CancelScope, which fails with AttributeError on
+      # newer anyio versions that added __slots__ to CancelScope. Keep this
+      # disabled until the patch is rewritten to use external iteration
+      # tracking (e.g. WeakKeyDictionary) instead of attribute assignment.
+      - ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=false
+      - ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS=500              # Only used when patch is enabled
 
       # ═══════════════════════════════════════════════════════════════════════════
       # Execution Metrics Recording
@@ -1125,21 +1127,30 @@ services:
 ###############################################################################
 
   ###############################################################################
-  # Fast Time Server - High-performance time/timezone service for MCP
-  # Uses pre-built image by default. On ARM64, build locally:
-  #   FAST_TIME_IMAGE=mcpgateway/fast-time-server:local docker compose build fast_time_server
+  # Fast Time Server - High-performance MCP time/timezone service.
+  # The legacy Go implementation was removed upstream; this service now builds
+  # the Rust crate at mcp-servers/rust/fast-time-server (same Containerfile as
+  # fast_test_server). Build context is the workspace root so the crate can
+  # resolve its Cargo workspace inheritance.
   ###############################################################################
   fast_time_server:
-    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/fast-time-server:latest}
     build:
-      context: ./mcp-servers/go/fast-time-server
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: mcp-servers/rust/fast-time-server/Containerfile
+    image: mcpgateway/fast-time-server:latest
     restart: unless-stopped
     networks: [mcpnet]
     ports:
       - "8888:8080"    # Map host port 8888 to container port 8080
-    # Use dual mode for both SSE (/sse) and Streamable HTTP (/http) endpoints
-    command: ["-transport=dual", "-listen=0.0.0.0", "-port=8080", "-log-level=info"]
+    environment:
+      - BIND_ADDRESS=0.0.0.0:8080
+      - RUST_LOG=info
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
 
   ###############################################################################
   # Auto-registration service - registers fast_time_server with gateway
@@ -1290,7 +1301,7 @@ services:
         try:
             result = api_request('POST', '/gateways', {
                 'name': 'fast_time',
-                'url': 'http://fast_time_server:8080/http',
+                'url': 'http://fast_time_server:8080/mcp',
                 'transport': 'STREAMABLEHTTP'
             })
             print(f'Registration response: {result}')
