@@ -684,7 +684,7 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"deprecated": true}' \
   $BASE_URL/tools/$TOOL_ID
-# Response: {"detail": "sunsetDate is required when deprecated=True"}
+# Response: {"detail": "sunsetDate is required when deprecated=True. Please provide a future date when this tool will be sunset."}
 
 # ❌ FAILS: sunsetDate must be in the future
 curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
@@ -694,7 +694,7 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
     "sunsetDate": "2020-01-01T00:00:00Z"
   }' \
   $BASE_URL/tools/$TOOL_ID
-# Response: {"detail": "sunsetDate must be in the future"}
+# Response: {"detail": "sunsetDate must be in the future. Provided: 2020-01-01T00:00:00+00:00, Current time: 2026-06-26T..."}
 
 # ✅ SUCCEEDS: Valid future sunsetDate
 curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
@@ -776,7 +776,7 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
     }
   }' \
   $BASE_URL/rpc
-# Response: {"error": {"code": -32001, "message": "Tool not found or not available"}}
+# Response: {"error": {"code": -32603, "message": "Tool 'sunset_tool' has been sunset and can no longer be executed. Sunset date: 2026-06-26. Please update your agent to use an alternative tool."}}
 ```
 
 ### Enable/Disable Tool

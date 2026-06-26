@@ -171,15 +171,26 @@ Before any validation layers execute, tool invocation checks the tool's lifecycl
 **Rule:**
 
 ```python
-if not tool.enabled:
-    raise ToolNotFoundError(f"Tool {tool_name} not found or not available")
+# Check if tool is sunset (past sunset_date)
+sunset_date_str = tool_payload.get("sunset_date")
+if sunset_date_str:
+    sunset_date = dateutil_parser.isoparse(sunset_date_str)
+    now = datetime.now(timezone.utc)
+    if sunset_date.tzinfo is None:
+        sunset_date = sunset_date.replace(tzinfo=timezone.utc)
+    if sunset_date <= now:
+        raise ToolInvocationError(
+            f"Tool '{name}' has been sunset and can no longer be executed. "
+            f"Sunset date: {sunset_date.strftime('%Y-%m-%d')}. "
+            f"Please update your agent to use an alternative tool."
+        )
 ```
 
 **Behavior:**
 
-1. **Active tools** (`deprecated=false, enabled=true`): Execute normally through validation pipeline
-2. **Deprecated tools** (`deprecated=true, enabled=true`): Execute normally with lifecycle metadata in response
-3. **Sunset tools** (`deprecated=true, enabled=false`): Blocked before any validation occurs
+1. **Active tools** (`deprecated=false`): Execute normally through validation pipeline
+2. **Deprecated tools** (`deprecated=true, sunset_date` in future): Execute normally with lifecycle metadata in response
+3. **Sunset tools** (`sunset_date <= now()`): Blocked before any validation occurs with descriptive error message
 
 ### Automated Sunset Transition
 
@@ -188,7 +199,7 @@ Tools transition from deprecated to sunset automatically:
 - **Scheduler:** Background service runs every 60 minutes (configurable via `SUNSET_SCHEDULER_INTERVAL_MINUTES`)
 - **Query:** `WHERE deprecated=true AND sunset_date <= now() AND enabled=true`
 - **Action:** Atomically sets `enabled=false` and invalidates tool cache
-- **Effect:** Subsequent invocation attempts return `404 Not Found`
+- **Effect:** Subsequent invocation attempts are blocked during the sunset date check in `invoke_tool` (the `enabled=false` flag is set by scheduler for consistency, but invocation blocking is based on `sunset_date <= now()` comparison)
 
 ### Integration with Validation Pipeline
 

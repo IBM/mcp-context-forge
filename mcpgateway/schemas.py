@@ -593,8 +593,8 @@ class ToolCreate(BaseModel):
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
     tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the tool")
-    deprecated: Optional[bool] = Field(default=False, description="Whether the tool is deprecated (visible but non-executable)")
-    sunset_date: Optional[datetime] = Field(None, alias="sunsetDate", description="Date when deprecated tool will be sunset (disabled). Required when deprecated=True")
+    deprecated: Optional[bool] = Field(default=False, description="Whether the tool is deprecated (visible and executable until sunset_date)")
+    sunset_date: Optional[datetime] = Field(None, alias="sunsetDate", description="Date when deprecated tool will be sunset (disabled and non-executable). Required when deprecated=True")
 
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
@@ -1197,8 +1197,8 @@ class ToolUpdate(BaseModelWithConfigDict):
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the tool")
-    deprecated: Optional[bool] = Field(None, description="Whether the tool is deprecated (visible but non-executable)")
-    sunset_date: Optional[datetime] = Field(None, alias="sunsetDate", description="Date when deprecated tool will be sunset (disabled). Required when deprecated=True")
+    deprecated: Optional[bool] = Field(None, description="Whether the tool is deprecated (visible and executable until sunset_date)")
+    sunset_date: Optional[datetime] = Field(None, alias="sunsetDate", description="Date when deprecated tool will be sunset (disabled and non-executable). Required when deprecated=True")
     visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
 
     # Passthrough REST fields

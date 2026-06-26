@@ -66,7 +66,7 @@ curl -X PUT http://localhost:4444/tools/123 \
 
 # Day 0-89: Tool remains executable, users see deprecation warnings
 # Day 90: Scheduler automatically disables tool (enabled=false)
-# Day 90+: Tool invocation attempts return 404 Not Found
+# Day 90+: Tool invocation attempts raise ToolInvocationError with sunset message
 ```
 
 ## Viewing Lifecycle State
@@ -147,16 +147,26 @@ Check scheduler activity in logs:
 
 ```bash
 # View sunset transitions
-grep "Tool sunset" /var/log/mcpgateway.log
+grep "Processing.*tools for sunset" /var/log/mcpgateway.log
 
 # Example log entry
+INFO: Processing 2 tools for sunset: ['legacy_tool', 'old_api']
+```
+
+Audit trail entries are also created for each sunset transition:
+
+```json
 {
-  "timestamp": "2026-06-26T14:30:00Z",
-  "level": "INFO",
-  "message": "Tool sunset by scheduler",
-  "tool_id": 123,
-  "tool_name": "legacy_tool",
-  "sunset_date": "2026-06-26T00:00:00Z"
+  "user_id": "sunset_scheduler",
+  "action": "tool_sunset",
+  "resource_type": "tool",
+  "resource_id": "123",
+  "resource_name": "legacy_tool",
+  "details": {
+    "sunset_date": "2026-06-26T00:00:00Z",
+    "automated": true,
+    "timestamp": "2026-06-26T14:30:00Z"
+  }
 }
 ```
 
@@ -205,9 +215,9 @@ curl -X PUT http://localhost:4444/tools/{tool_id} \
 
 ### Sunset Tools
 
-- ❌ **Not executable**: Tool invocation returns `404 Not Found`
+- ❌ **Not executable**: Tool invocation raises `ToolInvocationError`
 - 👁️ **Admin-only visibility**: Only visible with `include_inactive=true`
-- 🔒 **Error message**: `"Tool not found or not available"`
+- 🔒 **Error message**: `"Tool '{name}' has been sunset and can no longer be executed. Sunset date: {date}. Please update your agent to use an alternative tool."`
 
 ### Execution Flow
 

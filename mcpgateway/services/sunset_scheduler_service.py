@@ -94,6 +94,9 @@ class SunsetSchedulerService:
                     self._processing = False
 
             except Exception as e:
+                # Bare exception is intentional: scheduler must never crash on individual errors
+                # (e.g., database connectivity issues, cache failures) to maintain service continuity.
+                # Errors are logged with full context for debugging.
                 logger.exception(f"Error in sunset scheduler: {e}")
                 structured_logger.log(
                     level="ERROR",

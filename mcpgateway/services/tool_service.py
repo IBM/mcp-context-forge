@@ -1415,8 +1415,10 @@ class ToolService(BaseService):
             now = datetime.now(timezone.utc)
             # Ensure sunset_date is timezone-aware for comparison
             if sunset_date.tzinfo is None:
-                sunset_date = sunset_date.replace(tzinfo=timezone.utc)
-            if sunset_date <= now:
+                sunset_date_aware = sunset_date.replace(tzinfo=timezone.utc)
+            else:
+                sunset_date_aware = sunset_date
+            if sunset_date_aware <= now:
                 # Sunset date has passed but tool hasn't been disabled yet (scheduler will handle it)
                 tool_dict["lifecycle_state"] = "sunset"
                 tool_dict["is_executable"] = False
@@ -1425,7 +1427,7 @@ class ToolService(BaseService):
                 tool_dict["lifecycle_state"] = "deprecated"
                 tool_dict["is_executable"] = True
                 # Calculate days until sunset
-                time_until_sunset = sunset_date - now
+                time_until_sunset = sunset_date_aware - now
                 tool_dict["days_until_sunset"] = max(0, time_until_sunset.days)
         elif deprecated:
             # Deprecated without sunset date (backwards compatibility)
@@ -6472,16 +6474,14 @@ class ToolService(BaseService):
             # Update deprecated status if provided
             if tool_update.deprecated is not None:
                 tool.deprecated = tool_update.deprecated
-                # If deprecated is being set to False, explicitly clear sunset_date
+                # If deprecated is being set to False, clear sunset_date and re-enable the tool
                 if tool_update.deprecated is False:
                     tool.sunset_date = None
+                    tool.enabled = True
 
             # Update sunset_date if provided (and deprecated is not being set to False)
             if tool_update.sunset_date is not None:
                 tool.sunset_date = tool_update.sunset_date
-            # Explicitly clear sunset_date if the validator set it to None (when deprecated=False)
-            elif tool_update.deprecated is False:
-                tool.sunset_date = None
 
             # Update modification metadata
             if modified_by is not None:

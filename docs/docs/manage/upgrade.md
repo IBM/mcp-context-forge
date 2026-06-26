@@ -48,7 +48,7 @@ The migration adds the `sunset_date` column with these characteristics:
 
 ```sql
 ALTER TABLE tools ADD COLUMN sunset_date TIMESTAMP WITH TIME ZONE;
-CREATE INDEX idx_tools_sunset_date ON tools(sunset_date);
+CREATE INDEX ix_tools_sunset_date ON tools(sunset_date);
 ```
 
 **Migration Details:**
@@ -56,7 +56,7 @@ CREATE INDEX idx_tools_sunset_date ON tools(sunset_date);
 - **File**: `mcpgateway/alembic/versions/15a7b5f1e41a_add_sunset_date_to_tools.py`
 - **Idempotent**: Safe to run multiple times
 - **Default Value**: `NULL` for all existing tools
-- **Index**: Added for efficient scheduler queries
+- **Index**: Added for efficient scheduler queries (`ix_tools_sunset_date`)
 
 ### Upgrade Steps
 
@@ -75,8 +75,8 @@ alembic upgrade head
 docker-compose up -d
 
 # 5. Verify migration
-docker-compose logs -f mcpgateway | grep "sunset_scheduler"
-# Expected output: "Sunset scheduler started with interval: 60 minutes"
+docker-compose logs -f mcpgateway | grep -i "sunset scheduler"
+# Expected output: "Sunset scheduler service initialized (interval: 60 minutes)"
 ```
 
 ### Behavior Changes
@@ -85,7 +85,7 @@ docker-compose logs -f mcpgateway | grep "sunset_scheduler"
 |----------|--------|-------|
 | Create deprecated tool | ✅ `deprecated=true` (no sunset date) | ❌ Requires `sunsetDate` field |
 | Existing deprecated tools | ✅ Executable indefinitely | ✅ Executable indefinitely (backwards compatible) |
-| Update to `deprecated=false` | ✅ Clears deprecation | ✅ Clears deprecation + `sunset_date` |
+| Update to `deprecated=false` | ✅ Clears deprecation | ✅ Clears deprecation + `sunset_date` + re-enables tool |
 | Tool past sunset date | N/A | ⚠️ Automatically disabled by scheduler |
 
 ### Configuration
