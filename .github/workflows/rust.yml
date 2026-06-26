@@ -170,6 +170,33 @@ jobs:
       - name: Cargo clippy (workspace)
         run: make rust-lint
 
+  rust-unused-deps:
+    needs: ci-decision
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false')
+    name: Rust unused dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup default stable
+
+      - name: Cache Cargo
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-shear-${{ hashFiles('**/Cargo.lock', 'Cargo.toml') }}
+
+      - name: Cargo shear
+        run: make rust-unused-deps
+
   rust-test:
     needs: ci-decision
     if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false')
@@ -507,7 +534,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     if: startsWith(github.ref, 'refs/tags/') && needs.resolve-release.outputs.has_pyo3_release_crates == 'true'
-    needs: [rust-build, rust-fmt, rust-clippy, rust-test, security-audit, supply-chain-vet, license-check, resolve-release]
+    needs: [rust-build, rust-fmt, rust-clippy, rust-unused-deps, rust-test, security-audit, supply-chain-vet, license-check, resolve-release]
     strategy:
       fail-fast: false
       matrix:
@@ -608,7 +635,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     if: startsWith(github.ref, 'refs/tags/') && needs.resolve-release.outputs.has_pyo3_release_crates == 'true'
-    needs: [rust-build, rust-fmt, rust-clippy, rust-test, security-audit, supply-chain-vet, license-check, resolve-release]
+    needs: [rust-build, rust-fmt, rust-clippy, rust-unused-deps, rust-test, security-audit, supply-chain-vet, license-check, resolve-release]
     defaults:
       run:
         shell: bash

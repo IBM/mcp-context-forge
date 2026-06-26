@@ -8344,6 +8344,7 @@ upgrade-validate:                         ## Validate fresh + upgrade + roundtri
 # help: rust-format                           - Format Rust code (cargo fmt)
 # help: rust-fmt-check                        - Check formatting (cargo fmt --check)
 # help: rust-lint                             - Lint Rust code (cargo clippy)
+# help: rust-unused-deps                      - Detect unused Rust dependencies with cargo-shear
 # help: rust-check                            - Run all Rust checks (build, fmt, clippy, test)
 # help: rust-doc                              - Build Rust documentation
 # help: rust-vet                              - Run cargo vet (strict supply-chain auditing)
@@ -8369,7 +8370,7 @@ upgrade-validate:                         ## Validate fresh + upgrade + roundtri
 # help: rust-mcp-runtime-run                  - Run the experimental Rust MCP runtime against local gateway /rpc
 # help: -----------------------------------------------------------------------------
 
-.PHONY: rust-build rust-build-check rust-dev rust-test rust-format rust-fmt-check rust-lint rust-check rust-doc rust-clean rust-verify rust-verify-stubs rust-stub-gen rust-licenses rust-vet rust-deny rust-coverage rust-diff-cover rust-bench-check
+.PHONY: rust-build rust-build-check rust-dev rust-test rust-format rust-fmt-check rust-lint rust-unused-deps rust-check rust-doc rust-clean rust-verify rust-verify-stubs rust-stub-gen rust-licenses rust-vet rust-deny rust-coverage rust-diff-cover rust-bench-check
 .PHONY: rust-ensure-deps rust-install-deps rust-install-targets rust-install rust-build-wheels rust-uninstall-plugins rust-clean-stubs rust-verify-python-crates
 .PHONY: rust-mcp-runtime-build rust-mcp-runtime-test rust-mcp-runtime-run
 
@@ -8460,7 +8461,13 @@ rust-lint: rust-ensure-deps             ## Lint Rust code (cargo clippy)
 	@cargo clippy --workspace --all-targets -- -D warnings -A clippy::multiple_crate_versions
 	@echo "✅ Rust lint passed"
 
-rust-check: rust-build-check rust-fmt-check rust-lint rust-test  ## Run all Rust checks (build, fmt, clippy, test)
+rust-unused-deps: rust-ensure-deps      ## Detect unused Rust dependencies with cargo-shear
+	@echo "🦀 Checking Rust dependency usage..."
+	@command -v cargo-shear >/dev/null 2>&1 || { echo "Installing cargo-shear..."; cargo install --locked cargo-shear --version 1.13.1; }
+	@cargo shear --locked --deny-warnings
+	@echo "✅ Rust dependency usage check passed"
+
+rust-check: rust-build-check rust-fmt-check rust-lint rust-unused-deps rust-test  ## Run all Rust checks (build, fmt, clippy, unused deps, test)
 	@echo "✅ Rust check passed"
 
 rust-doc: rust-ensure-deps              ## Build Rust documentation

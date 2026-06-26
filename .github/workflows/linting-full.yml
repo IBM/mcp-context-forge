@@ -233,6 +233,9 @@ jobs:
           - id: deny
             components: ""
             cmd: make rust-deny
+          - id: unused-deps
+            components: ""
+            cmd: make rust-unused-deps
 
     name: "rust: ${{ matrix.id }}"
     runs-on: ubuntu-latest
