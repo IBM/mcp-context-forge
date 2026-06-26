@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { z } from "zod";
+import * as RadioGroupPrimitive from "@radix-ui/react-radio-group";
 import { CircleCheck, CircleAlert, Copy, Info, Loader2, TestTubeDiagonal } from "lucide-react";
 import {
   Dialog,
@@ -11,6 +13,7 @@ import {
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
+import { RadioGroup } from "../ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 import { JsonHighlighter } from "../ui/json-highlighter";
@@ -33,6 +36,24 @@ interface TestResponse {
 }
 
 const HTTP_METHODS = ["Get", "Post", "Put", "Delete", "Patch"] as const;
+
+// Matches the URL validation convention used in useMCPServerForm/useToolForm:
+// required, and constrained to http/https schemes.
+const testUrlSchema = z
+  .string()
+  .trim()
+  .min(1, "URL is required.")
+  .refine(
+    (value) => {
+      try {
+        const parsed = new URL(value);
+        return parsed.protocol === "http:" || parsed.protocol === "https:";
+      } catch {
+        return false;
+      }
+    },
+    { message: "URL must start with http:// or https://." },
+  );
 
 function FieldLabel({
   htmlFor,
@@ -91,6 +112,14 @@ export function TestConnectionDialog({ open, onOpenChange, serverUrl }: TestConn
     setResponse(null);
     setError("");
 
+    // URL is required and must be an http/https URL before sending.
+    const urlResult = testUrlSchema.safeParse(url);
+    if (!urlResult.success) {
+      setStatus("error");
+      setError(urlResult.error.issues[0].message);
+      return;
+    }
+
     // Validate JSON fields before they would be sent.
     if (headers.trim()) {
       try {
@@ -122,7 +151,7 @@ export function TestConnectionDialog({ open, onOpenChange, serverUrl }: TestConn
     // https://github.com/IBM/mcp-context-forge/issues/5326
     setStatus("error");
     setError("Connection testing isn't available yet — the API endpoint is pending (#5326).");
-  }, [headers, body, method]);
+  }, [url, headers, body, method]);
 
   const handleClose = useCallback(() => {
     onOpenChange(false);
@@ -188,30 +217,29 @@ export function TestConnectionDialog({ open, onOpenChange, serverUrl }: TestConn
             {/* Method */}
             <div className="space-y-2">
               <FieldLabel>Method</FieldLabel>
-              <div
-                role="radiogroup"
+              <RadioGroup
+                value={method}
+                onValueChange={setMethod}
+                disabled={isTesting}
                 aria-label="Method"
                 className="flex w-full gap-1 rounded-md bg-muted p-1"
               >
                 {HTTP_METHODS.map((m) => (
-                  <button
+                  <RadioGroupPrimitive.Item
                     key={m}
-                    type="button"
-                    role="radio"
-                    aria-checked={method === m}
-                    onClick={() => setMethod(m)}
-                    disabled={isTesting}
+                    value={m}
                     className={cn(
-                      "flex-1 rounded-sm px-3 py-1.5 text-sm font-medium transition-colors disabled:pointer-events-none disabled:opacity-50",
-                      method === m
-                        ? "bg-background text-foreground shadow-sm"
-                        : "text-muted-foreground hover:text-foreground",
+                      "flex-1 rounded-sm px-3 py-1.5 text-sm font-medium transition-colors",
+                      "text-muted-foreground hover:text-foreground",
+                      "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                      "disabled:pointer-events-none disabled:opacity-50",
+                      "data-[state=checked]:bg-background data-[state=checked]:text-foreground data-[state=checked]:shadow-sm",
                     )}
                   >
                     {m}
-                  </button>
+                  </RadioGroupPrimitive.Item>
                 ))}
-              </div>
+              </RadioGroup>
             </div>
 
             {/* Path */}
