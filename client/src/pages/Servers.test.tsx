@@ -154,7 +154,7 @@ describe("Servers", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Error deleting server")).toBeInTheDocument();
-      expect(screen.getByText("Cannot delete server")).toBeInTheDocument();
+      expect(screen.getByText("An error occurred. Please try again.")).toBeInTheDocument();
     });
   });
 

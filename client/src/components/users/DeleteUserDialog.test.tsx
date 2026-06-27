@@ -25,7 +25,7 @@ describe("DeleteUserDialog", () => {
 
   it("displays the dialog title", () => {
     renderWithI18n(<DeleteUserDialog {...defaultProps} />);
-    expect(screen.getByText(/delete user/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /delete user/i })).toBeInTheDocument();
   });
 
   it("displays user name and email in description", () => {
