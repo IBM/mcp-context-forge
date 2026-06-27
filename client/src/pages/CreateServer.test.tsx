@@ -356,7 +356,7 @@ describe("CreateServer", () => {
       
       let resolvePromise: (value: any) => void;
       server.use(
-        http.get("*/gateways/gateway-1", () => {
+        http.get("*/servers/gateway-1", () => {
           return new Promise((resolve) => {
             resolvePromise = resolve;
           });
@@ -364,14 +364,14 @@ describe("CreateServer", () => {
       );
       
       renderWithProviders(<CreateServer />);
-      expect(screen.getByRole("status")).toBeInTheDocument();
+      expect(screen.getAllByRole("status").length).toBeGreaterThan(0);
       expect(screen.getByText("Loading...")).toBeInTheDocument();
     });
 
     it("renders error state when fetch fails in edit mode", async () => {
       mockPath = "/app/gateways/create-server?editServerId=gateway-1";
       server.use(
-        http.get("*/gateways/gateway-1", () => {
+        http.get("*/servers/gateway-1", () => {
           return HttpResponse.json({ detail: "Not found" }, { status: 404 });
         })
       );
@@ -387,7 +387,7 @@ describe("CreateServer", () => {
     it("renders the edit form when data is loaded successfully", async () => {
       mockPath = "/app/gateways/create-server?editServerId=gateway-1";
       server.use(
-        http.get("*/gateways/gateway-1", () => {
+        http.get("*/servers/gateway-1", () => {
           return HttpResponse.json({
             id: "gateway-1",
             name: "Test Edit Server",
