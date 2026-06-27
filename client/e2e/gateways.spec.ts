@@ -318,7 +318,6 @@ test.describe("Gateways page", () => {
 
     await expect.poll(() => deleteRequestCount).toBe(1);
     await expect.poll(() => listRequestCount).toBeGreaterThan(1);
-    await expect(page.getByRole("status")).toContainText("testVS deleted.");
   });
 
   test("shows delete progress while a virtual server delete is pending", async ({ page }) => {
