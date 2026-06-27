@@ -104,11 +104,8 @@ export function Users() {
     }
 
     // Optimistic update: snapshot current list, remove immediately, close dialog
-    let previousUsers: User[] = [];
-    setAllUsers((prev) => {
-      previousUsers = prev;
-      return prev.filter((u) => u.email !== emailToDelete);
-    });
+    const previousUsers = allUsers;
+    setAllUsers(allUsers.filter((u) => u.email !== emailToDelete));
     setDeleteDialogOpen(false);
     setUserToDelete(null);
 
@@ -139,7 +136,7 @@ export function Users() {
 
       toast.error(errorMessage);
     }
-  }, [userToDelete, currentUser, intl]);
+  }, [allUsers, userToDelete, currentUser, intl]);
 
   const handleDeleteCancel = useCallback(() => {
     setDeleteDialogOpen(false);
