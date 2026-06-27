@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { toast } from "sonner";
 import { ConnectSourceCard } from "@/components/gateways/ConnectSourceCard";
@@ -30,7 +30,6 @@ export function Gateways() {
   const { navigate } = useRouter();
   const { data, error, isLoading, refetch } = useQuery<VirtualServersResponse>(SERVERS_QUERY_PATH);
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const statusRef = useRef<HTMLDivElement>(null);
   const pendingDeleteServerIdRef = useRef<string | null>(null);
   const [detailsServer, setDetailsServer] = useState<VirtualServer | null>(null);
   const [isDetailsPanelOpen, setIsDetailsPanelOpen] = useState(false);
@@ -38,7 +37,6 @@ export function Gateways() {
   const [deleteServer, setDeleteServer] = useState<VirtualServer | null>(null);
   const [deletedServerIds, setDeletedServerIds] = useState<Set<string>>(() => new Set());
   const [pendingDeleteServerId, setPendingDeleteServerId] = useState<string | null>(null);
-  const [deleteStatus, setDeleteStatus] = useState<string | null>(null);
   const servers = useMemo(
     () => (data?.servers ?? []).filter((server) => !deletedServerIds.has(server.id)),
     [data?.servers, deletedServerIds],
@@ -46,16 +44,10 @@ export function Gateways() {
   const layoutServers = useMemo(() => sortServersForLayout(servers), [servers]);
   const isDeletePending = pendingDeleteServerId !== null;
 
-  useEffect(() => {
-    if (!deleteStatus) return;
-    (headingRef.current ?? statusRef.current)?.focus();
-  }, [deleteStatus]);
-
   const handleDelete = useCallback(
     (server: VirtualServer) => {
       if (isDeletePending) return;
       setDeleteServer(server);
-      setDeleteStatus(null);
       setDeleteDialogOpen(true);
     },
     [isDeletePending],
@@ -73,15 +65,9 @@ export function Gateways() {
 
     const serverToDelete = deleteServer;
     const previousDetailsServer = detailsServer;
-    const deletedMessage = intl.formatMessage(
-      { id: "gateways.delete.success" },
-      { name: serverToDelete.name },
-    );
-
     pendingDeleteServerIdRef.current = serverToDelete.id;
     setPendingDeleteServerId(serverToDelete.id);
     // Close dialog and clear form state immediately
-    setDeleteStatus(null);
     setDeleteDialogOpen(false);
     setDeleteServer(null);
     // Remove the card from the grid right away for a snappy feel
@@ -95,7 +81,6 @@ export function Gateways() {
     try {
       await deleteVirtualServer(serverToDelete.id);
 
-      setDeleteStatus(deletedMessage);
       toast.success(
         intl.formatMessage({ id: "gateways.delete.success" }, { name: serverToDelete.name }),
       );
@@ -169,18 +154,6 @@ export function Gateways() {
 
   return (
     <div className="space-y-9 p-6">
-      <div
-        ref={statusRef}
-        tabIndex={-1}
-        className="sr-only"
-        role="status"
-        aria-label={intl.formatMessage({ id: "gateways.notifications" })}
-        aria-live="polite"
-        aria-atomic="true"
-      >
-        {deleteStatus}
-      </div>
-
       <h1 ref={headingRef} tabIndex={-1} className="text-base font-semibold text-foreground">
         {intl.formatMessage({ id: "gateways.title" })}
       </h1>
