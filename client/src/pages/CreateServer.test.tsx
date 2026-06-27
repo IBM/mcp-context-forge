@@ -396,6 +396,9 @@ describe("CreateServer", () => {
             tags: ["prod", "test"],
             description: "A test server for editing",
           });
+        }),
+        http.get("*/gateways", () => {
+          return HttpResponse.json({ gateways: [] }, { status: 200 });
         })
       );
 
