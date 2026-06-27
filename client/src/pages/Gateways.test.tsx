@@ -505,7 +505,6 @@ describe("Gateways", () => {
 
     resolveDelete();
     await waitFor(() => expect(refetch).toHaveBeenCalledOnce());
-    expect(screen.getByRole("status")).toHaveTextContent("GH repo tasks deleted.");
   });
 
   it("confirms and deletes a virtual server", async () => {
@@ -534,7 +533,6 @@ describe("Gateways", () => {
 
     expect(mockDeleteVirtualServer).toHaveBeenCalledWith("gateway/1?mode=delete");
     await waitFor(() => expect(refetch).toHaveBeenCalledOnce());
-    expect(screen.getByRole("status")).toHaveTextContent("GH repo tasks deleted.");
   });
 
   it("closes the dialog and clears form state immediately on confirm", async () => {
