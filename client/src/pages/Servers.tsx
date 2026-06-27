@@ -103,14 +103,10 @@ export function Servers() {
     if (!selectedServerId) return;
 
     const idToDelete = selectedServerId;
+    const previousServers = allServers;
+    const serverToDelete = allServers.find((s) => s.id === idToDelete);
 
-    let previousServers: MCPServer[] = [];
-    setAllServers((prev) => {
-      previousServers = prev;
-      return prev.filter((s) => s.id !== idToDelete);
-    });
-
-    const serverToDelete = previousServers.find((s) => s.id === idToDelete);
+    setAllServers(allServers.filter((s) => s.id !== idToDelete));
 
     const previousServerIdForDetails = selectedServerIdForDetails;
     const previousDrawerOpen = isDetailsDrawerOpen;
@@ -146,7 +142,14 @@ export function Servers() {
       });
       console.error("Failed to delete server:", errorMsg);
     }
-  }, [selectedServerId, selectedServerIdForDetails, isDetailsDrawerOpen, refetch, intl]);
+  }, [
+    allServers,
+    selectedServerId,
+    selectedServerIdForDetails,
+    isDetailsDrawerOpen,
+    refetch,
+    intl,
+  ]);
 
   const handleTest = async (id: string) => {
     setTestError(null);

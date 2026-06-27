@@ -282,15 +282,12 @@ export function Tools() {
     const idToDelete = selectedToolId;
     const nameToDelete = selectedToolName;
 
-    let previousTools: Tool[] = [];
+    const previousTools = allTools;
     const previousGroup = selectedGroup
       ? { ...selectedGroup, tools: selectedGroup.tools.map((t) => ({ ...t })) }
       : null;
 
-    setAllTools((prev) => {
-      previousTools = prev;
-      return prev.filter((t) => t.id !== idToDelete);
-    });
+    setAllTools(allTools.filter((t) => t.id !== idToDelete));
 
     const remainingGroupTools = selectedGroup?.tools.filter((t) => t.id !== idToDelete) ?? [];
     const nextGroup =
@@ -339,7 +336,7 @@ export function Tools() {
 
       toast.error(errorMessage);
     }
-  }, [selectedToolId, selectedToolName, selectedGroup, refetch, intl]);
+  }, [allTools, selectedToolId, selectedToolName, selectedGroup, refetch, intl]);
 
   return (
     <div className="p-6">
