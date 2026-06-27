@@ -411,5 +411,76 @@ describe("CreateServer", () => {
 
       expect(screen.getByDisplayValue("Test Edit Server")).toBeInTheDocument();
     });
+
+    it("renders MCP servers section in edit mode and allows source selection", async () => {
+      mockPath = "/app/gateways/create-server?editServerId=gateway-1";
+      server.use(
+        http.get("*/servers/gateway-1", () => {
+          return HttpResponse.json({
+            id: "gateway-1",
+            name: "Test Edit Server",
+            visibility: "team",
+            oauthEnabled: false,
+          });
+        }),
+        http.get("*/gateways", () => {
+          return HttpResponse.json({
+            gateways: [
+              {
+                id: "mcp-server-1",
+                name: "MCP Server 1",
+                enabled: true,
+                reachable: true,
+                toolCount: 1,
+                resourceCount: 2,
+                promptCount: 3,
+              },
+            ],
+          });
+        }),
+        http.get("*/tools", () => {
+          return HttpResponse.json({ tools: [{ id: "tool-1", name: "Test Tool" }] });
+        }),
+        http.get("*/resources", () => {
+          return HttpResponse.json({ resources: [{ id: "resource-1", name: "Test Resource" }] });
+        }),
+        http.get("*/prompts", () => {
+          return HttpResponse.json({ prompts: [{ id: "prompt-1", name: "Test Prompt" }] });
+        })
+      );
+
+      renderWithProviders(<CreateServer />);
+      
+      await waitFor(() => {
+        expect(screen.getByRole("heading", { name: "Edit server" })).toBeInTheDocument();
+      });
+
+      // It should display MCP servers section
+      expect(screen.getByText("MCP server")).toBeInTheDocument();
+      
+      // Wait for MCP Server to be loaded and rendered
+      await waitFor(() => {
+        expect(screen.getByText("MCP Server 1")).toBeInTheDocument();
+      });
+
+      // Expand the accordion
+      const trigger = screen.getByText("MCP Server 1");
+      act(() => {
+        trigger.click();
+      });
+
+      // Wait for components to load
+      await waitFor(() => {
+        expect(screen.getByText("Test Tool")).toBeInTheDocument();
+        expect(screen.getByText("Test Resource")).toBeInTheDocument();
+        expect(screen.getByText("Test Prompt")).toBeInTheDocument();
+      });
+      
+      // Select a tool
+      const toolCheckbox = screen.getByLabelText("Select Test Tool");
+      act(() => {
+        toolCheckbox.click();
+      });
+    });
   });
 });
