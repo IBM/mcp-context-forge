@@ -112,6 +112,52 @@ describe("Servers", () => {
     });
   });
 
+  it("renders an error alert when the server fetch fails", async () => {
+    vi.mocked(api.get).mockRejectedValueOnce(new Error("Could not load servers"));
+
+    renderWithRouter(<Servers />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("Error loading servers")).toBeInTheDocument();
+    expect(screen.getByText("Could not load servers")).toBeInTheDocument();
+  });
+
+  it("renders delete error alert when server deletion fails", async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(api.get).mockResolvedValueOnce({
+      gateways: createMockServers(0, 1),
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Servers />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Test Server 0")).toBeInTheDocument();
+    });
+
+    // Setup for deletion
+    vi.mocked(api.delete).mockRejectedValueOnce(new Error("Cannot delete server"));
+
+    const actionsButtons = screen.getAllByRole("button", { name: /actions for/i });
+    await user.click(actionsButtons[0]);
+
+    const deleteItem = await screen.findByRole("menuitem", { name: /delete/i });
+    await user.click(deleteItem);
+
+    // Confirm deletion
+    const confirmButton = screen.getByRole("button", { name: "Delete" });
+    await user.click(confirmButton);
+
+    await waitFor(() => {
+      expect(screen.getByText("Error deleting server")).toBeInTheDocument();
+      expect(screen.getByText("Cannot delete server")).toBeInTheDocument();
+    });
+  });
+
   it("opens details panel when View Details is clicked", async () => {
     const user = userEvent.setup();
 

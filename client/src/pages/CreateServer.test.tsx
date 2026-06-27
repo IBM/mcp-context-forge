@@ -55,10 +55,14 @@ vi.mock("@/components/gateways/SourceSelection", async (importOriginal) => {
 
 const mockNavigate = vi.fn();
 
+let mockPath = "/app/gateways/create-server";
+
 vi.mock("@/router", () => ({
   useRouter: () => ({
     navigate: mockNavigate,
-    path: "/app/gateways/create-server",
+    get path() {
+      return mockPath;
+    },
     params: {},
   }),
 }));
@@ -75,6 +79,7 @@ describe("CreateServer", () => {
     capturedProps = null;
     mockSourceSelection = false;
     capturedSourceSelectionProps = null;
+    mockPath = "/app/gateways/create-server";
     mockNavigate.mockClear();
     mockCreateVirtualServer.mockReset();
     mockCreateVirtualServer.mockResolvedValue({
@@ -343,5 +348,65 @@ describe("CreateServer", () => {
       mockForm = false;
       mockSourceSelection = false;
     }
+  });
+
+  describe("Edit Mode", () => {
+    it("renders loading state initially in edit mode", () => {
+      mockPath = "/app/gateways/create-server?editServerId=gateway-1";
+      
+      let resolvePromise: (value: any) => void;
+      server.use(
+        http.get("*/gateways/gateway-1", () => {
+          return new Promise((resolve) => {
+            resolvePromise = resolve;
+          });
+        })
+      );
+      
+      renderWithProviders(<CreateServer />);
+      expect(screen.getByRole("status")).toBeInTheDocument();
+      expect(screen.getByText("Loading...")).toBeInTheDocument();
+    });
+
+    it("renders error state when fetch fails in edit mode", async () => {
+      mockPath = "/app/gateways/create-server?editServerId=gateway-1";
+      server.use(
+        http.get("*/gateways/gateway-1", () => {
+          return HttpResponse.json({ detail: "Not found" }, { status: 404 });
+        })
+      );
+
+      renderWithProviders(<CreateServer />);
+      
+      await waitFor(() => {
+        expect(screen.getByRole("alert")).toBeInTheDocument();
+      });
+      // The default error behavior from msw mock uses a fallback if there's no message
+    });
+
+    it("renders the edit form when data is loaded successfully", async () => {
+      mockPath = "/app/gateways/create-server?editServerId=gateway-1";
+      server.use(
+        http.get("*/gateways/gateway-1", () => {
+          return HttpResponse.json({
+            id: "gateway-1",
+            name: "Test Edit Server",
+            visibility: "team",
+            oauthEnabled: false,
+            tags: ["prod", "test"],
+            description: "A test server for editing",
+          });
+        })
+      );
+
+      renderWithProviders(<CreateServer />);
+      
+      await waitFor(() => {
+        // "Edit server" is the title in Edit mode
+        expect(screen.getByRole("heading", { name: "Edit server" })).toBeInTheDocument();
+      });
+
+      expect(screen.getByDisplayValue("Test Edit Server")).toBeInTheDocument();
+    });
   });
 });
