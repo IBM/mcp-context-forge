@@ -1,39 +1,49 @@
+[workspace]
+# This server is NOT part of the repository's root workspace
+
 [package]
 name = "fast-time-server"
 version = "0.1.0"
-edition.workspace = true
-rust-version.workspace = true
+edition = "2024"
+rust-version = "1.85"
 description = "Ultra-fast MCP test server with echo and time tools"
-license.workspace = true
-authors.workspace = true
-repository.workspace = true
+license = "Apache-2.0"
+authors = ["ContextForge Contributors"]
+repository = "https://github.com/IBM/mcp-context-forge"
 
 [dependencies]
 # Async runtime
-tokio.workspace = true
+tokio = { version = "1.49", features = ["full"] }
 
 # Web framework
-axum.workspace = true
+axum = "0.8.9"
 
 # Serialization
-serde.workspace = true
-serde_json.workspace = true
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
 # Random number generation (normal distribution for delay jitter)
-rand = "0.10.1"
+rand = "0.10"
 rand_distr = "0.6.0"
 
 # Error handling
-anyhow.workspace = true
+anyhow = "1.0"
 
 # Logging
-tracing.workspace = true
-tracing-subscriber.workspace = true
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 
 # Time handling
-chrono.workspace = true
-chrono-tz.workspace = true
-uuid.workspace = true
+chrono = { version = "0.4.45", features = ["serde"] }
+chrono-tz = "0.10.4"
+uuid = { version = "1.23.0", features = ["v4"] }
 
-[lints]
-workspace = true
+[lints.clippy]
+multiple_crate_versions = "allow"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"

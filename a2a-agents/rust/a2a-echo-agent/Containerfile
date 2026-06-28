@@ -2,13 +2,14 @@
 FROM docker.io/library/rust:1.86-slim AS builder
 
 WORKDIR /app
+
+# Copy workspace manifests
 COPY Cargo.toml Cargo.lock ./
-COPY crates ./crates
-COPY mcp-servers/rust/benchmark-server ./mcp-servers/rust/benchmark-server
-COPY mcp-servers/rust/fast-time-server ./mcp-servers/rust/fast-time-server
-COPY mcp-servers/rust/filesystem-server ./mcp-servers/rust/filesystem-server
-COPY mcp-servers/rust/slow-time-server ./mcp-servers/rust/slow-time-server
+
+# Create minimal workspace structure - only a2a-echo-agent
 COPY a2a-agents/rust/a2a-echo-agent ./a2a-agents/rust/a2a-echo-agent
+
+# Build only a2a-echo-agent (no crates/* or mcp-servers/* needed)
 RUN cargo build --release -p a2a-echo-agent
 
 FROM docker.io/library/debian:trixie-slim
