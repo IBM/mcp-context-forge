@@ -38,7 +38,7 @@ clean:
 	@cargo clean
 
 container-build:
-	@$(CONTAINER_RT) build -f Containerfile -t $(IMAGE) ../../..
+	@$(CONTAINER_RT) build -f Containerfile -t $(IMAGE) .
 
 container-run: container-build
 	@$(CONTAINER_RT) run --rm -p 8080:8080 $(IMAGE)

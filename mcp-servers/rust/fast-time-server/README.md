@@ -42,10 +42,13 @@ make test-time
 Or with curl:
 
 ```bash
-# Initialize (optional for stateless requests)
-curl -X POST http://localhost:9080/mcp \
+# Initialize session
+SESSION_RESPONSE=$(curl -s -X POST http://localhost:9080/mcp \
   -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","method":"initialize","params":{"clientInfo":{"name":"test","version":"1.0"}},"id":1}'
+  -d '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}},"id":1}')
+
+# Extract session ID from response header (if using httpie or similar)
+# Or parse from mcp-session-id header
 
 # List tools
 curl -X POST http://localhost:9080/mcp \
@@ -62,6 +65,30 @@ curl -X POST http://localhost:9080/mcp \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_system_time","arguments":{"timezone":"America/New_York"}},"id":1}'
 ```
+
+### SSE Streaming Transport
+
+The server supports Server-Sent Events (SSE) for streaming MCP protocol messages. Per the MCP SSE specification, clients connect to the SSE endpoint first to receive the POST endpoint URL, then initialize the session:
+
+```bash
+# Step 1: Connect to SSE endpoint (no session required)
+curl -N http://localhost:9080/sse
+
+# Expected output:
+# event: endpoint
+# data: /mcp
+#
+# : (keep-alive comments every 15 seconds)
+
+# Step 2: Initialize session via the endpoint from SSE
+curl -X POST http://localhost:9080/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}},"id":1}'
+
+# Response includes mcp-session-id header for subsequent requests
+```
+
+The SSE endpoint immediately sends an "endpoint" event with the POST endpoint URL (`/mcp`), then maintains the connection with periodic keep-alive comments.
 
 ## Benchmarking
 
@@ -150,6 +177,7 @@ make docker-run
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/mcp` | POST | MCP JSON-RPC (requires session management) |
+| `/sse` | GET | Server-Sent Events streaming transport |
 
 ## Environment Variables
 

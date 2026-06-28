@@ -2,14 +2,14 @@
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # fast-time-server - Ultra-fast MCP server in Rust for performance testing
 #
-# This image is built from the workspace root so the crate's `Cargo.toml`
-# can resolve `.workspace = true` inheritance from the root manifest.
+# This image is built from the fast-time-server directory using its standalone
+# workspace (not part of the repo root workspace).
 #
-# Build (from the repo root):
-#   docker build -f mcp-servers/rust/fast-time-server/Containerfile -t IMG .
+# Build (from this directory):
+#   docker build -f Containerfile -t IMG .
 #
-# Or via the crate's Makefile (handles the relative path automatically):
-#   cd mcp-servers/rust/fast-time-server && make container-build
+# Or via the Makefile:
+#   make container-build
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 # =============================================================================
@@ -23,15 +23,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy the Cargo workspace. All members declared in the root manifest must
-# exist on disk for `cargo build -p ...` to parse the workspace, even though
-# only fast-time-server and its transitive deps actually get compiled.
-COPY Cargo.toml Cargo.lock ./
-COPY crates ./crates
-COPY a2a-agents ./a2a-agents
-COPY mcp-servers/rust ./mcp-servers/rust
+# Copy the entire fast-time-server directory (build context is this directory)
+COPY . ./
 
-RUN cargo build --release -p fast-time-server
+RUN cargo build --release
 
 # =============================================================================
 # Runtime stage - Minimal Debian image with just the compiled binary

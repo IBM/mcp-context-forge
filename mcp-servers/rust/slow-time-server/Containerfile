@@ -2,15 +2,12 @@
 FROM docker.io/library/rust:1.86-slim AS builder
 
 WORKDIR /app
-COPY Cargo.toml Cargo.lock ./
-COPY crates ./crates
-COPY mcp-servers/rust/slow-time-server/Cargo.toml ./mcp-servers/rust/slow-time-server/Cargo.toml
-RUN mkdir -p mcp-servers/rust/slow-time-server/src \
-    && echo "fn main() {}" > mcp-servers/rust/slow-time-server/src/main.rs \
-    && cargo build --release -p slow-time-server
-COPY mcp-servers/rust/slow-time-server/src ./mcp-servers/rust/slow-time-server/src
-RUN touch mcp-servers/rust/slow-time-server/src/main.rs \
-    && cargo build --release -p slow-time-server
+
+# Copy the entire slow-time-server directory (build context is this directory)
+COPY . ./
+
+# Build slow-time-server using its standalone workspace
+RUN cargo build --release
 
 FROM docker.io/library/debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \

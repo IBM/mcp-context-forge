@@ -24,10 +24,8 @@ DIST_DIR        := target
 RELEASE_BIN     := $(DIST_DIR)/release/$(BIN_NAME)
 DEBUG_BIN       := $(DIST_DIR)/debug/$(BIN_NAME)
 
-# Workspace root - the crate participates in the root Cargo workspace, so
-# container builds must run from there to resolve `.workspace = true` fields.
-REPO_ROOT       := $(abspath ../../..)
-CONTAINERFILE   := $(REPO_ROOT)/mcp-servers/rust/fast-time-server/Containerfile
+# Build from local directory using standalone workspace
+CONTAINERFILE   := Containerfile
 
 ifeq ($(shell test -t 1 && echo tty),tty)
 C_BLUE  := \033[38;5;75m
@@ -130,8 +128,8 @@ IMAGE_TAG ?= $(VERSION)
 IMAGE ?= $(IMAGE_NAME):$(IMAGE_TAG)
 
 container-build:
-	@echo "$(C_BLUE)➜ Building container with $(CONTAINER_RT_NAME) from workspace root...$(C_RESET)"
-	@$(CONTAINER_RT) build -f $(CONTAINERFILE) -t $(IMAGE) $(REPO_ROOT)
+	@echo "$(C_BLUE)➜ Building container with $(CONTAINER_RT_NAME)...$(C_RESET)"
+	@$(CONTAINER_RT) build -f $(CONTAINERFILE) -t $(IMAGE) .
 	@$(CONTAINER_RT) images $(IMAGE)
 
 container-run: container-build

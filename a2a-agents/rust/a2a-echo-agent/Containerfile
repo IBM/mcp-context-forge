@@ -3,14 +3,11 @@ FROM docker.io/library/rust:1.86-slim AS builder
 
 WORKDIR /app
 
-# Copy workspace manifests
-COPY Cargo.toml Cargo.lock ./
+# Copy the entire a2a-echo-agent directory (build context is this directory)
+COPY . ./
 
-# Create minimal workspace structure - only a2a-echo-agent
-COPY a2a-agents/rust/a2a-echo-agent ./a2a-agents/rust/a2a-echo-agent
-
-# Build only a2a-echo-agent (no crates/* or mcp-servers/* needed)
-RUN cargo build --release -p a2a-echo-agent
+# Build a2a-echo-agent using its standalone workspace
+RUN cargo build --release
 
 FROM docker.io/library/debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
