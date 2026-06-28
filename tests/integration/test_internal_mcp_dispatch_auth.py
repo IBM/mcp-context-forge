@@ -24,6 +24,9 @@ Contract under test:
 # Standard
 import orjson
 
+# Standard
+from unittest.mock import patch
+
 # Third-Party
 import httpx
 import pytest
@@ -66,9 +69,9 @@ def _trust_headers(ctx, *, hmac=None, include_ctx=True):
     return headers
 
 
-async def _post_internal_rpc(app, method, ctx, *, hmac=None, include_ctx=True):
+async def _post_internal_rpc(app, method, ctx, *, params=None, hmac=None, include_ctx=True):
     """POST a JSON-RPC call to /_internal/mcp/rpc over a loopback ASGI transport."""
-    body = orjson.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": {}})
+    body = orjson.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}})
     # client=("127.0.0.1", 0) makes scope["client"] loopback, satisfying the trust gate's
     # defense-in-depth loopback check (mirrors the real affinity dispatch transport).
     transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 0))
@@ -107,3 +110,32 @@ async def test_missing_auth_context_is_rejected(app):
     """A valid HMAC with no auth-context header fails the trust gate (non-authenticate path requires it)."""
     response = await _post_internal_rpc(app, "tools/list", PUBLIC_ONLY_CTX, include_ctx=False)
     assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_public_only_tools_call_is_served_and_state_survives_dispatch(app):
+    """Public-only forwarded ``tools/call`` (tools.execute) is served and reaches invocation.
+
+    Confirms the RBAC skip also applies to the state-changing ``tools/call`` branch (not just the
+    read-only list methods), and that per-call results round-trip through the dispatch. The upstream
+    tool invocation is mocked with a stateful counter so the increments returned across three
+    forwarded calls are 1, 2, 3 — i.e. each public-only dispatch reaches and re-enters the same
+    tool-execution path rather than being denied.
+    """
+    counter = {"n": 0}
+
+    async def _fake_invoke_tool(*_args, **_kwargs):
+        counter["n"] += 1
+        return {"content": [{"type": "text", "text": str(counter["n"])}], "isError": False}
+
+    seen = []
+    with patch("mcpgateway.main.tool_service.invoke_tool", new=_fake_invoke_tool):
+        for _ in range(3):
+            response = await _post_internal_rpc(app, "tools/call", PUBLIC_ONLY_CTX, params={"name": "increment", "arguments": {}})
+            assert response.status_code == 200
+            payload = response.json()
+            assert payload.get("error", {}).get("code") != -32003, f"public-only tools/call was RBAC-denied: {payload}"
+            assert "result" in payload, f"expected a result for public-only tools/call, got {payload}"
+            seen.append(payload["result"]["content"][0]["text"])
+
+    assert seen == ["1", "2", "3"], f"expected stateful increments across dispatches, got {seen}"
