@@ -8,6 +8,7 @@ import gateways from "./gateways.json";
 import users from "./users.json";
 import tools from "./tools.json";
 import resources from "./resources.json";
+import mcpServer from "./mcpServer.json";
 
 export default {
   ...common,
@@ -20,4 +21,5 @@ export default {
   ...users,
   ...tools,
   ...resources,
+  ...mcpServer,
 };

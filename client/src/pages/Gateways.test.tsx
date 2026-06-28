@@ -28,6 +28,7 @@ vi.mock("@/api/virtualServers", () => ({
 
 vi.mock("sonner", () => ({
   toast: {
+    success: vi.fn(),
     error: vi.fn(),
   },
 }));
@@ -35,6 +36,64 @@ vi.mock("sonner", () => ({
 const mockUseQuery = vi.mocked(useQuery);
 const mockDeleteVirtualServer = vi.mocked(deleteVirtualServer);
 const mockToastError = vi.mocked(toast.error);
+
+// ---------------------------------------------------------------------------
+// Shared factory — avoids repeating all 30 fields in every test
+// ---------------------------------------------------------------------------
+function makeServer(overrides: Partial<VirtualServer> = {}): VirtualServer {
+  return {
+    id: "gateway-1",
+    name: "GH repo tasks",
+    description: "Test server",
+    icon: "",
+    createdAt: "2026-04-16T13:23:12Z",
+    updatedAt: "2026-04-16T13:23:12Z",
+    enabled: true,
+    associatedTools: [],
+    associatedToolIds: [],
+    associatedResources: [],
+    associatedPrompts: [],
+    associatedA2aAgents: [],
+    metrics: null,
+    tags: [],
+    createdBy: "admin@example.com",
+    createdFromIp: "127.0.0.1",
+    createdVia: "ui",
+    createdUserAgent: "Mozilla/5.0",
+    modifiedBy: null,
+    modifiedFromIp: null,
+    modifiedVia: null,
+    modifiedUserAgent: null,
+    importBatchId: null,
+    federationSource: null,
+    version: 1,
+    teamId: "team-1",
+    team: "Test Team",
+    ownerEmail: "admin@example.com",
+    visibility: "team",
+    oauthEnabled: false,
+    oauthConfig: null,
+    ...overrides,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Helper: mount with a single server in the list
+// ---------------------------------------------------------------------------
+function setupWithServer(
+  server: VirtualServer,
+  {
+    refetch = vi.fn().mockResolvedValue({ servers: [] }),
+  }: { refetch?: ReturnType<typeof vi.fn> } = {},
+) {
+  mockUseQuery.mockReturnValue({
+    data: { servers: [server] },
+    error: null,
+    isLoading: false,
+    execute: vi.fn(),
+    refetch,
+  });
+}
 
 describe("Gateways", () => {
   beforeEach(() => {
@@ -117,47 +176,16 @@ describe("Gateways", () => {
 
   it("renders the virtual server layout when servers exist", async () => {
     const user = userEvent.setup();
-    const mockServer: VirtualServer = {
-      id: "gateway-1",
-      name: "GH repo tasks",
-      description: "Test server",
-      icon: "",
-      createdAt: "2026-04-16T13:23:12Z",
-      updatedAt: "2026-04-16T13:23:12Z",
-      enabled: true,
-      associatedTools: [],
+    const mockServer = makeServer({
       associatedToolIds: ["tool1", "tool2", "tool3", "tool4", "tool5", "tool6"],
-      associatedResources: [],
-      associatedPrompts: [],
-      associatedA2aAgents: [],
-      metrics: null,
       tags: [
         { id: "tag-team", label: "team" },
         { id: "tag-enabled", label: "enabled" },
       ],
-      createdBy: "admin@example.com",
-      createdFromIp: "127.0.0.1",
-      createdVia: "ui",
-      createdUserAgent: "Mozilla/5.0",
-      modifiedBy: null,
-      modifiedFromIp: null,
-      modifiedVia: null,
-      modifiedUserAgent: null,
-      importBatchId: null,
-      federationSource: null,
-      version: 1,
-      teamId: "team-1",
-      team: "Test Team",
-      ownerEmail: "admin@example.com",
-      visibility: "team",
-      oauthEnabled: false,
-      oauthConfig: null,
-    };
+    });
 
     mockUseQuery.mockReturnValue({
-      data: {
-        servers: [mockServer],
-      },
+      data: { servers: [mockServer] },
       error: null,
       isLoading: false,
       execute: vi.fn(),
@@ -185,51 +213,7 @@ describe("Gateways", () => {
 
   it("navigates to the create-server form with edit details when edit is clicked", async () => {
     const user = userEvent.setup();
-    const mockServer: VirtualServer = {
-      id: "gateway-1",
-      name: "GH repo tasks",
-      description: "Test server",
-      icon: "",
-      createdAt: "2026-04-16T13:23:12Z",
-      updatedAt: "2026-04-16T13:23:12Z",
-      enabled: true,
-      associatedTools: [],
-      associatedToolIds: [],
-      associatedResources: [],
-      associatedPrompts: [],
-      associatedA2aAgents: [],
-      metrics: null,
-      tags: [
-        { id: "tag-team", label: "team" },
-        { id: "tag-enabled", label: "enabled" },
-      ],
-      createdBy: "admin@example.com",
-      createdFromIp: "127.0.0.1",
-      createdVia: "ui",
-      createdUserAgent: "Mozilla/5.0",
-      modifiedBy: null,
-      modifiedFromIp: null,
-      modifiedVia: null,
-      modifiedUserAgent: null,
-      importBatchId: null,
-      federationSource: null,
-      version: 1,
-      teamId: "team-1",
-      team: "Test Team",
-      ownerEmail: "admin@example.com",
-      visibility: "team",
-      oauthEnabled: false,
-      oauthConfig: null,
-    };
-
-    mockUseQuery.mockReturnValue({
-      data: { servers: [mockServer] },
-      error: null,
-      isLoading: false,
-      execute: vi.fn(),
-      refetch: vi.fn(),
-    });
-
+    setupWithServer(makeServer());
     renderWithProviders(<Gateways />);
 
     await user.click(screen.getByRole("button", { name: "Actions for GH repo tasks" }));
@@ -239,39 +223,13 @@ describe("Gateways", () => {
   });
 
   it("renders empty virtual servers as full-width add-components rows", () => {
-    const mockServer: VirtualServer = {
+    const mockServer = makeServer({
       id: "gateway-empty",
       name: "peach-thistle-shark",
       description: "",
-      icon: "",
-      createdAt: "2026-04-16T13:23:12Z",
-      updatedAt: "2026-04-16T13:23:12Z",
       enabled: false,
-      associatedTools: [],
       associatedToolIds: [],
-      associatedResources: [],
-      associatedPrompts: [],
-      associatedA2aAgents: [],
-      metrics: null,
-      tags: [],
-      createdBy: "admin@example.com",
-      createdFromIp: "127.0.0.1",
-      createdVia: "ui",
-      createdUserAgent: "Mozilla/5.0",
-      modifiedBy: null,
-      modifiedFromIp: null,
-      modifiedVia: null,
-      modifiedUserAgent: null,
-      importBatchId: null,
-      federationSource: null,
-      version: 1,
-      teamId: "team-1",
-      team: "Test Team",
-      ownerEmail: "admin@example.com",
-      visibility: "team",
-      oauthEnabled: false,
-      oauthConfig: null,
-    };
+    });
 
     mockUseQuery.mockReturnValue({
       data: { servers: [mockServer] },
@@ -291,39 +249,13 @@ describe("Gateways", () => {
   });
 
   it("renders empty virtual servers after servers with components", () => {
-    const emptyServer: VirtualServer = {
+    const emptyServer = makeServer({
       id: "gateway-empty",
       name: "peach-thistle-shark",
       description: "",
-      icon: "",
-      createdAt: "2026-04-16T13:23:12Z",
-      updatedAt: "2026-04-16T13:23:12Z",
       enabled: false,
-      associatedTools: [],
       associatedToolIds: [],
-      associatedResources: [],
-      associatedPrompts: [],
-      associatedA2aAgents: [],
-      metrics: null,
-      tags: [],
-      createdBy: "admin@example.com",
-      createdFromIp: "127.0.0.1",
-      createdVia: "ui",
-      createdUserAgent: "Mozilla/5.0",
-      modifiedBy: null,
-      modifiedFromIp: null,
-      modifiedVia: null,
-      modifiedUserAgent: null,
-      importBatchId: null,
-      federationSource: null,
-      version: 1,
-      teamId: "team-1",
-      team: "Test Team",
-      ownerEmail: "admin@example.com",
-      visibility: "team",
-      oauthEnabled: false,
-      oauthConfig: null,
-    };
+    });
     const populatedServer: VirtualServer = {
       ...emptyServer,
       id: "gateway-populated",
@@ -351,48 +283,7 @@ describe("Gateways", () => {
 
   it("navigates to the create server UI when the create server card is clicked", async () => {
     const user = userEvent.setup();
-    const mockServer: VirtualServer = {
-      id: "gateway-1",
-      name: "GH repo tasks",
-      description: "Test server",
-      icon: "",
-      createdAt: "2026-04-16T13:23:12Z",
-      updatedAt: "2026-04-16T13:23:12Z",
-      enabled: true,
-      associatedTools: [],
-      associatedToolIds: [],
-      associatedResources: [],
-      associatedPrompts: [],
-      associatedA2aAgents: [],
-      metrics: null,
-      tags: [],
-      createdBy: "admin@example.com",
-      createdFromIp: "127.0.0.1",
-      createdVia: "ui",
-      createdUserAgent: "Mozilla/5.0",
-      modifiedBy: null,
-      modifiedFromIp: null,
-      modifiedVia: null,
-      modifiedUserAgent: null,
-      importBatchId: null,
-      federationSource: null,
-      version: 1,
-      teamId: "team-1",
-      team: "Test Team",
-      ownerEmail: "admin@example.com",
-      visibility: "team",
-      oauthEnabled: false,
-      oauthConfig: null,
-    };
-
-    mockUseQuery.mockReturnValue({
-      data: { servers: [mockServer] },
-      error: null,
-      isLoading: false,
-      execute: vi.fn(),
-      refetch: vi.fn(),
-    });
-
+    setupWithServer(makeServer());
     renderWithProviders(<Gateways />);
 
     await user.click(screen.getByRole("button", { name: /Create server Make external sources/i }));
@@ -402,48 +293,15 @@ describe("Gateways", () => {
 
   it("navigates to the edit server UI when empty server add-components row is clicked", async () => {
     const user = userEvent.setup();
-    const mockServer: VirtualServer = {
-      id: "gateway-empty",
-      name: "peach-thistle-shark",
-      description: "",
-      icon: "",
-      createdAt: "2026-04-16T13:23:12Z",
-      updatedAt: "2026-04-16T13:23:12Z",
-      enabled: false,
-      associatedTools: [],
-      associatedToolIds: [],
-      associatedResources: [],
-      associatedPrompts: [],
-      associatedA2aAgents: [],
-      metrics: null,
-      tags: [],
-      createdBy: "admin@example.com",
-      createdFromIp: "127.0.0.1",
-      createdVia: "ui",
-      createdUserAgent: "Mozilla/5.0",
-      modifiedBy: null,
-      modifiedFromIp: null,
-      modifiedVia: null,
-      modifiedUserAgent: null,
-      importBatchId: null,
-      federationSource: null,
-      version: 1,
-      teamId: "team-1",
-      team: "Test Team",
-      ownerEmail: "admin@example.com",
-      visibility: "team",
-      oauthEnabled: false,
-      oauthConfig: null,
-    };
-
-    mockUseQuery.mockReturnValue({
-      data: { servers: [mockServer] },
-      error: null,
-      isLoading: false,
-      execute: vi.fn(),
-      refetch: vi.fn(),
-    });
-
+    setupWithServer(
+      makeServer({
+        id: "gateway-empty",
+        name: "peach-thistle-shark",
+        description: "",
+        enabled: false,
+        associatedToolIds: [],
+      }),
+    );
     renderWithProviders(<Gateways />);
 
     await user.click(screen.getByRole("button", { name: "Add sources and components" }));
@@ -464,39 +322,7 @@ describe("Gateways", () => {
 
   it("opens virtual server details from the actions menu", async () => {
     const user = userEvent.setup();
-    const mockServer: VirtualServer = {
-      id: "gateway/1?mode=detail",
-      name: "GH repo tasks",
-      description: "Test server",
-      icon: "",
-      createdAt: "2026-04-16T13:23:12Z",
-      updatedAt: "2026-04-16T13:23:12Z",
-      enabled: true,
-      associatedTools: [],
-      associatedToolIds: [],
-      associatedResources: [],
-      associatedPrompts: [],
-      associatedA2aAgents: [],
-      metrics: null,
-      tags: [],
-      createdBy: "admin@example.com",
-      createdFromIp: "127.0.0.1",
-      createdVia: "ui",
-      createdUserAgent: "Mozilla/5.0",
-      modifiedBy: null,
-      modifiedFromIp: null,
-      modifiedVia: null,
-      modifiedUserAgent: null,
-      importBatchId: null,
-      federationSource: null,
-      version: 1,
-      teamId: "team-1",
-      team: "Test Team",
-      ownerEmail: "admin@example.com",
-      visibility: "team",
-      oauthEnabled: false,
-      oauthConfig: null,
-    };
+    const mockServer = makeServer({ id: "gateway/1?mode=detail" });
     const detailServer: VirtualServer = {
       ...mockServer,
       description:
@@ -653,50 +479,39 @@ describe("Gateways", () => {
     expect(screen.getAllByText("summarize_pull_request").length).toBeGreaterThan(0);
   });
 
+  it("removes the card from the grid immediately on confirm (optimistic)", async () => {
+    const user = userEvent.setup();
+    let resolveDelete!: () => void;
+    const deletePromise = new Promise<void>((resolve) => {
+      resolveDelete = resolve;
+    });
+    mockDeleteVirtualServer.mockReturnValue(deletePromise);
+
+    const refetch = vi.fn().mockResolvedValue({ servers: [] });
+    setupWithServer(makeServer({ id: "gateway/1?mode=delete", name: "GH repo tasks" }), {
+      refetch,
+    });
+
+    renderWithProviders(<Gateways />);
+
+    await user.click(screen.getByRole("button", { name: "Actions for GH repo tasks" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(screen.queryByText("GH repo tasks")).not.toBeInTheDocument());
+
+    expect(mockDeleteVirtualServer).toHaveBeenCalledWith("gateway/1?mode=delete");
+    expect(refetch).not.toHaveBeenCalled();
+
+    resolveDelete();
+    await waitFor(() => expect(refetch).toHaveBeenCalledOnce());
+  });
+
   it("confirms and deletes a virtual server", async () => {
     const user = userEvent.setup();
     const refetch = vi.fn().mockResolvedValue({ servers: [] });
-    const mockServer: VirtualServer = {
-      id: "gateway/1?mode=delete",
-      name: "GH repo tasks",
-      description: "Test server",
-      icon: "",
-      createdAt: "2026-04-16T13:23:12Z",
-      updatedAt: "2026-04-16T13:23:12Z",
-      enabled: true,
-      associatedTools: [],
-      associatedToolIds: [],
-      associatedResources: [],
-      associatedPrompts: [],
-      associatedA2aAgents: [],
-      metrics: null,
-      tags: [],
-      createdBy: "admin@example.com",
-      createdFromIp: "127.0.0.1",
-      createdVia: "ui",
-      createdUserAgent: "Mozilla/5.0",
-      modifiedBy: null,
-      modifiedFromIp: null,
-      modifiedVia: null,
-      modifiedUserAgent: null,
-      importBatchId: null,
-      federationSource: null,
-      version: 1,
-      teamId: "team-1",
-      team: "Test Team",
-      ownerEmail: "admin@example.com",
-      visibility: "team",
-      oauthEnabled: false,
-      oauthConfig: null,
-    };
-
-    mockUseQuery.mockReturnValue({
-      data: { servers: [mockServer] },
-      error: null,
-      isLoading: false,
-      execute: vi.fn(),
-      refetch,
-    });
+    const mockServer = makeServer({ id: "gateway/1?mode=delete", name: "GH repo tasks" });
+    setupWithServer(mockServer, { refetch });
 
     renderWithProviders(<Gateways />);
 
@@ -714,74 +529,78 @@ describe("Gateways", () => {
 
     await user.click(screen.getByRole("button", { name: "Delete" }));
 
+    await waitFor(() => expect(screen.queryByText("GH repo tasks")).not.toBeInTheDocument());
+
     expect(mockDeleteVirtualServer).toHaveBeenCalledWith("gateway/1?mode=delete");
     await waitFor(() => expect(refetch).toHaveBeenCalledOnce());
-    expect(screen.getByRole("status")).toHaveTextContent("GH repo tasks deleted.");
-    await waitFor(() => expect(screen.queryByText("GH repo tasks")).not.toBeInTheDocument());
   });
 
-  it("shows delete progress and blocks repeated delete requests while pending", async () => {
+  it("closes the dialog and clears form state immediately on confirm", async () => {
+    const user = userEvent.setup();
+    let resolveDelete!: () => void;
+    const deletePromise = new Promise<void>((resolve) => {
+      resolveDelete = resolve;
+    });
+    mockDeleteVirtualServer.mockReturnValue(deletePromise);
+
+    setupWithServer(makeServer({ id: "gateway-dialog-close", name: "Dialog Close Server" }));
+    renderWithProviders(<Gateways />);
+
+    await user.click(screen.getByRole("button", { name: "Actions for Dialog Close Server" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    // API promise is still pending at this point — resolve to unblock the test
+    resolveDelete();
+  });
+
+  it("blocks repeated delete requests while a deletion is pending", async () => {
     const user = userEvent.setup();
     let resolveDelete!: () => void;
     const deletePromise = new Promise<void>((resolve) => {
       resolveDelete = resolve;
     });
     const refetch = vi.fn().mockResolvedValue({ servers: [] });
-    const mockServer: VirtualServer = {
-      id: "gateway-pending",
-      name: "Pending server",
-      description: "Test server",
-      icon: "",
-      createdAt: "2026-04-16T13:23:12Z",
-      updatedAt: "2026-04-16T13:23:12Z",
-      enabled: true,
-      associatedTools: [],
-      associatedToolIds: [],
-      associatedResources: [],
-      associatedPrompts: [],
-      associatedA2aAgents: [],
-      metrics: null,
-      tags: [],
-      createdBy: "admin@example.com",
-      createdFromIp: "127.0.0.1",
-      createdVia: "ui",
-      createdUserAgent: "Mozilla/5.0",
-      modifiedBy: null,
-      modifiedFromIp: null,
-      modifiedVia: null,
-      modifiedUserAgent: null,
-      importBatchId: null,
-      federationSource: null,
-      version: 1,
-      teamId: "team-1",
-      team: "Test Team",
-      ownerEmail: "admin@example.com",
-      visibility: "team",
-      oauthEnabled: false,
-      oauthConfig: null,
-    };
+    const serverA = makeServer({
+      id: "gateway-a",
+      name: "Server A",
+      associatedToolIds: ["tool-1"],
+    });
+    const serverB: VirtualServer = { ...serverA, id: "gateway-b", name: "Server B" };
 
     mockDeleteVirtualServer.mockReturnValue(deletePromise);
     mockUseQuery.mockReturnValue({
-      data: { servers: [mockServer] },
+      data: { servers: [serverA, serverB] },
       error: null,
       isLoading: false,
       execute: vi.fn(),
       refetch,
     });
-
     renderWithProviders(<Gateways />);
-
-    await user.click(screen.getByRole("button", { name: "Actions for Pending server" }));
+    await user.click(screen.getByRole("button", { name: "Actions for Server A" }));
     await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
     await user.click(screen.getByRole("button", { name: "Delete" }));
 
-    const deletingButton = screen.getByRole("button", { name: /Deleting/i });
-    expect(deletingButton).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
     expect(mockDeleteVirtualServer).toHaveBeenCalledOnce();
 
-    await user.click(deletingButton);
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("button", { name: "Actions for Server A" }),
+      ).not.toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Actions for Server B" }));
+    const deleteBItem = await screen.findByRole("menuitem", { name: "Delete" });
+    expect(deleteBItem).toHaveAttribute("data-disabled");
+
     expect(mockDeleteVirtualServer).toHaveBeenCalledOnce();
 
     resolveDelete();
@@ -791,39 +610,7 @@ describe("Gateways", () => {
   it("shows delete failures in a toast without rendering a page alert", async () => {
     const user = userEvent.setup();
     const refetch = vi.fn();
-    const mockServer: VirtualServer = {
-      id: "gateway-error",
-      name: "Error server",
-      description: "Test server",
-      icon: "",
-      createdAt: "2026-04-16T13:23:12Z",
-      updatedAt: "2026-04-16T13:23:12Z",
-      enabled: true,
-      associatedTools: [],
-      associatedToolIds: [],
-      associatedResources: [],
-      associatedPrompts: [],
-      associatedA2aAgents: [],
-      metrics: null,
-      tags: [],
-      createdBy: "admin@example.com",
-      createdFromIp: "127.0.0.1",
-      createdVia: "ui",
-      createdUserAgent: "Mozilla/5.0",
-      modifiedBy: null,
-      modifiedFromIp: null,
-      modifiedVia: null,
-      modifiedUserAgent: null,
-      importBatchId: null,
-      federationSource: null,
-      version: 1,
-      teamId: "team-1",
-      team: "Test Team",
-      ownerEmail: "admin@example.com",
-      visibility: "team",
-      oauthEnabled: false,
-      oauthConfig: null,
-    };
+    const mockServer = makeServer({ id: "gateway-error", name: "Error server" });
 
     mockDeleteVirtualServer.mockRejectedValue(new Error("HTTP 403: Forbidden"));
     mockUseQuery.mockReturnValue({
@@ -848,6 +635,93 @@ describe("Gateways", () => {
     expect(screen.getByText("Error server")).toBeInTheDocument();
     expect(screen.queryByText("Error deleting virtual server")).not.toBeInTheDocument();
     expect(refetch).not.toHaveBeenCalled();
+  });
+
+  it("rolls back the card to the grid when the delete API call fails", async () => {
+    const user = userEvent.setup();
+    let rejectDelete!: (err: Error) => void;
+    const deletePromise = new Promise<void>((_, reject) => {
+      rejectDelete = reject;
+    });
+    mockDeleteVirtualServer.mockReturnValue(deletePromise);
+
+    const refetch = vi.fn();
+    const mockServer = makeServer({ id: "gateway-rollback", name: "Rollback Server" });
+    mockUseQuery.mockReturnValue({
+      data: { servers: [mockServer] },
+      error: null,
+      isLoading: false,
+      execute: vi.fn(),
+      refetch,
+    });
+
+    renderWithProviders(<Gateways />);
+
+    await user.click(screen.getByRole("button", { name: "Actions for Rollback Server" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(screen.queryByText("Rollback Server")).not.toBeInTheDocument());
+
+    rejectDelete(new Error("HTTP 500"));
+    await waitFor(() => expect(screen.getByText("Rollback Server")).toBeInTheDocument());
+
+    expect(refetch).not.toHaveBeenCalled();
+    expect(mockToastError).toHaveBeenCalledWith(
+      "Error deleting virtual server",
+      expect.objectContaining({ description: expect.any(String) }),
+    );
+  });
+
+  it("rolls back the details panel when the delete API call fails", async () => {
+    const user = userEvent.setup();
+    let rejectDelete!: (err: Error) => void;
+    const deletePromise = new Promise<void>((_, reject) => {
+      rejectDelete = reject;
+    });
+    mockDeleteVirtualServer.mockReturnValue(deletePromise);
+
+    const mockServer = makeServer({ id: "gateway-details-rollback", name: "Details Server" });
+
+    mockUseQuery.mockImplementation((path) => {
+      if (path === "/servers/gateway-details-rollback") {
+        return {
+          data: mockServer,
+          error: null,
+          isLoading: false,
+          execute: vi.fn(),
+          refetch: vi.fn(),
+        };
+      }
+      return {
+        data: { servers: [mockServer] },
+        error: null,
+        isLoading: false,
+        execute: vi.fn(),
+        refetch: vi.fn(),
+      };
+    });
+
+    renderWithProviders(<Gateways />);
+
+    await user.click(screen.getByRole("button", { name: "Actions for Details Server" }));
+    await user.click(await screen.findByRole("menuitem", { name: "View details" }));
+    expect(screen.getByRole("region", { name: "Details Server details" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Actions for Details Server" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("virtual-server-card")).not.toBeInTheDocument(),
+    );
+
+    rejectDelete(new Error("HTTP 500"));
+    await waitFor(() => expect(screen.getByTestId("virtual-server-card")).toBeInTheDocument());
+    expect(mockToastError).toHaveBeenCalledWith(
+      "Error deleting virtual server",
+      expect.objectContaining({ description: expect.any(String) }),
+    );
   });
 
   it("renders virtual server card without crashing when array fields are missing", () => {
@@ -901,39 +775,7 @@ describe("Gateways", () => {
 
   it("handles query failures for tools, resources, and prompts gracefully", async () => {
     const user = userEvent.setup();
-    const mockServer: VirtualServer = {
-      id: "gateway-1",
-      name: "Test Server",
-      description: "Test server",
-      icon: "",
-      createdAt: "2026-04-16T13:23:12Z",
-      updatedAt: "2026-04-16T13:23:12Z",
-      enabled: true,
-      associatedTools: [],
-      associatedToolIds: ["tool1"],
-      associatedResources: [],
-      associatedPrompts: [],
-      associatedA2aAgents: [],
-      metrics: null,
-      tags: [],
-      createdBy: "admin@example.com",
-      createdFromIp: "127.0.0.1",
-      createdVia: "ui",
-      createdUserAgent: "Mozilla/5.0",
-      modifiedBy: null,
-      modifiedFromIp: null,
-      modifiedVia: null,
-      modifiedUserAgent: null,
-      importBatchId: null,
-      federationSource: null,
-      version: 1,
-      teamId: "team-1",
-      team: "Test Team",
-      ownerEmail: "admin@example.com",
-      visibility: "team",
-      oauthEnabled: false,
-      oauthConfig: null,
-    };
+    const mockServer = makeServer({ associatedToolIds: ["tool1"] });
 
     mockUseQuery.mockImplementation((path) => {
       if (path === "/servers/gateway-1") {
@@ -987,7 +829,7 @@ describe("Gateways", () => {
 
     renderWithProviders(<Gateways />);
 
-    await user.click(screen.getByRole("button", { name: "Actions for Test Server" }));
+    await user.click(screen.getByRole("button", { name: "Actions for GH repo tasks" }));
     await user.click(await screen.findByRole("menuitem", { name: "View details" }));
 
     expect(screen.getByText("Virtual server details")).toBeInTheDocument();

@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
 import { Plus } from "lucide-react";
+import { toast } from "sonner";
 import { MCPIcon } from "@/components/icons/MCPIcon";
 import { Button } from "@/components/ui/button";
 import { MCPServerForm } from "@/components/mcp-servers/MCPServerForm";
@@ -13,11 +14,13 @@ import { sanitizeError } from "@/utils/errors";
 import type { MCPServer, ServersResponse } from "@/types/server";
 import { Loading } from "@/components/ui/loading";
 import { InlineNotification } from "@/components/ui/inline-notification";
+import { useIntl } from "react-intl";
 
 // Pagination constants
 const DEFAULT_PAGE_SIZE = 10;
 
 export function Servers() {
+  const intl = useIntl();
   const [limit, setLimit] = useState(DEFAULT_PAGE_SIZE);
   const [allServers, setAllServers] = useState<MCPServer[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -26,7 +29,6 @@ export function Servers() {
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
   const [updateServerId, setUpdateServerId] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<string | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [toggleError, setToggleError] = useState<string | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -97,22 +99,57 @@ export function Servers() {
     setDeleteDialogOpen(true);
   };
 
-  const confirmDelete = async () => {
+  const confirmDelete = useCallback(async () => {
     if (!selectedServerId) return;
 
+    const idToDelete = selectedServerId;
+    const previousServers = allServers;
+    const serverToDelete = allServers.find((s) => s.id === idToDelete);
+
+    setAllServers(allServers.filter((s) => s.id !== idToDelete));
+
+    const previousServerIdForDetails = selectedServerIdForDetails;
+    const previousDrawerOpen = isDetailsDrawerOpen;
+
+    if (selectedServerIdForDetails === idToDelete) {
+      setIsDetailsDrawerOpen(false);
+      setSelectedServerIdForDetails(null);
+    }
     setDeleteDialogOpen(false);
-    setDeleteError(null);
+    setSelectedServerId(null);
 
     try {
-      await serversApi.delete(selectedServerId);
-      setSelectedServerId(null);
-      await refetch();
+      await serversApi.delete(idToDelete);
+      toast.success(
+        intl.formatMessage(
+          { id: "mcpServer.delete.success" },
+          { name: serverToDelete?.name ?? idToDelete },
+        ),
+      );
+      try {
+        await refetch();
+      } catch (refreshErr) {
+        const errorMsg = sanitizeError(refreshErr);
+        console.error("Failed to refresh servers after deletion:", errorMsg);
+      }
     } catch (err) {
+      setAllServers(previousServers);
+      setSelectedServerIdForDetails(previousServerIdForDetails);
+      setIsDetailsDrawerOpen(previousDrawerOpen);
       const errorMsg = sanitizeError(err);
-      setDeleteError(errorMsg);
+      toast.error(intl.formatMessage({ id: "mcpServer.delete.errorTitle" }), {
+        description: errorMsg,
+      });
       console.error("Failed to delete server:", errorMsg);
     }
-  };
+  }, [
+    allServers,
+    selectedServerId,
+    selectedServerIdForDetails,
+    isDetailsDrawerOpen,
+    refetch,
+    intl,
+  ]);
 
   const handleTest = async (id: string) => {
     setTestError(null);
@@ -225,18 +262,6 @@ export function Servers() {
             </div>
           )}
 
-          {deleteError && (
-            <div
-              className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 mb-6"
-              role="alert"
-              aria-live="assertive"
-              aria-atomic="true"
-            >
-              <h3 className="font-semibold mb-1">Error deleting server</h3>
-              <p className="text-red-800 dark:text-red-200">{deleteError}</p>
-            </div>
-          )}
-
           {toggleError && (
             <div className="mb-6">
               <InlineNotification
@@ -260,7 +285,9 @@ export function Servers() {
           {servers.length > 0 ? (
             <>
               <div className="flex justify-between items-center mb-6">
-                <h1 className="text-base font-semibold text-foreground">MCP Servers</h1>
+                <h1 className="text-base font-semibold text-foreground">
+                  {intl.formatMessage({ id: "mcpServer.title" })}
+                </h1>
                 <Button
                   variant="default"
                   className="h-7 rounded-sm px-4"

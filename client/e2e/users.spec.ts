@@ -321,14 +321,16 @@ test.describe("Users page", () => {
     });
   });
 
-  test("confirms and deletes a user", async ({ page }) => {
+  test("optimistically removes user on delete confirmation and shows success toast", async ({
+    page,
+  }) => {
     let deleteRequestCount = 0;
 
     await page.route("**/auth/email/admin/users?*", async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ users: [MOCK_USER] }),
+        body: JSON.stringify({ users: [MOCK_USER, MOCK_USER_2] }),
       });
     });
     await page.route(MOCK_USER_ROUTE, async (route) => {
@@ -341,6 +343,7 @@ test.describe("Users page", () => {
     await page.waitForLoadState("networkidle");
 
     await expect(page.getByText("John Doe")).toBeVisible();
+    await expect(page.getByText("Jane Smith")).toBeVisible();
 
     await page.getByRole("button", { name: "Actions for John Doe" }).click();
     await page.getByRole("menuitem", { name: "Delete" }).click();
@@ -355,14 +358,88 @@ test.describe("Users page", () => {
 
     await dialog.getByRole("button", { name: "Delete User" }).click();
 
-    await expect.poll(() => deleteRequestCount).toBe(1);
+    // Optimistic: dialog closes and user disappears immediately before API resolves
+    await expect(dialog).not.toBeVisible();
     await expect(page.getByText("John Doe")).not.toBeVisible();
+    await expect(page.getByText("Jane Smith")).toBeVisible();
+
+    await expect.poll(() => deleteRequestCount).toBe(1);
     await expect(
       page.locator("[data-sonner-toast]").filter({ hasText: /deleted successfully/ }),
     ).toBeVisible();
   });
 
-  test("shows error when trying to delete own account", async ({ page }) => {
+  test("cancels delete dialog and keeps user in list", async ({ page }) => {
+    await page.route("**/auth/email/admin/users?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ users: [MOCK_USER] }),
+      });
+    });
+
+    await page.goto(APP.USERS);
+    await page.waitForLoadState("networkidle");
+
+    await page.getByRole("button", { name: "Actions for John Doe" }).click();
+    await page.getByRole("menuitem", { name: "Delete" }).click();
+
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toBeVisible();
+
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(dialog).not.toBeVisible();
+
+    await expect(page.getByText("John Doe")).toBeVisible();
+  });
+
+  test("rolls back optimistic delete and shows error toast when delete API fails", async ({
+    page,
+  }) => {
+    let deleteRequestCount = 0;
+
+    await page.route("**/auth/email/admin/users?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ users: [MOCK_USER, MOCK_USER_2] }),
+      });
+    });
+    await page.route(MOCK_USER_ROUTE, async (route) => {
+      expect(route.request().method()).toBe("DELETE");
+      deleteRequestCount++;
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Internal Server Error" }),
+      });
+    });
+
+    await page.goto(APP.USERS);
+    await page.waitForLoadState("networkidle");
+
+    await expect(page.getByText("John Doe")).toBeVisible();
+
+    await page.getByRole("button", { name: "Actions for John Doe" }).click();
+    await page.getByRole("menuitem", { name: "Delete" }).click();
+
+    const dialog = page.getByRole("alertdialog");
+    await dialog.getByRole("button", { name: "Delete User" }).click();
+
+    // Optimistic: dialog closes and user is removed immediately
+    await expect(dialog).not.toBeVisible();
+
+    // API fails → user is rolled back into the table
+    await expect.poll(() => deleteRequestCount).toBe(1);
+    await expect(page.getByText("John Doe")).toBeVisible();
+    await expect(
+      page.locator("[data-sonner-toast]").filter({ hasText: /Failed to delete user/ }),
+    ).toBeVisible();
+  });
+
+  test("blocks self-delete client-side: no API call fires, dialog closes, error toast shown", async ({
+    page,
+  }) => {
     // DEFAULT_TEST_USER (logged-in user) has email "test@example.com"
     const selfUser: User = { ...MOCK_USER, email: "test@example.com", full_name: "Test User" };
 
@@ -373,8 +450,14 @@ test.describe("Users page", () => {
         body: JSON.stringify({ users: [selfUser] }),
       });
     });
-    // encodeURIComponent("test@example.com") = "test%40example.com"
+
+    // Track whether the DELETE endpoint is ever called — it must NOT be
+    let deleteCallCount = 0;
     await page.route("**/auth/email/admin/users/test%40example.com", async (route) => {
+      if (route.request().method() === "DELETE") {
+        deleteCallCount++;
+      }
+      // Fulfill just in case, but we assert it's never reached
       await route.fulfill({
         status: 400,
         contentType: "application/json",
@@ -392,13 +475,16 @@ test.describe("Users page", () => {
     await expect(dialog).toBeVisible();
     await dialog.getByRole("button", { name: "Delete User" }).click();
 
+    // Client-side guard fires: dialog closes immediately with no round-trip
+    await expect(dialog).not.toBeVisible();
     await expect(
       page.locator("[data-sonner-toast]").filter({ hasText: "You cannot delete your own account" }),
     ).toBeVisible();
-    // Dialog stays open on error; close it so Radix un-aria-hides the background
-    await dialog.getByRole("button", { name: "Cancel" }).click();
-    await expect(dialog).not.toBeVisible();
-    // Confirm rollback: user's email still visible in the table
+
+    // User stays in the table (no optimistic removal happened)
     await expect(page.getByText("test@example.com")).toBeVisible();
+
+    // The DELETE API was never called
+    expect(deleteCallCount).toBe(0);
   });
 });

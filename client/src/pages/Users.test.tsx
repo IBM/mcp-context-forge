@@ -2,14 +2,40 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { render } from "@testing-library/react";
+import { toast } from "sonner";
 import { Users } from "./Users";
 import { RouterProvider } from "@/router";
 import { I18nProvider } from "@/i18n";
 import type { ReactElement } from "react";
 
+vi.mock("@/auth/AuthContext", () => ({
+  useAuthContext: vi.fn(),
+}));
+
 vi.mock("@/api/client", () => ({
   api: {
     get: vi.fn(),
+    delete: vi.fn(),
+    post: vi.fn(),
+    put: vi.fn(),
+    patch: vi.fn(),
+  },
+  ApiError: class ApiError extends Error {
+    status: number;
+    body: unknown;
+    constructor(status: number, body: unknown, message: string) {
+      super(message);
+      this.name = "ApiError";
+      this.status = status;
+      this.body = body;
+    }
+  },
+}));
+
+vi.mock("sonner", () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
   },
 }));
 
@@ -37,6 +63,32 @@ vi.mock("@/components/users/UserForm", () => ({
 }));
 
 import { api } from "@/api/client";
+import { ApiError } from "@/api/client";
+import * as AuthContextModule from "@/auth/AuthContext";
+
+const mockUseAuthContext = vi.mocked(AuthContextModule.useAuthContext);
+const mockToastSuccess = vi.mocked(toast.success);
+const mockToastError = vi.mocked(toast.error);
+
+function makeAuthContext(email = "admin@example.com") {
+  return {
+    user: {
+      email,
+      full_name: "Admin",
+      is_admin: true,
+      is_active: true,
+      auth_provider: "local",
+      email_verified: true,
+      password_change_required: false,
+    },
+    isAuthenticated: true,
+    isLoading: false,
+    selectedTeamId: null,
+    login: vi.fn(),
+    logout: vi.fn(),
+    setSelectedTeamId: vi.fn(),
+  } as ReturnType<typeof AuthContextModule.useAuthContext>;
+}
 
 function createMockUsers(startIndex: number, count: number) {
   return Array.from({ length: count }, (_, i) => ({
@@ -67,6 +119,8 @@ function renderWithRouter(ui: ReactElement) {
 describe("Users", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mockUseAuthContext.mockReturnValue(makeAuthContext("admin@example.com"));
   });
 
   it("renders loading state while fetching users", () => {
@@ -226,6 +280,40 @@ describe("Users", () => {
     });
   });
 
+  it("renders empty state when no users exist", async () => {
+    vi.mocked(api.get).mockResolvedValueOnce({
+      users: [],
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Users />);
+
+    await waitFor(() => {
+      expect(screen.getByText("No users found")).toBeInTheDocument();
+    });
+  });
+
+  it("renders loading spinner while fetching", async () => {
+    vi.mocked(api.get).mockImplementationOnce(() => new Promise(() => {}));
+
+    renderWithRouter(<Users />);
+
+    expect(screen.getByText("Users")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
+  });
+
+  it("shows error alert when query fails", async () => {
+    vi.mocked(api.get).mockRejectedValueOnce(new Error("Network error"));
+
+    renderWithRouter(<Users />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("Error loading users")).toBeInTheDocument();
+  });
+
   it("loads more users when Load More button is clicked", async () => {
     const user = userEvent.setup();
 
@@ -255,6 +343,302 @@ describe("Users", () => {
     });
 
     expect(screen.queryByRole("button", { name: /load more users/i })).not.toBeInTheDocument();
+  });
+
+  it("hides Load More button when there is no nextCursor", async () => {
+    vi.mocked(api.get).mockResolvedValueOnce({
+      users: createMockUsers(0, 5),
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Users />);
+
+    await waitFor(() => {
+      expect(screen.getByText("user0@example.com")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole("button", { name: /load more users/i })).not.toBeInTheDocument();
+  });
+
+  it("shows the Create User button", async () => {
+    vi.mocked(api.get).mockResolvedValueOnce({
+      users: createMockUsers(0, 3),
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Users />);
+
+    expect(screen.getByRole("button", { name: /create user/i })).toBeInTheDocument();
+  });
+
+  it("removes user from list and shows success toast after API responds", async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(api.get).mockResolvedValueOnce({
+      users: createMockUsers(0, 3),
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Users />);
+
+    await waitFor(() => {
+      expect(screen.getByText("user0@example.com")).toBeInTheDocument();
+    });
+
+    vi.mocked(api.delete).mockResolvedValueOnce({ success: true, message: "Deleted" });
+
+    await user.click(screen.getByRole("button", { name: "Actions for User 0" }));
+    await user.click(await screen.findByRole("menuitem", { name: /^delete$/i }));
+
+    await user.click(await screen.findByRole("button", { name: /delete user/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("user0@example.com")).not.toBeInTheDocument();
+    });
+
+    expect(screen.getByText("user1@example.com")).toBeInTheDocument();
+    expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringContaining("user0@example.com"));
+  });
+
+  it("optimistically removes user from list immediately on delete confirmation", async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(api.get).mockResolvedValueOnce({
+      users: createMockUsers(0, 1),
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Users />);
+
+    await waitFor(() => {
+      expect(screen.getByText("user0@example.com")).toBeInTheDocument();
+    });
+
+    let resolveDelete!: (val: unknown) => void;
+    vi.mocked(api.delete).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveDelete = resolve;
+        }),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Actions for User 0" }));
+    await user.click(await screen.findByRole("menuitem", { name: /^delete$/i }));
+    await user.click(await screen.findByRole("button", { name: /delete user/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("user0@example.com")).not.toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: /delete user/i })).not.toBeInTheDocument();
+
+    resolveDelete({ success: true, message: "Deleted" });
+
+    await waitFor(() => {
+      expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringContaining("user0@example.com"));
+    });
+  });
+
+  it("rolls back optimistic delete when API call fails with generic error", async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(api.get).mockResolvedValueOnce({
+      users: createMockUsers(0, 3),
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Users />);
+
+    await waitFor(() => {
+      expect(screen.getByText("user0@example.com")).toBeInTheDocument();
+    });
+
+    vi.mocked(api.delete).mockRejectedValueOnce(new Error("500 Internal Server Error"));
+
+    const actionsButton = screen.getByRole("button", { name: "Actions for User 0" });
+    await user.click(actionsButton);
+
+    const deleteItem = await screen.findByRole("menuitem", { name: /^delete$/i });
+    await user.click(deleteItem);
+
+    const confirmButton = await screen.findByRole("button", { name: /delete user/i });
+    await user.click(confirmButton);
+
+    await waitFor(() => {
+      expect(screen.getByText("user0@example.com")).toBeInTheDocument();
+    });
+
+    expect(mockToastError).toHaveBeenCalledWith(expect.stringContaining("Failed to delete user"));
+  });
+
+  it("blocks self-delete client-side: no API call, dialog closes, error toast shown immediately", async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(api.get).mockResolvedValueOnce({
+      users: [{ ...createMockUsers(0, 1)[0], email: "admin@example.com" }],
+      nextCursor: null,
+    });
+
+    mockUseAuthContext.mockReturnValue(makeAuthContext("admin@example.com"));
+
+    renderWithRouter(<Users />);
+
+    await waitFor(() => {
+      expect(screen.getByText("admin@example.com")).toBeInTheDocument();
+    });
+
+    const actionsButton = screen.getByRole("button", { name: /actions for/i });
+    await user.click(actionsButton);
+
+    const deleteItem = await screen.findByRole("menuitem", { name: /^delete$/i });
+    await user.click(deleteItem);
+
+    const confirmButton = await screen.findByRole("button", { name: /delete user/i });
+    await user.click(confirmButton);
+
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalledWith("You cannot delete your own account");
+    });
+    expect(api.delete).not.toHaveBeenCalled();
+
+    expect(screen.queryByRole("button", { name: /delete user/i })).not.toBeInTheDocument();
+    expect(screen.getByText("admin@example.com")).toBeInTheDocument();
+  });
+
+  it("shows 'cannot delete own account' toast error on 400 with self-delete message", async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(api.get).mockResolvedValueOnce({
+      users: createMockUsers(0, 1),
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Users />);
+
+    await waitFor(() => {
+      expect(screen.getByText("user0@example.com")).toBeInTheDocument();
+    });
+
+    const selfDeleteError = new ApiError(
+      400,
+      { detail: "Cannot delete your own account" },
+      "HTTP 400",
+    );
+    vi.mocked(api.delete).mockRejectedValueOnce(selfDeleteError);
+
+    const actionsButton = screen.getByRole("button", { name: "Actions for User 0" });
+    await user.click(actionsButton);
+
+    const deleteItem = await screen.findByRole("menuitem", { name: /^delete$/i });
+    await user.click(deleteItem);
+
+    const confirmButton = await screen.findByRole("button", { name: /delete user/i });
+    await user.click(confirmButton);
+
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalledWith("You cannot delete your own account");
+    });
+
+    expect(screen.getByText("user0@example.com")).toBeInTheDocument();
+  });
+
+  it("shows 'cannot delete last admin' toast error on 400 with last-admin message", async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(api.get).mockResolvedValueOnce({
+      users: [{ ...createMockUsers(0, 1)[0], is_admin: true }],
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Users />);
+
+    await waitFor(() => {
+      expect(screen.getByText("user0@example.com")).toBeInTheDocument();
+    });
+
+    const lastAdminError = new ApiError(
+      400,
+      { detail: "Cannot delete the last remaining admin" },
+      "HTTP 400",
+    );
+    vi.mocked(api.delete).mockRejectedValueOnce(lastAdminError);
+
+    const actionsButton = screen.getByRole("button", { name: "Actions for User 0" });
+    await user.click(actionsButton);
+
+    const deleteItem = await screen.findByRole("menuitem", { name: /^delete$/i });
+    await user.click(deleteItem);
+
+    const confirmButton = await screen.findByRole("button", { name: /delete user/i });
+    await user.click(confirmButton);
+
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalledWith("Cannot delete the last remaining admin user");
+    });
+
+    expect(screen.getByText("user0@example.com")).toBeInTheDocument();
+  });
+
+  it("shows 'user not found' toast error on 404", async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(api.get).mockResolvedValueOnce({
+      users: createMockUsers(0, 1),
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Users />);
+
+    await waitFor(() => {
+      expect(screen.getByText("user0@example.com")).toBeInTheDocument();
+    });
+
+    const notFoundError = new ApiError(404, { detail: "User not found" }, "HTTP 404");
+    vi.mocked(api.delete).mockRejectedValueOnce(notFoundError);
+
+    const actionsButton = screen.getByRole("button", { name: "Actions for User 0" });
+    await user.click(actionsButton);
+
+    const deleteItem = await screen.findByRole("menuitem", { name: /^delete$/i });
+    await user.click(deleteItem);
+
+    const confirmButton = await screen.findByRole("button", { name: /delete user/i });
+    await user.click(confirmButton);
+
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalledWith("User not found");
+    });
+  });
+
+  it("cancelling the delete dialog keeps user in list", async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(api.get).mockResolvedValueOnce({
+      users: createMockUsers(0, 2),
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Users />);
+
+    await waitFor(() => {
+      expect(screen.getByText("user0@example.com")).toBeInTheDocument();
+    });
+
+    const actionsButton = screen.getByRole("button", { name: "Actions for User 0" });
+    await user.click(actionsButton);
+
+    const deleteItem = await screen.findByRole("menuitem", { name: /^delete$/i });
+    await user.click(deleteItem);
+
+    expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
+
+    const cancelButton = screen.getByRole("button", { name: /cancel/i });
+    await user.click(cancelButton);
+
+    expect(screen.getByText("user0@example.com")).toBeInTheDocument();
+
+    expect(api.delete).not.toHaveBeenCalled();
+    expect(mockToastSuccess).not.toHaveBeenCalled();
+    expect(mockToastError).not.toHaveBeenCalled();
   });
 
   it("shows loading text on Load More button while loading", async () => {
