@@ -13,6 +13,7 @@ using automatic service discovery through gRPC server reflection.
 
 # Standard
 import asyncio
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Sequence
 
@@ -42,6 +43,12 @@ from mcpgateway.services.logging_service import LoggingService
 # Initialize logging
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+
+@lru_cache(maxsize=1)
+def _warn_trusted_local_once() -> None:
+    """Warn, at most once per process, that SSRF/TLS validation was skipped."""
+    logger.warning("GrpcEndpoint.start() called with trusted_local=True: SSRF/TLS target validation is skipped. The caller is responsible for having validated the target address and TLS paths.")
 
 
 PROTO_TO_JSON_TYPE_MAP = {
@@ -95,14 +102,49 @@ class GrpcEndpoint:
         self._pool = descriptor_pool.DescriptorPool()
         self._factory = message_factory.MessageFactory(pool=self._pool)
 
-    async def start(self, timeout: Optional[float] = None) -> None:
+    def _validate_target_and_tls(self) -> None:
+        """Validate the target address and any TLS paths against SSRF / traversal rules.
+
+        Reuses the shared validators from the gRPC service layer. They are
+        imported lazily to avoid a circular import with
+        ``mcpgateway.services.grpc_service`` (which imports ``GrpcEndpoint``).
+
+        Raises:
+            GrpcServiceError: If the target or a TLS path is rejected.
+        """
+        # First-Party
+        from mcpgateway.services.grpc_service import _validate_grpc_target, _validate_tls_path  # pylint: disable=import-outside-toplevel,cyclic-import
+
+        _validate_grpc_target(self._target)
+        if self._tls_cert_path:
+            _validate_tls_path(self._tls_cert_path, "TLS cert path")
+        if self._tls_key_path:
+            _validate_tls_path(self._tls_key_path, "TLS key path")
+
+    async def start(self, timeout: Optional[float] = None, trusted_local: bool = False) -> None:
         """Initialize gRPC channel and perform reflection if enabled.
 
         Args:
             timeout: Per-call gRPC deadline propagated to reflection RPCs so a
                 slow upstream cannot block the executor beyond the caller's
                 asyncio cancellation.
+            trusted_local: When False (the default), the target address and any
+                TLS certificate/key paths are validated against the platform SSRF
+                and path-traversal rules before any channel is opened, so a direct
+                caller cannot be steered at a blocked destination (e.g. a cloud
+                metadata endpoint). Set True only when the caller has already
+                validated the target; validation is then skipped and a warning is
+                logged once per process.
+
+        Raises:
+            GrpcServiceError: If trusted_local is False and the target or a TLS
+                path is rejected by the SSRF / path-traversal validators.
         """
+        if trusted_local:
+            _warn_trusted_local_once()
+        else:
+            self._validate_target_and_tls()
+
         logger.info(f"Starting gRPC endpoint connection to {self._target}")
 
         # Create channel
