@@ -24,6 +24,7 @@ except ImportError:
     GRPC_AVAILABLE = False
 
 # First-Party
+from mcpgateway.services.grpc_service import GrpcServiceError
 from mcpgateway.translate_grpc import (
     expose_grpc_via_sse,
     GrpcEndpoint,
@@ -92,7 +93,7 @@ class TestGrpcEndpoint:
         mock_grpc.insecure_channel.return_value = mock_channel
 
         with patch.object(endpoint, "_discover_services", new_callable=AsyncMock):
-            await endpoint.start()
+            await endpoint.start(trusted_local=True)
 
         mock_grpc.insecure_channel.assert_called_once_with("localhost:50051")
         assert endpoint._channel == mock_channel
@@ -106,7 +107,7 @@ class TestGrpcEndpoint:
 
         with patch("mcpgateway.translate_grpc.asyncio.to_thread", new_callable=AsyncMock, return_value=b"cert_data"):
             with patch.object(endpoint_with_tls, "_discover_services", new_callable=AsyncMock):
-                await endpoint_with_tls.start()
+                await endpoint_with_tls.start(trusted_local=True)
 
         assert endpoint_with_tls._channel == mock_channel
         mock_grpc.secure_channel.assert_called_once()
@@ -125,10 +126,38 @@ class TestGrpcEndpoint:
         mock_grpc.ssl_channel_credentials.return_value = MagicMock()
 
         with patch.object(endpoint, "_discover_services", new_callable=AsyncMock):
-            await endpoint.start()
+            await endpoint.start(trusted_local=True)
 
         mock_grpc.ssl_channel_credentials.assert_called_once_with()
         assert endpoint._channel == mock_channel
+
+    @patch("mcpgateway.translate_grpc.grpc")
+    async def test_start_validates_and_blocks_ssrf_target(self, mock_grpc, monkeypatch):
+        """start() rejects an SSRF-blocked target before opening any channel (default trusted_local=False)."""
+        monkeypatch.setattr("mcpgateway.config.settings.ssrf_protection_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.config.settings.ssrf_blocked_hosts", ["metadata.google.internal"], raising=False)
+
+        endpoint = GrpcEndpoint(target="metadata.google.internal:443", reflection_enabled=False)
+
+        with pytest.raises(GrpcServiceError):
+            await endpoint.start()
+
+        # No channel may be opened once validation rejects the target.
+        mock_grpc.insecure_channel.assert_not_called()
+        mock_grpc.secure_channel.assert_not_called()
+
+    @patch("mcpgateway.translate_grpc.grpc")
+    async def test_start_trusted_local_skips_validation(self, mock_grpc, monkeypatch):
+        """trusted_local=True skips SSRF validation for an otherwise-blocked target."""
+        monkeypatch.setattr("mcpgateway.config.settings.ssrf_protection_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.config.settings.ssrf_blocked_hosts", ["metadata.google.internal"], raising=False)
+        mock_grpc.insecure_channel.return_value = MagicMock()
+
+        endpoint = GrpcEndpoint(target="metadata.google.internal:443", reflection_enabled=False)
+
+        await endpoint.start(trusted_local=True)  # must not raise
+
+        mock_grpc.insecure_channel.assert_called_once_with("metadata.google.internal:443")
 
     @patch("mcpgateway.translate_grpc.grpc")
     @patch("mcpgateway.translate_grpc.reflection_pb2_grpc")
@@ -525,7 +554,7 @@ async def test_endpoint_start_without_reflection(monkeypatch):
     monkeypatch.setattr("mcpgateway.translate_grpc.grpc", mock_grpc)
     monkeypatch.setattr(endpoint, "_discover_services", AsyncMock())
 
-    await endpoint.start()
+    await endpoint.start(trusted_local=True)
     assert endpoint._channel == "chan"
     endpoint._discover_services.assert_not_called()
 
@@ -552,7 +581,7 @@ async def test_endpoint_start_with_tls_and_reflection(monkeypatch):
     monkeypatch.setattr(tg.asyncio, "to_thread", AsyncMock(return_value=b"cert-data"))
     monkeypatch.setattr(endpoint, "_discover_services", AsyncMock())
 
-    await endpoint.start()
+    await endpoint.start(trusted_local=True)
 
     assert endpoint._channel == "secure-chan"
     mock_grpc.ssl_channel_credentials.assert_called_once()

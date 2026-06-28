@@ -962,7 +962,7 @@ class GrpcService:
 
         # Import here to avoid circular dependency
         # First-Party
-        from mcpgateway.translate_grpc import GrpcEndpoint  # pylint: disable=import-outside-toplevel
+        from mcpgateway.translate_grpc import GrpcEndpoint  # pylint: disable=import-outside-toplevel,cyclic-import
 
         # Parse method name (service.Method format)
         if "." not in method_name:
