@@ -2212,6 +2212,38 @@ class TestClientCapabilitiesAndElicitation:
         result = await registry.get_elicitation_capable_sessions()
         assert "orphan" not in result
 
+    @pytest.mark.asyncio
+    async def test_has_elicitation_legacy_declaration_is_form_only(self, registry):
+        """SEP-1036: a legacy bare declaration counts as form mode, not url mode."""
+        await registry.store_client_capabilities("legacy", {"elicitation": True})
+        assert await registry.has_elicitation_capability("legacy") is True
+        assert await registry.has_elicitation_capability("legacy", mode="form") is True
+        assert await registry.has_elicitation_capability("legacy", mode="url") is False
+
+    @pytest.mark.asyncio
+    async def test_has_elicitation_subcapabilities(self, registry):
+        """SEP-1036: explicit form/url sub-capabilities are honored per-mode."""
+        await registry.store_client_capabilities("both", {"elicitation": {"form": {}, "url": {}}})
+        assert await registry.has_elicitation_capability("both", mode="form") is True
+        assert await registry.has_elicitation_capability("both", mode="url") is True
+
+        await registry.store_client_capabilities("urlonly", {"elicitation": {"url": {}}})
+        assert await registry.has_elicitation_capability("urlonly") is True
+        assert await registry.has_elicitation_capability("urlonly", mode="url") is True
+        assert await registry.has_elicitation_capability("urlonly", mode="form") is False
+
+    @pytest.mark.asyncio
+    async def test_get_elicitation_capable_sessions_by_mode(self, registry):
+        """SEP-1036: capable-session filtering respects the requested mode."""
+        for sid in ("uf", "uu", "ul"):
+            await registry.add_session(sid, FakeSSETransport(sid))
+        await registry.store_client_capabilities("uf", {"elicitation": {"form": {}}})
+        await registry.store_client_capabilities("uu", {"elicitation": {"url": {}}})
+        await registry.store_client_capabilities("ul", {"elicitation": True})  # legacy = form
+
+        assert set(await registry.get_elicitation_capable_sessions(mode="url")) == {"uu"}
+        assert set(await registry.get_elicitation_capable_sessions(mode="form")) == {"uf", "ul"}
+
 
 # ---------------------------------------------------------------------------
 # generate_response edge cases (lines 1926, 1951, 1955, 1962-1968)

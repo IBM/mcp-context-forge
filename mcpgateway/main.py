@@ -10892,6 +10892,31 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 params.get("logger"),
             )
             result = {}
+        elif method == "notifications/elicitation/complete":
+            # SEP-1036: server signals a URL-mode elicitation has completed so the
+            # client can retry a request that previously received a -32042 error.
+            # Route the notification to the client session owning the elicitation.
+            if settings.mcpgateway_elicitation_enabled and settings.mcpgateway_elicitation_url_mode_enabled:
+                # First-Party
+                from mcpgateway.services.elicitation_service import get_elicitation_service  # pylint: disable=import-outside-toplevel
+
+                elicitation_id = params.get("elicitationId")
+                target_session_id = params.get("session_id") or params.get("sessionId")
+                if not target_session_id and elicitation_id:
+                    pending = get_elicitation_service().get_pending_by_elicitation_id(elicitation_id)
+                    if pending:
+                        target_session_id = pending.downstream_session_id
+                if target_session_id:
+                    await session_registry.broadcast(
+                        target_session_id,
+                        {"jsonrpc": "2.0", "method": "notifications/elicitation/complete", "params": {"elicitationId": elicitation_id}},
+                    )
+                    logger.debug("Routed elicitation completion (elicitationId=%s) to session %s", elicitation_id, target_session_id)
+                else:
+                    # TODO: durable elicitationId->session mapping is needed for completions
+                    # that arrive after the consent response cleared the pending entry.
+                    logger.warning("Could not route elicitation completion for elicitationId=%s (no target session)", elicitation_id)
+            result = {}
         elif method.startswith("notifications/"):
             # Catch-all for other notifications/* methods (currently unsupported)
             result = {}
@@ -10905,86 +10930,132 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             # Catch-all for other sampling/* methods (currently unsupported)
             result = {}
         elif method == "elicitation/create":
-            # MCP spec 2025-06-18: Elicitation support (server-to-client requests)
-            # Elicitation allows servers to request structured user input through clients
+            # Elicitation: server-to-client request for user input.
+            # Form mode: MCP 2025-06-18. URL mode: SEP-1036 (MCP 2025-11-25).
 
             # Check if elicitation is enabled
             if not settings.mcpgateway_elicitation_enabled:
                 raise JSONRPCError(-32601, "Elicitation feature is disabled", {"feature": "elicitation", "config": "MCPGATEWAY_ELICITATION_ENABLED=false"})
 
-            # Validate params
             # First-Party
-            from mcpgateway.common.models import ElicitRequestParams  # pylint: disable=import-outside-toplevel
+            from mcpgateway.common.models import ElicitRequestParams, ElicitRequestURLParams  # pylint: disable=import-outside-toplevel
             from mcpgateway.services.elicitation_service import get_elicitation_service  # pylint: disable=import-outside-toplevel
 
-            try:
-                elicit_params = ElicitRequestParams(**params)
-            except Exception as e:
-                raise JSONRPCError(-32602, f"Invalid elicitation params: {e}", params)
-
-            # Get target session (from params or find elicitation-capable session)
-            target_session_id = params.get("session_id") or params.get("sessionId")
-            if not target_session_id:
-                # Find an elicitation-capable session
-                capable_sessions = await session_registry.get_elicitation_capable_sessions()
-                if not capable_sessions:
-                    raise JSONRPCError(-32000, "No elicitation-capable clients available", {"message": elicit_params.message})
-                target_session_id = capable_sessions[0]
-                logger.debug("Selected session %s for elicitation", target_session_id)
-
-            # Verify session has elicitation capability
-            if not await session_registry.has_elicitation_capability(target_session_id):
-                raise JSONRPCError(-32000, f"Session {target_session_id} does not support elicitation", {"session_id": target_session_id})
-
-            # Get elicitation service and create request
+            elicit_mode = params.get("mode", "form")
             elicitation_service = get_elicitation_service()
-
-            # Extract timeout from params or use default
             timeout = params.get("timeout", settings.mcpgateway_elicitation_timeout)
+            # In a full bidirectional proxy this is the upstream session that
+            # initiated the request; passthrough uses a placeholder.
+            upstream_session_id = "gateway"
 
-            try:
-                # Create elicitation request - this stores it and waits for response
-                # For now, use dummy upstream_session_id - in full bidirectional proxy,
-                # this would be the session that initiated the request
-                upstream_session_id = "gateway"
+            if elicit_mode == "url":
+                # ----- URL mode (SEP-1036) -----
+                if not settings.mcpgateway_elicitation_url_mode_enabled:
+                    raise JSONRPCError(-32601, "URL-mode elicitation is disabled", {"feature": "elicitation.url", "config": "MCPGATEWAY_ELICITATION_URL_MODE_ENABLED=false"})
 
-                # Start the elicitation (creates pending request and future)
-                elicitation_task = asyncio.create_task(
-                    elicitation_service.create_elicitation(
-                        upstream_session_id=upstream_session_id, downstream_session_id=target_session_id, message=elicit_params.message, requested_schema=elicit_params.requestedSchema, timeout=timeout
+                try:
+                    url_params = ElicitRequestURLParams(**params)
+                except Exception as e:
+                    raise JSONRPCError(-32602, f"Invalid URL elicitation params: {e}", params)
+
+                target_session_id = params.get("session_id") or params.get("sessionId")
+                if not target_session_id:
+                    capable_sessions = await session_registry.get_elicitation_capable_sessions(mode="url")
+                    if not capable_sessions:
+                        raise JSONRPCError(-32000, "No URL-elicitation-capable clients available", {"message": url_params.message})
+                    target_session_id = capable_sessions[0]
+                    logger.debug("Selected session %s for URL elicitation", target_session_id)
+
+                if not await session_registry.has_elicitation_capability(target_session_id, mode="url"):
+                    raise JSONRPCError(-32000, f"Session {target_session_id} does not support URL-mode elicitation", {"session_id": target_session_id})
+
+                try:
+                    elicitation_task = asyncio.create_task(
+                        elicitation_service.create_url_elicitation(
+                            upstream_session_id=upstream_session_id,
+                            downstream_session_id=target_session_id,
+                            message=url_params.message,
+                            url=url_params.url,
+                            elicitation_id=url_params.elicitationId,
+                            timeout=timeout,
+                            require_https=settings.mcpgateway_elicitation_url_require_https,
+                        )
                     )
-                )
 
-                # Get the pending elicitation to extract request_id
-                # Wait a moment for it to be created
-                await asyncio.sleep(0.01)
-                pending_elicitations = [e for e in elicitation_service._pending.values() if e.downstream_session_id == target_session_id]  # pylint: disable=protected-access
-                if not pending_elicitations:
-                    raise JSONRPCError(-32000, "Failed to create elicitation request", {})
+                    # Wait for the pending entry to materialize so we can read request_id
+                    await asyncio.sleep(0.01)
+                    pending = elicitation_service.get_pending_by_elicitation_id(url_params.elicitationId)
+                    if not pending:
+                        raise JSONRPCError(-32000, "Failed to create URL elicitation request", {})
 
-                pending = pending_elicitations[-1]  # Get most recent
+                    elicitation_request = {
+                        "jsonrpc": "2.0",
+                        "id": pending.request_id,
+                        "method": "elicitation/create",
+                        "params": {"mode": "url", "message": url_params.message, "url": url_params.url, "elicitationId": url_params.elicitationId},
+                    }
+                    await session_registry.broadcast(target_session_id, elicitation_request)
+                    logger.debug("Sent URL elicitation %s (elicitationId=%s) to session %s", pending.request_id, url_params.elicitationId, target_session_id)
 
-                # Send elicitation request to client via broadcast
-                elicitation_request = {
-                    "jsonrpc": "2.0",
-                    "id": pending.request_id,
-                    "method": "elicitation/create",
-                    "params": {"message": elicit_params.message, "requestedSchema": elicit_params.requestedSchema},
-                }
+                    elicit_result = await elicitation_task
+                    result = elicit_result.model_dump(by_alias=True, exclude_none=True)
+                except asyncio.TimeoutError:
+                    raise JSONRPCError(-32000, f"Elicitation timed out after {timeout}s", {"message": url_params.message, "timeout": timeout})
+                except ValueError as e:
+                    # Includes URL validation failures and concurrency limits
+                    raise JSONRPCError(-32602, str(e), {"message": url_params.message})
+            else:
+                # ----- Form mode (MCP 2025-06-18) -----
+                try:
+                    elicit_params = ElicitRequestParams(**params)
+                except Exception as e:
+                    raise JSONRPCError(-32602, f"Invalid elicitation params: {e}", params)
 
-                await session_registry.broadcast(target_session_id, elicitation_request)
-                logger.debug("Sent elicitation request %s to session %s", pending.request_id, target_session_id)
+                target_session_id = params.get("session_id") or params.get("sessionId")
+                if not target_session_id:
+                    capable_sessions = await session_registry.get_elicitation_capable_sessions(mode="form")
+                    if not capable_sessions:
+                        raise JSONRPCError(-32000, "No elicitation-capable clients available", {"message": elicit_params.message})
+                    target_session_id = capable_sessions[0]
+                    logger.debug("Selected session %s for elicitation", target_session_id)
 
-                # Wait for response
-                elicit_result = await elicitation_task
+                if not await session_registry.has_elicitation_capability(target_session_id, mode="form"):
+                    raise JSONRPCError(-32000, f"Session {target_session_id} does not support elicitation", {"session_id": target_session_id})
 
-                # Return result
-                result = elicit_result.model_dump(by_alias=True, exclude_none=True)
+                try:
+                    elicitation_task = asyncio.create_task(
+                        elicitation_service.create_elicitation(
+                            upstream_session_id=upstream_session_id,
+                            downstream_session_id=target_session_id,
+                            message=elicit_params.message,
+                            requested_schema=elicit_params.requestedSchema,
+                            timeout=timeout,
+                        )
+                    )
 
-            except asyncio.TimeoutError:
-                raise JSONRPCError(-32000, f"Elicitation timed out after {timeout}s", {"message": elicit_params.message, "timeout": timeout})
-            except ValueError as e:
-                raise JSONRPCError(-32000, str(e), {"message": elicit_params.message})
+                    # Wait a moment for the pending entry to be created
+                    await asyncio.sleep(0.01)
+                    pending_elicitations = [e for e in elicitation_service._pending.values() if e.downstream_session_id == target_session_id]  # pylint: disable=protected-access
+                    if not pending_elicitations:
+                        raise JSONRPCError(-32000, "Failed to create elicitation request", {})
+
+                    pending = pending_elicitations[-1]  # Get most recent
+
+                    elicitation_request = {
+                        "jsonrpc": "2.0",
+                        "id": pending.request_id,
+                        "method": "elicitation/create",
+                        "params": {"mode": "form", "message": elicit_params.message, "requestedSchema": elicit_params.requestedSchema},
+                    }
+                    await session_registry.broadcast(target_session_id, elicitation_request)
+                    logger.debug("Sent elicitation request %s to session %s", pending.request_id, target_session_id)
+
+                    elicit_result = await elicitation_task
+                    result = elicit_result.model_dump(by_alias=True, exclude_none=True)
+                except asyncio.TimeoutError:
+                    raise JSONRPCError(-32000, f"Elicitation timed out after {timeout}s", {"message": elicit_params.message, "timeout": timeout})
+                except ValueError as e:
+                    raise JSONRPCError(-32000, str(e), {"message": elicit_params.message})
         elif method.startswith("elicitation/"):
             # Catch-all for other elicitation/* methods
             result = {}

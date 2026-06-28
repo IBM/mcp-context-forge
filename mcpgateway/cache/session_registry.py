@@ -2226,31 +2226,61 @@ class SessionRegistry(SessionBackend):
         async with self._lock:
             return self._client_capabilities.get(session_id)
 
-    async def has_elicitation_capability(self, session_id: str) -> bool:
+    @staticmethod
+    def _capabilities_support_elicitation(capabilities: Optional[Dict[str, Any]], mode: Optional[str]) -> bool:
+        """Return whether a client capabilities dict supports elicitation (optionally a mode).
+
+        Args:
+            capabilities: Stored client capabilities dictionary (or None)
+            mode: Optional elicitation mode to require ("form" or "url", per SEP-1036)
+
+        Returns:
+            True if the requested elicitation capability is supported, else False
+        """
+        if not capabilities:
+            return False
+        elicitation = capabilities.get("elicitation")
+        if mode is None:
+            # Preserve legacy behaviour: any truthy elicitation declaration counts.
+            return bool(elicitation)
+        if not elicitation:
+            return False
+        # Explicit SEP-1036 sub-capabilities take precedence when present.
+        if isinstance(elicitation, dict) and ("form" in elicitation or "url" in elicitation):
+            return elicitation.get(mode) is not None
+        # Legacy declaration without sub-capabilities: form mode only.
+        return mode == "form"
+
+    async def has_elicitation_capability(self, session_id: str, mode: Optional[str] = None) -> bool:
         """Check if a session has elicitation capability.
 
         Args:
             session_id: The session ID
+            mode: Optional elicitation mode to require ("form" or "url", per SEP-1036).
+                When None, returns True if the client declares any elicitation
+                support. When a mode is given, the client must declare that specific
+                sub-capability; a legacy bare declaration (e.g. ``{}`` or ``True``)
+                without explicit ``form``/``url`` keys is treated as form-mode only.
 
         Returns:
-            True if session supports elicitation, False otherwise
+            True if session supports the requested elicitation capability, else False
         """
         capabilities = await self.get_client_capabilities(session_id)
-        if not capabilities:
-            return False
-        # Check if elicitation capability exists in client capabilities
-        return bool(capabilities.get("elicitation"))
+        return self._capabilities_support_elicitation(capabilities, mode)
 
-    async def get_elicitation_capable_sessions(self) -> list[str]:
+    async def get_elicitation_capable_sessions(self, mode: Optional[str] = None) -> list[str]:
         """Get list of session IDs that support elicitation.
 
+        Args:
+            mode: Optional elicitation mode to require ("form" or "url", per SEP-1036).
+
         Returns:
-            List of session IDs with elicitation capability
+            List of session IDs with the requested elicitation capability
         """
         async with self._lock:
             capable_sessions = []
             for session_id, capabilities in self._client_capabilities.items():
-                if capabilities.get("elicitation"):
+                if self._capabilities_support_elicitation(capabilities, mode):
                     # Verify session still exists
                     if session_id in self._sessions:
                         capable_sessions.append(session_id)

@@ -2979,6 +2979,55 @@ class TestRPCEndpoints:
         body = response.json()
         assert body["error"]["code"] == -32601
 
+    def test_rpc_elicitation_url_mode_disabled(self, test_client, auth_headers, monkeypatch):
+        """URL-mode elicitation/create returns -32601 when url mode disabled (SEP-1036)."""
+        monkeypatch.setattr(settings, "mcpgateway_elicitation_enabled", True)
+        monkeypatch.setattr(settings, "mcpgateway_elicitation_url_mode_enabled", False)
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "elicitation/create",
+            "params": {"mode": "url", "message": "Sign in", "url": "https://auth.example.com/x", "elicitationId": "e1"},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["error"]["code"] == -32601
+
+    def test_rpc_elicitation_url_invalid_params(self, test_client, auth_headers, monkeypatch):
+        """URL-mode elicitation/create with missing url/elicitationId returns -32602."""
+        monkeypatch.setattr(settings, "mcpgateway_elicitation_enabled", True)
+        monkeypatch.setattr(settings, "mcpgateway_elicitation_url_mode_enabled", True)
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "elicitation/create",
+            "params": {"mode": "url", "message": "Sign in"},  # missing url + elicitationId
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["error"]["code"] == -32602
+
+    def test_rpc_elicitation_url_no_capable_clients(self, test_client, auth_headers, monkeypatch):
+        """URL-mode elicitation/create with no url-capable client returns -32000."""
+        monkeypatch.setattr(settings, "mcpgateway_elicitation_enabled", True)
+        monkeypatch.setattr(settings, "mcpgateway_elicitation_url_mode_enabled", True)
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "elicitation/create",
+            "params": {"mode": "url", "message": "Sign in", "url": "https://auth.example.com/x", "elicitationId": "e1"},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["error"]["code"] == -32000
+        assert "URL-elicitation-capable" in body["error"]["message"]
+
     @patch("mcpgateway.main.logging_service.notify", new_callable=AsyncMock)
     def test_rpc_notifications_initialized(self, mock_notify, test_client, auth_headers):
         """Test notifications/initialized JSON-RPC method."""
