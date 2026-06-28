@@ -3,15 +3,11 @@
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 
-Test-only plugin for the primary-worker e2e (#5139).
+Test-only plugin for the primary-worker e2e.
 
-A non-hook plugin whose initialize() side effect is gated on
-``is_primary_worker()``. Each process that actually runs the side effect appends
-its PID to the marker file named by ``MCPGW_PRIMARY_WORKER_E2E_MARKER``. With a
-multi-worker gateway the file should contain exactly one line.
-
-Loaded only when the gateway is started with this fixture's plugin config; inert
-otherwise. Not a production plugin.
+A non-hook plugin whose ``initialize()`` side effect is gated on
+``is_primary_worker()`` and appends its PID to ``MCPGW_PRIMARY_WORKER_E2E_MARKER``.
+A multi-worker gateway should leave exactly one line in that file.
 """
 
 # Standard

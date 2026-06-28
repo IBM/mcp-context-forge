@@ -868,7 +868,7 @@ test-mcp-plugin-parity: uv  ## MCP plugin parity E2E for current Python or Rust 
 		|| { echo "❌ MCP plugin parity tests failed!"; exit 1; }
 	@echo "✅ MCP plugin parity tests passed!"
 
-test-primary-worker-e2e: uv  ## Primary-worker election E2E (#5139): boots a local 2-worker gateway, asserts the gated side effect runs once
+test-primary-worker-e2e: uv  ## Primary-worker election E2E: boots a local 2-worker gateway, asserts the gated side effect runs once
 	@echo "🧪 Running primary-worker e2e (boots its own 2-worker gateway)..."
 	@$(UV_BIN) run bash tests/live_gateway/run_primary_worker_e2e.sh \
 		|| { echo "❌ Primary-worker e2e failed!"; exit 1; }

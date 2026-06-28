@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# Boot a local 2-worker gateway with the marker plugin, run the primary-worker
-# e2e assertion, and tear down. (#5139)
-#
-# Intended to be invoked via `make test-primary-worker-e2e`, which runs it
-# inside the project venv (so gunicorn/pytest resolve to the venv binaries).
+# Boot a local multi-worker gateway with the marker plugin, run the
+# primary-worker e2e assertion, and tear down. Invoked via
+# `make test-primary-worker-e2e` (runs inside the project venv).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
