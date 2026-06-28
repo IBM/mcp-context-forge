@@ -2,6 +2,7 @@
 resolver = "3"
 # Workspace policy: core repo-owned crates live under crates/. Rust sample
 # servers participate only when they are explicitly listed.
+# Note: a2a-echo-agent is now standalone and not part of this workspace
 members = [
     "crates/*",
 ]
