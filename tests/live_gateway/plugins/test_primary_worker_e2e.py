@@ -3,18 +3,11 @@
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 
-End-to-end test for primary-worker election (#5139).
+End-to-end test for primary-worker election.
 
-Requires a locally running gateway started with >=2 workers and the marker
-plugin config, e.g.:
-
-    make test-primary-worker-e2e
-
-The marker plugin (tests/live_gateway/fixtures/primary_marker.py) appends its
-PID to ``MCPGW_PRIMARY_WORKER_E2E_MARKER`` only on the primary worker. Despite
-multiple workers, the side effect must run exactly once -> the file has one line.
-
-Excluded from ``make test`` by living under tests/live_gateway/.
+Run via ``make test-primary-worker-e2e``, which boots a local >=2 worker gateway
+with the marker plugin. The gated side effect must run once, so the marker file
+has a single line.
 """
 
 # Standard

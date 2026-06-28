@@ -5,16 +5,10 @@ SPDX-License-Identifier: Apache-2.0
 
 Primary-worker election for side-effecting plugin work.
 
-When the gateway runs under multiple worker processes (e.g. gunicorn), every
-worker loads the plugin manager and runs each plugin's ``initialize()``. For a
-non-hook plugin that performs a side effect on startup or in a background task,
-that work would run once per worker. ``is_primary_worker()`` lets such a plugin
-gate its work so it runs on exactly one worker.
-
-Election is done with a file lock: the first process to acquire it is the
-primary and holds it for its lifetime; other processes get ``False``. The lock
-is released by the OS when the holding process exits, so another caller becomes
-primary on its next call.
+Under multiple worker processes every worker runs each plugin's
+``initialize()``. ``is_primary_worker()`` lets a plugin gate side-effecting work
+to one worker. Election uses a file lock: the first process to acquire it is
+primary; the OS releases it on exit so another caller can take over.
 """
 
 # Standard
@@ -39,9 +33,7 @@ _is_primary: bool = False
 def _lock_path() -> str:
     """Return the lock file path.
 
-    Uses ``MCPGW_PRIMARY_WORKER_LOCK`` when set; otherwise a tempdir file scoped
-    by the configured port so co-located gateway instances do not collide while
-    workers of the same instance share one lock.
+    Uses ``MCPGW_PRIMARY_WORKER_LOCK`` if set, else a port-scoped tempdir file.
 
     Returns:
         Absolute path to the lock file.
@@ -55,21 +47,9 @@ def _lock_path() -> str:
 def is_primary_worker() -> bool:
     """Return ``True`` on exactly one worker process; ``False`` on the others.
 
-    The first process to acquire the lock becomes the primary and keeps it. A
-    non-primary process retries on each call, so if the current primary exits
-    (e.g. gunicorn ``max_requests`` recycling) the next caller takes over.
-
-    Intended for the startup / event-loop path; it mutates module state without
-    a thread guard and is not meant to be called concurrently across threads.
-
-    Example::
-
-        from mcpgateway.utils.primary_worker import is_primary_worker
-
-        async def initialize(self) -> None:
-            if not is_primary_worker():
-                return
-            ...  # side effect that should run on one worker only
+    The first caller to acquire the lock holds it; others retry on later calls,
+    so a new primary is elected if the current one exits. Call from the startup /
+    event-loop path (mutates module state without a thread guard).
 
     Returns:
         Whether this process holds primary status.
