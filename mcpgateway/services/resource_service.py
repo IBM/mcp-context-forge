@@ -2296,13 +2296,14 @@ class ResourceService(BaseService):
                     # Normalize user to an identifier string if provided
                     user_id = None
                     if user is not None:
-                        if isinstance(user, dict) and "email" in user:
-                            user_id = user.get("email")
-                        elif isinstance(user, str):
+                        if isinstance(user, str):
                             user_id = user
                         else:
-                            # Attempt to fallback to attribute access
-                            user_id = getattr(user, "email", None)
+                            # Use canonical get_user_email for consistent email extraction
+                            # Import here to avoid circular dependency
+                            from mcpgateway.auth_context import get_user_email  # pylint: disable=import-outside-toplevel
+
+                            user_id = get_user_email(user)
 
                     # Use existing global_context from middleware or create new one
                     if plugin_global_context:

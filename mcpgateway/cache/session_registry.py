@@ -64,6 +64,7 @@ import orjson
 
 # First-Party
 from mcpgateway import __version__
+from mcpgateway.auth_context import get_user_email
 from mcpgateway.common.models import Implementation, InitializeResult, ServerCapabilities
 from mcpgateway.config import settings
 from mcpgateway.db import get_db, SessionMessageRecord, SessionRecord
@@ -2327,7 +2328,8 @@ class SessionRegistry(SessionBackend):
                 # Pass downstream session id to /rpc for session affinity.
                 # This is gateway-internal only; the pool strips it before contacting upstream MCP servers.
                 if settings.mcpgateway_session_affinity_enabled:
-                    await self._register_session_mapping(transport.session_id, message, user.get("email") if hasattr(user, "get") else None)
+                    user_email = get_user_email(user) if hasattr(user, "get") else None
+                    await self._register_session_mapping(transport.session_id, message, user_email)
 
                 # Internal /rpc auth must be sent under the configured AUTH_HEADER_NAME
                 # so that ConfigurableHTTPBearer in the loopback target reads the JWT.

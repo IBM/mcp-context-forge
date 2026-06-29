@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway import version as version_module
+from mcpgateway.auth_context import get_user_email
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, get_db, require_permission
 from mcpgateway.runtime_state import (
     get_runtime_state,
@@ -218,7 +219,7 @@ async def _apply_mode_change(
             detail="Cannot safely allocate a runtime-mode version",
         ) from exc
 
-    change = await state.apply_local(runtime, new_mode, initiator_user=user.get("email"), version=next_version)
+    change = await state.apply_local(runtime, new_mode, initiator_user=get_user_email(user), version=next_version)
     if change is None:
         # A concurrent newer change won the race on this pod. Surface this as
         # a soft success — current state already reflects an authorized flip
@@ -274,7 +275,7 @@ async def _apply_mode_change(
         new_mode.value,
         previous_override,
         change.version,
-        user.get("email"),
+        get_user_email(user),
         publish_status.value,
         audit_persisted,
     )
@@ -344,16 +345,17 @@ def _write_audit_event(
         ``True`` when the audit write succeeded, ``False`` when it failed.
     """
     try:
+        user_email = get_user_email(user)
         get_security_logger().log_data_access(
             action="update",
             resource_type="runtime_config",
             resource_id=resource_label,
             resource_name=f"{runtime.value}_runtime_mode",
-            user_id=user.get("email") or "unknown",
-            user_email=user.get("email"),
+            user_id=user_email or "unknown",
+            user_email=user_email,
             team_id=None,
-            client_ip=user.get("ip_address"),
-            user_agent=user.get("user_agent"),
+            client_ip=user.get("ip_address") if isinstance(user, dict) else None,
+            user_agent=user.get("user_agent") if isinstance(user, dict) else None,
             success=success,
             old_values=old_values,
             new_values=new_values,
