@@ -1148,6 +1148,9 @@ class Settings(BaseSettings):
     # MCP Apps support (disabled by default)
     mcpgateway_mcp_apps_enabled: bool = Field(default=False, description="Enable MCP Apps support through capabilities.extensions")
     mcpgateway_mcp_apps_session_ttl: int = Field(default=900, ge=1, le=86400, description="AppBridge session TTL in seconds")
+    mcpgateway_mcp_apps_session_cleanup_enabled: bool = Field(default=True, description="Enable automatic cleanup of expired AppBridge sessions")
+    mcpgateway_mcp_apps_session_cleanup_interval_seconds: int = Field(default=300, ge=60, le=86400, description="Seconds between expired AppBridge session cleanup runs")
+    mcpgateway_mcp_apps_session_cleanup_batch_size: int = Field(default=1000, ge=1, le=100000, description="Maximum expired AppBridge sessions to delete per cleanup batch")
 
     # Security
     skip_ssl_verify: bool = Field(

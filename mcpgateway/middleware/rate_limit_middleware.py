@@ -111,6 +111,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 "limit": settings.rate_limit_high_rpm,
                 "burst": settings.rate_limit_high_burst,
             },
+            "HIGH_APPBRIDGE": {
+                "pattern": r"^/mcp/apps/sessions(/|$)",
+                "limit": settings.rate_limit_high_rpm,
+                "burst": settings.rate_limit_high_burst,
+            },
             "MEDIUM": {
                 "pattern": r"^/(mcp|tools|prompts|resources|servers|gateways|llmchat)(/|$)",
                 "limit": settings.rate_limit_medium_rpm,

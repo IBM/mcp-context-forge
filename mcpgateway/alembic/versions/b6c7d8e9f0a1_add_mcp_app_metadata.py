@@ -32,6 +32,10 @@ def upgrade() -> None:
     bind = op.get_bind()
     tables = _table_names(bind)
 
+    # Existing tools and resources intentionally keep NULL extension_metadata.
+    # NULL means "no extension metadata" and preserves the pre-MCP-Apps behavior:
+    # tools remain model-visible by default, and existing resources are not treated
+    # as ui:// MCP Apps resources unless metadata is explicitly added later.
     if "tools" in tables and "extension_metadata" not in _column_names(bind, "tools"):
         op.add_column("tools", sa.Column("extension_metadata", sa.JSON(), nullable=True))
 
