@@ -341,6 +341,14 @@ def get_token_teams_from_request(request: Request) -> Optional[List[str]]:
     if cached and isinstance(cached, tuple) and len(cached) == 2:
         _, payload = cached
         if payload:
+            # KNOWN LIMITATION: This fallback path uses normalize_token_teams()
+            # which doesn't understand session semantics. A session token
+            # reaching here would never produce token_teams=None, so the
+            # session admin bypass in get_rpc_filter_context() wouldn't fire.
+            # This is fail-secure (denies bypass rather than wrongly granting
+            # it) but is uncovered and undocumented as a design constraint.
+            # If auth.py ever stops setting request.state.token_teams before
+            # this code runs, session admin bypass would silently stop working.
             return normalize_token_teams(payload)
 
     # No JWT payload - return [] for public-only (secure default).
@@ -412,10 +420,48 @@ def get_rpc_filter_context(request: Request, user) -> tuple[Optional[str], Optio
     if cached and isinstance(cached, tuple) and len(cached) == 2:
         _, payload = cached
         if payload:
-            is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
+            # Session tokens ignore JWT is_admin claim — DB is the authority.
+            # An old/stale session JWT carrying is_admin=true must not influence
+            # the boolean admin decision; only DB-resolved token_teams=None can
+            # produce admin bypass below.
+            if getattr(request.state, "token_use", None) != "session":
+                is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
 
     if token_teams is not None and len(token_teams) == 0:
         is_admin = False
+
+    # Session token admin bypass: resolve_session_teams() confirmed admin from DB,
+    # but JWT payload lacks is_admin claim (by design — DB is the authority for
+    # session tokens so revocations take effect immediately).
+    #
+    # Fresh DB check: auth caching can produce token_teams=None from stale
+    # cached_ctx.user["is_admin"] without re-reading the DB.  Verify admin
+    # status from DB before granting bypass so demotions take effect immediately
+    # even when the auth cache has not yet expired.
+    if not is_admin and token_teams is None and getattr(request.state, "token_use", None) == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
+        db_user_is_admin = None
+        if user_email:
+            from mcpgateway.db import EmailUser, SessionLocal  # lazy import — avoids cycle
+
+            _db = SessionLocal()
+            try:
+                _db_user = _db.query(EmailUser).filter(EmailUser.email == user_email).first()
+                db_user_is_admin = bool(_db_user and _db_user.is_admin) if _db_user else None
+            finally:
+                _db.close()
+        # Grant bypass only when the fresh DB check positively confirms admin.
+        # db_user_is_admin is None (user missing from DB or query error) must
+        # fail-closed — a deleted or missing user should not inherit bypass
+        # even if the cached token_teams=None signal persists.
+        if db_user_is_admin is True:
+            is_admin = True
+            logger.debug(
+                "Session admin bypass: token_use=%s, email=%s path=%s (db_check=%s)",
+                getattr(request.state, "token_use", None),
+                user_email,
+                getattr(getattr(request, "url", None), "path", "unknown"),
+                db_user_is_admin,
+            )
 
     return user_email, token_teams, is_admin
 

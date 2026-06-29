@@ -114,14 +114,9 @@ class ToonEncoderPlugin(Plugin):
         self._items_converted: int = 0  # Content items successfully converted to TOON
         self._total_bytes_saved: int = 0
 
-        logger.info(
-            f"ToonEncoderPlugin initialized: min_size={self._min_size_bytes}, "
-            f"max_size={self._max_size_bytes}, exclude={self._exclude_tools}"
-        )
+        logger.info(f"ToonEncoderPlugin initialized: min_size={self._min_size_bytes}, max_size={self._max_size_bytes}, exclude={self._exclude_tools}")
 
-    async def tool_post_invoke(
-        self, payload: ToolPostInvokePayload, _context: PluginContext
-    ) -> ToolPostInvokeResult:
+    async def tool_post_invoke(self, payload: ToolPostInvokePayload, _context: PluginContext) -> ToolPostInvokeResult:
         """Convert tool result to TOON format after invocation.
 
         This method is called after a tool has been invoked. It examines the
@@ -179,9 +174,7 @@ class ToonEncoderPlugin(Plugin):
         self._tools_processed += 1
 
         for item in content:
-            processed_item, was_modified, orig_size, new_size = self._process_content_item(
-                item, tool_name
-            )
+            processed_item, was_modified, orig_size, new_size = self._process_content_item(item, tool_name)
             new_content.append(processed_item)
             if was_modified:
                 modified = True
@@ -199,11 +192,7 @@ class ToonEncoderPlugin(Plugin):
             duration_ms = (time.monotonic() - start_time) * 1000
             savings_pct = (bytes_saved / total_original_size * 100) if total_original_size > 0 else 0
 
-            logger.info(
-                f"ToonEncoder: Converted tool '{tool_name}' result, "
-                f"saved {bytes_saved} bytes ({savings_pct:.1f}%), "
-                f"took {duration_ms:.2f}ms"
-            )
+            logger.info(f"ToonEncoder: Converted tool '{tool_name}' result, saved {bytes_saved} bytes ({savings_pct:.1f}%), took {duration_ms:.2f}ms")
 
             new_result = {**result, "content": new_content}
             return ToolPostInvokeResult(
@@ -234,9 +223,7 @@ class ToonEncoderPlugin(Plugin):
         # Check blacklist
         return tool_name not in self._exclude_tools
 
-    def _process_content_item(
-        self, item: Any, tool_name: str
-    ) -> tuple[Any, bool, int, int]:
+    def _process_content_item(self, item: Any, tool_name: str) -> tuple[Any, bool, int, int]:
         """Process a single content item, converting JSON to TOON if applicable.
 
         Args:
@@ -261,17 +248,11 @@ class ToonEncoderPlugin(Plugin):
 
         # Check size thresholds
         if original_size < self._min_size_bytes:
-            logger.debug(
-                f"ToonEncoder: Skipping '{tool_name}' content "
-                f"(size {original_size} < min {self._min_size_bytes})"
-            )
+            logger.debug(f"ToonEncoder: Skipping '{tool_name}' content (size {original_size} < min {self._min_size_bytes})")
             return (item, False, 0, 0)
 
         if original_size > self._max_size_bytes:
-            logger.debug(
-                f"ToonEncoder: Skipping '{tool_name}' content "
-                f"(size {original_size} > max {self._max_size_bytes})"
-            )
+            logger.debug(f"ToonEncoder: Skipping '{tool_name}' content (size {original_size} > max {self._max_size_bytes})")
             return (item, False, 0, 0)
 
         # Try to parse as JSON and convert to TOON
@@ -296,10 +277,7 @@ class ToonEncoderPlugin(Plugin):
 
         # Only use TOON if it's actually smaller
         if new_size >= original_size:
-            logger.debug(
-                f"ToonEncoder: TOON not smaller for '{tool_name}' "
-                f"({new_size} >= {original_size}), keeping JSON"
-            )
+            logger.debug(f"ToonEncoder: TOON not smaller for '{tool_name}' ({new_size} >= {original_size}), keeping JSON")
             return (item, False, 0, 0)
 
         # Build new content item with TOON
@@ -345,19 +323,11 @@ class ToonEncoderPlugin(Plugin):
             # Tool-level stats
             "tools_processed": self._tools_processed,
             "tools_converted": self._tools_converted,
-            "tool_conversion_rate": (
-                self._tools_converted / self._tools_processed * 100
-                if self._tools_processed > 0
-                else 0.0
-            ),
+            "tool_conversion_rate": (self._tools_converted / self._tools_processed * 100 if self._tools_processed > 0 else 0.0),
             # Item-level stats
             "items_attempted": self._items_attempted,
             "items_converted": self._items_converted,
-            "item_conversion_rate": (
-                self._items_converted / self._items_attempted * 100
-                if self._items_attempted > 0
-                else 0.0
-            ),
+            "item_conversion_rate": (self._items_converted / self._items_attempted * 100 if self._items_attempted > 0 else 0.0),
             # Size stats
             "total_bytes_saved": self._total_bytes_saved,
         }

@@ -27,7 +27,7 @@ ContextForge is built with:
 
 Development tools:
 
-* Linters: `ruff`, `mypy`, `black`, `isort`
+* Linters: `ruff`, `mypy`
 * Testing: `pytest`, `httpx`
 * Serving: `uvicorn`, `gunicorn`
 
@@ -40,7 +40,7 @@ Frontend tools (Admin UI):
 Code style and consistency is enforced via:
 
 ```bash
-make lint          # runs ruff, mypy, black, isort
+make lint          # runs ruff, mypy
 make lint-web      # runs ESLint, HTMLHint, Stylelint
 make pre-commit    # runs pre-commit hooks on staged files
 ```

@@ -20,6 +20,7 @@ from fastapi import HTTPException, Request, status
 import pytest
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import get_db as db_get_db
 from mcpgateway.middleware import rbac
 
@@ -1703,8 +1704,11 @@ async def test_proxy_user_db_lookup_not_found(no_cookie_request):
 
 
 @pytest.mark.asyncio
-async def test_cookies_without_jwt_token():
+async def test_cookies_without_jwt_token(monkeypatch):
     """Cookies exist but no jwt_token/access_token → manual_token is None (branch 245->250)."""
+    monkeypatch.setattr(settings, "auth_required", True)
+    monkeypatch.setattr(settings, "mcp_client_auth_enabled", True)
+
     mock_request = MagicMock(spec=Request)
     mock_request.cookies = {"session_id": "abc123"}  # No jwt_token or access_token
     mock_request.headers = {"accept": "application/json", "user-agent": "api"}

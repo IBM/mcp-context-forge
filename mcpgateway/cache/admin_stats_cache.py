@@ -142,7 +142,7 @@ class AdminStatsCache:
         self._redis_hit_count = 0
         self._redis_miss_count = 0
 
-        logger.info(f"AdminStatsCache initialized: enabled={self._enabled}, " f"system_ttl={self._system_ttl}s, observability_ttl={self._observability_ttl}s, tags_ttl={self._tags_ttl}s")
+        logger.info(f"AdminStatsCache initialized: enabled={self._enabled}, system_ttl={self._system_ttl}s, observability_ttl={self._observability_ttl}s, tags_ttl={self._tags_ttl}s")
 
     def _get_redis_key(self, key_type: str, identifier: str = "") -> str:
         """Generate Redis key with proper prefix.

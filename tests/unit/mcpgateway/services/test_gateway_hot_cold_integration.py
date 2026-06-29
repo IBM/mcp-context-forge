@@ -17,9 +17,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.services.gateway_service import GatewayService
 from mcpgateway.services.server_classification_service import ServerClassificationService
+
+
+@pytest.fixture(autouse=True)
+def default_sync_gateway_lifecycle(monkeypatch):
+    """Keep hot/cold integration tests on sync gateway lifecycle unless opted in."""
+    monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", False)
 
 
 @pytest.fixture(autouse=True)

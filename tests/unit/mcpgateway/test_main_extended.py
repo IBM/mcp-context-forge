@@ -1163,6 +1163,7 @@ class TestMcpSerialization:
         payload = _serialize_mcp_tool_definition(
             {
                 "name": "a2a-test-agent",
+                "title": "A2A Test Agent",
                 "description": "A2A tool",
                 "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}},
                 "outputSchema": {"type": "object"},
@@ -1174,6 +1175,7 @@ class TestMcpSerialization:
 
         assert payload == {
             "name": "a2a-test-agent",
+            "title": "A2A Test Agent",
             "description": "A2A tool",
             "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}},
             "outputSchema": {"type": "object"},
@@ -1185,6 +1187,41 @@ class TestMcpSerialization:
     def test_serialize_mcp_tool_definition_handles_unknown_objects(self):
         """Unknown objects should serialize to an empty MCP payload."""
         assert _serialize_mcp_tool_definition(object()) == {}
+
+    def test_serialize_mcp_tool_definition_omits_title_when_null(self):
+        """title should be omitted from payload when None/absent."""
+        payload = _serialize_mcp_tool_definition(
+            {
+                "name": "test-no-title",
+                "title": None,
+                "description": "No title tool",
+                "inputSchema": {"type": "object"},
+            }
+        )
+
+        assert payload == {
+            "name": "test-no-title",
+            "description": "No title tool",
+            "inputSchema": {"type": "object"},
+        }
+        assert "title" not in payload
+
+    def test_serialize_mcp_tool_definition_gets_title_from_object_attr(self):
+        """title should be extractable via getattr for non-dict objects."""
+        class FakeTool:
+            name = "fake-tool"
+            title = "Fake Tool Title"
+            description = "A fake tool"
+            input_schema = {"type": "object"}
+
+        payload = _serialize_mcp_tool_definition(FakeTool())
+
+        assert payload == {
+            "name": "fake-tool",
+            "title": "Fake Tool Title",
+            "description": "A fake tool",
+            "inputSchema": {"type": "object"},
+        }
 
     def test_serialize_mcp_tool_definition_normalizes_null_description(self):
         """MCP tool payloads should always expose a string description."""
@@ -5883,7 +5920,7 @@ class TestUtilityFunctions:
         monkeypatch.setattr(main_mod.session_registry, "set_session_owner", AsyncMock())
         monkeypatch.setattr(main_mod.session_registry, "respond", AsyncMock(return_value=None))
         monkeypatch.setattr(main_mod.session_registry, "register_respond_task", MagicMock())
-        monkeypatch.setattr(main_mod.asyncio, "create_task", MagicMock(return_value=MagicMock()))
+        monkeypatch.setattr(main_mod.asyncio, "create_task", MagicMock(return_value=AsyncMock()))
 
         remove_session = AsyncMock(side_effect=Exception("boom"))
         monkeypatch.setattr(main_mod.session_registry, "remove_session", remove_session)
@@ -12529,6 +12566,20 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod.settings, "skip_ssl_verify", True, raising=False)
         main_mod.log_security_recommendations({"secure_secrets": False, "auth_enabled": False})
 
+    async def test_request_validation_exception_handler_production_suppression(self, monkeypatch):
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        monkeypatch.setattr(main_mod, "should_expose_error_details", lambda: False)
+        request = MagicMock(spec=Request)
+        request.url = SimpleNamespace(path="/tools")
+        exc = MagicMock()
+        exc.errors.return_value = [{"loc": ["body"], "msg": "bad input", "ctx": {}, "type": "value_error"}]
+
+        response = await main_mod.request_validation_exception_handler(request, exc)
+        assert response.status_code == 422
+        assert json.loads(response.body.decode()) == {"detail": "An error occurred, please try again."}
+
     async def test_request_validation_exception_handler_ctx_non_dict(self):
         # First-Party
         import mcpgateway.main as main_mod
@@ -13114,6 +13165,30 @@ class TestHardeningHelperCoverage:
         with patch("mcpgateway.auth_context.get_rpc_filter_context", return_value=("user@example.com", None, False)):
             assert main_mod.get_scoped_resource_access_context(request, {"email": "user@example.com"}) == ("user@example.com", [])
 
+    def test_get_scoped_resource_access_context_session_token_admin_bypass(self):
+        """Session token with DB admin bypass flows through without patching.
+
+        Verifies the fix for issue #5232: get_scoped_resource_access_context
+        returns (email, None) for session tokens where resolve_session_teams()
+        confirmed admin from DB, even though the JWT lacks an is_admin claim.
+        """
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        request.state._jwt_verified_payload = ("token", {"sub": "admin@example.com", "token_use": "session"})
+        request.state.token_teams = None
+        request.state.token_use = "session"
+
+        with patch("mcpgateway.db.SessionLocal") as mock_session_local:
+            mock_db = MagicMock()
+            mock_db_user = MagicMock()
+            mock_db_user.is_admin = True
+            mock_db.query.return_value.filter.return_value.first.return_value = mock_db_user
+            mock_session_local.return_value = mock_db
+
+            result = main_mod.get_scoped_resource_access_context(request, {"email": "admin@example.com"})
+        assert result == ("admin@example.com", None), f"Expected admin bypass, got {result}"
+
     @pytest.mark.asyncio
     async def test_assert_session_owner_or_admin_returns_404_for_missing_session(self):
         # First-Party
@@ -13476,12 +13551,33 @@ class TestRpcScopedPermissions:
         assert "Access denied" in result["error"]["message"]
 
     async def test_logging_set_level_allowed_with_admin_system_config(self):
-        """Token scoped to admin.system_config should be allowed logging/setLevel."""
-        payload = {"jsonrpc": "2.0", "id": 1, "method": "logging/setLevel", "params": {"level": "error"}}
-        request = self._make_request(payload, scoped_permissions=["admin.system_config"])
+        """Token scoped to admin.system_config should be allowed logging/setLevel.
 
-        result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
-        assert "error" not in result
+        This exercises the real (unmocked) ``logging_service.set_level()``, which
+        mutates global logging state (root + every registered logger's level,
+        including the "mcpgateway" parent logger) for the lifetime of the process.
+        Restore it afterwards so this test doesn't leak ERROR-level filtering into
+        unrelated tests later in the same worker (e.g. caplog-based deny-reason
+        assertions on "mcpgateway.*" child loggers would otherwise silently break,
+        since caplog.at_level only overrides the root logger, not an explicitly
+        leveled intermediate logger like "mcpgateway").
+        """
+        # Standard
+        import logging
+
+        mcpgateway_logger = logging.getLogger("mcpgateway")
+        root_logger = logging.getLogger()
+        orig_mcpgateway_level = mcpgateway_logger.level
+        orig_root_level = root_logger.level
+        try:
+            payload = {"jsonrpc": "2.0", "id": 1, "method": "logging/setLevel", "params": {"level": "error"}}
+            request = self._make_request(payload, scoped_permissions=["admin.system_config"])
+
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            assert "error" not in result
+        finally:
+            mcpgateway_logger.setLevel(orig_mcpgateway_level)
+            root_logger.setLevel(orig_root_level)
 
     async def test_logging_set_level_denied_without_admin_system_config(self):
         """Token scoped without admin.system_config should be denied logging/setLevel."""

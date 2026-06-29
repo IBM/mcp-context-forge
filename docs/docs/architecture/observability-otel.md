@@ -284,16 +284,28 @@ OTEL_BAGGAGE_PROPAGATE_TO_EXTERNAL=true
 
 #### Header Name Validation
 
+HTTP header names must be valid tokens per [RFC 7230 Section 3.2](https://tools.ietf.org/html/rfc7230#section-3.2).
+
+**Valid Characters:**
+- Alphanumeric: `a-z`, `A-Z`, `0-9`
+- Special characters: `!`, `#`, `$`, `%`, `&`, `'`, `*`, `+`, `-`, `.`, `^`, `_`, `` ` ``, `|`, `~`
+
+**Pattern:** `^[a-zA-Z0-9!#$%&'*+\-.^_` + "`" + `|~]+$`
+
+**Examples:**
+
 ```python
 # Valid header names (RFC 7230)
 X-Tenant-ID      ✅
 X-User-ID        ✅
 X-Request-ID     ✅
+Content-Type     ✅
+Authorization    ✅
 
 # Invalid header names
-X-Tenant@ID      ❌ (special characters)
-1-Tenant-ID      ❌ (starts with number)
-X Tenant ID      ❌ (contains spaces)
+X-Tenant@ID      ❌ (@ is not a valid token character)
+X Tenant ID      ❌ (spaces not allowed)
+X-Tenant:ID      ❌ (: is not a valid token character)
 ```
 
 #### Baggage Key Validation

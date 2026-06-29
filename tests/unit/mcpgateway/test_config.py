@@ -1640,8 +1640,9 @@ def test_oauth_manager_non_string_token_url_raises():
 # --------------------------------------------------------------------------- #
 #                    UAID Security Configuration                               #
 # --------------------------------------------------------------------------- #
-def test_uaid_allow_all_domains_defaults_false():
+def test_uaid_allow_all_domains_defaults_false(monkeypatch):
     """Verify UAID_ALLOW_ALL_DOMAINS defaults to False (secure default)."""
+    monkeypatch.delenv("UAID_ALLOW_ALL_DOMAINS", raising=False)
     settings = Settings(_env_file=None)
     assert settings.uaid_allow_all_domains is False
 

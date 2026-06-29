@@ -35,6 +35,7 @@ from functools import lru_cache
 import html
 import json
 import logging
+import math
 import multiprocessing
 import os
 import re
@@ -124,6 +125,7 @@ from mcpgateway.plugins import (
     stop_plugin_invalidation_listener,
 )
 from mcpgateway.plugins.violation_codes import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode, VALID_HTTP_STATUS_CODES
+from mcpgateway.routers.openapi_schema_router import router as openapi_schema_router
 from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
@@ -171,7 +173,7 @@ from mcpgateway.services.content_security import ContentPatternError, ContentSiz
 from mcpgateway.services.dataplane_publisher import DataplanePublisherService
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.export_service import ExportError, ExportService
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayNameConflictError, GatewayNotFoundError
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayLookupConflictError, GatewayNameConflictError, GatewayNotFoundError
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
@@ -196,7 +198,8 @@ from mcpgateway.transports.streamablehttp_transport import (
 from mcpgateway.utils import uaid as uaid_utils
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
-from mcpgateway.utils.error_formatter import ErrorFormatter
+from mcpgateway.utils.error_formatter import ErrorFormatter, sanitize_validation_error_for_log, should_expose_error_details
+from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filter_sensitive_headers
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -757,12 +760,15 @@ def _serialize_mcp_tool_definition(tool: Any) -> Dict[str, Any]:
         data = {}
 
     name = data.get("name", getattr(tool, "name", None))
+    title = data.get("title", getattr(tool, "title", None))
     description = data.get("description", getattr(tool, "description", None))
     input_schema = data.get("inputSchema", getattr(tool, "input_schema", None))
 
     payload: Dict[str, Any] = {}
     if name is not None:
         payload["name"] = name
+    if title is not None:
+        payload["title"] = title
     if description is not None or name is not None or input_schema is not None:
         payload["description"] = description or ""
     if input_schema is not None:
@@ -1638,9 +1644,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             total_pool = settings.db_pool_size + settings.db_max_overflow
             total_connections = workers * total_pool
             logger.warning(
-                "⚠️  DATABASE POOL: Running with %d gunicorn workers. "
-                "Total max DB connections = workers(%d) * (pool_size + max_overflow) = %d * %d = %d. "
-                "Ensure PostgreSQL max_connections >= %d. ",
+                "⚠️  DATABASE POOL: Running with %d gunicorn workers. Total max DB connections = workers(%d) * (pool_size + max_overflow) = %d * %d = %d. Ensure PostgreSQL max_connections >= %d. ",
                 workers,
                 workers,
                 workers,
@@ -1896,6 +1900,16 @@ async def setup_passthrough_headers():
         logger.warning("⚠️  Base Header Override: ENABLED - Client headers can override gateway headers")
     else:
         logger.info("🔒 Base Header Override: DISABLED - Gateway headers take precedence")
+
+    # SECURITY AUDIT: Startup warning for sensitive header forwarding (Issue #3621 Phase 1)
+    if settings.enable_sensitive_header_passthrough:
+        logger.warning(
+            "🔐 SECURITY AUDIT: Sensitive Header Passthrough ENABLED - "
+            "whitelisted sensitive headers (Authorization, X-API-Key, etc.) will be forwarded to downstream A2A agents. "
+            "Monitor metric 'a2a.downstream_headers.forwarded' for visibility (requires OBSERVABILITY_ENABLED=true). "
+            "Only enable when trusted A2A agents require upstream credentials."
+        )
+
     db_gen = get_db()
     db = next(db_gen)  # pylint: disable=stop-iteration-return
     try:
@@ -1953,7 +1967,6 @@ def validate_security_configuration():
 
         # Warn about ephemeral storage without strict user-in-DB mode
         if not getattr(current_settings, "require_user_in_db", False):
-
             is_ephemeral = ":memory:" in current_settings.database_url or current_settings.database_url == "sqlite:///./mcp.db"
             if is_ephemeral:
                 logger.warning("Using potentially ephemeral storage with platform admin bootstrap enabled. Consider using persistent storage or setting REQUIRE_USER_IN_DB=true for production.")
@@ -1961,7 +1974,6 @@ def validate_security_configuration():
         # Warn about default JWT issuer/audience in non-development environments
         if current_settings.environment != "development":
             if current_settings.jwt_issuer == "mcpgateway":
-
                 logger.warning("Using default JWT_ISSUER in %s environment. Set a unique JWT_ISSUER per environment to prevent cross-environment token acceptance.", current_settings.environment)
             if current_settings.jwt_audience == "mcpgateway-api":
                 logger.warning("Using default JWT_AUDIENCE in %s environment. Set a unique JWT_AUDIENCE per environment to prevent cross-environment token acceptance.", current_settings.environment)
@@ -2165,6 +2177,11 @@ async def request_validation_exception_handler(_request: Request, exc: RequestVa
     Returns:
         JSONResponse: A 422 Unprocessable Entity response with error details.
     """
+    logger.warning("Request validation error on %s: %s", _request.url.path if _request else "unknown", sanitize_validation_error_for_log(exc))
+
+    if not should_expose_error_details():
+        return ORJSONResponse(status_code=422, content={"detail": "An error occurred, please try again."})
+
     if _request.url.path.startswith("/tools"):
         error_details = []
 
@@ -2181,8 +2198,7 @@ async def request_validation_exception_handler(_request: Request, exc: RequestVa
             error_detail = {"type": type_, "loc": loc, "msg": msg, "ctx": ctx_serializable}
             error_details.append(error_detail)
 
-        response_content = {"detail": error_details}
-        return ORJSONResponse(status_code=422, content=response_content)
+        return ORJSONResponse(status_code=422, content={"detail": error_details})
     return await fastapi_default_validation_handler(_request, exc)
 
 
@@ -3106,10 +3122,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 if settings.header_size_validation_enabled:
     app.add_middleware(HeaderSizeMiddleware)
     logger.info(
-        f"📏 RFC 6585 header size validation enabled: "
-        f"max_total={settings.max_header_total_size_bytes}B, "
-        f"max_field={settings.max_header_field_size_bytes}B, "
-        f"max_count={settings.max_header_count}"
+        f"📏 RFC 6585 header size validation enabled: max_total={settings.max_header_total_size_bytes}B, max_field={settings.max_header_field_size_bytes}B, max_count={settings.max_header_count}"
     )
 
 # Add rate limiting middleware (after HttpAuthMiddleware for user-aware limiting)
@@ -5019,22 +5032,22 @@ async def delete_a2a_agent(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-_SENSITIVE_REQUEST_HEADER_PATTERNS = (
-    re.compile(r"^authorization$", re.IGNORECASE),
-    re.compile(r"^proxy-authorization$", re.IGNORECASE),
-    re.compile(r"^x-api-key$", re.IGNORECASE),
-    re.compile(r"^api-key$", re.IGNORECASE),
-    re.compile(r"^apikey$", re.IGNORECASE),
-    re.compile(r"^x-(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
-    re.compile(r"^cookie$", re.IGNORECASE),
-    re.compile(r"^set-cookie$", re.IGNORECASE),
-    re.compile(r"^host$", re.IGNORECASE),
-)
+def _prepare_request_headers(request_headers: Dict[str, str]) -> Dict[str, str]:
+    """
+    Prepare request headers for A2A agent invocation based on security configuration.
 
+    Phase 1 (Issue #3621): When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true, pass all headers.
+    Filtering happens in a2a_service after checking whitelist.
 
-def _filter_sensitive_headers(headers: Dict[str, str]) -> Dict[str, str]:
-    """Strip sensitive/credential headers from a dict before passing to plugins."""
-    return {k: v for k, v in headers.items() if not any(p.match(k) for p in _SENSITIVE_REQUEST_HEADER_PATTERNS)}
+    Args:
+        request_headers: Raw request headers dictionary
+
+    Returns:
+        Dict[str, str]: Prepared headers (either all headers or filtered headers)
+    """
+    if settings.enable_sensitive_header_passthrough:
+        return {k.lower(): v for k, v in request_headers.items()}
+    return _filter_sensitive_headers({k.lower(): v for k, v in request_headers.items()})
 
 
 @a2a_router.post("/{agent_name}/invoke", response_model=Dict[str, Any])
@@ -5117,9 +5130,10 @@ async def invoke_a2a_agent(
             bearer_token = None
 
         # Extract inbound request metadata for plugin context
-        # Strip sensitive/credential headers before passing to plugins.
+        # When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=false: strip sensitive headers at router level
+        # When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true: pass all headers; service layer filters after whitelist check
         content_type = request.headers.get("content-type")
-        request_headers = _filter_sensitive_headers({k.lower(): v for k, v in request.headers.items()})
+        request_headers = _prepare_request_headers(request.headers)
 
         return await a2a_service.invoke_agent(
             db,
@@ -5209,9 +5223,10 @@ async def invoke_a2a_agent_by_id(
             bearer_token = None
 
         # Extract inbound request metadata for plugin context
-        # Strip sensitive/credential headers before passing to plugins.
+        # When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=false: strip sensitive headers at router level
+        # When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true: pass all headers; service layer filters after whitelist check
         content_type = request.headers.get("content-type")
-        request_headers = _filter_sensitive_headers({k.lower(): v for k, v in request.headers.items()})
+        request_headers = _prepare_request_headers(request.headers)
 
         return await a2a_service.invoke_agent(
             db,
@@ -6935,6 +6950,7 @@ async def list_gateways(
 async def register_gateway(
     gateway: GatewayCreate,
     request: Request,
+    response: Response = None,  # type: ignore[assignment]
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[GatewayRead, JSONResponse]:
@@ -6944,6 +6960,7 @@ async def register_gateway(
     Args:
         gateway: Gateway creation data.
         request: The FastAPI request object for metadata extraction.
+        response: Outgoing response used to set `202 Accepted` for async lifecycle.
         db: Database session.
         user: Authenticated user.
 
@@ -6986,7 +7003,7 @@ async def register_gateway(
 
         logger.debug(f"User {SecurityValidator.sanitize_log_message(user_email)} is creating a new gateway for team {team_id}")
 
-        return await gateway_service.register_gateway(
+        result = await gateway_service.register_gateway(
             db,
             gateway,
             created_by=metadata["created_by"],
@@ -6997,6 +7014,13 @@ async def register_gateway(
             owner_email=user_email,
             visibility=visibility,
         )
+        result_status = getattr(result, "status", None)
+        if result_status is None and isinstance(result, dict):
+            result_status = result.get("status")
+        if result_status == "pending" and response is not None:
+            response.status_code = status.HTTP_202_ACCEPTED
+            response.headers["Retry-After"] = str(max(1, math.ceil(settings.gateway_async_lifecycle_poll_interval)))
+        return result
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_502_BAD_GATEWAY)
@@ -7041,6 +7065,8 @@ async def get_gateway(gateway_id: str, request: Request, db: Session = Depends(g
         gateway = await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
         _enforce_scoped_resource_access(request, db, user, f"/gateways/{gateway_id}")
         return gateway
+    except GatewayLookupConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except GatewayNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -7051,6 +7077,7 @@ async def update_gateway(
     gateway_id: str,
     gateway: GatewayUpdate,
     request: Request,
+    response: Response = None,  # type: ignore[assignment]
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[GatewayRead, JSONResponse]:
@@ -7061,6 +7088,7 @@ async def update_gateway(
         gateway_id: Gateway ID.
         gateway: Gateway update data.
         request (Request): The FastAPI request object for metadata extraction.
+        response: Outgoing response used to set `202 Accepted` for async lifecycle.
         db: Database session.
         user: Authenticated user.
 
@@ -7083,6 +7111,12 @@ async def update_gateway(
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
         )
+        result_status = getattr(result, "status", None)
+        if result_status is None and isinstance(result, dict):
+            result_status = result.get("status")
+        if result_status == "pending" and response is not None:
+            response.status_code = status.HTTP_202_ACCEPTED
+            response.headers["Retry-After"] = str(max(1, math.ceil(settings.gateway_async_lifecycle_poll_interval)))
         db.commit()
         db.close()
         return result
@@ -7110,13 +7144,20 @@ async def update_gateway(
 
 @gateway_router.delete("/{gateway_id}")
 @require_permission("gateways.delete")
-async def delete_gateway(gateway_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_gateway(
+    gateway_id: str,
+    request: Request,
+    response: Response = None,  # type: ignore[assignment]
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Union[Dict[str, str], GatewayRead]:
     """
     Delete a gateway by ID.
 
     Args:
         gateway_id: ID of the gateway.
         request: Incoming FastAPI request (for visibility scope resolution).
+        response: Outgoing response used to set `202 Accepted` for async lifecycle.
         db: Database session.
         user: Authenticated user.
 
@@ -7132,7 +7173,7 @@ async def delete_gateway(gateway_id: str, request: Request, db: Session = Depend
         auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
         current = await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
         has_resources = bool(current.capabilities.get("resources"))
-        await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
+        result = await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
 
         # If the gateway had resources and was successfully deleted, invalidate
         # the whole resource cache. This is needed since the cache holds both
@@ -7143,6 +7184,14 @@ async def delete_gateway(gateway_id: str, request: Request, db: Session = Depend
 
         db.commit()
         db.close()
+        result_status = getattr(result, "status", None)
+        if result_status is None and isinstance(result, dict):
+            result_status = result.get("status")
+        if result_status == "deleting":
+            if response is not None:
+                response.status_code = status.HTTP_202_ACCEPTED
+                response.headers["Retry-After"] = str(max(1, math.ceil(settings.gateway_async_lifecycle_poll_interval)))
+            return result
         return {"status": "success", "message": f"Gateway {gateway_id} deleted"}
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -12053,6 +12102,7 @@ app.include_router(server_well_known_router, prefix="/servers")
 app.include_router(metrics_router)
 app.include_router(tag_router)
 app.include_router(export_import_router)
+app.include_router(openapi_schema_router)
 
 # Compliance report router (admin API)
 if settings.mcpgateway_admin_api_enabled:

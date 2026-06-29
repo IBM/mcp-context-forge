@@ -40,15 +40,15 @@ _service = ToolPluginBindingService()
 
 
 def _allowed_teams_from_ctx(ctx: Dict[str, Any]) -> Optional[set[str]]:
-    """Derive the set of teams a caller is allowed to mutate.
+    """Derive the set of teams a caller is allowed to access (read/write).
 
     Returns ``None`` for unrestricted admins (full bypass).
     Returns an empty set for public-only callers (nothing allowed).
     """
     is_admin: bool = ctx.get("is_admin", False)
     token_teams = ctx.get("token_teams")
-    # Admin bypass: full bypass unless the token is explicitly scoped to teams.
-    if is_admin and not token_teams:
+
+    if is_admin and token_teams is None:
         return None
     return set(token_teams or [])
 
@@ -165,7 +165,8 @@ async def list_tool_plugin_bindings(
         >>> asyncio.iscoroutinefunction(list_tool_plugin_bindings)
         True
     """
-    bindings = _service.list_bindings(db, team_id=None, binding_reference_id=binding_reference_id)
+    allowed_teams = _allowed_teams_from_ctx(current_user_ctx)
+    bindings = _service.list_bindings(db, team_id=None, binding_reference_id=binding_reference_id, allowed_teams=allowed_teams)
     return ToolPluginBindingListResponse(bindings=bindings, total=len(bindings))
 
 
@@ -198,7 +199,16 @@ async def list_tool_plugin_bindings_for_team(
         >>> asyncio.iscoroutinefunction(list_tool_plugin_bindings_for_team)
         True
     """
-    bindings = _service.list_bindings(db, team_id=team_id, binding_reference_id=binding_reference_id)
+    allowed_teams = _allowed_teams_from_ctx(current_user_ctx)
+
+    # SECURITY: Validate team membership for explicit team_id requests
+    if allowed_teams is not None and team_id not in allowed_teams:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Not authorized to view bindings for team: {team_id}",
+        )
+
+    bindings = _service.list_bindings(db, team_id=team_id, binding_reference_id=binding_reference_id, allowed_teams=allowed_teams)
     return ToolPluginBindingListResponse(bindings=bindings, total=len(bindings))
 
 

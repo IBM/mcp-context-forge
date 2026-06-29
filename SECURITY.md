@@ -2,7 +2,7 @@
 
 ## ⚠️ Beta Software Notice
 
-**Current Version: 1.0.3**
+**Current Version: 1.0.4**
 
 ContextForge is currently in beta and should be treated as such until the 1.0 release. While we implement comprehensive security measures and follow best practices, important limitations exist:
 
@@ -404,6 +404,42 @@ Starting with 0.1.0:
 - **Read-only filesystems** in container deployments
 
 **Important**: The Admin UI is provided for developer convenience only and should **never be enabled in production deployments**.
+
+### Environment Isolation for JWTs (GHSA-vgf8-3685-66j9)
+
+Tokens must not be valid across DEV/STAGING/PROD.
+
+**Required:**
+- Distinct `JWT_SECRET_KEY` per environment (never share or copy `.env` between environments).
+- Distinct `ENVIRONMENT` value per deployment (`development`, `staging`, or `production`); when
+  relying on `DERIVE_KEY_PER_ENVIRONMENT`, each deployment **must** set a distinct `ENVIRONMENT`
+  — if all deployments keep the default `ENVIRONMENT=development`, derived keys are identical and
+  cross-environment isolation is not achieved.
+- Optionally distinct `JWT_AUDIENCE` / `JWT_ISSUER` per environment.
+- `EMBED_ENVIRONMENT_IN_TOKENS=true` and `VALIDATE_TOKEN_ENVIRONMENT=true` (both on by default).
+- HS\* shared-base-secret setups: `DERIVE_KEY_PER_ENVIRONMENT=true` (counts as a key rotation).
+- RS\*/ES\*: distinct key pairs per environment (derivation does not apply).
+
+**The `env` claim alone is not a security boundary.** With `DERIVE_KEY_PER_ENVIRONMENT=false` and a
+shared `JWT_SECRET_KEY`, anyone holding that secret can mint a token with `env=production` and pass
+validation. The claim is defense-in-depth/diagnostics only; real isolation comes from a distinct or
+derived signing key per environment.
+
+**Derived-key strength inherits the base secret.** `DERIVE_KEY_PER_ENVIRONMENT` re-keys per
+environment but does not strengthen a weak `JWT_SECRET_KEY` — a weak base secret still yields a weak
+derived key. Use a strong, random `JWT_SECRET_KEY` regardless (existing weak-secret checks apply).
+
+**Rollout order:**
+1. Set distinct `JWT_SECRET_KEY` per environment.
+2. Communicate and perform token rotation for long-lived tokens.
+3. Optionally enable `DERIVE_KEY_PER_ENVIRONMENT` (coordinate with same-env federation peers).
+4. Confirm the startup log shows derivation active and no "indistinguishable" warning.
+
+**Federation:** Cross-environment UAID federation is unsupported by design. Same-environment
+federation peers must share `JWT_SECRET_KEY` and `ENVIRONMENT` so derived keys match.
+
+**Scope:** Applies to gateway-issued tokens. External OAuth/SSO/JWKS tokens are governed by issuer
+pinning and are out of scope.
 
 ---
 

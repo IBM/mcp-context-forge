@@ -163,7 +163,7 @@ def send_message(self, message: Dict[str, Any]) -> None:
 
 ## Pre-commit Integration
 
-The default `.pre-commit-config.yaml` ships with a doctest hook commented out. Enable it locally by uncommenting the block (or copying the snippet below) if you want doctests to run on every commit:
+The `.pre-commit-lite.yaml` configuration can be extended with a doctest hook. Add the following block if you want doctests to run on every commit:
 
 ```yaml
 - repo: local

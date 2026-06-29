@@ -194,11 +194,11 @@ class OAuthManager:
 
         # Validate format (URI or hostname)
         if not _AUDIENCE_PATTERN.match(audience):
-            raise ValueError(f"Invalid audience format: '{sanitize_for_log(audience)}'. " "Audience must be a URI or hostname (alphanumeric, dots, hyphens, underscores, colons, slashes only).")
+            raise ValueError(f"Invalid audience format: '{sanitize_for_log(audience)}'. Audience must be a URI or hostname (alphanumeric, dots, hyphens, underscores, colons, slashes only).")
 
         # Validate length
         if len(audience) > _AUDIENCE_MAX_LENGTH:
-            raise ValueError(f"Audience parameter too long ({len(audience)} chars, max {_AUDIENCE_MAX_LENGTH}): " f"'{sanitize_for_log(audience[:100])}...'")
+            raise ValueError(f"Audience parameter too long ({len(audience)} chars, max {_AUDIENCE_MAX_LENGTH}): '{sanitize_for_log(audience[:100])}...'")
 
         return audience
 

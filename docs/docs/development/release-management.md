@@ -195,17 +195,10 @@ Update non-Python dependencies across the repository.
 
 ### 3.1 Rust dependencies
 
-Update the root workspace `Cargo.lock`, plus any standalone Rust server locks outside the workspace, and verify they build and pass tests:
+Update the root workspace `Cargo.lock` and verify the workspace builds and passes tests:
 
 ```bash
-# Update the root Rust workspace lockfile
 cargo update --workspace
-
-# Update standalone Rust MCP server locks
-for manifest in mcp-servers/rust/*/Cargo.toml; do
-  server_dir="$(dirname "$manifest")"
-  (cd "$server_dir" && cargo update)
-done
 
 # Verify build + lint + tests
 make rust-check
@@ -225,7 +218,7 @@ After any Rust dependency update, run cargo-vet before release freeze:
 make rust-vet
 ```
 
-This runs `cargo vet check` against `supply-chain/config.toml`, `supply-chain/audits.toml`, and the trusted audit imports recorded in `supply-chain/imports.lock`. Release CI treats this as a blocking gate for Rust wheels and source distributions.
+The `make rust-vet` target runs `cargo vet check` against `supply-chain/config.toml`, `supply-chain/audits.toml`, and the trusted audit imports recorded in `supply-chain/imports.lock`. Release CI treats this as a blocking gate for Rust wheels and source distributions.
 
 If vetting fails, use the [cargo-vet audit workflow](https://mozilla.github.io/cargo-vet/performing-audits.html) to handle each unvetted crate before tagging:
 
@@ -240,6 +233,12 @@ If vetting fails, use the [cargo-vet audit workflow](https://mozilla.github.io/c
 Audits and exemptions should be reviewed by Rust maintainers or security reviewers who understand the affected crate and the `safe-to-deploy` / `safe-to-run` criteria. Prefer diff audits over exemptions. Exemptions are allowed, but each one reduces the value of the vetting gate and should be revisited with `cargo vet suggest`.
 
 When ContextForge and `cpex-plugins` share Rust dependency changes, apply the same decision in both repositories: run each repo's cargo-vet check, update each repo's `supply-chain/` metadata, or explicitly defer the update in the repo where the audit cannot be completed.
+
+At the end of Rust supply-chain vetting, prune stale cargo-vet exemptions:
+
+```bash
+cargo vet prune
+```
 
 ### 3.3 Go dependencies
 
@@ -352,14 +351,12 @@ All formatting and linting checks must pass with zero errors.
 ### 4.1 Code formatting
 
 ```bash
-make autoflake isort black
+make ruff-format
 ```
 
 | Target | What it checks |
 |--------|----------------|
-| `autoflake` | Removes unused imports and variables |
-| `isort` | Sorts imports (profile=black) |
-| `black` | Formats Python code (line length 200) |
+| `ruff-format` | Formats Python code (includes import sorting and unused code removal) |
 
 !!! note "Pre-commit hooks run automatically"
     The configured pre-commit hooks (whitespace, EOF fixers, detect-secrets, AST checks, etc.) are enforced at commit time and in CI — they do not need a dedicated release step. If a release commit passes pre-commit locally it will pass in CI; otherwise investigate before tagging.
@@ -1495,7 +1492,7 @@ make install-dev
 make pip-audit
 
 # 2. Rust / Go / JS / CDN dependency updates
-# ... repeat for all Cargo.toml dirs (see Section 3) ...
+cargo update --workspace
 # ... go get -u ./... && go mod tidy for all go.mod dirs ...
 make linting-go-gosec linting-go-govulncheck
 npm update && npm audit && npm audit fix
@@ -1508,7 +1505,7 @@ make docker-prod DOCKER_BUILD_ARGS="--no-cache"
 make test
 
 # 4. Format, lint & security
-make autoflake isort black
+make ruff-format
 make ruff vulture bandit interrogate pylint verify
 make yamllint tomllint jsonlint
 make lint-web

@@ -220,6 +220,7 @@ class A2AAgentPluginBindingService:
         binding_reference_id: Optional[str] = None,
         limit: Optional[int] = None,
         offset: int = 0,
+        allowed_teams: Optional[set[str]] = None,
     ) -> tuple[List[A2AAgentPluginBindingResponse], int]:
         """Return all bindings, optionally filtered by team or binding_reference_id.
 
@@ -235,11 +236,19 @@ class A2AAgentPluginBindingService:
                 reference ID (``team_id`` is ignored).
             limit: Maximum number of results to return (None = no limit).
             offset: Number of results to skip.
+            allowed_teams: When non-None, only bindings whose ``team_id`` is in
+                this set are returned. Pass ``None`` for admin callers (unrestricted).
+                This enforces multi-tenant isolation at the data layer.
 
         Returns:
             Tuple of (List[A2AAgentPluginBindingResponse], total_count).
         """
         query = db.query(A2AAgentPluginBinding)
+
+        # Filter by allowed_teams first (multi-tenant isolation)
+        if allowed_teams is not None:
+            query = query.filter(A2AAgentPluginBinding.team_id.in_(allowed_teams))
+
         if binding_reference_id:
             query = query.filter(A2AAgentPluginBinding.binding_reference_id == binding_reference_id)
         elif team_id:

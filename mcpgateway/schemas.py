@@ -83,7 +83,7 @@ def _validate_association_ids(v: Any, field_name: str = "associated IDs") -> Any
             try:
                 validated.append(SecurityValidator.validate_uuid(item_str, field_name))
             except ValueError:
-                raise ValueError(f"Invalid ID format: '{item_str}'. " f"{field_name} must contain UUID values, not names. " f"Use UUIDs from the respective entity listings.")
+                raise ValueError(f"Invalid ID format: '{item_str}'. {field_name} must contain UUID values, not names. Use UUIDs from the respective entity listings.")
         return validated
     return v
 
@@ -2887,7 +2887,7 @@ class GatewayCreate(BaseModelWithConfigDict):
         """
         if v is not None and v != "":
             if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_\-]*$", v):
-                raise ValueError("Query parameter key must start with a letter or underscore, " "followed by letters, numbers, underscores, or hyphens")
+                raise ValueError("Query parameter key must start with a letter or underscore, followed by letters, numbers, underscores, or hyphens")
         return v
 
     # Adding `auth_value` as an alias for better access post-validation
@@ -3304,7 +3304,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
         """
         if v is not None and v != "":
             if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_\-]*$", v):
-                raise ValueError("Query parameter key must start with a letter or underscore, " "followed by letters, numbers, underscores, or hyphens")
+                raise ValueError("Query parameter key must start with a letter or underscore, followed by letters, numbers, underscores, or hyphens")
         return v
 
     # One time auth - do not store the auth in gateway flag
@@ -3633,6 +3633,14 @@ class GatewayRead(BaseModelWithConfigDict):
     capabilities: Dict[str, Any] = Field(default_factory=dict, description="Gateway capabilities")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Creation timestamp")
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Last update timestamp")
+    status: str = Field(default="active", description="Gateway lifecycle status: pending, active, or deleting")
+    status_message: Optional[str] = Field(default=None, description="Gateway lifecycle status message or failure detail")
+    registration_attempts: int = Field(default=0, description="Number of async lifecycle registration attempts")
+    next_retry_at: Optional[datetime] = Field(default=None, description="Next async lifecycle retry timestamp")
+    last_error: Optional[str] = Field(default=None, description="Most recent async lifecycle error detail")
+    lifecycle_claimed_by: Optional[str] = Field(default=None, description="Worker instance currently claiming async lifecycle work")
+    lifecycle_claimed_at: Optional[datetime] = Field(default=None, description="Timestamp when async lifecycle claim was acquired")
+    lifecycle_claim_expires_at: Optional[datetime] = Field(default=None, description="Timestamp when async lifecycle claim expires")
     enabled: bool = Field(default=True, description="Is the gateway enabled?")
     reachable: bool = Field(default=True, description="Is the gateway reachable/online?")
 
@@ -4783,6 +4791,30 @@ class A2AAgentCreate(BaseModel):
     version: Optional[str] = Field(default="1.0.0", description="Agent version for UAID generation")
     uaid_native_id_override: Optional[str] = Field(None, description="Override nativeId in UAID for cross-gateway routing (defaults to endpoint_url if not provided)")
 
+    @field_validator("passthrough_headers")
+    @classmethod
+    def validate_passthrough_headers(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        """Validate passthrough_headers contain valid HTTP header names.
+
+        Args:
+            v: Optional list of header name strings to validate
+
+        Returns:
+            List of validated header names or None
+
+        Raises:
+            ValueError: If any header name is invalid
+        """
+        if v is None:
+            return None
+        # HTTP header name must be a token per RFC 7230 section 3.2
+        # Token chars: alphanumeric, !, #, $, %, &, ', *, +, -, ., ^, _, `, |, ~
+        header_name_pattern = re.compile(r"^[a-zA-Z0-9!#$%&'*+\-.^_`|~]+$")
+        invalid_headers = [h for h in v if not header_name_pattern.match(h)]
+        if invalid_headers:
+            raise ValueError(f"Invalid header names: {', '.join(invalid_headers)}. Header names must contain only valid token characters (RFC 7230).")
+        return v
+
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
@@ -5112,6 +5144,30 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
     uaid_protocol: Optional[str] = Field(default=None, description="Protocol for UAID (a2a, mcp, rest, grpc)")
     version: Optional[str] = Field(default=None, description="Agent version for UAID generation")
     uaid_native_id_override: Optional[str] = Field(None, description="Override nativeId in UAID for cross-gateway routing (defaults to endpoint_url if not provided)")
+
+    @field_validator("passthrough_headers")
+    @classmethod
+    def validate_passthrough_headers(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        """Validate passthrough_headers contain valid HTTP header names.
+
+        Args:
+            v: Optional list of header name strings to validate
+
+        Returns:
+            List of validated header names or None
+
+        Raises:
+            ValueError: If any header name is invalid
+        """
+        if v is None:
+            return None
+        # HTTP header name must be a token per RFC 7230 section 3.2
+        # Token chars: alphanumeric, !, #, $, %, &, ', *, +, -, ., ^, _, `, |, ~
+        header_name_pattern = re.compile(r"^[a-zA-Z0-9!#$%&'*+\-.^_`|~]+$")
+        invalid_headers = [h for h in v if not header_name_pattern.match(h)]
+        if invalid_headers:
+            raise ValueError(f"Invalid header names: {', '.join(invalid_headers)}. Header names must contain only valid token characters (RFC 7230).")
+        return v
 
     @field_validator("auth_type")
     @classmethod

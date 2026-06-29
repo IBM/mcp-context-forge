@@ -303,9 +303,7 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
             # Generate CSRF token
             csrf_token = generate_csrf_token(user_id=user.email, session_id=session_id, secret=settings.csrf_secret_key, expiry=settings.csrf_token_expiry)
 
-            auth_response = AuthenticationResponse(
-                access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
-            )  # nosec B106 - OAuth2 token type, not a password
+            auth_response = AuthenticationResponse(access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user))  # nosec B106 - OAuth2 token type, not a password
             response = ORJSONResponse(content=auth_response.model_dump(mode="json"))
 
             set_csrf_cookie(response, csrf_token, settings)
@@ -314,9 +312,7 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
         except Exception as e:
             logger.warning(f"Failed to set CSRF token for {user.email}: {e}")
             # Fall back to response without CSRF token (non-critical)
-            return AuthenticationResponse(
-                access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
-            )  # nosec B106 - OAuth2 token type, not a password
+            return AuthenticationResponse(access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user))  # nosec B106 - OAuth2 token type, not a password
 
     except HTTPException:
         raise  # Re-raise HTTP exceptions as-is (401, 403, etc.)
@@ -382,9 +378,7 @@ async def register(registration_request: PublicRegistrationRequest, request: Req
 
         logger.info(f"New user registered: {SecurityValidator.sanitize_log_message(user.email)}")
 
-        return AuthenticationResponse(
-            access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
-        )  # nosec B106 - OAuth2 token type, not a password
+        return AuthenticationResponse(access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user))  # nosec B106 - OAuth2 token type, not a password
 
     except EmailValidationError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

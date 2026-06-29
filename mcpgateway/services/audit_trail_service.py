@@ -169,7 +169,13 @@ class AuditTrailService:
         # Use provided session or create new one
         close_db = False
         if db is None:
-            db = SessionLocal()
+            try:
+                db = SessionLocal()
+            except Exception as e:  # pragma: no cover - defensive
+                logger.error(
+                    "Failed to create audit trail session: %s", e, exc_info=True, extra={"correlation_id": correlation_id, "action": action, "resource_type": resource_type, "resource_id": resource_id}
+                )
+                return None
             close_db = True
 
         try:

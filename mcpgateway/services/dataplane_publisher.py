@@ -203,7 +203,6 @@ class DataplanePublisherService:
         result: dict[str, UserConfig] = {}
 
         for user_email, user_data in data.items():
-
             servers = user_data["servers"]
             gateways = user_data["gateways"]
             prompts = user_data["prompts"]
@@ -225,7 +224,6 @@ class DataplanePublisherService:
             virtual_hosts: dict[str, VirtualHostConfig] = {}
 
             for server in servers:
-
                 backends: dict[str, BackendConfig] = {}
 
                 for gateway_id, backend_items in server["backend_items"].items():

@@ -2,6 +2,7 @@
 """Location: ./mcpgateway/tools/builder/build_hooks.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Custom setuptools build hook to generate UI assets before packaging.
 
@@ -9,11 +10,13 @@ This hook runs during `python -m build` to ensure bundle-*.js and tailwind.min.c
 are generated and included in the wheel/sdist, without requiring them to be committed to git.
 """
 
+# Standard
 import logging
+from pathlib import Path
 import subprocess
 import sys
-from pathlib import Path
 
+# Third-Party
 from setuptools.command.build_py import build_py
 
 logger = logging.getLogger(__name__)
@@ -24,6 +27,7 @@ class BuildPyWithUI(build_py):
 
     def run(self):
         """Run UI build before standard build_py."""
+        # Standard
         import os
 
         # Only run npm build when explicitly requested via BUILD_UI_ASSETS=true.

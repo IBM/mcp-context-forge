@@ -16,6 +16,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import Gateway, Server, Tool, Resource, Prompt, A2AAgent
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.gateway_service import GatewayService
@@ -24,6 +25,12 @@ from mcpgateway.services.tool_service import ToolService
 from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.a2a_service import A2AAgentService
+
+
+@pytest.fixture(autouse=True)
+def default_sync_gateway_lifecycle(monkeypatch):
+    """Keep ownership tests on sync gateway lifecycle unless opted into async."""
+    monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", False)
 
 
 @pytest.fixture(autouse=True)

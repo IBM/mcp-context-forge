@@ -936,8 +936,9 @@ class TestServerEndpoints:
         assert response.status_code == 201
         mock_create.assert_called_once()
 
-    def test_create_server_rejects_non_uuid_associated_tools(self, test_client, auth_headers):
+    def test_create_server_rejects_non_uuid_associated_tools(self, test_client, auth_headers, monkeypatch):
         """Test that POST /servers rejects non-UUID values in associated_tools with 422."""
+        monkeypatch.setattr("mcpgateway.main.should_expose_error_details", lambda: True)
         req = {
             "server": {
                 "name": "test_server",
@@ -1991,6 +1992,17 @@ class TestGatewayEndpoints:
         assert response.status_code == 200
         mock_update.assert_called_once()
 
+    @patch("mcpgateway.main.gateway_service.update_gateway")
+    def test_update_gateway_endpoint_secondary_returns_202_for_pending(self, mock_update, test_client, auth_headers):
+        """Async gateway update should return 202 when service reports pending."""
+        mock_update.return_value = {**MOCK_GATEWAY_READ, "status": "pending", "status_message": "Gateway update accepted and pending initialization", "reachable": False}
+        req = {"description": "Updated description"}
+        response = test_client.put("/gateways/1", json=req, headers=auth_headers)
+        assert response.status_code == 202
+        assert response.json()["status"] == "pending"
+        assert response.headers["Retry-After"] == "5"
+        mock_update.assert_called_once()
+
     @patch("mcpgateway.main.gateway_service.delete_gateway")
     @patch("mcpgateway.main.gateway_service.get_gateway")
     def test_delete_gateway_endpoint_no_resources(self, mock_get, mock_delete, test_client, auth_headers):
@@ -2000,6 +2012,18 @@ class TestGatewayEndpoints:
         response = test_client.delete("/gateways/1", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
+        mock_delete.assert_called_once()
+
+    @patch("mcpgateway.main.gateway_service.delete_gateway")
+    @patch("mcpgateway.main.gateway_service.get_gateway")
+    def test_delete_gateway_endpoint_no_resources_returns_202_for_deleting(self, mock_get, mock_delete, test_client, auth_headers):
+        """Async gateway delete should return 202 when service reports deleting."""
+        mock_get.return_value = MagicMock(capabilities={})
+        mock_delete.return_value = {**MOCK_GATEWAY_READ, "status": "deleting", "status_message": "Gateway deletion accepted and pending cleanup", "reachable": False}
+        response = test_client.delete("/gateways/1", headers=auth_headers)
+        assert response.status_code == 202
+        assert response.json()["status"] == "deleting"
+        assert response.headers["Retry-After"] == "5"
         mock_delete.assert_called_once()
 
     @patch("mcpgateway.main.gateway_service.delete_gateway")
@@ -2069,6 +2093,17 @@ class TestGatewayEndpoints:
         mock_create.assert_called_once()
 
     @patch("mcpgateway.main.gateway_service.register_gateway")
+    def test_create_gateway_endpoint_returns_202_for_pending_registration(self, mock_create, test_client, auth_headers):
+        """Async gateway registration should return 202 when service reports pending."""
+        mock_create.return_value = {**MOCK_GATEWAY_READ, "status": "pending", "status_message": "Gateway registration accepted and pending initialization", "reachable": False}
+        req = {"name": "test_gateway", "url": "http://example.com"}
+        response = test_client.post("/gateways/", json=req, headers=auth_headers)
+        assert response.status_code == 202
+        assert response.json()["status"] == "pending"
+        assert response.headers["Retry-After"] == "5"
+        mock_create.assert_called_once()
+
+    @patch("mcpgateway.main.gateway_service.register_gateway")
     def test_create_gateway_endpoint_skipped_tools_in_response(self, mock_create, test_client, auth_headers):
         """POST /gateways/ must include skipped_tools in the response body when tools are skipped (issue #136 Bug C)."""
         skipped = [
@@ -2103,6 +2138,18 @@ class TestGatewayEndpoints:
         assert response.status_code == 404
         mock_get.assert_called_once()
 
+    @patch("mcpgateway.main.gateway_service.get_gateway")
+    def test_get_gateway_endpoint_returns_409_for_ambiguous_identifier(self, mock_get, test_client, auth_headers):
+        """GET /gateways/{id} returns 409 when visible name/slug lookup is ambiguous."""
+        # First-Party
+        from mcpgateway.services.gateway_service import GatewayLookupConflictError
+
+        mock_get.side_effect = GatewayLookupConflictError("shared-name")
+        response = test_client.get("/gateways/shared-name", headers=auth_headers)
+        assert response.status_code == 409
+        assert "ambiguous" in response.json()["detail"]
+        mock_get.assert_called_once()
+
     @patch("mcpgateway.main.gateway_service.update_gateway")
     def test_update_gateway_endpoint(self, mock_update, test_client, auth_headers):
         """Test updating an existing gateway."""
@@ -2110,6 +2157,17 @@ class TestGatewayEndpoints:
         req = {"description": "Updated description"}
         response = test_client.put("/gateways/1", json=req, headers=auth_headers)
         assert response.status_code == 200
+        mock_update.assert_called_once()
+
+    @patch("mcpgateway.main.gateway_service.update_gateway")
+    def test_update_gateway_endpoint_returns_202_for_pending(self, mock_update, test_client, auth_headers):
+        """Async gateway update should return 202 when service reports pending."""
+        mock_update.return_value = {**MOCK_GATEWAY_READ, "status": "pending", "status_message": "Gateway update accepted and pending initialization", "reachable": False}
+        req = {"description": "Updated description"}
+        response = test_client.put("/gateways/1", json=req, headers=auth_headers)
+        assert response.status_code == 202
+        assert response.json()["status"] == "pending"
+        assert response.headers["Retry-After"] == "5"
         mock_update.assert_called_once()
 
     @patch("mcpgateway.main.gateway_service.delete_gateway")
@@ -2121,6 +2179,17 @@ class TestGatewayEndpoints:
         response = test_client.delete("/gateways/1", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
+
+    @patch("mcpgateway.main.gateway_service.delete_gateway")
+    @patch("mcpgateway.main.gateway_service.get_gateway")
+    def test_delete_gateway_endpoint_returns_202_for_deleting(self, mock_get, mock_delete, test_client, auth_headers):
+        """Async gateway delete should return 202 when service reports deleting."""
+        mock_get.return_value = MagicMock(capabilities={})
+        mock_delete.return_value = {**MOCK_GATEWAY_READ, "status": "deleting", "status_message": "Gateway deletion accepted and pending cleanup", "reachable": False}
+        response = test_client.delete("/gateways/1", headers=auth_headers)
+        assert response.status_code == 202
+        assert response.json()["status"] == "deleting"
+        assert response.headers["Retry-After"] == "5"
 
     @patch("mcpgateway.main.gateway_service.set_gateway_state")
     def test_set_gateway_state(self, mock_toggle, test_client, auth_headers):
@@ -5237,6 +5306,100 @@ class TestGetRpcFilterContext:
         assert teams == ["t1"]
         assert is_admin is False
         assert any("internal_auth_context email non-string type" in record.message for record in caplog.records)
+
+    # ── Session token admin bypass tests (issue #5232) ────────────────────── #
+
+    def test_session_token_admin_bypass(self):
+        """Session token with token_teams=None and admin DB user returns is_admin=True."""
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"sub": "admin@example.com", "token_use": "session"})
+        mock_request.state.token_teams = None
+        mock_request.state.token_use = "session"
+        user = {"email": "admin@example.com"}
+
+        with patch("mcpgateway.db.SessionLocal") as mock_session_local:
+            mock_db = MagicMock()
+            mock_db_user = MagicMock()
+            mock_db_user.is_admin = True
+            mock_db.query.return_value.filter.return_value.first.return_value = mock_db_user
+            mock_session_local.return_value = mock_db
+
+            email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        assert email == "admin@example.com"
+        assert teams is None
+        assert is_admin is True
+
+    def test_session_token_admin_bypass_missing_user(self):
+        """Session token with token_teams=None but no DB user record does NOT grant bypass."""
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"sub": "ghost@example.com", "token_use": "session"})
+        mock_request.state.token_teams = None
+        mock_request.state.token_use = "session"
+        user = {"email": "ghost@example.com"}
+
+        with patch("mcpgateway.db.SessionLocal") as mock_session_local:
+            mock_db = MagicMock()
+            mock_db.query.return_value.filter.return_value.first.return_value = None
+            mock_session_local.return_value = mock_db
+
+            email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        assert email == "ghost@example.com"
+        assert teams is None
+        assert is_admin is False
+
+    def test_session_token_non_admin(self):
+        """Session token with token_teams=["team1"] (DB non-admin) returns is_admin=False."""
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"sub": "user@example.com", "token_use": "session"})
+        mock_request.state.token_teams = ["team1"]
+        mock_request.state.token_use = "session"
+        user = {"email": "user@example.com"}
+
+        email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        assert email == "user@example.com"
+        assert teams == ["team1"]
+        assert is_admin is False
+
+    def test_session_token_public_only(self):
+        """Session token with token_teams=[] (public-only) returns is_admin=False."""
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"sub": "user@example.com", "token_use": "session"})
+        mock_request.state.token_teams = []
+        mock_request.state.token_use = "session"
+        user = {"email": "user@example.com"}
+
+        email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        assert email == "user@example.com"
+        assert teams == []
+        assert is_admin is False
+
+    def test_api_token_admin_bypass_regression(self):
+        """API token with is_admin=true, teams=null still gets is_admin=True (regression guard)."""
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"teams": None, "is_admin": True})
+        mock_request.state.token_teams = None
+        mock_request.state.token_use = None
+        user = {"email": "admin@example.com"}
+
+        email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        assert email == "admin@example.com"
+        assert teams is None
+        assert is_admin is True
 
 
 # --------------------------------------------------------------------------- #

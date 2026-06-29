@@ -28,7 +28,7 @@ permissions:
 # Linters are invoked via `uv tool run <tool>==<pin>` so CI and local runs
 # use identical versions regardless of the dev dependency group.
 env:
-  RUFF_VERSION: "0.15.1"
+  RUFF_VERSION: "0.15.16"
   PYLINT_VERSION: "3.3.9"
   PYLINT_PYDANTIC_VERSION: "0.3.5"
   VULTURE_VERSION: "2.14"

@@ -85,7 +85,7 @@ class ElicitationService:
         self.cleanup_interval = cleanup_interval
         self._pending: Dict[str, PendingElicitation] = {}
         self._cleanup_task: Optional[asyncio.Task] = None
-        logger.info("ElicitationService initialized: timeout=%ss, max_concurrent=%s, cleanup_interval=%ss", default_timeout, max_concurrent, cleanup_interval)
+        logger.info(f"ElicitationService initialized: timeout={default_timeout}s, max_concurrent={max_concurrent}, cleanup_interval={cleanup_interval}s")
 
     async def start(self):
         """Start background cleanup task."""
@@ -296,17 +296,17 @@ class ElicitationService:
 
             prop_type = prop_schema.get("type")
             if prop_type not in allowed_types:
-                raise ValueError(f"Property '{prop_name}' has invalid type '{prop_type}'. " f"Only primitive types allowed: {allowed_types}")
+                raise ValueError(f"Property '{prop_name}' has invalid type '{prop_type}'. Only primitive types allowed: {allowed_types}")
 
             # Check for nested structures (not allowed per spec)
             if "properties" in prop_schema or "items" in prop_schema:
-                raise ValueError(f"Property '{prop_name}' contains nested structure. " "MCP elicitation schemas must be flat.")
+                raise ValueError(f"Property '{prop_name}' contains nested structure. MCP elicitation schemas must be flat.")
 
             # Validate string format if present
             if prop_type == "string" and "format" in prop_schema:
                 fmt = prop_schema["format"]
                 if fmt not in allowed_formats:
-                    logger.warning("Property '%s' has non-standard format '%s'. Allowed formats: %s", prop_name, fmt, allowed_formats)
+                    logger.warning(f"Property '{prop_name}' has non-standard format '{fmt}'. Allowed formats: {allowed_formats}")
 
         logger.debug("Schema validation passed: %s properties", len(properties))
 

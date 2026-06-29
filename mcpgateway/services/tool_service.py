@@ -2071,7 +2071,6 @@ class ToolService(BaseService):
                     "import_batch_id": import_batch_id,
                     "federation_source": federation_source,
                 },
-                db=db,
             )
 
             # Structured logging: Log successful tool creation
@@ -2377,7 +2376,6 @@ class ToolService(BaseService):
                     resource_type="tool",
                     resource_id=None,
                     details={"count": len(tools_to_add) + len(tools_to_update), "import_batch_id": import_batch_id},
-                    db=db,
                 )
 
         except Exception as e:
@@ -3008,6 +3006,7 @@ class ToolService(BaseService):
             query = (
                 select(
                     name_column.label("name"),
+                    DbTool.title.label("title"),
                     DbTool.description.label("description"),
                     DbTool.input_schema.label("input_schema"),
                     DbTool.output_schema.label("output_schema"),
@@ -3045,6 +3044,8 @@ class ToolService(BaseService):
                     "inputSchema": row["input_schema"] or {"type": "object", "properties": {}},
                     "annotations": row["annotations"] or {},
                 }
+                if row["title"] is not None:
+                    payload["title"] = row["title"]
                 if row["output_schema"] is not None:
                     payload["outputSchema"] = row["output_schema"]
                 result.append(payload)
@@ -3365,7 +3366,6 @@ class ToolService(BaseService):
                 old_values={
                     "name": tool_name,
                 },
-                db=db,
             )
 
             # Structured logging: Log successful tool deletion
@@ -3539,7 +3539,6 @@ class ToolService(BaseService):
                     context={
                         "action": "activate" if activate else "deactivate",
                     },
-                    db=db,
                 )
 
                 # Structured logging: Log successful tool state change
@@ -6459,7 +6458,6 @@ class ToolService(BaseService):
                     "modified_via": modified_via,
                     "changes": ", ".join(changes) if changes else "metadata only",
                 },
-                db=db,
             )
 
             # Structured logging: Log successful tool update

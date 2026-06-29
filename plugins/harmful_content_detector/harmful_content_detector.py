@@ -73,17 +73,11 @@ class HarmfulContentConfig(BaseModel):
         if "categories" in data:
             compiled_cats = {}
             for cat, patterns in data["categories"].items():
-                compiled_cats[cat] = [
-                    re.compile(p, re.IGNORECASE) if isinstance(p, str) else p
-                    for p in patterns
-                ]
+                compiled_cats[cat] = [re.compile(p, re.IGNORECASE) if isinstance(p, str) else p for p in patterns]
             data["categories"] = compiled_cats
         else:
             # Use default lexicons and compile them
-            data["categories"] = {
-                cat: [re.compile(p, re.IGNORECASE) for p in patterns]
-                for cat, patterns in DEFAULT_LEXICONS.items()
-            }
+            data["categories"] = {cat: [re.compile(p, re.IGNORECASE) for p in patterns] for cat, patterns in DEFAULT_LEXICONS.items()}
         super().__init__(**data)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)

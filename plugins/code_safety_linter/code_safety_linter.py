@@ -47,7 +47,7 @@ class CodeSafetyConfig(BaseModel):
         ]
     )
 
-    @field_validator('blocked_patterns', mode='before')
+    @field_validator("blocked_patterns", mode="before")
     @classmethod
     def compile_patterns(cls, v: Any) -> List[Pattern[str]]:
         """Compile string patterns to regex Pattern objects.
