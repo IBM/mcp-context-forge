@@ -84,7 +84,7 @@ function setupWithServer(
   server: VirtualServer,
   {
     refetch = vi.fn().mockResolvedValue({ servers: [] }),
-  }: { refetch?: ReturnType<typeof vi.fn> } = {},
+  }: { refetch?: () => Promise<{ servers: VirtualServer[] }> } = {},
 ) {
   mockUseQuery.mockReturnValue({
     data: { servers: [server] },

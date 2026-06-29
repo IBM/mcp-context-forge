@@ -1,12 +1,12 @@
 import { useEffect, useRef } from "react";
 import { X, Trash2, FileText } from "lucide-react";
-import type { Resource } from "@/types/resource";
+import type { ResourceRead } from "@/generated/types";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 
 interface ResourceDetailsPanelProps {
-  resources: Resource[];
+  resources: NonNullable<ResourceRead>[];
   gatewaySlug: string;
   open: boolean;
   onClose: () => void;

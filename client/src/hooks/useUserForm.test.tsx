@@ -35,6 +35,7 @@ describe("useUserForm", () => {
       isLoading: false,
       execute: mockExecute,
       refetch: vi.fn(),
+      setData: vi.fn(),
     });
   });
 
