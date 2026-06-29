@@ -381,9 +381,17 @@ init-secrets: ## Generate secure secrets for the gateway (US-3)
         js-build fetch-openapi
 
 ## --- JS build ----------------------------------------------------------------
+# js-build is gated on MCPGATEWAY_ADMIN_API_ENABLED.  The config.py default is
+# false; .env.example sets it to true.  Run `cp .env.example .env` (or export
+# MCPGATEWAY_ADMIN_API_ENABLED=true) before invoking serve/dev targets,
+# otherwise the Admin UI bundle will not be built and the UI will not load.
 js-build:                        ## Install npm dependencies and build JS bundle with Vite (includes client React app)
 	@if [ "$(MCPGATEWAY_ADMIN_API_ENABLED)" != "true" ]; then \
-		echo "⏭️  MCPGATEWAY_ADMIN_API_ENABLED != true — skipping JS build"; \
+		echo ""; \
+		echo "WARNING: JS build skipped — MCPGATEWAY_ADMIN_API_ENABLED is not set to true."; \
+		echo "         The Admin UI will not load at runtime."; \
+		echo "         Fix: cp .env.example .env  (or export MCPGATEWAY_ADMIN_API_ENABLED=true)"; \
+		echo ""; \
 	elif command -v npm >/dev/null 2>&1; then \
 		npm install --no-audit --no-fund && npm run build:css && npm run vite:build && \
 		cd client && npm install --no-audit --no-fund && npm run build; \
@@ -394,8 +402,19 @@ js-build:                        ## Install npm dependencies and build JS bundle
 fetch-openapi:                   ## Fetch OpenAPI spec from running gateway into client/openapi.json (requires MCPGATEWAY_BEARER_TOKEN; override URL with MCP_CLI_BASE_URL)
 	@curl -sf "$${MCP_CLI_BASE_URL:-http://localhost:4444}/openapi.json" \
 		-H "Authorization: Bearer $${MCPGATEWAY_BEARER_TOKEN}" \
-		-o client/openapi.json
+		-o client/openapi.json || { \
+		echo ""; \
+		echo "ERROR: Could not fetch OpenAPI spec from $${MCP_CLI_BASE_URL:-http://localhost:4444}/openapi.json"; \
+		echo "       Start the gateway first:  make serve  (or make dev)"; \
+		echo "       Then set MCPGATEWAY_BEARER_TOKEN and retry:  make generate-client"; \
+		echo ""; \
+		exit 1; \
+	}
 	@echo "OpenAPI spec saved to client/openapi.json"
+
+# Requires a running gateway (make serve or make dev) and MCPGATEWAY_BEARER_TOKEN to be set.
+generate-client: fetch-openapi   ## Fetch OpenAPI spec from running gateway and regenerate client types (requires running gateway + MCPGATEWAY_BEARER_TOKEN)
+	@cd client && npm run generate
 
 ## --- Primary servers ---------------------------------------------------------
 serve: install js-build                  ## Run production server with Gunicorn + Uvicorn (default)

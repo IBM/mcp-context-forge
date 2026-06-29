@@ -28,7 +28,6 @@ function createMockResource(id: number, gatewaySlug: string, enabled = true): Re
     name: `Resource ${id}`,
     description: `Description for resource ${id}`,
     gatewayId: `gateway-${gatewaySlug}`,
-    gatewaySlug,
     enabled,
     uri: `resource://example/${id}`,
     mimeType: "application/json",
@@ -38,7 +37,7 @@ function createMockResource(id: number, gatewaySlug: string, enabled = true): Re
     tags: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-  } as unknown as Resource;
+  };
 }
 
 // Helper: render with router + auth

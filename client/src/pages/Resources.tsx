@@ -142,15 +142,10 @@ function AddResourcesCard({ onAddResource }: { onAddResource: () => void }) {
 }
 
 /**
- * Resources page component - displays and manages MCP resources
- * Currently implements read-only listing with grouping by gateway
- * Future PRs will add CRUD operations
- *
- * Features:
- * - Groups resources by gateway slug
- * - Shows resource count and active status per group
- * - Details panel for viewing individual resources
- * - Placeholder form for future resource creation
+ * Resources page component - displays and manages MCP resources.
+ * Renders one card per resource (no gateway grouping).
+ * Details panel resolves a human-readable gateway name from gatewayId via gatewayNameById,
+ * falling back to the raw gatewayId when the gateway is not in the fetched list.
  */
 export function Resources() {
   const intl = useIntl();
