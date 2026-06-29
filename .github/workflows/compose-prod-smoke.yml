@@ -1,0 +1,159 @@
+name: Compose Production Smoke
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    branches: ["main"]
+    paths:
+      - ".dockerignore"
+      - "Containerfile.lite"
+      - "Makefile"
+      - "docker-compose*.yml"
+      - "docker-entrypoint.sh"
+      - "gunicorn.config.py"
+      - "infra/nginx/**"
+      - "run-gunicorn.sh"
+      - "a2a-agents/rust/a2a-echo-agent/**"
+      - "mcpgateway/**"
+      - "mcp-servers/rust/fast-time-server/**"
+      - "plugins/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/compose-prod-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compose-prod-smoke:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: compose-prod-smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      DOCKER_BUILDKIT: "1"
+      GATEWAY_REPLICAS: "1"
+      GUNICORN_WORKERS: "2"
+      GATEWAY_CPU_LIMIT: "4"
+      GATEWAY_CPU_RESERVATION: "1"
+      TESTING_LOCUST_WORKERS: "1"
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Build production image
+        run: make docker-prod
+
+      - name: Smoke default compose stack
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          make compose-up
+
+          for i in {1..90}; do
+            if curl -fsS http://localhost:8080/health >/tmp/compose-health.json; then
+              break
+            fi
+            echo "Waiting for gateway health through nginx (${i}/90)"
+            sleep 2
+          done
+
+          curl -fsS http://localhost:8080/health | jq -e '.status == "healthy"'
+          curl -fsS http://localhost:8080/admin/login -o /tmp/admin-login.html
+          grep -q "Sign In - ContextForge" /tmp/admin-login.html
+          docker compose -f docker-compose.yml logs --no-color gateway > /tmp/default-gateway.log
+          if grep -E "Control server error|Read-only file system|SIGKILL|Perhaps out of memory" /tmp/default-gateway.log; then
+            echo "Gateway logged startup/runtime errors in default compose stack"
+            exit 1
+          fi
+
+      - name: Restart with testing profile and smoke endpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          make compose-down
+          make testing-up
+
+          for i in {1..90}; do
+            if curl -fsS http://localhost:8080/health >/tmp/testing-health.json; then
+              break
+            fi
+            echo "Waiting for testing gateway health through nginx (${i}/90)"
+            sleep 2
+          done
+
+          curl -fsS http://localhost:8080/health | jq -e '.status == "healthy"'
+          curl -fsS http://localhost:8080/admin/login -o /tmp/testing-admin-login.html
+          grep -q "Sign In - ContextForge" /tmp/testing-admin-login.html
+
+          for i in {1..60}; do
+            if curl -fsS http://localhost:8880/health >/tmp/fast-test-health.json; then
+              break
+            fi
+            echo "Waiting for fast test server (${i}/60)"
+            sleep 2
+          done
+          for i in {1..60}; do
+            if curl -fsS http://localhost:9100/health >/tmp/a2a-echo-health.json; then
+              break
+            fi
+            echo "Waiting for A2A echo agent (${i}/60)"
+            sleep 2
+          done
+          for i in {1..60}; do
+            if curl -fsS http://localhost:8089/ >/tmp/locust.html; then
+              break
+            fi
+            echo "Waiting for Locust UI (${i}/60)"
+            sleep 2
+          done
+
+          curl -fsS http://localhost:8880/health | jq -e '.status == "healthy"'
+          curl -fsS http://localhost:9100/health | jq -e '.status == "healthy"'
+          curl -fsS http://localhost:8089/ >/tmp/locust.html
+          docker compose -f docker-compose.yml logs --no-color gateway > /tmp/testing-gateway.log
+          if grep -E "Control server error|Read-only file system|SIGKILL|Perhaps out of memory" /tmp/testing-gateway.log; then
+            echo "Gateway logged startup/runtime errors in testing compose stack"
+            exit 1
+          fi
+
+      - name: Show compose status
+        if: always()
+        run: docker compose -f docker-compose.yml ps -a || true
+
+      - name: Collect compose logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.yml logs --no-color > /tmp/compose-prod-smoke.log || true
+
+      - name: Upload compose logs on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: compose-prod-smoke-logs
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            /tmp/compose-health.json
+            /tmp/testing-health.json
+            /tmp/fast-test-health.json
+            /tmp/a2a-echo-health.json
+            /tmp/admin-login.html
+            /tmp/testing-admin-login.html
+            /tmp/locust.html
+            /tmp/default-gateway.log
+            /tmp/testing-gateway.log
+            /tmp/compose-prod-smoke.log
+
+      - name: Stop compose stack
+        if: always()
+        run: make compose-down || true
