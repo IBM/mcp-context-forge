@@ -6,7 +6,6 @@ on:
         types: [opened, synchronize, reopened]
         paths:
             - "crates/wrapper/**"
-            - "mcp-servers/rust/fast-time-server/**"
             - "Cargo.toml"
             - "Cargo.lock"
             - "rust-toolchain.toml"
@@ -123,19 +122,12 @@ jobs:
                     -H "Authorization: Bearer ${{ steps.generate_jwt.outputs.token }}" \
                     -H "Content-Type: application/json"
 
-            - name: Build fast-time-server
-              run: |
-                  cargo build -p fast-time-server
-
             - name: Start fast-time-server
               run: |
-                  pkill -9 -f "fast-time-server" 2>/dev/null || true
-                  sleep 1
-
-                  nohup target/debug/fast-time-server \
-                    -transport=dual -listen=0.0.0.0 -port=8080 -log-level=info \
-                    > fast-time-server.log 2>&1 &
-                  echo $! > fast-time-server.pid
+                  docker run --detach \
+                    --publish 127.0.0.1:8080:9080 \
+                    --name fast-time-server \
+                    ghcr.io/ibm/cfex-mcp-fast-time-server
 
                   echo "Waiting for fast-time-server..."
                   for i in {1..30}; do
@@ -152,7 +144,6 @@ jobs:
                     cat fast-time-server.log
                     exit 1
                   fi
-                  echo "fast-time-server PID: $(cat fast-time-server.pid)"
 
             - name: Register gateway and create virtual server
               run: |
@@ -171,7 +162,7 @@ jobs:
                     -H "Content-Type: application/json" \
                     -d '{
                       "name": "fast_time",
-                      "url": "http://localhost:8080/http",
+                      "url": "http://localhost:8080/mcp",
                       "transport": "STREAMABLEHTTP"
                     }')
                   echo "Gateway response: $GATEWAY_RESPONSE"

@@ -8,7 +8,6 @@ on:
             - "mcpgateway/**"
             - "plugins/**"
             - "crates/sql-sanitizer/**"
-            - "mcp-servers/rust/fast-time-server/**"
             - "pyproject.toml"
             - "uv.lock"
             - ".github/workflows/sql-sanitizer.yml"
@@ -160,20 +159,12 @@ jobs:
                     -H "Content-Type: application/json" | yq
 
 
-            - name: Build fast-time-server
-              working-directory: mcp-servers/rust/fast-time-server
-              run: |
-                  cargo build
-
             - name: Start fast-time-server
               run: |
-                  pkill -9 -f "fast-time-server" 2>/dev/null || true
-                  sleep 1
-
-                  nohup target/debug/fast-time-server \
-                    -transport=dual -listen=0.0.0.0 -port=9080 -log-level=info \
-                    > fast-time-server.log 2>&1 &
-                  echo $! > fast-time-server.pid
+                  docker run --detach \
+                    --publish 127.0.0.1:9080:9080 \
+                    --name fast-time-server \
+                    ghcr.io/ibm/cfex-mcp-fast-time-server
 
                   echo "Waiting for fast-time-server..."
                   for i in {1..30}; do
@@ -190,7 +181,6 @@ jobs:
                     cat fast-time-server.log
                     exit 1
                   fi
-                  echo "fast-time-server PID: $(cat fast-time-server.pid)"
 
             - name: Register gateway and create virtual server
               run: |
