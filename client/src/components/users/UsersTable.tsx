@@ -146,10 +146,16 @@ export function UsersTable({ users, onDeleteClick, onEditClick }: UsersTableProp
                   </div>
                 </TableCell>
                 <TableCell className="px-3 py-2.5 font-mono text-[13px] leading-4 text-muted-foreground">
-                  {formatLocalDateTime(user.created_at, intl.formatMessage({ id: "users.date.never" }))}
+                  {formatLocalDateTime(
+                    user.created_at,
+                    intl.formatMessage({ id: "users.date.never" }),
+                  )}
                 </TableCell>
                 <TableCell className="px-3 py-2.5 font-mono text-[13px] leading-4 text-muted-foreground">
-                  {formatLocalDateTime(user.last_login, intl.formatMessage({ id: "users.date.never" }))}
+                  {formatLocalDateTime(
+                    user.last_login,
+                    intl.formatMessage({ id: "users.date.never" }),
+                  )}
                 </TableCell>
                 <TableCell className="rounded-r-lg px-3 py-2.5 text-muted-foreground">
                   <UserActionsMenu
