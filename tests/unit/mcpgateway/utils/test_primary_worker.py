@@ -10,7 +10,7 @@ Tests for the primary-worker election helper.
 import threading
 
 # Third-Party
-from filelock import FileLock
+from filelock import FileLock, Timeout
 import pytest
 
 # First-Party
@@ -33,7 +33,7 @@ def _reset_state(monkeypatch):
     if pw._lock is not None:
         try:
             pw._lock.release()
-        except Exception:
+        except (Timeout, OSError):
             pass
     pw._lock = None
     pw._is_primary = False
@@ -113,6 +113,9 @@ def test_oserror_returns_false_without_raising(tmp_path, monkeypatch):
         def acquire(self, *args, **kwargs):
             raise PermissionError("read-only temp dir")
 
+        def release(self, *args, **kwargs):
+            pass
+
     monkeypatch.setattr(pw, "FileLock", BoomLock)
     assert is_primary_worker() is False
 
@@ -147,3 +150,16 @@ def test_thread_safe_single_lock_creation(tmp_path, monkeypatch):
 
     assert len(created) == 1  # guard prevented duplicate FileLock creation
     assert results == [True] * n  # one process -> every thread is primary
+
+
+def test_lock_path_is_directory_fails_closed(tmp_path, monkeypatch):
+    """A lock path pointing at a directory raises OSError -> non-primary, not crash."""
+    _set_override(monkeypatch, tmp_path)  # tmp_path is an existing directory
+    assert is_primary_worker() is False
+
+
+def test_empty_string_override_falls_back_to_default(monkeypatch):
+    """An empty override is falsy, so the default port-scoped path is used."""
+    monkeypatch.setattr(pw.settings, "primary_worker_lock_path", "", raising=False)
+    monkeypatch.setattr(pw.settings, "port", 4444, raising=False)
+    assert _lock_path().endswith("mcpgw_plugin_primary_4444.lock")
