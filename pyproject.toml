@@ -16,7 +16,6 @@ exclude-newer = "10 days"
 
 [tool.uv.exclude-newer-package]
 cpex = "2026-06-29T23:59:59Z"
-
 cpex-url-reputation = "2026-06-29T23:59:59Z"
 cpex-rate-limiter = "2026-06-29T23:59:59Z"
 cpex-encoded-exfil-detection = "2026-06-29T23:59:59Z"
