@@ -122,10 +122,13 @@ class TestPostForkHook:
             # Should not raise - exception is caught
             gunicorn_config.post_fork(mock_server, mock_worker)
 
-        # Verify warning was logged
-        mock_server.log.warning.assert_called_once()
-        warning_call = mock_server.log.warning.call_args[0]
-        assert "Failed to reset SQLAlchemy engine pool" in warning_call[0]
+        # Verify the engine-pool warning was logged. Search among all warning calls
+        # rather than asserting it was the only one: post_fork may emit other warnings
+        # (e.g. the affinity rebind) depending on configuration, so assert_called_once()
+        # would be brittle.
+        engine_warnings = [c for c in mock_server.log.warning.call_args_list if c.args and "Failed to reset SQLAlchemy engine pool" in str(c.args[0])]
+        assert engine_warnings, "expected a warning about engine pool reset failure"
+        warning_call = engine_warnings[0].args
         assert "Connection pool error" in str(warning_call[1])
 
     def test_post_fork_resets_redis_client(self):
@@ -168,16 +171,18 @@ class TestPostForkHook:
         mock_server.log.info.assert_any_call("SQLAlchemy engine pool reset for worker %s", 12345)
 
 
-def test_post_fork_rebinds_worker_id_per_worker(fake_worker):
-    """Happy path: ``post_fork`` overrides the master-frozen ``WORKER_ID`` with ``{hostname}:{worker.pid}``.
+def test_post_fork_rebinds_worker_id_per_worker(fake_worker, monkeypatch):
+    """Happy path: with the affinity flag on, ``post_fork`` overrides the master-frozen ``WORKER_ID`` with ``{hostname}:{worker.pid}``.
 
     Without this, every forked gunicorn worker carries the master's
     ``{hostname}:1``, so a forwarded request published to the owner's
     pub/sub channel reaches every worker in the container.
     """
     # First-Party
+    from mcpgateway.config import settings
     from mcpgateway.services import session_affinity
 
+    monkeypatch.setattr(settings, "mcpgateway_session_affinity_enabled", True)
     cfg = _load_gunicorn_config()
     original = session_affinity.WORKER_ID
     try:
@@ -185,6 +190,30 @@ def test_post_fork_rebinds_worker_id_per_worker(fake_worker):
         assert session_affinity.WORKER_ID == f"{socket.gethostname()}:{fake_worker.pid}"
     finally:
         # Restore the module-level constant so other tests aren't affected.
+        session_affinity.WORKER_ID = original
+
+
+def test_post_fork_skips_worker_id_rebind_when_affinity_disabled(fake_worker, monkeypatch):
+    """With the affinity flag off, ``post_fork`` must NOT touch ``WORKER_ID``.
+
+    The kill-switch contract: flag off means the affinity machinery is a clean
+    no-op, so the per-worker rebind (and the ``session_affinity`` import at fork)
+    is skipped and ``WORKER_ID`` keeps whatever value it already had.
+    """
+    # First-Party
+    from mcpgateway.config import settings
+    from mcpgateway.services import session_affinity
+
+    monkeypatch.setattr(settings, "mcpgateway_session_affinity_enabled", False)
+    cfg = _load_gunicorn_config()
+    sentinel = "sentinel-host:0"
+    original = session_affinity.WORKER_ID
+    session_affinity.WORKER_ID = sentinel
+    try:
+        cfg.post_fork(_make_fake_server(), fake_worker)
+        # Unchanged: the rebind block was gated out by the disabled flag.
+        assert session_affinity.WORKER_ID == sentinel
+    finally:
         session_affinity.WORKER_ID = original
 
 
@@ -201,7 +230,10 @@ def test_post_fork_logs_warning_when_rebind_fails(fake_worker, monkeypatch):
     the try block) to raise.
     """
     # First-Party
+    from mcpgateway.config import settings
     from mcpgateway.services import session_affinity
+
+    monkeypatch.setattr(settings, "mcpgateway_session_affinity_enabled", True)
 
     original_worker_id = session_affinity.WORKER_ID
 
