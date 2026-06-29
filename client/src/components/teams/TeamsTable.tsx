@@ -19,22 +19,7 @@ import { Button } from "../ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import type { Team } from "../../types/team";
 import { Loading } from "../ui/loading";
-
-function formatDate(dateString: string, invalidLabel: string): string {
-  const date = new Date(dateString);
-  if (Number.isNaN(date.getTime())) return invalidLabel;
-
-  return date
-    .toLocaleString("sv-SE", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    })
-    .replace(" ", "T");
-}
+import { formatLocalDateTime } from "../../utils/formatDate";
 
 function getTeamIcon(name: string): string {
   return name.charAt(0).toUpperCase();
@@ -119,10 +104,10 @@ export function TeamsTable({ teams, isLoading, onEdit, onDelete }: TeamsTablePro
                   {team.member_count}
                 </TableCell>
                 <TableCell className="px-4 py-2.5 text-xs text-neutral-600 dark:text-neutral-400">
-                  {formatDate(team.created_at, invalidDateLabel)}
+                  {formatLocalDateTime(team.created_at, invalidDateLabel)}
                 </TableCell>
                 <TableCell className="px-4 py-2.5 text-xs text-neutral-600 dark:text-neutral-400">
-                  {formatDate(team.updated_at, invalidDateLabel)}
+                  {formatLocalDateTime(team.updated_at, invalidDateLabel)}
                 </TableCell>
                 <TableCell className="px-4 py-2.5 text-right">
                   <div className="flex items-center justify-end gap-1">

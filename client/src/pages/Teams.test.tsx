@@ -12,7 +12,15 @@ vi.mock("@/api/client", () => ({
   },
 }));
 
+vi.mock("sonner", () => ({
+  toast: {
+    error: vi.fn(),
+    success: vi.fn(),
+  },
+}));
+
 import { api } from "@/api/client";
+import { toast } from "sonner";
 
 function renderTeams(ui: ReactElement) {
   return render(<I18nProvider>{ui}</I18nProvider>);
@@ -386,7 +394,7 @@ describe("Teams", () => {
     expect(api.get).toHaveBeenCalledTimes(2);
   });
 
-  it("logs a console error when loading more fails", async () => {
+  it("shows a toast error when loading more fails", async () => {
     const user = userEvent.setup();
     vi.mocked(api.get).mockResolvedValueOnce({
       teams: createMockTeams(0, 10),
@@ -400,14 +408,11 @@ describe("Teams", () => {
     });
 
     vi.mocked(api.get).mockRejectedValueOnce(new Error("Load more network failure"));
-    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     await user.click(screen.getByRole("button", { name: /Load more teams/i }));
 
     await waitFor(() => {
-      expect(consoleErrorSpy).toHaveBeenCalledWith("Failed to load more teams:", expect.any(Error));
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith("Failed to load more teams");
     });
-
-    consoleErrorSpy.mockRestore();
   });
 });

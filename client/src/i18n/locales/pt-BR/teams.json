@@ -2,6 +2,7 @@
   "teams.all.title": "Todas as equipes",
   "teams.createTeam": "Criar equipe",
   "teams.error.loading": "Erro ao carregar equipes",
+  "teams.error.loadMore": "Erro ao carregar mais equipes",
   "teams.loading.sr": "Carregando equipes, aguarde...",
   "teams.loadMore": "Carregar mais",
   "teams.loadMore.aria": "Carregar mais equipes",

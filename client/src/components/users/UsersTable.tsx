@@ -13,22 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from "../ui/table";
-
-function formatDate(intl: IntlShape, value?: string | null): string {
-  if (!value) return intl.formatMessage({ id: "users.date.never" });
-
-  try {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
-      return value;
-    }
-
-    const pad = (part: number) => part.toString().padStart(2, "0");
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-  } catch {
-    return value;
-  }
-}
+import { formatLocalDateTime } from "../../utils/formatDate";
 
 function getDisplayName(user: User, intl: IntlShape): string {
   return user.full_name?.trim() || intl.formatMessage({ id: "users.unnamed" });
@@ -161,10 +146,10 @@ export function UsersTable({ users, onDeleteClick, onEditClick }: UsersTableProp
                   </div>
                 </TableCell>
                 <TableCell className="px-3 py-2.5 font-mono text-[13px] leading-4 text-muted-foreground">
-                  {formatDate(intl, user.created_at)}
+                  {formatLocalDateTime(user.created_at, intl.formatMessage({ id: "users.date.never" }))}
                 </TableCell>
                 <TableCell className="px-3 py-2.5 font-mono text-[13px] leading-4 text-muted-foreground">
-                  {formatDate(intl, user.last_login)}
+                  {formatLocalDateTime(user.last_login, intl.formatMessage({ id: "users.date.never" }))}
                 </TableCell>
                 <TableCell className="rounded-r-lg px-3 py-2.5 text-muted-foreground">
                   <UserActionsMenu

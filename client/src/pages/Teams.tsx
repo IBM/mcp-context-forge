@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
 import { useIntl } from "react-intl";
+import { toast } from "sonner";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TeamsTable } from "@/components/teams/TeamsTable";
@@ -27,7 +28,6 @@ export function Teams() {
   // Use useQuery hook for initial data fetching and limit changes
   const { data: response, error: queryError, isLoading } = useQuery<TeamsResponse>(queryPath);
 
-  // Update teams on initial load
   useEffect(() => {
     if (response) {
       setAllTeams(response.teams);
@@ -35,7 +35,6 @@ export function Teams() {
     }
   }, [response]);
 
-  // Derive teams from accumulated list
   const teams = allTeams;
 
   // Convert query error to string for display
@@ -53,8 +52,8 @@ export function Teams() {
       const result = await api.get<TeamsResponse>(`/teams?${params.toString()}`);
       setAllTeams((prev) => [...prev, ...result.teams]);
       setNextCursor(result.nextCursor ?? null);
-    } catch (err) {
-      console.error("Failed to load more teams:", err);
+    } catch {
+      toast.error(intl.formatMessage({ id: "teams.error.loadMore" }));
     } finally {
       setLoadingMore(false);
     }
