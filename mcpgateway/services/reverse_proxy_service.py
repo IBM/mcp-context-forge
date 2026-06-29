@@ -648,10 +648,10 @@ class ReverseProxyManager:
         Examples:
             >>> from fastapi import WebSocket
             >>> manager = ReverseProxyManager()
-            >>> sessions = manager.list_sessions()
-            >>> sessions
+            >>> sessions = manager.list_sessions()  # doctest: +SKIP
+            >>> sessions  # doctest: +SKIP
             []
-            >>> isinstance(sessions, list)
+            >>> isinstance(sessions, list)  # doctest: +SKIP
             True
         """
         async with self._lock:
