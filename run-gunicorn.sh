@@ -391,6 +391,11 @@ cmd+=(
     --pid "${LOCK_FILE}"  # Use lock file as PID file
 )
 
+if gunicorn --help 2>/dev/null | grep -q -- "--no-control-socket"; then
+    cmd+=( --no-control-socket )
+    echo "🚫  Gunicorn control socket disabled for read-only container filesystem"
+fi
+
 # Add developer mode flags if enabled
 if [[ "${GUNICORN_DEV_MODE}" == "true" ]]; then
     cmd+=( --reload --reload-extra-file gunicorn.config.py )
