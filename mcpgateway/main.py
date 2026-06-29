@@ -12181,6 +12181,10 @@ app.include_router(well_known_router)
 # Per-server well-known endpoints (/servers/{id}/.well-known/*)
 app.include_router(server_well_known_router, prefix="/servers")
 
+# OpenAPI schema generation (/v1/tools/generate-schemas-from-openapi)
+# prefix="/v1/tools" is hardcoded in the router — not versioned via v1_router to avoid /v1/v1/tools
+app.include_router(openapi_schema_router)
+
 # OAuth 2.0 protocol (/oauth/*) — standard location, not versioned
 try:
     # First-Party
