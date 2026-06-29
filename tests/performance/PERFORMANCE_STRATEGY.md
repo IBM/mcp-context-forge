@@ -55,7 +55,7 @@ Test each component in isolation to establish baseline performance.
 **Objective:** Measure MCP server performance without gateway overhead.
 
 **Test Targets:**
-- `fast-time-server` (Go-based MCP server)
+- `fast-time-server` (Rust-based MCP server)
 - Other MCP servers (mcp-server-git, etc.)
 
 **Metrics to Collect:**

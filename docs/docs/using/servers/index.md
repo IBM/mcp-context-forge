@@ -8,16 +8,16 @@ The **ContextForge Gateway** includes a collection of **high-performance sample 
 
 ## 🌟 Available Servers
 
-### 🦫 Fast Time Server (Go)
-**`mcp-servers/go/fast-time-server`** - Ultra-fast timezone and time conversion tools
+### 🦀 Fast Time Server (Rust)
+**`mcp-servers/rust/fast-time-server`** - Ultra-fast timezone and time conversion tools
 
-- **Language:** Go 1.21+
+- **Language:** Rust
 - **Performance:** Sub-millisecond response times
 - **Transport:** stdio, HTTP, SSE, dual-mode
 - **Tools:** `get_system_time`, timezone conversions with DST support
 - **Container:** `ghcr.io/ibm/fast-time-server:latest`
 
-**[📖 Full Documentation →](go/fast-time-server.md)**
+**[📖 Source README →](https://github.com/IBM/mcp-context-forge/tree/main/mcp-servers/rust/fast-time-server)**
 
 #### Quick Start
 ```bash
@@ -27,7 +27,7 @@ docker run --rm -it -p 8888:8080 \
   -transport=dual -log-level=debug
 
 # From source
-cd mcp-servers/go/fast-time-server
+cd mcp-servers/rust/fast-time-server
 make build && make run
 ```
 
@@ -218,7 +218,7 @@ We're particularly interested in:
 
 ## 🔗 Quick Links
 
-- [🦫 **Fast Time Server (Go)** →](go/fast-time-server.md)
+- [🦀 **Fast Time Server (Rust)** →](https://github.com/IBM/mcp-context-forge/tree/main/mcp-servers/rust/fast-time-server)
 
 ---
 

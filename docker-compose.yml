@@ -258,8 +258,9 @@ services:
       # WebSocket transport features (disabled by default; opt-in only)
       - MCPGATEWAY_WS_RELAY_ENABLED=${MCPGATEWAY_WS_RELAY_ENABLED:-false}
       - MCPGATEWAY_REVERSE_PROXY_ENABLED=${MCPGATEWAY_REVERSE_PROXY_ENABLED:-false}
-      # Prometheus metrics endpoint (disabled by default; requires JWT auth when enabled)
-      - ENABLE_METRICS=true
+      # Prometheus metrics endpoint (compose enables it by default; requires JWT auth when enabled).
+      # Set ENABLE_METRICS=false to disable it for local or resource-constrained runs.
+      - ENABLE_METRICS=${ENABLE_METRICS:-true}
       # Local compose profile: allow local/private upstream URLs used by bundled test services.
       # Production deployments should override these to stricter values.
       - SSRF_ALLOW_LOCALHOST=${SSRF_ALLOW_LOCALHOST:-true}
@@ -700,17 +701,18 @@ services:
       # Last resort: patches anyio to limit _deliver_cancellation iterations.
       # Enable only if Layers 1-2 don't fully resolve the issue.
       # WARNING: May be removed when anyio/MCP SDK fix upstream issue.
-      - ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=true              # Enable workaround - TESTING
+      - ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=${ANYIO_CANCEL_DELIVERY_PATCH_ENABLED:-false}  # Experimental workaround; disabled for current AnyIO
       - ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS=500              # Max iterations before giving up (~60ms recovery)
 
       # ═══════════════════════════════════════════════════════════════════════════
       # Execution Metrics Recording
       # ═══════════════════════════════════════════════════════════════════════════
       # Controls tool/resource/prompt/server/A2A execution metrics (one DB row per operation).
+      # Compose records these metrics by default; set DB_METRICS_RECORDING_ENABLED=false to disable.
       # Disable when using external observability to improve performance.
       # Set to true if you need per-operation metrics in the database.
       # Note: Does NOT affect log aggregation (METRICS_AGGREGATION_ENABLED) or Prometheus.
-      - DB_METRICS_RECORDING_ENABLED=true
+      - DB_METRICS_RECORDING_ENABLED=${DB_METRICS_RECORDING_ENABLED:-true}
 
       # ═══════════════════════════════════════════════════════════════════════════
       # Metrics Configuration
@@ -1529,20 +1531,29 @@ services:
 
   ###############################################################################
   # Fast Time Server - High-performance time/timezone service for MCP
-  # Uses pre-built image by default. On ARM64, build locally:
+  # Defaults to the published GHCR image. Override FAST_TIME_IMAGE when building locally:
   #   FAST_TIME_IMAGE=mcpgateway/fast-time-server:local docker compose build fast_time_server
   ###############################################################################
   fast_time_server:
     image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/fast-time-server:latest}
     build:
-      context: ./mcp-servers/go/fast-time-server
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: mcp-servers/rust/fast-time-server/Containerfile
     restart: unless-stopped
     networks: [mcpnet]
     ports:
       - "8888:8080"    # Map host port 8888 to container port 8080
+    environment:
+      - BIND_ADDRESS=0.0.0.0:8080
+      - RUST_LOG=info
     # Use dual mode for both SSE (/sse) and Streamable HTTP (/http) endpoints
     command: ["-transport=dual", "-listen=0.0.0.0", "-port=8080", "-log-level=info"]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   ###############################################################################
   # Auto-registration service - registers fast_time_server with gateway
@@ -1644,7 +1655,7 @@ services:
             req.add_header('Content-Type', 'application/json')
             if data:
                 req.data = json.dumps(data).encode('utf-8')
-            with urllib.request.urlopen(req) as response:
+            with urllib.request.urlopen(req, timeout=60) as response:
                 return json.loads(response.read().decode('utf-8'))
 
         def api_request_with_retry(method, path, data=None, retries=30, delay=2, retry_statuses=(401, 502, 503)):
@@ -1859,7 +1870,7 @@ services:
             req.add_header('Content-Type', 'application/json')
             if data:
                 req.data = json.dumps(data).encode('utf-8')
-            with urllib.request.urlopen(req) as response:
+            with urllib.request.urlopen(req, timeout=60) as response:
                 return json.loads(response.read().decode('utf-8'))
 
         # Delete existing SSE gateway if present
@@ -2028,7 +2039,7 @@ services:
             req.add_header('Content-Type', 'application/json')
             if data:
                 req.data = json.dumps(data).encode('utf-8')
-            with urllib.request.urlopen(req) as response:
+            with urllib.request.urlopen(req, timeout=60) as response:
                 return json.loads(response.read().decode('utf-8'))
 
         # Delete existing gateway if present
@@ -2066,8 +2077,8 @@ services:
   fast_test_server:
     build:
       # Context builds the renamed rust fast-time-server crate; image/service name kept as fast-test-server to avoid colliding with the Go fast_time_server.
-      context: ./mcp-servers/rust/fast-time-server
-      dockerfile: Containerfile
+      context: .
+      dockerfile: mcp-servers/rust/fast-time-server/Containerfile
     image: mcpgateway/fast-test-server:latest
     restart: unless-stopped
     networks: [mcpnet]
@@ -2144,7 +2155,7 @@ services:
             req.add_header('Content-Type', 'application/json')
             if data:
                 req.data = json.dumps(data).encode('utf-8')
-            with urllib.request.urlopen(req) as response:
+            with urllib.request.urlopen(req, timeout=60) as response:
                 return json.loads(response.read().decode('utf-8'))
 
         def api_request_with_retry(method, path, data=None, retries=30, delay=2, retry_statuses=(401, 403, 502, 503)):
