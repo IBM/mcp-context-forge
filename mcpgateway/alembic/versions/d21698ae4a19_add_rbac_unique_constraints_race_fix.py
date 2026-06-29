@@ -50,24 +50,21 @@ def upgrade() -> None:
     # Find duplicate active roles (same name+scope combination)
     # Strategy: soft-delete (set is_active=false) for duplicates, keep oldest by created_at
 
-    # PostgreSQL uses DELETE...RETURNING, SQLite needs subquery approach
+    # Use row_number() for deterministic deduplication (handles timestamp ties via id ordering)
+    # Keep the row with row_number = 1 (oldest created_at, lowest id on ties)
     if dialect == 'postgresql':
         dedupe_roles_sql = text("""
             UPDATE roles
             SET is_active = false
             WHERE id IN (
-                SELECT r.id
-                FROM roles r
-                INNER JOIN (
-                    SELECT name, scope, MIN(created_at) as oldest_created_at
+                SELECT id
+                FROM (
+                    SELECT id,
+                           ROW_NUMBER() OVER (PARTITION BY name, scope ORDER BY created_at, id) as rn
                     FROM roles
                     WHERE is_active = true
-                    GROUP BY name, scope
-                    HAVING COUNT(*) > 1
-                ) dupes ON r.name = dupes.name
-                       AND r.scope = dupes.scope
-                       AND r.created_at > dupes.oldest_created_at
-                WHERE r.is_active = true
+                ) ranked
+                WHERE rn > 1
             )
         """)
     else:  # SQLite
@@ -75,18 +72,14 @@ def upgrade() -> None:
             UPDATE roles
             SET is_active = 0
             WHERE id IN (
-                SELECT r.id
-                FROM roles r
-                INNER JOIN (
-                    SELECT name, scope, MIN(created_at) as oldest_created_at
+                SELECT id
+                FROM (
+                    SELECT id,
+                           ROW_NUMBER() OVER (PARTITION BY name, scope ORDER BY created_at, id) as rn
                     FROM roles
                     WHERE is_active = 1
-                    GROUP BY name, scope
-                    HAVING COUNT(*) > 1
-                ) dupes ON r.name = dupes.name
-                       AND r.scope = dupes.scope
-                       AND r.created_at > dupes.oldest_created_at
-                WHERE r.is_active = 1
+                ) ranked
+                WHERE rn > 1
             )
         """)
 
@@ -102,26 +95,20 @@ def upgrade() -> None:
     # For user_roles, we need to handle scope_id IS NULL and IS NOT NULL separately
     # Strategy: soft-delete duplicates, keep oldest by granted_at
 
-    # Handle scope_id IS NULL case
+    # Handle scope_id IS NULL case - use row_number() for deterministic tie-breaking
     if dialect == 'postgresql':
         dedupe_user_roles_null_scope_sql = text("""
             UPDATE user_roles
             SET is_active = false
             WHERE id IN (
-                SELECT ur.id
-                FROM user_roles ur
-                INNER JOIN (
-                    SELECT user_email, role_id, scope, MIN(granted_at) as oldest_granted_at
+                SELECT id
+                FROM (
+                    SELECT id,
+                           ROW_NUMBER() OVER (PARTITION BY user_email, role_id, scope ORDER BY granted_at, id) as rn
                     FROM user_roles
                     WHERE is_active = true AND scope_id IS NULL
-                    GROUP BY user_email, role_id, scope
-                    HAVING COUNT(*) > 1
-                ) dupes ON ur.user_email = dupes.user_email
-                       AND ur.role_id = dupes.role_id
-                       AND ur.scope = dupes.scope
-                       AND ur.scope_id IS NULL
-                       AND ur.granted_at > dupes.oldest_granted_at
-                WHERE ur.is_active = true
+                ) ranked
+                WHERE rn > 1
             )
         """)
     else:  # SQLite
@@ -129,46 +116,34 @@ def upgrade() -> None:
             UPDATE user_roles
             SET is_active = 0
             WHERE id IN (
-                SELECT ur.id
-                FROM user_roles ur
-                INNER JOIN (
-                    SELECT user_email, role_id, scope, MIN(granted_at) as oldest_granted_at
+                SELECT id
+                FROM (
+                    SELECT id,
+                           ROW_NUMBER() OVER (PARTITION BY user_email, role_id, scope ORDER BY granted_at, id) as rn
                     FROM user_roles
                     WHERE is_active = 1 AND scope_id IS NULL
-                    GROUP BY user_email, role_id, scope
-                    HAVING COUNT(*) > 1
-                ) dupes ON ur.user_email = dupes.user_email
-                       AND ur.role_id = dupes.role_id
-                       AND ur.scope = dupes.scope
-                       AND ur.scope_id IS NULL
-                       AND ur.granted_at > dupes.oldest_granted_at
-                WHERE ur.is_active = 1
+                ) ranked
+                WHERE rn > 1
             )
         """)
 
     result = bind.execute(dedupe_user_roles_null_scope_sql)
     deduped_user_roles_null = result.rowcount
 
-    # Handle scope_id IS NOT NULL case
+    # Handle scope_id IS NOT NULL case - use row_number() for deterministic tie-breaking
     if dialect == 'postgresql':
         dedupe_user_roles_with_scope_sql = text("""
             UPDATE user_roles
             SET is_active = false
             WHERE id IN (
-                SELECT ur.id
-                FROM user_roles ur
-                INNER JOIN (
-                    SELECT user_email, role_id, scope, scope_id, MIN(granted_at) as oldest_granted_at
+                SELECT id
+                FROM (
+                    SELECT id,
+                           ROW_NUMBER() OVER (PARTITION BY user_email, role_id, scope, scope_id ORDER BY granted_at, id) as rn
                     FROM user_roles
                     WHERE is_active = true AND scope_id IS NOT NULL
-                    GROUP BY user_email, role_id, scope, scope_id
-                    HAVING COUNT(*) > 1
-                ) dupes ON ur.user_email = dupes.user_email
-                       AND ur.role_id = dupes.role_id
-                       AND ur.scope = dupes.scope
-                       AND ur.scope_id = dupes.scope_id
-                       AND ur.granted_at > dupes.oldest_granted_at
-                WHERE ur.is_active = true
+                ) ranked
+                WHERE rn > 1
             )
         """)
     else:  # SQLite
@@ -176,20 +151,14 @@ def upgrade() -> None:
             UPDATE user_roles
             SET is_active = 0
             WHERE id IN (
-                SELECT ur.id
-                FROM user_roles ur
-                INNER JOIN (
-                    SELECT user_email, role_id, scope, scope_id, MIN(granted_at) as oldest_granted_at
+                SELECT id
+                FROM (
+                    SELECT id,
+                           ROW_NUMBER() OVER (PARTITION BY user_email, role_id, scope, scope_id ORDER BY granted_at, id) as rn
                     FROM user_roles
                     WHERE is_active = 1 AND scope_id IS NOT NULL
-                    GROUP BY user_email, role_id, scope, scope_id
-                    HAVING COUNT(*) > 1
-                ) dupes ON ur.user_email = dupes.user_email
-                       AND ur.role_id = dupes.role_id
-                       AND ur.scope = dupes.scope
-                       AND ur.scope_id = dupes.scope_id
-                       AND ur.granted_at > dupes.oldest_granted_at
-                WHERE ur.is_active = 1
+                ) ranked
+                WHERE rn > 1
             )
         """)
 
