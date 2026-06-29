@@ -648,15 +648,11 @@ class RoleService:
             if not existing.is_expired():
                 # Active and not expired - reject the new assignment
                 raise ValueError("User already has this role assignment")
-            else:
-                # Active but expired - soft-delete it to allow the new assignment
-                # This handles the SQLite limitation where we can't use datetime('now') in partial indexes
-                existing.is_active = False
-                self.db.commit()
-                logger.info(
-                    "Soft-deleted expired assignment for %s to role %s (scope: %s, scope_id: %s) to allow re-grant",
-                    user_email, role_id, scope, scope_id
-                )
+            # Active but expired - soft-delete it to allow the new assignment
+            # This handles the SQLite limitation where we can't use datetime('now') in partial indexes
+            existing.is_active = False
+            self.db.commit()
+            logger.info("Soft-deleted expired assignment for %s to role %s (scope: %s, scope_id: %s) to allow re-grant", user_email, role_id, scope, scope_id)
 
         # Create the assignment with savepoint to handle race conditions
         # If another process created the same assignment concurrently, we'll catch IntegrityError
