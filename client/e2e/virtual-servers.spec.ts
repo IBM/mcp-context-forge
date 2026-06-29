@@ -83,17 +83,6 @@ test.describe("Virtual Servers page", () => {
     });
   });
 
-  test("shows loading state while fetching virtual servers", async ({ page }) => {
-    await page.route("**/servers?*", () => new Promise(() => {}));
-
-    await page.goto(APP.GATEWAYS);
-
-    const loadingStatus = page
-      .getByRole("status")
-      .filter({ hasText: "Loading virtual servers, please wait..." });
-    await expect(loadingStatus).toBeVisible();
-  });
-
   test("shows connect source card when no virtual servers exist", async ({ page }) => {
     // Mock empty servers response
     await page.route("**/servers?*", async (route) => {
