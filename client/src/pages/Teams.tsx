@@ -57,7 +57,7 @@ export function Teams() {
     } finally {
       setLoadingMore(false);
     }
-  }, [nextCursor, limit, loadingMore]);
+  }, [nextCursor, limit, loadingMore, intl]);
 
   const handleLimitChange = useCallback((newLimit: number) => {
     setLimit(newLimit);
