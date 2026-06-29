@@ -2481,11 +2481,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             prompt.visibility = gateway.visibility
                 if gateway_update.passthrough_headers is not None:
                     if isinstance(gateway_update.passthrough_headers, list):
-                        gateway.passthrough_headers = gateway_update.passthrough_headers
+                        # [] means "user cleared the field" → store None in DB
+                        gateway.passthrough_headers = gateway_update.passthrough_headers if gateway_update.passthrough_headers else None
                     else:
                         if isinstance(gateway_update.passthrough_headers, str):
                             parsed: List[str] = [h.strip() for h in gateway_update.passthrough_headers.split(",") if h.strip()]
-                            gateway.passthrough_headers = parsed
+                            gateway.passthrough_headers = parsed if parsed else None
                         else:
                             raise GatewayError("Invalid passthrough_headers format: must be list[str] or comma-separated string")
 
