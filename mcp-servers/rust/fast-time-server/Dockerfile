@@ -25,12 +25,10 @@ COPY src ./src
 RUN touch src/main.rs && cargo build --release
 
 # Runtime stage - minimal image
-FROM docker.io/library/debian:trixie-slim
+FROM registry.access.redhat.com/ubi10/ubi-minimal:10.2-1777462752
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+RUN microdnf install -y ca-certificates curl shadow-utils \
+    && microdnf clean all
 
 WORKDIR /app
 
