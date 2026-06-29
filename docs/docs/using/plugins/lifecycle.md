@@ -342,15 +342,11 @@ make serve
 
 ## Multi-Worker Execution
 
-The gateway typically runs under several worker processes (e.g. `GUNICORN_WORKERS`).
-Each worker loads the plugin manager independently and calls every plugin's
-`initialize()`, so **hook methods run on every worker by design** — that is what
-lets any worker handle the request it receives.
-
-A non-hook plugin that performs a **side effect** at startup or in a background
-task (for example, fetching data and pushing it to an external system) would
-otherwise run that work once per worker. To run it on a single worker per host,
-gate it with `is_primary_worker()`:
+Under multiple workers (`GUNICORN_WORKERS`), every worker calls each plugin's
+`initialize()`, so **hooks run on every worker by design**. A non-hook plugin
+that does a **side effect** at startup or in a background task would otherwise
+run it once per worker. Gate it with `is_primary_worker()` to run on one worker
+per host:
 
 ```python
 from mcpgateway.utils.primary_worker import is_primary_worker
@@ -362,8 +358,6 @@ class InventorySync(Plugin):
         ...  # runs on one worker only
 ```
 
-`is_primary_worker()` elects one worker via a file lock (the first to acquire it
-wins; the OS releases it on process exit, so a follower takes over if the primary
-exits). For recurring work, re-check it on each cycle rather than only at startup.
-The lock is per host; its path defaults to a port-scoped temp file and can be
-overridden with `PRIMARY_WORKER_LOCK_PATH`.
+One worker is elected via a file lock; the OS frees it on process exit, so a
+follower takes over. Re-check it each cycle for recurring work. The lock is per
+host and its path is overridable with `PRIMARY_WORKER_LOCK_PATH`.

@@ -10,12 +10,10 @@ Under multiple worker processes every worker runs each plugin's
 to one worker. Election uses a file lock: the first process to acquire it is
 primary; the OS releases it on exit so another caller can take over.
 
-The lock file is shared per host. Its path defaults to a port-scoped file in the
-system temp dir and is overridable via the ``primary_worker_lock_path`` setting
-(``PRIMARY_WORKER_LOCK_PATH``). Because that path is predictable and the temp dir
-is world-writable, a local process can pre-acquire the lock and keep every worker
-non-primary; point the setting at a gateway-owned directory in hostile
-multi-tenant hosts.
+The lock is per host. Its path defaults to a port-scoped temp file, overridable
+via ``PRIMARY_WORKER_LOCK_PATH``. The path is predictable in a world-writable
+temp dir, so a local process could pre-acquire it and block election — point the
+setting at a gateway-owned directory on hostile hosts.
 """
 
 # Standard
@@ -34,11 +32,10 @@ __all__ = ["is_primary_worker"]
 
 logger = logging.getLogger(__name__)
 
-# Module state: the lock object is kept here so the winning process holds the
-# lock for the lifetime of the process (it is never released explicitly; the OS
-# releases it on process exit, which is what lets a follower take over), and so
-# the primary decision is memoized. The guard protects the lazy ``_lock``
-# init/acquire against concurrent threads (e.g. gunicorn ``--threads > 1``).
+# Module state: the winner holds the lock for the process lifetime (never
+# released explicitly — the OS frees it on exit, letting a follower take over)
+# and memoizes the result. ``_guard`` serializes the lazy init/acquire across
+# threads (gunicorn ``--threads > 1``).
 _lock: FileLock | None = None
 _is_primary: bool = False
 _guard = threading.Lock()
@@ -71,13 +68,11 @@ def is_primary_worker() -> bool:
     global _lock, _is_primary  # pylint: disable=global-statement
     if _is_primary:
         return True
-    # The guard serializes the lazy init/acquire so concurrent threads can't
-    # create two FileLock objects (TOCTOU). The in-guard re-check returns early
-    # for threads that were waiting while another won (mypy can't see the
-    # concurrent mutation, hence the unreachable ignore).
+    # Guard serializes the lazy init/acquire (no double FileLock); the re-check
+    # returns early for threads that waited while another won.
     with _guard:
         if _is_primary:
-            return True  # type: ignore[unreachable]
+            return True  # type: ignore[unreachable]  # set concurrently by another thread
         if _lock is None:
             _lock = FileLock(_lock_path())
         try:
