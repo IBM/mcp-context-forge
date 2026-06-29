@@ -16,12 +16,18 @@ import time
 from typing import Union
 
 # Third-Party
-from prometheus_client import Histogram
+from prometheus_client import Counter, Histogram
 
 # Precompiled regex pattern for performance
 _POLICY_OPERATORS_RE = re.compile(r"\b(and|or|not)\b|[()]")
 
 # Prometheus metrics
+llm_guard_policy_errors_total = Counter(
+    "llm_guard_policy_errors_total",
+    "Total number of policy evaluation errors by type",
+    labelnames=["error_type"],
+)
+
 llm_guard_policy_compile_duration_seconds = Histogram(
     "llm_guard_policy_compile_duration_seconds",
     "Duration of policy compilation/evaluation in seconds",
@@ -58,7 +64,14 @@ class GuardrailPolicy:
             # Parse the policy expression into an abstract syntax tree
             tree = ast.parse(policy, mode="eval")
             return self._safe_eval(tree.body, policy_variables)
-        except (ValueError, SyntaxError, Exception):
+        except ValueError:
+            llm_guard_policy_errors_total.labels(error_type="value_error").inc()
+            return "Invalid expression"
+        except SyntaxError:
+            llm_guard_policy_errors_total.labels(error_type="syntax_error").inc()
+            return "Invalid expression"
+        except Exception:
+            llm_guard_policy_errors_total.labels(error_type="evaluation_error").inc()
             return "Invalid expression"
 
     def _safe_eval(self, node, variables):

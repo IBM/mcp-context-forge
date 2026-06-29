@@ -466,7 +466,7 @@ In this case you would add the following in `mcp-context-forge/plugins/external/
     priority: 10 # adjust the priority
     mcp:
       proto: STREAMABLEHTTP
-      url: http://127.0.0.1:8001/mcp
+      url: http://localhost:8001/mcp
 
   - name: "LLMGuardPluginInputSanitizer"
     kind: "external"
@@ -474,7 +474,7 @@ In this case you would add the following in `mcp-context-forge/plugins/external/
     priority: 20 # adjust the priority
     mcp:
       proto: STREAMABLEHTTP
-      url: http://127.0.0.1:8001/mcp
+      url: http://localhost:8001/mcp
 
   - name: "LLMGuardPluginOutputFilter"
     kind: "external"
@@ -482,7 +482,7 @@ In this case you would add the following in `mcp-context-forge/plugins/external/
     priority: 20 # adjust the priority
     mcp:
       proto: STREAMABLEHTTP
-      url: http://127.0.0.1:8001/mcp
+      url: http://localhost:8001/mcp
 
   - name: "LLMGuardPluginOutputSanitizer"
     kind: "external"
@@ -490,7 +490,7 @@ In this case you would add the following in `mcp-context-forge/plugins/external/
     priority: 10 # adjust the priority
     mcp:
       proto: STREAMABLEHTTP
-      url: http://127.0.0.1:8001/mcp
+      url: http://localhost:8001/mcp
 ```
 The configuration leverages plugin priority settings to control execution order in the processing pipeline. For input processing (prompt_pre_fetch), input filters are assigned priority 10 while input sanitizers get priority 20, ensuring filters run before sanitizers can perform their transformations on the input. For output processing (prompt_post_fetch), the order is reversed: output sanitizers receive priority 10 and output filters get priority 20. This means sanitizers process the output first, followed by filters. This priority-based approach creates a logical processing flow:
 
@@ -584,7 +584,7 @@ Set `export PLUGINS_ENABLED=true`
     priority: 20 # adjust the priority
     mcp:
       proto: STREAMABLEHTTP
-      url: http://127.0.0.1:8001/mcp
+      url: http://localhost:8001/mcp
 
 ```
 
