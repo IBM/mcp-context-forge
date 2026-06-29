@@ -555,6 +555,10 @@ class TestAppBridgeEndpoints:
     async def test_rpc_serializes_model_dump_and_maps_tool_errors(self, monkeypatch, mock_db, valid_app_session):
         """AppBridge RPC should serialize Pydantic-like results and map tool failures."""
         # First-Party
+        from cpex.framework.errors import PluginError, PluginViolationError
+        from cpex.framework.models import PluginErrorModel, PluginViolation
+
+        # First-Party
         from mcpgateway import main as main_mod
 
         class Dumpable:
@@ -593,6 +597,26 @@ class TestAppBridgeEndpoints:
         ):
             result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("app-session-1", request=request, db=mock_db, user={"email": "user@example.com"})
         assert result["error"]["code"] == -32000
+
+        violation = PluginViolation(reason="policy denied", description="blocked", code="DENIED", mcp_error_code=-32042)
+        with (
+            patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
+            patch.object(main_mod, "get_request_identity", return_value=("user@example.com", False)),
+            patch.object(main_mod.mcp_app_session_service, "get_valid_session", return_value=valid_app_session),
+            patch.object(main_mod.tool_service, "invoke_tool", new=AsyncMock(side_effect=PluginViolationError("blocked", violation=violation))),
+        ):
+            result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("app-session-1", request=request, db=mock_db, user={"email": "user@example.com"})
+        assert result["error"]["code"] == -32042
+
+        plugin_error = PluginErrorModel(message="plugin crashed", plugin_name="test-plugin", code="CRASH", mcp_error_code=-32043)
+        with (
+            patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
+            patch.object(main_mod, "get_request_identity", return_value=("user@example.com", False)),
+            patch.object(main_mod.mcp_app_session_service, "get_valid_session", return_value=valid_app_session),
+            patch.object(main_mod.tool_service, "invoke_tool", new=AsyncMock(side_effect=PluginError(error=plugin_error))),
+        ):
+            result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("app-session-1", request=request, db=mock_db, user={"email": "user@example.com"})
+        assert result["error"]["code"] == -32043
 
         with (
             patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),

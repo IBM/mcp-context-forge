@@ -531,8 +531,6 @@ class MCPAppSessionCleanupService:
                 deleted_count = await self.cleanup_once()
                 if deleted_count:
                     logger.info("MCP Apps session cleanup deleted %d expired sessions", deleted_count)
-            except asyncio.CancelledError:
-                raise
             except Exception:
                 logger.exception("MCP Apps session cleanup loop failed")
                 await asyncio.sleep(min(interval, 60))
