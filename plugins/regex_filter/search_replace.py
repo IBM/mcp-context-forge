@@ -36,9 +36,6 @@ from mcpgateway.services.logging_service import LoggingService
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
-# Maximum recursion depth to prevent stack overflow
-MAX_RECURSION_DEPTH = 100
-
 
 class SearchReplace(BaseModel):
     """Search and replace pattern configuration.
@@ -62,54 +59,33 @@ class SearchReplaceConfig(BaseModel):
     words: list[SearchReplace]
 
 
-def _scan_and_replace_recursive(value: Any, patterns: list[tuple], depth: int = 0) -> Any:
+def _scan_and_replace_recursive(value: Any, patterns: list[tuple]) -> Any:
     """Recursively scan and replace patterns in nested structures.
 
     This function walks through nested dictionaries, lists, and strings,
     applying regex patterns to all string values regardless of nesting depth.
-    Includes protection against excessive recursion depth.
 
     Args:
         value: The value to scan (can be str, dict, list, or other types).
         patterns: List of (compiled_pattern, replacement) tuples.
-        depth: Current recursion depth (internal use).
 
     Returns:
         Modified value with patterns replaced in all nested strings.
 
     Raises:
-        RecursionError: If maximum recursion depth is exceeded.
+        RecursionError: Propagated naturally if the payload structure exceeds
+            Python's recursion limit (~950 levels on CPython).
     """
-    if depth >= MAX_RECURSION_DEPTH:
-        logger.error(
-            f"regex_filter: Maximum recursion depth ({MAX_RECURSION_DEPTH}) reached. "
-            f"Payload structure is too deeply nested. Returning value unchanged to prevent stack overflow."
-        )
-        raise RecursionError(f"Maximum recursion depth ({MAX_RECURSION_DEPTH}) reached in regex_filter")
-
-    try:
-        if isinstance(value, str):
-            # Apply all patterns to this string
-            result = value
-            for pattern, replacement in patterns:
-                result = pattern.sub(replacement, result)
-            return result
-        elif isinstance(value, dict):
-            # Recursively process dictionary values
-            return {k: _scan_and_replace_recursive(v, patterns, depth + 1) for k, v in value.items()}
-        elif isinstance(value, list):
-            # Recursively process list items
-            return [_scan_and_replace_recursive(item, patterns, depth + 1) for item in value]
-        else:
-            # Return other types unchanged
-            return value
-    except RecursionError:
-        # Re-raise RecursionError from nested calls
-        raise
-    except Exception as e:
-        logger.error(f"regex_filter: Unexpected error during recursive scanning at depth {depth}: {e}")
-        # Return value unchanged on error to fail safely
-        return value
+    if isinstance(value, str):
+        result = value
+        for pattern, replacement in patterns:
+            result = pattern.sub(replacement, result)
+        return result
+    elif isinstance(value, dict):
+        return {k: _scan_and_replace_recursive(v, patterns) for k, v in value.items()}
+    elif isinstance(value, list):
+        return [_scan_and_replace_recursive(item, patterns) for item in value]
+    return value
 
 
 class SearchReplacePlugin(Plugin):
@@ -144,7 +120,11 @@ class SearchReplacePlugin(Plugin):
             The result of the plugin's analysis, including whether the prompt can proceed.
         """
         if payload.args:
-            modified_args = _scan_and_replace_recursive(payload.args, self.__patterns)
+            try:
+                modified_args = _scan_and_replace_recursive(payload.args, self.__patterns)
+            except RecursionError:
+                logger.error("regex_filter: RecursionError scanning prompt args — payload is pathologically nested; aborting hook")
+                raise
             payload = payload.model_copy(update={"args": modified_args})
         return PromptPrehookResult(modified_payload=payload)
 
@@ -158,7 +138,6 @@ class SearchReplacePlugin(Plugin):
         Returns:
             The result of the plugin's analysis, including whether the prompt can proceed.
         """
-
         if payload.result.messages:
             modified_result = copy.deepcopy(payload.result)
             for index, message in enumerate(modified_result.messages):
@@ -178,7 +157,11 @@ class SearchReplacePlugin(Plugin):
             The result of the plugin's analysis, including whether the tool can proceed.
         """
         if payload.args:
-            modified_args = _scan_and_replace_recursive(payload.args, self.__patterns)
+            try:
+                modified_args = _scan_and_replace_recursive(payload.args, self.__patterns)
+            except RecursionError:
+                logger.error("regex_filter: RecursionError scanning tool args — payload is pathologically nested; aborting hook")
+                raise
             payload = payload.model_copy(update={"args": modified_args})
         return ToolPreInvokeResult(modified_payload=payload)
 
@@ -193,7 +176,11 @@ class SearchReplacePlugin(Plugin):
             The result of the plugin's analysis, including whether the tool result should proceed.
         """
         if payload.result and isinstance(payload.result, dict):
-            modified_result = _scan_and_replace_recursive(payload.result, self.__patterns)
+            try:
+                modified_result = _scan_and_replace_recursive(payload.result, self.__patterns)
+            except RecursionError:
+                logger.error("regex_filter: RecursionError scanning tool result — payload is pathologically nested; aborting hook")
+                raise
             payload = payload.model_copy(update={"result": modified_result})
         elif payload.result and isinstance(payload.result, str):
             result = payload.result

@@ -12,7 +12,7 @@ import pytest
 
 # First-Party
 from cpex.framework import GlobalContext, PluginConfig, PluginContext, PromptHookType, PromptPrehookPayload
-from plugins.deny_filter.deny import DenyListConfig, DenyListPlugin, MAX_RECURSION_DEPTH, _scan_for_denied_words
+from plugins.deny_filter.deny import DenyListConfig, DenyListPlugin, _scan_for_denied_words
 
 
 class TestScanForDeniedWords:
@@ -319,18 +319,17 @@ class TestDenyListPlugin:
 class TestDeepRecursion:
     """Test deep recursion protection in deny_filter."""
 
-    def test_recursion_depth_limit_realistic_mcp_payload(self):
-        """Test recursion protection with realistic deeply nested MCP tool call payload."""
-        depth = MAX_RECURSION_DEPTH
-        nested = {"data": "test value with forbidden word"}
+    def test_recursion_depth_limit_pathological_payload(self):
+        """Test that Python's native RecursionError fires on a pathologically nested payload."""
+        import sys
+
+        depth = sys.getrecursionlimit() + 100
+        nested: dict = {"data": "test value with forbidden word"}
         for i in range(depth):
-            nested = {"tool_call": {"name": f"wrapper_{i}", "input": nested}}
+            nested = {"level": nested}
 
-        with pytest.raises(RecursionError) as exc_info:
+        with pytest.raises(RecursionError):
             _scan_for_denied_words(nested, ["forbidden"])
-
-        assert f"Maximum recursion depth ({MAX_RECURSION_DEPTH})" in str(exc_info.value)
-        assert "deny_filter" in str(exc_info.value)
 
     def test_realistic_mcp_payload_depth_3(self):
         """Test standard MCP tool call structure (3-4 levels deep) with denied word detection."""
