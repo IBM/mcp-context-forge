@@ -32,15 +32,12 @@ RUN touch src/main.rs && cargo build --release
 # =============================================================================
 # Runtime stage - Minimal distroless-like image
 # =============================================================================
-FROM docker.io/library/debian:trixie-slim
+FROM registry.access.redhat.com/ubi10/ubi-minimal:10.2-1777462752
 
 # Install runtime deps (ca-certificates + curl for health checks) and create
 # the non-root mcpuser in a single layer.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates \
-        curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean \
+RUN microdnf install -y ca-certificates curl shadow-utils \
+    && microdnf clean all \
     && useradd -r -s /bin/false mcpuser
 
 WORKDIR /app

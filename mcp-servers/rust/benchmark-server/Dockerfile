@@ -12,9 +12,9 @@ COPY mcp-servers/rust/benchmark-server/src ./mcp-servers/rust/benchmark-server/s
 RUN touch mcp-servers/rust/benchmark-server/src/main.rs \
     && cargo build --release -p benchmark-server
 
-FROM docker.io/library/debian:trixie-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
-    && rm -rf /var/lib/apt/lists/* \
+FROM registry.access.redhat.com/ubi10/ubi-minimal:10.2-1777462752
+RUN microdnf install -y ca-certificates curl shadow-utils \
+    && microdnf clean all \
     && useradd -r -s /bin/false mcpuser
 WORKDIR /app
 COPY --from=builder /app/target/release/benchmark-server /app/benchmark-server
