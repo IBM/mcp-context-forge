@@ -36,6 +36,7 @@ describe("TeamSwitcher", () => {
       error: null,
       execute: vi.fn(),
       refetch: vi.fn(),
+      setData: vi.fn(),
     });
 
     renderTeamSwitcher();
@@ -54,6 +55,7 @@ describe("TeamSwitcher", () => {
       error: null,
       execute: vi.fn(),
       refetch: vi.fn(),
+      setData: vi.fn(),
     });
 
     renderTeamSwitcher();
@@ -68,6 +70,7 @@ describe("TeamSwitcher", () => {
       error: { message: "Network error", status: 500 },
       execute: vi.fn(),
       refetch: vi.fn(),
+      setData: vi.fn(),
     });
 
     renderTeamSwitcher();
@@ -90,6 +93,7 @@ describe("TeamSwitcher", () => {
       error: null,
       execute: vi.fn(),
       refetch: vi.fn(),
+      setData: vi.fn(),
     });
 
     renderTeamSwitcher();
@@ -118,6 +122,7 @@ describe("TeamSwitcher", () => {
       error: null,
       execute: vi.fn(),
       refetch: vi.fn(),
+      setData: vi.fn(),
     });
 
     renderTeamSwitcher();
@@ -147,6 +152,7 @@ describe("TeamSwitcher", () => {
       error: null,
       execute: vi.fn(),
       refetch: vi.fn(),
+      setData: vi.fn(),
     });
 
     renderTeamSwitcher();
@@ -179,6 +185,7 @@ describe("TeamSwitcher", () => {
       error: null,
       execute: vi.fn(),
       refetch: vi.fn(),
+      setData: vi.fn(),
     });
 
     renderTeamSwitcher();
@@ -227,6 +234,7 @@ describe("TeamSwitcher", () => {
       error: null,
       execute: vi.fn(),
       refetch: vi.fn(),
+      setData: vi.fn(),
     });
 
     renderTeamSwitcher();

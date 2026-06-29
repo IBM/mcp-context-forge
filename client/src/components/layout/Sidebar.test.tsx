@@ -46,6 +46,7 @@ describe("AppSidebar", () => {
       error: null,
       execute: vi.fn(),
       refetch: vi.fn(),
+      setData: vi.fn(),
     });
     mockUseAuthContext.mockReturnValue({
       user: {

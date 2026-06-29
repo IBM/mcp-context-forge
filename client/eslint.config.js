@@ -9,6 +9,7 @@ export default tseslint.config(
   {
     ignores: [
       "../mcpgateway/static/app",
+      "src/generated",
       "dist",
       "build",
       "playwright-report",

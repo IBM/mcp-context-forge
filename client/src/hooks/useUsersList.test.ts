@@ -9,6 +9,7 @@ vi.mock("@/hooks/useQuery", () => ({
     isLoading: false,
     execute: vi.fn(),
     refetch: vi.fn(),
+    setData: vi.fn(),
   })),
 }));
 

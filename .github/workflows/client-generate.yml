@@ -1,0 +1,80 @@
+name: Client Type Generation
+
+on:
+    pull_request:
+        branches:
+            - epic/ui-rewrite
+        types: [opened, synchronize, reopened, ready_for_review]
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    generate-types:
+        if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+        name: Generate and verify types
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+
+        steps:
+            - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v4
+              with:
+                  persist-credentials: false
+
+            - name: Setup Python
+              uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v5
+              with:
+                  python-version: "3.12"
+
+            - name: Install uv
+              uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+              with:
+                  enable-cache: true
+
+            - name: Setup Node
+              uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+              with:
+                  node-version: "20"
+
+            - name: Cache uv virtual environment
+              uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+              with:
+                  path: .venv
+                  key: venv-${{ runner.os }}-python-3.12-${{ hashFiles('uv.lock') }}
+                  restore-keys: |
+                      venv-${{ runner.os }}-python-3.12-
+                      venv-${{ runner.os }}-
+
+            - name: Install Python dependencies
+              run: |
+                  cp .env.example .env
+                  make venv
+                  make install-dev
+
+            - name: Export OpenAPI spec
+              run: |
+                  CACHE_TYPE=memory uv run python -c \
+                    "import json; from mcpgateway.main import app; open('client/openapi.json', 'w').write(json.dumps(app.openapi(), indent=2))"
+                  echo "OpenAPI spec exported ($(wc -c < client/openapi.json) bytes)"
+
+            - name: Install client dependencies
+              working-directory: client
+              run: npm ci --no-audit --no-fund
+
+            - name: Generate types with orval
+              working-directory: client
+              run: npm run generate
+
+            - name: Verify generated types exist
+              run: |
+                  test -d client/src/generated/types || (echo "ERROR: src/generated/types/ not created" && exit 1)
+                  echo "Generated types count: $(find client/src/generated/types -name '*.ts' | wc -l)"
+
+            - name: Verify generated types compile
+              working-directory: client
+              run: npx tsc -b --noEmit
