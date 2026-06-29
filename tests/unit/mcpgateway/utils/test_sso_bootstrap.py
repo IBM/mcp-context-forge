@@ -679,8 +679,10 @@ class TestSSOBootstrapAsync:
 
                         # Should get DB session but not create any providers
                         mock_get_db.assert_called_once()
-                        # list_all_providers only called when sso_auto_disable_unconfigured_providers=True
-                        mock_service_instance.list_all_providers.assert_not_called()
+                        # list_all_providers is always called once, for the trusted_for_api_auth
+                        # confused-deputy audience-misconfiguration warning (independent of the
+                        # sso_auto_disable_unconfigured_providers flag).
+                        mock_service_instance.list_all_providers.assert_called_once()
                         mock_service_instance.create_provider.assert_not_called()
 
     @pytest.mark.asyncio
@@ -708,7 +710,9 @@ class TestSSOBootstrapAsync:
 
                         await bootstrap_sso_providers()
 
-                        mock_service_instance.list_all_providers.assert_called_once()
+                        # Called once for the auto-disable pass and once more for the
+                        # trusted_for_api_auth confused-deputy audience warning.
+                        assert mock_service_instance.list_all_providers.call_count == 2
                         mock_service_instance.update_provider.assert_called_once_with("old-provider", {"is_enabled": False})
 
 

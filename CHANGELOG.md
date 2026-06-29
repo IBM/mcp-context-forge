@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- New REST API endpoint `POST /v1/tools/generate-schemas-from-openapi` for generating MCP tool schemas from OpenAPI specifications without admin UI dependencies (#5142)
+
+### Security
+
+- Fixed cross-environment JWT acceptance (GHSA-vgf8-3685-66j9, CVE pending). Gateway-issued tokens
+  now carry an `env` claim and reject environment mismatches by default (`EMBED_ENVIRONMENT_IN_TOKENS=true`,
+  `VALIDATE_TOKEN_ENVIRONMENT=true`). Added optional `DERIVE_KEY_PER_ENVIRONMENT` to bind the HS*
+  signing key (including explicit-secret mints) to the deployment environment, which also closes legacy
+  tokens lacking an `env` claim. **Upgrade:** use a distinct `JWT_SECRET_KEY` per environment and
+  rotate long-lived tokens; enabling `DERIVE_KEY_PER_ENVIRONMENT` invalidates tokens issued before it
+  was turned on. RS*/ES* deployments must use distinct key pairs per environment.
+
 ### Deprecation Notice
 
 - Rust MCP runtime sidecar, Rust A2A runtime sidecar, and ValidationMiddleware are deprecated as of 2026-06-11 and will sunset on 2026-07-07. Use the Python MCP transport path, the Python A2A invocation path, and endpoint-level Pydantic or protocol-specific validation instead. See [Deprecations](docs/docs/deprecations.md).
