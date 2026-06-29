@@ -665,9 +665,7 @@ class RoleService:
             self.db.commit()
             self.db.refresh(user_role)
 
-        logger.info("Assigned role %s to %s (scope: %s, scope_id: %s)", role.name, user_email, scope, scope_id)
-        return user_role
-            logger.info(f"Assigned role {role.name} to {user_email} (scope: {scope}, scope_id: {scope_id})")
+            logger.info("Assigned role %s to %s (scope: %s, scope_id: %s)", role.name, user_email, scope, scope_id)
             return user_role
 
         except IntegrityError as e:
