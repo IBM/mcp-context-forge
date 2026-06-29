@@ -1477,7 +1477,7 @@ minio:
       memory: 256Mi
 
 ########################################################################
-# MCP-FAST-TIME-SERVER - optional high-performance time server for MCP (go)
+# MCP-FAST-TIME-SERVER - optional high-performance time server for MCP (Rust)
 # Provides a fast implementation including SSE and Streamable HTTP
 ########################################################################
 mcpFastTimeServer:
