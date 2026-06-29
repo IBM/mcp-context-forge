@@ -192,9 +192,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', 'Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-unused-deps-${{ hashFiles('**/Cargo.lock', 'Cargo.toml') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-unused-deps-
 
       - name: Cargo shear
         run: make rust-unused-deps

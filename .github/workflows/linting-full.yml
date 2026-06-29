@@ -265,7 +265,6 @@ jobs:
           key: ${{ runner.os }}-cargo-lint-${{ matrix.id }}-${{ hashFiles('**/Cargo.lock', 'Cargo.toml') }}
           restore-keys: |
             ${{ runner.os }}-cargo-lint-${{ matrix.id }}-
-            ${{ runner.os }}-cargo-
 
       - name: Run ${{ matrix.id }}
         run: ${{ matrix.cmd }}
