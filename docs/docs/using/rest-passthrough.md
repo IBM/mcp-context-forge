@@ -185,11 +185,11 @@ Configure pre and post-request plugin processing:
 
 **Allowed Plugins:**
 
-- `deny_filter` - Block requests matching deny patterns
+- `deny_filter` - Block requests matching deny patterns; scans all string values recursively through nested dicts and lists
 - `rate_limit` - Rate limiting enforcement
 - `pii_filter` - PII detection and filtering
 - `response_shape` - Response transformation
-- `regex_filter` - Regex-based content filtering
+- `regex_filter` - Regex-based content filtering; applies search/replace patterns recursively through nested dicts and lists
 - `resource_filter` - Resource access control
 
 **Execution Order:**

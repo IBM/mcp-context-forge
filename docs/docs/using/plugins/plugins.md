@@ -75,8 +75,8 @@ Plugins for filtering, validating, and controlling content.
 
 | Plugin | Type | Description |
 |--------|------|-------------|
-| [Deny Filter](https://github.com/IBM/mcp-context-forge/tree/main/plugins/deny_filter) | Native | Deny list plugin for blocking specific content patterns |
-| [Regex Filter](https://github.com/IBM/mcp-context-forge/tree/main/plugins/regex_filter) | Native | Search and replace plugin using regex patterns for content filtering |
+| [Deny Filter](https://github.com/IBM/mcp-context-forge/tree/main/plugins/deny_filter) | Native | Deny list plugin for blocking specific content patterns; recursively scans nested dicts and lists so words are caught at any depth in the payload |
+| [Regex Filter](https://github.com/IBM/mcp-context-forge/tree/main/plugins/regex_filter) | Native | Search and replace plugin using regex patterns for content filtering; recursively rewrites string values inside nested dicts and lists at any depth in the payload |
 | [Resource Filter](https://github.com/IBM/mcp-context-forge/tree/main/plugins/resource_filter) | Native | Resource filtering with max content size, protocol restrictions, blocked domains, and content pattern replacement |
 | [File Type Allowlist](https://github.com/IBM/mcp-context-forge/tree/main/plugins/file_type_allowlist) | Native | Allows only configured MIME types and file extensions for resources |
 | [Output Length Guard](https://github.com/IBM/mcp-context-forge/tree/main/plugins/output_length_guard) | Native | Guards tool outputs by length with block or truncate strategies |
