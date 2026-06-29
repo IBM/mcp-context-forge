@@ -552,6 +552,91 @@ def _extract_rest_url_components(values: dict) -> dict:
     return values
 
 
+def _encode_auth_headers_list(auth_headers: list) -> Optional[str]:
+    """Validate and encode a multi-header ``auth_headers`` list into a stored auth value.
+
+    Canonical ``authheaders`` array encoder shared by :class:`ToolCreate`,
+    :class:`ToolUpdate`, :class:`GatewayCreate`, :class:`GatewayUpdate`,
+    :class:`A2AAgentCreate` and :class:`A2AAgentUpdate` so the multi-header
+    validation and encoding stay identical across every create/update path.
+
+    Each element is expected to be a ``{"key": ..., "value": ...}`` dict. Non-dict
+    elements and entries without a key are skipped, empty values are allowed, and the
+    last value wins on duplicate keys (a warning is logged). Validation raises
+    ``ValueError`` (surfaced as a 422 through the schemas) when a key has an invalid
+    format, when no entry carries a usable key, or when more than 100 headers remain.
+
+    Note:
+        The non-dict skip above only applies when this helper is called directly. Each
+        schema declares ``auth_headers`` as ``Optional[List[Dict[str, str]]]``, so
+        Pydantic rejects non-dict entries (e.g. ``["not-a-dict"]``) at field validation
+        before they could reach this helper.
+
+    Args:
+        auth_headers: Non-empty list of header dicts to validate and encode.
+
+    Returns:
+        Optional[str]: The encoded auth value (``encode_auth`` returns ``None`` only when
+        encoding is unavailable; this helper otherwise raises on invalid input).
+
+    Raises:
+        ValueError: If a header key has an invalid format, no valid header with a key is
+            present, or more than 100 headers are supplied.
+
+    Examples:
+        >>> from mcpgateway.utils.services_auth import decode_auth
+        >>> decode_auth(_encode_auth_headers_list([{'key': 'X-API-Key', 'value': 'secret'}]))
+        {'X-API-Key': 'secret'}
+        >>> _encode_auth_headers_list([{'value': 'no-key'}])
+        Traceback (most recent call last):
+            ...
+        ValueError: For 'authheaders' auth, at least one valid header with a key must be provided.
+        >>> _encode_auth_headers_list([{'key': 'Bad@Key!', 'value': 'x'}])
+        Traceback (most recent call last):
+            ...
+        ValueError: Invalid header key format: 'Bad@Key!'. Header keys should contain only alphanumeric characters, hyphens, and underscores.
+    """
+    header_dict = {}
+    duplicate_keys = set()
+
+    for header in auth_headers:
+        # Non-dict entries are skipped here; schema field validation rejects them earlier.
+        if not isinstance(header, dict):
+            continue
+
+        key = header.get("key")
+        value = header.get("value", "")
+
+        # Skip headers without a key.
+        if not key:
+            continue
+
+        # Track duplicate keys (last value wins).
+        if key in header_dict:
+            duplicate_keys.add(key)
+
+        # Validate header key format (basic HTTP header validation).
+        if not all(c.isalnum() or c in "-_" for c in key.replace(" ", "")):
+            raise ValueError(f"Invalid header key format: '{key}'. Header keys should contain only alphanumeric characters, hyphens, and underscores.")
+
+        # Store header (empty values are allowed).
+        header_dict[key] = value
+
+    # Ensure at least one valid header.
+    if not header_dict:
+        raise ValueError("For 'authheaders' auth, at least one valid header with a key must be provided.")
+
+    # Warn about duplicate keys (last value used).
+    if duplicate_keys:
+        logger.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
+
+    # Check for excessive headers (prevent abuse).
+    if len(header_dict) > 100:
+        raise ValueError("Maximum of 100 headers allowed.")
+
+    return encode_auth(header_dict)
+
+
 class ToolCreate(BaseModel):
     """
     Represents the configuration for creating a tool with various attributes and settings.
@@ -591,6 +676,8 @@ class ToolCreate(BaseModel):
     )
     jsonpath_filter: Optional[str] = Field(default="", description="JSON modification filter")
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
+    # Declared for OpenAPI discoverability; consumed by the ``assemble_auth`` validator to build ``auth`` for the "authheaders" type.
+    auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for 'authheaders' authentication (array of {'key': ..., 'value': ...} entries)")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
     tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the tool")
     deprecated: Optional[bool] = Field(default=False, description="Whether the tool is deprecated (visible but non-executable)")
@@ -866,8 +953,12 @@ class ToolCreate(BaseModel):
         """
         Assemble authentication information from separate keys if provided.
 
-        Looks for keys "auth_type", "auth_username", "auth_password", "auth_token", "auth_header_key" and "auth_header_value".
+        Looks for keys "auth_type", "auth_username", "auth_password", "auth_token", "auth_headers",
+        "auth_header_key" and "auth_header_value".
         Constructs the "auth" field as a dictionary suitable for BasicAuth or BearerTokenAuth or HeadersAuth.
+
+        For "authheaders" type, the "auth_headers" list (array of {"key": ..., "value": ...} dicts)
+        takes precedence over the legacy "auth_header_key"/"auth_header_value" single-header pair.
 
         Args:
             values: Dict with authentication information
@@ -890,7 +981,15 @@ class ToolCreate(BaseModel):
             >>> result['auth']['auth_type']
             'bearer'
 
-            >>> # Test authheaders
+            >>> # Test authheaders with array (multi-header)
+            >>> values = {'auth_type': 'authheaders', 'auth_headers': [{'key': 'X-API-Key', 'value': 'secret'}, {'key': 'X-Tenant', 'value': 'acme'}]}
+            >>> result = ToolCreate.assemble_auth(values)
+            >>> result['auth']['auth_type']
+            'authheaders'
+            >>> result['auth']['auth_value'] is not None
+            True
+
+            >>> # Test authheaders with legacy single-header fallback
             >>> values = {'auth_type': 'authheaders', 'auth_header_key': 'X-API-Key', 'auth_header_value': 'secret'}
             >>> result = ToolCreate.assemble_auth(values)
             >>> result['auth']['auth_type']
@@ -922,14 +1021,22 @@ class ToolCreate(BaseModel):
                 encoded_auth = encode_auth({"Authorization": f"Bearer {values.get('auth_token', '')}"})
                 values["auth"] = {"auth_type": "bearer", "auth_value": encoded_auth}
             elif auth_type.lower() == "authheaders":
-                header_key = values.get("auth_header_key", "")
-                header_value = values.get("auth_header_value", "")
-                if header_key and header_value:
-                    encoded_auth = encode_auth({header_key: header_value})
-                    values["auth"] = {"auth_type": "authheaders", "auth_value": encoded_auth}
+                auth_headers = values.get("auth_headers")
+                if auth_headers and isinstance(auth_headers, list):
+                    # A non-empty multi-header array takes precedence over the legacy pair and is
+                    # validated/encoded by the shared helper (raises on invalid input, matching gateways).
+                    values["auth"] = {"auth_type": "authheaders", "auth_value": _encode_auth_headers_list(auth_headers)}
                 else:
-                    # Don't encode empty headers - leave auth empty
-                    values["auth"] = {"auth_type": "authheaders", "auth_value": None}
+                    # An empty/absent array falls through to the legacy single-header pair; when that is
+                    # also absent we intentionally store a null auth_value rather than raising.
+                    header_key = values.get("auth_header_key", "")
+                    header_value = values.get("auth_header_value", "")
+                    if header_key and header_value:
+                        encoded_auth = encode_auth({header_key: header_value})
+                        values["auth"] = {"auth_type": "authheaders", "auth_value": encoded_auth}
+                    else:
+                        # Don't encode empty headers - leave auth empty
+                        values["auth"] = {"auth_type": "authheaders", "auth_value": None}
         return values
 
     @model_validator(mode="before")
@@ -1157,6 +1264,8 @@ class ToolUpdate(BaseModelWithConfigDict):
     annotations: Optional[Dict[str, Any]] = Field(None, description="Tool annotations for behavior hints")
     jsonpath_filter: Optional[str] = Field(None, description="JSON path filter for rpc tool calls")
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
+    # Declared for OpenAPI discoverability; consumed by the ``assemble_auth`` validator to build ``auth`` for the "authheaders" type.
+    auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for 'authheaders' authentication (array of {'key': ..., 'value': ...} entries)")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the tool")
     deprecated: Optional[bool] = Field(None, description="Whether the tool is deprecated (visible but non-executable)")
@@ -1335,8 +1444,12 @@ class ToolUpdate(BaseModelWithConfigDict):
         """
         Assemble authentication information from separate keys if provided.
 
-        Looks for keys "auth_type", "auth_username", "auth_password", "auth_token", "auth_header_key" and "auth_header_value".
+        Looks for keys "auth_type", "auth_username", "auth_password", "auth_token", "auth_headers",
+        "auth_header_key" and "auth_header_value".
         Constructs the "auth" field as a dictionary suitable for BasicAuth or BearerTokenAuth or HeadersAuth.
+
+        For "authheaders" type, the "auth_headers" list (array of {"key": ..., "value": ...} dicts)
+        takes precedence over the legacy "auth_header_key"/"auth_header_value" single-header pair.
 
         Args:
             values: Dict with authentication information
@@ -1345,7 +1458,7 @@ class ToolUpdate(BaseModelWithConfigDict):
             Dict: Reformatedd values dict
         """
         logger.debug(
-            "Assembling auth in ToolCreate with raw values",
+            "Assembling auth in ToolUpdate with raw values",
             extra={
                 "auth_type": values.get("auth_type"),
                 "auth_username": values.get("auth_username"),
@@ -1364,14 +1477,22 @@ class ToolUpdate(BaseModelWithConfigDict):
                 encoded_auth = encode_auth({"Authorization": f"Bearer {values.get('auth_token', '')}"})
                 values["auth"] = {"auth_type": "bearer", "auth_value": encoded_auth}
             elif auth_type.lower() == "authheaders":
-                header_key = values.get("auth_header_key", "")
-                header_value = values.get("auth_header_value", "")
-                if header_key and header_value:
-                    encoded_auth = encode_auth({header_key: header_value})
-                    values["auth"] = {"auth_type": "authheaders", "auth_value": encoded_auth}
+                auth_headers = values.get("auth_headers")
+                if auth_headers and isinstance(auth_headers, list):
+                    # A non-empty multi-header array takes precedence over the legacy pair and is
+                    # validated/encoded by the shared helper (raises on invalid input, matching gateways).
+                    values["auth"] = {"auth_type": "authheaders", "auth_value": _encode_auth_headers_list(auth_headers)}
                 else:
-                    # Don't encode empty headers - leave auth empty
-                    values["auth"] = {"auth_type": "authheaders", "auth_value": None}
+                    # An empty/absent array falls through to the legacy single-header pair; when that is
+                    # also absent we intentionally store a null auth_value rather than raising.
+                    header_key = values.get("auth_header_key", "")
+                    header_value = values.get("auth_header_value", "")
+                    if header_key and header_value:
+                        encoded_auth = encode_auth({header_key: header_value})
+                        values["auth"] = {"auth_type": "authheaders", "auth_value": encoded_auth}
+                    else:
+                        # Don't encode empty headers - leave auth empty
+                        values["auth"] = {"auth_type": "authheaders", "auth_value": None}
         return values
 
     @model_validator(mode="before")
@@ -3130,45 +3251,8 @@ class GatewayCreate(BaseModelWithConfigDict):
             # Support both new multi-headers format and legacy single header format
             auth_headers = data.get("auth_headers")
             if auth_headers and isinstance(auth_headers, list):
-                # New multi-headers format with enhanced validation
-                header_dict = {}
-                duplicate_keys = set()
-
-                for header in auth_headers:
-                    if not isinstance(header, dict):
-                        continue
-
-                    key = header.get("key")
-                    value = header.get("value", "")
-
-                    # Skip headers without keys
-                    if not key:
-                        continue
-
-                    # Track duplicate keys (last value wins)
-                    if key in header_dict:
-                        duplicate_keys.add(key)
-
-                    # Validate header key format (basic HTTP header validation)
-                    if not all(c.isalnum() or c in "-_" for c in key.replace(" ", "")):
-                        raise ValueError(f"Invalid header key format: '{key}'. Header keys should contain only alphanumeric characters, hyphens, and underscores.")
-
-                    # Store header (empty values are allowed)
-                    header_dict[key] = value
-
-                # Ensure at least one valid header
-                if not header_dict:
-                    raise ValueError("For 'authheaders' auth, at least one valid header with a key must be provided.")
-
-                # Warn about duplicate keys (optional - could log this instead)
-                if duplicate_keys:
-                    logger.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
-
-                # Check for excessive headers (prevent abuse)
-                if len(header_dict) > 100:
-                    raise ValueError("Maximum of 100 headers allowed per gateway.")
-
-                return encode_auth(header_dict)
+                # New multi-headers format (validated and encoded by the shared helper)
+                return _encode_auth_headers_list(auth_headers)
 
             # Legacy single header format (backward compatibility)
             header_key = data.get("auth_header_key")
@@ -3487,45 +3571,8 @@ class GatewayUpdate(BaseModelWithConfigDict):
             # Support both new multi-headers format and legacy single header format
             auth_headers = data.get("auth_headers")
             if auth_headers and isinstance(auth_headers, list):
-                # New multi-headers format with enhanced validation
-                header_dict = {}
-                duplicate_keys = set()
-
-                for header in auth_headers:
-                    if not isinstance(header, dict):
-                        continue
-
-                    key = header.get("key")
-                    value = header.get("value", "")
-
-                    # Skip headers without keys
-                    if not key:
-                        continue
-
-                    # Track duplicate keys (last value wins)
-                    if key in header_dict:
-                        duplicate_keys.add(key)
-
-                    # Validate header key format (basic HTTP header validation)
-                    if not all(c.isalnum() or c in "-_" for c in key.replace(" ", "")):
-                        raise ValueError(f"Invalid header key format: '{key}'. Header keys should contain only alphanumeric characters, hyphens, and underscores.")
-
-                    # Store header (empty values are allowed)
-                    header_dict[key] = value
-
-                # Ensure at least one valid header
-                if not header_dict:
-                    raise ValueError("For 'authheaders' auth, at least one valid header with a key must be provided.")
-
-                # Warn about duplicate keys (optional - could log this instead)
-                if duplicate_keys:
-                    logger.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
-
-                # Check for excessive headers (prevent abuse)
-                if len(header_dict) > 100:
-                    raise ValueError("Maximum of 100 headers allowed per gateway.")
-
-                return encode_auth(header_dict)
+                # New multi-headers format (validated and encoded by the shared helper)
+                return _encode_auth_headers_list(auth_headers)
 
             # Legacy single header format (backward compatibility)
             header_key = data.get("auth_header_key")
@@ -4990,45 +5037,8 @@ class A2AAgentCreate(BaseModel):
             # Support both new multi-headers format and legacy single header format
             auth_headers = data.get("auth_headers")
             if auth_headers and isinstance(auth_headers, list):
-                # New multi-headers format with enhanced validation
-                header_dict = {}
-                duplicate_keys = set()
-
-                for header in auth_headers:
-                    if not isinstance(header, dict):
-                        continue
-
-                    key = header.get("key")
-                    value = header.get("value", "")
-
-                    # Skip headers without keys
-                    if not key:
-                        continue
-
-                    # Track duplicate keys (last value wins)
-                    if key in header_dict:
-                        duplicate_keys.add(key)
-
-                    # Validate header key format (basic HTTP header validation)
-                    if not all(c.isalnum() or c in "-_" for c in key.replace(" ", "")):
-                        raise ValueError(f"Invalid header key format: '{key}'. Header keys should contain only alphanumeric characters, hyphens, and underscores.")
-
-                    # Store header (empty values are allowed)
-                    header_dict[key] = value
-
-                # Ensure at least one valid header
-                if not header_dict:
-                    raise ValueError("For 'authheaders' auth, at least one valid header with a key must be provided.")
-
-                # Warn about duplicate keys (optional - could log this instead)
-                if duplicate_keys:
-                    logger.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
-
-                # Check for excessive headers (prevent abuse)
-                if len(header_dict) > 100:
-                    raise ValueError("Maximum of 100 headers allowed per gateway.")
-
-                return encode_auth(header_dict)
+                # New multi-headers format (validated and encoded by the shared helper)
+                return _encode_auth_headers_list(auth_headers)
 
             # Legacy single header format (backward compatibility)
             header_key = data.get("auth_header_key")
@@ -5366,45 +5376,8 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
             # Support both new multi-headers format and legacy single header format
             auth_headers = data.get("auth_headers")
             if auth_headers and isinstance(auth_headers, list):
-                # New multi-headers format with enhanced validation
-                header_dict = {}
-                duplicate_keys = set()
-
-                for header in auth_headers:
-                    if not isinstance(header, dict):
-                        continue
-
-                    key = header.get("key")
-                    value = header.get("value", "")
-
-                    # Skip headers without keys
-                    if not key:
-                        continue
-
-                    # Track duplicate keys (last value wins)
-                    if key in header_dict:
-                        duplicate_keys.add(key)
-
-                    # Validate header key format (basic HTTP header validation)
-                    if not all(c.isalnum() or c in "-_" for c in key.replace(" ", "")):
-                        raise ValueError(f"Invalid header key format: '{key}'. Header keys should contain only alphanumeric characters, hyphens, and underscores.")
-
-                    # Store header (empty values are allowed)
-                    header_dict[key] = value
-
-                # Ensure at least one valid header
-                if not header_dict:
-                    raise ValueError("For 'authheaders' auth, at least one valid header with a key must be provided.")
-
-                # Warn about duplicate keys (optional - could log this instead)
-                if duplicate_keys:
-                    logger.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
-
-                # Check for excessive headers (prevent abuse)
-                if len(header_dict) > 100:
-                    raise ValueError("Maximum of 100 headers allowed per gateway.")
-
-                return encode_auth(header_dict)
+                # New multi-headers format (validated and encoded by the shared helper)
+                return _encode_auth_headers_list(auth_headers)
 
             # Legacy single header format (backward compatibility)
             header_key = data.get("auth_header_key")

@@ -16,7 +16,7 @@ import pytest
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.schemas import A2AAgentCreate, A2AAgentUpdate, AdminCreateUserRequest, EmailRegistrationRequest, GatewayCreate, GatewayUpdate, PublicRegistrationRequest
+from mcpgateway.schemas import _encode_auth_headers_list, A2AAgentCreate, A2AAgentUpdate, AdminCreateUserRequest, EmailRegistrationRequest, GatewayCreate, GatewayUpdate, PublicRegistrationRequest, ToolCreate, ToolUpdate
 from mcpgateway.utils.services_auth import decode_auth
 
 
@@ -559,3 +559,208 @@ def test_a2a_agent_update_invalid_passthrough_header_with_colon():
         )
     error_str = str(exc_info.value)
     assert "Invalid header names" in error_str or "RFC 7230" in error_str
+
+
+# =========================================================================
+# ToolCreate / ToolUpdate: auth_headers array support (issue #5201)
+# Verify that POST /tools and PUT /tools/{id} correctly persist all entries
+# in the auth_headers array instead of silently dropping them.
+# =========================================================================
+
+
+def test_tool_create_authheaders_array_multi():
+    """ToolCreate encodes all entries from auth_headers list."""
+    tool = ToolCreate(
+        name="my_tool",
+        url="https://api.example.com/endpoint",
+        request_type="POST",
+        auth_type="authheaders",
+        auth_headers=[
+            {"key": "X-API-Key", "value": "secret"},
+            {"key": "X-Tenant", "value": "acme"},
+        ],
+    )
+    assert tool.auth is not None
+    assert tool.auth.auth_type == "authheaders"
+    assert tool.auth.auth_value is not None
+    decoded = decode_auth(tool.auth.auth_value)
+    assert decoded["X-API-Key"] == "secret"
+    assert decoded["X-Tenant"] == "acme"
+
+
+def test_tool_create_authheaders_array_single():
+    """ToolCreate handles a single-entry auth_headers array correctly."""
+    tool = ToolCreate(
+        name="my_tool",
+        url="https://api.example.com/endpoint",
+        request_type="POST",
+        auth_type="authheaders",
+        auth_headers=[{"key": "Authorization", "value": "Bearer tok"}],
+    )
+    assert tool.auth is not None
+    decoded = decode_auth(tool.auth.auth_value)
+    assert decoded["Authorization"] == "Bearer tok"
+
+
+def test_tool_create_authheaders_legacy_fallback():
+    """ToolCreate falls back to auth_header_key/auth_header_value when no array is provided."""
+    tool = ToolCreate(
+        name="my_tool",
+        url="https://api.example.com/endpoint",
+        request_type="POST",
+        auth_type="authheaders",
+        auth_header_key="X-API-Key",
+        auth_header_value="legacy-secret",
+    )
+    assert tool.auth is not None
+    assert tool.auth.auth_type == "authheaders"
+    decoded = decode_auth(tool.auth.auth_value)
+    assert decoded["X-API-Key"] == "legacy-secret"
+
+
+def test_tool_create_authheaders_empty_array_gives_null_value():
+    """ToolCreate with an empty auth_headers list produces auth_value=None."""
+    tool = ToolCreate(
+        name="my_tool",
+        url="https://api.example.com/endpoint",
+        request_type="POST",
+        auth_type="authheaders",
+        auth_headers=[],
+    )
+    assert tool.auth is not None
+    assert tool.auth.auth_value is None
+
+
+def test_tool_create_authheaders_array_takes_precedence_over_legacy():
+    """auth_headers array takes precedence over legacy auth_header_key/value when both supplied."""
+    tool = ToolCreate(
+        name="my_tool",
+        url="https://api.example.com/endpoint",
+        request_type="POST",
+        auth_type="authheaders",
+        auth_headers=[{"key": "X-New-Key", "value": "new-value"}],
+        auth_header_key="X-Old-Key",
+        auth_header_value="old-value",
+    )
+    decoded = decode_auth(tool.auth.auth_value)
+    assert "X-New-Key" in decoded
+    assert "X-Old-Key" not in decoded
+
+
+def test_tool_update_authheaders_array_takes_precedence_over_legacy():
+    """ToolUpdate: auth_headers array takes precedence over legacy auth_header_key/value when both supplied."""
+    update = ToolUpdate(
+        auth_type="authheaders",
+        auth_headers=[{"key": "X-New-Key", "value": "new-value"}],
+        auth_header_key="X-Old-Key",
+        auth_header_value="old-value",
+    )
+    decoded = decode_auth(update.auth.auth_value)
+    assert "X-New-Key" in decoded
+    assert "X-Old-Key" not in decoded
+
+
+def test_tool_update_authheaders_array_multi():
+    """ToolUpdate encodes all entries from auth_headers list."""
+    update = ToolUpdate(
+        auth_type="authheaders",
+        auth_headers=[
+            {"key": "X-API-Key", "value": "newsecret"},
+            {"key": "X-Tenant", "value": "newacme"},
+        ],
+    )
+    assert update.auth is not None
+    assert update.auth.auth_type == "authheaders"
+    decoded = decode_auth(update.auth.auth_value)
+    assert decoded["X-API-Key"] == "newsecret"
+    assert decoded["X-Tenant"] == "newacme"
+
+
+def test_tool_update_authheaders_legacy_fallback():
+    """ToolUpdate falls back to auth_header_key/auth_header_value when no array is provided."""
+    update = ToolUpdate(
+        auth_type="authheaders",
+        auth_header_key="X-API-Key",
+        auth_header_value="legacy-secret",
+    )
+    assert update.auth is not None
+    decoded = decode_auth(update.auth.auth_value)
+    assert decoded["X-API-Key"] == "legacy-secret"
+
+
+def test_tool_create_authheaders_array_all_empty_keys_raises():
+    """ToolCreate with a non-empty auth_headers list where every entry has an empty/missing key is rejected (gateway parity)."""
+    with pytest.raises(ValidationError) as exc_info:
+        ToolCreate(
+            name="my_tool",
+            url="https://api.example.com/endpoint",
+            request_type="POST",
+            auth_type="authheaders",
+            auth_headers=[{"key": "", "value": "something"}, {"value": "no-key-field"}],
+        )
+    assert "at least one valid header with a key must be provided" in str(exc_info.value)
+
+
+def test_tool_update_authheaders_array_all_empty_keys_raises():
+    """ToolUpdate with a non-empty auth_headers list where every entry has an empty/missing key is rejected (gateway parity)."""
+    with pytest.raises(ValidationError) as exc_info:
+        ToolUpdate(
+            auth_type="authheaders",
+            auth_headers=[{"key": "", "value": "something"}, {"value": "no-key-field"}],
+        )
+    assert "at least one valid header with a key must be provided" in str(exc_info.value)
+
+
+def test_tool_update_authheaders_empty_array_gives_null_value():
+    """ToolUpdate with an empty auth_headers list produces auth_value=None (symmetry with ToolCreate)."""
+    update = ToolUpdate(
+        auth_type="authheaders",
+        auth_headers=[],
+    )
+    assert update.auth is not None
+    assert update.auth.auth_value is None
+
+
+def test_encode_auth_headers_list_skips_non_dict_and_keyless_entries():
+    """The shared helper skips non-dict and keyless entries instead of raising AttributeError."""
+    # Non-dict entries and entries without a key are ignored (no AttributeError).
+    encoded = _encode_auth_headers_list(["not-a-dict", {"value": "no-key"}, {"key": "X-API-Key", "value": "secret"}])
+    assert decode_auth(encoded) == {"X-API-Key": "secret"}
+
+    # An all-invalid list raises rather than silently encoding an empty header set (gateway parity).
+    with pytest.raises(ValueError, match="at least one valid header with a key must be provided"):
+        _encode_auth_headers_list(["not-a-dict", {"value": "no-key"}, {"key": ""}])
+
+
+def test_encode_auth_headers_list_invalid_key_format_raises():
+    """The shared helper rejects header keys with an invalid format."""
+    with pytest.raises(ValueError, match="Invalid header key format"):
+        _encode_auth_headers_list([{"key": "Bad@Key!", "value": "x"}])
+
+
+def test_encode_auth_headers_list_too_many_headers_raises():
+    """The shared helper rejects more than 100 headers."""
+    headers = [{"key": f"Header-{i}", "value": f"value-{i}"} for i in range(101)]
+    with pytest.raises(ValueError, match="Maximum of 100 headers allowed"):
+        _encode_auth_headers_list(headers)
+
+
+def test_tool_create_authheaders_non_dict_entry_rejected_cleanly():
+    """A non-dict auth_headers entry produces a clean ValidationError, not a 500 AttributeError."""
+    with pytest.raises(ValidationError):
+        ToolCreate(
+            name="my_tool",
+            url="https://api.example.com/endpoint",
+            request_type="POST",
+            auth_type="authheaders",
+            auth_headers=["not-a-dict"],
+        )
+
+
+def test_tool_update_authheaders_non_dict_entry_rejected_cleanly():
+    """A non-dict auth_headers entry produces a clean ValidationError, not a 500 AttributeError (ToolUpdate)."""
+    with pytest.raises(ValidationError):
+        ToolUpdate(
+            auth_type="authheaders",
+            auth_headers=["not-a-dict"],
+        )
