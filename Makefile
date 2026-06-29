@@ -15,9 +15,8 @@ SHELL := /bin/bash
 
 # Read values from .env.make
 -include .env.make
-
-# Read MCPGATEWAY_ADMIN_API_ENABLED from environment, falling back to .env
-MCPGATEWAY_ADMIN_API_ENABLED ?= $(shell grep -s '^MCPGATEWAY_ADMIN_API_ENABLED=' .env | cut -d= -f2 | tr -d '[:space:]"'"'"')
+# Read MCPGATEWAY_UI_ENABLED from environment, falling back to .env
+MCPGATEWAY_UI_ENABLED ?= $(shell grep -s '^MCPGATEWAY_UI_ENABLED=' .env | cut -d= -f2 | xargs)
 
 # Rust build configuration (set to 1 to enable Rust builds, 0 to disable)
 # Default is disabled to avoid requiring Rust toolchain for standard builds
@@ -378,42 +377,36 @@ init-secrets: ## Generate secure secrets for the gateway (US-3)
 
 .PHONY: serve serve-ssl serve-granian serve-granian-ssl serve-granian-http2 dev dev-remote stop stop-dev stop-serve run \
         certs certs-jwt certs-jwt-ecdsa certs-all certs-mcp-ca certs-mcp-gateway certs-mcp-plugin certs-mcp-all certs-mcp-check \
-        js-build fetch-openapi
+        js-build export-schema
 
 ## --- JS build ----------------------------------------------------------------
-# js-build is gated on MCPGATEWAY_ADMIN_API_ENABLED.  The config.py default is
+# js-build is gated on MCPGATEWAY_UI_ENABLED.  The config.py default is
 # false; .env.example sets it to true.  Run `cp .env.example .env` (or export
-# MCPGATEWAY_ADMIN_API_ENABLED=true) before invoking serve/dev targets,
+# MCPGATEWAY_UI_ENABLED=true) before invoking serve/dev targets,
 # otherwise the Admin UI bundle will not be built and the UI will not load.
 js-build:                        ## Install npm dependencies and build JS bundle with Vite (includes client React app)
-	@if [ "$(MCPGATEWAY_ADMIN_API_ENABLED)" != "true" ]; then \
+	@if [ "$(MCPGATEWAY_UI_ENABLED)" != "true" ]; then \
 		echo ""; \
-		echo "WARNING: JS build skipped — MCPGATEWAY_ADMIN_API_ENABLED is not set to true."; \
+		echo "WARNING: JS build skipped — MCPGATEWAY_UI_ENABLED is not set to true."; \
 		echo "         The Admin UI will not load at runtime."; \
-		echo "         Fix: cp .env.example .env  (or export MCPGATEWAY_ADMIN_API_ENABLED=true)"; \
+		echo "         Fix: cp .env.example .env  (or export MCPGATEWAY_UI_ENABLED=true)"; \
 		echo ""; \
 	elif command -v npm >/dev/null 2>&1; then \
 		npm install --no-audit --no-fund && npm run build:css && npm run vite:build && \
+		CACHE_TYPE=memory python -c \
+		  "import json; from mcpgateway.main import app; open('client/openapi.json', 'w').write(json.dumps(app.openapi(), indent=2))" && \
+		echo "OpenAPI spec exported to client/openapi.json" && \
 		cd client && npm install --no-audit --no-fund && npm run build; \
 	else \
 		echo "WARNING: npm not found — skipping JS bundle build (admin UI may not load)"; \
 	fi
 
-fetch-openapi:                   ## Fetch OpenAPI spec from running gateway into client/openapi.json (requires MCPGATEWAY_BEARER_TOKEN; override URL with MCP_CLI_BASE_URL)
-	@curl -sf "$${MCP_CLI_BASE_URL:-http://localhost:4444}/openapi.json" \
-		-H "Authorization: Bearer $${MCPGATEWAY_BEARER_TOKEN}" \
-		-o client/openapi.json || { \
-		echo ""; \
-		echo "ERROR: Could not fetch OpenAPI spec from $${MCP_CLI_BASE_URL:-http://localhost:4444}/openapi.json"; \
-		echo "       Start the gateway first:  make serve  (or make dev)"; \
-		echo "       Then set MCPGATEWAY_BEARER_TOKEN and retry:  make generate-client"; \
-		echo ""; \
-		exit 1; \
-	}
-	@echo "OpenAPI spec saved to client/openapi.json"
+export-schema:                   ## Export OpenAPI schema directly from the Python app (no running gateway needed)
+	@CACHE_TYPE=memory python -c \
+	  "import json; from mcpgateway.main import app; open('client/openapi.json', 'w').write(json.dumps(app.openapi(), indent=2))"
+	@echo "OpenAPI spec exported to client/openapi.json"
 
-# Requires a running gateway (make serve or make dev) and MCPGATEWAY_BEARER_TOKEN to be set.
-generate-client: fetch-openapi   ## Fetch OpenAPI spec from running gateway and regenerate client types (requires running gateway + MCPGATEWAY_BEARER_TOKEN)
+generate-client: export-schema   ## Export OpenAPI schema and regenerate client types (no running gateway needed)
 	@cd client && npm run generate
 
 ## --- Primary servers ---------------------------------------------------------
@@ -438,7 +431,7 @@ dev:
 	@trap 'echo "🛑 Stopping background processes..."; jobs -p | xargs $(XARGS_FLAGS) kill 2>/dev/null || true' EXIT; \
 	$(MAKE) js-build watch-css & \
 	WATCH_CSS_PID=$$!; \
-	if [ "$(MCPGATEWAY_ADMIN_API_ENABLED)" = "true" ]; then \
+	if [ "$(MCPGATEWAY_UI_ENABLED)" = "true" ]; then \
 		(cd client && npm install --no-audit --no-fund && npm run build:watch > /dev/null 2>&1) & \
 		echo $$! > /tmp/mcpgateway-client-watch.pid; \
 	fi; \

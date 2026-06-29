@@ -50,60 +50,17 @@ jobs:
                       venv-${{ runner.os }}-python-3.12-
                       venv-${{ runner.os }}-
 
-            - name: Generate JWT secret
-              run: |
-                  SECRET=$(openssl rand -base64 32)
-                  echo "DYNAMIC_JWT_SECRET=$SECRET" >> "${GITHUB_ENV}"
-
-            - name: Start gateway
-              env:
-                  GUNICORN_WORKERS: 1
-                  MCPGATEWAY_UI_ENABLED: false
-                  MCPGATEWAY_ADMIN_API_ENABLED: false
-                  SSRF_PROTECTION_ENABLED: false
-                  JWT_SECRET_KEY: ${{ env.DYNAMIC_JWT_SECRET }}
-                  ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP: false
-                  PASSWORD_CHANGE_ENFORCEMENT_ENABLED: false
-                  LOG_LEVEL: ERROR
+            - name: Install Python dependencies
               run: |
                   cp .env.example .env
                   make venv
-                  make install
-                  make stop-serve
-                  make serve > gateway.log 2>&1 &
+                  make install-dev
 
-                  echo "Waiting for gateway to start..."
-                  for i in {1..60}; do
-                    if curl -s http://localhost:4444 >/dev/null 2>&1; then
-                      echo "Gateway is up!"
-                      break
-                    fi
-                    echo "Waiting for port 4444 to open... (attempt $i)"
-                    sleep 2
-                  done
-
-                  if ! curl -s http://localhost:4444 >/dev/null 2>&1; then
-                    echo "ERROR: gateway failed to start"
-                    cat gateway.log
-                    exit 1
-                  fi
-
-            - name: Generate JWT token
-              id: generate_jwt
-              env:
-                  JWT_SECRET_KEY: ${{ env.DYNAMIC_JWT_SECRET }}
+            - name: Export OpenAPI spec
               run: |
-                  TOKEN=$(uv run --no-dev python -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret "$JWT_SECRET_KEY")
-                  echo "::add-mask::$TOKEN"
-                  echo "token=$TOKEN" >> "${GITHUB_OUTPUT}"
-                  echo "JWT token generated successfully"
-
-            - name: Fetch OpenAPI spec
-              run: |
-                  curl -sf http://localhost:4444/openapi.json \
-                    -H "Authorization: Bearer ${{ steps.generate_jwt.outputs.token }}" \
-                    -o client/openapi.json
-                  echo "OpenAPI spec fetched ($(wc -c < client/openapi.json) bytes)"
+                  CACHE_TYPE=memory uv run python -c \
+                    "import json; from mcpgateway.main import app; open('client/openapi.json', 'w').write(json.dumps(app.openapi(), indent=2))"
+                  echo "OpenAPI spec exported ($(wc -c < client/openapi.json) bytes)"
 
             - name: Install client dependencies
               working-directory: client
