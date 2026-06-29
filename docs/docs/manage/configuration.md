@@ -896,6 +896,10 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `TOOL_RATE_LIMIT`       | Tool calls per minute          | `100`   | int > 0 |
 | `TOOL_CONCURRENT_LIMIT` | Concurrent tool invocations    | `10`    | int > 0 |
 | `GATEWAY_TOOL_NAME_SEPARATOR` | Tool name separator for gateway routing | `-`     | `-`, `--`, `_`, `.` |
+| `SUNSET_SCHEDULER_INTERVAL_MINUTES` | Interval for checking and disabling tools past their sunset date | `60` | int > 0 |
+
+!!! info "Tool Lifecycle Management"
+    The sunset scheduler automatically disables tools when their `sunsetDate` is reached. It runs as a background service at the interval specified by `SUNSET_SCHEDULER_INTERVAL_MINUTES`. For production deployments, the default 60-minute interval is recommended as sunset dates are typically set days or weeks in advance. See [Tool Lifecycle Management](./tool-lifecycle.md) for complete documentation.
 
 ### Prompts
 

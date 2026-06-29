@@ -3254,6 +3254,7 @@ class Tool(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     enabled: Mapped[bool] = mapped_column(default=True)
     deprecated: Mapped[bool] = mapped_column(default=False, nullable=False)
+    sunset_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
     reachable: Mapped[bool] = mapped_column(default=True)
     jsonpath_filter: Mapped[str] = mapped_column(Text, default="")
     tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)

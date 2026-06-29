@@ -593,7 +593,8 @@ class ToolCreate(BaseModel):
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
     tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the tool")
-    deprecated: Optional[bool] = Field(default=False, description="Whether the tool is deprecated (visible but non-executable)")
+    deprecated: Optional[bool] = Field(default=False, description="Whether the tool is deprecated (visible and executable until sunset_date)")
+    sunset_date: Optional[datetime] = Field(None, alias="sunsetDate", description="Date when deprecated tool will be sunset (disabled and non-executable). Required when deprecated=True")
 
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
@@ -1125,6 +1126,43 @@ class ToolCreate(BaseModel):
         return _validate_header_mapping_targets(v)
 
     @model_validator(mode="after")
+    def validate_sunset_date_requirements(self):
+        """Validate sunset_date requirements based on deprecated status.
+
+        Business rules:
+        - If deprecated=True, sunsetDate is required and must be in the future
+        - If deprecated=False, sunsetDate must be None (active tools cannot have sunset dates)
+        - Existing tools with deprecated=True but no sunsetDate are allowed (backwards compatibility)
+
+        Returns:
+            self: The validated model instance
+
+        Raises:
+            ValueError: If validation rules are violated
+        """
+        if self.deprecated is True:
+            if self.sunset_date is None:
+                raise ValueError("sunsetDate is required when deprecated=True. Please provide a future date when this tool will be sunset.")
+
+            # Ensure sunsetDate is in the future
+            now = datetime.now(timezone.utc)
+
+            # Make sunsetDate timezone-aware if it isn't already
+            sunset_date = self.sunset_date
+            if sunset_date.tzinfo is None:
+                # Assume UTC if no timezone provided
+                sunset_date = sunset_date.replace(tzinfo=timezone.utc)
+                self.sunset_date = sunset_date
+
+            if sunset_date <= now:
+                raise ValueError(f"sunsetDate must be in the future. Provided: {sunset_date.isoformat()}, Current time: {now.isoformat()}")
+        elif self.deprecated is False:
+            # Active tools cannot have sunset dates
+            self.sunset_date = None
+
+        return self
+
+    @model_validator(mode="after")
     def handle_timeout_ms_defaults(self):
         """Handle timeout_ms defaults based on integration_type and expose_passthrough.
 
@@ -1159,7 +1197,8 @@ class ToolUpdate(BaseModelWithConfigDict):
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the tool")
-    deprecated: Optional[bool] = Field(None, description="Whether the tool is deprecated (visible but non-executable)")
+    deprecated: Optional[bool] = Field(None, description="Whether the tool is deprecated (visible and executable until sunset_date)")
+    sunset_date: Optional[datetime] = Field(None, alias="sunsetDate", description="Date when deprecated tool will be sunset (disabled and non-executable). Required when deprecated=True")
     visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
 
     # Passthrough REST fields
@@ -1399,6 +1438,46 @@ class ToolUpdate(BaseModelWithConfigDict):
 
         return values
 
+    @model_validator(mode="after")
+    def validate_sunset_date_requirements(self):
+        """Validate sunset_date requirements for tool updates.
+
+        Business rules for updates:
+        - If deprecated is being set to True, sunsetDate must be provided and be in the future
+        - If deprecated is being set to False, sunsetDate must be None (active tools cannot have sunset dates)
+        - If deprecated is not being changed, sunsetDate validation is skipped (partial update)
+
+        Returns:
+            self: The validated model instance
+
+        Raises:
+            ValueError: If validation rules are violated
+        """
+        # Only validate if deprecated is explicitly being set in this update
+        if self.deprecated is not None:
+            if self.deprecated is True:
+                if self.sunset_date is None:
+                    raise ValueError("sunsetDate is required when setting deprecated=True. Please provide a future date when this tool will be sunset.")
+
+                # Ensure sunsetDate is in the future
+                now = datetime.now(timezone.utc)
+
+                # Make sunsetDate timezone-aware if it isn't already
+                sunset_date = self.sunset_date
+                if sunset_date.tzinfo is None:
+                    # Assume UTC if no timezone provided
+                    sunset_date = sunset_date.replace(tzinfo=timezone.utc)
+                    self.sunset_date = sunset_date
+
+                if sunset_date <= now:
+                    raise ValueError(f"sunsetDate must be in the future. Provided: {sunset_date.isoformat()}, Current time: {now.isoformat()}")
+            else:
+                # deprecated is being set to False, so clear sunset_date
+                # Active tools cannot have sunset dates
+                self.sunset_date = None
+
+        return self
+
     @field_validator("displayName")
     @classmethod
     def validate_display_name(cls, v: Optional[str]) -> Optional[str]:
@@ -1607,6 +1686,15 @@ class ToolRead(BaseModelWithConfigDict):
     updated_at: datetime
     enabled: bool
     deprecated: bool
+    sunset_date: Optional[datetime] = Field(None, alias="sunsetDate", description="Date when deprecated tool will be sunset (disabled)")
+
+    # Computed lifecycle fields
+    lifecycle_state: Optional[Literal["active", "deprecated", "sunset"]] = Field(
+        None, description="Current lifecycle state: active (normal operation), deprecated (still executable but discouraged), sunset (disabled, not executable)"
+    )
+    days_until_sunset: Optional[int] = Field(None, description="Days remaining until sunset (only for deprecated tools with future sunset date)")
+    is_executable: Optional[bool] = Field(None, description="Whether the tool can be executed (true for active/deprecated, false for sunset)")
+
     reachable: bool
     gateway_id: Optional[str]
     grpc_service_id: Optional[str] = Field(None, description="ID of the gRPC service this tool was discovered from")

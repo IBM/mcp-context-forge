@@ -150,6 +150,128 @@ A2A tools do not currently route through Validator B. In practice this means gat
 [#4207]: https://github.com/IBM/mcp-context-forge/issues/4207
 [#4208]: https://github.com/IBM/mcp-context-forge/issues/4208
 
+## Tool Lifecycle State Enforcement
+
+Before any validation layers execute, tool invocation checks the tool's lifecycle state to determine if execution is permitted.
+
+### Lifecycle States
+
+| State | `deprecated` | `enabled` | `sunsetDate` | Executable |
+|-------|--------------|-----------|--------------|------------|
+| **Active** | `false` | `true` | N/A | ✅ Yes |
+| **Deprecated** | `true` | `true` | Future or NULL | ✅ Yes |
+| **Sunset** | `true` | `false` | Past | ❌ No |
+
+### Enforcement Point
+
+**Where:** `mcpgateway/services/tool_service.py::invoke_tool` (before backend dispatch)
+
+**When:** Every tool invocation, regardless of integration type (MCP, REST, A2A, etc.)
+
+**Rule:**
+
+```python
+# Check if tool is sunset (past sunset_date)
+sunset_date_str = tool_payload.get("sunset_date")
+if sunset_date_str:
+    sunset_date = dateutil_parser.isoparse(sunset_date_str)
+    now = datetime.now(timezone.utc)
+    if sunset_date.tzinfo is None:
+        sunset_date = sunset_date.replace(tzinfo=timezone.utc)
+    if sunset_date <= now:
+        raise ToolInvocationError(
+            f"Tool '{name}' has been sunset and can no longer be executed. "
+            f"Sunset date: {sunset_date.strftime('%Y-%m-%d')}. "
+            f"Please update your agent to use an alternative tool."
+        )
+```
+
+**Behavior:**
+
+1. **Active tools** (`deprecated=false`): Execute normally through validation pipeline
+2. **Deprecated tools** (`deprecated=true, sunset_date` in future): Execute normally with lifecycle metadata in response
+3. **Sunset tools** (`sunset_date <= now()`): Blocked before any validation occurs with descriptive error message
+
+### Automated Sunset Transition
+
+Tools transition from deprecated to sunset automatically:
+
+- **Scheduler:** Background service runs every 60 minutes (configurable via `SUNSET_SCHEDULER_INTERVAL_MINUTES`)
+- **Query:** `WHERE deprecated=true AND sunset_date <= now() AND enabled=true`
+- **Action:** Atomically sets `enabled=false` and invalidates tool cache
+- **Effect:** Subsequent invocation attempts are blocked during the sunset date check in `invoke_tool` (the `enabled=false` flag is set by scheduler for consistency, but invocation blocking is based on `sunset_date <= now()` comparison)
+
+### Integration with Validation Pipeline
+
+Lifecycle enforcement occurs **before** any validation layer:
+
+```
+Tool invocation request
+        ↓
+┌───────────────────────────────┐
+│ Lifecycle State Check         │
+│ • enabled=false? → 404        │
+│ • enabled=true? → continue    │
+└───────────────────────────────┘
+        ↓
+┌───────────────────────────────┐
+│ Backend Dispatch              │
+│ (MCP, REST, A2A, etc.)        │
+└───────────────────────────────┘
+        ↓
+┌───────────────────────────────┐
+│ Validator A/B/C               │
+│ (per integration type)        │
+└───────────────────────────────┘
+        ↓
+Response to client
+```
+
+**Key invariant:** Sunset tools never reach the validation pipeline. The lifecycle check acts as a fail-fast gate.
+
+### Error Response Format
+
+When a sunset tool is invoked:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "error": {
+    "code": -32001,
+    "message": "Tool not found or not available"
+  }
+}
+```
+
+**Rationale:** Sunset tools return the same error as non-existent tools. This prevents clients from distinguishing between deleted and sunset tools, simplifying the deprecation workflow.
+
+### Resurrection Path
+
+Sunset tools can be resurrected by setting `deprecated=false`:
+
+```python
+# Automatically sets enabled=true and clears sunset_date
+tool.deprecated = False
+# Tool returns to "active" lifecycle state
+```
+
+### Testing Coverage
+
+Unit tests:
+
+- `tests/unit/mcpgateway/services/test_tool_service.py::test_sunset_date_cleared_when_deprecated_false` — Verifies `sunset_date` is cleared when `deprecated=False`
+- `tests/integration/test_tool_lifecycle_management.py::TestToolLifecycleExecution::test_sunset_tool_not_executable` — Verifies sunset tools blocked from execution
+
+Integration tests:
+
+- `tests/integration/test_tool_lifecycle_regression.py::TestToolLifecycleInvocationRegression::test_tool_invocation_blocked_after_scheduler_disables` — End-to-end flow: scheduler sunset → invocation blocked
+- `tests/integration/test_tool_lifecycle_regression.py::TestToolLifecycleInvocationRegression::test_concurrent_invocations_during_sunset_transition` — Race condition handling
+
+### Documentation
+
+See [Tool Lifecycle Management](../manage/tool-lifecycle.md) for end-user documentation.
+
 ## Known gaps and follow-ups
 
 - **[#4207] — e2e coverage for non-MCP paths.** REST (incl. OpenAPI-imported) tools have Validator B as their only gateway-side enforcement, and A2A has none (see the "option B" item below). Today those paths are covered by unit tests but not by `make test-mcp-protocol-e2e` e2e tests.

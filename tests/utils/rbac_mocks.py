@@ -103,6 +103,9 @@ class MockPermissionService:
         team_id: Optional[str] = None,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
+        token_teams: Optional[list] = None,
+        allow_admin_bypass: bool = True,
+        **kwargs,
     ) -> bool:
         """Mock permission check that returns configured result.
 
@@ -114,6 +117,9 @@ class MockPermissionService:
             team_id: Optional team context
             ip_address: Optional IP address
             user_agent: Optional user agent
+            token_teams: Optional token teams for scoping
+            allow_admin_bypass: Whether to allow admin bypass
+            **kwargs: Additional keyword arguments (ignored)
 
         Returns:
             bool: Permission result

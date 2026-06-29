@@ -629,6 +629,156 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
   $BASE_URL/tools/$TOOL_ID | jq '.'
 ```
 
+### Tool Lifecycle Management
+
+Tools have three lifecycle states: **Active → Deprecated → Sunset**. See [Tool Lifecycle Management](./tool-lifecycle.md) for complete documentation.
+
+#### Deprecate a Tool
+
+When deprecating a tool, you **must** provide a `sunsetDate` (future date in UTC):
+
+```bash
+# Deprecate tool with 90-day sunset period
+curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "deprecated": true,
+    "sunsetDate": "2026-12-31T23:59:59Z"
+  }' \
+  $BASE_URL/tools/$TOOL_ID | jq '.'
+```
+
+**Response with lifecycle fields:**
+
+```json
+{
+  "id": 123,
+  "name": "legacy_tool",
+  "description": "Old tool being phased out",
+  "deprecated": true,
+  "sunsetDate": "2026-12-31T23:59:59Z",
+  "enabled": true,
+  "lifecycleState": "deprecated",
+  "daysUntilSunset": 189,
+  "isExecutable": true,
+  ...
+}
+```
+
+#### Lifecycle Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `deprecated` | boolean | Whether tool is deprecated |
+| `sunsetDate` | string (ISO 8601) | When tool will be automatically disabled (required when `deprecated=true`) |
+| `enabled` | boolean | Whether tool is currently enabled |
+| `lifecycleState` | string | Current state: `active`, `deprecated`, or `sunset` (read-only) |
+| `daysUntilSunset` | integer | Days remaining until sunset (null for active tools, read-only) |
+| `isExecutable` | boolean | Whether tool can be invoked (read-only) |
+
+#### Validation Rules
+
+```bash
+# ❌ FAILS: sunsetDate required when deprecated=true
+curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"deprecated": true}' \
+  $BASE_URL/tools/$TOOL_ID
+# Response: {"detail": "sunsetDate is required when deprecated=True. Please provide a future date when this tool will be sunset."}
+
+# ❌ FAILS: sunsetDate must be in the future
+curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "deprecated": true,
+    "sunsetDate": "2020-01-01T00:00:00Z"
+  }' \
+  $BASE_URL/tools/$TOOL_ID
+# Response: {"detail": "sunsetDate must be in the future. Provided: 2020-01-01T00:00:00+00:00, Current time: 2026-06-26T..."}
+
+# ✅ SUCCEEDS: Valid future sunsetDate
+curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "deprecated": true,
+    "sunsetDate": "2026-12-31T23:59:59Z"
+  }' \
+  $BASE_URL/tools/$TOOL_ID | jq '.'
+```
+
+#### Resurrect a Tool
+
+Clear deprecation flag to resurrect a sunset tool:
+
+```bash
+# Setting deprecated=false automatically clears sunsetDate
+curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"deprecated": false}' \
+  $BASE_URL/tools/$TOOL_ID | jq '.'
+```
+
+**Response:**
+
+```json
+{
+  "id": 123,
+  "name": "legacy_tool",
+  "deprecated": false,
+  "sunsetDate": null,
+  "enabled": true,
+  "lifecycleState": "active",
+  "daysUntilSunset": null,
+  "isExecutable": true,
+  ...
+}
+```
+
+#### View Lifecycle State
+
+```bash
+# List all tools (excludes sunset tools by default)
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools | jq '.'
+
+# Include sunset tools (admin view)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tools?include_inactive=true" | jq '.'
+
+# Filter deprecated tools only
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools | \
+  jq '.tools[] | select(.lifecycleState == "deprecated")'
+
+# Check days until sunset for deprecated tools
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools | \
+  jq '.tools[] | select(.deprecated == true) | {name, daysUntilSunset}'
+```
+
+#### Automated Sunset
+
+Tools are automatically disabled when `sunsetDate` is reached:
+
+- Scheduler runs every 60 minutes (configurable via `SUNSET_SCHEDULER_INTERVAL_MINUTES`)
+- Sets `enabled=false` for tools past their `sunsetDate`
+- Invalidates tool cache across all gateway instances
+- Sunset tools return `404 Not Found` when invoked
+
+```bash
+# After sunset date passes, tool becomes unavailable
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/call",
+    "params": {
+      "name": "sunset_tool",
+      "arguments": {}
+    }
+  }' \
+  $BASE_URL/rpc
+# Response: {"error": {"code": -32603, "message": "Tool 'sunset_tool' has been sunset and can no longer be executed. Sunset date: 2026-06-26. Please update your agent to use an alternative tool."}}
+```
+
 ### Enable/Disable Tool
 
 ```bash

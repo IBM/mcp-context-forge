@@ -169,6 +169,7 @@ def mock_tool(mock_gateway):
     tool.gateway_slug = "test-gateway"
     tool.enabled = True
     tool.deprecated = False
+    tool.sunset_date = None
     tool.reachable = True
     tool.team_id = None
     tool.owner_email = "admin@example.com"
@@ -222,6 +223,8 @@ def _make_tool_update(**overrides) -> MagicMock:
         visibility=None,
         auth=None,
         tags=None,
+        deprecated=None,
+        sunset_date=None,
     )
     defaults.update(overrides)
     for attr, value in defaults.items():
@@ -3830,6 +3833,7 @@ class TestToolNotificationMethods:
         tool.description = "A test tool"
         tool.enabled = True
         tool.reachable = True
+        tool.sunset_date = None
         return tool
 
     @pytest.mark.asyncio
@@ -5505,6 +5509,8 @@ class TestUpdateToolBranches:
         tool.version = 3
         tool.team_id = "team-1"
         tool.visibility = "public"
+        tool.deprecated = False
+        tool.sunset_date = None
 
         tool_update = MagicMock(spec=ToolUpdate)
         tool_update.name = "new_name"
@@ -5523,6 +5529,8 @@ class TestUpdateToolBranches:
         tool_update.visibility = "team"
         tool_update.auth = None
         tool_update.tags = ["api", "v2"]
+        tool_update.deprecated = None
+        tool_update.sunset_date = None
 
         db = MagicMock()
 
@@ -5564,6 +5572,8 @@ class TestUpdateToolBranches:
         tool.version = None
         tool.team_id = None
         tool.visibility = "public"
+        tool.deprecated = False
+        tool.sunset_date = None
 
         tool_update = MagicMock(spec=ToolUpdate)
         tool_update.name = None
@@ -5582,6 +5592,8 @@ class TestUpdateToolBranches:
         tool_update.visibility = None
         tool_update.auth = None
         tool_update.tags = None
+        tool_update.deprecated = None
+        tool_update.sunset_date = None
 
         db = MagicMock()
         with (
@@ -5602,6 +5614,8 @@ class TestUpdateToolBranches:
         tool.custom_name = "old_name"
         tool.team_id = "team-1"
         tool.visibility = "team"
+        tool.deprecated = False
+        tool.sunset_date = None
 
         tool_update = MagicMock(spec=ToolUpdate)
         tool_update.name = "conflict_name"
@@ -5620,12 +5634,16 @@ class TestUpdateToolBranches:
         tool_update.visibility = "team"
         tool_update.auth = None
         tool_update.tags = None
+        tool_update.deprecated = None
+        tool_update.sunset_date = None
 
         existing = MagicMock()
         existing.custom_name = "conflict_name"
         existing.enabled = True
         existing.id = "t2"
         existing.visibility = "team"
+        existing.deprecated = False
+        existing.sunset_date = None
 
         db = MagicMock()
         with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing]):
@@ -5651,6 +5669,8 @@ class TestUpdateToolBranches:
         existing.enabled = True
         existing.id = "t2"
         existing.visibility = "team"
+        existing.deprecated = False
+        existing.sunset_date = None
 
         db = MagicMock()
         with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing]):
@@ -5693,6 +5713,8 @@ class TestUpdateToolBranches:
         existing = MagicMock()
         existing.custom_name = "conflict_name"
         existing.enabled = True
+        existing.deprecated = False
+        existing.sunset_date = None
         existing.id = "t2"
         existing.visibility = "public"
 
@@ -5738,6 +5760,8 @@ class TestUpdateToolBranches:
         existing.enabled = True
         existing.id = "t2"
         existing.visibility = "team"
+        existing.deprecated = False
+        existing.sunset_date = None
 
         db = MagicMock()
         with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing]):
@@ -5762,6 +5786,8 @@ class TestUpdateToolBranches:
         existing.enabled = True
         existing.id = "t2"
         existing.visibility = "public"
+        existing.deprecated = False
+        existing.sunset_date = None
 
         db = MagicMock()
         with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing]):
@@ -5786,6 +5812,8 @@ class TestUpdateToolBranches:
         existing.enabled = True
         existing.id = "t2"
         existing.visibility = "public"
+        existing.deprecated = False
+        existing.sunset_date = None
 
         db = MagicMock()
         with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing]):
@@ -5810,6 +5838,8 @@ class TestUpdateToolBranches:
         existing.enabled = True
         existing.id = "t2"
         existing.visibility = "team"
+        existing.deprecated = False
+        existing.sunset_date = None
 
         db = MagicMock()
         with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing]):
@@ -5863,6 +5893,8 @@ class TestUpdateToolBranches:
         existing.enabled = True
         existing.id = "t2"
         existing.visibility = "private"
+        existing.deprecated = False
+        existing.sunset_date = None
 
         db = MagicMock()
         with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing]):
@@ -5888,6 +5920,8 @@ class TestUpdateToolBranches:
         existing.enabled = True
         existing.id = "t2"
         existing.visibility = "private"
+        existing.deprecated = False
+        existing.sunset_date = None
 
         db = MagicMock()
         with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing]):
@@ -5914,6 +5948,8 @@ class TestUpdateToolBranches:
         existing.enabled = True
         existing.id = "t2"
         existing.visibility = "public"
+        existing.deprecated = False
+        existing.sunset_date = None
 
         db = MagicMock()
         # The conflict check should query for "display_name" (the unchanged custom_name),

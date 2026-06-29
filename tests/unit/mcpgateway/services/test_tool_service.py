@@ -439,6 +439,7 @@ def mock_tool(mock_gateway):
     tool.owner_email = "admin@admin.org"
     tool.enabled = True
     tool.deprecated = False
+    tool.sunset_date = None
     tool.reachable = True
     tool.auth_type = None
     tool.auth_username = None
@@ -3756,6 +3757,7 @@ class TestToolService:
             assert call_kwargs["tool_id"] == str(mock_tool.id)
             assert call_kwargs["success"] is False
             assert call_kwargs["error_message"] == "HTTP error"
+
 
     @pytest.mark.asyncio
     async def test_invoke_tool_with_metadata(self, tool_service, mock_tool, test_db):
@@ -7538,6 +7540,7 @@ class TestToolServiceHelpers:
             grpc_service_id=None,
             enabled=True,
             deprecated=False,
+            sunset_date=None,
             reachable=True,
             tags=None,
             team_id="team-1",
@@ -9518,6 +9521,7 @@ class TestRustMcpExecutionPlan:
             original_description="tool-one",
             enabled=True,
             deprecated=False,
+            sunset_date=None,
             reachable=True,
             visibility="public",
             team_id=None,
@@ -9595,6 +9599,7 @@ class TestRustMcpExecutionPlan:
             original_description="tool-one",
             enabled=True,
             deprecated=False,
+            sunset_date=None,
             reachable=True,
             visibility="public",
             team_id=None,
@@ -10622,6 +10627,7 @@ class TestGrpcToolInvocation:
         tool.display_name = "Test Svc Dostuff"
         tool.enabled = True
         tool.deprecated = False
+        tool.sunset_date = None
         tool.reachable = True
         tool.tags = []
         tool.team_id = None
@@ -10700,11 +10706,430 @@ class TestGrpcToolInvocation:
                 await tool_service.invoke_tool(test_db, "test.Svc.DoStuff", {}, request_headers=None)
 
 
-# Coverage decision-record (B7 anti-regression):
-#   ``invoke_tool`` has three byte-identical ``except asyncio.CancelledError: raise``
-#   clauses (REST ~5446, MCP ~5632, gRPC 5847) plus the gRPC timeout post-invoke hook
-#   (~5851). The gRPC clauses are exercised by ``TestGrpcToolInvocation``. Equivalent
-#   REST/MCP tests require coaxing CancelledError through ``asyncio.wait_for``, which
-#   converts cancellation into TimeoutError in some Python event-loop states. Since the
-#   pattern is structurally identical in all three branches, protecting it in one branch
-#   (gRPC) is sufficient to detect a regression that would affect all three.
+class TestToolLifecycleSerialization:
+    """Tests for tool lifecycle serialization to cover missing lines."""
+
+    @pytest.fixture
+    def tool_service(self):
+        """Create a ToolService instance."""
+        from mcpgateway.services.tool_service import ToolService
+        return ToolService()
+
+
+    def test_convert_tool_to_read_with_sunset_date_mapping(self, tool_service):
+        """Test that sunset_date is mapped to sunsetDate in camelCase (line 1334)."""
+        from datetime import datetime, timezone
+        from types import SimpleNamespace
+
+        mock_tool = SimpleNamespace(
+            id="tool-1",
+            name="test_tool",
+            original_name="test_tool",
+            url="http://example.com/tool",
+            description="Test tool",
+            integration_type="REST",
+            input_schema={},
+            jsonpath_filter="",
+            deprecated=False,
+            sunset_date=datetime(2026, 12, 31, tzinfo=timezone.utc),
+            enabled=True,
+            auth_type=None,
+            auth_value=None,
+            request_type="POST",
+            annotations={},
+            headers=None,
+            visibility="public",
+            owner_email=None,
+            team_id=None,
+            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            reachable=True,
+            gateway_id="gw-1",
+            metrics_summary={
+                "total_executions": 0,
+                "success_count": 0,
+                "error_count": 0,
+                "avg_duration_ms": 0,
+            }
+        )
+
+        result = tool_service.convert_tool_to_read(
+            mock_tool,
+            include_metrics=False,
+            include_auth=False,
+        )
+
+        # Verify sunset_date is mapped to sunsetDate (line 1334)
+        assert hasattr(result, "sunset_date")
+        assert result.sunset_date == datetime(2026, 12, 31, tzinfo=timezone.utc)
+
+    def test_convert_tool_to_read_sunset_lifecycle_state(self, tool_service):
+        """Test that sunset tools (disabled, deprecated, with sunset_date) get lifecycle_state='sunset' (lines 1339-1340)."""
+        from datetime import datetime, timezone
+        from types import SimpleNamespace
+
+        mock_tool = SimpleNamespace(
+            id="tool-2",
+            name="sunset_tool",
+            original_name="sunset_tool",
+            url="http://example.com/tool",
+            description="Sunset tool",
+            integration_type="REST",
+            input_schema={},
+            jsonpath_filter="",
+            deprecated=True,
+            sunset_date=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            enabled=False,  # Tool has been disabled (sunset)
+            auth_type=None,
+            auth_value=None,
+            request_type="POST",
+            annotations={},
+            headers=None,
+            visibility="public",
+            owner_email=None,
+            team_id=None,
+            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            reachable=True,
+            gateway_id="gw-2",
+            metrics_summary={
+                "total_executions": 0,
+                "success_count": 0,
+                "error_count": 0,
+                "avg_duration_ms": 0,
+            }
+        )
+
+        result = tool_service.convert_tool_to_read(
+            mock_tool,
+            include_metrics=False,
+            include_auth=False,
+        )
+
+        # Verify lifecycle_state is 'sunset' and is_executable is False (lines 1339-1340)
+        assert result.lifecycle_state == "sunset"
+
+    def test_convert_tool_to_read_deprecated_with_future_sunset(self, tool_service):
+        """Test deprecated tool with future sunset date gets lifecycle_state='deprecated' (lines 1343, 1353-1354, 1356-1357)."""
+        from datetime import datetime, timedelta, timezone
+        from types import SimpleNamespace
+
+        future_sunset = datetime.now(timezone.utc) + timedelta(days=30)
+
+        mock_tool = SimpleNamespace(
+            id="tool-3",
+            name="deprecated_tool",
+            original_name="deprecated_tool",
+            url="http://example.com/tool",
+            description="Deprecated tool",
+            integration_type="REST",
+            input_schema={},
+            jsonpath_filter="",
+            deprecated=True,
+            sunset_date=future_sunset,
+            enabled=True,  # Still enabled
+            auth_type=None,
+            auth_value=None,
+            request_type="POST",
+            annotations={},
+            headers=None,
+            visibility="public",
+            owner_email=None,
+            team_id=None,
+            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            reachable=True,
+            gateway_id="gw-3",
+            metrics_summary={
+                "total_executions": 0,
+                "success_count": 0,
+                "error_count": 0,
+                "avg_duration_ms": 0,
+            }
+        )
+
+        result = tool_service.convert_tool_to_read(
+            mock_tool,
+            include_metrics=False,
+            include_auth=False,
+        )
+
+        # Verify lifecycle_state is 'deprecated' and is_executable is True
+        assert result.lifecycle_state == "deprecated"
+        assert result.is_executable is True
+        # Verify days_until_sunset is calculated
+        assert result.days_until_sunset is not None
+        assert result.days_until_sunset >= 29  # Should be around 30 days
+
+    def test_convert_tool_to_read_deprecated_past_sunset_still_enabled(self, tool_service):
+        """Test deprecated tool past sunset but still enabled gets lifecycle_state='sunset' (lines 1343, 1347, 1349-1350)."""
+        from datetime import datetime, timedelta, timezone
+        from types import SimpleNamespace
+
+        past_sunset = datetime.now(timezone.utc) - timedelta(days=10)
+
+        mock_tool = SimpleNamespace(
+            id="tool-4",
+            name="past_sunset_tool",
+            original_name="past_sunset_tool",
+            url="http://example.com/tool",
+            description="Past sunset tool",
+            integration_type="REST",
+            input_schema={},
+            jsonpath_filter="",
+            deprecated=True,
+            sunset_date=past_sunset,
+            enabled=True,  # Still enabled (scheduler hasn't disabled it yet)
+            auth_type=None,
+            auth_value=None,
+            request_type="POST",
+            annotations={},
+            headers=None,
+            visibility="public",
+            owner_email=None,
+            team_id=None,
+            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            reachable=True,
+            gateway_id="gw-4",
+            metrics_summary={
+                "total_executions": 0,
+                "success_count": 0,
+                "error_count": 0,
+                "avg_duration_ms": 0,
+            }
+        )
+
+        result = tool_service.convert_tool_to_read(
+            mock_tool,
+            include_metrics=False,
+            include_auth=False,
+        )
+
+        # Verify lifecycle_state is 'sunset' and is_executable is False
+        assert result.lifecycle_state == "sunset"
+        assert result.is_executable is False
+
+    def test_convert_tool_to_read_deprecated_naive_sunset_date(self, tool_service):
+        """Test deprecated tool with naive (no timezone) sunset date is handled correctly (lines 1345-1346)."""
+        from datetime import datetime, timedelta, timezone
+        from types import SimpleNamespace
+
+        # Create a naive datetime (no timezone info)
+        future_sunset_naive = datetime.now() + timedelta(days=15)
+
+        mock_tool = SimpleNamespace(
+            id="tool-5",
+            name="naive_sunset_tool",
+            original_name="naive_sunset_tool",
+            url="http://example.com/tool",
+            description="Naive sunset tool",
+            integration_type="REST",
+            input_schema={},
+            jsonpath_filter="",
+            deprecated=True,
+            sunset_date=future_sunset_naive,  # Naive datetime
+            enabled=True,
+            auth_type=None,
+            auth_value=None,
+            request_type="POST",
+            annotations={},
+            headers=None,
+            visibility="public",
+            owner_email=None,
+            team_id=None,
+            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            reachable=True,
+            gateway_id="gw-5",
+            metrics_summary={
+                "total_executions": 0,
+                "success_count": 0,
+                "error_count": 0,
+                "avg_duration_ms": 0,
+            }
+        )
+
+        result = tool_service.convert_tool_to_read(
+            mock_tool,
+            include_metrics=False,
+            include_auth=False,
+        )
+
+        # Should handle naive datetime and still work
+        assert result.lifecycle_state == "deprecated"
+        assert result.is_executable is True
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_sunset_date_check_blocks_execution(self, tool_service, test_db):
+        """Test that tools past their sunset date are blocked from execution (lines 4566-4568, 4570-4572, 4574-4575)."""
+        from datetime import datetime, timedelta, timezone
+        from types import SimpleNamespace
+
+        past_sunset = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+
+        # Mock tool lookup cache to return a tool with past sunset date
+        cached_payload = {
+            "status": "active",
+            "tool": {
+                "id": "tool-sunset",
+                "name": "sunset_tool",
+                "original_name": "sunset_tool",
+                "url": "http://example.com/tool",
+                "integration_type": "REST",
+                "request_type": "POST",
+                "auth_type": None,
+                "headers": {},
+                "annotations": {},
+                "jsonpath_filter": "",
+                "output_schema": {},
+                "enabled": True,
+                "reachable": True,
+                "visibility": "public",
+                "owner_email": None,
+                "team_id": None,
+                "gateway_id": "gw-sunset",
+                "deprecated": True,
+                "sunset_date": past_sunset,  # Past sunset date as ISO string
+            },
+            "gateway": {
+                "id": "gw-sunset",
+                "name": "sunset-gw",
+                "url": "http://example.com/gateway",
+                "auth_type": None,
+                "passthrough_headers": [],
+            },
+        }
+
+        lookup_cache = SimpleNamespace(
+            enabled=True,
+            get=AsyncMock(return_value=cached_payload),
+            set=AsyncMock(),
+            set_negative=AsyncMock(),
+        )
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=lookup_cache),
+            patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
+        ):
+            # Should raise ToolInvocationError because tool is past sunset
+            with pytest.raises(ToolInvocationError) as exc_info:
+                await tool_service.invoke_tool(test_db, "sunset_tool", {"param": "value"}, request_headers=None)
+
+            # Verify error message mentions sunset
+            assert "has been sunset" in str(exc_info.value)
+            assert "can no longer be executed" in str(exc_info.value)
+
+            # Verify negative cache was set
+            lookup_cache.set_negative.assert_awaited_once_with("sunset_tool", "sunset")
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_sunset_date_naive_timezone(self, tool_service, test_db):
+        """Test that naive sunset dates are handled correctly (lines 4570-4571)."""
+        from datetime import datetime, timedelta
+        from types import SimpleNamespace
+
+        # Create a naive datetime string (no timezone)
+        past_sunset_naive = (datetime.now() - timedelta(days=5)).isoformat()
+
+        cached_payload = {
+            "status": "active",
+            "tool": {
+                "id": "tool-naive-sunset",
+                "name": "naive_sunset_tool",
+                "original_name": "naive_sunset_tool",
+                "url": "http://example.com/tool",
+                "integration_type": "REST",
+                "request_type": "POST",
+                "auth_type": None,
+                "headers": {},
+                "annotations": {},
+                "jsonpath_filter": "",
+                "output_schema": {},
+                "enabled": True,
+                "reachable": True,
+                "visibility": "public",
+                "owner_email": None,
+                "team_id": None,
+                "gateway_id": "gw-naive",
+                "deprecated": True,
+                "sunset_date": past_sunset_naive,  # Naive datetime
+            },
+            "gateway": {
+                "id": "gw-naive",
+                "name": "naive-gw",
+                "url": "http://example.com/gateway",
+                "auth_type": None,
+                "passthrough_headers": [],
+            },
+        }
+
+        lookup_cache = SimpleNamespace(
+            enabled=True,
+            get=AsyncMock(return_value=cached_payload),
+            set=AsyncMock(),
+            set_negative=AsyncMock(),
+        )
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=lookup_cache),
+            patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
+        ):
+            # Should raise ToolInvocationError even with naive datetime
+            with pytest.raises(ToolInvocationError) as exc_info:
+                await tool_service.invoke_tool(test_db, "naive_sunset_tool", {"param": "value"}, request_headers=None)
+
+            assert "has been sunset" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_update_tool_deprecated_false_clears_sunset_date(self, tool_service, test_db):
+        """Test that setting deprecated=False clears sunset_date in service layer (line 6477)."""
+        from datetime import datetime, timedelta, timezone
+        from mcpgateway.db import Tool as DbTool
+        from mcpgateway.schemas import ToolUpdate
+
+        # Create a deprecated tool with a sunset date
+        future_date = datetime.now(timezone.utc) + timedelta(days=30)
+        tool = DbTool(
+            original_name="test_deprecated_tool",
+            custom_name="test_deprecated_tool",
+            custom_name_slug="test-deprecated-tool",
+            display_name="Test Deprecated Tool",
+            url="http://example.com/tool",
+            description="Tool for testing deprecated=False clearing sunset_date",
+            input_schema={"type": "object"},
+            deprecated=True,
+            sunset_date=future_date,
+            enabled=True,
+        )
+        test_db.add(tool)
+        test_db.commit()
+        test_db.refresh(tool)
+
+        # Verify tool starts with deprecated=True and sunset_date set
+        assert tool.deprecated is True
+        assert tool.sunset_date is not None
+
+        # Update tool to set deprecated=False WITHOUT explicitly setting sunset_date
+        tool_update = ToolUpdate(deprecated=False)
+
+        # Mock cache to avoid Redis dependency
+        with patch("mcpgateway.services.tool_service._get_registry_cache") as mock_cache:
+            mock_registry = AsyncMock()
+            mock_cache.return_value = mock_registry
+
+            # Update the tool
+            updated_tool = await tool_service.update_tool(
+                test_db,
+                str(tool.id),
+                tool_update,
+            )
+
+        # Verify sunset_date was cleared (line 6477)
+        assert updated_tool.deprecated is False
+        assert updated_tool.sunset_date is None, "sunset_date should be cleared when deprecated is set to False"
+
+        # Verify in database
+        test_db.refresh(tool)
+        assert tool.deprecated is False
+        assert tool.sunset_date is None
