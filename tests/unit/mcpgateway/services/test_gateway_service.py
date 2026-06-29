@@ -1571,9 +1571,11 @@ class TestGatewayService:
         mock_gateway_read.masked.return_value = mock_gateway_read
 
         with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
-            with pytest.raises(GatewayConnectionError):
+            with pytest.raises(GatewayConnectionError) as exc_info:
                 await gateway_service.update_gateway(test_db, 1, gateway_update)
 
+        # Secret query-param value must be sanitized out of the propagated message
+        assert "secret123" not in str(exc_info.value)
         test_db.commit.assert_not_called()
         test_db.rollback.assert_called_once()
 
