@@ -170,6 +170,7 @@ from mcpgateway.services.plugin_service import get_plugin_service
 from mcpgateway.services.prompt_service import PromptArgumentsJSONError, PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError
 from mcpgateway.services.root_service import RootService, RootServiceError, RootServiceNotFoundError
+from mcpgateway.services.sbom_service import SBOMService
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.tag_service import TagService
@@ -17836,6 +17837,62 @@ async def update_plugin_mode(
     )
 
     return PluginModeUpdateResponse(plugin=name, mode=mode, redis_persisted=redis_persisted)
+
+@admin_router.get("/sbom/partial")
+async def get_sbom_partial(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> HTMLResponse:  # pylint: disable=unused-argument
+    """Render the SBOM dashboard partial for the admin UI."""
+    LOGGER.debug(f"User {get_user_email(user)} requested SBOM partial")
+
+    stats: dict[str, Any] = {
+        "total_sboms": 0,
+        "total_components": 0,
+        "unique_ecosystems": [],
+        "ecosystem_count": 0,
+    }
+    license_summary: dict[str, int] = {}
+    recent_sboms: list[dict[str, Any]] = []
+    load_error: str | None = None
+
+    try:
+        # First-Party
+        from plugins.sbom_generator.storage.models import SBOMDocumentDB
+
+        sbom_service = SBOMService(db)
+        stats = sbom_service.get_statistics()
+        license_summary = sbom_service.get_license_summary()
+
+        docs = (
+            db.query(SBOMDocumentDB)
+            .order_by(SBOMDocumentDB.generated_at.desc())
+            .limit(20)
+            .all()
+        )
+
+        recent_sboms = [
+            {
+                "id": str(doc.id),
+                "server_id": str(doc.server_id),
+                "format": doc.format,
+                "generated_at": doc.generated_at,
+                "main_component_name": doc.main_component_name,
+                "main_component_version": doc.main_component_version,
+                "created_at": doc.created_at,
+            }
+            for doc in docs
+        ]
+    except Exception as exc:  # pragma: no cover - UI fallback path
+        LOGGER.warning("Failed to load SBOM UI data: %s", exc)
+        load_error = str(exc)
+
+    context = {
+        "request": request,
+        "root_path": request.scope.get("root_path", ""),
+        "stats": stats,
+        "license_summary": license_summary,
+        "recent_sboms": recent_sboms,
+        "load_error": load_error,
+    }
+    return request.app.state.templates.TemplateResponse("sbom_partial.html", context)
 
 
 ##################################################

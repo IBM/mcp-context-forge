@@ -1,0 +1,108 @@
+<div class="space-y-6">
+  <div class="bg-gradient-to-r from-emerald-600 to-cyan-700 rounded-lg shadow-lg p-6 text-white">
+    <h2 class="text-2xl font-bold">SBOM Dashboard</h2>
+    <p class="text-emerald-100 mt-2">
+      Software Bill of Materials coverage, component inventory, and license visibility.
+    </p>
+  </div>
+
+  {% if load_error %}
+  <div class="bg-yellow-50 border border-yellow-300 text-yellow-800 px-4 py-3 rounded">
+    <strong class="font-semibold">SBOM data could not be fully loaded.</strong>
+    <div class="text-sm mt-1">{{ load_error }}</div>
+  </div>
+  {% endif %}
+
+  <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-5">
+      <div class="text-sm text-gray-500 dark:text-gray-400">Total SBOMs</div>
+      <div class="text-3xl font-bold text-gray-900 dark:text-gray-100 mt-1">{{ stats.total_sboms }}</div>
+    </div>
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-5">
+      <div class="text-sm text-gray-500 dark:text-gray-400">Total Components</div>
+      <div class="text-3xl font-bold text-gray-900 dark:text-gray-100 mt-1">{{ stats.total_components }}</div>
+    </div>
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-5">
+      <div class="text-sm text-gray-500 dark:text-gray-400">Ecosystems</div>
+      <div class="text-3xl font-bold text-gray-900 dark:text-gray-100 mt-1">{{ stats.ecosystem_count }}</div>
+    </div>
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-5">
+      <div class="text-sm text-gray-500 dark:text-gray-400">Unique Licenses</div>
+      <div class="text-3xl font-bold text-gray-900 dark:text-gray-100 mt-1">{{ license_summary | length }}</div>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-5">
+      <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Top Licenses</h3>
+      {% if license_summary %}
+      <div class="space-y-2">
+        {% for license_name, count in (license_summary | dictsort(by='value', reverse=True))[:10] %}
+        <div class="flex items-center justify-between px-3 py-2 rounded bg-gray-50 dark:bg-gray-700">
+          <span class="text-sm text-gray-800 dark:text-gray-200">{{ license_name }}</span>
+          <span class="text-xs font-semibold px-2 py-1 rounded bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-100">{{ count }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="text-sm text-gray-500 dark:text-gray-400">No license data available yet.</p>
+      {% endif %}
+    </div>
+
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-5">
+      <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Ecosystem Coverage</h3>
+      {% if stats.unique_ecosystems %}
+      <div class="flex flex-wrap gap-2">
+        {% for ecosystem in stats.unique_ecosystems %}
+        <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-100">{{ ecosystem }}</span>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="text-sm text-gray-500 dark:text-gray-400">No ecosystems detected yet.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-5">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Recent SBOM Documents</h3>
+      <a href="{{ root_path }}/sbom/stats" target="_blank" class="text-sm text-cyan-700 dark:text-cyan-300 hover:underline">Open API stats</a>
+    </div>
+
+    {% if recent_sboms %}
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead class="bg-gray-50 dark:bg-gray-700">
+          <tr>
+            <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600 dark:text-gray-300 uppercase">Generated</th>
+            <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600 dark:text-gray-300 uppercase">Server ID</th>
+            <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600 dark:text-gray-300 uppercase">Format</th>
+            <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600 dark:text-gray-300 uppercase">Main Component</th>
+            <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600 dark:text-gray-300 uppercase">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+          {% for sbom in recent_sboms %}
+          <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+            <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ sbom.generated_at }}</td>
+            <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300 font-mono">{{ sbom.server_id }}</td>
+            <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300 uppercase">{{ sbom.format }}</td>
+            <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+              {{ sbom.main_component_name or "N/A" }}
+              {% if sbom.main_component_version %}
+              <span class="text-xs text-gray-500 dark:text-gray-400">@ {{ sbom.main_component_version }}</span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-3 text-sm">
+              <a href="{{ root_path }}/sbom/{{ sbom.id }}" target="_blank" class="text-cyan-700 dark:text-cyan-300 hover:underline">View JSON</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="text-sm text-gray-500 dark:text-gray-400">No SBOM documents found.</p>
+    {% endif %}
+  </div>
+</div>

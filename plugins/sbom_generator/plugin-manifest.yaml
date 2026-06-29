@@ -1,0 +1,148 @@
+name: SBOM Generator
+version: 0.1.0
+description: |
+  Generates Software Bill of Materials (SBOM) for MCP servers to enable
+  dependency visibility, CVE correlation, and license compliance.
+  
+  Supports CycloneDX and SPDX formats, multiple package ecosystems,
+  container image analysis, and source code scanning.
+
+author: MCP Gateway Contributors
+license: Apache-2.0
+
+# Plugin capabilities
+capabilities:
+  - sbom_generation
+  - dependency_extraction
+  - license_detection
+  - cve_correlation
+
+# Hook points where this plugin operates
+hooks:
+  - assessment_post_scan  # Triggered after MCP server assessment
+
+# Execution mode
+mode: enforce  # SBOM generation failures block server registration
+
+# Execution priority (higher number = later execution)
+priority: 20  # Run after security scanners, before final approval
+
+# Plugin configuration schema
+config_schema:
+  type: object
+  properties:
+    # Generator settings
+    generator:
+      type: string
+      enum: [syft]
+      default: syft
+      description: SBOM generation tool to use
+    
+    format:
+      type: string
+      enum: [cyclonedx, spdx]
+      default: cyclonedx
+      description: Primary SBOM output format
+    
+    spec_version:
+      type: string
+      default: "1.5"
+      description: SBOM format specification version
+    
+    # Extraction settings
+    include_dev_deps:
+      type: boolean
+      default: false
+      description: Include development dependencies
+    
+    include_files:
+      type: boolean
+      default: false
+      description: Include file-level components in SBOM
+    
+    extraction_timeout:
+      type: integer
+      default: 300
+      description: Timeout for extraction in seconds
+    
+    # License settings
+    detect_licenses:
+      type: boolean
+      default: true
+      description: Attempt to detect component licenses
+    
+    blocked_licenses:
+      type: array
+      items:
+        type: string
+      default:
+        - GPL-3.0
+        - AGPL-3.0
+      description: Licenses that block server registration
+    
+    flagged_licenses:
+      type: array
+      items:
+        type: string
+      default: []
+      description: Licenses that require manual review
+    
+    # Storage settings
+    store_full_sbom:
+      type: boolean
+      default: true
+      description: Store complete SBOM document in database
+    
+    retention_days:
+      type: integer
+      default: 365
+      description: Number of days to retain SBOM documents
+    
+    compress_sbom:
+      type: boolean
+      default: false
+      description: Compress SBOM documents before storage
+    
+    # Performance tuning
+    max_workers:
+      type: integer
+      default: 2
+      description: Maximum concurrent extraction workers
+    
+    cache_ttl:
+      type: integer
+      default: 3600
+      description: Cache TTL for SBOM results in seconds
+  
+  required:
+    - generator
+    - format
+
+# Dependencies
+dependencies:
+  external:
+    - syft  # Required for SBOM generation
+  python:
+    - pydantic>=2.0.0
+    - sqlalchemy>=2.0.0
+
+# Resource requirements
+resources:
+  memory_mb: 512
+  cpu_cores: 1
+  disk_mb: 100
+
+# Logging configuration
+logging:
+  level: INFO
+  format: json
+  
+# Metrics configuration
+metrics:
+  enabled: true
+  prefix: sbom_generator
+  
+# Health check
+health_check:
+  enabled: true
+  interval_seconds: 60

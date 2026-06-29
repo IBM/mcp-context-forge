@@ -1025,6 +1025,49 @@ plugins:
       include_payload_data: false
       max_payload_size: 1000
 
+  # SBOM Generator - Software Bill of Materials for MCP Servers
+  - name: "SBOMGenerator"
+    kind: "plugins.sbom_generator.sbom_generator.SBOMGeneratorPlugin"
+    description: "Generate and validate Software Bill of Materials (SBOM) for MCP servers using CycloneDX/SPDX formats"
+    version: "0.1.0"
+    author: "Ayo"
+    hooks: ["assessment_post_scan"]
+    tags: ["security", "compliance", "sbom", "dependencies", "licensing", "vulnerability"]
+    mode: "permissive"  # Use permissive to warn about issues without blocking
+    priority: 200  # Run during assessment phase
+    conditions: []  # Apply to all servers
+    config:
+      # Syft configuration for dependency extraction
+      syft:
+        enabled: true
+        format: "cyclonedx"  # cyclonedx | spdx
+        spec_version: "1.5"  # CycloneDX: 1.4, 1.5 | SPDX: 2.2, 2.3
+        include_dev_deps: false  # Include development dependencies
+        include_files: false  # Include file listings
+        timeout_seconds: 300  # Timeout for syft extraction
+      
+      # License policy configuration
+      license:
+        detect_licenses: true
+        # Blocked licenses that will cause violations
+        blocked_licenses:
+          - "GPL-3.0"
+          - "AGPL-3.0"
+        # Licenses to flag for review but not block
+        warn_licenses:
+          - "GPL-2.0"
+          - "LGPL-3.0"
+      
+      # Storage configuration
+      storage:
+        store_full_sbom: true  # Store complete SBOM document
+        retention_days: 365  # Keep SBOMs for 1 year
+        enable_compression: false  # Compress SBOM JSON in database
+      
+      # Behavior flags
+      fail_on_blocked_licenses: false  # Block deployment if blocked licenses detected
+      fail_on_missing_sbom: false  # Block deployment if SBOM generation fails
+
   # Content Moderation Plugin - AI-powered content safety using IBM, OpenAI, Azure, AWS
   - name: "ContentModeration"
     kind: "plugins.content_moderation.content_moderation.ContentModerationPlugin"

@@ -581,6 +581,13 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🧩</span>
               <span x-show="!sidebarCollapsed">Plugins</span>
             </a>
+            <a href="#sbom" id="tab-sbom" data-testid="sbom-tab"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('sbom')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🛡️</span>
+              <span x-show="!sidebarCollapsed">SBOM</span>
+            </a>
             {% endif %}
             {% if a2a_enabled and 'a2a_agent_plugin_bindings' not in hidden_sections %}
             <a href="#a2a-plugin-bindings" id="tab-a2a-plugin-bindings" data-testid="a2a-plugin-bindings-tab"
@@ -1553,6 +1560,9 @@
       {% if 'plugins' not in hidden_sections %}
       <!-- Plugins Panel -->
       <div id="plugins-panel" class="tab-panel hidden"></div>
+
+      <!-- SBOM Panel -->
+      <div id="sbom-panel" class="tab-panel hidden"></div>
       {% endif %}
 
       <!-- Performance Panel -->
