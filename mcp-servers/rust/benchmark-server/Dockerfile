@@ -4,13 +4,12 @@ FROM docker.io/library/rust:1.86-slim AS builder
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
-COPY mcp-servers/rust/benchmark-server/Cargo.toml ./mcp-servers/rust/benchmark-server/Cargo.toml
-RUN mkdir -p mcp-servers/rust/benchmark-server/src \
-    && echo "fn main() {}" > mcp-servers/rust/benchmark-server/src/main.rs \
-    && cargo build --release -p benchmark-server
-COPY mcp-servers/rust/benchmark-server/src ./mcp-servers/rust/benchmark-server/src
-RUN touch mcp-servers/rust/benchmark-server/src/main.rs \
-    && cargo build --release -p benchmark-server
+COPY mcp-servers/rust/benchmark-server ./mcp-servers/rust/benchmark-server
+COPY mcp-servers/rust/fast-time-server ./mcp-servers/rust/fast-time-server
+COPY mcp-servers/rust/filesystem-server ./mcp-servers/rust/filesystem-server
+COPY mcp-servers/rust/slow-time-server ./mcp-servers/rust/slow-time-server
+COPY a2a-agents/rust/a2a-echo-agent ./a2a-agents/rust/a2a-echo-agent
+RUN cargo build --release -p benchmark-server
 
 FROM registry.access.redhat.com/ubi10/ubi-minimal:10.2-1777462752
 RUN microdnf install -y ca-certificates curl shadow-utils \
