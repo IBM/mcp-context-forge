@@ -418,8 +418,12 @@ class Settings(BaseSettings):
         default=True,
         description="Require all authenticated users to exist in the database. When true, disables the platform admin bootstrap mechanism. Set REQUIRE_USER_IN_DB=false in .env for development environments that use the bootstrap admin path.",
     )
-    embed_environment_in_tokens: bool = Field(default=False, description="Embed environment claim in gateway-issued JWTs for environment isolation")
-    validate_token_environment: bool = Field(default=False, description="Reject tokens with mismatched environment claim (tokens without env claim are allowed)")
+    embed_environment_in_tokens: bool = Field(default=True, description="Embed environment claim in gateway-issued JWTs for environment isolation")
+    validate_token_environment: bool = Field(default=True, description="Reject tokens with mismatched environment claim (tokens without env claim are allowed)")
+    derive_key_per_environment: bool = Field(
+        default=False,
+        description="Derive a per-environment HMAC signing key from JWT_SECRET_KEY so tokens minted in one environment fail signature verification in another (HS* algorithms only). Enabling re-keys tokens; treat as a key rotation.",
+    )
 
     # CSRF Protection Configuration
     csrf_enabled: bool = Field(default=True, description="Enable CSRF protection for state-changing operations")
@@ -1569,6 +1573,29 @@ class Settings(BaseSettings):
         # Rate limiting warnings
         if self.tool_rate_limit > 1000:
             warnings.append("🚦 Tool rate limit is very high - may allow abuse")
+
+        # Cross-environment token isolation (GHSA-vgf8-3685-66j9)
+        if self.jwt_algorithm.upper().startswith("HS"):
+            hs_indistinguishable = self.jwt_audience == "mcpgateway-api" and self.jwt_issuer == "mcpgateway" and not self.derive_key_per_environment
+            if hs_indistinguishable:
+                warnings.append(
+                    "🌍 Environments are indistinguishable for JWTs - default JWT_AUDIENCE/JWT_ISSUER and no per-environment key. "
+                    "Set a distinct JWT_SECRET_KEY (and ideally JWT_AUDIENCE/JWT_ISSUER) per environment, or enable DERIVE_KEY_PER_ENVIRONMENT, "
+                    "to prevent tokens crossing DEV/STAGING/PROD."
+                )
+            if self.derive_key_per_environment and self.environment == "development":
+                warnings.append(
+                    "🌍 DERIVE_KEY_PER_ENVIRONMENT is enabled but ENVIRONMENT='development' (the default). "
+                    "If all deployments share the same ENVIRONMENT value, derived keys are identical and "
+                    "cross-environment isolation is not achieved. Set a distinct ENVIRONMENT per deployment "
+                    "(e.g., 'staging', 'production')."
+                )
+        else:
+            if not self.jwt_public_key_path or not self.jwt_private_key_path:
+                warnings.append(
+                    "🌍 Asymmetric JWT keys not configured per environment - tokens may be indistinguishable across environments. "
+                    "Use distinct key pairs per environment (DEV/STAGING/PROD); derivation does not apply to asymmetric algorithms."
+                )
 
         return warnings
 
