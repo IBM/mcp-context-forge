@@ -119,6 +119,7 @@ run-port: build
 # Auto-detect container runtime (prefers Docker, set CONTAINER_RUNTIME=podman to override)
 CONTAINER_RT := $(or $(CONTAINER_RUNTIME),$(shell command -v docker 2>/dev/null || command -v podman 2>/dev/null))
 CONTAINER_RT_NAME := $(notdir $(CONTAINER_RT))
+REPO_ROOT := $(abspath ../../..)
 
 IMAGE_NAME ?= mcpgateway/fast-time-server
 IMAGE_TAG ?= $(VERSION)
@@ -126,16 +127,16 @@ IMAGE ?= $(IMAGE_NAME):$(IMAGE_TAG)
 
 container-build:
 	@echo "$(C_BLUE)➜ Building container with $(CONTAINER_RT_NAME)...$(C_RESET)"
-	@$(CONTAINER_RT) build -f Containerfile -t $(IMAGE) .
+	@$(CONTAINER_RT) build -f $(REPO_ROOT)/mcp-servers/rust/fast-time-server/Containerfile -t $(IMAGE) $(REPO_ROOT)
 	@$(CONTAINER_RT) images $(IMAGE)
 
 container-run: container-build
 	@echo "$(C_BLUE)➜ Running container on :9080...$(C_RESET)"
-	@$(CONTAINER_RT) run --rm --name fast-time-server -p 9080:9080 $(IMAGE)
+	@$(CONTAINER_RT) run --rm --name fast-time-server -p 9080:8080 $(IMAGE)
 
 container-run-detached: container-build
 	@echo "$(C_BLUE)➜ Running container in background on :9080...$(C_RESET)"
-	@$(CONTAINER_RT) run -d --rm --name fast-time-server -p 9080:9080 $(IMAGE)
+	@$(CONTAINER_RT) run -d --rm --name fast-time-server -p 9080:8080 $(IMAGE)
 	@echo "$(C_GREEN)Container started. Use 'make container-stop' to stop.$(C_RESET)"
 
 container-stop:
