@@ -223,7 +223,7 @@ jobs:
 
                   echo "Waiting for fast-time-server..."
                   for i in {1..30}; do
-                    if curl -s http://localhost:9080/health >/dev/null 2>&1; then
+                    if curl -s http://localhost:8080/health >/dev/null 2>&1; then
                       echo "fast-time-server is up!"
                       break
                     fi
@@ -231,7 +231,7 @@ jobs:
                     sleep 2
                   done
 
-                  if ! curl -s http://localhost:9080/health >/dev/null 2>&1; then
+                  if ! curl -s http://localhost:8080/health >/dev/null 2>&1; then
                     echo "ERROR: fast-time-server failed to start"
                     cat fast-time-server.log
                     exit 1

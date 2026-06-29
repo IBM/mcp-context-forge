@@ -15,26 +15,24 @@ build_py = "mcpgateway.tools.builder.build_hooks.BuildPyWithUI"
 exclude-newer = "10 days"
 
 [tool.uv.exclude-newer-package]
-cpex = "2026-06-08T10:56:34Z"
-cpex-url-reputation = "2026-06-08T10:56:34Z"
-cpex-rate-limiter = "2026-06-16T23:59:59Z"
-cpex-encoded-exfil-detection = "2026-06-08T10:56:34Z"
-cpex-pii-filter = "2026-06-08T10:56:34Z"
-cpex-retry-with-backoff = "2026-06-08T10:56:34Z"
-cpex-secrets-detection = "2026-06-08T10:56:34Z"
-langchain-core = "2026-06-08T10:56:34Z"
-langsmith = "2026-06-08T10:56:34Z"
-opentelemetry-api = "2026-06-08T10:56:34Z"
-opentelemetry-sdk = "2026-06-08T10:56:34Z"
-opentelemetry-exporter-otlp-proto-grpc = "2026-06-08T10:56:34Z"
-opentelemetry-exporter-otlp-proto-http = "2026-06-08T10:56:34Z"
-opentelemetry-exporter-otlp-proto-common = "2026-06-08T10:56:34Z"
-opentelemetry-proto = "2026-06-08T10:56:34Z"
-opentelemetry-semantic-conventions = "2026-06-08T10:56:34Z"
-prometheus-fastapi-instrumentator = "2026-06-08T10:56:34Z"
-aiohttp = "2026-06-08T10:56:34Z"
-cryptography = "2026-06-17T23:59:59Z"
-starlette = "2026-06-17T23:59:59Z"
+msgpack = "2026-06-18T23:59:59Z"
+grpcio-reflection = "2026-06-18T23:59:59Z"
+sqlalchemy = "2026-06-18T23:59:59Z"
+starlette = "2026-06-18T23:59:59Z"
+cpex = "2026-06-18T23:59:59Z"
+cpex-url-reputation = "2026-06-24T23:59:59Z"
+cpex-rate-limiter = "2026-06-24T23:59:59Z"
+cpex-encoded-exfil-detection = "2026-06-24T23:59:59Z"
+cpex-pii-filter = "2026-06-24T23:59:59Z"
+cpex-retry-with-backoff = "2026-06-24T23:59:59Z"
+cpex-secrets-detection = "2026-06-24T23:59:59Z"
+granian = "2026-06-18T23:59:59Z"
+tornado = "2026-06-10T23:59:59Z"
+langsmith = "2026-06-20T23:59:59Z"
+# 8.0.1 fixes AttributeError: '_IncludedRouter' object has no attribute 'path'
+# raised on every request once FastAPI 0.137 / Starlette 0.42+ introduced
+# _IncludedRouter (upstream issue trallnag/prometheus-fastapi-instrumentator#370).
+prometheus-fastapi-instrumentator = "2026-06-22T23:59:59Z"
 
 
 [tool.uv.sources]
@@ -45,7 +43,7 @@ compliance-reference-server = { path = "mcp-servers/python/compliance_reference_
 # ----------------------------------------------------------------
 [project]
 name = "mcp-contextforge-gateway"
-version = "1.0.3"
+version = "1.0.4"
 description = "ContextForge AI Gateway — an AI gateway, registry, and proxy for MCP, A2A, and REST/gRPC APIs. Exposes a unified control plane with centralized governance, discovery, and observability. Optimizes agent and tool calling, and supports plugins."
 keywords = ["MCP","API","gateway","proxy","tools",
   "agents","agentic ai","model context protocol","multi-agent","fastapi",

@@ -59,7 +59,7 @@ STATIC_CONFIG_PATH = Path(__file__).resolve().parents[3] / "plugins" / "config.y
 JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")  # pragma: allowlist secret
 
 # Where fast-time-server is reachable for federation registration.
-FAST_TIME_URL = os.getenv("FAST_TIME_SERVER_URL", "http://localhost:9080/mcp")
+FAST_TIME_URL = os.getenv("FAST_TIME_SERVER_URL", "http://localhost:8080/mcp")
 
 # Bounded polling budget for asynchronous tool federation sync.
 _TOOL_SYNC_ATTEMPTS = 30

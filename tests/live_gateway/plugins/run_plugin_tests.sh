@@ -17,7 +17,7 @@
 #    REDIS_PORT          Redis port                     (default: 6379)
 #    VENV_DIR            Path to project virtualenv     (default: .venv)
 #    FAST_TIME_BIN       Path to fast-time-server bin   (default: auto-detected)
-#    FAST_TIME_PORT      fast-time-server port          (default: 9080)
+#    FAST_TIME_PORT      fast-time-server port          (default: 8080)
 # ===========================================================================
 set -euo pipefail
 
@@ -37,7 +37,7 @@ JWT_SECRET="${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}"
 REDIS_HOST="${REDIS_HOST:-127.0.0.1}"
 REDIS_PORT="${REDIS_PORT:-6379}"
 VENV_DIR="${VENV_DIR:-${PROJECT_ROOT}/.venv}"
-FAST_TIME_PORT="${FAST_TIME_PORT:-9080}"
+FAST_TIME_PORT="${FAST_TIME_PORT:-8080}"
 FAST_TIME_BIN="${FAST_TIME_BIN:-${PROJECT_ROOT}/mcp-servers/rust/fast-time-server/target/debug/fast-time-server}"
 
 # Args
