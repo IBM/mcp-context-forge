@@ -158,7 +158,7 @@ async def list_teams(
 ) -> Union[TeamListResponse, CursorPaginatedTeamsResponse]:
     """List teams visible to the caller.
 
-    - Administrators see all non-personal teams (paginated)
+    - Administrators see all non-personal teams plus their own personal team (paginated)
     - Regular users see only teams they are a member of (paginated client-side)
 
     Args:
@@ -194,16 +194,20 @@ async def list_teams(
             # If current request uses offset (skip), mapped to offset.
             # If cursor, mapped to cursor.
             # page is None, so returns Tuple
+            # personal_owner_email includes the caller's own personal team alongside
+            # all non-personal teams, matching the /admin/teams/partial admin view.
+            # Without it, an admin whose only team is personal would get an empty list.
             result = await service.list_teams(
                 limit=limit,
                 offset=skip,
                 cursor=cursor,
+                personal_owner_email=current_user_ctx["email"],
             )
             # Result is tuple (list, next_cursor)
             teams_data, next_cursor = result
 
             # Get accurate total count for API consumers
-            total = await service.get_teams_count()
+            total = await service.get_teams_count(personal_owner_email=current_user_ctx["email"])
         else:
             # Fallback to user teams and apply pagination locally
             user_teams = await service.get_user_teams(current_user_ctx["email"], include_personal=True)
