@@ -307,3 +307,35 @@ class TestAdminStaticAssets:
         response = client.get("/admin/static/css/app.css")
         assert response.status_code in [200, 304, 404]
         assert response.status_code not in [401, 403]
+
+
+class TestAdminAuthMiddlewareProtection:
+    """Verify AdminAuthMiddleware blocks unauthenticated/non-admin access to non-static admin routes."""
+
+    def test_unauthenticated_v1_admin_route_rejected(self, client: TestClient):
+        """Unauthenticated request to /v1/admin/ must return 401 or 403 (not 200)."""
+        with patch.object(settings, "auth_required", True):
+            response = client.get("/v1/admin/", follow_redirects=False)
+        assert response.status_code in [401, 403, 302], (
+            f"/v1/admin/ returned {response.status_code} without auth — expected 401/403/302 redirect to login"
+        )
+        assert response.status_code != 200, "Unauthenticated access to /v1/admin/ must not return 200"
+
+    def test_unauthenticated_legacy_admin_route_rejected(self, client: TestClient):
+        """Unauthenticated request to legacy /admin/ must also be rejected."""
+        with patch.object(settings, "auth_required", True):
+            response = client.get("/admin/", follow_redirects=False)
+        assert response.status_code in [401, 403, 302]
+        assert response.status_code != 200
+
+    def test_v1_admin_login_exempt_from_auth(self, client: TestClient):
+        """Login page /v1/admin/login must be reachable without credentials."""
+        response = client.get("/v1/admin/login", follow_redirects=False)
+        assert response.status_code not in [401, 403], (
+            "/v1/admin/login is in EXEMPT_PATHS and must not require authentication"
+        )
+
+    def test_v1_admin_logout_exempt_from_auth(self, client: TestClient):
+        """Logout /v1/admin/logout must be reachable without credentials."""
+        response = client.get("/v1/admin/logout", follow_redirects=False)
+        assert response.status_code not in [401, 403]

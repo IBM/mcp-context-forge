@@ -41,7 +41,10 @@ from __future__ import annotations
 # Standard
 from datetime import datetime
 from email.utils import format_datetime, parsedate_to_datetime
-from typing import Callable
+from typing import Optional
+
+# Third-Party
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
@@ -180,7 +183,7 @@ class DeprecationHeadersMiddleware:
         True
     """
 
-    def __init__(self, app: Callable, *, sunset_date: str) -> None:
+    def __init__(self, app: ASGIApp, *, sunset_date: str) -> None:
         """Initialise the middleware.
 
         Args:
@@ -189,6 +192,11 @@ class DeprecationHeadersMiddleware:
                          e.g. ``"Wed, 13 May 2026 00:00:00 GMT"``.
         """
         self.app = app
+        self._sunset_date: Optional[str] = None
+
+        if not sunset_date or not sunset_date.strip():
+            logger.error("LEGACY_API_SUNSET_DATE is empty or whitespace; Sunset deprecation headers will be omitted.")
+            return
 
         # Parse and re-serialise to canonical HTTP-date — strips any CR/LF that
         # could be injected via a misconfigured env var or secrets-manager value.
@@ -217,13 +225,12 @@ class DeprecationHeadersMiddleware:
                     days_until_sunset,
                 )
         except (ValueError, TypeError) as e:
-            logger.error("Failed to parse sunset date '%s': %s", sunset_date, e)
-            # Fall back to raw string but strip CR/LF to prevent header injection
-            self._sunset_date = sunset_date.replace("\r", "").replace("\n", "")
+            logger.error("Failed to parse sunset date '%s': %s — Sunset deprecation headers will be omitted.", sunset_date, e)
+            self._sunset_date = None
 
         logger.debug("DeprecationHeadersMiddleware initialised (sunset=%s)", sunset_date)
 
-    async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Process one ASGI event.
 
         Args:
@@ -237,7 +244,7 @@ class DeprecationHeadersMiddleware:
             return
 
         path: str = scope.get("path", "")
-        if not _is_legacy_path(path):
+        if not _is_legacy_path(path) or self._sunset_date is None:
             await self.app(scope, receive, send)
             return
 
@@ -254,7 +261,7 @@ class DeprecationHeadersMiddleware:
             ),
         ]
 
-        async def _send_with_deprecation(message: dict) -> None:
+        async def _send_with_deprecation(message: Message) -> None:
             """Intercept ``http.response.start`` to inject deprecation headers.
 
             Args:

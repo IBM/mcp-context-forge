@@ -289,6 +289,33 @@ class TestDeprecationHeadersMiddlewareInit:
         messages = [r.message for r in caplog.records if r.levelno == logging.ERROR]
         assert any("Failed to parse sunset date" in m for m in messages)
 
+    def test_empty_sunset_date_logs_error_and_omits_headers(self, caplog):
+        """Empty LEGACY_API_SUNSET_DATE logs an error and produces no Sunset header."""
+        import asyncio
+
+        with caplog.at_level(logging.ERROR, logger="mcpgateway.middleware.deprecation"):
+            mw = DeprecationHeadersMiddleware(_build_app("/tools"), sunset_date="")
+
+        messages = [r.message for r in caplog.records if r.levelno == logging.ERROR]
+        assert any("empty" in m.lower() for m in messages), "Expected error log for empty sunset date"
+
+        status, headers = asyncio.get_event_loop().run_until_complete(_call(mw, "/tools"))
+        assert status == 200
+        assert "sunset" not in headers, "Sunset header must not be injected when sunset_date is empty"
+
+    def test_whitespace_sunset_date_logs_error_and_omits_headers(self, caplog):
+        """Whitespace-only LEGACY_API_SUNSET_DATE is treated same as empty."""
+        import asyncio
+
+        with caplog.at_level(logging.ERROR, logger="mcpgateway.middleware.deprecation"):
+            mw = DeprecationHeadersMiddleware(_build_app("/tools"), sunset_date="   ")
+
+        messages = [r.message for r in caplog.records if r.levelno == logging.ERROR]
+        assert any("empty" in m.lower() for m in messages)
+
+        status, headers = asyncio.get_event_loop().run_until_complete(_call(mw, "/tools"))
+        assert "sunset" not in headers
+
 
 # ---------------------------------------------------------------------------
 # Data-consistency tests

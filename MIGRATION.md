@@ -8,7 +8,7 @@ Step-by-step instructions for upgrading between major versions. For a full list 
 
 ### What changed
 
-All REST API routes now live under the `/v1/` prefix. The legacy (unversioned) paths remain available but respond with `Sunset` and `Deprecation` headers to signal that they will be removed in a future release.
+Resource-management and business-logic REST routes now live under the `/v1/` prefix. Protocol-level routes (MCP transports, OAuth, health probes, well-known URIs) and diagnostics endpoints intentionally remain unversioned at the root — see the "Routes not versioned" table below. The legacy (unversioned) resource-management paths remain available but respond with `Sunset` and `Deprecation` headers to signal that they will be removed in a future release.
 
 ### API path migration table
 
@@ -33,7 +33,6 @@ All REST API routes now live under the `/v1/` prefix. The legacy (unversioned) p
 | `* /tags/**` | `* /v1/tags/**` |
 | `GET /export` | `GET /v1/export` |
 | `POST /import` | `POST /v1/import` |
-| `GET /version` | `GET /v1/version` |
 
 #### Feature-flagged routes
 
@@ -83,7 +82,7 @@ Token scope patterns (`^/tools`, `^/admin`) continue to match both versioned and
 | Setting | Default | Notes |
 |---------|---------|-------|
 | `LEGACY_API_ENABLED` | `true` | Set `false` to disable unversioned shims after migration |
-| `LEGACY_API_SUNSET_DATE` | `2026-12-31` | Date sent in `Sunset` response header |
+| `LEGACY_API_SUNSET_DATE` | `Sat, 26 Sep 2026 00:00:00 GMT` | RFC 8594 date sent in `Sunset` response header |
 | `LLM_API_PREFIX` | `/v1` | **Action required** — change to `/llm/v1` or similar to avoid collision with the gateway v1 prefix |
 
 ### Migration steps
