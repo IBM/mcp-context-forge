@@ -8375,8 +8375,8 @@ upgrade-validate:                         ## Validate fresh + upgrade + roundtri
 .PHONY: rust-mcp-runtime-build rust-mcp-runtime-test rust-mcp-runtime-run
 
 CARGO_SHEAR_VERSION ?= 1.13.1
-CARGO_SHEAR_SHA256 ?= 6f87c8d4905560b357e0e57b59f6578f38edfbb272e35a145fae2dde0fa1ab1d
-CARGO_SHEAR_CRATE_URL ?= https://crates.io/api/v1/crates/cargo-shear/$(CARGO_SHEAR_VERSION)/download
+override CARGO_SHEAR_SHA256 := 6f87c8d4905560b357e0e57b59f6578f38edfbb272e35a145fae2dde0fa1ab1d
+override CARGO_SHEAR_CRATE_URL := https://crates.io/api/v1/crates/cargo-shear/$(CARGO_SHEAR_VERSION)/download
 
 # Intentional broad scan under crates/: workspace-owned crates live here and CI
 # should pick up new maturin crates automatically rather than curating a short list.
@@ -8473,9 +8473,9 @@ rust-unused-deps: rust-ensure-deps      ## Detect unused Rust dependencies with 
 		trap 'rm -rf "$$tmp_dir"' EXIT; \
 		crate_file="$$tmp_dir/cargo-shear-$(CARGO_SHEAR_VERSION).crate"; \
 		curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error -H 'User-Agent: mcp-context-forge-make' --output "$$crate_file" "$(CARGO_SHEAR_CRATE_URL)"; \
-		python3 -c 'import hashlib, pathlib, sys; expected, path = sys.argv[1], pathlib.Path(sys.argv[2]); actual = hashlib.sha256(path.read_bytes()).hexdigest(); sys.exit(0 if actual == expected else f"sha256 mismatch for {path}: expected {expected}, got {actual}")' "$(CARGO_SHEAR_SHA256)" "$$crate_file"; \
-		mkdir "$$tmp_dir/src"; \
-		tar -xzf "$$crate_file" -C "$$tmp_dir/src" --strip-components=1; \
+		python3 -c 'import hashlib, pathlib, sys; expected, path = sys.argv[1], pathlib.Path(sys.argv[2]); actual = hashlib.sha256(path.read_bytes()).hexdigest(); sys.exit(0 if actual == expected else f"sha256 mismatch for {path}: expected {expected}, got {actual}")' "$(CARGO_SHEAR_SHA256)" "$$crate_file" && \
+		mkdir "$$tmp_dir/src" && \
+		tar -xzf "$$crate_file" -C "$$tmp_dir/src" --strip-components=1 && \
 		CARGO_NET_RETRY=$${CARGO_NET_RETRY:-10} CARGO_HTTP_MULTIPLEXING=$${CARGO_HTTP_MULTIPLEXING:-false} cargo install --locked --path "$$tmp_dir/src"; \
 	}
 	@CARGO_NET_RETRY=$${CARGO_NET_RETRY:-10} CARGO_HTTP_MULTIPLEXING=$${CARGO_HTTP_MULTIPLEXING:-false} cargo shear --locked --deny-warnings
