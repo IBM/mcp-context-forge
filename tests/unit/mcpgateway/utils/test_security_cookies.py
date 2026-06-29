@@ -16,7 +16,7 @@ from fastapi import Response
 import pytest
 
 # First-Party
-import mcpgateway.utils.security_cookies as security_cookies
+from mcpgateway.utils import security_cookies
 
 
 def test_set_auth_cookie_uses_short_expiry_and_insecure_in_dev(monkeypatch) -> None:

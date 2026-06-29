@@ -30,7 +30,7 @@ import logging
 from unittest.mock import MagicMock, Mock, patch
 
 # First-Party
-import mcpgateway.utils.check_schema_at_head as check_schema_at_head
+from mcpgateway.utils import check_schema_at_head
 
 
 def _build_mock_engine_with_connect():

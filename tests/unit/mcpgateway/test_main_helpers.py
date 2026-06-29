@@ -8,7 +8,6 @@ Unit tests for mcpgateway.main helper functions.
 """
 
 # Standard
-import asyncio
 from types import SimpleNamespace
 
 # Third-Party

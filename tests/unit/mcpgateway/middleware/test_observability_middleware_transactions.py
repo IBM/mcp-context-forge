@@ -165,7 +165,6 @@ async def test_observability_data_persists_on_error_separate_session():
     """
     # First-Party
     from mcpgateway.main import get_db
-    from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
 
     middleware = ObservabilityMiddleware(app=None, enabled=True)
     mock_request = create_mock_request()
@@ -397,7 +396,6 @@ def test_record_metric_returns_zero_on_failure():
 async def test_middleware_no_session_management():
     """Verify middleware doesn't create or manage request sessions anymore."""
     # First-Party
-    from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
 
     middleware = ObservabilityMiddleware(app=None, enabled=True)
     # Create a fresh mock request without any preset attributes

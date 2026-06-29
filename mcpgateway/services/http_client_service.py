@@ -46,6 +46,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 import logging
+import os
 import ssl
 from typing import AsyncIterator, Optional
 
@@ -99,6 +100,7 @@ class SharedHttpClient:
         Initialize the HTTP client with configured limits and timeouts.
 
         Reads configuration from settings and creates the shared AsyncClient.
+        Respects SSL_CERT_FILE environment variable for custom CA bundles.
         """
         # Import here to avoid circular imports
         # First-Party
@@ -117,20 +119,41 @@ class SharedHttpClient:
             pool=settings.httpx_pool_timeout,
         )
 
+        # Determine SSL verification setting
+        # Priority: SKIP_SSL_VERIFY > SSL_CERT_FILE (combined with system) > default
+        if settings.skip_ssl_verify:
+            verify_setting = False
+            logger.info("SSL verification disabled via SKIP_SSL_VERIFY")
+        else:
+            # Check for SSL_CERT_FILE environment variable (used in containers)
+            ssl_cert_file = os.environ.get("SSL_CERT_FILE")
+            if ssl_cert_file and os.path.isfile(ssl_cert_file):
+                # Create SSL context that combines system CAs with custom CA bundle
+                # ssl.create_default_context() loads system CAs automatically
+                # then we add the custom CA file on top
+                ssl_context = ssl.create_default_context()
+                ssl_context.load_verify_locations(cafile=ssl_cert_file)
+                verify_setting = ssl_context
+                logger.info("Using SSL context with custom CA bundle + system CAs: %s", ssl_cert_file)
+            else:
+                verify_setting = True
+                logger.debug("Using default system CA bundle")
+
         self._client = httpx.AsyncClient(
             limits=self._limits,
             timeout=timeout,
             http2=settings.httpx_http2_enabled,
             follow_redirects=False,
-            verify=not settings.skip_ssl_verify,
+            verify=verify_setting,
         )
         self._initialized = True
 
         logger.info(
-            "Shared HTTP client initialized: max_connections=%d, keepalive=%d, http2=%s",
+            "Shared HTTP client initialized: max_connections=%d, keepalive=%d, http2=%s, ssl_verify=%s",
             settings.httpx_max_connections,
             settings.httpx_max_keepalive_connections,
             settings.httpx_http2_enabled,
+            verify_setting if isinstance(verify_setting, bool) else "custom_ca",
         )
 
     @property
@@ -285,20 +308,36 @@ def get_admin_timeout() -> httpx.Timeout:
     )
 
 
-def get_default_verify() -> bool:
+def get_default_verify() -> bool | ssl.SSLContext:
     """
-    Get the default SSL verification setting based on skip_ssl_verify config.
+    Get the default SSL verification setting based on skip_ssl_verify config and SSL_CERT_FILE.
 
     Use this when creating factory clients that should respect the global
-    skip_ssl_verify setting when no custom SSL context is provided.
+    skip_ssl_verify setting and SSL_CERT_FILE environment variable when no custom SSL context is provided.
 
     Returns:
-        bool: True if SSL should be verified, False if skip_ssl_verify is enabled.
+        bool | ssl.SSLContext: False if skip_ssl_verify is enabled,
+                               SSL context if SSL_CERT_FILE is set (combines system + custom CAs),
+                               True for default system CA verification.
     """
     # First-Party
     from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
 
-    return not settings.skip_ssl_verify
+    if settings.skip_ssl_verify:
+        return False
+
+    # Check for SSL_CERT_FILE environment variable (used in containers)
+    ssl_cert_file = os.environ.get("SSL_CERT_FILE")
+    if ssl_cert_file and os.path.isfile(ssl_cert_file):
+        # Create SSL context that combines system CAs with custom CA bundle
+        # ssl.create_default_context() loads system CAs automatically
+        # then we add the custom CA file on top
+        ssl_context = ssl.create_default_context()
+        ssl_context.load_verify_locations(cafile=ssl_cert_file)
+        logger.info("get_default_verify: Using SSL context with custom CA bundle + system CAs: %s", ssl_cert_file)
+        return ssl_context
+
+    return True
 
 
 @asynccontextmanager

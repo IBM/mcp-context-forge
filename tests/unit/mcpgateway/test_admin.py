@@ -5655,7 +5655,7 @@ class TestA2AAgentManagement:
     async def test_admin_list_a2a_agents_enabled(self, mock_list_agents, mock_request, mock_db):
         """Test listing A2A agents when A2A is enabled."""
         # First-Party
-        from mcpgateway.schemas import PaginationMeta, PaginationLinks
+        from mcpgateway.schemas import PaginationMeta
 
         mock_request.state = MagicMock()
         mock_request.state.token_teams = None

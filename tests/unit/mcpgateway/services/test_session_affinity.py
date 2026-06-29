@@ -190,12 +190,12 @@ def test_session_owner_key_has_expected_prefix():
 
 
 def test_worker_heartbeat_key_uses_module_worker_id():
-    """Heartbeat key embeds the process-wide WORKER_ID constant (hostname+pid)."""
+    """Heartbeat key embeds the process-wide worker ID (hostname+pid)."""
     # First-Party
-    from mcpgateway.services.session_affinity import SessionAffinity, WORKER_ID
+    from mcpgateway.services.session_affinity import SessionAffinity, get_worker_id
 
     affinity = SessionAffinity()
-    assert affinity._worker_heartbeat_key() == f"mcpgw:worker_heartbeat:{WORKER_ID}"  # pylint: disable=protected-access
+    assert affinity._worker_heartbeat_key() == f"mcpgw:worker_heartbeat:{get_worker_id()}"  # pylint: disable=protected-access
 
 
 # ---------------------------------------------------------------------------
@@ -373,7 +373,7 @@ async def test_register_session_mapping_rejects_invalid_session_id(caplog):
 async def test_register_session_mapping_happy_path_writes_mapping_and_claims_ownership():
     """A fresh valid session id stores the mapping JSON and claims ownership with SET NX."""
     # First-Party
-    from mcpgateway.services.session_affinity import SessionAffinity, WORKER_ID
+    from mcpgateway.services.session_affinity import SessionAffinity, get_worker_id
 
     affinity = SessionAffinity()
     fake = _FakeRedis()
@@ -391,7 +391,7 @@ async def test_register_session_mapping_happy_path_writes_mapping_and_claims_own
     assert mapping_keys
     assert owner_keys == ["mcpgw:pool_owner:sess-1"]
     # Ownership value is this worker id.
-    assert fake.store["mcpgw:pool_owner:sess-1"].decode() == WORKER_ID
+    assert fake.store["mcpgw:pool_owner:sess-1"].decode() == get_worker_id()
 
 
 @pytest.mark.asyncio
@@ -467,7 +467,7 @@ async def test_register_session_owner_noop_when_feature_disabled():
 async def test_register_session_owner_fresh_claim_sets_key():
     """A previously-unclaimed session id becomes owned by this worker (Lua CAS returns 1)."""
     # First-Party
-    from mcpgateway.services.session_affinity import SessionAffinity, WORKER_ID
+    from mcpgateway.services.session_affinity import SessionAffinity, get_worker_id
 
     affinity = SessionAffinity()
     fake = _FakeRedis()
@@ -479,18 +479,18 @@ async def test_register_session_owner_fresh_claim_sets_key():
         mock_settings.mcpgateway_session_affinity_ttl = 300
         await affinity.register_session_owner("sess-1")
 
-    assert fake.store.get("mcpgw:pool_owner:sess-1").decode() == WORKER_ID
+    assert fake.store.get("mcpgw:pool_owner:sess-1").decode() == get_worker_id()
 
 
 @pytest.mark.asyncio
 async def test_register_session_owner_refresh_when_same_worker():
     """If this worker already owns the session, Lua CAS refreshes TTL (returns 2) — still a no-op to the caller."""
     # First-Party
-    from mcpgateway.services.session_affinity import SessionAffinity, WORKER_ID
+    from mcpgateway.services.session_affinity import SessionAffinity, get_worker_id
 
     affinity = SessionAffinity()
     fake = _FakeRedis()
-    fake.store["mcpgw:pool_owner:sess-1"] = WORKER_ID.encode()
+    fake.store["mcpgw:pool_owner:sess-1"] = get_worker_id().encode()
 
     with (
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,
@@ -501,7 +501,7 @@ async def test_register_session_owner_refresh_when_same_worker():
         await affinity.register_session_owner("sess-1")
 
     # Key still exists, still owned by this worker (no poison).
-    assert fake.store["mcpgw:pool_owner:sess-1"].decode() == WORKER_ID
+    assert fake.store["mcpgw:pool_owner:sess-1"].decode() == get_worker_id()
 
 
 @pytest.mark.asyncio
@@ -616,11 +616,11 @@ async def test_cleanup_session_owner_rejects_invalid_session_id(caplog):
 async def test_cleanup_session_owner_only_deletes_keys_this_worker_owns():
     """Don't delete another worker's claim — only our own."""
     # First-Party
-    from mcpgateway.services.session_affinity import SessionAffinity, WORKER_ID
+    from mcpgateway.services.session_affinity import SessionAffinity, get_worker_id
 
     affinity = SessionAffinity()
     fake = _FakeRedis()
-    fake.store["mcpgw:pool_owner:ours"] = WORKER_ID.encode()
+    fake.store["mcpgw:pool_owner:ours"] = get_worker_id().encode()
     fake.store["mcpgw:pool_owner:theirs"] = b"other-worker:5555"
 
     with patch("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=fake)):
@@ -805,11 +805,11 @@ async def test_forward_request_to_owner_no_owner_returns_none():
 async def test_forward_request_to_owner_returns_none_when_we_own_the_session():
     """Self-owned session → None (caller executes locally, no forwarding needed)."""
     # First-Party
-    from mcpgateway.services.session_affinity import SessionAffinity, WORKER_ID
+    from mcpgateway.services.session_affinity import SessionAffinity, get_worker_id
 
     affinity = SessionAffinity()
     fake = _FakeRedis()
-    fake.store["mcpgw:pool_owner:sess-1"] = WORKER_ID.encode()
+    fake.store["mcpgw:pool_owner:sess-1"] = get_worker_id().encode()
 
     with (
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,
@@ -1371,7 +1371,7 @@ async def test_forward_request_to_owner_raises_and_counts_timeout_when_no_respon
 async def test_forward_request_to_owner_reclaims_session_from_dead_worker():
     """Dead owner worker → Lua CAS reclaims ownership to us; caller executes locally (None)."""
     # First-Party
-    from mcpgateway.services.session_affinity import SessionAffinity, WORKER_ID
+    from mcpgateway.services.session_affinity import SessionAffinity, get_worker_id
 
     affinity = SessionAffinity()
     fake = _FakeRedis()
@@ -1390,7 +1390,7 @@ async def test_forward_request_to_owner_reclaims_session_from_dead_worker():
     # We reclaimed + now own it → execute locally (None).
     assert result is None
     # Ownership was transferred to us.
-    assert fake.store["mcpgw:pool_owner:sess-1"].decode() == WORKER_ID
+    assert fake.store["mcpgw:pool_owner:sess-1"].decode() == get_worker_id()
 
 
 # ---------------------------------------------------------------------------
@@ -2193,7 +2193,7 @@ async def test_forward_request_to_owner_returns_none_when_reclaimed_key_vanishes
 async def test_forward_request_to_owner_returns_none_when_reclaim_race_makes_us_owner():
     """Reclaim CAS lost, but the re-read shows we ended up as owner → execute locally."""
     # First-Party
-    from mcpgateway.services.session_affinity import SessionAffinity, WORKER_ID
+    from mcpgateway.services.session_affinity import SessionAffinity, get_worker_id
 
     affinity = SessionAffinity()
 
@@ -2209,7 +2209,7 @@ async def test_forward_request_to_owner_returns_none_when_reclaim_race_makes_us_
                 if self.get_call_count == 1:
                     return b"dead-worker"
                 # After losing the CAS, the re-read shows WE are now the owner (via concurrent claim).
-                return WORKER_ID.encode()
+                return get_worker_id().encode()
             return self.store.get(key)
 
         async def eval(self, script, numkeys, *args):

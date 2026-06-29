@@ -239,7 +239,6 @@ class TestPubSubRedis:
     @pytest.mark.asyncio
     async def test_toggle_publishes_invalidation_message(self, async_redis, sync_redis):
         """enable_plugins_shared publishes a message on the invalidation channel."""
-        import redis as sync_redis_lib
 
         # Subscribe with sync client
         pubsub = sync_redis.pubsub()

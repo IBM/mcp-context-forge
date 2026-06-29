@@ -20,10 +20,8 @@ from cpex.framework import (
     ToolHookType,
     PromptPrehookPayload,
     ToolPostInvokePayload,
-    ToolPreInvokePayload,
 )
 from plugins.webhook_notification.webhook_notification import (
-    AuthenticationType,
     EventType,
     WebhookNotificationPlugin,
 )

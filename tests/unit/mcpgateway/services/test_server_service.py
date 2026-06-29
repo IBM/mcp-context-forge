@@ -1296,6 +1296,9 @@ class TestServerService:
     @pytest.mark.asyncio
     async def test_register_server_uuid_normalization_error_handling(self, server_service, test_db):
         """Test that UUID normalization handles errors gracefully."""
+        # Mock db.get to return None (no existing server with that ID)
+        test_db.get = Mock(return_value=None)
+
         # No existing server with the same name
         mock_scalar = Mock()
         mock_scalar.scalar_one_or_none.return_value = None

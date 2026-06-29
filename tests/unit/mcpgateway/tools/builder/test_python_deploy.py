@@ -11,7 +11,7 @@ Unit tests for plain Python MCP Stack deployment.
 from pathlib import Path
 import subprocess
 from types import SimpleNamespace
-from unittest.mock import MagicMock, Mock, patch, call
+from unittest.mock import Mock, patch, call
 
 # Third-Party
 import pytest
@@ -19,7 +19,7 @@ from pydantic import ValidationError
 
 # First-Party
 from mcpgateway.tools.builder.python_deploy import MCPStackPython
-from mcpgateway.tools.builder.schema import BuildableConfig, MCPStackConfig
+from mcpgateway.tools.builder.schema import MCPStackConfig
 
 
 class TestMCPStackPython:

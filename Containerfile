@@ -56,7 +56,7 @@ WORKDIR /build
 
 # Copy only files needed for CSS build (with proper ownership for non-root user)
 COPY --chown=1001:1001 package.json package-lock.json* ./
-COPY --chown=1001:1001 tailwind.config.js postcss.config.js ./
+COPY --chown=1001:1001 tailwind.config.js postcss.config.cjs ./
 COPY --chown=1001:1001 mcpgateway/templates/ ./mcpgateway/templates/
 COPY --chown=1001:1001 mcpgateway/static/ ./mcpgateway/static/
 

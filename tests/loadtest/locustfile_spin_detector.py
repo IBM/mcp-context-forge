@@ -273,7 +273,7 @@ def get_docker_stats() -> tuple[str, list[tuple[str, float]]]:
             ["docker", "stats", "--no-stream", "--format", "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=10, check=False,
         )
         if result.returncode == 0:
             lines = result.stdout.strip().split("\n")

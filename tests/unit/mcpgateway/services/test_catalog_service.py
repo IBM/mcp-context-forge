@@ -8,7 +8,6 @@ Unit Tests for Catalog Service .
 """
 
 # Standard
-import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 

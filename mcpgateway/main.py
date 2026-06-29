@@ -1331,6 +1331,23 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # Initialize logging service FIRST to ensure all logging goes to dual output
     await logging_service.initialize()
+
+    # Start log config watcher if file watcher is enabled and config path is set
+    log_config_watcher_instance = None
+    if settings.file_watcher_enabled and settings.log_config_path:
+        try:
+            # First-Party
+            from mcpgateway.services.log_config_watcher import get_log_config_watcher  # pylint: disable=import-outside-toplevel
+
+            log_config_watcher_instance = await get_log_config_watcher(logging_service)
+            await log_config_watcher_instance.start(settings.log_config_path)
+            logger.info("Log config watcher started for: %s", settings.log_config_path)
+        except FileNotFoundError:
+            logger.warning("Log config file not found: %s - watcher not started", settings.log_config_path)
+        except RuntimeError as e:
+            logger.warning("Log config watcher not started: %s", e)
+        except Exception as e:
+            logger.error("Failed to start log config watcher: %s", e)
     logger.info("Starting ContextForge services")
 
     # Wait for the database to be ready, then run bootstrap (alembic + seed).
@@ -1351,7 +1368,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await bootstrap_db()
 
     # Initialize Redis client early (shared pool for all services)
-    await get_redis_client()
+    # Wrap in timeout to prevent hanging on connection issues
+    logger.info("About to initialize Redis client...")
+    try:
+        await asyncio.wait_for(get_redis_client(), timeout=10.0)
+        logger.info("Redis client initialization completed")
+    except asyncio.TimeoutError:
+        logger.warning("Redis client initialization timeout - continuing without Redis")
+    except Exception as e:
+        logger.warning(f"Redis client initialization failed: {e} - continuing without Redis")
 
     # Register the Redis provider with the plugin framework so framework
     # modules can reach Redis without importing mcpgateway.utils directly
@@ -1634,6 +1659,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if settings.sso_enabled:
             await attempt_to_bootstrap_sso_providers()
 
+        # Start reverse proxy health monitoring if enabled
+        if settings.mcpgateway_reverse_proxy_enabled:
+            # First-Party
+            from mcpgateway.services.reverse_proxy_service import get_reverse_proxy_service  # pylint: disable=import-outside-toplevel
+
+            reverse_proxy_service = get_reverse_proxy_service()
+            await reverse_proxy_service.manager.start_health_monitoring()
+            logger.info("Reverse proxy health monitoring started")
+
         logger.info("All services initialized successfully")
 
         # Warn about per-worker database connection pool multiplication
@@ -1768,6 +1802,37 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             logger.info("Plugin manager shutdown complete")
         except Exception as e:
             logger.error(f"Error shutting down plugin manager: {str(e)}")
+
+        # Stop reverse proxy health monitoring
+        if settings.mcpgateway_reverse_proxy_enabled:
+            try:
+                # First-Party
+                from mcpgateway.services.reverse_proxy_service import get_reverse_proxy_service  # pylint: disable=import-outside-toplevel
+
+                reverse_proxy_service = get_reverse_proxy_service()
+                await reverse_proxy_service.manager.stop_health_monitoring()
+                logger.info("Reverse proxy health monitoring stopped")
+            except Exception as e:
+                logger.debug(f"Error stopping reverse proxy health monitoring: {e}")
+        # Stop log config watcher
+        if log_config_watcher_instance is not None:
+            try:
+                await log_config_watcher_instance.stop()
+                logger.info("Log config watcher stopped")
+            except Exception as e:
+                logger.debug(f"Error stopping log config watcher: {e}")
+
+        # Stop FileWatcherService singleton (only if enabled)
+        if settings.file_watcher_enabled:
+            try:
+                # First-Party
+                from mcpgateway.services.file_watcher_service import get_file_watcher_service  # pylint: disable=import-outside-toplevel
+
+                file_watcher_service = await get_file_watcher_service()
+                await file_watcher_service.stop_all()
+                logger.info("FileWatcherService stopped")
+            except Exception as e:
+                logger.debug(f"Error stopping FileWatcherService: {e}")
 
         # Stop cache invalidation subscriber
         try:
@@ -7461,15 +7526,15 @@ async def remove_root(
     Returns:
         Status message indicating result.
     """
-    logger.debug(f"User '{safe_log_user(user)}' requested to remove root with URI: {uri}")
+    logger.debug(f"User '{safe_log_user(user)}' requested to remove root with URI: {html.escape(str(uri))}")
     try:
         await root_service.remove_root(uri)
     except RootServiceNotFoundError as e:
-        raise HTTPException(status_code=404, detail=f"Root not found: {uri}") from e
+        raise HTTPException(status_code=404, detail=f"Root not found: {html.escape(str(uri))}") from e
     except Exception as e:
-        logger.exception(f"Unexpected error removing root {uri}: {e}")
+        logger.exception(f"Unexpected error removing root {html.escape(str(uri))}: {e}")
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}") from e
-    return {"status": "success", "message": f"Root {uri} removed"}
+    return {"status": "success", "message": f"Root {html.escape(str(uri))} removed"}
 
 
 ##################
@@ -9828,14 +9893,14 @@ async def _maybe_forward_affinitized_rpc_request(
 
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id and method != "initialize" and not is_internally_forwarded:
         # First-Party
-        from mcpgateway.services.session_affinity import SessionAffinity, WORKER_ID  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.session_affinity import get_worker_id, SessionAffinity  # pylint: disable=import-outside-toplevel
 
         if not SessionAffinity.is_valid_mcp_session_id(mcp_session_id):
             logger.debug("Invalid MCP session id for affinity forwarding, executing locally")
             return None
 
         session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
-        logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | RPC request received, checking affinity", WORKER_ID, session_short, method)
+        logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | RPC request received, checking affinity", get_worker_id(), session_short, method)
         try:
             # First-Party
             from mcpgateway.services.session_affinity import get_session_affinity  # pylint: disable=import-outside-toplevel
@@ -9846,20 +9911,20 @@ async def _maybe_forward_affinitized_rpc_request(
                 {"method": method, "params": params, "headers": lowered_request_headers, "req_id": req_id},
             )
             if forwarded_response is not None:
-                logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Forwarded response received", WORKER_ID, session_short, method)
+                logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Forwarded response received", get_worker_id(), session_short, method)
                 if "error" in forwarded_response:
                     return {"jsonrpc": "2.0", "error": forwarded_response["error"], "id": req_id}
                 return {"jsonrpc": "2.0", "result": forwarded_response.get("result", {}), "id": req_id}
         except RuntimeError:
-            logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | Pool not initialized, executing locally", WORKER_ID, session_short, method)
+            logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | Pool not initialized, executing locally", get_worker_id(), session_short, method)
         return None
 
     if is_internally_forwarded and mcp_session_id:
         # First-Party
-        from mcpgateway.services.session_affinity import WORKER_ID  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.session_affinity import get_worker_id  # pylint: disable=import-outside-toplevel
 
         session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
-        logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | Internally forwarded request, executing locally", WORKER_ID, session_short, method)
+        logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | Internally forwarded request, executing locally", get_worker_id(), session_short, method)
 
     return None
 
@@ -9905,11 +9970,11 @@ async def _execute_rpc_initialize(
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id and mcp_session_id != "not-provided":
         try:
             # First-Party
-            from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import get_session_affinity, get_worker_id  # pylint: disable=import-outside-toplevel
 
             pool = get_session_affinity()
             await pool.register_session_owner(mcp_session_id)
-            logger.debug("[AFFINITY_INIT] Worker %s | Session %s... | Registered ownership after initialize", WORKER_ID, mcp_session_id[:8])
+            logger.debug("[AFFINITY_INIT] Worker %s | Session %s... | Registered ownership after initialize", get_worker_id(), mcp_session_id[:8])
         except Exception as e:
             logger.warning("[AFFINITY_INIT] Failed to register session ownership: %s", e)
 

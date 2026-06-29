@@ -52,7 +52,7 @@ import warnings
 # Third-Party
 from locust import between, constant_throughput, events, tag, task
 from locust.contrib.fasthttp import FastHttpUser
-from locust.runners import MasterRunner, WorkerRunner
+from locust.runners import WorkerRunner
 
 # =============================================================================
 # Configuration

@@ -21,7 +21,6 @@ from fastapi.testclient import TestClient
 import pytest
 
 # First-Party
-from mcpgateway.main import app
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")

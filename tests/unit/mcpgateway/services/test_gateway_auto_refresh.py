@@ -11,7 +11,6 @@ Unit tests for the auto-refresh tools/resources/prompts feature in GatewayServic
 from __future__ import annotations
 
 # Standard
-import asyncio
 from typing import Any, Dict
 from unittest.mock import AsyncMock, MagicMock, patch
 

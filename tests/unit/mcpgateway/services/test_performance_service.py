@@ -20,8 +20,6 @@ from mcpgateway.services.performance_service import (
     PerformanceService,
     get_performance_service,
     PSUTIL_AVAILABLE,
-    REDIS_AVAILABLE,
-    PROMETHEUS_AVAILABLE,
     APP_START_TIME,
     HOSTNAME,
 )
@@ -987,7 +985,6 @@ class TestNetConnectionsCache:
     def test_net_connections_cache_handles_oserror(self):
         """Test that cache handles OSError gracefully."""
         import mcpgateway.services.performance_service as ps
-        import time
         import psutil
 
         service = PerformanceService()

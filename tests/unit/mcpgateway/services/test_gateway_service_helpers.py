@@ -555,6 +555,7 @@ async def test_process_pending_gateway_marks_gateway_active(monkeypatch):
         client_cert=None,
         client_key=None,
         initialize_timeout=settings.gateway_async_lifecycle_attempt_timeout,
+        gateway_id="gw-1",
     )
 
 
@@ -1059,8 +1060,19 @@ async def test_authheaders_auth_value_stored_as_dict(monkeypatch):
     )
 
     db = MagicMock()
-    db.flush = Mock()
+    db.commit = Mock()  # Implementation uses commit()
     db.refresh = Mock()
+    # Mock execute for orphaned resource/prompt detection
+    db.execute = Mock(
+        side_effect=[
+            MagicMock(all=Mock(return_value=[])),  # orphaned resources check (valid gateway IDs)
+            MagicMock(scalars=Mock(return_value=MagicMock(all=Mock(return_value=[])))),  # orphaned resources lookup
+            MagicMock(all=Mock(return_value=[])),  # orphaned prompts check (valid gateway IDs)
+            MagicMock(scalars=Mock(return_value=MagicMock(all=Mock(return_value=[])))),  # orphaned prompts lookup
+        ]
+    )
+    # Mock query for _check_gateway_uniqueness
+    db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(all=Mock(return_value=[])))))
 
     # Snapshot at db.add() time — tools flow through the gateway relationship (gateway.tools=tools),
     # not separate db.add() calls.

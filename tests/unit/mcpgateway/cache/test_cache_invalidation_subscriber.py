@@ -344,7 +344,6 @@ class TestCacheInvalidationSubscriber:
                     self.called = True
                     stop_event.set()
                     raise asyncio.TimeoutError()
-                return None
 
         cache_subscriber._pubsub = TimeoutPubSub()
         cache_subscriber._stop_event = stop_event

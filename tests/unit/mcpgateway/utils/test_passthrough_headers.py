@@ -15,7 +15,6 @@ import logging
 from unittest.mock import Mock, patch
 
 # Third-Party
-import pytest
 
 # First-Party
 from mcpgateway.cache.global_config_cache import global_config_cache

@@ -26,7 +26,6 @@ logging.getLogger("mcpgateway.auth").setLevel(logging.DEBUG)
 
 # Third-Party
 import pytest
-from fastapi import Request
 from fastapi.security import HTTPAuthorizationCredentials
 
 # First-Party

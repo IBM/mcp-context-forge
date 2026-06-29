@@ -8,6 +8,7 @@ SIEM admin API router.
 """
 
 # Standard
+import html
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -99,7 +100,7 @@ async def add_siem_destination(payload: DestinationUpsertRequest, _user=Depends(
     try:
         created = await service.add_destination(payload.model_dump(exclude_none=True))
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=html.escape(str(exc))) from exc
     except Exception as exc:
         logger.error("Failed to add SIEM destination: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to add SIEM destination") from exc
@@ -129,7 +130,7 @@ async def replace_siem_destinations(payload: DestinationBulkReplaceRequest, _use
     try:
         destinations = await service.replace_destinations([item.model_dump(exclude_none=True) for item in payload.destinations])
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=html.escape(str(exc))) from exc
     except Exception as exc:
         logger.error("Failed to replace SIEM destinations: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to replace SIEM destinations") from exc
@@ -154,12 +155,14 @@ async def test_siem_destination(destination_name: str, _user=Depends(get_current
     Raises:
         HTTPException: If destination is missing or test fails unexpectedly.
     """
+    # Sanitize destination_name to prevent XSS (CWE-79)
+    sanitized_name = html.escape(destination_name)
     service = get_siem_export_service()
 
     try:
-        return await service.test_destination(destination_name)
+        return await service.test_destination(sanitized_name)
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail=html.escape(str(exc))) from exc
     except Exception as exc:
-        logger.error("Failed SIEM destination test for %s: %s", destination_name, exc)
+        logger.error("Failed SIEM destination test for %s: %s", sanitized_name, exc)
         raise HTTPException(status_code=500, detail="Failed to test SIEM destination") from exc

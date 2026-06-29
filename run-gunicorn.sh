@@ -389,6 +389,7 @@ cmd+=(
     --error-logfile -
     --forwarded-allow-ips="*"
     --pid "${LOCK_FILE}"  # Use lock file as PID file
+    --worker-tmp-dir /tmp  # Use /tmp for worker temporary files (fixes permission issues in read-only containers)
 )
 
 # Add developer mode flags if enabled

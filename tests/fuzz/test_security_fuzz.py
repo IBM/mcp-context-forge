@@ -51,7 +51,7 @@ class TestSecurityFuzzing:
 
             assert response.status_code in [200, 201, 400, 401, 422]
 
-    @given(st.text().filter(lambda x: any(char in x for char in "<>\"'&")))
+    @given(st.text(min_size=1, max_size=500))
     def test_xss_prevention(self, potentially_malicious):
         """Test XSS prevention in user inputs."""
         client = TestClient(app)

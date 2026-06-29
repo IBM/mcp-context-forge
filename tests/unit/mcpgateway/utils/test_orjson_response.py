@@ -15,11 +15,9 @@ Should show **100 %** statement coverage for the target module.
 
 # Standard
 from datetime import datetime, timezone
-from decimal import Decimal
 from uuid import UUID, uuid4
 
 # Third-Party
-import orjson
 import pytest
 from pydantic import BaseModel
 

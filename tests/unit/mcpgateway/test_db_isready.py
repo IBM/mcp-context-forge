@@ -17,7 +17,7 @@ import pytest
 
 # First-Party
 # Import the module under test after patching where necessary
-import mcpgateway.utils.db_isready as db_isready
+from mcpgateway.utils import db_isready
 
 # ---------------------------------------------------------------------------
 # Helper test doubles

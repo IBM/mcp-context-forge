@@ -22,7 +22,6 @@ from cpex.framework import (
 )
 
 from plugins.argument_normalizer.argument_normalizer import (
-    ArgumentNormalizerConfig,
     ArgumentNormalizerPlugin,
 )
 

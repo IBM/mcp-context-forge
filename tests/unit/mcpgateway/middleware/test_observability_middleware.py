@@ -8,7 +8,7 @@ Unit tests for observability middleware.
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 from starlette.requests import Request
 from starlette.responses import Response
 from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware

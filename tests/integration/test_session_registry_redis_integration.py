@@ -18,7 +18,6 @@ local reviewers can opt-in to tests that may start external services.
 """
 
 import asyncio
-import json
 import socket
 import subprocess
 import time

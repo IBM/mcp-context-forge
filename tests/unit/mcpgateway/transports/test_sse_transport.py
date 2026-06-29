@@ -751,7 +751,6 @@ async def test_create_sse_response_keepalive_disabled_mid_loop(monkeypatch):
 
     async def _flip_and_return_none(_timeout):  # noqa: D401 - test stub
         settings.sse_keepalive_enabled = False
-        return None
 
     monkeypatch.setattr(transport, "_get_message_with_timeout", _flip_and_return_none)
 

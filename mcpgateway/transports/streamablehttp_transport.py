@@ -1112,13 +1112,32 @@ async def _check_streamable_permission(
     if not user_email:
         return False
 
+    # Extract team_id from token teams for RBAC role lookup.
+    # token_teams is used for Layer 1 (visibility), team_id is used for Layer 2 (RBAC).
+    token_teams = user_context.get("teams")
+    team_id = None
+    if token_teams and len(token_teams) == 1:
+        team_id = token_teams[0]
+    elif token_teams and len(token_teams) > 1:
+        check_any_team = True
+
+    # Extract team_id from token teams for RBAC role lookup.
+    # token_teams is used for Layer 1 (visibility), team_id is used for Layer 2 (RBAC).
+    token_teams = user_context.get("teams")
+    team_id = None
+    if token_teams and len(token_teams) == 1:
+        team_id = token_teams[0]
+    elif token_teams and len(token_teams) > 1:
+        check_any_team = True
+
     try:
         async with get_db() as db:
             permission_service = PermissionService(db)
             granted = await permission_service.check_permission(
                 user_email=user_email,
                 permission=permission,
-                token_teams=user_context.get("teams"),
+                team_id=team_id,
+                token_teams=token_teams,
                 allow_admin_bypass=allow_admin_bypass,
                 check_any_team=check_any_team,
             )
@@ -1398,8 +1417,37 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
         if identity:
             headers.update(build_identity_headers(identity, gateway))
 
+        # Create httpx client factory for SSL handling
+        def create_transport_client() -> httpx.AsyncClient:
+            """Create httpx client with proper SSL verification for transport operations."""
+            # First-Party
+            from mcpgateway.services.http_client_service import get_default_verify  # pylint: disable=import-outside-toplevel
+            from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context  # pylint: disable=import-outside-toplevel
+
+            # Handle gateway CA certificate if present
+            if gateway.ca_certificate:
+                ctx = get_cached_ssl_context(gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key)
+                verify_setting = ctx
+            else:
+                verify_setting = get_default_verify()
+
+            return httpx.AsyncClient(
+                verify=verify_setting,
+                follow_redirects=True,
+                timeout=settings.mcpgateway_direct_proxy_timeout,
+                limits=httpx.Limits(
+                    max_connections=settings.httpx_max_connections,
+                    max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                    keepalive_expiry=settings.httpx_keepalive_expiry,
+                ),
+            )
+
         # Use MCP SDK to connect and list tools
-        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
+        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout, httpx_client_factory=create_transport_client) as (
+            read_stream,
+            write_stream,
+            _get_session_id,
+        ):
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
 
@@ -1454,8 +1502,37 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
             # CWE-532: log only key names, never values which may carry PII/tokens
             logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
 
+        # Create httpx client factory for SSL handling (reuse from list_tools)
+        def create_transport_client() -> httpx.AsyncClient:
+            """Create httpx client with proper SSL verification for transport operations."""
+            # First-Party
+            from mcpgateway.services.http_client_service import get_default_verify  # pylint: disable=import-outside-toplevel
+            from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context  # pylint: disable=import-outside-toplevel
+
+            # Handle gateway CA certificate if present
+            if gateway.ca_certificate:
+                ctx = get_cached_ssl_context(gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key)
+                verify_setting = ctx
+            else:
+                verify_setting = get_default_verify()
+
+            return httpx.AsyncClient(
+                verify=verify_setting,
+                follow_redirects=True,
+                timeout=settings.mcpgateway_direct_proxy_timeout,
+                limits=httpx.Limits(
+                    max_connections=settings.httpx_max_connections,
+                    max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                    keepalive_expiry=settings.httpx_keepalive_expiry,
+                ),
+            )
+
         # Use MCP SDK to connect and list resources
-        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
+        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout, httpx_client_factory=create_transport_client) as (
+            read_stream,
+            write_stream,
+            _get_session_id,
+        ):
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
 
@@ -1520,8 +1597,37 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
             # CWE-532: log only key names, never values which may carry PII/tokens
             logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
 
+        # Create httpx client factory for SSL handling (reuse from list_tools)
+        def create_transport_client() -> httpx.AsyncClient:
+            """Create httpx client with proper SSL verification for transport operations."""
+            # First-Party
+            from mcpgateway.services.http_client_service import get_default_verify  # pylint: disable=import-outside-toplevel
+            from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context  # pylint: disable=import-outside-toplevel
+
+            # Handle gateway CA certificate if present
+            if gateway.ca_certificate:
+                ctx = get_cached_ssl_context(gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key)
+                verify_setting = ctx
+            else:
+                verify_setting = get_default_verify()
+
+            return httpx.AsyncClient(
+                verify=verify_setting,
+                follow_redirects=True,
+                timeout=settings.mcpgateway_direct_proxy_timeout,
+                limits=httpx.Limits(
+                    max_connections=settings.httpx_max_connections,
+                    max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                    keepalive_expiry=settings.httpx_keepalive_expiry,
+                ),
+            )
+
         # Use MCP SDK to connect and read resource
-        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
+        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout, httpx_client_factory=create_transport_client) as (
+            read_stream,
+            write_stream,
+            _get_session_id,
+        ):
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
 
@@ -4207,15 +4313,15 @@ class SessionManagerWrapper:
             try:
                 # First-Party - lazy import to avoid circular dependencies
                 # First-Party
-                from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.session_affinity import get_session_affinity, get_worker_id  # pylint: disable=import-outside-toplevel
 
                 pool = get_session_affinity()
                 owner = await pool.get_session_owner(mcp_session_id)
-                logger.debug("[HTTP_AFFINITY_CHECK] Worker %s | Session %s... | Owner from Redis: %s", WORKER_ID, mcp_session_id[:8], owner)
+                logger.debug(f"[HTTP_AFFINITY_CHECK] Worker {get_worker_id()} | Session {mcp_session_id[:8]}... | Owner from Redis: {owner}")
 
-                if owner and owner != WORKER_ID:
+                if owner and owner != get_worker_id():
                     # Session owned by another worker - forward the entire HTTP request
-                    logger.info("[HTTP_AFFINITY] Worker %s | Session %s... | Owner: %s | Forwarding HTTP request", WORKER_ID, mcp_session_id[:8], owner)
+                    logger.info(f"[HTTP_AFFINITY] Worker {get_worker_id()} | Session {mcp_session_id[:8]}... | Owner: {owner} | Forwarding HTTP request")
 
                     # Read request body
                     body_parts = []
@@ -4258,17 +4364,18 @@ class SessionManagerWrapper:
                                 "body": response["body"],
                             }
                         )
-                        logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarded response sent to client", WORKER_ID, mcp_session_id[:8])
+                        logger.debug(f"[HTTP_AFFINITY] Worker {get_worker_id()} | Session {mcp_session_id[:8]}... | Forwarded response sent to client")
+                        logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarded response sent to client", {get_worker_id()}, mcp_session_id[:8])
                         return
 
                     # Forwarding failed - fall through to local handling
                     # This may result in "session not found" but it's better than no response
-                    logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarding failed, falling back to local", WORKER_ID, mcp_session_id[:8])
+                    logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarding failed, falling back to local", {get_worker_id()}, mcp_session_id[:8])
 
-                elif owner == WORKER_ID and method == "POST":
+                elif owner == get_worker_id() and method == "POST":
                     # We own this session - route POST requests to /rpc to avoid SDK session issues
                     # The SDK's _server_instances gets cleared between requests, so we can't rely on it
-                    logger.debug("[HTTP_AFFINITY_LOCAL] Worker %s | Session %s... | Owner is us, routing to /rpc", WORKER_ID, mcp_session_id[:8])
+                    logger.debug("[HTTP_AFFINITY_LOCAL] Worker %s | Session %s... | Owner is us, routing to /rpc", {get_worker_id()}, mcp_session_id[:8])
 
                     # Read request body
                     body_parts = []
@@ -4629,13 +4736,13 @@ class SessionManagerWrapper:
                 try:
                     # First-Party - lazy import to avoid circular dependencies
                     # First-Party
-                    from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.services.session_affinity import get_session_affinity, get_worker_id  # pylint: disable=import-outside-toplevel
 
                     pool = get_session_affinity()
                     await pool.register_session_owner(session_to_register)
                     logger.debug(
                         "[HTTP_AFFINITY_SDK] Worker %s | Session %s... | Registered ownership after SDK handling",
-                        WORKER_ID,
+                        get_worker_id,
                         session_to_register[:8],
                     )
                 except Exception as e:
@@ -4978,6 +5085,8 @@ class _StreamableHttpAuthHandler:
 
             jti = user_payload.get("jti")
             user_email = user_payload.get("sub") or user_payload.get("email")
+            logger.info("[UUID_RESOLUTION] streamablehttp: JWT sub=%s, email=%s, jti=%s",
+                       user_email, user_payload.get("email"), jti)
             nested_user = user_payload.get("user", {})
             nested_is_admin = nested_user.get("is_admin", False) if isinstance(nested_user, dict) else False
             is_admin = user_payload.get("is_admin", False) or nested_is_admin
@@ -5006,7 +5115,7 @@ class _StreamableHttpAuthHandler:
 
                         if cached_user:
                             db_user_is_admin = bool(cached_user.get("is_admin", False))
-                        elif settings.require_user_in_db and user_email != platform_admin_email:
+                        elif settings.require_user_in_db and user_email != platform_admin_email and not is_admin:
                             return await self._send_error(detail="User not found in database", headers={"WWW-Authenticate": "Bearer"})
 
                         if token_use == "session" and not is_admin:  # nosec B105 - token_use is a JWT claim type, not a password
@@ -5037,7 +5146,17 @@ class _StreamableHttpAuthHandler:
 
                     if cached_user:
                         db_user_is_admin = bool(cached_user.get("is_admin", False))
-                    elif settings.require_user_in_db and user_email != platform_admin_email:
+                        # CRITICAL: Update user_email to resolved email from DB (was UUID from JWT sub)
+                        # The batched auth context resolved UUID->email in _get_auth_context_batched_sync
+                        # Only update if we got a different email (UUID was resolved)
+                        resolved_email = cached_user.get("email")
+                        if resolved_email and resolved_email != user_email:
+                            logger.info("[UUID_RESOLUTION] streamablehttp: user_email updated from UUID %s to email %s", user_email, resolved_email)
+                            user_email = resolved_email
+                        elif not resolved_email:
+                            # User found but no email in cached_user - this shouldn't happen but log it
+                            logger.warning("[UUID_RESOLUTION] streamablehttp: cached_user exists but has no email field")
+                    elif settings.require_user_in_db and user_email != platform_admin_email and not is_admin:
                         return await self._send_error(detail="User not found in database", headers={"WWW-Authenticate": "Bearer"})
 
                     if auth_cache is not None:
@@ -5089,7 +5208,7 @@ class _StreamableHttpAuthHandler:
                         return await self._send_error(detail="Account disabled", headers={"WWW-Authenticate": "Bearer"})
                     if user_record:
                         db_user_is_admin = bool(getattr(user_record, "is_admin", False))
-                    if user_record is None and settings.require_user_in_db and user_email != platform_admin_email:
+                    if user_record is None and settings.require_user_in_db and user_email != platform_admin_email and not is_admin:
                         return await self._send_error(detail="User not found in database", headers={"WWW-Authenticate": "Bearer"})
 
                     if auth_cache is not None:
@@ -5199,6 +5318,8 @@ class _StreamableHttpAuthHandler:
                 else:
                     _record_mcp_auth_cache_event("team_membership_cache_hit")
 
+            logger.info("[UUID_RESOLUTION] streamablehttp: Creating auth context with user_email=%s, final_teams=%s",
+                       user_email, final_teams)
             auth_user_ctx: dict[str, Any] = {
                 "email": user_email,
                 "teams": final_teams,

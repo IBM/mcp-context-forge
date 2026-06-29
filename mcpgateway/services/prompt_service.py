@@ -25,6 +25,7 @@ import uuid
 
 # Third-Party
 from cpex.framework import GlobalContext, PluginContextTable, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
+import httpx
 from jinja2 import meta, select_autoescape, Template
 from jinja2.exceptions import SecurityError as JinjaSecurityError
 from jinja2.sandbox import SandboxedEnvironment
@@ -447,13 +448,42 @@ class PromptService(BaseService):
                             description=getattr(remote_result, "description", None) or prompt.description,
                         )
 
+            # Create httpx client factory for SSL handling
+            def create_prompt_client() -> httpx.AsyncClient:
+                """Create httpx client with proper SSL verification for prompt fetching."""
+                # First-Party
+                from mcpgateway.services.http_client_service import get_default_verify  # pylint: disable=import-outside-toplevel
+                from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context  # pylint: disable=import-outside-toplevel
+
+                # Handle gateway CA certificate if present
+                if gateway.ca_certificate:
+                    ctx = get_cached_ssl_context(gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key)
+                    verify_setting = ctx
+                else:
+                    verify_setting = get_default_verify()
+
+                return httpx.AsyncClient(
+                    verify=verify_setting,
+                    follow_redirects=True,
+                    timeout=settings.health_check_timeout,
+                    limits=httpx.Limits(
+                        max_connections=settings.httpx_max_connections,
+                        max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                        keepalive_expiry=settings.httpx_keepalive_expiry,
+                    ),
+                )
+
             if transport == "sse":
-                async with sse_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout) as streams:
+                async with sse_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=create_prompt_client) as streams:
                     async with ClientSession(*streams) as session:
                         await session.initialize()
                         remote_result = await _get_prompt_with_meta(session, remote_name, prompt_arguments, meta_data)
             else:
-                async with streamablehttp_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout) as (read_stream, write_stream, _get_session_id):
+                async with streamablehttp_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=create_prompt_client) as (
+                    read_stream,
+                    write_stream,
+                    _get_session_id,
+                ):
                     async with ClientSession(read_stream, write_stream) as session:
                         await session.initialize()
                         remote_result = await _get_prompt_with_meta(session, remote_name, prompt_arguments, meta_data)

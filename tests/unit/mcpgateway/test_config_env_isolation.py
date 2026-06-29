@@ -47,6 +47,7 @@ def test_no_default_env_warning_when_derivation_on_distinct_environment():
         jwt_algorithm="HS256",
         jwt_secret_key="a-strong-test-secret-key-for-staging-32ch",  # pragma: allowlist secret
         auth_encryption_secret="a-strong-test-encryption-secret-32chars",  # pragma: allowlist secret
+        basic_auth_password="Str0ng!StagingP@ssw0rd#2026",  # pragma: allowlist secret
         jwt_audience="mcpgateway-api",
         jwt_issuer="mcpgateway",
         derive_key_per_environment=True,

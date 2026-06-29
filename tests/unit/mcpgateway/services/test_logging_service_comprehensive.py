@@ -19,7 +19,7 @@ import pytest
 
 # First-Party
 from mcpgateway.common.models import LogLevel
-import mcpgateway.services.structured_logger as structured_logger
+from mcpgateway.services import structured_logger
 from mcpgateway.services.logging_service import _get_file_handler, _get_text_handler, LoggingService
 
 

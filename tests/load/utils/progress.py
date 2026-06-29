@@ -320,7 +320,7 @@ class MultiProgressTracker:
             total = task_info.get("total", 0)
             current = task_info.get("completed", 0)
 
-            if current >= total and total > 0:
+            if current >= total > 0:
                 status = "completed"
                 completed.append((name, task_info))
             elif current > 0:
@@ -499,7 +499,7 @@ class MultiProgressTracker:
             total = task_info.get("total", 0)
             current = task_info.get("completed", 0)
 
-            if current >= total and total > 0:
+            if current >= total > 0:
                 completed_count += 1
             elif current > 0:
                 in_progress_count += 1

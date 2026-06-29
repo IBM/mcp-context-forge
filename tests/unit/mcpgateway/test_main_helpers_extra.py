@@ -86,7 +86,6 @@ def test_validate_security_configuration_logs_default_jwt_warnings(monkeypatch: 
     )
     monkeypatch.setattr(main, "get_settings", lambda: fake_settings)
 
-
     caplog.set_level("WARNING", logger="mcpgateway")
 
     main.validate_security_configuration()

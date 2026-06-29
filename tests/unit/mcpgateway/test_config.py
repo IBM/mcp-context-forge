@@ -50,8 +50,6 @@ def test_parse_sso_entra_admin_groups_json_and_csv():
     assert s_json.sso_entra_admin_groups == ["admin", "superadmin"]
 
 
-
-
 def test_ratelimiter_redis_url_defaults():
     """Test rate limiter Redis config defaults to None."""
     s = Settings(_env_file=None)
@@ -1296,6 +1294,7 @@ def test_init_cors_production_env():
             app_domain="https://myapp.com",
             jwt_secret_key="x3Kp!mQ8rZvN2wLsA5dYfB7cEjGhTuIo",  # pragma: allowlist secret
             auth_encryption_secret="F4nRqW9kMpXzD1sVbYcL6eHjOuAtG2wC",  # pragma: allowlist secret
+            mcpgateway_ui_enabled=False,  # Disable UI to avoid basic_auth_password validation
             _env_file=None,
         )
         # Production origins should be based on app_domain
@@ -1544,8 +1543,10 @@ def test_ws_relay_feature_default_false():
     assert s.mcpgateway_ws_relay_enabled is False
 
 
-def test_reverse_proxy_feature_default_false():
+def test_reverse_proxy_feature_default_false(monkeypatch):
     """mcpgateway_reverse_proxy_enabled should default to False."""
+    # Clear any environment variable override
+    monkeypatch.delenv("MCPGATEWAY_REVERSE_PROXY_ENABLED", raising=False)
     s = Settings(_env_file=None)
     assert s.mcpgateway_reverse_proxy_enabled is False
 

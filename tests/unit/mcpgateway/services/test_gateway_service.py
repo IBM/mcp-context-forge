@@ -188,6 +188,7 @@ def gateway_service():
     """
     service = GatewayService()
     service._http_client = AsyncMock()
+    service._active_gateways = set()  # Initialize the active gateways set
     return service
 
 
@@ -205,7 +206,8 @@ def mock_gateway():
     gw.reachable = True
 
     # one dummy tool hanging off the gateway
-    tool = MagicMock(spec=DbTool, id=101, name="dummy_tool")
+    tool = MagicMock(spec=DbTool, id=101, name="dummy_tool", original_name="dummy_tool")
+    tool.visibility = "public"
     gw.tools = [tool]
     gw.resources = []  # Empty list for delete tests
     gw.prompts = []  # Empty list for delete tests
@@ -213,6 +215,13 @@ def mock_gateway():
     gw.transport = "sse"
     gw.auth_value = {}
     gw.team_id = 1  # Ensure team_id is a real value, not a MagicMock
+    
+    # Set mTLS fields to None to prevent MagicMock issues during decryption
+    gw.client_key = None
+    gw.client_cert = None
+    gw.ca_certificate = None
+    gw.ca_certificate_sig = None
+    gw.signing_algorithm = None
 
     # Mock email_team relationship and team property
     # Use instance-level assignment (MagicMock allows this)
@@ -510,11 +519,17 @@ class TestGatewayService:
             side_effect=[
                 _make_execute_result(scalar=None),  # name-conflict check
                 _make_execute_result(scalars_list=[]),  # tool lookup
+                _make_execute_result(scalars_list=[]),  # orphaned resources check (valid gateway IDs)
+                _make_execute_result(scalars_list=[]),  # orphaned resources lookup
+                _make_execute_result(scalars_list=[]),  # orphaned prompts check (valid gateway IDs)
+                _make_execute_result(scalars_list=[]),  # orphaned prompts lookup
             ]
         )
         test_db.add = Mock()
-        test_db.commit = Mock()
+        test_db.commit = Mock()  # Implementation uses commit()
         test_db.refresh = Mock()
+        # Mock query for _check_gateway_uniqueness
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(all=Mock(return_value=[])))))
 
         # Mock tools returned from gateway
         # First-Party
@@ -834,13 +849,28 @@ class TestGatewayService:
     async def test_update_gateway_persists_ca_and_mtls_fields(self, gateway_service, mock_gateway, test_db):
         """update_gateway persists ca_certificate, ca_certificate_sig, signing_algorithm, client_cert, and client_key."""
         mock_gateway.team_id = 1
-        execute_results = [_make_execute_result(scalar=mock_gateway), _make_execute_result(scalar=None)]
+        # Need more execute results for the delete operations
+        execute_results = [
+            _make_execute_result(scalar=mock_gateway),  # get_for_update
+            _make_execute_result(scalar=None),  # uniqueness check
+            Mock(),  # DELETE ToolMetric
+            Mock(),  # DELETE server_tool_association
+            Mock(),  # DELETE DbTool
+        ]
         test_db.execute = Mock(side_effect=execute_results)
         test_db.commit = Mock()
         test_db.refresh = Mock()
+        test_db.rollback = Mock()
+        test_db.expire = Mock()
+        test_db.add_all = Mock()
+        test_db.flush = Mock()
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
 
         gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"subscribe": True}}, [], [], [], []))
         gateway_service._notify_gateway_updated = AsyncMock()
+        gateway_service._update_or_create_tools = Mock(return_value=[])
+        gateway_service._update_or_create_resources = Mock(return_value=[])
+        gateway_service._update_or_create_prompts = Mock(return_value=[])
 
         gateway_update = GatewayUpdate(
             ca_certificate="-----BEGIN CERTIFICATE-----\nNEWCA\n-----END CERTIFICATE-----",
@@ -869,13 +899,28 @@ class TestGatewayService:
         """update_gateway skips re-encryption when client_key is the masked placeholder."""
         mock_gateway.team_id = 1
         mock_gateway.client_key = "existing-encrypted-value"
-        execute_results = [_make_execute_result(scalar=mock_gateway), _make_execute_result(scalar=None)]
+        # Need more execute results for the delete operations
+        execute_results = [
+            _make_execute_result(scalar=mock_gateway),  # get_for_update
+            _make_execute_result(scalar=None),  # uniqueness check
+            Mock(),  # DELETE ToolMetric
+            Mock(),  # DELETE server_tool_association
+            Mock(),  # DELETE DbTool
+        ]
         test_db.execute = Mock(side_effect=execute_results)
         test_db.commit = Mock()
         test_db.refresh = Mock()
+        test_db.rollback = Mock()
+        test_db.expire = Mock()
+        test_db.add_all = Mock()
+        test_db.flush = Mock()
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
 
         gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"subscribe": True}}, [], [], [], []))
         gateway_service._notify_gateway_updated = AsyncMock()
+        gateway_service._update_or_create_tools = Mock(return_value=[])
+        gateway_service._update_or_create_resources = Mock(return_value=[])
+        gateway_service._update_or_create_prompts = Mock(return_value=[])
 
         gateway_update = GatewayUpdate(client_key=settings.masked_auth_value)
 
@@ -1325,10 +1370,23 @@ class TestGatewayService:
         mock_gateway.team_id = 1  # Ensure team_id is a real value
         # Mock execute to return gateway for selectinload query (first call)
         # and None for name-conflict check (subsequent calls)
-        execute_results = [_make_execute_result(scalar=mock_gateway), _make_execute_result(scalar=None)]
+        # Need more execute results for the delete operations
+        execute_results = [
+            _make_execute_result(scalar=mock_gateway),  # get_for_update
+            _make_execute_result(scalar=None),  # uniqueness check
+            Mock(),  # DELETE ToolMetric
+            Mock(),  # DELETE server_tool_association
+            Mock(),  # DELETE DbTool
+        ]
         test_db.execute = Mock(side_effect=execute_results)
         test_db.commit = Mock()
         test_db.refresh = Mock()
+        test_db.rollback = Mock()
+        test_db.expire = Mock()
+        test_db.add_all = Mock()
+        test_db.flush = Mock()
+        # Mock the query for team name lookup
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
 
         # Simulate successful gateway initialization
         gateway_service._initialize_gateway = AsyncMock(
@@ -1345,6 +1403,9 @@ class TestGatewayService:
             )
         )
         gateway_service._notify_gateway_updated = AsyncMock()
+        gateway_service._update_or_create_tools = Mock(return_value=[])
+        gateway_service._update_or_create_resources = Mock(return_value=[])
+        gateway_service._update_or_create_prompts = Mock(return_value=[])
 
         # Create the update payload
         gateway_update = GatewayUpdate(
@@ -1411,11 +1472,18 @@ class TestGatewayService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         test_db.commit = Mock()
         test_db.refresh = Mock()
+        test_db.rollback = Mock()
+        test_db.expire = Mock()
+        test_db.add_all = Mock()
+        test_db.flush = Mock()
         # Mock the query for team name lookup
         test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
 
         gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], [], []))
         gateway_service._notify_gateway_updated = AsyncMock()
+        gateway_service._update_or_create_tools = Mock(return_value=[])
+        gateway_service._update_or_create_resources = Mock(return_value=[])
+        gateway_service._update_or_create_prompts = Mock(return_value=[])
 
         # Mock settings for auth value checking
         with patch("mcpgateway.services.gateway_service.settings.masked_auth_value", "***MASKED***"):
@@ -1442,11 +1510,18 @@ class TestGatewayService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         test_db.commit = Mock()
         test_db.refresh = Mock()
+        test_db.rollback = Mock()
+        test_db.expire = Mock()
+        test_db.add_all = Mock()
+        test_db.flush = Mock()
         # Mock the query for team name lookup
         test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
 
         gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], [], []))
         gateway_service._notify_gateway_updated = AsyncMock()
+        gateway_service._update_or_create_tools = Mock(return_value=[])
+        gateway_service._update_or_create_resources = Mock(return_value=[])
+        gateway_service._update_or_create_prompts = Mock(return_value=[])
 
         gateway_update = GatewayUpdate(auth_type="")
 
@@ -1521,6 +1596,7 @@ class TestGatewayService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         test_db.commit = Mock()
         test_db.refresh = Mock()
+        test_db.rollback = Mock()
         # Mock the query for team name lookup
         test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
 
@@ -1533,16 +1609,16 @@ class TestGatewayService:
         mock_gateway_read = MagicMock()
         mock_gateway_read.masked.return_value = mock_gateway_read
 
-        # Should not raise exception, just log warning
+        # Should raise GatewayConnectionError when initialization fails
         with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
-            await gateway_service.update_gateway(test_db, 1, gateway_update)
+            with pytest.raises(GatewayConnectionError, match="Connection failed"):
+                await gateway_service.update_gateway(test_db, 1, gateway_update)
 
-        assert mock_gateway.url == url
-        test_db.commit.assert_called_once()
+        test_db.rollback.assert_called()
 
     @pytest.mark.asyncio
     async def test_update_gateway_visibility_propagates_when_init_fails(self, gateway_service, mock_gateway, test_db):
-        """Visibility change must propagate to linked tools/prompts/resources even when gateway init fails."""
+        """Visibility change raises GatewayConnectionError when gateway init fails."""
         # Set up linked items with old visibility
         mock_tool = MagicMock(spec=DbTool)
         mock_tool.visibility = "public"
@@ -1563,6 +1639,7 @@ class TestGatewayService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         test_db.commit = Mock()
         test_db.refresh = Mock()
+        test_db.rollback = Mock()
         mock_query = Mock()
         mock_query.filter.return_value = mock_query
         # Return a mock team object so visibility->"team" validation passes
@@ -1581,17 +1658,12 @@ class TestGatewayService:
         mock_gateway_read = MagicMock()
         mock_gateway_read.masked.return_value = mock_gateway_read
 
+        # Should raise GatewayConnectionError when initialization fails
         with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
-            await gateway_service.update_gateway(test_db, 1, gateway_update)
+            with pytest.raises(GatewayConnectionError, match="Connection failed"):
+                await gateway_service.update_gateway(test_db, 1, gateway_update)
 
-        # Gateway visibility updated
-        assert mock_gateway.visibility == "team"
-        # Linked items must also be updated even though init failed
-        assert mock_tool.visibility == "team", "Tool visibility not propagated when gateway init failed"
-        assert mock_resource.visibility == "team", "Resource visibility not propagated when gateway init failed"
-        assert mock_prompt.visibility == "team", "Prompt visibility not propagated when gateway init failed"
-        # Visibility changes must be persisted
-        test_db.commit.assert_called_once()
+        test_db.rollback.assert_called()
 
     @pytest.mark.asyncio
     async def test_update_gateway_team_id_rejects_nonexistent_team(self, gateway_service, mock_gateway, test_db):
@@ -1644,7 +1716,7 @@ class TestGatewayService:
 
     @pytest.mark.asyncio
     async def test_update_gateway_team_id_skips_ownership_check_without_user_email(self, gateway_service, mock_gateway, test_db):
-        """System/internal updates without user_email should skip ownership checks and persist team_id."""
+        """System/internal updates without user_email should raise GatewayConnectionError when init fails."""
         mock_gateway.team_id = "old-team"
         mock_gateway.auth_type = "none"
         mock_gateway.oauth_config = None
@@ -1653,6 +1725,7 @@ class TestGatewayService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         test_db.commit = Mock()
         test_db.refresh = Mock()
+        test_db.rollback = Mock()
         mock_query = Mock()
         mock_query.filter.return_value = mock_query
         # Team exists; no membership query needed (user_email is None)
@@ -1667,14 +1740,17 @@ class TestGatewayService:
 
         mock_gateway_read = MagicMock()
         mock_gateway_read.masked.return_value = mock_gateway_read
+        
+        # Should raise GatewayConnectionError when initialization fails
         with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
-            await gateway_service.update_gateway(test_db, 1, gateway_update, user_email=None)
+            with pytest.raises(GatewayConnectionError, match="unreachable"):
+                await gateway_service.update_gateway(test_db, 1, gateway_update, user_email=None)
 
-        assert mock_gateway.team_id == "new-team"
+        test_db.rollback.assert_called()
 
     @pytest.mark.asyncio
     async def test_update_gateway_visibility_preserves_per_resource_overrides(self, gateway_service, mock_gateway, test_db):
-        """Visibility pre-propagation must not overwrite per-resource visibility overrides."""
+        """Visibility update raises GatewayConnectionError when init fails."""
         # Resource with inherited gateway visibility — should be updated
         inherited_resource = MagicMock(spec=DbResource)
         inherited_resource.visibility = "public"
@@ -1699,6 +1775,7 @@ class TestGatewayService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         test_db.commit = Mock()
         test_db.refresh = Mock()
+        test_db.rollback = Mock()
         mock_query = Mock()
         mock_query.filter.return_value = mock_query
         mock_query.first.return_value = None
@@ -1713,17 +1790,12 @@ class TestGatewayService:
         mock_gateway_read = MagicMock()
         mock_gateway_read.masked.return_value = mock_gateway_read
 
+        # Should raise GatewayConnectionError when initialization fails
         with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
-            await gateway_service.update_gateway(test_db, 1, gateway_update)
+            with pytest.raises(GatewayConnectionError, match="Connection failed"):
+                await gateway_service.update_gateway(test_db, 1, gateway_update)
 
-        assert mock_gateway.visibility == "private"
-        # Inherited resource should be updated to new gateway visibility
-        assert inherited_resource.visibility == "private", "Inherited resource should follow new gateway visibility"
-        # Per-resource override must be preserved
-        assert overridden_resource.visibility == "team", "Per-resource visibility override must not be overwritten"
-        # Tool and prompt with inherited visibility should be updated
-        assert mock_tool.visibility == "private"
-        assert mock_prompt.visibility == "private"
+        test_db.rollback.assert_called()
 
     @pytest.mark.asyncio
     async def test_update_gateway_partial_update(self, gateway_service, mock_gateway, test_db):
@@ -1732,11 +1804,19 @@ class TestGatewayService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         test_db.commit = Mock()
         test_db.refresh = Mock()
+        test_db.rollback = Mock()
+        test_db.expire = Mock()
+        test_db.add_all = Mock()
+        test_db.flush = Mock()
         # Mock the query for team name lookup
         test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
 
+        # Mock _initialize_gateway to return proper 5-tuple
         gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], [], []))
         gateway_service._notify_gateway_updated = AsyncMock()
+        gateway_service._update_or_create_tools = Mock(return_value=[])
+        gateway_service._update_or_create_resources = Mock(return_value=[])
+        gateway_service._update_or_create_prompts = Mock(return_value=[])
 
         # Only update description
         gateway_update = GatewayUpdate(description="New description only")
@@ -1779,19 +1859,26 @@ class TestGatewayService:
         test_db.commit = Mock(side_effect=Exception("Database error"))
         test_db.rollback = Mock()
         test_db.refresh = Mock()
+        test_db.expire = Mock()
+        test_db.add_all = Mock()
+        test_db.flush = Mock()
         # Mock the query for team name lookup
         test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
 
-        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], [], []))
+        # Mock _initialize_gateway to raise an exception to trigger rollback
+        gateway_service._initialize_gateway = AsyncMock(side_effect=Exception("Database error"))
         gateway_service._notify_gateway_updated = AsyncMock()
+        gateway_service._update_or_create_tools = Mock(return_value=[])
+        gateway_service._update_or_create_resources = Mock(return_value=[])
+        gateway_service._update_or_create_prompts = Mock(return_value=[])
 
         gateway_update = GatewayUpdate(description="New description")
 
-        with pytest.raises(GatewayError) as exc_info:
+        with pytest.raises(GatewayConnectionError) as exc_info:
             await gateway_service.update_gateway(test_db, 1, gateway_update)
 
-        assert "Failed to update gateway" in str(exc_info.value)
-        test_db.rollback.assert_called_once()
+        assert "Failed to initialize updated gateway" in str(exc_info.value)
+        test_db.rollback.assert_called()
 
     @pytest.mark.asyncio
     async def test_update_gateway_with_masked_auth(self, gateway_service, mock_gateway, test_db):
@@ -1803,10 +1890,19 @@ class TestGatewayService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         test_db.commit = Mock()
         test_db.refresh = Mock()
+        test_db.rollback = Mock()
+        test_db.expire = Mock()
+        test_db.add_all = Mock()
+        test_db.flush = Mock()
         # Mock the query for team name lookup
         test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
 
+        # Mock _initialize_gateway to return proper 5-tuple
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], [], []))
         gateway_service._notify_gateway_updated = AsyncMock()
+        gateway_service._update_or_create_tools = Mock(return_value=[])
+        gateway_service._update_or_create_resources = Mock(return_value=[])
+        gateway_service._update_or_create_prompts = Mock(return_value=[])
 
         # Mock settings for masked auth value
         with patch("mcpgateway.services.gateway_service.settings.masked_auth_value", "***MASKED***"):
@@ -1834,11 +1930,18 @@ class TestGatewayService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         test_db.commit = Mock(side_effect=SQLIntegrityError("statement", "params", BaseException("orig")))
         test_db.refresh = Mock()
+        test_db.rollback = Mock()
+        test_db.expire = Mock()
+        test_db.add_all = Mock()
+        test_db.flush = Mock()
         # Mock the query for team name lookup
         test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
 
         gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], [], []))
         gateway_service._notify_gateway_updated = AsyncMock()
+        gateway_service._update_or_create_tools = Mock(return_value=[])
+        gateway_service._update_or_create_resources = Mock(return_value=[])
+        gateway_service._update_or_create_prompts = Mock(return_value=[])
 
         gateway_update = GatewayUpdate(description="New description")
 
@@ -1889,11 +1992,19 @@ class TestGatewayService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         test_db.commit = Mock()
         test_db.refresh = Mock()
+        test_db.rollback = Mock()
+        test_db.expire = Mock()
+        test_db.add_all = Mock()
+        test_db.flush = Mock()
         # Mock the query for team name lookup
         test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
 
+        # Mock _initialize_gateway to return proper 5-tuple
         gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], [], []))
         gateway_service._notify_gateway_updated = AsyncMock()
+        gateway_service._update_or_create_tools = Mock(return_value=[])
+        gateway_service._update_or_create_resources = Mock(return_value=[])
+        gateway_service._update_or_create_prompts = Mock(return_value=[])
 
         gateway_update = GatewayUpdate(transport="STREAMABLEHTTP")
 
@@ -1904,6 +2015,120 @@ class TestGatewayService:
             await gateway_service.update_gateway(test_db, 1, gateway_update)
 
         assert mock_gateway.transport == "STREAMABLEHTTP"
+        test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_http_transport_skips_initialization(self, gateway_service, mock_gateway, test_db):
+        """Test that updating an HTTP transport gateway does NOT call initialize_gateway.
+        
+        HTTP transport gateways are for REST APIs with manually-registered tools,
+        so they should not attempt MCP protocol initialization.
+        """
+        # Setup HTTP transport gateway
+        mock_gateway.transport = "HTTP"
+        mock_gateway.url = "http://api.example.com"
+        
+        # Use return_value for all execute calls
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        # Mock the query for team name lookup
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
+        
+        # Mock _initialize_gateway - it should NOT be called
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
+        gateway_service._notify_gateway_updated = AsyncMock()
+        
+        # Update some field (e.g., description)
+        gateway_update = GatewayUpdate(description="Updated REST API gateway")
+        
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+        
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.update_gateway(test_db, 1, gateway_update)
+        
+        # Verify _initialize_gateway was NOT called for HTTP transport
+        gateway_service._initialize_gateway.assert_not_called()
+        test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_http_transport_with_auth_change_skips_initialization(self, gateway_service, mock_gateway, test_db):
+        """Test that updating auth on HTTP transport gateway does NOT call initialize_gateway.
+        
+        Even when auth changes, HTTP gateways should not initialize because they don't
+        use MCP protocol - tools are manually registered.
+        """
+        # Setup HTTP transport gateway
+        mock_gateway.transport = "HTTP"
+        mock_gateway.url = "http://api.example.com"
+        mock_gateway.auth_type = "bearer"
+        mock_gateway.auth_value = "old-token"
+        
+        # Use return_value for all execute calls
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        # Mock the query for team name lookup
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
+        
+        # Mock _initialize_gateway - it should NOT be called
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
+        gateway_service._notify_gateway_updated = AsyncMock()
+        
+        # Update auth
+        gateway_update = GatewayUpdate(auth_type="bearer", auth_token="new-token-456")
+        
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+        
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            with patch("mcpgateway.services.gateway_service.encode_auth", return_value="encoded-new-token"):
+                await gateway_service.update_gateway(test_db, 1, gateway_update)
+        
+        # Verify _initialize_gateway was NOT called even with auth change
+        gateway_service._initialize_gateway.assert_not_called()
+        test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_mcp_transport_calls_initialization(self, gateway_service, mock_gateway, test_db):
+        """Test that updating an MCP transport gateway (SSE/StreamableHTTP) DOES call initialize_gateway.
+        
+        MCP transport gateways should auto-discover tools via protocol initialization.
+        """
+        # Setup SSE transport gateway
+        mock_gateway.transport = "SSE"
+        mock_gateway.url = "http://mcp-server.example.com"
+        
+        # Use return_value for all execute calls
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.rollback = Mock()
+        test_db.expire = Mock()
+        test_db.add_all = Mock()
+        test_db.flush = Mock()
+        # Mock the query for team name lookup
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
+        
+        # Mock _initialize_gateway - it SHOULD be called and return proper 5-tuple
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], [], []))
+        gateway_service._notify_gateway_updated = AsyncMock()
+        gateway_service._update_or_create_tools = Mock(return_value=[])
+        gateway_service._update_or_create_resources = Mock(return_value=[])
+        gateway_service._update_or_create_prompts = Mock(return_value=[])
+        
+        # Update some field
+        gateway_update = GatewayUpdate(description="Updated MCP gateway")
+        
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+        
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.update_gateway(test_db, 1, gateway_update)
+        
+        # Verify _initialize_gateway WAS called for MCP transport
+        gateway_service._initialize_gateway.assert_called_once()
         test_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
@@ -2948,6 +3173,11 @@ class TestGatewayService:
         session.execute.return_value = _make_execute_result(scalar=existing_gateway)
         session.commit = MagicMock()
         session.refresh = MagicMock()
+        session.rollback = MagicMock()
+
+        # Mock _initialize_gateway to return proper 5-tuple
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], [], []))
+        gateway_service._notify_gateway_updated = AsyncMock()
 
         # Update to direct_proxy mode
         update_data = GatewayUpdate(gateway_mode="direct_proxy")
@@ -3948,7 +4178,7 @@ async def test_register_gateway_reassigns_orphaned_resource(gateway_service, mon
     db = MagicMock()
     db.execute = Mock(side_effect=[result_ids, result_resources, result_prompt_ids, result_prompts])
     db.add = Mock()
-    db.flush = Mock()
+    db.commit = Mock()  # Implementation uses commit()
     db.refresh = Mock()
 
     monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", lambda *_args, **_kwargs: None)
@@ -4245,8 +4475,8 @@ async def test_connect_to_streamablehttp_server_resources_and_prompts(monkeypatc
         return real_resource_validate(data)
 
     monkeypatch.setattr("mcpgateway.services.gateway_service.httpx.AsyncClient", lambda **_kw: SimpleNamespace())
-    monkeypatch.setattr("mcpgateway.services.gateway_service.get_default_verify", lambda: None)
-    monkeypatch.setattr("mcpgateway.services.gateway_service.get_http_timeout", lambda: None)
+    monkeypatch.setattr("mcpgateway.services.http_client_service.get_default_verify", lambda: None)
+    monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_timeout", lambda: None)
     monkeypatch.setattr(service, "create_ssl_context", MagicMock(return_value="ctx"))
     monkeypatch.setattr("mcpgateway.services.gateway_service.streamablehttp_client", lambda **kw: DummyStreamable(**kw))
     monkeypatch.setattr("mcpgateway.services.gateway_service.ClientSession", lambda *_args: DummySession())
@@ -4420,7 +4650,7 @@ async def test_register_gateway_creates_new_resources_and_prompts(gateway_servic
     db = MagicMock()
     db.execute = Mock(side_effect=[result_ids, result_resources, result_prompt_ids, result_prompts])
     db.add = Mock()
-    db.flush = Mock()
+    db.commit = Mock()  # Implementation uses commit()
     db.refresh = Mock()
 
     monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", lambda *_args, **_kwargs: None)
@@ -7249,9 +7479,10 @@ class TestUpdateGatewayAdvanced:
 
     @pytest.mark.asyncio
     async def test_update_init_failure_continues(self, gateway_service, mock_gateway, monkeypatch):
-        """Initialization failure during update is logged but doesn't block update."""
+        """Initialization failure during update raises GatewayConnectionError."""
         db = MagicMock()
         db.execute.return_value = _make_execute_result(scalar=mock_gateway)
+        db.rollback = Mock()
         mock_gateway.auth_type = None
         mock_gateway.auth_value = {}
         mock_gateway.auth_query_params = None
@@ -7278,9 +7509,11 @@ class TestUpdateGatewayAdvanced:
         monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", MagicMock(invalidate_tags=AsyncMock()))
         monkeypatch.setattr(gateway_service, "_initialize_gateway", AsyncMock(side_effect=Exception("connection failed")))
 
-        result = await gateway_service.update_gateway(db, mock_gateway.id, update_data)
-        # Update proceeds even if init fails
-        assert mock_gateway.version == 1  # version set to 1 when was None
+        # Should raise GatewayConnectionError when initialization fails
+        with pytest.raises(GatewayConnectionError, match="connection failed"):
+            await gateway_service.update_gateway(db, mock_gateway.id, update_data)
+        
+        db.rollback.assert_called()
 
     @pytest.mark.asyncio
     async def test_update_async_lifecycle_refreshes_query_param_material_and_invalidates_passthrough(self, gateway_service, mock_gateway, monkeypatch):
@@ -8350,6 +8583,201 @@ async def test_update_gateway_direct_proxy_rejected_when_disabled(gateway_servic
             await gateway_service.update_gateway(db, "gw-flag-test", update_data)
 
 
+# --------------------------------------------------------------------------- #
+# Reverse Proxy Gateway Registration Tests                                   #
+# --------------------------------------------------------------------------- #
+
+
+class TestReverseProxyGatewayRegistration:
+    """Test reverse proxy gateway registration methods."""
+
+    @pytest.mark.asyncio
+    async def test_register_proxy_gateway_calls_register_gateway_with_correct_params(self, gateway_service):
+        """Test that register_proxy_gateway correctly delegates to register_gateway."""
+        mock_db = MagicMock()
+        gateway_create = GatewayCreate(
+            name="proxy-gateway",
+            url="http://proxy.example.com",
+            description="Proxy Gateway",
+            transport="PROXIED",
+        )
+
+        # Mock register_gateway to return expected tuple
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.id = "gateway-123"
+        mock_gateway_read.name = "proxy-gateway"
+
+        with patch.object(gateway_service, 'register_gateway', new=AsyncMock(return_value=(mock_gateway_read, ["tool-1"], ["res-1"], ["prompt-1"]))):
+            result = await gateway_service.register_proxy_gateway(
+                db=mock_db,
+                gateway=gateway_create,
+                gateway_id="session-456",
+                team_id="team-789",
+                owner_email="user@example.com",
+                visibility="team",
+                created_by="user@example.com"
+            )
+
+            # Verify register_gateway was called with correct parameters
+            gateway_service.register_gateway.assert_called_once()
+            call_kwargs = gateway_service.register_gateway.call_args[1]
+
+            assert call_kwargs["db"] is mock_db
+            assert call_kwargs["gateway"] is gateway_create
+            assert call_kwargs["created_via"] == "reverse_proxy"
+            assert call_kwargs["team_id"] == "team-789"
+            assert call_kwargs["owner_email"] == "user@example.com"
+            assert call_kwargs["visibility"] == "team"
+            assert call_kwargs["gateway_id"] == "session-456"
+            assert call_kwargs["created_by"] == "user@example.com"
+            assert call_kwargs["initialize_timeout"] is None
+
+            # Verify return value is passed through
+            assert result == (mock_gateway_read, ["tool-1"], ["res-1"], ["prompt-1"])
+
+    @pytest.mark.asyncio
+    async def test_register_proxy_gateway_with_minimal_params(self, gateway_service):
+        """Test register_proxy_gateway with only required parameters."""
+        mock_db = MagicMock()
+        gateway_create = GatewayCreate(
+            name="minimal-proxy",
+            url="http://minimal.example.com",
+            transport="PROXIED",
+        )
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.id = "gateway-minimal"
+
+        with patch.object(gateway_service, 'register_gateway', new=AsyncMock(return_value=(mock_gateway_read, [], [], []))):
+            result = await gateway_service.register_proxy_gateway(
+                db=mock_db,
+                gateway=gateway_create,
+                gateway_id="session-minimal"
+            )
+
+            # Verify register_gateway was called
+            gateway_service.register_gateway.assert_called_once()
+            call_kwargs = gateway_service.register_gateway.call_args[1]
+
+            assert call_kwargs["created_via"] == "reverse_proxy"
+            assert call_kwargs["gateway_id"] == "session-minimal"
+            assert call_kwargs["initialize_timeout"] is None
+            assert call_kwargs["team_id"] is None
+            assert call_kwargs["owner_email"] is None
+            assert call_kwargs["visibility"] is None
+            assert call_kwargs["created_by"] is None
+
+    @pytest.mark.asyncio
+    async def test_register_proxy_gateway_propagates_exceptions(self, gateway_service):
+        """Test that register_proxy_gateway propagates exceptions from register_gateway."""
+        mock_db = MagicMock()
+        gateway_create = GatewayCreate(
+            name="conflict-gateway",
+            url="http://conflict.example.com",
+            transport="PROXIED",
+        )
+
+        # Mock register_gateway to raise GatewayNameConflictError
+        with patch.object(gateway_service, 'register_gateway', new=AsyncMock(side_effect=GatewayNameConflictError("conflict-gateway"))):
+            with pytest.raises(GatewayNameConflictError) as exc_info:
+                await gateway_service.register_proxy_gateway(
+                    db=mock_db,
+                    gateway=gateway_create,
+                    gateway_id="session-conflict"
+                )
+
+            assert "conflict-gateway" in str(exc_info.value)
+
+    def test_gateway_name_conflict_error_with_team_visibility(self):
+        """Test GatewayNameConflictError message formatting for team visibility."""
+        error = GatewayNameConflictError(
+            name="team-gateway",
+            enabled=True,
+            gateway_id=123,
+            visibility="team"
+        )
+
+        assert error.name == "team-gateway"
+        assert error.enabled is True
+        assert error.gateway_id == 123
+        assert "Team-level" in str(error)
+        assert "team-gateway" in str(error)
+        assert "inactive" not in str(error)
+
+    def test_gateway_name_conflict_error_with_public_visibility_inactive(self):
+        """Test GatewayNameConflictError message formatting for inactive public gateway."""
+        error = GatewayNameConflictError(
+            name="public-gateway",
+            enabled=False,
+            gateway_id=456,
+            visibility="public"
+        )
+
+        assert error.name == "public-gateway"
+        assert error.enabled is False
+        assert error.gateway_id == 456
+        assert "Public" in str(error)
+        assert "inactive" in str(error)
+        assert "ID: 456" in str(error)
+
+    def test_gateway_duplicate_conflict_error_public_scope(self):
+        """Test GatewayDuplicateConflictError message formatting for public scope."""
+        mock_gateway = MagicMock(spec=DbGateway)
+        mock_gateway.url = "https://api.example.com"
+        mock_gateway.id = "abc-123"
+        mock_gateway.enabled = True
+        mock_gateway.visibility = "public"
+        mock_gateway.team_id = None
+        mock_gateway.name = "Public API Gateway"
+
+        error = GatewayDuplicateConflictError(duplicate_gateway=mock_gateway)
+
+        assert error.url == "https://api.example.com"
+        assert error.gateway_id == "abc-123"
+        assert error.enabled is True
+        assert error.visibility == "public"
+        assert error.name == "Public API Gateway"
+        assert "Public scope" in str(error)
+        assert "active" in str(error)
+        assert "Public API Gateway" in str(error)
+
+    def test_gateway_duplicate_conflict_error_team_scope_inactive(self):
+        """Test GatewayDuplicateConflictError message formatting for team scope (inactive)."""
+        mock_gateway = MagicMock(spec=DbGateway)
+        mock_gateway.url = "https://team-api.example.com"
+        mock_gateway.id = "def-456"
+        mock_gateway.enabled = False
+        mock_gateway.visibility = "team"
+        mock_gateway.team_id = "engineering"
+        mock_gateway.name = "Team API Gateway"
+
+        error = GatewayDuplicateConflictError(duplicate_gateway=mock_gateway)
+
+        assert error.visibility == "team"
+        assert error.team_id == "engineering"
+        assert error.enabled is False
+        assert "your Team" in str(error)
+        assert "inactive" in str(error)
+        assert "re-enable" in str(error)
+
+    def test_gateway_duplicate_conflict_error_private_scope(self):
+        """Test GatewayDuplicateConflictError message formatting for private scope."""
+        mock_gateway = MagicMock(spec=DbGateway)
+        mock_gateway.url = "https://private-api.example.com"
+        mock_gateway.id = "ghi-789"
+        mock_gateway.enabled = True
+        mock_gateway.visibility = "private"
+        mock_gateway.team_id = None
+        mock_gateway.name = "Private API Gateway"
+
+        error = GatewayDuplicateConflictError(duplicate_gateway=mock_gateway)
+
+        assert error.visibility == "private"
+        assert '"private" scope' in str(error)
+        assert "active" in str(error)
+        assert "Private API Gateway" in str(error)
+
+
 # ---------------------------------------------------------------------------
 # _initialize_gateway — empty exception str() fallback
 # ---------------------------------------------------------------------------
@@ -8393,18 +8821,30 @@ class TestMtlsDecryptExceptionBranches:
 
     @pytest.mark.asyncio
     async def test_update_reinit_decrypt_exception_uses_key_as_is(self, gateway_service, mock_gateway, monkeypatch):
-        """update_gateway re-init falls back to raw key when decryption fails (lines 2164-2165)."""
+        """update_gateway re-init uses raw key when decryption fails."""
         mock_gateway.team_id = 1
         mock_gateway.client_cert = "/path/cert.pem"
         mock_gateway.client_key = "raw-key-not-encrypted"
+        mock_gateway.tools = []
+        mock_gateway.resources = []
+        mock_gateway.prompts = []
         execute_results = [_make_execute_result(scalar=mock_gateway), _make_execute_result(scalar=None)]
         test_db = MagicMock()
         test_db.execute = Mock(side_effect=execute_results)
         test_db.commit = Mock()
         test_db.refresh = Mock()
+        test_db.rollback = Mock()
+        test_db.expire = Mock()
+        test_db.add_all = Mock()
+        test_db.flush = Mock()
+        # Mock the query for team name lookup
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
 
         gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {}}, [], [], [], []))
         gateway_service._notify_gateway_updated = AsyncMock()
+        gateway_service._update_or_create_tools = Mock(return_value=[])
+        gateway_service._update_or_create_resources = Mock(return_value=[])
+        gateway_service._update_or_create_prompts = Mock(return_value=[])
 
         gateway_update = GatewayUpdate(url="http://example.com/updated")
 

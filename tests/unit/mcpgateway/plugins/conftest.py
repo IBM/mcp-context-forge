@@ -16,7 +16,6 @@ from cpex.framework import PluginManager
 from cpex.framework.settings import settings
 
 
-
 @pytest.fixture(autouse=True)
 def reset_plugin_manager_state():
     """Reset PluginManager Borg state, the shared-toggle cache, and the factory singleton before/after each test."""

@@ -10,7 +10,6 @@ Tests the apply_query_param_auth and sanitize_url_for_logging functions
 used for handling query parameter authentication with upstream MCP servers.
 """
 
-import pytest
 
 from mcpgateway.utils.url_auth import (
     STATIC_SENSITIVE_PARAMS,

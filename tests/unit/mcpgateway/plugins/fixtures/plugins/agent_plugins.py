@@ -8,7 +8,7 @@ Test agent plugins for unit testing.
 """
 
 # First-Party
-from mcpgateway.common.models import Message, Role, TextContent
+from mcpgateway.common.models import TextContent
 from cpex.framework import (
     Plugin,
     PluginContext,

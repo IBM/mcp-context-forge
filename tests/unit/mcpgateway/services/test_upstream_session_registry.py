@@ -812,6 +812,35 @@ async def test_acquire_evicts_on_oserror_in_body(registry, factory_and_records):
 
 
 @pytest.mark.asyncio
+async def test_acquire_evicts_on_mcp_error_in_body(registry, factory_and_records):
+    """McpError (e.g., 'Session terminated') raised inside acquire() body must evict and re-raise.
+    
+    This handles the race condition where the MCP server terminates the session after a tool
+    call completes but before the SDK's validation (e.g., list_tools()) finishes. Without
+    eviction, subsequent tool calls would reuse the dead session and fail immediately.
+    """
+    # Third-Party
+    from mcp import McpError
+    from mcp.types import ErrorData
+
+    _, _ = factory_and_records
+    error = McpError(ErrorData(code=-1, message="Session terminated"))
+    
+    with pytest.raises(McpError, match="Session terminated"):
+        async with registry.acquire(
+            downstream_session_id="s1",
+            gateway_id="g1",
+            url="http://upstream/mcp",
+            headers=None,
+            transport_type=TransportType.STREAMABLE_HTTP,
+        ):
+            raise error
+
+    # Session must be evicted so next acquire rebuilds instead of reusing dead session
+    assert registry.snapshot().active_sessions == 0
+
+
+@pytest.mark.asyncio
 async def test_acquire_does_not_evict_on_plain_value_error_in_body(registry, factory_and_records):
     """A caller-level exception (ValueError, etc.) leaves the session intact — the transport is fine."""
     _, _ = factory_and_records

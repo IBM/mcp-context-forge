@@ -13,7 +13,6 @@ request parsing (JSONRPC, A2A protocol, simple, nested message parts)
 and the calculator/weather tool routing.
 """
 
-import json
 
 import pytest
 from fastapi.testclient import TestClient

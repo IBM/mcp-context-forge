@@ -323,9 +323,10 @@ class TestMultiAuthHeaders:
         mock_db.delete = MagicMock()
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
+        mock_db.rollback = MagicMock()
         mock_db.query = MagicMock(return_value=MagicMock(filter=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))))
 
-        monkeypatch.setattr(service, "_initialize_gateway", AsyncMock(return_value=({}, [], [], [])))
+        monkeypatch.setattr(service, "_initialize_gateway", AsyncMock(return_value=({}, [], [], [], [])))
         monkeypatch.setattr(service, "_update_or_create_tools", MagicMock(return_value=[]))
         monkeypatch.setattr(service, "_update_or_create_resources", MagicMock(return_value=[]))
         monkeypatch.setattr(service, "_update_or_create_prompts", MagicMock(return_value=[]))

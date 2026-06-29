@@ -18,7 +18,7 @@ from cpex.framework import (
     ResourcePreFetchPayload,
 )
 from mcpgateway.common.models import ResourceContent
-from mcpgateway.common.models import Message, PromptResult, Role, TextContent
+from mcpgateway.common.models import Message, PromptResult, TextContent
 
 from plugins.external.clamav_server.clamav_plugin import ClamAVRemotePlugin
 

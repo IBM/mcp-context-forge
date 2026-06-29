@@ -420,6 +420,7 @@ async def test_handle_sso_callback_keycloak_oversized_id_token_skips_hint_cookie
     assert "id_token too large for cookie storage" in caplog.text
     assert set_cookie.called
 
+
 @pytest.mark.asyncio
 async def test_handle_sso_callback_non_admin_with_team_redirects_to_team(monkeypatch: pytest.MonkeyPatch):
     """Test that non-admin users with teams are redirected to team-scoped admin."""
@@ -582,6 +583,7 @@ async def test_handle_sso_callback_team_service_error_falls_back_to_admin(monkey
     assert response.headers.get("location", "") == "/admin"
     assert set_cookie.called
 
+
 @pytest.mark.asyncio
 async def test_handle_sso_callback_invalid_jwt_falls_back_to_user_info(monkeypatch: pytest.MonkeyPatch):
     """Test that invalid JWT token falls back to using user_info for redirect determination.
@@ -632,8 +634,6 @@ async def test_handle_sso_callback_invalid_jwt_falls_back_to_user_info(monkeypat
     # Should redirect to admin gateways view since user has no teams and is not admin
     assert response.headers.get("location", "") == "/admin/#gateways"
     assert set_cookie.called
-
-
 
 
 @pytest.mark.asyncio

@@ -75,7 +75,7 @@ class TestVerifyCredentialsUuidCoverage:
     @pytest.mark.asyncio
     async def test_uuid_resolution_in_require_admin_auth_lines_1409_1414(self):
         """Cover lines 1409-1414: UUID resolution in require_admin_auth."""
-        from fastapi import Request, HTTPException
+        from fastapi import Request
         from mcpgateway.utils.verify_credentials import require_admin_auth
         from mcpgateway.db import EmailUser
         from unittest.mock import AsyncMock

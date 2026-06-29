@@ -1251,6 +1251,7 @@ class TestOAuthManager:
     async def test_exchange_code_for_tokens_with_ca_certificate(self):
         """Test _exchange_code_for_tokens with CA certificate (lines 1271-1277)."""
         manager = OAuthManager()
+        manager.settings.skip_ssl_verify = False  # Ensure SSL verification is enabled
         credentials = {
             "client_id": "test_client",
             "client_secret": "test_secret",
@@ -1439,6 +1440,7 @@ class TestOAuthManager:
     async def test_client_credentials_flow_with_ca_certificate(self):
         """Test client credentials flow with custom CA certificate."""
         manager = OAuthManager()
+        manager.settings.skip_ssl_verify = False  # Ensure SSL verification is enabled
         credentials = {
             "grant_type": "client_credentials",
             "client_id": "test_client",
@@ -1458,6 +1460,7 @@ class TestOAuthManager:
     async def test_password_flow_with_ca_certificate(self):
         """Test password flow with custom CA certificate."""
         manager = OAuthManager()
+        manager.settings.skip_ssl_verify = False  # Ensure SSL verification is enabled
         credentials = {
             "grant_type": "password",
             "client_id": "test_client",
@@ -1513,6 +1516,7 @@ class TestOAuthManager:
     async def test_refresh_token_with_ca_certificate(self):
         """Test refresh token with custom CA certificate."""
         manager = OAuthManager()
+        manager.settings.skip_ssl_verify = False  # Ensure SSL verification is enabled
         credentials = {
             "client_id": "test_client",
             "client_secret": "test_secret",  # pragma: allowlist secret

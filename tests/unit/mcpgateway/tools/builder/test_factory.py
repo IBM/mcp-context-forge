@@ -13,7 +13,6 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 # Third-Party
-import pytest
 
 # First-Party
 from mcpgateway.tools.builder.factory import CICDTypes, DeployFactory

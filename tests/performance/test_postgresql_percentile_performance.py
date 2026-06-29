@@ -20,12 +20,12 @@ native percentile_cont functions (5-10x faster) or falls back to Python calculat
 import time
 import statistics
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Tuple
+from typing import List, Tuple
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
-from mcpgateway.db import Base, ObservabilitySpan, ObservabilityTrace, get_db
+from mcpgateway.db import Base, ObservabilitySpan, ObservabilityTrace
 from mcpgateway.admin import _get_span_entity_performance
 from mcpgateway.config import settings
 
@@ -262,7 +262,7 @@ class TestPostgreSQLPercentilePerformance:
         try:
             self.generate_span_data(sqlite_session, "tool", num_entities, spans_per_entity)
             sqlite_time, sqlite_results = self.measure_query_performance(sqlite_session, "tool")
-            print(f"\n📊 SQLite (Python percentile):")
+            print("\n📊 SQLite (Python percentile):")
             print(f"   Average query time: {sqlite_time:.2f} ms")
             print(f"   Results returned: {len(sqlite_results)}")
             if sqlite_results:
@@ -288,7 +288,7 @@ class TestPostgreSQLPercentilePerformance:
         if sqlite_time > 0:
             speedup = sqlite_time / pg_time
             improvement_pct = ((sqlite_time - pg_time) / sqlite_time) * 100
-            print(f"\n✨ Performance Improvement:")
+            print("\n✨ Performance Improvement:")
             print(f"   Speedup: {speedup:.2f}x faster")
             print(f"   Time saved: {improvement_pct:.1f}%")
             print(f"   Absolute difference: {sqlite_time - pg_time:.2f} ms")
@@ -446,7 +446,7 @@ class TestPostgreSQLPercentilePerformance:
             assert len(results) == 1
             result = results[0]
 
-            print(f"\n📊 Percentile Results:")
+            print("\n📊 Percentile Results:")
             print(f"   Count: {result['count']}")
             print(f"   Min: {result['min_duration_ms']}")
             print(f"   P50 (median): {result['p50']}")
@@ -464,7 +464,7 @@ class TestPostgreSQLPercentilePerformance:
             assert 95 <= result["p95"] <= 96  # P95 should be ~95.05
             assert 99 <= result["p99"] <= 100  # P99 should be ~99.01
 
-            print(f"\n✅ Percentile calculations are accurate!")
+            print("\n✅ Percentile calculations are accurate!")
 
         finally:
             session.close()
@@ -571,7 +571,7 @@ class TestPostgreSQLPercentilePerformance:
 
             # Test with USE_POSTGRESDB_PERCENTILES=True (native percentile_cont)
             settings.use_postgresdb_percentiles = True
-            print(f"\n🚀 Testing with USE_POSTGRESDB_PERCENTILES=True (native percentile_cont)")
+            print("\n🚀 Testing with USE_POSTGRESDB_PERCENTILES=True (native percentile_cont)")
             native_time, native_results = self.measure_query_performance(session, "tool")
             print(f"   Average query time: {native_time:.2f} ms")
             print(f"   Results returned: {len(native_results)}")
@@ -580,7 +580,7 @@ class TestPostgreSQLPercentilePerformance:
 
             # Test with USE_POSTGRESDB_PERCENTILES=False (Python percentiles)
             settings.use_postgresdb_percentiles = False
-            print(f"\n📊 Testing with USE_POSTGRESDB_PERCENTILES=False (Python percentiles)")
+            print("\n📊 Testing with USE_POSTGRESDB_PERCENTILES=False (Python percentiles)")
             python_time, python_results = self.measure_query_performance(session, "tool")
             print(f"   Average query time: {python_time:.2f} ms")
             print(f"   Results returned: {len(python_results)}")
@@ -594,7 +594,7 @@ class TestPostgreSQLPercentilePerformance:
             if python_time > 0:
                 speedup = python_time / native_time
                 improvement_pct = ((python_time - native_time) / python_time) * 100
-                print(f"\n✨ Performance Comparison:")
+                print("\n✨ Performance Comparison:")
                 print(f"   Native percentile_cont speedup: {speedup:.2f}x faster")
                 print(f"   Time saved: {improvement_pct:.1f}%")
                 print(f"   Absolute difference: {python_time - native_time:.2f} ms")
@@ -619,12 +619,12 @@ class TestPostgreSQLPercentilePerformance:
                         diff_pct = abs(native_val - python_val) / native_val * 100
                         assert diff_pct < 5, f"{metric} differs by {diff_pct:.1f}% (Native: {native_val}, Python: {python_val})"
 
-                print(f"\n✅ Both methods produce similar results (within 5% tolerance)")
+                print("\n✅ Both methods produce similar results (within 5% tolerance)")
 
             # Native should be faster for this dataset size
             assert native_time < python_time, f"Native percentile_cont should be faster than Python percentiles for {total_spans:,} spans"
 
-            print(f"\n✅ USE_POSTGRESDB_PERCENTILES configuration works correctly!")
+            print("\n✅ USE_POSTGRESDB_PERCENTILES configuration works correctly!")
 
         finally:
             session.close()

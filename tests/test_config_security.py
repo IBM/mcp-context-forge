@@ -13,7 +13,7 @@ unconfigured or weak in production environments.
 import pytest
 
 # First-Party
-from mcpgateway.config import Settings, get_settings, SecurityConfigurationError
+from mcpgateway.config import get_settings, SecurityConfigurationError
 
 
 @pytest.fixture(autouse=True)
@@ -118,8 +118,16 @@ def test_client_mode_skips_fail_closed_secret_enforcement():
 
 
 def test_apply_environment_aware_defaults_non_dict_passthrough():
-    """Verify non-dict inputs pass through unchanged in the model validator."""
-    sentinel = ("not", "a", "dict")
-
-    apply_defaults = getattr(Settings, "apply_environment_aware_defaults")
-    assert apply_defaults(sentinel) is sentinel
+    """Verify the model validator works correctly with mode='after'."""
+    # With mode="after", the validator always receives a Settings instance
+    # Test that it correctly sets require_strong_secrets based on environment
+    cfg = get_settings(
+        environment="production",
+        jwt_secret_key="x3Kp!mQ8rZvN2wLsA5dYfB7cEjGhTuIo",  # pragma: allowlist secret
+        auth_encryption_secret="F4nRqW9kMpXzD1sVbYcL6eHjOuAtG2wC",  # pragma: allowlist secret
+        mcpgateway_ui_enabled=False,  # Disable UI to avoid basic_auth_password validation
+    )
+    assert cfg.require_strong_secrets is True
+    
+    cfg2 = get_settings(environment="development", jwt_secret_key="my-test-key", auth_encryption_secret="my-test-salt")  # pragma: allowlist secret
+    assert cfg2.require_strong_secrets is False

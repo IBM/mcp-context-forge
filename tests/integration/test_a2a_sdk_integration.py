@@ -623,6 +623,7 @@ class TestContextForgeA2ATestEndpoint:
         assert test_params["parameters"]["query"] == user_query
         assert test_params["parameters"]["message"] == user_query
 
+
 class TestA2AListEndpoint:
     """Integration tests for GET /a2a agent listing endpoint (issue #4624)."""
 

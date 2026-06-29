@@ -170,12 +170,17 @@ class TestToolServiceLocking:
         mock_admin_stats = MagicMock()
         mock_admin_stats.invalidate_tags = AsyncMock()
 
+        # Mock audit_trail to prevent extra db.commit()
+        mock_audit_trail = MagicMock()
+        mock_audit_trail.log_action = MagicMock(return_value=None)
+        
         with patch.object(service, "_notify_tool_deleted", return_value=None):
             with patch("mcpgateway.services.tool_service._get_registry_cache", return_value=mock_registry_cache):
                 with patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=mock_tool_lookup_cache):
                     with patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache", mock_admin_stats):
                         with patch("mcpgateway.cache.metrics_cache.metrics_cache"):
-                            await service.delete_tool(db, "tool-id")
+                            with patch("mcpgateway.services.tool_service.audit_trail", mock_audit_trail):
+                                await service.delete_tool(db, "tool-id")
 
         # Verify db.get was called for initial lookup (not get_for_update)
         db.get.assert_called_once_with(Tool, "tool-id")

@@ -14,12 +14,9 @@ Tests cover:
 """
 
 # Standard
-from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch, PropertyMock
-import uuid
+from unittest.mock import MagicMock, patch
 
 # Third-Party
-import pytest
 
 # First-Party
 from mcpgateway.services.token_blocklist_service import TokenBlocklistService

@@ -33,8 +33,10 @@ from mcpgateway.config import settings
 # Bind to exactly what .env (or defaults) says
 bind = f"{settings.host}:{settings.port}"
 
-workers = 2  # A positive integer generally in the 2-4 x $(NUM_CORES)
-timeout = 600  # Set a timeout of 600
+# Workers: read from environment variable or default to 2
+# This allows GUNICORN_WORKERS env var to override the default
+workers = int(os.environ.get("GUNICORN_WORKERS", "2"))
+timeout = int(os.environ.get("GUNICORN_TIMEOUT", "600"))  # Set a timeout of 600
 loglevel = "info"  # debug info warning error critical
 max_requests = 100000  # The maximum number of requests a worker will process before restarting
 max_requests_jitter = 100  # The maximum jitter to add to the max_requests setting.

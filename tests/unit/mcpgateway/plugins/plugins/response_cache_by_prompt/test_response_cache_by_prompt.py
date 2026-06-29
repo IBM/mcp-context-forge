@@ -7,7 +7,6 @@ Authors: Mihai Criveti
 Tests for ResponseCacheByPromptPlugin with inverted index optimization.
 """
 
-import asyncio
 
 import pytest
 

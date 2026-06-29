@@ -1279,7 +1279,6 @@ class TestResourceEndpoints:
     def test_update_resource_content_type_error(self, mock_update, test_client, auth_headers):
         """Test update_resource returns 415 for unsupported MIME type."""
         # First-Party
-        from mcpgateway.services.content_security import ContentTypeError
 
         mock_update.side_effect = ContentTypeError("application/x-executable", ["text/plain", "application/json"])
         req = {"mime_type": "text/plain", "content": "hello"}
@@ -1293,7 +1292,6 @@ class TestResourceEndpoints:
     def test_update_resource_content_type_error(self, mock_update, test_client, auth_headers):
         """Test update_resource returns 415 for unsupported MIME type."""
         # First-Party
-        from mcpgateway.services.content_security import ContentTypeError
 
         mock_update.side_effect = ContentTypeError("application/x-executable", ["text/plain", "application/json"])
         req = {"mime_type": "text/plain", "content": "hello"}
@@ -1307,7 +1305,6 @@ class TestResourceEndpoints:
     def test_update_resource_content_type_error(self, mock_update, test_client, auth_headers):
         """Test update_resource returns 415 for unsupported MIME type."""
         # First-Party
-        from mcpgateway.services.content_security import ContentTypeError
 
         mock_update.side_effect = ContentTypeError("application/x-executable", ["text/plain", "application/json"])
         req = {"mime_type": "text/plain", "content": "hello"}
@@ -1346,7 +1343,6 @@ class TestResourceEndpoints:
     def test_create_resource_content_type_error(self, mock_create, test_client, auth_headers):
         """Test create_resource returns 415 for unsupported MIME type."""
         # First-Party
-        from mcpgateway.services.content_security import ContentTypeError
 
         mock_create.side_effect = ContentTypeError("application/x-malicious", ["text/plain", "application/json"])
         req = {"resource": {"uri": "test/resource", "name": "Test Resource", "mime_type": "text/plain", "content": "hello"}, "team_id": None, "visibility": "private"}
@@ -1378,7 +1374,6 @@ class TestResourceEndpoints:
     def test_create_resource_content_type_error(self, mock_create, test_client, auth_headers):
         """Test create_resource returns 415 for unsupported MIME type."""
         # First-Party
-        from mcpgateway.services.content_security import ContentTypeError
 
         mock_create.side_effect = ContentTypeError("application/x-malicious", ["text/plain", "application/json"])
         req = {"resource": {"uri": "test/resource", "name": "Test Resource", "mime_type": "text/plain", "content": "hello"}, "team_id": None, "visibility": "private"}
@@ -2439,7 +2434,6 @@ class TestRootEndpoints:
         assert response.status_code == 500
         assert "Internal error" in response.json()["detail"]
 
-
     @patch("mcpgateway.main.root_service.subscribe_changes")
     def test_subscribe_root_changes(self, mock_subscribe, test_client, auth_headers):
         """Test subscribing to root directory changes via SSE."""
@@ -2681,6 +2675,7 @@ class TestRPCEndpoints:
         assert body["error"]["code"] == -32002
         assert "Resource not found" in body["error"]["message"]
         assert body["error"]["message"] != "Internal error"
+
     @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
     def test_rpc_resources_read_resource_error(self, mock_read, test_client, auth_headers):
         """Test resources/read returns -32000 when ResourceError is raised."""
@@ -2720,7 +2715,6 @@ class TestRPCEndpoints:
         assert "error" in body
         assert body["error"]["code"] == -32603
         assert "Internal error" in body["error"]["message"]
-
 
     @patch("mcpgateway.main.get_user_email", return_value="user_1")
     @patch("mcpgateway.main.resource_service.subscribe_resource", new_callable=AsyncMock)
@@ -2812,6 +2806,7 @@ class TestRPCEndpoints:
         body = response.json()["result"]
         assert body["nextCursor"] == "next-cursor"
         assert body["prompts"][0]["name"] == "prompt-1"
+
     @patch("mcpgateway.main.prompt_service.get_prompt", new_callable=AsyncMock)
     def test_rpc_prompts_get_not_found_error(self, mock_get, test_client, auth_headers):
         """Test prompts/get returns -32002 when PromptNotFoundError is raised."""
@@ -2872,7 +2867,6 @@ class TestRPCEndpoints:
         assert "error" in body
         assert body["error"]["code"] == -32603
         assert "Internal error" in body["error"]["message"]
-
 
     @patch("mcpgateway.main.gateway_service.list_gateways", new_callable=AsyncMock)
     def test_rpc_list_gateways(self, mock_list_gateways, test_client, auth_headers):
@@ -4344,7 +4338,6 @@ class TestPluginExceptionHandlers:
     def test_plugin_violation_exception_handler_without_violation_object(self):
         """Test plugin_violation_exception_handler when violation object is None."""
         # First-Party
-        from mcpgateway.main import plugin_violation_exception_handler
         from cpex.framework.errors import PluginViolationError
 
         exc = PluginViolationError(message="Generic plugin violation", violation=None)

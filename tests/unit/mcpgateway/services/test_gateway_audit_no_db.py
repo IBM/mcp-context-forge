@@ -75,6 +75,9 @@ def gateway_db():
     gw.auth_value = None
     gw.oauth_config = None
     gw.transport = "SSE"
+    gw.client_cert = None
+    gw.client_key = None
+    gw.ca_certificate = None
     return gw
 
 
@@ -106,14 +109,24 @@ class TestGatewayAuditNoDb:
 
     @pytest.mark.asyncio
     async def test_update_gateway(self, gateway_service, db, gateway_db):
+        from mcpgateway.services.gateway_service import GatewayConnectionMaterial
+        conn_material = GatewayConnectionMaterial(
+            url="https://example.com",
+            auth_query_params_encrypted=None,
+            auth_query_params_decrypted=None,
+            client_cert=None,
+            client_key=None,
+        )
         with patch("mcpgateway.services.gateway_service.audit_trail") as mock_audit, patch("mcpgateway.services.gateway_service.structured_logger"):
             mock_audit.log_action = MagicMock(return_value=None)
             db.execute = Mock(return_value=_make_execute_result(scalar=gateway_db))
             db.commit = Mock(); db.refresh = Mock(); db.rollback = Mock(); db.expire = Mock(); db.delete = Mock(); db.add_all = Mock(); db.flush = Mock()
             gateway_service._notify_gateway_updated = AsyncMock()
-            gateway_service._update_or_create_tools = AsyncMock(return_value=[])
-            gateway_service._update_or_create_resources = AsyncMock(return_value=[])
-            gateway_service._update_or_create_prompts = AsyncMock(return_value=[])
+            gateway_service._prepare_gateway_connection_material = AsyncMock(return_value=conn_material)
+            gateway_service._initialize_gateway = AsyncMock(return_value=({"prompts": {}, "resources": {}, "tools": {}}, [], [], [], []))
+            gateway_service._update_or_create_tools = MagicMock(return_value=[])
+            gateway_service._update_or_create_resources = MagicMock(return_value=[])
+            gateway_service._update_or_create_prompts = MagicMock(return_value=[])
             await gateway_service.update_gateway(db, "gw-1", GatewayUpdate(description="updated"))
             mock_audit.log_action.assert_called_once()
             _assert_no_db_passed(mock_audit, expected_action="update_gateway", resource_type="gateway")

@@ -315,7 +315,12 @@ class OAuthManager:
         context so that OAuth token exchange works against self-signed or
         custom-CA upstream servers and/or presents client certificates for mTLS.
         Otherwise the shared HTTP client (which respects the global
-        ``SKIP_SSL_VERIFY`` setting) is used.
+        ``SKIP_SSL_VERIFY`` and ``SSL_CERT_FILE`` settings) is used.
+
+        The global ``SKIP_SSL_VERIFY`` setting is respected even when custom
+        CA certificates are provided, allowing SSL verification to be disabled
+        for development/testing environments. Similarly, ``SSL_CERT_FILE`` is
+        respected when no custom CA is provided.
 
         Note:
             When only ``client_cert``/``client_key`` are provided (no custom CA),
@@ -332,11 +337,27 @@ class OAuthManager:
 
         Returns:
             The HTTP response from the token endpoint.
+
+        Raises:
+            ValueError: If only one of client_cert/client_key is provided (mTLS requires both).
         """
+        # Validate mTLS configuration early (before SSL context creation)
+        if bool(client_cert) != bool(client_key):
+            raise ValueError("mTLS requires both client_cert and client_key; got only one")
+
         if ca_certificate or client_cert or client_key:
-            ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
-            async with httpx.AsyncClient(verify=ssl_context) as client:
-                return await client.post(url, data=data, headers=headers, timeout=self.request_timeout)
+            # Check if SSL verification should be skipped globally
+            if self.settings.skip_ssl_verify:
+                # When SKIP_SSL_VERIFY is enabled, disable verification entirely
+                async with httpx.AsyncClient(verify=False) as client:
+                    return await client.post(url, data=data, headers=headers, timeout=self.request_timeout)
+            else:
+                # Use custom SSL context with CA certificate
+                ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
+                async with httpx.AsyncClient(verify=ssl_context) as client:
+                    return await client.post(url, data=data, headers=headers, timeout=self.request_timeout)
+
+        # No custom CA certificate - use shared client which respects SSL_CERT_FILE
         client = await self._get_client()
         return await client.post(url, data=data, headers=headers, timeout=self.request_timeout)
 
@@ -556,6 +577,10 @@ class OAuthManager:
                 logger.info("""Successfully obtained access token via client credentials""")
                 return token_response["access_token"]
 
+            except ValueError:
+                # Re-raise ValueError immediately (e.g., mTLS validation errors from get_cached_ssl_context)
+                # These are configuration errors that should not be retried
+                raise
             except httpx.HTTPError as e:
                 logger.warning("Token request attempt %s failed: %s", attempt + 1, str(e))
                 if attempt == self.max_retries - 1:

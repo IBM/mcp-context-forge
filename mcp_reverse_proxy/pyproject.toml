@@ -1,0 +1,128 @@
+# ----------------------------------------------------------------
+# 💡 Build system (PEP 517)
+# ----------------------------------------------------------------
+[build-system]
+requires = ["setuptools>=78.1.1", "wheel>=0.46.2"]
+build-backend = "setuptools.build_meta"
+
+# ----------------------------------------------------------------
+# 📦 Core project metadata (PEP 621)
+# ----------------------------------------------------------------
+[project]
+name = "mcp-reverse-proxy"
+version = "1.0.0"
+description = "MCP Reverse Proxy - Bridge MCP servers to remote gateways with multi-transport support"
+keywords = [
+    "MCP",
+    "reverse-proxy",
+    "model-context-protocol",
+    "gateway",
+    "stdio",
+    "websocket",
+    "sse",
+    "http",
+    "streaming"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Framework :: AsyncIO",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: Internet :: WWW/HTTP"
+]
+readme = "USER_README.md"
+requires-python = ">=3.11"
+
+# SPDX licence expression + explicit licence file (PEP 639)
+license = "Apache-2.0"
+
+# Maintainers
+maintainers = [
+    {name = "Mihai Criveti", email = "redacted@ibm.com"}
+]
+
+# ----------------------------------------------------------------
+# Runtime dependencies
+# ----------------------------------------------------------------
+dependencies = [
+    "httpx>=0.28.1",
+    "httpx[http2]>=0.28.1",
+    "orjson>=3.11.9",
+    "python-json-logger>=3.2.1",
+    "websockets>=14.1",
+    "pyyaml>=6.0.2"
+]
+
+# ----------------------------------------------------------------
+# Optional dependencies
+# ----------------------------------------------------------------
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.4",
+    "pytest-asyncio>=0.25.2",
+    "pytest-cov>=6.0.0",
+    "mypy>=1.14.1",
+    "ruff>=0.9.1",
+    "black>=25.1.0"
+]
+
+# ----------------------------------------------------------------
+# Console scripts
+# ----------------------------------------------------------------
+[project.scripts]
+mcp-reverse-proxy = "mcp_reverse_proxy.cli:run"
+
+# ----------------------------------------------------------------
+# Package discovery
+# ----------------------------------------------------------------
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["mcp_reverse_proxy*"]
+
+# ----------------------------------------------------------------
+# Black formatter configuration
+# ----------------------------------------------------------------
+[tool.black]
+line-length = 120
+target-version = ["py311", "py312", "py313"]
+
+# ----------------------------------------------------------------
+# Ruff linter configuration
+# ----------------------------------------------------------------
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "DTZ", "T10", "ISC", "ICN", "PIE", "PT", "RSE", "RET", "SIM", "TID", "ARG", "PLE", "PLW", "RUF"]
+ignore = ["E501"]
+
+# ----------------------------------------------------------------
+# MyPy type checker configuration
+# ----------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+
+# ----------------------------------------------------------------
+# Pytest configuration
+# ----------------------------------------------------------------
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --cov=mcp_reverse_proxy --cov-report=term-missing"

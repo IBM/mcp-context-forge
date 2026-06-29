@@ -11846,6 +11846,9 @@ async def admin_add_tool(
         # Extract creation metadata
         metadata = MetadataCapture.extract_creation_metadata(request, user)
 
+        # Get token_teams from request state for gateway access check
+        token_teams = getattr(request.state, "token_teams", None)
+
         await tool_service.register_tool(
             db,
             tool,
@@ -11855,6 +11858,7 @@ async def admin_add_tool(
             created_user_agent=metadata["created_user_agent"],
             import_batch_id=metadata["import_batch_id"],
             federation_source=metadata["federation_source"],
+            token_teams=token_teams,
         )
         return ORJSONResponse(
             content={"message": "Tool registered successfully!", "success": True},

@@ -10,8 +10,7 @@ Tests for mcpgateway.services.http_client_service.
 from __future__ import annotations
 
 import asyncio
-import ssl
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest

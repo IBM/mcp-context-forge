@@ -288,7 +288,7 @@ def _scan_redis_pattern(pattern: str, timeout: int = 20) -> int:
             ["docker", "exec", DOCKER_REDIS_CONTAINER, "redis-cli", "--scan", "--pattern", pattern],
             capture_output=True,
             text=True,
-            timeout=timeout,
+            timeout=timeout, check=False,
         )
         if r.returncode != 0:
             return 0
@@ -323,7 +323,7 @@ def _scan_rl_sample_keys(dimension: str, timeout: int = 15) -> list[str]:
                 ["docker", "exec", DOCKER_REDIS_CONTAINER, "redis-cli", "--scan", "--pattern", pattern],
                 capture_output=True,
                 text=True,
-                timeout=timeout,
+                timeout=timeout, check=False,
             )
             if r.returncode == 0:
                 keys.extend(line.strip() for line in r.stdout.splitlines() if line.strip())
@@ -345,7 +345,7 @@ def _poll_redis_once() -> dict[str, Any] | None:
             ["docker", "exec", DOCKER_REDIS_CONTAINER, "redis-cli", "DBSIZE"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=5, check=False,
         )
         total_keys = int(r_dbsize.stdout.strip()) if r_dbsize.returncode == 0 else 0
 
@@ -359,7 +359,7 @@ def _poll_redis_once() -> dict[str, Any] | None:
             ["docker", "exec", DOCKER_REDIS_CONTAINER, "redis-cli", "INFO", "memory"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=5, check=False,
         )
         mem_bytes = 0
         for line in r_mem.stdout.splitlines():
@@ -398,7 +398,7 @@ def _detect_algorithm_from_redis() -> str:
             ["docker", "exec", DOCKER_REDIS_CONTAINER, "redis-cli", "TYPE", sample_keys[0]],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=5, check=False,
         )
         key_type = r_type.stdout.strip().lower()
 
@@ -832,10 +832,10 @@ def on_test_stop(environment, **kwargs):
                 print(f"  RL key delta:        {delta_rl_keys:,}  (baseline-subtracted)")
                 if delta_rl_keys > 0:
                     print(f"  Mem per RL key:      {per_key:.2f} KiB  (delta_mem / delta_keys — same sample)")
-                    print(f"\n  Expected per-key cost by algorithm:")
-                    print(f"    fixed_window:    ~0.1–0.3 KiB  (single integer + TTL)")
+                    print("\n  Expected per-key cost by algorithm:")
+                    print("    fixed_window:    ~0.1–0.3 KiB  (single integer + TTL)")
                     print(f"    sliding_window:  ~1–3 KiB      (sorted set, {RL_LIMIT_PER_MIN} float entries)")
-                    print(f"    token_bucket:    ~0.2 KiB      (hash: tokens + last_refill)")
+                    print("    token_bucket:    ~0.2 KiB      (hash: tokens + last_refill)")
                     if per_key < 0.5:
                         verdict = "✅ consistent with fixed_window"
                     elif per_key <= 5.0:
@@ -846,7 +846,7 @@ def on_test_stop(environment, **kwargs):
 
     # Latency
     if total_http > 0:
-        print(f"\n  Response Times (ms):")
+        print("\n  Response Times (ms):")
         print(f"    Average: {stats.total.avg_response_time:>8.1f}")
         print(f"    p50:     {stats.total.get_response_time_percentile(0.50):>8.1f}")
         print(f"    p90:     {stats.total.get_response_time_percentile(0.90):>8.1f}")

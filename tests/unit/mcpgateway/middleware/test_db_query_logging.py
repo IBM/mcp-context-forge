@@ -9,7 +9,7 @@ Tests for DB query logging middleware.
 
 # Standard
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
 import orjson

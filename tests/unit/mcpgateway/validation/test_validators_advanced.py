@@ -1171,14 +1171,14 @@ class TestValidateUrlSecurity:
 
     def test_ssrf_skipped_when_disabled(self, monkeypatch):
         """SSRF protection can be disabled via settings (branch 1047->1051)."""
-        import mcpgateway.common.validators as validators
+        from mcpgateway.common import validators
 
         monkeypatch.setattr(validators.settings, "ssrf_protection_enabled", False)
         assert SecurityValidator.validate_url("https://example.com", "URL") == "https://example.com"
 
     def test_script_patterns_in_url(self, monkeypatch):
         """Script patterns (non-protocol) should be blocked (line 1064)."""
-        import mcpgateway.common.validators as validators
+        from mcpgateway.common import validators
 
         monkeypatch.setattr(validators.settings, "ssrf_protection_enabled", False)
         with pytest.raises(ValueError, match="script patterns"):
@@ -1186,7 +1186,7 @@ class TestValidateUrlSecurity:
 
     def test_urlparse_exception_raises_valueerror(self, monkeypatch):
         """Non-ValueError exceptions are converted to a generic validation error (lines 1069-1070)."""
-        import mcpgateway.common.validators as validators
+        from mcpgateway.common import validators
 
         monkeypatch.setattr(validators.settings, "ssrf_protection_enabled", False)
         with patch("mcpgateway.common.validators.urlparse", side_effect=RuntimeError("boom")):
@@ -1195,7 +1195,7 @@ class TestValidateUrlSecurity:
 
     def test_hostname_missing_still_runs_port_validation(self, monkeypatch):
         """Cover hostname=None branch (1041->1051) without accepting an invalid port."""
-        import mcpgateway.common.validators as validators
+        from mcpgateway.common import validators
 
         monkeypatch.setattr(validators.settings, "ssrf_protection_enabled", False)
         with pytest.raises(ValueError):
@@ -1211,7 +1211,7 @@ class TestValidateUrlPercentEncoding:
     @pytest.fixture(autouse=True)
     def _disable_ssrf(self, monkeypatch):
         """SSRF tests live in TestValidateSsrf; here we focus on pattern bypass."""
-        import mcpgateway.common.validators as validators
+        from mcpgateway.common import validators
 
         monkeypatch.setattr(validators.settings, "ssrf_protection_enabled", False)
 
@@ -1655,7 +1655,7 @@ class TestValidateUrlControlCharacters:
 
     @pytest.fixture(autouse=True)
     def _disable_ssrf(self, monkeypatch):
-        import mcpgateway.common.validators as validators
+        from mcpgateway.common import validators
 
         monkeypatch.setattr(validators.settings, "ssrf_protection_enabled", False)
 
@@ -1714,7 +1714,7 @@ class TestDoubleEncodedIisEscapes:
 
     @pytest.fixture(autouse=True)
     def _disable_ssrf(self, monkeypatch):
-        import mcpgateway.common.validators as validators
+        from mcpgateway.common import validators
 
         monkeypatch.setattr(validators.settings, "ssrf_protection_enabled", False)
 

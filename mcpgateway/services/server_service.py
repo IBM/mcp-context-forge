@@ -582,6 +582,39 @@ class ServerService(BaseService):
         """
         try:
             logger.info("Registering server: %s", server_in.name)
+
+            # Log all input parameters to understand where team_id comes from
+            logger.debug("register_server called with:")
+            logger.debug(f"  server_in.name: {server_in.name}")
+            logger.debug(f"  server_in.id: {getattr(server_in, 'id', None)}")
+            logger.debug(f"  server_in.team_id: {getattr(server_in, 'team_id', None)}")
+            logger.debug(f"  server_in.owner_email: {getattr(server_in, 'owner_email', None)}")
+            logger.debug(f"  server_in.visibility: {getattr(server_in, 'visibility', None)}")
+            logger.debug(f"  Parameter team_id: {team_id}")
+            logger.debug(f"  Parameter owner_email: {owner_email}")
+            logger.debug(f"  Parameter visibility: {visibility}")
+            logger.debug(f"  Parameter created_by: {created_by}")
+
+            # Check for existing server with the same name (with row locking to prevent race conditions)
+            # The unique constraint is on (team_id, owner_email, name), so we check based on that
+            owner_email_to_check = getattr(server_in, "owner_email", None) or owner_email or created_by
+            team_id_to_check = getattr(server_in, "team_id", None) or team_id
+
+            # Check for name conflicts
+            # Build conditions to check for existing server with same name/team/owner
+            conditions = [
+                DbServer.name == server_in.name,
+                DbServer.team_id == team_id_to_check if team_id_to_check else DbServer.team_id.is_(None),
+                DbServer.owner_email == owner_email_to_check if owner_email_to_check else DbServer.owner_email.is_(None),
+            ]
+
+            existing_server = get_for_update(db, DbServer, where=and_(*conditions))
+            if existing_server:
+                # Always raise ServerNameConflictError for existing servers
+                # This allows the caller (e.g., reverse_proxy) to decide whether to update or fail
+                raise ServerNameConflictError(server_in.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
+
+            # Create the new server record (only if we reach here - no existing server found)
             oauth_config = await protect_oauth_config_for_storage(getattr(server_in, "oauth_config", None))
             # # Create the new server record.
             db_server = DbServer(
@@ -1307,6 +1340,10 @@ class ServerService(BaseService):
             # Update tags if provided
             if server_update.tags is not None:
                 server.tags = server_update.tags
+
+            # Update enabled state if provided
+            if hasattr(server_update, "enabled") and server_update.enabled is not None:
+                server.enabled = server_update.enabled
 
             # Update OAuth 2.0 configuration if provided
             # Track if OAuth is being explicitly disabled to prevent config re-assignment

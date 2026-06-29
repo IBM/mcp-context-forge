@@ -17,7 +17,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 # First-Party
-import mcpgateway.utils.ssl_context_cache as ssl_context_cache
+from mcpgateway.utils import ssl_context_cache
 
 
 def _fake_pem_key(body: str = "FAKE") -> str:
@@ -256,7 +256,6 @@ def test_is_expired_returns_true_when_entry_ttl_elapsed(monkeypatch):
 
 def test_ssl_context_cache_ttl_invalid_value_raises_error():
     """Test that invalid SSL_CONTEXT_CACHE_TTL raises ValueError during module import."""
-    import importlib
     import os
     import sys
 
@@ -274,7 +273,6 @@ def test_ssl_context_cache_ttl_invalid_value_raises_error():
         # Import should raise ValueError
         with patch.dict(os.environ, {"SSL_CONTEXT_CACHE_TTL": "not-a-number"}):
             try:
-                import mcpgateway.utils.ssl_context_cache
 
                 # If we get here, manually trigger the validation logic
                 ttl_val = os.getenv("SSL_CONTEXT_CACHE_TTL")
@@ -303,7 +301,6 @@ def test_ttl_env_var_parsing_with_invalid_value(monkeypatch):
     with patch.object(importlib, "reload") as mock_reload:
         try:
             # Simulate module reload with invalid TTL
-            import mcpgateway.utils.ssl_context_cache as module
 
             # Manually trigger the parsing logic
             ttl_value = "invalid"

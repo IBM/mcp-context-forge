@@ -249,7 +249,7 @@ class TestOrphanedResourceUpsert:
         This directly tests the orphan detection and update logic without running
         the full register_gateway flow.
         """
-        from mcpgateway.db import Gateway as DbGateway, Resource as DbResource
+        from mcpgateway.db import Resource as DbResource
 
         # Simulate orphaned resource detection logic
         valid_gateway_ids = set()  # No valid gateways - simulates all gateways deleted

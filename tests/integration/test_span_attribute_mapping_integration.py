@@ -17,7 +17,6 @@ from cpex.framework import (
     ToolHookType,
 )
 from cpex.framework import ToolPreInvokePayload
-from cpex.framework.manager import PluginManager
 from mcpgateway.plugins.utils import apply_attribute_mapping
 from mcpgateway.services.observability_service import ObservabilityService
 from plugins.span_attribute_customizer.span_attribute_customizer import SpanAttributeCustomizerPlugin

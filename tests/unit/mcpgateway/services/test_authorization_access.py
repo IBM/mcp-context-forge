@@ -27,7 +27,6 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
 from mcpgateway.services.tool_service import ToolNotFoundError, ToolService
-from tests.helpers.admin_mocks import install_admin_user
 
 
 @pytest.fixture

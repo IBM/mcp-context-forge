@@ -38,10 +38,10 @@ import logging
 import os
 import shlex
 import signal
+import ssl
 import sys
 from typing import Any, cast, Dict, List, Optional
 from urllib.parse import urljoin, urlparse
-import uuid
 
 # Third-Party
 import orjson
@@ -257,20 +257,28 @@ class ReverseProxyClient:
         self,
         gateway_url: str,
         local_command: str,
+        server_id: str,
         token: Optional[str] = None,
         reconnect_delay: float = DEFAULT_RECONNECT_DELAY,
         max_retries: int = DEFAULT_MAX_RETRIES,
         keepalive_interval: float = DEFAULT_KEEPALIVE_INTERVAL,
+        server_name: Optional[str] = None,
+        server_description: Optional[str] = None,
+        cert: Optional[str] = None,
     ):
         """Initialize reverse proxy client.
 
         Args:
             gateway_url: Remote gateway URL.
             local_command: Local MCP server command.
+            server_id: identifier for the server.
             token: Optional bearer token for authentication.
             reconnect_delay: Initial reconnection delay in seconds.
             max_retries: Maximum reconnection attempts (0 = infinite).
             keepalive_interval: Heartbeat interval in seconds.
+            server_name: Optional server name.
+            server_description: Optional server description.
+            cert: Optional CA SSL certificate for gateway.
         """
         self.gateway_url = gateway_url
         self.local_command = local_command
@@ -286,8 +294,18 @@ class ReverseProxyClient:
         # Connection state
         self.state = ConnectionState.DISCONNECTED
         self.connection: Optional[WSClientProtocol] = None
-        self.session_id = uuid.uuid4().hex
+        self.session_id = server_id
         self.retry_count = 0
+        if server_name is None:
+            self.server_name = f"reverse-proxy-{self.session_id[:8]}"
+        else:
+            self.server_name = server_name
+
+        if server_description is None:
+            self.description = f"Reverse proxied: {self.local_command}"
+        else:
+            self.description = server_description
+        self.cert = cert
 
         # Components
         self.stdio_process = StdioProcess(local_command)
@@ -363,12 +381,25 @@ class ReverseProxyClient:
 
         LOGGER.info(f"Connecting to WebSocket: {ws_url}")
 
+        # Configure SSL context based on whether a cert was provided
+        if self.cert is not None:
+            # Use provided certificate for verification
+            ssl_context = ssl.create_default_context(cadata=self.cert)
+            ssl_context.check_hostname = True
+            ssl_context.verify_mode = ssl.CERT_REQUIRED
+        else:
+            # No certificate provided - disable verification (insecure)
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE  # noqa: DUO122
+
         # Connect
         self.connection = await websockets.connect(
             ws_url,
-            extra_headers=headers,
+            additional_headers=headers,
             ping_interval=20,
             ping_timeout=10,
+            ssl=ssl_context,
         )
 
         # Start receiving messages
@@ -390,38 +421,24 @@ class ReverseProxyClient:
 
     async def _register(self) -> None:
         """Register local server with gateway."""
-        # Get server info by sending initialize request
-        init_request = {
-            "jsonrpc": "2.0",
-            "id": "init-" + uuid.uuid4().hex,
-            "method": "initialize",
-            "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "reverse-proxy", "version": "1.0.0"}},
-        }
-
-        # Send to local server
-        await self.stdio_process.send(orjson.dumps(init_request).decode())
-
-        # Wait for response (simplified - should correlate properly)
-        await asyncio.sleep(1)
-
         # Send registration to gateway
         register_msg = {
             "type": MessageType.REGISTER.value,
             "sessionId": self.session_id,
             "server": {
-                "name": f"reverse-proxy-{self.session_id[:8]}",
-                "description": f"Reverse proxied: {self.local_command}",
+                "name": self.server_name,
+                "description": self.description,
                 "protocol": "stdio",
             },
         }
 
         await self._send_to_gateway(orjson.dumps(register_msg).decode())
 
-    async def _send_to_gateway(self, message: str) -> None:
+    async def _send_to_gateway(self, message: str | bytes) -> None:
         """Send message to remote gateway.
 
         Args:
-            message: Message to send.
+            message: Message to send (str or bytes).
 
         Raises:
             RuntimeError: If not connected to gateway.
@@ -432,6 +449,9 @@ class ReverseProxyClient:
             raise RuntimeError("Not connected to gateway")
 
         if self.use_websocket:
+            # Ensure message is string for WebSocket text frames
+            if isinstance(message, bytes):
+                message = message.decode("utf-8")
             await cast(Any, conn).send(message)
         else:
             # SSE would POST to message endpoint
@@ -444,14 +464,28 @@ class ReverseProxyClient:
             message: JSON-RPC message from stdio.
         """
         try:
+            LOGGER.debug(f"_handle_stdio_message message {message}")
+
             # Parse to check if it's a response or notification
             data = orjson.loads(message)
 
-            # Wrap in reverse proxy envelope
-            envelope = {"type": MessageType.RESPONSE.value if "id" in data else MessageType.NOTIFICATION.value, "sessionId": self.session_id, "payload": data}
+            result = data.get("result")
+            LOGGER.info(f"response result {result}  type result {type(result)}")
+            request_id = data.get("id")
 
-            # Forward to gateway
-            await self._send_to_gateway(orjson.dumps(envelope).decode())
+            if request_id and request_id in self._pending_requests:
+                LOGGER.info("request_id found in _pending_responses")
+                future = self._pending_requests.pop(request_id)
+                LOGGER.info("future found %s", future)
+                if not future.done():
+                    LOGGER.info("set result on future")
+                    future.set_result(result)
+            else:
+                # Wrap in reverse proxy envelope
+                envelope = {"type": MessageType.RESPONSE.value if "id" in data else MessageType.NOTIFICATION.value, "sessionId": self.session_id, "payload": data}
+
+                # Forward to gateway
+                await self._send_to_gateway(orjson.dumps(envelope).decode())
 
         except Exception as e:
             LOGGER.error(f"Error forwarding stdio message: {e}")
@@ -464,6 +498,9 @@ class ReverseProxyClient:
         try:
             conn = cast(Any, self.connection)
             async for message in conn:
+                # Ensure message is string
+                if isinstance(message, bytes):
+                    message = message.decode("utf-8")
                 await self._handle_gateway_message(message)
         except Exception as e:  # Catch broad exceptions to avoid dependency-specific attribute errors
             closed_exc = None
@@ -478,19 +515,25 @@ class ReverseProxyClient:
         finally:
             self.state = ConnectionState.DISCONNECTED
 
-    async def _handle_gateway_message(self, message: str) -> None:
+    async def _handle_gateway_message(self, message: str | bytes) -> None:
         """Handle message from remote gateway.
 
         Args:
-            message: Message from gateway.
+            message: Message from gateway (str or bytes).
         """
         try:
+            # orjson.loads can handle both str and bytes
             data = orjson.loads(message)
             msg_type = data.get("type")
 
             if msg_type == MessageType.REQUEST.value:
+                LOGGER.debug(f"_handle_gateway_message called {message}")
+
                 # Forward request to local server
                 payload = data.get("payload", {})
+
+                LOGGER.info(f"_handle_gateway_message payload {payload}")
+
                 await self.stdio_process.send(orjson.dumps(payload).decode())
 
             elif msg_type == MessageType.HEARTBEAT.value:
@@ -648,6 +691,26 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Bearer token for authentication (can also use REVERSE_PROXY_TOKEN env var)",
     )
 
+    parser.add_argument(
+        "--server-id",
+        help="Identifier to be assigned to the session when registering",
+    )
+
+    parser.add_argument(
+        "--server-name",
+        help="name of the gateway server when registering",
+    )
+
+    parser.add_argument(
+        "--server-description",
+        help="description of the gateway server when registering",
+    )
+
+    parser.add_argument(
+        "--cert",
+        help="ca certificate of the Gateway when registering",
+    )
+
     # Connection options
     parser.add_argument(
         "--reconnect-delay",
@@ -696,16 +759,6 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     if args.verbose:
         args.log_level = "DEBUG"
 
-    # Get gateway from environment if not provided
-    if not args.gateway:
-        args.gateway = os.getenv(ENV_GATEWAY)
-        if not args.gateway:
-            parser.error("--gateway or REVERSE_PROXY_GATEWAY environment variable required")
-
-    # Get token from environment if not provided
-    if not args.token:
-        args.token = os.getenv(ENV_TOKEN)
-
     # Load configuration file if provided
     if args.config:
         if not yaml:
@@ -725,6 +778,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
             for key, value in config.items():
                 if not hasattr(args, key) or getattr(args, key) is None:
                     setattr(args, key, value)
+
+    # Get gateway from environment if not provided
+    if not args.gateway:
+        args.gateway = os.getenv(ENV_GATEWAY)
+        if not args.gateway:
+            parser.error("--gateway or REVERSE_PROXY_GATEWAY environment variable required")
+
+    # Get token from environment if not provided
+    if not args.token:
+        args.token = os.getenv(ENV_TOKEN)
 
     return args
 
@@ -749,10 +812,14 @@ async def main(argv: Optional[List[str]] = None) -> None:
     client = ReverseProxyClient(
         gateway_url=args.gateway,
         local_command=args.local_stdio,
+        server_id=args.server_id,
         token=args.token,
         reconnect_delay=args.reconnect_delay,
         max_retries=args.max_retries,
         keepalive_interval=args.keepalive,
+        server_name=args.server_name,
+        server_description=args.server_description,
+        cert=args.cert,
     )
 
     # Handle shutdown signals

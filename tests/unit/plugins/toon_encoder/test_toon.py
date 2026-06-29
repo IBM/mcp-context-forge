@@ -10,7 +10,6 @@ Tests the pure Python TOON implementation against the spec v3.0.
 """
 
 import json
-import math
 
 import pytest
 

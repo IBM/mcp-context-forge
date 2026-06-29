@@ -321,13 +321,23 @@ async def get_redis_client() -> Optional[Any]:
         connection_kwargs.update(_build_ssl_kwargs(settings))
 
         _client = aioredis.from_url(settings.redis_url, **connection_kwargs)
-        await _client.ping()
-        logger.info(
-            f"Redis client initialized: parser={_parser_info}, "
-            f"pool_size={settings.redis_max_connections}, "
-            f"timeout={settings.redis_socket_timeout}s, "
-            f"health_check={settings.redis_health_check_interval}s"
-        )
+
+        # Add timeout to ping to prevent hanging on connection issues
+        try:
+            # Standard
+            import asyncio
+
+            await asyncio.wait_for(_client.ping(), timeout=10.0)
+            logger.info(
+                f"Redis client initialized: parser={_parser_info}, "
+                f"pool_size={settings.redis_max_connections}, "
+                f"timeout={settings.redis_socket_timeout}s, "
+                f"health_check={settings.redis_health_check_interval}s"
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Redis ping timeout after 10s - connection may be unstable")
+            await _client.aclose()
+            _client = None
     except ImportError as e:
         logger.error(f"Redis parser configuration error: {_sanitize(str(e))}")
         _client = None

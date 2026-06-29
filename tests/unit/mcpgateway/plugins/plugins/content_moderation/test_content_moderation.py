@@ -7,7 +7,6 @@ Authors: Mihai Criveti
 Tests for ContentModerationPlugin.
 """
 
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,7 +15,6 @@ from cpex.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,
-    PluginViolation,
     PromptHookType,
     ToolHookType,
     PromptPrehookPayload,

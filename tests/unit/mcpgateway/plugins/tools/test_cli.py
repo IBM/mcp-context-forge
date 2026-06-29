@@ -22,7 +22,7 @@ from typer.testing import CliRunner
 import yaml
 
 # First-Party
-import cpex.tools.cli as cli
+from cpex.tools import cli
 from cpex.tools.models import InstallManifest
 
 

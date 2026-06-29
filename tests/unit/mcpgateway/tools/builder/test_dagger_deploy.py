@@ -11,7 +11,7 @@ These tests are skipped if Dagger is not installed.
 
 # Standard
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 # Third-Party
 import pytest

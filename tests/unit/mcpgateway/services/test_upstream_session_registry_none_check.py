@@ -8,7 +8,7 @@ Unit tests for UpstreamSessionRegistry None session check.
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 import anyio
 
 from mcpgateway.services.upstream_session_registry import UpstreamSessionRegistry

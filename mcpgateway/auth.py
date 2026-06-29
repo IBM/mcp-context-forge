@@ -1006,8 +1006,31 @@ def _get_user_by_email_sync(email: str) -> Optional[EmailUser]:
         # Third-Party
         from sqlalchemy import select  # pylint: disable=import-outside-toplevel
 
-        result = db.execute(select(EmailUser).where(EmailUser.email == email))
-        user = result.scalar_one_or_none()
+        # Try UUID lookup first if input looks like a UUID
+        user = None
+        is_uuid = False
+        try:
+            import uuid  # pylint: disable=import-outside-toplevel
+            uuid.UUID(email)
+            is_uuid = True
+            logger.debug("[UUID_RESOLUTION] _get_user_by_email_sync: input=%s is UUID, querying by id", email)
+            result = db.execute(select(EmailUser).where(EmailUser.id == email))
+            user = result.scalar_one_or_none()
+            if user:
+                logger.info("[UUID_RESOLUTION] _get_user_by_email_sync: UUID %s resolved to email %s", email, user.email)
+            else:
+                logger.warning("[UUID_RESOLUTION] _get_user_by_email_sync: UUID %s not found in database", email)
+        except (ValueError, AttributeError):
+            logger.debug("[UUID_RESOLUTION] _get_user_by_email_sync: input=%s is not UUID, will query by email", email)
+        
+        # Fall back to email lookup if UUID lookup failed or input wasn't a UUID
+        if user is None:
+            result = db.execute(select(EmailUser).where(EmailUser.email == email))
+            user = result.scalar_one_or_none()
+            if user:
+                logger.debug("[UUID_RESOLUTION] _get_user_by_email_sync: email %s found in database", email)
+            else:
+                logger.warning("[UUID_RESOLUTION] _get_user_by_email_sync: email %s not found in database (is_uuid=%s)", email, is_uuid)
         if user:
             # Detach from session and return a copy of attributes
             # since the session will be closed
@@ -1127,9 +1150,32 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
             "team_names": {},
         }
 
-        # Query 1: Get user data
-        user_result = db.execute(select(EmailUser).where(EmailUser.email == email))
-        user = user_result.scalar_one_or_none()
+        # Query 1: Get user data (handle both UUID and email)
+        user = None
+        is_uuid = False
+        try:
+            # Try UUID lookup first if input looks like a UUID
+            import uuid  # pylint: disable=import-outside-toplevel
+            uuid.UUID(email)
+            is_uuid = True
+            logger.debug("[UUID_RESOLUTION] _get_auth_context_batched_sync: input=%s is UUID, querying by id", email)
+            user_result = db.execute(select(EmailUser).where(EmailUser.id == email))
+            user = user_result.scalar_one_or_none()
+            if user:
+                logger.info("[UUID_RESOLUTION] _get_auth_context_batched_sync: UUID %s resolved to email %s", email, user.email)
+            else:
+                logger.warning("[UUID_RESOLUTION] _get_auth_context_batched_sync: UUID %s not found in database", email)
+        except (ValueError, AttributeError):
+            logger.debug("[UUID_RESOLUTION] _get_auth_context_batched_sync: input=%s is not UUID, will query by email", email)
+        
+        # Fall back to email lookup if UUID lookup failed or input wasn't a UUID
+        if user is None:
+            user_result = db.execute(select(EmailUser).where(EmailUser.email == email))
+            user = user_result.scalar_one_or_none()
+            if user:
+                logger.debug("[UUID_RESOLUTION] _get_auth_context_batched_sync: email %s found in database", email)
+            else:
+                logger.warning("[UUID_RESOLUTION] _get_auth_context_batched_sync: email %s not found in database (is_uuid=%s)", email, is_uuid)
 
         if user:
             # Detach user data as dict (session will close)
@@ -1147,11 +1193,13 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
             }
 
             # Query 2: Get personal team (only if user exists)
+            # Use user.email (resolved email) instead of email parameter (which may be UUID)
+            logger.debug("[UUID_RESOLUTION] _get_auth_context_batched_sync: querying personal team with user.email=%s", user.email)
             team_result = db.execute(
                 select(EmailTeam)
                 .join(EmailTeamMember)
                 .where(
-                    EmailTeamMember.user_email == email,
+                    EmailTeamMember.user_email == user.email,
                     EmailTeam.is_personal.is_(True),
                 )
             )
@@ -1160,16 +1208,19 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
                 result["personal_team_id"] = personal_team.id
 
             # Query 4: Get all active team memberships (for session token team resolution)
+            # Use user.email (resolved email) instead of email parameter (which may be UUID)
+            logger.debug("[UUID_RESOLUTION] _get_auth_context_batched_sync: querying team memberships with user.email=%s", user.email)
             team_ids_result = db.execute(
                 select(EmailTeamMember.team_id, EmailTeam.name)
                 .join(EmailTeam, EmailTeam.id == EmailTeamMember.team_id)
                 .where(
-                    EmailTeamMember.user_email == email,
+                    EmailTeamMember.user_email == user.email,
                     EmailTeamMember.is_active.is_(True),
                     EmailTeam.is_active.is_(True),
                 )
             )
             team_rows = team_ids_result.all()
+            logger.info("[UUID_RESOLUTION] _get_auth_context_batched_sync: found %d team memberships for user.email=%s", len(team_rows), user.email)
             team_ids: list[str] = []
             team_names: dict[str, str] = {}
 

@@ -16,7 +16,6 @@ under test.
 
 import pytest
 import httpx
-from unittest.mock import patch
 from mcpgateway.services.gateway_service import GatewayService
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 

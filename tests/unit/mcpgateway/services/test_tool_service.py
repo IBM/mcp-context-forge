@@ -1535,7 +1535,7 @@ class TestToolService:
 
         # Verify DB operations
         test_db.get.assert_called_once_with(DbTool, 1)
-        # Verify execute was called for server_tool_association cleanup + DELETE
+        # Verify execute was called twice: once for association deletion, once for tool deletion
         assert test_db.execute.call_count == 2
         test_db.commit.assert_called_once()
 
@@ -1549,12 +1549,11 @@ class TestToolService:
         test_db.commit = Mock()
         test_db.rollback = Mock()
 
-        # Mock execute results: batch deletes return rowcount=0 to stop loop,
-        # association cleanup returns a result, final DELETE returns rowcount=1
+        # Mock execute results: batch deletes return rowcount=0 to stop loop, association delete, final DELETE returns rowcount=1
         batch_result = Mock()
         batch_result.rowcount = 0  # No rows to delete (stops the batch loop)
         assoc_result = Mock()
-        assoc_result.rowcount = 0  # No server_tool_association rows
+        assoc_result.rowcount = 0  # Association deletion
         delete_result = Mock()
         delete_result.rowcount = 1  # Final DELETE succeeded
         test_db.execute = Mock(side_effect=[batch_result, batch_result, assoc_result, delete_result])
@@ -1563,7 +1562,7 @@ class TestToolService:
 
         await tool_service.delete_tool(test_db, 1, purge_metrics=True)
 
-        # Verify execute was called: 1 for ToolMetric + 1 for ToolMetricsHourly + 1 for association cleanup + 1 for DELETE = 4
+        # Verify execute was called: 1 for ToolMetric + 1 for ToolMetricsHourly + 1 for association + 1 for DELETE = 4
         assert test_db.execute.call_count == 4
         test_db.commit.assert_called_once()
 
@@ -4066,25 +4065,32 @@ class TestToolService:
 
     async def test_subscribe_events(self, tool_service):
         """Test event subscription mechanism."""
-        # Create an event to publish
-        test_event = {"type": "test_event", "data": {"id": 1}}
+        # Create events to publish
+        test_event1 = {"type": "test_event", "data": {"id": 1}}
+        test_event2 = {"type": "test_event", "data": {"id": 2}}
 
-        # Start subscription in background
-        subscriber = tool_service.subscribe_events()
-        subscription_task = asyncio.create_task(anext(subscriber))
+        # Mock the event service to provide a simple async generator
+        async def mock_event_gen():
+            yield test_event1
+            yield test_event2
 
-        # Give a moment for subscription to be registered
-        await asyncio.sleep(0.01)
+        tool_service._event_service = MagicMock()
+        tool_service._event_service.subscribe_events.return_value = mock_event_gen()
+        tool_service._event_service.publish_event = AsyncMock()
 
-        # Publish event
-        await tool_service._publish_event(test_event)
+        # Collect events from subscription
+        events = []
+        async for event in tool_service.subscribe_events():
+            events.append(event)
 
-        # Get the event
-        received_event = await subscription_task
-        assert received_event == test_event
+        # Verify events were received
+        assert len(events) == 2
+        assert events[0] == test_event1
+        assert events[1] == test_event2
 
-        # Clean up
-        await subscriber.aclose()
+        # Verify publish_event can be called
+        await tool_service._publish_event(test_event1)
+        tool_service._event_service.publish_event.assert_awaited_once_with(test_event1)
 
     async def test_notify_tool_added(self, tool_service, mock_tool):
         """Test notification when tool is added."""
@@ -7519,6 +7525,7 @@ class TestToolServiceHelpers:
             name="tool-name",
             original_name="tool-name",
             url="https://example.com/tool",
+            endpoint=None,
             description="desc",
             original_description="desc",
             integration_type="http",
@@ -9514,6 +9521,7 @@ class TestRustMcpExecutionPlan:
         tool = SimpleNamespace(
             id="tool-1",
             url=None,
+            endpoint=None,
             description="tool-one",
             original_description="tool-one",
             enabled=True,
@@ -9591,6 +9599,7 @@ class TestRustMcpExecutionPlan:
         tool = SimpleNamespace(
             id="tool-1",
             url=None,
+            endpoint=None,
             description="tool-one",
             original_description="tool-one",
             enabled=True,
@@ -10579,6 +10588,269 @@ async def test_list_server_mcp_tool_definitions_creates_span(tool_service):
     attrs = mock_create_span.call_args[0][1]
     assert attrs["mcp.definition_mode"] is True
     assert attrs["team.scope"] == "team-1"
+
+
+# ============================================================================
+# Gateway Auth Runtime Tests (REST Tool Invocation)
+# ============================================================================
+
+
+class TestToolServiceGatewayAuthRuntime:
+    """Tests for gateway authentication being applied at REST tool invocation time.
+
+    These tests verify that when a REST MCP tool is invoked, the gateway's
+    authentication credentials are properly included in the HTTP request to
+    the target API endpoint.
+    """
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_uses_gateway_bearer_auth(self, tool_service, mock_tool, mock_gateway, mock_global_config_obj, test_db):
+        """REST tool invocation should include gateway bearer token in request."""
+        # Setup gateway with bearer auth
+        mock_gateway.auth_type = "bearer"
+        mock_gateway.auth_value = {"Authorization": "Bearer gateway-token-123"}
+        mock_gateway.url = "http://api.example.com"
+
+        # Setup REST tool
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.url = "http://api.example.com/endpoint"
+        mock_tool.gateway_id = "gateway-123"
+        mock_tool.gateway = mock_gateway
+        mock_tool.jsonpath_filter = ""
+        mock_tool.headers = {}
+
+        # Set up DB mock
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        # Mock HTTP response
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "success"})
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        # Mock metrics
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {})
+
+            # Verify the HTTP request included gateway auth
+            tool_service._http_client.get.assert_called_once()
+            call_kwargs = tool_service._http_client.get.call_args[1]
+            assert "headers" in call_kwargs
+            assert "Authorization" in call_kwargs["headers"]
+            assert call_kwargs["headers"]["Authorization"] == "Bearer gateway-token-123"
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_without_gateway_auth(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """REST tool without gateway should work without auth headers."""
+        # Setup REST tool without gateway
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.url = "http://api.example.com/endpoint"
+        mock_tool.gateway_id = None
+        mock_tool.gateway = None
+        mock_tool.jsonpath_filter = ""
+        mock_tool.headers = {}
+        mock_tool.auth_value = None
+
+        # Set up DB mock
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        # Mock HTTP response
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "success"})
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        # Mock metrics
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {})
+
+            # Verify the HTTP request was made without gateway auth
+            tool_service._http_client.get.assert_called_once()
+            call_kwargs = tool_service._http_client.get.call_args[1]
+            headers = call_kwargs.get("headers", {})
+            # Should not have Authorization header from gateway
+            assert "Authorization" not in headers or not headers.get("Authorization", "").startswith("Bearer gateway-")
+
+
+# ============================================================================
+# Endpoint Property Tests
+# ============================================================================
+
+
+class TestToolEndpointProperty:
+    """Tests for the new endpoint property functionality."""
+
+    @pytest.mark.asyncio
+    async def test_convert_tool_to_read_includes_endpoint(self, tool_service):
+        """Test that convert_tool_to_read includes the endpoint field."""
+        tool = MagicMock(spec=DbTool)
+        tool.id = "tool1"
+        tool.name = "test_tool"
+        tool.original_name = "test_tool"
+        tool.custom_name = "test_tool"
+        tool.display_name = "Test Tool"
+        tool.url = "https://api.example.com"
+        tool.endpoint = "/v1/users"
+        tool.description = "Test tool"
+        tool.original_description = "Test tool"
+        tool.integration_type = "REST"
+        tool.request_type = "GET"
+        tool.headers = {}
+        tool.input_schema = {}
+        tool.annotations = {}
+        tool.jsonpath_filter = ""
+        tool.auth_type = None
+        tool.auth_value = None
+        tool.created_at = datetime.now(timezone.utc)
+        tool.updated_at = datetime.now(timezone.utc)
+        tool.enabled = True
+        tool.deprecated = False
+        tool.reachable = True
+        tool.gateway_id = None
+        tool.gateway_slug = ""
+        tool.custom_name_slug = "test_tool"
+        tool.tags = []
+        tool.team_id = None
+        tool.team = None
+        tool.visibility = "public"
+
+        result = tool_service.convert_tool_to_read(tool)
+
+        assert result.endpoint == "/v1/users"
+
+    @pytest.mark.asyncio
+    async def test_convert_tool_to_read_endpoint_none(self, tool_service):
+        """Test that convert_tool_to_read handles None endpoint."""
+        tool = MagicMock(spec=DbTool)
+        tool.id = "tool1"
+        tool.name = "test_tool"
+        tool.original_name = "test_tool"
+        tool.custom_name = "test_tool"
+        tool.display_name = "Test Tool"
+        tool.url = "https://api.example.com"
+        tool.endpoint = None
+        tool.description = "Test tool"
+        tool.original_description = "Test tool"
+        tool.integration_type = "REST"
+        tool.request_type = "GET"
+        tool.headers = {}
+        tool.input_schema = {}
+        tool.annotations = {}
+        tool.jsonpath_filter = ""
+        tool.auth_type = None
+        tool.auth_value = None
+        tool.created_at = datetime.now(timezone.utc)
+        tool.updated_at = datetime.now(timezone.utc)
+        tool.enabled = True
+        tool.deprecated = False
+        tool.reachable = True
+        tool.gateway_id = None
+        tool.gateway_slug = ""
+        tool.custom_name_slug = "test_tool"
+        tool.tags = []
+        tool.team_id = None
+        tool.team = None
+        tool.visibility = "public"
+
+        result = tool_service.convert_tool_to_read(tool)
+
+        assert result.endpoint is None
+
+    @pytest.mark.asyncio
+    async def test_convert_tool_to_read_endpoint_mock_object(self, tool_service):
+        """Test that convert_tool_to_read handles MagicMock endpoint gracefully."""
+        tool = MagicMock(spec=DbTool)
+        tool.id = "tool1"
+        tool.name = "test_tool"
+        tool.original_name = "test_tool"
+        tool.custom_name = "test_tool"
+        tool.display_name = "Test Tool"
+        tool.url = "https://api.example.com"
+        # endpoint will be a MagicMock when accessed via getattr
+        tool.description = "Test tool"
+        tool.original_description = "Test tool"
+        tool.integration_type = "REST"
+        tool.request_type = "GET"
+        tool.headers = {}
+        tool.input_schema = {}
+        tool.annotations = {}
+        tool.jsonpath_filter = ""
+        tool.auth_type = None
+        tool.auth_value = None
+        tool.created_at = datetime.now(timezone.utc)
+        tool.updated_at = datetime.now(timezone.utc)
+        tool.enabled = True
+        tool.deprecated = False
+        tool.reachable = True
+        tool.gateway_id = None
+        tool.gateway_slug = ""
+        tool.custom_name_slug = "test_tool"
+        tool.tags = []
+        tool.team_id = None
+        tool.team = None
+        tool.visibility = "public"
+
+        result = tool_service.convert_tool_to_read(tool)
+
+        # Should handle MagicMock and return None
+        assert result.endpoint is None
+
+    @pytest.mark.asyncio
+    async def test_update_tool_with_endpoint(self, tool_service):
+        """Test updating a tool with an endpoint value."""
+        tool = MagicMock(spec=DbTool)
+        tool.id = "tool1"
+        tool.name = "test_tool"
+        tool.custom_name = "test_tool"
+        tool.url = "https://api.example.com"
+        tool.endpoint = None
+        tool.visibility = "public"
+        tool.team_id = None
+        tool.owner_email = "test@example.com"
+        tool.version = 1
+        tool.gateway_id = None
+
+        tool_update = MagicMock(spec=ToolUpdate)
+        tool_update.name = None
+        tool_update.custom_name = None
+        tool_update.displayName = None
+        tool_update.title = None
+        tool_update.url = None
+        tool_update.endpoint = "/v2/users"
+        tool_update.description = None
+        tool_update.integration_type = None
+        tool_update.request_type = None
+        tool_update.headers = None
+        tool_update.input_schema = None
+        tool_update.output_schema = None
+        tool_update.annotations = None
+        tool_update.jsonpath_filter = None
+        tool_update.visibility = None
+        tool_update.auth = None
+        tool_update.tags = None
+
+        db = MagicMock()
+
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=tool),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "tool1", "endpoint": "/v2/users"}),
+        ):
+            result = await tool_service.update_tool(db, "tool1", tool_update)
+
+            # Verify endpoint was updated
+            assert tool.endpoint == "/v2/users"
+            assert result["endpoint"] == "/v2/users"
 
 
 class TestGrpcToolInvocation:

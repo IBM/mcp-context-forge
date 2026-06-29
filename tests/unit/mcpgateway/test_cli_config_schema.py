@@ -43,7 +43,7 @@ def test_config_schema_writes_to_file(tmp_path: Path):
 def test_insert_defaults_injects_app_host_port():
     """Defaults should be injected when no app/host/port provided."""
     # First-Party
-    import mcpgateway.cli as cli
+    from mcpgateway import cli
 
     args = cli._insert_defaults([])
     assert args[0] == cli.DEFAULT_APP
@@ -54,7 +54,7 @@ def test_insert_defaults_injects_app_host_port():
 def test_insert_defaults_skips_host_port_for_uds():
     """Host/port defaults should be skipped when UDS is used."""
     # First-Party
-    import mcpgateway.cli as cli
+    from mcpgateway import cli
 
     args = cli._insert_defaults(["--uds", "/tmp/socket.sock"])
     assert args[0] == cli.DEFAULT_APP
@@ -65,7 +65,7 @@ def test_insert_defaults_skips_host_port_for_uds():
 def test_handle_validate_config_success(monkeypatch, capsys):
     """Validation success prints confirmation."""
     # First-Party
-    import mcpgateway.cli as cli
+    from mcpgateway import cli
 
     class DummySettings:
         def __init__(self, _env_file=None):
@@ -81,7 +81,7 @@ def test_handle_validate_config_success(monkeypatch, capsys):
 def test_handle_validate_config_failure(monkeypatch, capsys):
     """Validation errors raise SystemExit and write to stderr."""
     # First-Party
-    import mcpgateway.cli as cli
+    from mcpgateway import cli
 
     class DummyModel:
         @staticmethod
@@ -112,7 +112,7 @@ def test_handle_validate_config_failure(monkeypatch, capsys):
 def test_handle_validate_config_security_error(monkeypatch, capsys):
     """SecurityConfigurationError raises SystemExit and writes to stderr."""
     # First-Party
-    import mcpgateway.cli as cli
+    from mcpgateway import cli
     from mcpgateway.config import SecurityConfigurationError
 
     def raise_security_error(*args, **kwargs):
@@ -131,7 +131,7 @@ def test_handle_validate_config_security_error(monkeypatch, capsys):
 def test_handle_config_schema_outputs_json(monkeypatch, capsys):
     """Schema helper prints JSON when no output is specified."""
     # First-Party
-    import mcpgateway.cli as cli
+    from mcpgateway import cli
 
     class DummySettings:
         @classmethod
@@ -148,7 +148,7 @@ def test_handle_config_schema_outputs_json(monkeypatch, capsys):
 def test_handle_config_schema_writes_output(monkeypatch, tmp_path: Path):
     """Schema helper writes JSON to file when output is given."""
     # First-Party
-    import mcpgateway.cli as cli
+    from mcpgateway import cli
 
     class DummySettings:
         @classmethod
@@ -167,7 +167,7 @@ def test_handle_config_schema_writes_output(monkeypatch, tmp_path: Path):
 def test_handle_support_bundle_success(monkeypatch, tmp_path: Path, capsys):
     """Support bundle helper prints success message."""
     # First-Party
-    import mcpgateway.cli as cli
+    from mcpgateway import cli
 
     bundle_path = tmp_path / "bundle.zip"
     bundle_path.write_bytes(b"data")
@@ -190,7 +190,7 @@ def test_handle_support_bundle_success(monkeypatch, tmp_path: Path, capsys):
 def test_handle_support_bundle_failure(monkeypatch):
     """Support bundle helper raises SystemExit on failure."""
     # First-Party
-    import mcpgateway.cli as cli
+    from mcpgateway import cli
 
     class DummyService:
         def generate_bundle(self, _config):
@@ -205,7 +205,7 @@ def test_handle_support_bundle_failure(monkeypatch):
 def test_main_support_bundle_parsing(monkeypatch):
     """CLI main should parse support bundle flags and invoke handler."""
     # First-Party
-    import mcpgateway.cli as cli
+    from mcpgateway import cli
 
     called = {}
 
@@ -227,7 +227,7 @@ def test_main_support_bundle_parsing(monkeypatch):
 def test_main_version_flag(monkeypatch, capsys):
     """CLI main should print version and exit."""
     # First-Party
-    import mcpgateway.cli as cli
+    from mcpgateway import cli
 
     monkeypatch.setattr(sys, "argv", ["mcpgateway", "--version"])
     cli.main()
@@ -238,7 +238,7 @@ def test_main_version_flag(monkeypatch, capsys):
 def test_main_export_import_branch(monkeypatch):
     """CLI main should delegate to export/import subcommands."""
     # First-Party
-    import mcpgateway.cli as cli
+    from mcpgateway import cli
 
     mock_main = MagicMock()
     monkeypatch.setattr("mcpgateway.cli_export_import.main_with_subcommands", mock_main)
@@ -251,7 +251,7 @@ def test_main_export_import_branch(monkeypatch):
 def test_main_calls_uvicorn(monkeypatch):
     """CLI main should invoke uvicorn with defaults."""
     # First-Party
-    import mcpgateway.cli as cli
+    from mcpgateway import cli
 
     called = {}
 

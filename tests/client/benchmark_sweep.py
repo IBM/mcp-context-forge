@@ -24,7 +24,6 @@ import json
 import os
 import sys
 from dataclasses import asdict
-from datetime import datetime
 from typing import List, Tuple
 
 import httpx

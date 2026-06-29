@@ -2,7 +2,7 @@
 """add api token auth columns to sso_providers (issue #3567)
 
 Revision ID: e198602c3c1e
-Revises: 6c0e5f8a9b1d
+Revises: z9z9z9z9z9z9
 Create Date: 2026-06-11
 
 """
@@ -15,7 +15,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "e198602c3c1e"  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = "6c0e5f8a9b1d"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "z9z9z9z9z9z9"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

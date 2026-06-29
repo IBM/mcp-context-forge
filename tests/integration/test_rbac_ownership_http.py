@@ -16,7 +16,6 @@ from __future__ import annotations
 import os
 import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime
 
 # Third-Party
 from fastapi.testclient import TestClient
@@ -30,9 +29,7 @@ from _pytest.monkeypatch import MonkeyPatch
 from mcpgateway.main import app
 from mcpgateway.utils.verify_credentials import require_auth
 from mcpgateway.auth import get_current_user
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, get_db as rbac_get_db, get_permission_service
-from mcpgateway.schemas import ToolRead, ServerRead, ResourceRead, PromptRead, GatewayRead, A2AAgentRead
-from mcpgateway.schemas import ToolMetrics
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, get_db as rbac_get_db
 
 # Local
 from tests.utils.rbac_mocks import MockPermissionService

@@ -8,7 +8,6 @@ Unit tests for well_known and server_well_known routers.
 """
 
 # Standard
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 # Third-Party

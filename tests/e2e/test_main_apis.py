@@ -43,7 +43,6 @@ import base64
 import json
 import os
 import tempfile
-import time
 from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock
 from unittest.mock import patch

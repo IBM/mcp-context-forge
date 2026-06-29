@@ -757,7 +757,6 @@ async def test_get_redis_client_warns_when_rediss_url_but_ssl_disabled(caplog):
     assert any("rediss://" in r.message and "REDIS_SSL=false" in r.message for r in caplog.records)
 
 
-
 # ---------------------------------------------------------------------------
 # Tests for build_reatelimiter_ssl_kwargs
 # ---------------------------------------------------------------------------

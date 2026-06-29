@@ -98,7 +98,7 @@ def test_migration_cleanup_sqlite():
         assert remaining.is_active is True
         assert remaining.id == active.id
 
-        print(f"✓ Migration cleanup test passed for SQLite")
+        print("✓ Migration cleanup test passed for SQLite")
 
     finally:
         session.close()

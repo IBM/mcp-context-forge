@@ -791,6 +791,8 @@ async def connect(input_data: ConnectInput, request: Request, user=Depends(get_c
         All configuration values support environment variable fallbacks.
     """
     user_id = _resolve_user_id(input_data.user_id, user)
+    # Sanitize user_id for safe output (defense against potential XSS)
+    safe_user_id = SecurityValidator.sanitize_display_text(user_id, "user_id")
 
     try:
         # Validate user_id
@@ -875,7 +877,7 @@ async def connect(input_data: ConnectInput, request: Request, user=Depends(get_c
             logger.warning(f"Failed to extract tool names: {tool_error}")
             # Continue without tools list
 
-        return {"status": "connected", "user_id": user_id, "provider": config.llm.provider, "tool_count": len(tool_names), "tools": tool_names}
+        return {"status": "connected", "user_id": safe_user_id, "provider": config.llm.provider, "tool_count": len(tool_names), "tools": tool_names}
 
     except HTTPException:
         # Re-raise HTTP exceptions as-is
@@ -1053,6 +1055,8 @@ async def chat(input_data: ChatInput, user=Depends(get_current_user_with_permiss
         Client must maintain persistent connection for streaming.
     """
     user_id = _resolve_user_id(input_data.user_id, user)
+    # Sanitize user_id for safe output (defense against potential XSS)
+    safe_user_id = SecurityValidator.sanitize_display_text(user_id, "user_id")
 
     # Validate input
     if not user_id:
@@ -1082,7 +1086,7 @@ async def chat(input_data: ChatInput, user=Depends(get_current_user_with_permiss
                 result = await chat_service.chat_with_metadata(input_data.message)
 
                 return {
-                    "user_id": user_id,
+                    "user_id": safe_user_id,
                     "response": result["text"],
                     "tool_used": result["tool_used"],
                     "tools": result["tools"],
@@ -1163,6 +1167,9 @@ async def disconnect(input_data: DisconnectInput, user=Depends(get_current_user_
     if not user_id:
         raise HTTPException(status_code=400, detail="User ID is required")
 
+    # Sanitize user_id for safe output (defense against potential XSS)
+    safe_user_id = SecurityValidator.sanitize_display_text(user_id, "user_id")
+
     # Remove and shut down chat service
     chat_service = await get_active_session(user_id)
     await delete_active_session(user_id)
@@ -1171,19 +1178,21 @@ async def disconnect(input_data: DisconnectInput, user=Depends(get_current_user_
     await delete_user_config(user_id)
 
     if not chat_service:
-        return {"status": "no_active_session", "user_id": user_id, "message": "No active session to disconnect"}
+        return {"status": "no_active_session", "user_id": safe_user_id, "message": "No active session to disconnect"}
 
     try:
         # Clear chat history on disconnect
         await chat_service.clear_history()
-        logger.info(f"Chat session disconnected for {SecurityValidator.sanitize_log_message(user_id)}")
+        logger.info(f"Chat session disconnected for {safe_user_id}")
 
         await chat_service.shutdown()
-        return {"status": "disconnected", "user_id": user_id, "message": "Successfully disconnected"}
+        return {"status": "disconnected", "user_id": safe_user_id, "message": "Successfully disconnected"}
     except Exception as e:
-        logger.error(f"Error during disconnect for user {SecurityValidator.sanitize_log_message(user_id)}: {e}", exc_info=True)
+        logger.error(f"Error during disconnect for user {safe_user_id}: {e}", exc_info=True)
         # Session already removed, so return success with warning
-        return {"status": "disconnected_with_errors", "user_id": user_id, "message": "Disconnected but cleanup encountered errors", "warning": str(e)}
+        # Sanitize exception message to prevent XSS
+        safe_warning = SecurityValidator.sanitize_display_text(str(e), "warning")
+        return {"status": "disconnected_with_errors", "user_id": safe_user_id, "message": "Disconnected but cleanup encountered errors", "warning": safe_warning}
 
 
 @llmchat_router.get("/status/{user_id}")
@@ -1228,8 +1237,10 @@ async def status(user_id: str, user=Depends(get_current_user_with_permissions)):
         only that it exists in the active_sessions dictionary.
     """
     resolved_user_id = _resolve_user_id(user_id, user)
+    # Sanitize user_id for safe output (defense against potential XSS)
+    safe_user_id = SecurityValidator.sanitize_display_text(resolved_user_id, "user_id")
     connected = bool(await get_active_session(resolved_user_id))
-    return {"user_id": resolved_user_id, "connected": connected}
+    return {"user_id": safe_user_id, "connected": connected}
 
 
 @llmchat_router.get("/config/{user_id}")

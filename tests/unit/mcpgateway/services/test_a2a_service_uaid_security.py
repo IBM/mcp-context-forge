@@ -95,7 +95,6 @@ class TestFailClosedDomainAllowlist:
         Then: Should pass fail-closed gate and proceed to domain validation logic
         """
         # Third-Party
-        import httpx
 
         # Arrange - set populated allowlist
         monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
@@ -146,7 +145,6 @@ class TestUAIDDomainAllowlistValidation:
         Then: Should proceed with HTTP call (not raise domain validation error)
         """
         # Third-Party
-        import httpx
 
         # Arrange
         monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
@@ -203,7 +201,6 @@ class TestUAIDDomainAllowlistValidation:
         Then: Should allow routing (subdomain matches parent domain)
         """
         # Third-Party
-        import httpx
 
         # Arrange
         monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
@@ -249,7 +246,6 @@ class TestUAIDBearerTokenForwarding:
         Then: Should include Authorization: Bearer {token} in HTTP headers
         """
         # Third-Party
-        import httpx
 
         # Arrange
         monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
@@ -292,7 +288,6 @@ class TestUAIDBearerTokenForwarding:
         Then: Should include X-Contextforge-Source-Gateway and X-Contextforge-Source-User headers
         """
         # Third-Party
-        import httpx
 
         # Arrange
         monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
@@ -341,7 +336,6 @@ class TestUAIDBearerTokenForwarding:
         Rationale: Prevents credential leakage in logs/proxies that may capture headers
         """
         # Third-Party
-        import httpx
 
         # Arrange
         monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
@@ -398,7 +392,6 @@ class TestUAIDBearerTokenForwarding:
         Then: Should proceed with HTTP call but without Authorization header
         """
         # Third-Party
-        import httpx
 
         # Arrange
         monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
@@ -439,7 +432,6 @@ class TestUAIDBearerTokenForwarding:
         Then: Should log warning about unauthenticated request
         """
         # Third-Party
-        import httpx
         import logging
 
         # Arrange
@@ -480,7 +472,6 @@ class TestUAIDBearerTokenForwarding:
         Rationale: Feature flag test per CLAUDE.md security invariants - deny-path regression test
         """
         # Third-Party
-        import httpx
         import logging
 
         # Arrange
@@ -538,7 +529,6 @@ class TestAuthenticationErrorHandling:
         Then: Should raise A2AAgentError with message about JWT trust
         """
         # Third-Party
-        import httpx
 
         # Arrange
         monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
@@ -578,7 +568,6 @@ class TestAuthenticationErrorHandling:
         Then: Should raise A2AAgentError with message about insufficient permissions
         """
         # Third-Party
-        import httpx
 
         # Arrange
         monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])

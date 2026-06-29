@@ -21,7 +21,6 @@ Issue #4273 tracks the underlying feature.
 
 from __future__ import annotations
 
-import json
 
 import pytest
 

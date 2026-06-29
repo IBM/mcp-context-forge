@@ -395,9 +395,11 @@ class TestReverseProxyClient:
         self.gateway_url = "wss://gateway.example.com"
         self.local_command = "uvx mcp-server-git"
         self.token = "test-token"
+        self.server_id = "test-server-123"
         self.client = ReverseProxyClient(
             gateway_url=self.gateway_url,
             local_command=self.local_command,
+            server_id=self.server_id,
             token=self.token,
         )
 
@@ -412,12 +414,12 @@ class TestReverseProxyClient:
         ]
 
         for url, expected in test_cases:
-            client = ReverseProxyClient(gateway_url=url, local_command="echo test")
+            client = ReverseProxyClient(gateway_url=url, local_command="echo test", server_id="test-id")
             assert client.use_websocket == expected
 
     def test_init_defaults(self):
         """Test initialization with default values."""
-        client = ReverseProxyClient(gateway_url="wss://example.com", local_command="echo test")
+        client = ReverseProxyClient(gateway_url="wss://example.com", local_command="echo test", server_id="test-id")
         assert client.token is None
         assert client.reconnect_delay == DEFAULT_RECONNECT_DELAY
         assert client.max_retries == DEFAULT_MAX_RETRIES
@@ -428,7 +430,7 @@ class TestReverseProxyClient:
 
     def test_init_custom_values(self):
         """Test initialization with custom values."""
-        client = ReverseProxyClient(gateway_url="wss://example.com", local_command="echo test", token="custom-token", reconnect_delay=5.0, max_retries=10, keepalive_interval=60)
+        client = ReverseProxyClient(gateway_url="wss://example.com", local_command="echo test", server_id="test-id", token="custom-token", reconnect_delay=5.0, max_retries=10, keepalive_interval=60)
         assert client.token == "custom-token"
         assert client.reconnect_delay == 5.0
         assert client.max_retries == 10
@@ -502,7 +504,7 @@ class TestReverseProxyClient:
     @pytest.mark.asyncio
     async def test_connect_sse_path_calls_connect_sse(self):
         """connect() calls the SSE path when use_websocket is False."""
-        client = ReverseProxyClient(gateway_url="tcp://gateway.example.com", local_command="echo test", token=None)
+        client = ReverseProxyClient(gateway_url="tcp://gateway.example.com", local_command="echo test", server_id="test-id", token=None)
         assert client.use_websocket is False
 
         with patch.object(client.stdio_process, "start", new_callable=AsyncMock):
@@ -542,7 +544,7 @@ class TestReverseProxyClient:
     @pytest.mark.asyncio
     async def test_connect_websocket_prefixes_wss_when_missing_scheme(self):
         """Gateway URLs without scheme are prefixed with wss://."""
-        client = ReverseProxyClient(gateway_url="gateway.example.com", local_command="echo test", token=None)
+        client = ReverseProxyClient(gateway_url="gateway.example.com", local_command="echo test", server_id="test-id", token=None)
 
         with patch("mcpgateway.reverse_proxy.websockets") as mock_ws:
             mock_ws.connect = AsyncMock(return_value=AsyncMock())
@@ -561,7 +563,7 @@ class TestReverseProxyClient:
     @pytest.mark.asyncio
     async def test_connect_websocket_does_not_duplicate_reverse_proxy_path(self):
         """If /reverse-proxy is already present, urljoin isn't applied again."""
-        client = ReverseProxyClient(gateway_url="https://gateway.example.com/reverse-proxy/ws", local_command="echo test", token=None)
+        client = ReverseProxyClient(gateway_url="https://gateway.example.com/reverse-proxy/ws", local_command="echo test", server_id="test-id", token=None)
 
         with patch("mcpgateway.reverse_proxy.websockets") as mock_ws:
             mock_ws.connect = AsyncMock(return_value=AsyncMock())
@@ -608,20 +610,17 @@ class TestReverseProxyClient:
         """Test registration with gateway."""
         self.client.connection = AsyncMock()
 
-        with patch.object(self.client.stdio_process, "send", new_callable=AsyncMock) as mock_send:
-            with patch("asyncio.sleep", new_callable=AsyncMock):
-                await self.client._register()
-
-        # Should send initialize to local server
-        mock_send.assert_called_once()
-        init_msg = json.loads(mock_send.call_args[0][0])
-        assert init_msg["method"] == "initialize"
+        await self.client._register()
 
         # Should send register to gateway
         self.client.connection.send.assert_called_once()
         register_msg = json.loads(self.client.connection.send.call_args[0][0])
         assert register_msg["type"] == MessageType.REGISTER.value
         assert register_msg["sessionId"] == self.client.session_id
+        assert "server" in register_msg
+        assert register_msg["server"]["name"] == self.client.server_name
+        assert register_msg["server"]["description"] == self.client.description
+        assert register_msg["server"]["protocol"] == "stdio"
 
     @pytest.mark.asyncio
     async def test_handle_stdio_message_response(self):
@@ -968,7 +967,6 @@ class TestReverseProxyClient:
         async def fast_sleep(delay: float):
             if delay == 1:
                 self.client.state = ConnectionState.DISCONNECTED
-            return None
 
         with patch.object(self.client, "connect", side_effect=mock_connect):
             with patch("asyncio.sleep", side_effect=fast_sleep):

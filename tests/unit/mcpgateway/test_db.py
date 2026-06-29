@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy.exc import SQLAlchemyError
 
 # First-Party
-import mcpgateway.db as db
+from mcpgateway import db
 
 
 # --- utc_now ---
@@ -2115,7 +2115,6 @@ def test_refresh_slugs_on_startup_tool_and_prompt_missing_tables(monkeypatch, ca
 
 def test_refresh_slugs_on_startup_outer_sqlalchemy_error(monkeypatch, caplog):
     # Third-Party
-    from sqlalchemy.exc import SQLAlchemyError
 
     class DummySession:
         def __enter__(self):
@@ -2986,7 +2985,7 @@ def test_email_api_token_is_expired_none():
 
 
 def test_db_tool_title_property(test_db):
-    import mcpgateway.db as db
+    from mcpgateway import db
 
     tool = db.Tool(
         id="tool-1",
@@ -3008,7 +3007,7 @@ def test_db_tool_title_property(test_db):
 
 
 def test_db_resource_title_property(test_db):
-    import mcpgateway.db as db
+    from mcpgateway import db
 
     resource = db.Resource(
         id="resource-1",
@@ -3027,7 +3026,7 @@ def test_db_resource_title_property(test_db):
 
 
 def test_db_prompt_title_property(test_db):
-    import mcpgateway.db as db
+    from mcpgateway import db
 
     prompt = db.Prompt(
         id="prompt-1",

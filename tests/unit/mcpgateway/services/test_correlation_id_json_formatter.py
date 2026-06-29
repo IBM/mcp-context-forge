@@ -9,7 +9,7 @@ Tests for correlation ID JSON formatter.
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from io import StringIO
 from unittest.mock import Mock, patch
 

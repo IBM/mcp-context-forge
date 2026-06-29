@@ -12,8 +12,7 @@ Comprehensive test suite for EventService with maximum code coverage.
 
 import asyncio
 import importlib
-from typing import Any, Dict
-from unittest.mock import AsyncMock, MagicMock, Mock, patch, call
+from unittest.mock import AsyncMock, MagicMock, patch
 import orjson
 import pytest
 import sys
@@ -226,7 +225,6 @@ class TestEventService:
                 yield {"type": "subscribe", "data": None}
                 yield {"type": "message", "data": json.dumps({"event": "test1"})}
                 yield {"type": "message", "data": json.dumps({"event": "test2"})}
-                return
 
             mock_pubsub.listen.return_value = mock_listen()
             mock_pubsub.subscribe = AsyncMock()

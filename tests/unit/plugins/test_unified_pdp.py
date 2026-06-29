@@ -18,8 +18,6 @@ Dependencies (test-only)::
 from __future__ import annotations
 
 import pytest
-import httpx
-from unittest.mock import AsyncMock, patch
 
 # ---------------------------------------------------------------------------
 # Adjust imports – works whether you run from repo root or this directory
@@ -47,8 +45,8 @@ from plugins.unified_pdp.engines.opa_engine import OPAEngineAdapter
 from plugins.unified_pdp.engines.cedar_engine import CedarEngineAdapter
 from plugins.unified_pdp.engines.native_engine import NativeRBACAdapter
 from plugins.unified_pdp.engines.mac_engine import MACEngineAdapter
-from plugins.unified_pdp.cache import DecisionCache, _build_cache_key
-from plugins.unified_pdp.adapter import PolicyEvaluationError, PolicyEngineUnavailableError
+from plugins.unified_pdp.cache import DecisionCache
+from plugins.unified_pdp.adapter import PolicyEvaluationError
 
 # ===========================================================================
 # Fixtures

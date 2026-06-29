@@ -2541,7 +2541,7 @@ class TestTeamManagementService:
     @pytest.mark.asyncio
     async def test_update_team_invalidates_member_team_object_caches(self, mock_db):
         """update_team must fire invalidate_user_teams for each active member."""
-        from unittest.mock import AsyncMock, MagicMock, call, patch
+        from unittest.mock import AsyncMock, MagicMock, patch
         from mcpgateway.db import EmailTeam, EmailTeamMember
         from mcpgateway.services.team_management_service import TeamManagementService
 

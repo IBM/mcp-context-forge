@@ -8,7 +8,6 @@ Unit tests for internal loopback HTTP helpers.
 """
 
 # Third-Party
-import pytest
 
 # First-Party
 from mcpgateway.utils.internal_http import _is_ssl_enabled, internal_loopback_base_url, internal_loopback_verify

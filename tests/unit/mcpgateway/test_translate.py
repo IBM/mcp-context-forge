@@ -1325,7 +1325,7 @@ async def test_run_sse_to_stdio_simple_mode_returns(monkeypatch, translate):
     setattr(translate, "httpx", real_httpx)
 
     # Patch the isolated client context so no real network calls happen.
-    import mcpgateway.services.http_client_service as http_client_service
+    from mcpgateway.services import http_client_service
 
     class DummyClient:
         pass
@@ -1401,7 +1401,7 @@ async def test_run_sse_to_stdio_read_stdout_raises_when_stdout_missing_initial(m
 
     monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
-    import mcpgateway.services.http_client_service as http_client_service
+    from mcpgateway.services import http_client_service
 
     class DummyClient:
         async def post(self, *_a, **_k):  # pragma: no cover - should not be reached
@@ -1454,7 +1454,7 @@ async def test_run_sse_to_stdio_read_stdout_raises_when_stdout_missing_in_loop(m
 
     monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
-    import mcpgateway.services.http_client_service as http_client_service
+    from mcpgateway.services import http_client_service
 
     class DummyClient:
         async def post(self, *_a, **_k):  # pragma: no cover - should not be reached
@@ -1501,7 +1501,7 @@ async def test_run_sse_to_stdio_read_stdout_skips_blank_lines(monkeypatch, trans
 
     monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
-    import mcpgateway.services.http_client_service as http_client_service
+    from mcpgateway.services import http_client_service
 
     class DummyClient:
         async def post(self, *_a, **_k):  # pragma: no cover - should not be reached
@@ -1549,7 +1549,7 @@ async def test_run_sse_to_stdio_read_stdout_no_endpoint_after_retries(monkeypatc
     monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     monkeypatch.setattr(translate.asyncio, "sleep", AsyncMock())
 
-    import mcpgateway.services.http_client_service as http_client_service
+    from mcpgateway.services import http_client_service
 
     class DummyClient:
         async def post(self, *_a, **_k):  # pragma: no cover - should not be reached
@@ -1648,7 +1648,7 @@ async def test_run_sse_to_stdio_read_stdout_posts_and_handles_errors(monkeypatch
 
     fake_client = FakeClient()
 
-    import mcpgateway.services.http_client_service as http_client_service
+    from mcpgateway.services import http_client_service
 
     class DummyCtx:
         async def __aenter__(self):
@@ -1743,7 +1743,7 @@ async def test_run_sse_to_stdio_read_stdout_posts_status_202_and_process_already
 
     client = Client()
 
-    import mcpgateway.services.http_client_service as http_client_service
+    from mcpgateway.services import http_client_service
 
     class Ctx:
         async def __aenter__(self):
@@ -1814,7 +1814,7 @@ async def test_run_sse_to_stdio_pump_status_error_when_httpx_falsy_raises_generi
         async def post(self, *_a, **_k):
             return types.SimpleNamespace(status_code=202, text="ok")
 
-    import mcpgateway.services.http_client_service as http_client_service
+    from mcpgateway.services import http_client_service
 
     class Ctx:
         async def __aenter__(self):
@@ -1905,7 +1905,7 @@ async def test_run_sse_to_stdio_pump_message_does_not_forward_when_stdin_falsy_a
         async def post(self, *_a, **_k):
             return types.SimpleNamespace(status_code=202, text="ok")
 
-    import mcpgateway.services.http_client_service as http_client_service
+    from mcpgateway.services import http_client_service
 
     class Ctx:
         async def __aenter__(self):
@@ -1970,7 +1970,7 @@ async def test_run_sse_to_stdio_pump_status_error_raises_httpstatuserror(monkeyp
         async def post(self, *_a, **_k):
             return types.SimpleNamespace(status_code=202, text="ok")
 
-    import mcpgateway.services.http_client_service as http_client_service
+    from mcpgateway.services import http_client_service
 
     class Ctx:
         async def __aenter__(self):
@@ -2053,7 +2053,7 @@ async def test_run_sse_to_stdio_pump_message_and_keepalive_forwarding(monkeypatc
         async def post(self, *_a, **_k):
             return types.SimpleNamespace(status_code=202, text="ok")
 
-    import mcpgateway.services.http_client_service as http_client_service
+    from mcpgateway.services import http_client_service
 
     class Ctx:
         async def __aenter__(self):
@@ -2109,7 +2109,7 @@ async def test_run_sse_to_stdio_pump_retry_warning_and_backoff(monkeypatch, tran
 
     client = Client()
 
-    import mcpgateway.services.http_client_service as http_client_service
+    from mcpgateway.services import http_client_service
 
     class Ctx:
         async def __aenter__(self):
@@ -2158,7 +2158,7 @@ async def test_run_sse_to_stdio_pump_unexpected_error(monkeypatch, translate):
         async def post(self, *_a, **_k):
             return types.SimpleNamespace(status_code=202, text="ok")
 
-    import mcpgateway.services.http_client_service as http_client_service
+    from mcpgateway.services import http_client_service
 
     class Ctx:
         async def __aenter__(self):
@@ -2309,7 +2309,6 @@ def test_main_dynamic_env_parses_header_mappings_and_disables_default_protocol_b
     # Avoid actually running the coroutine; just record the call site.
     def fake_run(coro):
         coro.close()
-        return None
 
     monkeypatch.setattr(translate.asyncio, "run", fake_run)
     monkeypatch.setattr(translate, "parse_header_mappings", lambda _items: {"X-Env": "ENV"})
@@ -2776,7 +2775,6 @@ async def test_run_stdio_to_streamable_http_basic(monkeypatch, translate):
         async def serve(self):
             calls.append("server_serve")
             # Quick exit to avoid hanging
-            return
 
         async def shutdown(self):
             calls.append("server_shutdown")
@@ -2791,7 +2789,6 @@ async def test_run_stdio_to_streamable_http_basic(monkeypatch, translate):
 
     async def mock_pump():
         calls.append("pump_task")
-        return
 
     def mock_create_task(coro):
         # Close the coroutine to prevent warnings
@@ -4090,7 +4087,7 @@ async def test_run_streamable_http_to_stdio_with_stdio_command(monkeypatch, tran
         async def __aexit__(self, *args):
             pass
 
-    import mcpgateway.services.http_client_service as http_client_service
+    from mcpgateway.services import http_client_service
 
     monkeypatch.setattr(http_client_service, "get_isolated_http_client", lambda **kwargs: FakeClientContext())
 
@@ -4179,7 +4176,7 @@ async def test_run_streamable_http_to_stdio_form_encoded(monkeypatch, translate)
         async def __aexit__(self, *args):
             pass
 
-    import mcpgateway.services.http_client_service as http_client_service
+    from mcpgateway.services import http_client_service
 
     monkeypatch.setattr(http_client_service, "get_isolated_http_client", lambda **kwargs: FakeClientContext())
 
@@ -4237,7 +4234,7 @@ async def test_run_streamable_http_to_stdio_read_stdout_raises_when_stdout_missi
 
     monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
-    import mcpgateway.services.http_client_service as http_client_service
+    from mcpgateway.services import http_client_service
 
     class Client:
         async def post(self, *_a, **_k):  # pragma: no cover - should not be reached
@@ -4306,7 +4303,7 @@ async def test_run_streamable_http_to_stdio_read_stdout_raises_when_stdout_missi
 
     monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
-    import mcpgateway.services.http_client_service as http_client_service
+    from mcpgateway.services import http_client_service
 
     class Client:
         async def post(self, *_a, **_k):  # pragma: no cover - should not be reached
@@ -4398,7 +4395,7 @@ async def test_run_streamable_http_to_stdio_read_stdout_skips_writing_empty_resp
 
     client = Client()
 
-    import mcpgateway.services.http_client_service as http_client_service
+    from mcpgateway.services import http_client_service
 
     class Ctx:
         async def __aenter__(self):
@@ -4459,7 +4456,7 @@ async def test_run_streamable_http_to_stdio_pump_max_retries_zero_skips_loop(mon
 
     client = Client()
 
-    import mcpgateway.services.http_client_service as http_client_service
+    from mcpgateway.services import http_client_service
 
     class Ctx:
         async def __aenter__(self):
@@ -4522,7 +4519,7 @@ async def test_run_streamable_http_to_stdio_pump_status_error_raises_httpstatuse
         async def post(self, *_a, **_k):  # pragma: no cover - stdout is empty
             raise AssertionError("post should not be called")
 
-    import mcpgateway.services.http_client_service as http_client_service
+    from mcpgateway.services import http_client_service
 
     class Ctx:
         async def __aenter__(self):
@@ -4590,7 +4587,7 @@ async def test_run_streamable_http_to_stdio_pump_status_error_when_httpx_falsy_r
         async def post(self, *_a, **_k):  # pragma: no cover - stdout is empty
             raise AssertionError("post should not be called")
 
-    import mcpgateway.services.http_client_service as http_client_service
+    from mcpgateway.services import http_client_service
 
     class Ctx:
         async def __aenter__(self):
@@ -4667,7 +4664,7 @@ async def test_run_streamable_http_to_stdio_pump_skips_non_data_and_empty_data_l
         async def post(self, *_a, **_k):  # pragma: no cover - stdout is empty
             raise AssertionError("post should not be called")
 
-    import mcpgateway.services.http_client_service as http_client_service
+    from mcpgateway.services import http_client_service
 
     class Ctx:
         async def __aenter__(self):
@@ -4717,7 +4714,7 @@ async def test_run_streamable_http_to_stdio_pump_retry_warning_and_backoff(monke
         async def post(self, *_a, **_k):  # pragma: no cover - stdout is empty
             raise AssertionError("post should not be called")
 
-    import mcpgateway.services.http_client_service as http_client_service
+    from mcpgateway.services import http_client_service
 
     class Ctx:
         async def __aenter__(self):
@@ -4766,7 +4763,7 @@ async def test_run_streamable_http_to_stdio_pump_unexpected_error(monkeypatch, t
         async def post(self, *_a, **_k):  # pragma: no cover - stdout is empty
             raise AssertionError("post should not be called")
 
-    import mcpgateway.services.http_client_service as http_client_service
+    from mcpgateway.services import http_client_service
 
     class Ctx:
         async def __aenter__(self):
@@ -4850,7 +4847,6 @@ async def test_multi_protocol_server_basic(monkeypatch, translate):
         async def serve(self):
             calls.append("server_serve")
             # Simulate quick exit
-            return
 
         async def shutdown(self):
             calls.append("server_shutdown")

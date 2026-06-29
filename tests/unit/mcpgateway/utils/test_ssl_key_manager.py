@@ -10,7 +10,6 @@ Unit tests for SSL key manager utility.
 # Standard
 import os
 from pathlib import Path
-import tempfile
 
 # Third-Party
 from cryptography.hazmat.primitives import serialization

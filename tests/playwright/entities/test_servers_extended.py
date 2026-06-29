@@ -12,7 +12,6 @@ visibility settings, OAuth configuration, and advanced features.
 # Standard
 import re
 import uuid
-import base64  # To encode the transparent PNG
 
 # Third-Party
 from playwright.sync_api import Error as PlaywrightError, expect

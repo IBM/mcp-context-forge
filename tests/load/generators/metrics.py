@@ -8,7 +8,7 @@ Metrics generators for load testing.
 """
 
 import random
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Generator, List
 
 from sqlalchemy import text

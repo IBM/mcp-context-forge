@@ -864,6 +864,7 @@ mcpContextForge:
     PASSWORD_REQUIRE_LOWERCASE: "true"     # require lowercase letters in passwords
     PASSWORD_REQUIRE_NUMBERS: "false"      # require numbers in passwords
     PASSWORD_REQUIRE_SPECIAL: "true"       # require special characters in passwords
+    PASSWORD_CHECK_SEQUENTIAL_CHARS: "true" # check for sequential characters (e.g., '123', 'abc')
     PASSWORD_CHANGE_ENFORCEMENT_ENABLED: "true" # enable password change enforcement checks
     ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP: "true" # force admin to change password after bootstrap
     DETECT_DEFAULT_PASSWORD_ON_LOGIN: "true" # detect default passwords on login
@@ -1003,6 +1004,13 @@ mcpContextForge:
     # - Bootstrap additional system roles -
     MCPGATEWAY_BOOTSTRAP_ROLES_IN_DB_ENABLED: "false" # Enable Bootstrap additional system roles feature
     MCPGATEWAY_BOOTSTRAP_ROLES_IN_DB_FILE: "additional_roles_in_db.json" # Create and populate this file as given in the .env.example to add additional roles
+
+    # ─ File Watcher & Dynamic Log Configuration ─
+    # Opt-in file system watcher for automatic log level reloading from YAML config.
+    # Best suited for development or controlled environments where hot-reload is needed.
+    # Leave disabled in most production deployments to avoid extra file monitoring overhead.
+    FILE_WATCHER_ENABLED: "false"    # enable file watcher for log config hot-reload
+    # LOG_CONFIG_PATH: "log_config.yaml" # path to YAML log config file (relative to project root or absolute)
 
 
   ####################################################################

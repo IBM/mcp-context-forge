@@ -7,7 +7,6 @@ Authors: Mihai Criveti
 
 Module documentation...
 """
-import asyncio
 
 from cpex.framework import GlobalContext, PluginConfig, PluginContext, ToolHookType, ToolPreInvokePayload
 from cpex.framework.memory import CopyOnWriteDict

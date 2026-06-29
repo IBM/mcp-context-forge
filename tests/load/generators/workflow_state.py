@@ -22,7 +22,6 @@ from mcpgateway.db import (
     OAuthToken,
 )
 
-from ..utils.distributions import exponential_decay_temporal
 from .base import BaseGenerator
 
 

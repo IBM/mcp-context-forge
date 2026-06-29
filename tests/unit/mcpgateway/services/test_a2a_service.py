@@ -1042,7 +1042,8 @@ class TestA2AAgentService:
         assert service._batch_get_team_names(mock_db, []) == {}
 
     @pytest.mark.asyncio
-    async def test_check_agent_access_variants(self, service):
+    @patch("mcpgateway.services.a2a_service.is_user_admin", side_effect=lambda db, email: email == "admin@example.com")
+    async def test_check_agent_access_variants(self, mock_is_admin, service):
         """Test access control logic for agent visibility."""
         mock_db = MagicMock()
         agent = SimpleNamespace(visibility="public", team_id="team-1", owner_email="owner@example.com")

@@ -87,6 +87,24 @@ class TestPasswordPolicyService:
         with pytest.raises(PasswordPolicyError, match="sequential characters"):
             policy_service.validate_user_password("Abcd!Password1", "user@example.com")
 
+    def test_validate_user_password_sequential_chars_disabled(self, policy_service):
+        """Test that sequential character check can be disabled via config."""
+        with patch("mcpgateway.services.password_policy_service.settings") as mock_settings:
+            # Configure mock to return proper values for all getattr calls
+            def mock_getattr(obj, name, default=None):
+                if name == "password_check_sequential_chars":
+                    return False
+                elif name == "password_min_length_user":
+                    return 12
+                elif name == "password_min_length_privileged":
+                    return 22
+                return default
+            
+            with patch("mcpgateway.services.password_policy_service.getattr", side_effect=mock_getattr):
+                # These passwords have sequential chars but should pass when check is disabled
+                assert policy_service.validate_user_password("Pass123word!", "user@example.com")
+                assert policy_service.validate_user_password("Abcd!Password1", "user@example.com")
+
     def test_validate_privileged_password_length(self, policy_service):
         """Test that privileged accounts require 22+ characters."""
         # 22 characters - should pass
@@ -463,13 +481,17 @@ class TestPasswordPolicyIntegration:
 
         service = EmailAuthService(mock_db)
 
-        # Common password should be rejected
-        with pytest.raises(PasswordValidationError):
-            service.validate_password("Password01@!", "user@example.com")
+        # Mock settings to ensure password policy is enabled
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+            mock_settings.password_policy_enabled = True
+            
+            # Common password should be rejected
+            with pytest.raises(PasswordValidationError):
+                service.validate_password("Password01@!", "user@example.com")
 
-        # Admin-based common password should be rejected
-        with pytest.raises(PasswordValidationError):
-            service.validate_password("Administrator!", "admin@example.com")
+            # Admin-based common password should be rejected
+            with pytest.raises(PasswordValidationError):
+                service.validate_password("Administrator!", "admin@example.com")
 
     def test_minimum_length_enforced(self, mock_db):
         """Test that 12-character minimum is enforced."""
@@ -477,12 +499,16 @@ class TestPasswordPolicyIntegration:
 
         service = EmailAuthService(mock_db)
 
-        # 11 characters - should fail (S-h-o-r-t-!-P-a-s-9-x = 11 chars)
-        with pytest.raises(PasswordValidationError, match="12 characters"):
-            service.validate_password("Short!Pas9x", "user@example.com")
+        # Mock settings to ensure password policy is enabled
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+            mock_settings.password_policy_enabled = True
+            
+            # 11 characters - should fail (S-h-o-r-t-!-P-a-s-9-x = 11 chars)
+            with pytest.raises(PasswordValidationError, match="12 characters"):
+                service.validate_password("Short!Pas9x", "user@example.com")
 
-        # 12 characters - should pass
-        service.validate_password("Valid1!Pass2", "user@example.com")
+            # 12 characters - should pass
+            service.validate_password("Valid1!Pass2", "user@example.com")
 
 
 # Pentesting Report Compliance Tests

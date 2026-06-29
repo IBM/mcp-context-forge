@@ -8,11 +8,9 @@ Tests for translate module helpers.
 """
 
 # Standard
-from types import SimpleNamespace
 
 # Third-Party
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 

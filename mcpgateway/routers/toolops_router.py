@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.common.query_params import QueryIdentifierDotted300, QueryToolOpsMode
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.main import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.logging_service import LoggingService
@@ -95,8 +96,10 @@ async def generate_testcases_for_tool(
         HTTPException: If the request body contains invalid JSON, a 400 Bad Request error is raised.
     """
     try:
+        # Sanitize tool_id to prevent XSS in returned test cases
+        safe_tool_id = SecurityValidator.sanitize_display_text(tool_id, "tool_id") if tool_id else None
         # logger.debug(f"Authenticated user {user} is initializing the protocol.")
-        test_cases = await validation_generate_test_cases(tool_id, tool_service, db, number_of_test_cases, number_of_nl_variations, mode)
+        test_cases = await validation_generate_test_cases(safe_tool_id, tool_service, db, number_of_test_cases, number_of_nl_variations, mode)
         return test_cases
 
     except orjson.JSONDecodeError:
@@ -163,10 +166,12 @@ async def enrich_a_tool(
         HTTPException: If the request body contains invalid JSON, a 400 Bad Request error is raised.
     """
     try:
-        logger.info("Running tool enrichment for Tool - " + tool_id)
-        enriched_tool_description, tool_schema = await enrich_tool(tool_id, tool_service, db)
+        # Sanitize tool_id to prevent XSS in response
+        safe_tool_id = SecurityValidator.sanitize_display_text(tool_id, "tool_id") if tool_id else None
+        logger.info("Running tool enrichment for Tool - " + safe_tool_id)
+        enriched_tool_description, tool_schema = await enrich_tool(safe_tool_id, tool_service, db)
         result: dict[str, Any] = {}
-        result["tool_id"] = tool_id
+        result["tool_id"] = safe_tool_id
         result["tool_name"] = tool_schema.name
         result["original_desc"] = tool_schema.description
         result["enriched_desc"] = enriched_tool_description

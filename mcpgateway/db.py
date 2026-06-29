@@ -2490,8 +2490,8 @@ server_prompt_association = Table(
 server_a2a_association = Table(
     "server_a2a_association",
     Base.metadata,
-    Column("server_id", String(36), ForeignKey("servers.id"), primary_key=True),
-    Column("a2a_agent_id", String(36), ForeignKey("a2a_agents.id"), primary_key=True),
+    Column("server_id", String(36), ForeignKey("servers.id", ondelete="CASCADE"), primary_key=True),
+    Column("a2a_agent_id", String(36), ForeignKey("a2a_agents.id", ondelete="CASCADE"), primary_key=True),
 )
 
 
@@ -3241,7 +3241,8 @@ class Tool(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     original_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    url: Mapped[str] = mapped_column(String(767), nullable=True)
+    url: Mapped[Optional[str]] = mapped_column(String(767), nullable=True)
+    endpoint: Mapped[Optional[str]] = mapped_column(String(767), nullable=True)
     original_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     integration_type: Mapped[str] = mapped_column(String(20), default="MCP")

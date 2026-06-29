@@ -10,11 +10,9 @@ Tests cover token generation, validation, cookie management, and edge cases.
 """
 
 # Standard
-import time
 from unittest.mock import Mock, patch
 
 # Third-Party
-import pytest
 
 # First-Party
 from mcpgateway.services.csrf_service import (

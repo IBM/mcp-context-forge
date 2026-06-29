@@ -7,7 +7,6 @@ Authors: Mihai Criveti
 Tests for safe_log_user() function combining PII redaction and log injection protection.
 """
 
-import pytest
 
 from mcpgateway.utils.trace_redaction import safe_log_user
 

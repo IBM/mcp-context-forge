@@ -2395,8 +2395,37 @@ class ResourceService(BaseService):
                             if plugin_global_context and plugin_global_context.user_context:
                                 headers.update(build_identity_headers(plugin_global_context.user_context, gateway))
 
+                            # Create httpx client factory for SSL handling
+                            def create_resource_client() -> httpx.AsyncClient:
+                                """Create httpx client with proper SSL verification for resource reading."""
+                                # First-Party
+                                from mcpgateway.services.http_client_service import get_default_verify  # pylint: disable=import-outside-toplevel
+                                from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context  # pylint: disable=import-outside-toplevel
+
+                                # Handle gateway CA certificate if present
+                                if gateway.ca_certificate:
+                                    ctx = get_cached_ssl_context(gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key)
+                                    verify_setting = ctx
+                                else:
+                                    verify_setting = get_default_verify()
+
+                                return httpx.AsyncClient(
+                                    verify=verify_setting,
+                                    follow_redirects=True,
+                                    timeout=settings.mcpgateway_direct_proxy_timeout,
+                                    limits=httpx.Limits(
+                                        max_connections=settings.httpx_max_connections,
+                                        max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                                        keepalive_expiry=settings.httpx_keepalive_expiry,
+                                    ),
+                                )
+
                             # Use MCP SDK to connect and read resource
-                            async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
+                            async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout, httpx_client_factory=create_resource_client) as (
+                                read_stream,
+                                write_stream,
+                                _get_session_id,
+                            ):
                                 async with ClientSession(read_stream, write_stream) as session:
                                     await session.initialize()
                                     result = await _read_resource_with_meta(session, uri, meta_data)

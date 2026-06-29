@@ -322,7 +322,8 @@ class TestCheckSingleGatewayHealthReal:
         gateway = self._make_gateway(transport="streamablehttp")
 
         session = AsyncMock()
-        session.initialize = AsyncMock(return_value=None)
+        # Mock initialize to return a successful response
+        session.initialize = AsyncMock(return_value=MagicMock(capabilities={}))
 
         update_db = MagicMock()
         db_gateway = MagicMock()

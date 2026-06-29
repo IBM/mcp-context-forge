@@ -169,8 +169,8 @@ def get_cached_ssl_context(
         ca_cert_bytes = str(ca_certificate).encode()
 
     # Client cert/key may be either path-like content or inlined PEM string.
-    client_cert_value = client_cert or ""
-    client_key_value = client_key or ""
+    client_cert_value = str(client_cert) if client_cert else ""
+    client_key_value = str(client_key) if client_key else ""
 
     # Build stable cache key incrementally (avoids delimiter collisions).
     key_hash = hashlib.sha256()
@@ -196,9 +196,22 @@ def get_cached_ssl_context(
         raise ValueError("mTLS requires both client_cert and client_key; got only one")
 
     # Create new SSL context and configure CA cert
+    # ssl.create_default_context() automatically loads system CAs
     ctx = ssl.create_default_context()
+
+    # Load the provided CA certificate (from gateway/server config)
     if ca_certificate:
         ctx.load_verify_locations(cadata=ca_certificate)
+
+    # Also load SSL_CERT_FILE if set (for custom CAs like OpenShift)
+    # This allows both the gateway-specific CA AND custom environment CAs to work
+    ssl_cert_file = os.environ.get("SSL_CERT_FILE")
+    if ssl_cert_file and os.path.isfile(ssl_cert_file):
+        try:
+            ctx.load_verify_locations(cafile=ssl_cert_file)
+            logger.debug("Loaded additional CA certificates from SSL_CERT_FILE: %s", ssl_cert_file)
+        except Exception as e:
+            logger.warning("Failed to load SSL_CERT_FILE %s: %s", ssl_cert_file, e)
 
     # Load client certificates for mTLS when provided
     if client_cert and client_key:

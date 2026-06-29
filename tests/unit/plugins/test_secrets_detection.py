@@ -19,7 +19,7 @@ pytest.importorskip("cpex_secrets_detection", reason="cpex-secrets-detection plu
 
 # First-Party
 from mcpgateway.common.models import ResourceContent
-from cpex.framework import PluginConfig, PluginManager, PluginMode, PromptHookType, PromptPrehookPayload, ResourceHookType, ResourcePostFetchPayload, ToolHookType, ToolPostInvokePayload
+from cpex.framework import PluginConfig, PluginManager, PluginMode, PromptHookType, PromptPrehookPayload, ResourceHookType, ToolHookType
 from cpex.framework.models import GlobalContext
 from mcpgateway.services.resource_service import ResourceService
 from cpex_secrets_detection import py_scan_container

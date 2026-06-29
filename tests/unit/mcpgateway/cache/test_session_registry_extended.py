@@ -1019,7 +1019,6 @@ class TestRespondTaskCancellation:
             sleep_calls["count"] += 1
             if sleep_calls["count"] > 1:
                 raise asyncio.CancelledError()
-            return None
 
         async def fake_wait_for(*_args, **_kwargs):
             raise asyncio.TimeoutError()

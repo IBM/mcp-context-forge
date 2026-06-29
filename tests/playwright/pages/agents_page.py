@@ -11,7 +11,7 @@ A2A Agents page object for Agent management features.
 import re
 
 # Third-Party
-from playwright.sync_api import expect, Locator
+from playwright.sync_api import Locator
 
 # Local
 from .base_page import BasePage

@@ -739,7 +739,7 @@ class TestGatewayActions:
         # which requires explicit RBAC role assignments beyond the is_admin JWT flag.
         delete_status = getattr(gateways_page, "last_delete_status", None)
         if delete_status == 403:
-            pytest.skip(f"Gateway delete blocked by RBAC permissions (allow_admin_bypass=False). HTTP 403 from DELETE endpoint.")
+            pytest.skip("Gateway delete blocked by RBAC permissions (allow_admin_bypass=False). HTTP 403 from DELETE endpoint.")
 
         # Verify gateway was deleted — reload to ensure DB commit is visible
         gateways_page.page.reload(wait_until="domcontentloaded")

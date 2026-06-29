@@ -392,6 +392,12 @@ class Settings(BaseSettings):
     basic_auth_password: SecretStr = Field(default=SecretStr("changeme"))
     jwt_algorithm: str = "HS256"
     jwt_secret_key: SecretStr = Field(default=SecretStr("changeme"))
+
+    # Password Policy Settings
+    password_check_sequential_chars: bool = Field(
+        default=True,
+        description="Check for sequential characters in passwords (e.g., '123', 'abc'). Set to False to disable this validation.",
+    )
     jwt_public_key_path: str = ""
     jwt_private_key_path: str = ""
     jwt_audience: str = "mcpgateway-api"
@@ -1276,18 +1282,21 @@ class Settings(BaseSettings):
     max_interval: float = Field(default=5.0, description="Maximum polling interval in seconds when the session is idle")
     backoff_factor: float = Field(default=1.5, description="Multiplier used to gradually increase the polling interval during inactivity")
 
-    @model_validator(mode="before")
-    @classmethod
-    def apply_environment_aware_defaults(cls, data: Any) -> Any:
-        """Apply defaults that depend on other settings values."""
-        if not isinstance(data, dict):
-            return data
+    @model_validator(mode="after")
+    def apply_environment_aware_defaults(self) -> "Settings":
+        """Apply defaults that depend on other settings values.
 
-        values: dict[str, Any] = dict(data)
-        if "require_strong_secrets" not in values:
-            environment = str(values.get("environment", "development")).lower()
-            values["require_strong_secrets"] = environment == "production"
-        return values
+        This runs AFTER all field values have been set (including from .env),
+        allowing us to override require_strong_secrets based on environment.
+        """
+        # If require_strong_secrets was not explicitly set to True, derive it from environment
+        # This allows production to automatically enable strong secret enforcement
+        # Skip this logic in client_mode as client mode bypasses server secret enforcement
+        if not self.client_mode and not self.require_strong_secrets:
+            environment = str(self.environment).lower()
+            if environment == "production":
+                self.require_strong_secrets = True
+        return self
 
     # redis configurations for Maintaining Chat Sessions in multi-worker environment
     llmchat_session_ttl: int = Field(default=300, description="Seconds for active_session key TTL")
@@ -1498,6 +1507,8 @@ class Settings(BaseSettings):
                 if env == "production":
                     raise SecurityConfigurationError(f"{field_name}: Value is an unset placeholder (__REPLACE_ME__). Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
                 logger.warning(f"🔓 SECURITY WARNING - {field_name}: Value is an unset placeholder (__REPLACE_ME__). Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
+
+            # Check if secret is in predefined weak list
             if val.lower() in weak_secrets:
                 if env != "development":
                     raise SecurityConfigurationError(f"{field_name}: Weak/default secret rejected in '{env}' environment. Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
@@ -1506,6 +1517,15 @@ class Settings(BaseSettings):
         # staging and production; development allows them with warnings from the field validator.
 
         if not self.client_mode:
+            # Validate BASIC_AUTH_PASSWORD when any basic auth method is enabled
+            if self.mcpgateway_ui_enabled or self.api_allow_basic_auth or self.docs_allow_basic_auth:
+                basic_auth_val = self.basic_auth_password.get_secret_value()
+                if basic_auth_val.lower() in weak_secrets:
+                    if env != "development":
+                        raise SecurityConfigurationError(
+                            f"basic_auth_password: Weak/default password rejected in '{env}' environment when basic auth is enabled. "
+                            "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values."
+                        )
             # Check for dangerous combinations - only log warnings, don't raise errors
             if not self.auth_required and self.mcpgateway_ui_enabled:
                 logger.warning("🔓 SECURITY WARNING: Admin UI is enabled without authentication. Consider setting AUTH_REQUIRED=true for production.")
@@ -2069,6 +2089,9 @@ class Settings(BaseSettings):
     registry_cache_gateways_ttl: int = Field(default=20, ge=5, le=300, description="TTL in seconds for gateways list cache")
     registry_cache_catalog_ttl: int = Field(default=300, ge=60, le=600, description="TTL in seconds for catalog servers list cache (external catalog, changes infrequently)")
 
+    # Tool Configuration
+    tool_inherit_from_gateway: bool = Field(default=True, description="Allow tools to inherit configuration (authentication, URL) from their associated gateway when not explicitly provided")
+
     # Tool Lookup Cache Configuration (reduces hot-path DB lookups in invoke_tool)
     tool_lookup_cache_enabled: bool = Field(default=True, description="Enable tool lookup cache (tool name -> tool config)")
     tool_lookup_cache_ttl_seconds: int = Field(default=60, ge=5, le=600, description="TTL in seconds for tool lookup cache entries")
@@ -2248,6 +2271,12 @@ class Settings(BaseSettings):
     # Transport
     mcpgateway_ws_relay_enabled: bool = Field(default=False, description="Enable WebSocket JSON-RPC relay endpoint at /ws")
     mcpgateway_reverse_proxy_enabled: bool = Field(default=False, description="Enable reverse-proxy transport endpoints under /reverse-proxy/*")
+
+    # Reverse Proxy Health Monitoring
+    mcpgateway_reverse_proxy_heartbeat_timeout: int = Field(default=90, description="Seconds without heartbeat before marking reverse proxy gateway as unreachable")
+    mcpgateway_reverse_proxy_health_check_interval: int = Field(default=60, description="Seconds between reverse proxy session health checks")
+    mcpgateway_reverse_proxy_failure_threshold: int = Field(default=3, description="Consecutive missed heartbeats before marking gateway unreachable (-1 to disable)")
+
     transport_type: str = "all"  # http, ws, sse, all
     websocket_ping_interval: int = 30  # seconds
     sse_retry_timeout: int = 5000  # milliseconds - client retry interval on disconnect
@@ -2715,6 +2744,21 @@ class Settings(BaseSettings):
     debug: bool = False
     expose_error_details: bool = False
 
+    # File Watcher
+    file_watcher_enabled: bool = Field(
+        default=False,
+        description="Opt-in file system watcher for automatic configuration reloading. "
+        "Best suited for development or controlled environments where hot-reload is needed. "
+        "Leave disabled in most production deployments to avoid extra file monitoring overhead. "
+        "Uses watchfiles (native inotify on Linux) for efficient monitoring.",
+    )
+    log_config_path: str = Field(
+        default="log_config.yaml",
+        description="Path to the YAML log configuration file used when FILE_WATCHER_ENABLED=true "
+        "(relative to project root or absolute). Absolute paths are allowed but should be used carefully. "
+        "Relative paths are resolved against the project root and validated to prevent path traversal.",
+    )
+
     # Observability (OpenTelemetry)
     deployment_env: str = Field(default="development", validation_alias=AliasChoices("DEPLOYMENT_ENV", "ENVIRONMENT"), description="Deployment environment label")
     otel_enable_observability: bool = Field(default=False, description="Enable OpenTelemetry observability")
@@ -2948,6 +2992,42 @@ Disallow: /
         if not uds_path.parent.exists():
             raise ValueError(f"{field_name} parent directory does not exist: {uds_path.parent}")
         return str(uds_path)
+
+    @field_validator("log_config_path", mode="after")
+    @classmethod
+    def _validate_log_config_path(cls, value: str) -> str:
+        """Validate log_config_path to prevent path traversal attacks.
+
+        Args:
+            value: The log config path from configuration.
+
+        Returns:
+            The validated path string.
+
+        Raises:
+            ValueError: If the path contains path traversal sequences or resolves outside the project directory.
+        """
+        if not value:
+            return value
+
+        project_root = Path(__file__).parent.parent.resolve()
+        config_path = Path(value).expanduser()
+
+        if config_path.is_absolute():
+            return str(config_path)
+
+        resolved_path = (project_root / config_path).resolve()
+
+        try:
+            resolved_path.relative_to(project_root)
+        except ValueError:
+            raise ValueError(
+                f"log_config_path '{value}' resolves outside the project directory. "
+                f"Resolved to: {resolved_path}, Project root: {project_root}. "
+                f"Use an absolute path if you need to reference files outside the project."
+            )
+
+        return value
 
     # -------------------------------
     # Flexible list parsing for envs

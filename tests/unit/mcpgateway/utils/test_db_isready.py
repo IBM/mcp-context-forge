@@ -15,7 +15,7 @@ from unittest.mock import Mock
 import pytest
 
 # First-Party
-import mcpgateway.utils.db_isready as db_isready
+from mcpgateway.utils import db_isready
 
 
 class DummyLogger:

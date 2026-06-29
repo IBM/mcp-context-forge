@@ -10,7 +10,7 @@ Tests cover request validation, token checking, exempt paths, and referer valida
 """
 
 # Standard
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest

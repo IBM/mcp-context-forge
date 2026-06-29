@@ -8,7 +8,6 @@ Extra tests for MCP chat service helpers.
 """
 
 # Standard
-from types import SimpleNamespace
 
 # Third-Party
 import pytest

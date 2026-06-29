@@ -8,7 +8,7 @@ Tests for the UnifiedPDPPlugin class (unified_pdp.py).
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from plugins.unified_pdp.unified_pdp import UnifiedPDPPlugin
 from plugins.unified_pdp.pdp_models import AccessDecision, Decision, EngineDecision, EngineType

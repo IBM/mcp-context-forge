@@ -8,11 +8,9 @@ Unit tests for token_validation_service.
 """
 
 # Standard
-from unittest.mock import patch
 
 # Third-Party
 import jwt
-import pytest
 
 # First-Party
 from mcpgateway.services.token_validation_service import (

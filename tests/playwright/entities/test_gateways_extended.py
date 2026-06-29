@@ -12,16 +12,14 @@ custom headers, pagination controls, and end-to-end edit flows.
 # Standard
 import json
 import logging
-import re
 import uuid
 
 # Third-Party
-from playwright.sync_api import Error as PlaywrightError, expect
+from playwright.sync_api import expect
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 import pytest
 
 # Local
-from ..pages.admin_utils import cleanup_entity, find_gateway
 from ..pages.gateways_page import GatewaysPage
 
 logger = logging.getLogger(__name__)

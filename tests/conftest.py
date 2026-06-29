@@ -299,6 +299,8 @@ def app_with_temp_db():
     mp.setattr(settings, "database_url", url, raising=False)
     # Disable auth for tests - allows dependency injection mocking to work
     mp.setattr(settings, "auth_required", False, raising=False)
+    # Enable A2A for tests that need it
+    mp.setattr(settings, "mcpgateway_a2a_enabled", True, raising=False)
 
     engine = create_engine(url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
     TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

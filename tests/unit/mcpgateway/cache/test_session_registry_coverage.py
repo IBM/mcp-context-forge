@@ -204,7 +204,6 @@ class TestCancelRespondTaskEdgeCases:
             if call_count["n"] == 1:
                 raise asyncio.TimeoutError()
             # Second call succeeds (returns normally)
-            return None
 
         event = asyncio.Event()
 
@@ -326,7 +325,6 @@ class TestCancelRespondTaskEdgeCases:
             call_count["n"] += 1
             if call_count["n"] <= 2:
                 raise asyncio.TimeoutError()
-            return None
 
         event = asyncio.Event()
 
@@ -377,7 +375,6 @@ class TestCancelRespondTaskEdgeCases:
             call_count["n"] += 1
             if call_count["n"] == 1:
                 raise asyncio.TimeoutError()
-            return None
 
         with patch("mcpgateway.cache.session_registry.asyncio.wait_for", wait_for_mock):
             await registry._cancel_respond_task("done_esc")
@@ -1072,7 +1069,6 @@ class TestRespondBackends:
                     # Trigger timeout path, then force loop exit next iteration.
                     reg._sessions.pop("sid", None)
                     raise asyncio.TimeoutError()
-                return None
 
             async def unsubscribe(self, channel):
                 self.unsubscribed = channel
@@ -1353,7 +1349,6 @@ class TestRespondBackends:
             async def get_message(self, **_kwargs):
                 # Exit loop quickly.
                 reg._sessions.pop("sid", None)
-                return None
 
             async def unsubscribe(self, _channel):
                 raise asyncio.TimeoutError()
@@ -1386,7 +1381,6 @@ class TestRespondBackends:
 
             async def get_message(self, **_kwargs):
                 reg._sessions.pop("sid", None)
-                return None
 
             async def unsubscribe(self, _channel):
                 raise RuntimeError("unsub boom")
@@ -1419,7 +1413,6 @@ class TestRespondBackends:
 
             async def get_message(self, **_kwargs):
                 reg._sessions.pop("sid", None)
-                return None
 
             async def unsubscribe(self, _channel):
                 return None
@@ -1452,7 +1445,6 @@ class TestRespondBackends:
 
             async def get_message(self, **_kwargs):
                 reg._sessions.pop("sid", None)
-                return None
 
             async def unsubscribe(self, _channel):
                 return None

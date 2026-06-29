@@ -75,6 +75,7 @@ async def test_invalid_referer_url_treated_as_api_request():
             assert response.status_code == 401
             assert "Token has been revoked" in response.body.decode()
 
+
 @pytest.mark.asyncio
 async def test_oauth_callback_referer_allows_browser_continuation():
     """OAuth callback referer should be treated as same-origin and allow browser request to continue."""

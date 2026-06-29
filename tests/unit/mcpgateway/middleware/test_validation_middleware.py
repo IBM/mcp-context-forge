@@ -8,7 +8,6 @@ Tests for the validation middleware.
 """
 
 # Standard
-import re
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party

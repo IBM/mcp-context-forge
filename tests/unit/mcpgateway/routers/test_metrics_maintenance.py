@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 from fastapi.testclient import TestClient
-import pytest
 
 # First-Party
 from mcpgateway.utils.verify_credentials import require_admin_auth

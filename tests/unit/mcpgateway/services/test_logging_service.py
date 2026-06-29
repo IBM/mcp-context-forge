@@ -233,6 +233,103 @@ async def test_subscribe_cleanup_removes_queue_on_cancel():
 # ---------------------------------------------------------------------------
 
 
+class TestUvicornHealthCheckFilter:
+    """Tests for the uvicorn.access health check suppression filter."""
+
+    @staticmethod
+    def _get_filter():
+        """Install the filter and return it."""
+        LoggingService._install_uvicorn_health_check_filter()
+        uvicorn_logger = logging.getLogger("uvicorn.access")
+        return [f for f in uvicorn_logger.filters if f.__class__.__name__ == "_UvicornHealthCheckFilter"][-1]
+
+    def test_suppresses_ready_endpoint(self):
+        """Test that /ready endpoint logs are suppressed."""
+        filt = self._get_filter()
+        record = logging.LogRecord(
+            name="uvicorn.access",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg='10.254.20.2:34442 - "GET /ready HTTP/1.1" 200',
+            args=(),
+            exc_info=None,
+        )
+        result = filt.filter(record)
+        assert result is False
+
+    def test_suppresses_health_endpoint(self):
+        """Test that /health endpoint logs are suppressed."""
+        filt = self._get_filter()
+        record = logging.LogRecord(
+            name="uvicorn.access",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg='10.254.20.2:34444 - "GET /health HTTP/1.1" 200',
+            args=(),
+            exc_info=None,
+        )
+        result = filt.filter(record)
+        assert result is False
+
+    def test_allows_other_endpoints(self):
+        """Test that other endpoints are not suppressed."""
+        filt = self._get_filter()
+        record = logging.LogRecord(
+            name="uvicorn.access",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg='10.254.20.2:34446 - "GET /api/tools HTTP/1.1" 200',
+            args=(),
+            exc_info=None,
+        )
+        result = filt.filter(record)
+        assert result is True
+
+    def test_allows_non_uvicorn_access_loggers(self):
+        """Test that non-uvicorn.access loggers are not affected."""
+        filt = self._get_filter()
+        record = logging.LogRecord(
+            name="uvicorn.error",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg='10.254.20.2:34442 - "GET /ready HTTP/1.1" 200',
+            args=(),
+            exc_info=None,
+        )
+        result = filt.filter(record)
+        assert result is True
+
+    def test_handles_missing_args_gracefully(self):
+        """Test that filter handles records without health/ready patterns."""
+        filt = self._get_filter()
+        record = logging.LogRecord(
+            name="uvicorn.access", level=logging.INFO, pathname="", lineno=0, msg="Some message without health or ready", args=(), exc_info=None
+        )
+        result = filt.filter(record)
+        assert result is True
+
+    def test_handles_malformed_messages_gracefully(self):
+        """Test that filter handles malformed messages gracefully."""
+        filt = self._get_filter()
+        record = logging.LogRecord(
+            name="uvicorn.access", level=logging.INFO, pathname="", lineno=0, msg="GET /api/users", args=(), exc_info=None
+        )
+        result = filt.filter(record)
+        assert result is True
+
+    def test_filter_survives_exception(self):
+        """Test that filter survives exceptions during processing."""
+        filt = self._get_filter()
+        record = logging.LogRecord(name="uvicorn.access", level=logging.INFO, pathname="", lineno=0, msg="test", args=None, exc_info=None)
+        # Should not raise even with None args
+        result = filt.filter(record)
+        assert result is True
+
+
 class TestHttpxUrlSanitizeFilter:
     """Tests for the httpx/httpcore URL sanitization filter."""
 

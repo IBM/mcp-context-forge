@@ -12,18 +12,13 @@ Covers missing lines in:
 """
 
 # Standard
-from unittest.mock import MagicMock, patch, AsyncMock
-import uuid
+from unittest.mock import MagicMock, patch
 
 # Third-Party
 import pytest
-from fastapi import HTTPException
-from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.schemas import A2AAgentCreate, A2AAgentUpdate
-from mcpgateway.services.a2a_service import A2AAgentService, _validate_uaid_endpoint_domain  # type: ignore[reportPrivateUsage]
+from mcpgateway.services.a2a_service import _validate_uaid_endpoint_domain  # type: ignore[reportPrivateUsage]
 
 
 @pytest.fixture(autouse=True)

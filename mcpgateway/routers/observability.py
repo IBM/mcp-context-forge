@@ -451,7 +451,9 @@ async def get_stats(
     from mcpgateway.db import ObservabilityTrace
 
     ObservabilityService()
-    cutoff_time = datetime.now() - timedelta(hours=hours)
+    # Ensure hours is an integer (defense in depth - FastAPI already validates this)
+    safe_hours = int(hours)
+    cutoff_time = datetime.now() - timedelta(hours=safe_hours)
 
     # Get basic counts
     total_traces = db.query(func.count(ObservabilityTrace.trace_id)).filter(ObservabilityTrace.start_time >= cutoff_time).scalar()
@@ -473,7 +475,7 @@ async def get_stats(
     )
 
     return {
-        "time_window_hours": hours,
+        "time_window_hours": safe_hours,
         "total_traces": total_traces,
         "success_count": success_count,
         "error_count": error_count,
@@ -732,13 +734,15 @@ async def get_query_performance(
     # First-Party
 
     ObservabilityService()
-    cutoff_time = datetime.now() - timedelta(hours=hours)
+    # Ensure hours is an integer (defense in depth - FastAPI already validates this)
+    safe_hours = int(hours)
+    cutoff_time = datetime.now() - timedelta(hours=safe_hours)
 
     # Use SQL aggregation for PostgreSQL, Python fallback for SQLite
     dialect_name = db.get_bind().dialect.name
     if dialect_name == "postgresql":
-        return _get_query_performance_postgresql(db, cutoff_time, hours)
-    return _get_query_performance_python(db, cutoff_time, hours)
+        return _get_query_performance_postgresql(db, cutoff_time, safe_hours)
+    return _get_query_performance_python(db, cutoff_time, safe_hours)
 
 
 def _get_query_performance_postgresql(db: Session, cutoff_time: datetime, hours: int) -> dict:

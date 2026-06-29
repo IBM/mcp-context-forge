@@ -17,7 +17,6 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 import pytest
 
 # First-Party
-from mcpgateway.common.models import Tool as PydanticTool
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.tool_service import ToolService

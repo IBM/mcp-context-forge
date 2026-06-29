@@ -59,10 +59,14 @@ class TestAllowTeamCreationFlag:
 
     @pytest.mark.asyncio
     @patch("mcpgateway.routers.teams.TeamManagementService")
+    @patch("mcpgateway.routers.teams.PermissionService")
     @patch("mcpgateway.routers.teams.settings")
-    async def test_allow_team_creation_disabled_admin_bypass(self, mock_settings, mock_service_cls):
+    async def test_allow_team_creation_disabled_admin_bypass(self, mock_settings, mock_perm_cls, mock_service_cls):
         """When allow_team_creation=False but user is admin, create_team succeeds."""
         mock_settings.allow_team_creation = False
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_platform_admin_permission = AsyncMock(return_value=True)
+        mock_perm_cls.return_value = mock_perm_service
 
         mock_team = MagicMock()
         mock_team.id = "team-1"

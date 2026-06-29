@@ -26,7 +26,6 @@ from fastapi.testclient import TestClient
 from mcpgateway.baggage import (
     BaggageConfig,
     BaggageConfigError,
-    BaggageSizeLimitError,
     HeaderMapping,
     extract_baggage_from_headers,
 )

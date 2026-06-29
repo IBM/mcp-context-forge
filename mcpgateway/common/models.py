@@ -1208,7 +1208,6 @@ class Gateway(CommonAttributes):
     last_seen: Optional[datetime] = None
     slug: str
     transport: str
-    last_seen: Optional[datetime]
     # Header passthrough configuration
     passthrough_headers: Optional[list[str]]  # Store list of strings as JSON array
     # Request type and authentication fields

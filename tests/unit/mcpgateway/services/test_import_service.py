@@ -18,7 +18,7 @@ import pytest
 # First-Party
 from mcpgateway.schemas import ToolCreate
 from mcpgateway.services.gateway_service import GatewayNameConflictError
-from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError, ImportError, ImportService, ImportStatus, ImportValidationError
+from mcpgateway.services.import_service import ConflictStrategy, ImportError, ImportService, ImportStatus, ImportValidationError
 from mcpgateway.services.prompt_service import PromptNameConflictError
 from mcpgateway.services.resource_service import ResourceURIConflictError
 from mcpgateway.services.server_service import ServerNameConflictError

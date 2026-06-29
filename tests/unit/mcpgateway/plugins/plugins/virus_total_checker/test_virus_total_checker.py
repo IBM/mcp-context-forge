@@ -7,9 +7,7 @@ Authors: Mihai Criveti
 Unit tests for VirusTotalURLCheckerPlugin with stubbed client.
 """
 
-import asyncio
 import os
-from types import SimpleNamespace
 
 import pytest
 

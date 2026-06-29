@@ -276,7 +276,7 @@ class TestSchemaValidation:
     def test_server_uuid_validation(self):
         """Test UUID validation in schemas."""
         # First-Party
-        from mcpgateway.schemas import ServerCreate, ServerUpdate
+        from mcpgateway.schemas import ServerCreate
 
         # Test valid UUID
         server_create = ServerCreate(id="550e8400-e29b-41d4-a716-446655440000", name="Test Server")

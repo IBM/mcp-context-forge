@@ -13,11 +13,10 @@ import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
-import typer
 from typer.testing import CliRunner
 
 # First-Party

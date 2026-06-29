@@ -8,13 +8,11 @@ Unit tests for PasswordChangeEnforcementMiddleware.
 """
 
 # Standard
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 # Third-Party
 import pytest
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, RedirectResponse
-from starlette.middleware.base import BaseHTTPMiddleware
 
 # First-Party
 from mcpgateway.db import EmailUser

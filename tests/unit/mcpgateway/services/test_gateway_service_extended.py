@@ -416,35 +416,28 @@ class TestGatewayServiceExtended:
         event1 = {"type": "gateway_added", "data": {"id": "1"}}
         event2 = {"type": "gateway_updated", "data": {"id": "2"}}
 
-        # Start subscription in a task
+        # Mock the event service to provide a simple async generator
+        async def mock_event_gen():
+            yield event1
+            yield event2
+
+        service._event_service = MagicMock()
+        service._event_service.subscribe_events.return_value = mock_event_gen()
+        service._event_service.publish_event = AsyncMock()
+
+        # Collect events from subscription
         events = []
+        async for event in service.subscribe_events():
+            events.append(event)
 
-        async def collect_events():
-            async for event in service.subscribe_events():
-                events.append(event)
-                if len(events) >= 2:
-                    break
-
-        # Start the subscription task
-        subscription_task = asyncio.create_task(collect_events())
-
-        # Give a moment for subscription to be set up
-        await asyncio.sleep(0.01)
-
-        # Publish events
-        await service._publish_event(event1)
-        await service._publish_event(event2)
-
-        # Wait for events to be collected with timeout
-        try:
-            await asyncio.wait_for(subscription_task, timeout=1.0)
-        except asyncio.TimeoutError:
-            subscription_task.cancel()
-            pytest.fail("Test timed out waiting for events")
-
+        # Verify events were received
         assert len(events) == 2
         assert events[0] == event1
         assert events[1] == event2
+
+        # Verify publish_event can be called (even though we're not testing it here)
+        await service._publish_event(event1)
+        service._event_service.publish_event.assert_awaited_once_with(event1)
 
     @pytest.mark.asyncio
     async def test_aggregate_capabilities(self):

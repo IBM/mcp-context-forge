@@ -345,7 +345,7 @@ class TestWheelContents:
             cwd=str(tmp_path),
             env=env,
             capture_output=True,
-            text=True,
+            text=True, check=False,
         )
         assert result.returncode == 0, f"wheel build failed:\n{result.stderr}"
         wheels = list(dist_dir.glob("*.whl"))

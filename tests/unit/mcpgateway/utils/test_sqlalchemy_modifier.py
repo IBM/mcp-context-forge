@@ -13,9 +13,8 @@ This suite provides complete test coverage for:
 """
 
 import pytest
-import json
 from unittest.mock import MagicMock, patch
-from sqlalchemy import text, and_, func, create_engine
+from sqlalchemy import text, and_, create_engine
 from sqlalchemy.sql.elements import BooleanClauseList
 from typing import Any
 

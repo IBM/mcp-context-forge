@@ -16,13 +16,10 @@ Tests cover:
 from __future__ import annotations
 
 # Standard
-import base64
 from datetime import datetime, timedelta, timezone
-import json
 import secrets
 from typing import Any, Dict
 from unittest.mock import AsyncMock, MagicMock, patch
-import uuid
 
 # Third-Party
 import jwt

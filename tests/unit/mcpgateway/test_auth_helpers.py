@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 # First-Party
-import mcpgateway.auth as auth
+from mcpgateway import auth
 from mcpgateway.db import EmailUser
 
 

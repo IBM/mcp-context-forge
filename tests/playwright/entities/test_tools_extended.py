@@ -12,11 +12,10 @@ annotation badge rendering.
 
 # Standard
 import logging
-import re
 import uuid
 
 # Third-Party
-from playwright.sync_api import Error as PlaywrightError, expect
+from playwright.sync_api import expect
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 import pytest
 
@@ -427,7 +426,7 @@ class TestToolsViewModal:
             raise
         # Use soft assertion: modal should contain the tool name or at least have content
         details_text = tools_page.tool_details_content.text_content() or ""
-        assert first_name in details_text or len(details_text.strip()) > 0, f"View modal should contain tool name or non-empty content"
+        assert first_name in details_text or len(details_text.strip()) > 0, "View modal should contain tool name or non-empty content"
         tools_page.close_tool_modal()
 
         # View second tool
@@ -440,7 +439,7 @@ class TestToolsViewModal:
                 pytest.skip(f"Tool API auth failed: {exc}")
             raise
         details_text = tools_page.tool_details_content.text_content() or ""
-        assert second_name in details_text or len(details_text.strip()) > 0, f"View modal should contain tool name or non-empty content"
+        assert second_name in details_text or len(details_text.strip()) > 0, "View modal should contain tool name or non-empty content"
         tools_page.close_tool_modal()
 
 

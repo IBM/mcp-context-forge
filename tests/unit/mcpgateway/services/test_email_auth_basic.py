@@ -121,22 +121,26 @@ class TestEmailAuthBasic:
 
     def test_validate_password_with_requirements(self, service):
         """Test password validation with comprehensive policy requirements."""
-        # Valid password meeting all requirements (12+ chars, 3 of 4 types, no sequential)
-        service.validate_password("SecurePass4$x!")
+        # Mock settings to ensure password policy is enabled
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+            mock_settings.password_policy_enabled = True
+            
+            # Valid password meeting all requirements (12+ chars, 3 of 4 types, no sequential)
+            service.validate_password("SecurePass4$x!")
 
-        # Invalid passwords - test complexity requirements (need 3 of 4 types)
-        with pytest.raises(PasswordValidationError, match="at least 3"):
-            service.validate_password("lowercaseonly!")  # only lowercase + special (2 types)
+            # Invalid passwords - test complexity requirements (need 3 of 4 types)
+            with pytest.raises(PasswordValidationError, match="at least 3"):
+                service.validate_password("lowercaseonly!")  # only lowercase + special (2 types)
 
-        with pytest.raises(PasswordValidationError, match="at least 3"):
-            service.validate_password("UPPERCASEONLY!")  # only uppercase + special (2 types)
+            with pytest.raises(PasswordValidationError, match="at least 3"):
+                service.validate_password("UPPERCASEONLY!")  # only uppercase + special (2 types)
 
-        with pytest.raises(PasswordValidationError, match="at least 3"):
-            service.validate_password("PasswordOnly")  # only upper + lower (2 types)
+            with pytest.raises(PasswordValidationError, match="at least 3"):
+                service.validate_password("PasswordOnly")  # only upper + lower (2 types)
 
-        # Test minimum length requirement
-        with pytest.raises(PasswordValidationError, match="12 characters"):
-            service.validate_password("Short4$x")  # only 8 chars
+            # Test minimum length requirement
+            with pytest.raises(PasswordValidationError, match="12 characters"):
+                service.validate_password("Short4$x")  # only 8 chars
 
     # =========================================================================
     # Service Initialization Tests
@@ -331,13 +335,17 @@ class TestEmailAuthBasic:
 
     def test_validate_password_min_length(self, service):
         """Test password validation with minimum length requirement."""
-        # New policy requires 12+ chars AND 3 of 4 complexity types
-        # Should pass with 12+ chars and complexity
-        service.validate_password("passwordLong4$")  # 14 chars, has lower+upper+number+special
+        # Mock settings to ensure password policy is enabled
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+            mock_settings.password_policy_enabled = True
+            
+            # New policy requires 12+ chars AND 3 of 4 complexity types
+            # Should pass with 12+ chars and complexity
+            service.validate_password("passwordLong4$")  # 14 chars, has lower+upper+number+special
 
-        # Should fail with less than 12 chars
-        with pytest.raises(PasswordValidationError, match="12 characters"):
-            service.validate_password("Short4$x")  # only 8 chars
+            # Should fail with less than 12 chars
+            with pytest.raises(PasswordValidationError, match="12 characters"):
+                service.validate_password("Short4$x")  # only 8 chars
 
     def test_validate_password_complex_requirements(self, service):
         """Test password validation with comprehensive policy complexity requirements."""
@@ -439,7 +447,6 @@ class TestEmailAuthServiceUserManagement:
 
         async def _get_user_by_email(_email):
             call_order.append("lookup")
-            return None
 
         service.password_service.hash_password_async = AsyncMock(side_effect=_hash_password)
         service.get_user_by_email = AsyncMock(side_effect=_get_user_by_email)
@@ -1597,7 +1604,6 @@ class TestEmailAuthServiceUserManagement:
             if commit_calls["count"] == 1:
                 raise Exception("Database error")
             # Second commit (auth event in finally block) succeeds
-            return None
 
         mock_db.commit.side_effect = commit_side_effect
 
@@ -2510,7 +2516,6 @@ class TestEmailAuthServiceUserDeletion:
 
         def _close_task(coro):
             coro.close()
-            return None
 
         monkeypatch.setattr("asyncio.create_task", _close_task)
 
@@ -2616,7 +2621,6 @@ class TestEmailAuthServiceUserDeletion:
 
         def _close_task(coro):
             coro.close()
-            return None
 
         with patch.object(type(service), "role_service", new_callable=lambda: property(lambda self: mock_role_svc)):
             with patch("asyncio.create_task", side_effect=_close_task):
@@ -2643,7 +2647,6 @@ class TestEmailAuthServiceUserDeletion:
 
         def _close_task(coro):
             coro.close()
-            return None
 
         with pytest.raises(ValueError, match="not found"):
             with patch("asyncio.create_task", side_effect=_close_task):
@@ -2675,7 +2678,6 @@ class TestEmailAuthServiceUserDeletion:
 
         def _close_task(coro):
             coro.close()
-            return None
 
         with patch.object(type(service), "role_service", new_callable=lambda: property(lambda self: mock_role_svc)):
             with patch("asyncio.create_task", side_effect=_close_task):
@@ -2728,7 +2730,6 @@ class TestEmailAuthServiceUserDeletion:
 
         def _close_task(coro):
             coro.close()
-            return None
 
         with patch.object(type(service), "role_service", new_callable=lambda: property(lambda self: mock_role_svc)):
             with patch("asyncio.create_task", side_effect=_close_task):

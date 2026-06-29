@@ -9,8 +9,6 @@ Tests for mcpgateway.__main__ startup entry point.
 
 import importlib
 
-import pytest
-
 
 class TestMainEntrypoint:
     """Verify __main__.py behaviour under different secret conditions."""

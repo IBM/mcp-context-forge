@@ -13,7 +13,6 @@ import asyncio
 import contextlib
 
 import pytest
-from fastmcp.client import Client
 
 from .helpers.compliance import resolve_tool, xfail_on
 

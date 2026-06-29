@@ -13,11 +13,9 @@ from cpex.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,
-    ResourceHookType,
     ResourcePostFetchPayload,
     ResourcePreFetchPayload,
     ToolHookType,
-    ToolPostInvokePayload,
     ToolPreInvokePayload,
 )
 from plugins.span_attribute_customizer.config_schema import (

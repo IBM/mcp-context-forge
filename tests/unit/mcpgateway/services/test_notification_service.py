@@ -19,14 +19,13 @@ from __future__ import annotations
 # Standard
 import asyncio
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
 import pytest
 
 # First-Party
 from mcpgateway.services.notification_service import (
-    GatewayCapabilities,
     NotificationService,
     NotificationType,
     PendingRefresh,

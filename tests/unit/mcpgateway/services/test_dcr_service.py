@@ -914,7 +914,6 @@ class TestUpdateClientRegistration:
     async def test_update_client_registration_decryption_failure(self, test_db):
         """Test that update raises DcrError when token decryption fails."""
         # First-Party
-        from mcpgateway.config import get_settings
         from mcpgateway.services.encryption_service import EncryptionService
 
         dcr_service = DcrService()

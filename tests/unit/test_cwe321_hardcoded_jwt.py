@@ -12,8 +12,8 @@ import re
 import datetime
 from datetime import timezone
 from pathlib import Path
+from unittest.mock import patch
 import pytest
-from pydantic import ValidationError
 from mcpgateway.config import SecurityConfigurationError, Settings
 
 WEAK_JWT_KEY = "my-test-key-but-now-longer-than-32-bytes"
@@ -29,6 +29,7 @@ def _make_settings(**kwargs):
     base = {
         "jwt_secret_key": STRONG_JWT_KEY,
         "auth_encryption_secret": STRONG_ENC_KEY,
+        "mcpgateway_ui_enabled": False,  # Disable UI to avoid basic_auth_password validation
     }
     base.update(kwargs)
     return Settings.model_validate(base)
@@ -116,8 +117,11 @@ class TestBootstrapIsAdmin:
         user = _bootstrap_platform_admin_user(email="regular-user@example.com")
         assert user.is_admin is False
 
-    def test_bootstrap_with_is_admin_true_claim_grants_admin(self):
+    @patch("mcpgateway.auth.settings")
+    def test_bootstrap_with_is_admin_true_claim_grants_admin(self, mock_settings):
         """Admin email receives admin status."""
+        mock_settings.platform_admin_email = "admin@example.com"
+        mock_settings.platform_admin_full_name = "Platform Administrator"
         from mcpgateway.auth import _bootstrap_platform_admin_user
 
         user = _bootstrap_platform_admin_user(email="admin@example.com")

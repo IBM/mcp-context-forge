@@ -118,8 +118,12 @@ def downgrade() -> None:
     if _index_exists(inspector, GATEWAY_TABLE, CLAIM_INDEX):
         op.drop_index(CLAIM_INDEX, table_name=GATEWAY_TABLE)
 
+    # Use batch_alter_table for SQLite compatibility (SQLite < 3.35.0 doesn't support DROP COLUMN)
     inspector = sa.inspect(bind)
     columns = _column_names(inspector, GATEWAY_TABLE)
-    for column_name in reversed(LIFECYCLE_COLUMNS):
-        if column_name in columns:
-            op.drop_column(GATEWAY_TABLE, column_name)
+    columns_to_drop = [col for col in reversed(LIFECYCLE_COLUMNS) if col in columns]
+    
+    if columns_to_drop:
+        with op.batch_alter_table(GATEWAY_TABLE, schema=None) as batch_op:
+            for column_name in columns_to_drop:
+                batch_op.drop_column(column_name)

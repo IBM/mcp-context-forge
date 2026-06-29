@@ -166,7 +166,7 @@ class MultiProgressTracker:
             total = info.get("total", 0)
             current = info.get("completed", 0)
 
-            if current >= total and total > 0:
+            if current >= total > 0:
                 completed.append((name, info))
             elif current > 0:
                 in_progress.append((name, info))
@@ -253,7 +253,7 @@ class MultiProgressTracker:
 
         overall_rate = total_created / elapsed if elapsed > 0 else 0
 
-        self.console.print(f"\n[bold green]Population Complete![/bold green]")
+        self.console.print("\n[bold green]Population Complete![/bold green]")
         self.console.print(f"Total Created: {total_created:,}/{self.total_records:,}")
         self.console.print(f"Errors: {total_errors:,}")
         self.console.print(f"Duration: {elapsed:.2f}s")

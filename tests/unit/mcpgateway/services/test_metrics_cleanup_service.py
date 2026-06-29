@@ -11,17 +11,12 @@ Tests for the metrics cleanup service.
 import asyncio
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
-import uuid
 
 # Third-Party
 import pytest
 
 # First-Party
 from mcpgateway.db import (
-    A2AAgentMetric,
-    PromptMetric,
-    ResourceMetric,
-    ServerMetric,
     ToolMetric,
 )
 from mcpgateway.services.metrics_cleanup_service import (

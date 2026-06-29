@@ -1138,6 +1138,9 @@ async def test_require_admin_auth_email_auth_success_admin_user(monkeypatch):
     # Prevent basic-auth fallback from interfering if reached.
     monkeypatch.setattr(vc.settings, "api_allow_basic_auth", False, raising=False)
 
+    # Bypass revocation/user-status check — tested separately.
+    monkeypatch.setattr(vc, "_enforce_revocation_and_active_user", AsyncMock())
+
     # Patch DB + service layer imported inside require_admin_auth().
     db_session = MagicMock()
     monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([db_session]))
@@ -1170,6 +1173,9 @@ async def test_require_admin_auth_email_auth_uses_token_from_bearer_credentials(
     """When jwt_token cookie is absent, token should be taken from Authorization credentials."""
     monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)
     monkeypatch.setattr(vc.settings, "api_allow_basic_auth", False, raising=False)
+
+    # Bypass revocation/user-status check — tested separately.
+    monkeypatch.setattr(vc, "_enforce_revocation_and_active_user", AsyncMock())
 
     db_session = MagicMock()
     monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([db_session]))

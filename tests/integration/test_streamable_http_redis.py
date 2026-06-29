@@ -11,9 +11,7 @@ using Redis as the shared event store backend.
 """
 
 import asyncio
-import os
 import uuid
-from unittest.mock import AsyncMock
 
 import pytest
 

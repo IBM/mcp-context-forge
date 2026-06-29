@@ -25,7 +25,7 @@ from typing import Any, Dict, List
 import pytest
 
 # First-Party
-import mcpgateway.cli as cli
+from mcpgateway import cli
 
 # ---------------------------------------------------------------------------
 # helpers / fixtures

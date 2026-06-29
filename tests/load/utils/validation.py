@@ -8,7 +8,7 @@ Data validation utilities.
 """
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session

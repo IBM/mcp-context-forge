@@ -9,9 +9,7 @@ Unit tests for mcp client chat service.
 
 import asyncio
 import pytest
-import logging
 from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime
 from types import SimpleNamespace
 
 import mcpgateway.services.mcp_client_chat_service as svc

@@ -13,7 +13,6 @@ from pydantic import ValidationError
 
 # First-Party
 from mcpgateway.tools.builder.schema import (
-    BuildableConfig,
     CertificatesConfig,
     DeploymentConfig,
     GatewayConfig,

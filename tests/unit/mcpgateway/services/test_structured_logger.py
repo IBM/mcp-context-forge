@@ -12,7 +12,6 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 # Third-Party
-import pytest
 
 # First-Party
 from mcpgateway.services.structured_logger import (

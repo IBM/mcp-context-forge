@@ -24,7 +24,6 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from fastmcp.client import Client
 
 from .helpers.compliance import resolve_tool, xfail_on
 

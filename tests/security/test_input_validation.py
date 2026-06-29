@@ -517,7 +517,7 @@ class TestSecurityValidation:
         # Invalid headers - too deep
         for payload in self.DEEP_NESTING_PAYLOADS:
             if isinstance(payload, dict):
-                logger.debug(f"Testing deep nested headers")
+                logger.debug("Testing deep nested headers")
                 with pytest.raises(ValidationError) as exc_info:
                     ToolCreate(name=self.VALID_TOOL_NAME, url=self.VALID_URL, headers=payload)
                 logger.debug(f"Validation error: {exc_info.value}")
@@ -559,7 +559,7 @@ class TestSecurityValidation:
         # Invalid schemas - too deep
         for i, payload in enumerate(self.DEEP_NESTING_PAYLOADS):
             if isinstance(payload, dict):
-                logger.debug(f"Testing deep nested schema")
+                logger.debug("Testing deep nested schema")
                 must_fail(payload, f"Deep nested schema #{i + 1}")
 
     def test_tool_create_request_type_validation(self):
@@ -751,7 +751,7 @@ class TestSecurityValidation:
                 print(f"❌ Valid MIME type rejected but should have passed: {mime!r} -> {err}")
                 # Note: MIME types with parameters might need special handling
                 if "; " in mime:
-                    print(f"   💡 Hint: MIME type contains parameters, might need to strip them")
+                    print("   💡 Hint: MIME type contains parameters, might need to strip them")
 
         # Invalid MIME types
         invalid_mime_types = [
@@ -1750,7 +1750,7 @@ class TestErrorMessageValidation:
                 print(f"⚠️  Error message contains raw HTML tags: {error_str[:100]}...")
                 print("   This could be a security issue if displayed without escaping")
             else:
-                print(f"✅ Error message properly sanitized (no raw HTML tags)")
+                print("✅ Error message properly sanitized (no raw HTML tags)")
 
             # The test expects no raw input in error messages
             assert "<script>" not in error_str, "Error messages should not contain raw user input"
@@ -2188,7 +2188,7 @@ class TestSensitiveLoggingRegressions:
         )
 
         script = Path(__file__).resolve().parents[2] / "scripts" / "pre-commit" / "check_sensitive_logging.py"
-        result = subprocess.run([sys.executable, str(script), str(bad_file)], capture_output=True, text=True)
+        result = subprocess.run([sys.executable, str(script), str(bad_file)], capture_output=True, text=True, check=False)
         assert result.returncode == 1
         assert "Sensitive variable interpolation" in result.stderr
 

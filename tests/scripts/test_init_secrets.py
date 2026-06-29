@@ -191,8 +191,7 @@ class TestEnsureEnvFileSecrets:
 
     def test_merge_env_file_closes_fd_on_fdopen_failure(self, tmp_path):
         """os.close(fd) is called when os.fdopen raises before ownership transfer."""
-        import os
-        from unittest.mock import patch, call
+        from unittest.mock import patch
 
         env = tmp_path / ".env"
         fake_fd = 99

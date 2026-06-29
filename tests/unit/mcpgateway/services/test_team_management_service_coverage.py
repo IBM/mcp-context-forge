@@ -11,7 +11,7 @@ Coverage tests for mcpgateway.services.team_management_service — missing branc
 import asyncio
 import base64
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import orjson
@@ -19,7 +19,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailTeamMemberHistory, EmailUser
+from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailUser
 from mcpgateway.services.team_management_service import TeamManagementService, TeamMemberLimitExceededError
 
 

@@ -8,8 +8,6 @@ Tests for observability module.
 """
 
 # Standard
-import importlib
-import inspect
 import os
 from unittest.mock import MagicMock, patch
 
@@ -20,18 +18,12 @@ import pytest
 from mcpgateway import observability
 from mcpgateway.config import get_settings
 from mcpgateway.observability import (
-    BaggageSpanAttributePolicy,
     configure_baggage_span_attribute_policy,
-    OpenTelemetryRequestMiddleware,
-    create_span,
-    extract_baggage_span_attribute_policy,
     inject_trace_context_headers,
     init_telemetry,
     otel_context_active,
     otel_tracing_enabled,
-    trace_operation,
 )
-from mcpgateway.utils.trace_context import clear_trace_context, set_trace_context_from_teams, set_trace_session_id
 
 
 class TestObservability:

@@ -9,6 +9,7 @@ Handles SSO login flows, provider configuration, and callback handling.
 """
 
 # Standard
+import html
 import secrets
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
@@ -732,13 +733,13 @@ async def delete_sso_provider(
     sso_service = SSOService(db)
 
     if not sso_service.delete_provider(provider_id):
-        raise HTTPException(status_code=404, detail=f"SSO provider '{provider_id}' not found")
+        raise HTTPException(status_code=404, detail=f"SSO provider '{html.escape(provider_id)}' not found")
 
     db.commit()
     db.close()
     invalidate_trusted_provider_cache()
     await invalidate_external_identity_cache()
-    return {"message": f"SSO provider '{provider_id}' deleted successfully"}
+    return {"message": f"SSO provider '{html.escape(provider_id)}' deleted successfully"}
 
 
 # ---------------------------------------------------------------------------

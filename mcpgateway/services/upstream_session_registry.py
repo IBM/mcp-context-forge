@@ -545,7 +545,11 @@ class UpstreamSessionRegistry:
         # next acquire rebuilds instead of handing out a dead session.
         try:
             yield session
-        except (OSError, anyio.ClosedResourceError, anyio.BrokenResourceError) as exc:
+        except (OSError, anyio.ClosedResourceError, anyio.BrokenResourceError, McpError) as exc:
+            # McpError with "Session terminated" indicates the server closed the session.
+            # This can happen when the server terminates after a tool call but before
+            # the SDK's validation completes (e.g., calling list_tools() to verify the result).
+            # Evict the session so the next acquire rebuilds instead of reusing a dead session.
             logger.info(
                 "acquire() caller raised %s for gateway=%s; evicting upstream so next acquire rebuilds",
                 type(exc).__name__,

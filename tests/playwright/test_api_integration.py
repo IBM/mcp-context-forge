@@ -12,7 +12,7 @@ Module documentation...
 import uuid
 
 # Third-Party
-from playwright.sync_api import APIRequestContext, expect, Locator, Page
+from playwright.sync_api import APIRequestContext, expect, Page
 import pytest
 
 

@@ -308,8 +308,31 @@ class LoggingService:
             >>> asyncio.run(service.initialize())
 
         """
-        # Update service log level from settings BEFORE configuring loggers
-        self._level = LogLevel[settings.log_level.upper()]
+        # Default to settings log level
+        log_level_str = settings.log_level.upper()
+        log_source = "settings"
+
+        # Try to read log level from config file if file watcher is enabled
+        if settings.file_watcher_enabled and settings.log_config_path:
+            try:
+                # First-Party
+                from mcpgateway.services.log_config_watcher import read_log_level_from_config  # pylint: disable=import-outside-toplevel
+
+                file_level = read_log_level_from_config(settings.log_config_path)
+                if file_level:
+                    log_level_str = file_level
+                    log_source = f"config file ({settings.log_config_path})"
+                    logging.info(f"Using log level from {log_source}: {log_level_str}")
+                else:
+                    logging.info(f"Config file not found or invalid, using log level from settings: {log_level_str}")
+            except Exception as e:
+                logging.warning(f"Error reading log config file, falling back to settings: {e}")
+        else:
+            logging.info(f"Using log level from {log_source}: {log_level_str}")
+
+        # Update service log level BEFORE configuring loggers
+        # This will use either the config file level or fall back to settings
+        self._level = LogLevel[log_level_str]
 
         root_logger = logging.getLogger()
         self._loggers[""] = root_logger
@@ -317,8 +340,8 @@ class LoggingService:
         # Clear existing handlers to avoid duplicates
         root_logger.handlers.clear()
 
-        # Set root logger level to match settings - this is critical for LOG_LEVEL to work
-        log_level = getattr(logging, settings.log_level.upper())
+        # Set root logger level to match the resolved startup level
+        log_level = getattr(logging, log_level_str)
         root_logger.setLevel(log_level)
 
         # Console handler (stdout/stderr)
@@ -374,6 +397,12 @@ class LoggingService:
 
         # Redact sensitive query parameters from httpx/httpcore log messages
         self._install_httpx_url_sanitize_filter()
+
+        # Suppress high-volume health check and readiness probe logs
+        self._install_uvicorn_health_check_filter()
+
+        # Suppress noisy watchfiles debug logs (timeout messages, filtered changes)
+        self._suppress_watchfiles_debug_logs()
 
     async def shutdown(self) -> None:
         """Shutdown logging service.
@@ -481,6 +510,95 @@ class LoggingService:
 
         target_logger = logging.getLogger("mcp.server.streamable_http")
         target_logger.addFilter(_SuppressClosedResourceErrorFilter())
+
+    @staticmethod
+    def _install_uvicorn_health_check_filter() -> None:
+        """Install a filter to suppress health check and readiness probe logs from uvicorn.access.
+
+        Kubernetes and other orchestrators frequently poll /health and /ready endpoints,
+        generating high-volume, low-value access logs. This filter suppresses those logs
+        to reduce noise while preserving logs for other endpoints.
+
+        The filter checks the formatted message string for /health and /ready patterns.
+
+        Examples:
+            >>> import asyncio, logging
+            >>> service = LoggingService()
+            >>> asyncio.run(service.initialize())
+            >>> filt = [f for f in logging.getLogger('uvicorn.access').filters
+            ...         if f.__class__.__name__ == '_UvicornHealthCheckFilter'][0]
+            >>> rec = logging.LogRecord(
+            ...     name='uvicorn.access', level=logging.INFO, pathname='', lineno=0,
+            ...     msg='10.254.16.2:53664 - "GET /ready HTTP/1.1" 200',
+            ...     args=(),
+            ...     exc_info=None
+            ... )
+            >>> filt.filter(rec)
+            False
+            >>> rec2 = logging.LogRecord(
+            ...     name='uvicorn.access', level=logging.INFO, pathname='', lineno=0,
+            ...     msg='10.254.16.2:53664 - "GET /health HTTP/1.1" 200',
+            ...     args=(),
+            ...     exc_info=None
+            ... )
+            >>> filt.filter(rec2)
+            False
+            >>> rec3 = logging.LogRecord(
+            ...     name='uvicorn.access', level=logging.INFO, pathname='', lineno=0,
+            ...     msg='10.254.20.2:34444 - "GET /api/tools HTTP/1.1" 200',
+            ...     args=(),
+            ...     exc_info=None
+            ... )
+            >>> filt.filter(rec3)
+            True
+            >>> asyncio.run(service.shutdown())
+
+        """
+
+        class _UvicornHealthCheckFilter(logging.Filter):
+            """Filter to suppress health check and readiness probe logs from uvicorn.access.
+
+            Checks the formatted log message for /health and /ready endpoint patterns.
+            """
+
+            def filter(self, record: logging.LogRecord) -> bool:  # noqa: D401
+                """Filter log records to suppress health/ready endpoint access logs.
+
+                Args:
+                    record: The log record to evaluate.
+
+                Returns:
+                    True to allow the record through, False to suppress it
+
+                """
+                # Only apply to uvicorn.access logger
+                if not record.name.startswith("uvicorn.access"):
+                    return True
+
+                try:
+                    # Check the formatted message for health/ready endpoints
+                    if hasattr(record, "getMessage"):
+                        msg = record.getMessage()
+                        # Match patterns like: 'GET /health HTTP' or '"GET /ready HTTP"'
+                        if "GET /health" in msg or "GET /ready" in msg:
+                            return False
+                except Exception:
+                    pass  # nosec B110 - Never break logging due to filter failure
+                return True
+
+        uvicorn_access_logger = logging.getLogger("uvicorn.access")
+        uvicorn_access_logger.addFilter(_UvicornHealthCheckFilter())
+
+    @staticmethod
+    def _suppress_watchfiles_debug_logs() -> None:
+        """Suppress noisy DEBUG logs from watchfiles.main.
+
+        The watchfiles library logs frequent DEBUG messages about timeouts and filtered changes
+        which create noise without adding value. This sets the watchfiles.main logger to INFO level
+        to suppress these messages while keeping INFO, WARNING, ERROR, and CRITICAL logs.
+        """
+        watchfiles_logger = logging.getLogger("watchfiles.main")
+        watchfiles_logger.setLevel(logging.INFO)
 
     @staticmethod
     def _install_httpx_url_sanitize_filter() -> None:
@@ -746,7 +864,14 @@ class LoggingService:
             # Set level to match our logging service level
             if hasattr(self, "_level"):
                 log_level = getattr(logging, self._level.upper())
-                uvicorn_logger.setLevel(log_level)
+
+                # Special handling for uvicorn.error to suppress verbose WebSocket frame logging
+                # WebSocket frame logs (< TEXT, > TEXT) appear at DEBUG level and can be very noisy
+                # Set uvicorn.error to at least WARNING to suppress these unless explicitly debugging
+                if logger_name == "uvicorn.error" and log_level < logging.WARNING:
+                    uvicorn_logger.setLevel(logging.WARNING)
+                else:
+                    uvicorn_logger.setLevel(log_level)
 
             # Track the logger
             self._loggers[logger_name] = uvicorn_logger

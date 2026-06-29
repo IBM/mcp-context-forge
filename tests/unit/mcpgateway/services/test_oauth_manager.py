@@ -653,6 +653,7 @@ async def test_exchange_code_for_token_basic_auth_without_secret(oauth_manager):
     assert "headers" in call_kwargs
     assert "Authorization" not in call_kwargs["headers"]
 
+
 @pytest.mark.asyncio
 async def test_exchange_code_for_token_with_auth_method_none(oauth_manager):
     """Test exchange_code_for_token with explicit token_endpoint_auth_method='none' (RFC 7591 §2)."""
@@ -681,7 +682,6 @@ async def test_exchange_code_for_token_with_auth_method_none(oauth_manager):
     assert "client_secret" not in call_kwargs["data"]
     assert "headers" in call_kwargs
     assert "Authorization" not in call_kwargs["headers"]
-
 
 
 # ---------- refresh_token ----------

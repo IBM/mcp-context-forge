@@ -30,7 +30,6 @@ from mcpgateway.llm_schemas import (
     HealthStatus,
     LLMModelCreate,
     LLMModelListResponse,
-    LLMModelResponse,
     LLMModelUpdate,
     LLMProviderCreate,
     LLMProviderListResponse,

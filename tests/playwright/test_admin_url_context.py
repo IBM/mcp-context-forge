@@ -15,7 +15,6 @@ They verify that after each mutation the browser URL retains:
 """
 
 # Standard
-import os
 import re
 import uuid
 

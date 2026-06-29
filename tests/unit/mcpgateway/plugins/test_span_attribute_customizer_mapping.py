@@ -8,7 +8,7 @@ Unit tests for SpanAttributeCustomizer attribute name mapping.
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 from cpex.framework import ToolPreInvokePayload
 from cpex.framework import GlobalContext, PluginConfig, PluginContext
@@ -259,7 +259,6 @@ async def test_observability_service_applies_mapping():
 @pytest.mark.asyncio
 async def test_plugin_manager_applies_mapping():
     """Test that PluginManager applies attribute mapping to plugin spans."""
-    from cpex.framework.manager import PluginManager
 
     # Setup context with mapping
     global_context = GlobalContext(request_id="test-123")

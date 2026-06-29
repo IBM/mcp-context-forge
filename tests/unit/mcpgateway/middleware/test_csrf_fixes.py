@@ -23,7 +23,6 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 # First-Party
-from mcpgateway.config import settings
 from mcpgateway.middleware.csrf_middleware import CSRFMiddleware
 from mcpgateway.services.csrf_service import generate_csrf_token, set_csrf_cookie
 

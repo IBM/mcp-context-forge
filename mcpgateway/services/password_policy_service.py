@@ -183,10 +183,11 @@ class PasswordPolicyService:
             if contains_username:
                 raise PasswordPolicyError("Password must not be based on your username")
 
-        # Check for sequential characters (e.g., "123", "abc")
-        has_sequential = self._has_sequential_chars(password)
-        if has_sequential:
-            raise PasswordPolicyError("Password contains too many sequential characters")
+        # Check for sequential characters (e.g., "123", "abc") - only if enabled
+        if getattr(settings, "password_check_sequential_chars", True):
+            has_sequential = self._has_sequential_chars(password)
+            if has_sequential:
+                raise PasswordPolicyError("Password contains too many sequential characters")
 
         return True
 

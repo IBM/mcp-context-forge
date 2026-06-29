@@ -1583,7 +1583,6 @@ class TestAlembicAtHead:
     def test_returns_true_when_db_heads_match_script_heads(self):
         """At-head DB → fast-path fires."""
         # First-Party
-        from mcpgateway.bootstrap_db import alembic_at_head  # pylint: disable=import-outside-toplevel
 
         mock_conn = Mock()
         mock_cfg = Mock()
@@ -1605,7 +1604,6 @@ class TestAlembicAtHead:
     def test_returns_false_when_db_has_no_alembic_version(self):
         """Empty DB or missing ``alembic_version`` row → must take slow path."""
         # First-Party
-        from mcpgateway.bootstrap_db import alembic_at_head  # pylint: disable=import-outside-toplevel
 
         mock_script_dir = Mock()
         mock_script_dir.get_heads.return_value = ("abc123",)
@@ -1621,7 +1619,6 @@ class TestAlembicAtHead:
     def test_returns_false_when_db_head_does_not_match_script_head(self):
         """Out-of-date DB → must take slow path so migrations actually run."""
         # First-Party
-        from mcpgateway.bootstrap_db import alembic_at_head  # pylint: disable=import-outside-toplevel
 
         mock_script_dir = Mock()
         mock_script_dir.get_heads.return_value = ("newhead",)
@@ -1637,7 +1634,6 @@ class TestAlembicAtHead:
     def test_returns_false_when_script_directory_has_no_heads(self):
         """Defensive: a zero-revision script dir must not fast-path."""
         # First-Party
-        from mcpgateway.bootstrap_db import alembic_at_head  # pylint: disable=import-outside-toplevel
 
         mock_script_dir = Mock()
         mock_script_dir.get_heads.return_value = ()
@@ -1652,7 +1648,6 @@ class TestAlembicAtHead:
     def test_returns_false_on_probe_exception(self):
         """Any error while probing falls through to the slow path."""
         # First-Party
-        from mcpgateway.bootstrap_db import alembic_at_head  # pylint: disable=import-outside-toplevel
 
         with patch(
             "mcpgateway.bootstrap_db.ScriptDirectory.from_config",

@@ -39,6 +39,17 @@ from mcpgateway.utils.verify_credentials import (
 )
 
 
+@pytest.fixture(autouse=True)
+def mock_plugin_manager_for_auth():
+    """Mock get_plugin_manager to return None by default for all auth tests.
+    
+    This prevents AttributeError when code checks plugin_manager.config.plugin_settings.
+    Individual tests can override this by patching get_plugin_manager themselves.
+    """
+    with patch("mcpgateway.auth.get_plugin_manager", return_value=None):
+        yield
+
+
 class TestGetDb:
     """Test cases for the get_db dependency function."""
 

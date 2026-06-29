@@ -19,7 +19,6 @@ Verifies all functionality:
 10. Per-tool configuration overrides
 """
 
-import asyncio
 import pytest
 import time
 from unittest.mock import MagicMock, patch
@@ -28,7 +27,6 @@ from unittest.mock import MagicMock, patch
 from plugins.circuit_breaker.circuit_breaker import (
     CircuitBreakerPlugin,
     CircuitBreakerConfig,
-    _ToolState,
     _STATE,
     _get_state,
     _cfg_for,

@@ -120,6 +120,10 @@ class PermissionService:
             True
         """
         try:
+            logger.debug("[RBAC_CHECK] check_permission: user_email=%s, permission=%s, team_id=%s, token_teams=%s",
+                        SecurityValidator.sanitize_log_message(user_email), permission,
+                        SecurityValidator.sanitize_log_message(team_id), token_teams)
+            
             # SECURITY: Public-only tokens (teams=[]) must never satisfy ANY permissions
             # via admin bypass or team-scoped roles, even when the backing user identity is an admin.
             # This enforces strict isolation: token_teams=[] means public-only access at both Layer 1 and Layer 2.
@@ -130,13 +134,23 @@ class PermissionService:
                 # Continue to permission check without admin bypass
             elif allow_admin_bypass and await self._is_user_admin(user_email):
                 # Check if user is admin (bypass all permission checks if allowed)
+                logger.info("[RBAC_CHECK] Admin bypass granted: user_email=%s, permission=%s", SecurityValidator.sanitize_log_message(user_email), permission)
                 return True
 
             # Get user's effective permissions (uses cache when valid)
             user_permissions = await self.get_user_permissions(user_email, team_id, include_all_teams=check_any_team, token_teams=token_teams)
+            logger.debug("[RBAC_CHECK] User permissions retrieved: user_email=%s, permissions=%s",
+                        SecurityValidator.sanitize_log_message(user_email), list(user_permissions)[:10])  # Log first 10 to avoid spam
 
             # Check if user has the specific permission or wildcard
             granted = permission in user_permissions or Permissions.ALL_PERMISSIONS in user_permissions
+            
+            if not granted:
+                logger.warning("[RBAC_CHECK] Permission DENIED: user_email=%s, permission=%s, user_permissions=%s",
+                             SecurityValidator.sanitize_log_message(user_email), permission, list(user_permissions)[:10])
+            else:
+                logger.info("[RBAC_CHECK] Permission GRANTED: user_email=%s, permission=%s",
+                           SecurityValidator.sanitize_log_message(user_email), permission)
 
             # Log the permission check if auditing is enabled
             if self.audit_enabled:
@@ -533,6 +547,13 @@ class PermissionService:
         Returns:
             List[UserRole]: List of active roles for the user
         """
+        # Debug: Log the user_email being used for role lookup
+        logger.debug("[RBAC_DEBUG] _get_user_roles: querying with user_email=%s, team_id=%s, include_all_teams=%s, token_teams=%s",
+                    SecurityValidator.sanitize_log_message(user_email),
+                    SecurityValidator.sanitize_log_message(team_id),
+                    include_all_teams,
+                    token_teams)
+        
         query = select(UserRole).join(Role).options(contains_eager(UserRole.role)).where(and_(UserRole.user_email == user_email, UserRole.is_active.is_(True), Role.is_active.is_(True)))
 
         # Include global roles and personal roles

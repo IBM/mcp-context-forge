@@ -21,7 +21,7 @@ from typing import Generator
 import uuid
 
 # Third-Party
-from playwright.sync_api import APIRequestContext, FrameLocator, Page, Playwright, Route
+from playwright.sync_api import APIRequestContext, Page, Playwright, Route
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 import pytest
 

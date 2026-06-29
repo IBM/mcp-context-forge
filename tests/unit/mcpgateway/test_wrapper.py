@@ -22,7 +22,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 # First-Party
-import mcpgateway.wrapper as wrapper
+from mcpgateway import wrapper
 
 
 # Ensure shutdown flag is clear before each test run
@@ -796,7 +796,6 @@ async def test_make_request_success(monkeypatch):
 
     async def ok_forward(*_a, **_k):
         called["n"] += 1
-        return None
 
     monkeypatch.setattr(wrapper, "forward_once", ok_forward)
     captured = []

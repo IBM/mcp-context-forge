@@ -14,7 +14,6 @@ from types import SimpleNamespace
 from typing import Any, List
 
 # Third-Party
-import pytest
 
 # First-Party
 from mcpgateway.utils import psycopg3_optimizations as psy

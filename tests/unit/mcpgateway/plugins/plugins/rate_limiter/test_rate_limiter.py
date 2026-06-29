@@ -9,7 +9,7 @@ Tests for the packaged rate limiter plugin.
 
 # Standard
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 # Third-Party
 import pytest

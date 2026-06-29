@@ -30,7 +30,6 @@ they require an adversarial fixture environment we don't provide.
 
 from __future__ import annotations
 
-import re
 
 import httpx
 import pytest
