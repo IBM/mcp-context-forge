@@ -34,10 +34,11 @@ __all__ = ["is_primary_worker"]
 
 logger = logging.getLogger(__name__)
 
-# Module state: the lock object is kept here so the winning process keeps holding
-# the lock for its lifetime, and so the primary decision is memoized. The guard
-# protects the lazy ``_lock`` init/acquire against concurrent threads (e.g.
-# gunicorn ``--threads > 1``).
+# Module state: the lock object is kept here so the winning process holds the
+# lock for the lifetime of the process (it is never released explicitly; the OS
+# releases it on process exit, which is what lets a follower take over), and so
+# the primary decision is memoized. The guard protects the lazy ``_lock``
+# init/acquire against concurrent threads (e.g. gunicorn ``--threads > 1``).
 _lock: FileLock | None = None
 _is_primary: bool = False
 _guard = threading.Lock()
