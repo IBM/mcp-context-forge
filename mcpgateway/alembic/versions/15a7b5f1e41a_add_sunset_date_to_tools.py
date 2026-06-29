@@ -1,7 +1,7 @@
 """add_sunset_date_to_tools
 
 Revision ID: 15a7b5f1e41a
-Revises: 0a089912b5f0
+Revises: e198602c3c1e
 Create Date: 2026-05-26 11:50:39.306163
 
 """
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "15a7b5f1e41a"
-down_revision: Union[str, Sequence[str], None] = "0a089912b5f0"
+down_revision: Union[str, Sequence[str], None] = "e198602c3c1e"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
