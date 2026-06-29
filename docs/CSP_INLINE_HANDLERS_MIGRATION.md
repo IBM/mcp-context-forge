@@ -122,11 +122,11 @@ No `'unsafe-inline'` or `'unsafe-hashes'` directives are required for inline eve
 
 ## Known Limitations
 
-1. **HTMX `hx-vals="js:{...}"` and `hx-on:*`**: Several instances in `admin.html` still use HTMX's JS eval path, so `'unsafe-eval'` remains in `script-src`. Tracked in #4655.
+1. **✅ RESOLVED (PR #5111)**: ~~HTMX `hx-vals="js:{...}"` and `hx-on:*` - Several instances in `admin.html` still use HTMX's JS eval path, so `'unsafe-eval'` remains in `script-src`.~~ All HTMX JS eval patterns have been successfully migrated to `htmx:configRequest` event handlers and `addEventListener`. `'unsafe-eval'` has been completely removed from `script-src` as of PR #5111 (2026-06-29).
 
-2. **HTMX `hx-on:*` attributes**: The 8 `hx-on:*` attributes are not affected by this migration as HTMX evaluates these via the trusted HTMX script and honors `inlineScriptNonce`.
+2. **✅ RESOLVED (PR #5111)**: ~~HTMX `hx-on:*` attributes - The 8 `hx-on:*` attributes are not affected by this migration as HTMX evaluates these via the trusted HTMX script and honors `inlineScriptNonce`.~~ All `hx-on:*` attributes have been migrated to standard JavaScript `addEventListener` patterns.
 
-3. **Complex inline functions**: A few handlers with complex inline arrow functions or callbacks may need manual review if they weren't automatically converted.
+3. **Complex inline functions**: A few handlers with complex inline arrow functions or callbacks may need manual review if they weren't automatically converted. This is a maintenance consideration for future development, not a current blocker.
 
 ## Rollback Procedure
 

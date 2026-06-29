@@ -204,7 +204,9 @@ class TestSecurityHeaders:
         # style-src uses 'unsafe-inline' for inline style attributes (documented configuration)
         # Inline style attributes (style="...") are used for animation delays, positioning,
         # and dynamic styling throughout the application. This is acceptable per CSP Level 3
-        # guidance since CSS cannot execute JavaScript or exfiltrate data (visual-only impact).
+        # guidance since CSS cannot execute JavaScript directly. While CSS injection can be
+        # used for clickjacking or UI redressing attacks, these are mitigated by X-Frame-Options,
+        # server-rendered content, and authentication requirements (documented trade-off).
         style_src_match = re.search(r"style-src ([^;]+)", csp_header)
         assert style_src_match, "CSP must contain style-src directive"
         style_src = style_src_match.group(1)

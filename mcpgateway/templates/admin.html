@@ -19,6 +19,8 @@
     />
     <!-- Tailwind CSS - Using precompiled CSS for strict CSP compliance -->
     <link rel="stylesheet" href="{{ root_path }}/static/css/tailwind.min.css" />
+    <!-- Custom animations - Previously defined via inline Tailwind config, now external for CSP compliance -->
+    <link rel="stylesheet" href="{{ root_path }}/static/css/auth-animations.css" />
     <!-- HTMX is now bundled in the main JS bundle -->
     <script nonce="{{ csp_nonce(request) }}">
       // Configure HTMX to swap content on 4xx responses (for inline error display)
