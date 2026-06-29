@@ -3,7 +3,7 @@
  */
 
 import { api } from "./client";
-import type { ResourceCreateRequest, ResourceUpdateRequest } from "@/types/resource";
+import type { ResourceCreate, ResourceUpdate } from "@/generated/types";
 
 /**
  * Validates resource ID to prevent path traversal and injection attacks
@@ -33,14 +33,14 @@ export const resourcesApi = {
   /**
    * Create a new resource
    */
-  create: (data: ResourceCreateRequest): Promise<void> => {
+  create: (data: ResourceCreate): Promise<void> => {
     return api.post("/resources", data);
   },
 
   /**
    * Update a resource
    */
-  update: (id: string, data: ResourceUpdateRequest): Promise<void> => {
+  update: (id: string, data: ResourceUpdate): Promise<void> => {
     const validId = validateResourceId(id);
     return api.put(`/resources/${validId}`, data);
   },

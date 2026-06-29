@@ -50,6 +50,7 @@ import warnings
 # Third-Party
 from cpex.framework import HttpHookType, PluginError, PluginViolationError, PromptHookType, ResourceHookType
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect
+from fastapi.openapi.utils import get_openapi
 from fastapi.background import BackgroundTasks
 from fastapi.exception_handlers import request_validation_exception_handler as fastapi_default_validation_handler
 from fastapi.exceptions import RequestValidationError
@@ -2044,6 +2045,25 @@ app = FastAPI(
 
 # Setup metrics instrumentation
 setup_metrics(app)
+
+
+def _custom_openapi() -> dict:
+    """Generate OpenAPI schema with trailing-slash duplicate paths removed."""
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    all_paths = set(schema["paths"])
+    schema["paths"] = {path: val for path, val in schema["paths"].items() if not path.endswith("/") or path == "/" or path.rstrip("/") not in all_paths}
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _custom_openapi  # type: ignore[method-assign]
 
 
 def validate_security_configuration():
