@@ -10420,7 +10420,7 @@ class TestProxyFunctions:
 
         with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
             with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=mock_session):
-                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={"Authorization": "Bearer remote-token"}):
+                with patch("mcpgateway.transports.streamablehttp_transport.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={"Authorization": "Bearer remote-token"}):
                     result = await tr._proxy_list_tools_to_gateway(mock_gateway, {}, {}, None)
 
         assert len(result) == 1
@@ -10451,7 +10451,7 @@ class TestProxyFunctions:
 
         with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
             with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=mock_session):
-                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                with patch("mcpgateway.transports.streamablehttp_transport.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}):
                     await tr._proxy_list_tools_to_gateway(mock_gateway, {}, {}, meta_data)
 
         # Verify list_tools was called with params
@@ -10498,7 +10498,7 @@ class TestProxyFunctions:
 
         with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
             with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=mock_session):
-                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                with patch("mcpgateway.transports.streamablehttp_transport.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}):
                     with patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", return_value=mock_db):
                         with patch("mcpgateway.transports.streamablehttp_transport.global_config_cache") as mock_cache:
                             mock_cache.get_passthrough_headers.return_value = ["X-Custom-Header", "X-Request-ID"]
@@ -10525,7 +10525,7 @@ class TestProxyFunctions:
         mock_gateway.passthrough_headers = None
 
         with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", side_effect=Exception("Connection failed")):
-            with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+            with patch("mcpgateway.transports.streamablehttp_transport.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}):
                 result = await tr._proxy_list_tools_to_gateway(mock_gateway, {}, {}, None)
 
         assert result == []
@@ -10558,7 +10558,7 @@ class TestProxyFunctions:
 
         with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
             with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=mock_session):
-                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                with patch("mcpgateway.transports.streamablehttp_transport.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}):
                     result = await tr._proxy_list_resources_to_gateway(mock_gateway, {}, {}, None)
 
         assert len(result) == 1
@@ -10601,7 +10601,7 @@ class TestProxyFunctions:
 
         with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
             with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=mock_session):
-                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                with patch("mcpgateway.transports.streamablehttp_transport.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}):
                     with patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", return_value=mock_db):
                         with patch("mcpgateway.transports.streamablehttp_transport.global_config_cache") as mock_cache:
                             mock_cache.get_passthrough_headers.return_value = ["X-Tenant-ID", "X-Request-ID"]
@@ -10643,7 +10643,7 @@ class TestProxyFunctions:
 
         with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
             with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=mock_session):
-                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                with patch("mcpgateway.transports.streamablehttp_transport.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}):
                     await tr._proxy_list_resources_to_gateway(mock_gateway, {}, {}, meta_data)
 
         call_args = mock_session.list_resources.call_args
@@ -10663,7 +10663,7 @@ class TestProxyFunctions:
         mock_gateway.passthrough_headers = None
 
         with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", side_effect=Exception("Network error")):
-            with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+            with patch("mcpgateway.transports.streamablehttp_transport.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}):
                 result = await tr._proxy_list_resources_to_gateway(mock_gateway, {}, {}, None)
 
         assert result == []
@@ -10696,7 +10696,7 @@ class TestProxyFunctions:
 
         with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
             with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=mock_session):
-                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                with patch("mcpgateway.transports.streamablehttp_transport.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}):
                     result = await tr._proxy_read_resource_to_gateway(mock_gateway, "file:///test.txt", {}, None)
 
         assert len(result) == 1
@@ -10731,7 +10731,7 @@ class TestProxyFunctions:
 
         with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
             with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=mock_session):
-                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                with patch("mcpgateway.transports.streamablehttp_transport.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}):
                     result = await tr._proxy_read_resource_to_gateway(mock_gateway, "file:///test.txt", {}, meta_data)
 
         assert len(result) == 1
@@ -10768,7 +10768,7 @@ class TestProxyFunctions:
 
         with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
             with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=mock_session):
-                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                with patch("mcpgateway.transports.streamablehttp_transport.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}):
                     await tr._proxy_read_resource_to_gateway(mock_gateway, "file:///test.txt", {}, None)
 
     @pytest.mark.asyncio
@@ -10803,7 +10803,7 @@ class TestProxyFunctions:
 
         with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
             with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=mock_session):
-                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                with patch("mcpgateway.transports.streamablehttp_transport.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}):
                     with patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", return_value=mock_db):
                         with patch("mcpgateway.transports.streamablehttp_transport.global_config_cache") as mock_cache:
                             mock_cache.get_passthrough_headers.return_value = ["X-Tenant-ID"]
@@ -10830,7 +10830,7 @@ class TestProxyFunctions:
         tr.request_headers_var.set({})
 
         with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", side_effect=Exception("Timeout")):
-            with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+            with patch("mcpgateway.transports.streamablehttp_transport.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}):
                 result = await tr._proxy_read_resource_to_gateway(mock_gateway, "file:///test.txt", {}, None)
 
         assert result == []
@@ -10890,7 +10890,7 @@ class TestProxyUpstreamAuthorizationRename:
 
         with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
             with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=session):
-                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                with patch("mcpgateway.transports.streamablehttp_transport.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}):
                     with patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", return_value=mock_db):
                         with patch("mcpgateway.transports.streamablehttp_transport.global_config_cache") as mock_cache:
                             mock_cache.get_passthrough_headers.return_value = []
@@ -10924,7 +10924,7 @@ class TestProxyUpstreamAuthorizationRename:
 
         with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
             with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=session):
-                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                with patch("mcpgateway.transports.streamablehttp_transport.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}):
                     with patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", return_value=mock_db):
                         with patch("mcpgateway.transports.streamablehttp_transport.global_config_cache") as mock_cache:
                             mock_cache.get_passthrough_headers.return_value = []
@@ -10959,7 +10959,7 @@ class TestProxyUpstreamAuthorizationRename:
 
         with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
             with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=session):
-                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                with patch("mcpgateway.transports.streamablehttp_transport.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}):
                     with patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", return_value=mock_db):
                         with patch("mcpgateway.transports.streamablehttp_transport.global_config_cache") as mock_cache:
                             mock_cache.get_passthrough_headers.return_value = []
@@ -10993,7 +10993,7 @@ class TestProxyUpstreamAuthorizationRename:
 
         with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
             with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=session):
-                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                with patch("mcpgateway.transports.streamablehttp_transport.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}):
                     with patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", return_value=mock_db):
                         with patch("mcpgateway.transports.streamablehttp_transport.global_config_cache") as mock_cache:
                             mock_cache.get_passthrough_headers.return_value = []
@@ -11026,7 +11026,7 @@ class TestProxyUpstreamAuthorizationRename:
 
         with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
             with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=session):
-                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                with patch("mcpgateway.transports.streamablehttp_transport.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}):
                     with patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", return_value=mock_db):
                         with patch("mcpgateway.transports.streamablehttp_transport.global_config_cache") as mock_cache:
                             mock_cache.get_passthrough_headers.return_value = []
@@ -11057,7 +11057,7 @@ class TestProxyUpstreamAuthorizationRename:
 
         with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
             with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=session):
-                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                with patch("mcpgateway.transports.streamablehttp_transport.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}):
                     with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
                         mock_settings.default_passthrough_headers = ["X-Tenant-Id"]
                         mock_settings.mcpgateway_direct_proxy_timeout = 30
@@ -11091,7 +11091,7 @@ class TestProxyUpstreamAuthorizationRename:
         # except, and the proxy returns []. We detect that via the captured headers.
         with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
             with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=session):
-                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                with patch("mcpgateway.transports.streamablehttp_transport.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}):
                     with patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", side_effect=RuntimeError("DB is down")):
                         with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
                             mock_settings.default_passthrough_headers = []

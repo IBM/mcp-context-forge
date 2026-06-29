@@ -7272,7 +7272,7 @@ class TestReadResourceDirectProxy:
         with (
             patch("mcpgateway.services.resource_service.settings") as mock_settings,
             patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
-            patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={"Authorization": "Bearer remote-token"}),
+            patch("mcpgateway.services.resource_service.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={"Authorization": "Bearer remote-token"}),
             patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client),
             patch("mcpgateway.services.resource_service.ClientSession", return_value=client_session_cm),
             self._common_patches(resource_service),
@@ -7317,7 +7317,7 @@ class TestReadResourceDirectProxy:
         with (
             patch("mcpgateway.services.resource_service.settings") as mock_settings,
             patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
-            patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.resource_service.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}),
             patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client),
             patch("mcpgateway.services.resource_service.ClientSession", return_value=client_session_cm),
             self._common_patches(resource_service),
@@ -7360,7 +7360,7 @@ class TestReadResourceDirectProxy:
         with (
             patch("mcpgateway.services.resource_service.settings") as mock_settings,
             patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
-            patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.resource_service.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}),
             patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client),
             patch("mcpgateway.services.resource_service.ClientSession", return_value=client_session_cm),
             self._common_patches(resource_service),
@@ -7401,7 +7401,7 @@ class TestReadResourceDirectProxy:
         with (
             patch("mcpgateway.services.resource_service.settings") as mock_settings,
             patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
-            patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.resource_service.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}),
             patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client),
             patch("mcpgateway.services.resource_service.ClientSession", return_value=client_session_cm),
             self._common_patches(resource_service),
@@ -7458,7 +7458,7 @@ class TestReadResourceDirectProxy:
         with (
             patch("mcpgateway.services.resource_service.settings") as mock_settings,
             patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
-            patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.resource_service.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}),
             patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client_error),
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
@@ -7499,7 +7499,7 @@ class TestReadResourceDirectProxy:
         with (
             patch("mcpgateway.services.resource_service.settings") as mock_settings,
             patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
-            patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.resource_service.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}),
             patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client),
             patch("mcpgateway.services.resource_service.ClientSession", return_value=client_session_cm),
             self._common_patches(resource_service),
@@ -7545,7 +7545,7 @@ class TestReadResourceDirectProxy:
         with (
             patch("mcpgateway.services.resource_service.settings") as mock_settings,
             patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
-            patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.resource_service.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}),
             patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client),
             patch("mcpgateway.services.resource_service.ClientSession", return_value=client_session_cm),
             self._common_patches(resource_service),

@@ -95,7 +95,7 @@ from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
-from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers
+from mcpgateway.utils.gateway_access import check_gateway_access, extract_gateway_id_from_headers, resolve_gateway_auth_headers
 from mcpgateway.utils.identity_propagation import build_identity_headers, build_identity_meta
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -3644,8 +3644,8 @@ class ToolService(BaseService):
             if not await check_gateway_access(db, gateway, user_email, token_teams):
                 raise ToolNotFoundError(f"Tool not found: {name}")
 
-            # Prepare headers with gateway auth
-            headers = build_gateway_auth_headers(gateway)
+            # Prepare headers with per-user credentials (falls back to gateway defaults)
+            headers = await resolve_gateway_auth_headers(gateway, app_user_email=user_email, db=db)
 
             # Forward passthrough headers if configured
             if gateway.passthrough_headers and request_headers:
@@ -4008,7 +4008,28 @@ class ToolService(BaseService):
         # plugin invocation enforces the requirement locally with an actionable error.
         oauth_authcode_no_db_token = False
 
-        if has_gateway and gateway_auth_type == "oauth" and isinstance(gateway_oauth_config, dict) and gateway_oauth_config:
+        # Per-user personal credentials always take priority over
+        # gateway-level OAuth tokens.
+        user_credential_headers = None
+        if has_gateway and app_user_email and gateway_id_str:
+            try:
+                from mcpgateway.services.credential_storage_service import CredentialStorageService  # pylint: disable=import-outside-toplevel
+
+                with fresh_db_session() as cred_db:
+                    cred_service = CredentialStorageService(cred_db)
+                    cred_record = await cred_service.get_credential_record(gateway_id_str, app_user_email)
+                    if cred_record:
+                        cred_value = await cred_service.get_credential(gateway_id_str, app_user_email)
+                        if cred_value:
+                            user_credential_headers = CredentialStorageService.build_auth_headers(
+                                cred_record.credential_type, cred_value, gateway_auth_type
+                            )
+            except Exception as e:
+                logger.debug(f"Failed to check personal credentials for gateway {gateway_name}: {e}")
+
+        if user_credential_headers:
+            headers = user_credential_headers
+        elif has_gateway and gateway_auth_type == "oauth" and isinstance(gateway_oauth_config, dict) and gateway_oauth_config:
             grant_type = gateway_oauth_config.get("grant_type", "client_credentials")
             if grant_type == "authorization_code":
                 try:
@@ -4046,6 +4067,7 @@ class ToolService(BaseService):
                     logger.error("Failed to obtain OAuth access token for gateway %s: %s", gateway_name, e)
                     raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
         else:
+            # No per-user credentials and no OAuth — fall back to shared gateway auth
             headers = decode_auth(gateway_auth_value) if gateway_auth_value else {}
 
         if request_headers:
@@ -5192,7 +5214,28 @@ class ToolService(BaseService):
 
                     # Handle OAuth authentication for the gateway (using local variables)
                     # NOTE: Use has_gateway instead of gateway to avoid accessing detached ORM object
-                    if has_gateway and gateway_auth_type == "oauth" and isinstance(gateway_oauth_config, dict) and gateway_oauth_config:
+                    # Per-user personal credentials always take priority over
+                    # gateway-level OAuth tokens.
+                    user_credential_headers = None
+                    if has_gateway and app_user_email and gateway_id_str:
+                        try:
+                            from mcpgateway.services.credential_storage_service import CredentialStorageService  # pylint: disable=import-outside-toplevel
+
+                            with fresh_db_session() as cred_db:
+                                cred_service = CredentialStorageService(cred_db)
+                                cred_record = await cred_service.get_credential_record(gateway_id_str, app_user_email)
+                                if cred_record:
+                                    cred_value = await cred_service.get_credential(gateway_id_str, app_user_email)
+                                    if cred_value:
+                                        user_credential_headers = CredentialStorageService.build_auth_headers(
+                                            cred_record.credential_type, cred_value, gateway_auth_type
+                                        )
+                        except Exception as e:
+                            logger.debug(f"Failed to check personal credentials for gateway {gateway_name}: {e}")
+
+                    if user_credential_headers:
+                        headers = user_credential_headers
+                    elif has_gateway and gateway_auth_type == "oauth" and isinstance(gateway_oauth_config, dict) and gateway_oauth_config:
                         grant_type = gateway_oauth_config.get("grant_type", "client_credentials")
 
                         if grant_type == "authorization_code":
@@ -5239,6 +5282,7 @@ class ToolService(BaseService):
                                 logger.error("Failed to obtain OAuth access token for gateway %s: %s", gateway_name, e)
                                 raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
                     else:
+                        # No per-user credentials and no OAuth — fall back to shared gateway auth
                         headers = decode_auth(gateway_auth_value) if gateway_auth_value else {}
 
                     # Use cached passthrough headers (no DB query needed)

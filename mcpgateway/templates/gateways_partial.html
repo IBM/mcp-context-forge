@@ -81,6 +81,15 @@
               >🔐 Authorize</a>
               {% endif %}
 
+              <!-- Store Personal Credential -->
+              <button
+                type="button"
+                role="menuitem"
+                @click="dispatch('openCredentialModal', {{ gateway.id|tojson_attr }}, {{ gateway.name|tojson_attr }})"
+                class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+                x-tooltip="'Store a personal API key, token, or credential for this gateway'"
+              >🔑 Store Credential</button>
+
               {% if can_modify %}
               <!-- Fetch / Refresh Tools (all auth types) -->
               <button

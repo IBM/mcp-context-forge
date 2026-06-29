@@ -8333,7 +8333,7 @@ class TestInvokeToolDirect:
             patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
             patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
-            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={"Authorization": "Bearer remote-token"}),
+            patch("mcpgateway.services.tool_service.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={"Authorization": "Bearer remote-token"}),
             patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
         ):
@@ -8372,7 +8372,7 @@ class TestInvokeToolDirect:
             patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
             patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
-            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.tool_service.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}),
             patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
         ):
@@ -8457,7 +8457,7 @@ class TestInvokeToolDirect:
             patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
             patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
-            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.tool_service.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}),
             patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client_error),
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
@@ -8495,7 +8495,7 @@ class TestInvokeToolDirect:
             patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
             patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
-            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={"Authorization": "Bearer xyz"}),
+            patch("mcpgateway.services.tool_service.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={"Authorization": "Bearer xyz"}),
             patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
         ):
@@ -8540,7 +8540,7 @@ class TestInvokeToolDirect:
             patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
             patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
-            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.tool_service.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}),
             patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
         ):
@@ -8580,7 +8580,7 @@ class TestInvokeToolDirect:
             patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway, tool_row=mock_tool)),
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
             patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
-            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.tool_service.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}),
             patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
         ):
@@ -8618,7 +8618,7 @@ class TestInvokeToolDirect:
             patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway, tool_row=None)),
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
             patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
-            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.tool_service.resolve_gateway_auth_headers", new_callable=AsyncMock, return_value={}),
             patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
         ):

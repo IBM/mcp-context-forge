@@ -12268,6 +12268,16 @@ try:
 except ImportError:
     logger.debug("OAuth router not available")
 
+# Include personal credential router
+try:
+    # First-Party
+    from mcpgateway.routers.credential_router import credential_router
+
+    app.include_router(credential_router)
+    logger.info("Credential router included")
+except ImportError:
+    logger.debug("Credential router not available")
+
 # Include reverse proxy router if enabled
 if settings.mcpgateway_reverse_proxy_enabled:
     try:

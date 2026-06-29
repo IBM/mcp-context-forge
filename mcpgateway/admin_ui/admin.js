@@ -166,11 +166,14 @@ Admin.handleSubmitWithConfirmation = handleSubmitWithConfirmation;
 Admin.handleDeleteSubmit = handleDeleteSubmit;
 
 // Gateways
-import { editGateway, refreshGatewayTools, refreshToolsForSelectedGateways, testGateway, viewGateway } from "./gateways.js";
+import { editGateway, openCredentialModal, refreshGatewayTools, refreshToolsForSelectedGateways, revokeCredential, submitCredential, testGateway, viewGateway } from "./gateways.js";
 
 Admin.editGateway = editGateway;
+Admin.openCredentialModal = openCredentialModal;
 Admin.refreshGatewayTools = refreshGatewayTools;
 Admin.refreshToolsForSelectedGateways = refreshToolsForSelectedGateways;
+Admin.revokeCredential = revokeCredential;
+Admin.submitCredential = submitCredential;
 Admin.testGateway = testGateway;
 Admin.viewGateway = viewGateway;
 

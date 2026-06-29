@@ -541,6 +541,7 @@ class TestPromptService:
             db_prompt,
             {"from_timezone": "UTC", "to_timezones": "America/New_York,Europe/Dublin"},
             meta_data=None,
+            user_identity="user@test.com",
         )
         test_db.commit.assert_called_once()
         assert result.description == "Convert time with detailed context"

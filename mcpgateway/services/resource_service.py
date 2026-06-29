@@ -47,8 +47,7 @@ from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
 from mcpgateway.common.models import ResourceContent, ResourceContents, ResourceTemplate, TextContent
-from mcpgateway.common.validators import SecurityValidator
-from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+from mcpgateway.common.validators import SecurityValidator, validate_meta_data as _validate_meta_data
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
@@ -74,7 +73,7 @@ from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
-from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
+from mcpgateway.utils.gateway_access import check_gateway_access, resolve_gateway_auth_headers
 from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
@@ -1713,8 +1712,7 @@ class ResourceService(BaseService):
         'using template: /template'
 
         """
-        # CWE-400: Validate meta_data limits before any further processing; invoke_resource is
-        # a separate entry point that must enforce the same guards as read_resource.
+        # CWE-400: validate _meta limits before any DB access or upstream call
         _validate_meta_data(meta_data)
 
         uri = None
@@ -2060,7 +2058,9 @@ class ResourceService(BaseService):
                             if authentication is None:
                                 authentication = {}
                             try:
-                                # #4205: see SSE path above; same 1:1 binding rationale.
+                                # #4205: Registry path is taken when the caller has a downstream
+                                # Mcp-Session-Id; upstream state is then bound 1:1 to that
+                                # downstream session and never shared across clients.
                                 downstream_session_id = _downstream_session_id_from_request()
                                 use_registry = bool(downstream_session_id) and bool(gateway_id)
                                 registry = None
@@ -2214,14 +2214,15 @@ class ResourceService(BaseService):
             >>> result
             True
         """
+        # CWE-400: validate _meta limits before any DB access or upstream call
+        _validate_meta_data(meta_data)
+
         start_time = time.monotonic()
         success = False
         error_message = None
         resource_db = None
         server_scoped = False
         resource_db_gateway = None  # Only set when eager-loaded via Q2's joinedload
-        # CWE-400: Validate meta_data limits before any further processing
-        _validate_meta_data(meta_data)
         content = None
         uri = resource_uri or "unknown"
         if resource_id:
@@ -2388,8 +2389,8 @@ class ResourceService(BaseService):
 
                             gateway = resource_db.gateway
 
-                            # Prepare headers with gateway auth
-                            headers = build_gateway_auth_headers(gateway)
+                            # Prepare headers with per-user credentials (falls back to gateway defaults)
+                            headers = await resolve_gateway_auth_headers(gateway, app_user_email=user, db=db)
 
                             # Inject identity propagation headers
                             if plugin_global_context and plugin_global_context.user_context:
