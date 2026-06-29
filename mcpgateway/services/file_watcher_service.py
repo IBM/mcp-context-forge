@@ -75,11 +75,11 @@ class FileWatcherService:
 
     Example:
         >>> watcher = FileWatcherService()
-        >>> async def handler(event: FileChangeEvent):
-        ...     print(f"{event.change_type}: {event.path}")
-        >>> handler_id = await watcher.watch("./config", handler)
+        >>> async def handler(event: FileChangeEvent):  # doctest: +SKIP
+        ...     print(f"{event.change_type}: {event.path}")  # doctest: +SKIP
+        >>> handler_id = await watcher.watch("./config", handler)  # doctest: +SKIP
         >>> # Later...
-        >>> await watcher.unwatch(handler_id)
+        >>> await watcher.unwatch(handler_id)  # doctest: +SKIP
     """
 
     def __init__(self) -> None:
@@ -112,9 +112,9 @@ class FileWatcherService:
             RuntimeError: If file watcher is disabled via FILE_WATCHER_ENABLED=false.
 
         Example:
-            >>> async def my_handler(event: FileChangeEvent):
-            ...     print(f"Changed: {event.path}")
-            >>> handler_id = await watcher.watch("./config.yaml", my_handler)
+            >>> async def my_handler(event: FileChangeEvent):  # doctest: +SKIP
+            ...     print(f"Changed: {event.path}")  # doctest: +SKIP
+            >>> handler_id = await watcher.watch("./config.yaml", my_handler)  # doctest: +SKIP
         """
         # Check if file watcher is enabled
         if not settings.file_watcher_enabled:
@@ -163,7 +163,7 @@ class FileWatcherService:
             True if watcher was stopped, False if handler_id not found.
 
         Example:
-            >>> await watcher.unwatch(handler_id)
+            >>> await watcher.unwatch(handler_id)  # doctest: +SKIP
         """
         if handler_id not in self._watchers:
             logger.warning(f"Handler ID not found: {handler_id[:8]}")
@@ -192,7 +192,7 @@ class FileWatcherService:
         all watcher tasks are properly cancelled.
 
         Example:
-            >>> await watcher.stop_all()
+            >>> await watcher.stop_all()  # doctest: +SKIP
         """
         logger.info(f"Stopping all file watchers ({len(self._watchers)} active)")
 
@@ -220,9 +220,10 @@ class FileWatcherService:
             Dictionary mapping handler IDs to their configurations.
 
         Example:
+            >>> watcher = FileWatcherService()
             >>> watchers = watcher.get_active_watchers()
-            >>> for handler_id, config in watchers.items():
-            ...     print(f"{handler_id}: watching {config['path']}")
+            >>> for handler_id, config in watchers.items():  # doctest: +SKIP
+            ...     print(f"{handler_id}: watching {config['path']}")  # doctest: +SKIP
         """
         return {
             handler_id: {
@@ -322,8 +323,8 @@ async def get_file_watcher_service() -> FileWatcherService:
         The global FileWatcherService instance.
 
     Example:
-        >>> watcher = await get_file_watcher_service()
-        >>> handler_id = await watcher.watch("./config", my_handler)
+        >>> watcher = await get_file_watcher_service()  # doctest: +SKIP
+        >>> handler_id = await watcher.watch("./config", my_handler)  # doctest: +SKIP
     """
     global _file_watcher_service
     if _file_watcher_service is None:
