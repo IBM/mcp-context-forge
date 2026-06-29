@@ -1096,16 +1096,29 @@ class SessionAffinity:
                 body = orjson.dumps(json_body)
 
             # First-Party - lazy imports avoid a circular dependency with main/transport.
-            from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header, encode_internal_mcp_auth_context  # pylint: disable=import-outside-toplevel,protected-access
+            from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header, verify_redis_auth_context  # pylint: disable=import-outside-toplevel,protected-access
             from mcpgateway.main import app  # pylint: disable=import-outside-toplevel,cyclic-import
             from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
             from mcpgateway.utils.verify_credentials import _resolve_auth_header_name  # pylint: disable=import-outside-toplevel,protected-access
 
-            # A forwarded payload may omit the auth context; fall back to an
-            # encoded public-only ({}) context so the endpoint applies default
-            # visibility instead of rejecting the dispatch with 400.
-            if not auth_context_header:
-                auth_context_header = encode_internal_mcp_auth_context({})
+            # Verify the forwarded auth context before trusting it. forward_to_owner()
+            # signs the encoded context (bound to this session id) with the auth
+            # encryption secret; a Redis writer cannot produce a valid signature
+            # without that secret. Without this check the owner would re-stamp any
+            # injected context with a valid runtime-auth token and dispatch it to the
+            # trusted endpoint (a signing oracle). Fail closed on a missing or invalid
+            # signature: do not dispatch, do not set x-contextforge-auth-context.
+            auth_context_sig = request.get("auth_context_sig") or ""
+            if not auth_context_header or not verify_redis_auth_context(mcp_session_id or "", auth_context_header, auth_context_sig):
+                logger.warning(
+                    "[HTTP_AFFINITY] Worker %s | Session %s... | Rejected forwarded request: missing or invalid auth-context signature",
+                    WORKER_ID,
+                    session_short,
+                )
+                self._forwarded_request_failures += 1
+                req_id = json_body.get("id") if isinstance(json_body, dict) else None
+                await _publish(403, orjson.dumps({"jsonrpc": "2.0", "error": {"code": -32003, "message": "Forwarded auth context failed integrity verification"}, "id": req_id}))
+                return
 
             # Trust headers for the internal /_internal/mcp/rpc endpoint:
             # - x-contextforge-mcp-runtime: "affinity" caller marker
@@ -1236,6 +1249,17 @@ class SessionAffinity:
             response_uuid = uuid.uuid4().hex
             response_channel = f"mcpgw:pool_http_response:{response_uuid}"
 
+            # Sign the forwarded auth context so the owner can verify it was not
+            # forged in Redis transit before re-stamping it with the runtime-auth
+            # token (closes the signing-oracle on the pub/sub hop). The signature
+            # is bound to this session id to block cross-session replay.
+            auth_context_sig = None
+            if auth_context:
+                # First-Party
+                from mcpgateway.auth_context import sign_redis_auth_context  # pylint: disable=import-outside-toplevel
+
+                auth_context_sig = sign_redis_auth_context(mcp_session_id, auth_context)
+
             # Serialize HTTP request for Redis transport
             forward_data = {
                 "type": "http_forward",
@@ -1250,6 +1274,8 @@ class SessionAffinity:
                 "timestamp": time.time(),
                 # Encoded edge identity; lets the owner dispatch without re-authenticating.
                 "auth_context": auth_context,
+                # HMAC over (session id, auth_context); verified by the owner before trust.
+                "auth_context_sig": auth_context_sig,
             }
 
             # Subscribe to response channel BEFORE publishing request (prevent race)

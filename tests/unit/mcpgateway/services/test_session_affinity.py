@@ -34,6 +34,23 @@ def _reset_affinity_singleton():
     sa._mcp_session_pool = None
 
 
+def _sign_forward(request: dict) -> dict:
+    """Attach a valid ``auth_context_sig`` for a forwarded-request payload.
+
+    ``_execute_forwarded_http_request`` now requires the forwarded auth context to
+    carry a signature bound to its ``mcp_session_id`` (closes the Redis signing
+    oracle). Tests that exercise the happy path build the same signature the
+    publisher (`forward_to_owner`) would, so the consumer accepts and dispatches.
+    """
+    # First-Party
+    from mcpgateway.auth_context import sign_redis_auth_context  # pylint: disable=import-outside-toplevel
+
+    ctx = request.get("auth_context")
+    if ctx:
+        request["auth_context_sig"] = sign_redis_auth_context(request.get("mcp_session_id") or "", ctx)
+    return request
+
+
 class _FakeRedis:
     """Minimal mock for the redis asyncio client surface SessionAffinity uses.
 
@@ -1672,6 +1689,7 @@ async def test_execute_forwarded_http_request_publishes_response_via_redis():
         "mcp_session_id": "sess-123456789",
         "auth_context": "encoded-ctx",
     }
+    _sign_forward(request)
 
     with (
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,
@@ -1724,7 +1742,9 @@ async def test_execute_forwarded_http_request_publishes_500_error_on_exception()
         "headers": {},
         "body": jsonrpc_body.hex(),
         "mcp_session_id": "sess-abcdef",
+        "auth_context": "ctx-err",
     }
+    _sign_forward(request)
 
     with (
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,
@@ -2343,6 +2363,7 @@ async def test_execute_forwarded_http_request_preserves_authorization_for_csrf_b
         "mcp_session_id": "sess-auth-bypass",
         "auth_context": "ctx",
     }
+    _sign_forward(request)
 
     with (
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,
@@ -2359,15 +2380,14 @@ async def test_execute_forwarded_http_request_preserves_authorization_for_csrf_b
 
 
 @pytest.mark.asyncio
-async def test_execute_forwarded_http_request_synthesizes_public_context_when_missing():
-    """Executor side: a forwarded payload with no auth_context falls back to an encoded public-only ({}) context.
+async def test_execute_forwarded_http_request_rejects_unsigned_context():
+    """Executor side: a forwarded payload without a valid auth-context signature is rejected, not dispatched.
 
-    Old / mixed-version payloads (e.g. a worker on a pre-auth-context build
-    during a rolling deploy) may omit ``auth_context``. Rather than sending an
-    empty header — which ``_build_internal_mcp_forwarded_user`` rejects with 400
-    — the executor synthesizes an encoded public-only ({}) context so the
-    dispatch applies default visibility. The trust headers (runtime marker +
-    HMAC) are still set.
+    Closes the Redis signing oracle: a writer to the pub/sub channel needs no
+    secret, so the owner must not re-stamp an unverified context with a valid
+    runtime-auth token. A missing ``auth_context`` (and thus a missing
+    ``auth_context_sig``) fails closed: a 403 is published and the trusted
+    endpoint is never called.
     """
     # Third-Party
     import orjson
@@ -2389,7 +2409,7 @@ async def test_execute_forwarded_http_request_synthesizes_public_context_when_mi
         "headers": {},
         "body": jsonrpc_body.hex(),
         "mcp_session_id": "sess-no-ctx",
-        # No "auth_context" key on purpose.
+        # No "auth_context"/"auth_context_sig" on purpose: must fail closed.
     }
 
     with (
@@ -2401,18 +2421,101 @@ async def test_execute_forwarded_http_request_synthesizes_public_context_when_mi
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
         await affinity._execute_forwarded_http_request(request, fake)  # pylint: disable=protected-access
 
-    assert client.last_post_kwargs is not None
-    assert client.last_post_kwargs["url"] == "/_internal/mcp/rpc"
-    headers = client.last_post_kwargs["headers"]
-    assert headers["x-contextforge-mcp-runtime"] == "affinity"
-    assert headers["x-contextforge-mcp-runtime-auth"] == "HMAC-SHA256"
-    # Missing context -> encoded public-only ({}) context, NOT an empty header
-    # (an empty header would 400 at _build_internal_mcp_forwarded_user).
-    # First-Party
-    from mcpgateway.auth_context import decode_internal_mcp_auth_context  # pylint: disable=import-outside-toplevel
+    # Never dispatched: the trusted endpoint was not called.
+    assert client.last_post_kwargs is None
+    # A 403 was published back to the requester.
+    chan, payload = fake.published[0]
+    assert chan == "mcpgw:pool_http_response:req-noctx"
+    decoded = orjson.loads(payload)
+    assert decoded["status"] == 403
+    # Failure counter incremented.
+    assert affinity._forwarded_request_failures == 1  # pylint: disable=protected-access
 
-    assert headers["x-contextforge-auth-context"]
-    assert decode_internal_mcp_auth_context(headers["x-contextforge-auth-context"]) == {}
+
+@pytest.mark.asyncio
+async def test_execute_forwarded_http_request_rejects_forged_signature():
+    """The core oracle case: an arbitrary injected context with an invalid signature is refused.
+
+    A Redis writer can supply any ``auth_context`` (e.g. an admin context) but
+    cannot produce a valid signature without the secret. The owner must refuse to
+    re-stamp it with a valid runtime-auth token: 403 published, never dispatched.
+    """
+    # Third-Party
+    import orjson
+
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+    fake = _FakeRedis()
+    client = _FakeHttpxClient(response=_FakeHttpResponse(200, text_body="ok"))
+
+    jsonrpc_body = orjson.dumps({"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 1})
+    request = {
+        "response_channel": "mcpgw:pool_http_response:req-forged",
+        "method": "POST",
+        "path": "/mcp",
+        "headers": {},
+        "body": jsonrpc_body.hex(),
+        "mcp_session_id": "sess-forged",
+        "auth_context": "forged-admin-ctx",
+        "auth_context_sig": "deadbeef" * 8,  # not a valid HMAC for this (session, context)
+    }
+
+    with (
+        patch("mcpgateway.services.session_affinity.settings") as mock_settings,
+        patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=client),
+        patch("mcpgateway.services.session_affinity.internal_loopback_base_url", return_value="http://localhost:4444"),
+        patch("mcpgateway.auth_context._expected_internal_mcp_runtime_auth_header", return_value="HMAC"),
+    ):
+        mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
+        await affinity._execute_forwarded_http_request(request, fake)  # pylint: disable=protected-access
+
+    assert client.last_post_kwargs is None  # never dispatched
+    decoded = orjson.loads(fake.published[0][1])
+    assert decoded["status"] == 403
+
+
+@pytest.mark.asyncio
+async def test_execute_forwarded_http_request_rejects_signature_bound_to_other_session():
+    """A signature valid for a different session id is rejected, blocking cross-session replay."""
+    # Third-Party
+    import orjson
+
+    # First-Party
+    from mcpgateway.auth_context import sign_redis_auth_context  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+    fake = _FakeRedis()
+    client = _FakeHttpxClient(response=_FakeHttpResponse(200, text_body="ok"))
+
+    jsonrpc_body = orjson.dumps({"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 1})
+    ctx = "victim-ctx"
+    request = {
+        "response_channel": "mcpgw:pool_http_response:req-replay",
+        "method": "POST",
+        "path": "/mcp",
+        "headers": {},
+        "body": jsonrpc_body.hex(),
+        "mcp_session_id": "attacker-session",
+        "auth_context": ctx,
+        # Signature minted for a DIFFERENT session id: must not verify here.
+        "auth_context_sig": sign_redis_auth_context("victim-session", ctx),
+    }
+
+    with (
+        patch("mcpgateway.services.session_affinity.settings") as mock_settings,
+        patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=client),
+        patch("mcpgateway.services.session_affinity.internal_loopback_base_url", return_value="http://localhost:4444"),
+        patch("mcpgateway.auth_context._expected_internal_mcp_runtime_auth_header", return_value="HMAC"),
+    ):
+        mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
+        await affinity._execute_forwarded_http_request(request, fake)  # pylint: disable=protected-access
+
+    assert client.last_post_kwargs is None  # cross-session replay refused
+    decoded = orjson.loads(fake.published[0][1])
+    assert decoded["status"] == 403
 
 
 @pytest.mark.asyncio
@@ -2445,6 +2548,7 @@ async def test_execute_forwarded_http_request_preserves_custom_auth_header():
         "mcp_session_id": "sess-custom",
         "auth_context": "encoded-ctx",
     }
+    _sign_forward(request)
 
     with (
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,
@@ -2574,7 +2678,9 @@ async def test_execute_forwarded_http_request_initialises_params_when_missing_fo
         "headers": {},
         "body": jsonrpc_body.hex(),
         "mcp_session_id": "sess-no-params",
+        "auth_context": "ctx-params",
     }
+    _sign_forward(request)
 
     with (
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,
@@ -2627,7 +2733,9 @@ async def test_execute_forwarded_http_request_dispatches_in_process_via_asgi_tra
         "headers": {},
         "body": jsonrpc_body.hex(),
         "mcp_session_id": "sess-asgi",
+        "auth_context": "ctx-asgi",
     }
+    _sign_forward(request)
 
     with (
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,

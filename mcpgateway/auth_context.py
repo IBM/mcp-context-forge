@@ -312,6 +312,87 @@ def has_valid_internal_mcp_runtime_auth_header(request: Request) -> bool:
     return hmac.compare_digest(provided, _expected_internal_mcp_runtime_auth_header())
 
 
+# Redis-transit integrity for forwarded auth context.
+#
+# The header-borne auth context that reaches /_internal/mcp/rpc is gated by the
+# secret-derived runtime-auth token, so a caller must already hold the secret.
+# The session-affinity Redis pub/sub hop is different: a writer to the Redis
+# channel needs no secret, yet the owner worker re-stamps whatever auth context
+# it reads with a valid runtime-auth token before dispatching. That makes the
+# owner a signing oracle for forged contexts. To close it, the publisher signs
+# the encoded auth context (bound to its mcp_session_id) and the consumer
+# verifies the signature before trusting it.
+#
+# These helpers are deliberately separate from the general header-encoding
+# contract (encode/decode_internal_mcp_auth_context), which must stay
+# byte-compatible for the Rust runtime. This is a Redis-specific integrity layer
+# only.
+_REDIS_AUTH_CONTEXT_SIG_DOMAIN = b"mcpgw.redis-auth-ctx.v1"
+_REDIS_AUTH_CONTEXT_SIG_DELIMITER = b"\x1f"  # ASCII unit separator; never present in hex ids or base64url
+
+
+def _redis_auth_context_sig_material(session_id: str, encoded_auth_context: str) -> bytes:
+    """Build the domain-separated HMAC input for a Redis-forwarded auth context.
+
+    The domain tag plus a unit-separator delimiter (which cannot occur in a hex
+    session id or a base64url payload) keeps the field boundaries unambiguous, so
+    distinct ``(session_id, encoded)`` pairs cannot collide onto the same input.
+
+    Args:
+        session_id: The MCP session id the context is bound to.
+        encoded_auth_context: The base64url payload from
+            :func:`encode_internal_mcp_auth_context`.
+
+    Returns:
+        The byte string fed to HMAC.
+    """
+    return (
+        _REDIS_AUTH_CONTEXT_SIG_DOMAIN
+        + _REDIS_AUTH_CONTEXT_SIG_DELIMITER
+        + (session_id or "").encode("utf-8")
+        + _REDIS_AUTH_CONTEXT_SIG_DELIMITER
+        + (encoded_auth_context or "").encode("utf-8")
+    )
+
+
+def sign_redis_auth_context(session_id: str, encoded_auth_context: str) -> str:
+    """Sign an encoded auth context for transit over the session-affinity Redis hop.
+
+    Keyed with ``auth_encryption_secret`` and bound to ``session_id`` so a
+    captured signature cannot be replayed under a different session.
+
+    Args:
+        session_id: The MCP session id the context is bound to.
+        encoded_auth_context: The base64url auth-context payload to protect.
+
+    Returns:
+        Hex-encoded HMAC-SHA256 signature.
+    """
+    return hmac.new(
+        _auth_encryption_secret_value().encode("utf-8"),
+        _redis_auth_context_sig_material(session_id, encoded_auth_context),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def verify_redis_auth_context(session_id: str, encoded_auth_context: str, signature: str) -> bool:
+    """Verify a Redis-forwarded auth-context signature in constant time.
+
+    Args:
+        session_id: The MCP session id the context must be bound to.
+        encoded_auth_context: The base64url auth-context payload that was signed.
+        signature: The hex HMAC-SHA256 signature to check.
+
+    Returns:
+        ``True`` only when ``signature`` is a non-empty, valid signature for the
+        given ``(session_id, encoded_auth_context)`` pair under the current secret.
+    """
+    if not signature:
+        return False
+    expected = sign_redis_auth_context(session_id, encoded_auth_context)
+    return hmac.compare_digest(signature, expected)
+
+
 # Internal-dispatch trust gate, defined once and shared by all callers.
 INTERNAL_MCP_PATH_PREFIX = "/_internal/mcp"
 INTERNAL_A2A_PATH_PREFIX = "/_internal/a2a"
