@@ -6407,6 +6407,27 @@ class ToolService(BaseService):
             if tool_update.tags is not None:
                 tool.tags = tool_update.tags
 
+            # Update REST-specific fields if applicable
+            if tool_update.integration_type == "REST" or (tool_update.integration_type is None and tool.integration_type == "REST"):
+                if tool_update.base_url is not None:
+                    tool.base_url = tool_update.base_url
+                if tool_update.path_template is not None:
+                    tool.path_template = tool_update.path_template
+                if tool_update.query_mapping is not None:
+                    tool.query_mapping = tool_update.query_mapping
+                if tool_update.header_mapping is not None:
+                    tool.header_mapping = tool_update.header_mapping
+                if tool_update.timeout_ms is not None:
+                    tool.timeout_ms = tool_update.timeout_ms
+                if tool_update.expose_passthrough is not None:
+                    tool.expose_passthrough = tool_update.expose_passthrough
+                if tool_update.allowlist is not None:
+                    tool.allowlist = tool_update.allowlist
+                if tool_update.plugin_chain_pre is not None:
+                    tool.plugin_chain_pre = tool_update.plugin_chain_pre
+                if tool_update.plugin_chain_post is not None:
+                    tool.plugin_chain_post = tool_update.plugin_chain_post
+
             # Update modification metadata
             if modified_by is not None:
                 tool.modified_by = modified_by
