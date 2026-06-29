@@ -140,6 +140,49 @@ class TestGetAccessTokenTokenExchange:
         assert kwargs["client_cert"] == "cert"
         assert kwargs["client_key"] == "key"
 
+    async def test_get_access_token_marks_client_secret_plaintext(self):
+        # _prepare_runtime_credentials already decrypts client_secret, so get_access_token
+        # must tell token_exchange() to skip the inline decrypt (client_secret_is_plaintext=True).
+        mgr = OAuthManager()
+        mgr.token_exchange = AsyncMock(return_value={"access_token": "exch-tok", "expires_in": 3600})
+        mgr._prepare_runtime_credentials = AsyncMock(return_value={"grant_type": "token-exchange", "token_url": "https://as/token", "client_id": "cf", "client_secret": "decrypted-secret", "target_audience": "aud"})  # pragma: allowlist secret
+
+        cfg = {"grant_type": "token-exchange", "token_url": "https://as/token", "client_id": "cf", "target_audience": "aud"}
+        await mgr.get_access_token(cfg, subject_token="user-jwt")
+
+        assert mgr.token_exchange.await_args.kwargs["client_secret_is_plaintext"] is True
+
+    async def test_token_exchange_skips_inline_decrypt_when_plaintext(self):
+        # When client_secret_is_plaintext=True, the inline decrypt block must not run,
+        # so a plaintext secret that false-positives is_encrypted() is sent unchanged.
+        # Standard
+        from unittest.mock import patch
+
+        mgr = OAuthManager()
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json = MagicMock(return_value={"access_token": "exch", "token_type": "Bearer", "expires_in": 60})
+        mgr._post_token_request = AsyncMock(return_value=resp)
+
+        # A plaintext secret that looks like an encrypted v2 bundle (false positive).
+        tricky_secret = "v2:looks-encrypted-but-isnt"  # pragma: allowlist secret
+
+        with patch("mcpgateway.services.oauth_manager.get_encryption_service") as mock_enc:
+            await mgr.token_exchange(
+                token_url="https://as/token",
+                subject_token="user-jwt",
+                client_id="cf",
+                client_secret=tricky_secret,
+                audience="aud",
+                client_secret_is_plaintext=True,
+            )
+            # decrypt path never touched
+            mock_enc.assert_not_called()
+
+        # secret reached the AS unchanged
+        sent = mgr._post_token_request.await_args.args[1]
+        assert sent["client_secret"] == tricky_secret
+
 
 # First-Party
 from mcpgateway.utils.token_exchange_audit import audit_token_exchange

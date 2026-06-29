@@ -274,6 +274,7 @@ class OAuthManager:
                 ca_certificate=ca_certificate,
                 client_cert=client_cert,
                 client_key=client_key,
+                client_secret_is_plaintext=True,  # _prepare_runtime_credentials already decrypted it
             )
             return response["access_token"]
         if grant_type == "authorization_code":
@@ -772,6 +773,7 @@ class OAuthManager:
         ca_certificate: Optional[str] = None,
         client_cert: Optional[str] = None,
         client_key: Optional[str] = None,
+        client_secret_is_plaintext: bool = False,
     ) -> Dict[str, Any]:
         """RFC 8693 token exchange for on-behalf-of flows.
 
@@ -795,6 +797,12 @@ class OAuthManager:
             ca_certificate: Optional custom CA certificate for SSL verification (PEM format).
             client_cert: Optional client certificate for mTLS (PEM format or file path).
             client_key: Optional client private key for mTLS (PEM format or file path).
+            client_secret_is_plaintext: Set True when the caller has already decrypted
+                ``client_secret`` (e.g. ``get_access_token`` routes through
+                ``_prepare_runtime_credentials``). Skips the inline decrypt block so an
+                already-plaintext secret is never re-run through ``is_encrypted``. The
+                direct ``ToolService`` caller passes the raw encrypted DB value and keeps
+                the default ``False`` so the inline decrypt still runs.
 
         Returns:
             Dict with ``access_token``, ``token_type``, and optionally
@@ -807,8 +815,9 @@ class OAuthManager:
                 values, but CF only forwards exchanged tokens as
                 ``Authorization: Bearer <token>``).
         """
-        # Decrypt client secret if encrypted
-        if client_secret:
+        # Decrypt client secret if encrypted. Skipped when the caller already decrypted it
+        # (client_secret_is_plaintext=True) to avoid re-running is_encrypted on plaintext.
+        if client_secret and not client_secret_is_plaintext:
             try:
                 settings = get_settings()
                 encryption = get_encryption_service(settings.auth_encryption_secret)
