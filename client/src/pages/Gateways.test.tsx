@@ -92,6 +92,7 @@ function setupWithServer(
     isLoading: false,
     execute: vi.fn(),
     refetch,
+    setData: vi.fn(),
   });
 }
 
@@ -107,6 +108,7 @@ describe("Gateways", () => {
       isLoading: false,
       execute: vi.fn(),
       refetch: vi.fn().mockResolvedValue({ servers: [] }),
+      setData: vi.fn(),
     });
   });
 
@@ -124,6 +126,7 @@ describe("Gateways", () => {
       isLoading: true,
       execute: vi.fn(),
       refetch: vi.fn(),
+      setData: vi.fn(),
     });
 
     renderWithProviders(<Gateways />);
@@ -139,6 +142,7 @@ describe("Gateways", () => {
       isLoading: false,
       execute: vi.fn(),
       refetch: vi.fn(),
+      setData: vi.fn(),
     });
 
     renderWithProviders(<Gateways />);
@@ -190,6 +194,7 @@ describe("Gateways", () => {
       isLoading: false,
       execute: vi.fn(),
       refetch: vi.fn(),
+      setData: vi.fn(),
     });
 
     renderWithProviders(<Gateways />);
@@ -237,6 +242,7 @@ describe("Gateways", () => {
       isLoading: false,
       execute: vi.fn(),
       refetch: vi.fn(),
+      setData: vi.fn(),
     });
 
     renderWithProviders(<Gateways />);
@@ -270,6 +276,7 @@ describe("Gateways", () => {
       isLoading: false,
       execute: vi.fn(),
       refetch: vi.fn(),
+      setData: vi.fn(),
     });
 
     renderWithProviders(<Gateways />);
@@ -342,6 +349,7 @@ describe("Gateways", () => {
           isLoading: false,
           execute: vi.fn(),
           refetch: vi.fn(),
+          setData: vi.fn(),
         };
       }
 
@@ -365,6 +373,7 @@ describe("Gateways", () => {
           isLoading: false,
           execute: vi.fn(),
           refetch: vi.fn(),
+          setData: vi.fn(),
         };
       }
 
@@ -381,6 +390,7 @@ describe("Gateways", () => {
           isLoading: false,
           execute: vi.fn(),
           refetch: vi.fn(),
+          setData: vi.fn(),
         };
       }
 
@@ -397,6 +407,7 @@ describe("Gateways", () => {
           isLoading: false,
           execute: vi.fn(),
           refetch: vi.fn(),
+          setData: vi.fn(),
         };
       }
 
@@ -406,6 +417,7 @@ describe("Gateways", () => {
         isLoading: false,
         execute: vi.fn(),
         refetch: vi.fn(),
+        setData: vi.fn(),
       };
     });
 
@@ -579,6 +591,7 @@ describe("Gateways", () => {
       isLoading: false,
       execute: vi.fn(),
       refetch,
+      setData: vi.fn(),
     });
     renderWithProviders(<Gateways />);
     await user.click(screen.getByRole("button", { name: "Actions for Server A" }));
@@ -619,6 +632,7 @@ describe("Gateways", () => {
       isLoading: false,
       execute: vi.fn(),
       refetch,
+      setData: vi.fn(),
     });
 
     renderWithProviders(<Gateways />);
@@ -653,6 +667,7 @@ describe("Gateways", () => {
       isLoading: false,
       execute: vi.fn(),
       refetch,
+      setData: vi.fn(),
     });
 
     renderWithProviders(<Gateways />);
@@ -691,6 +706,7 @@ describe("Gateways", () => {
           isLoading: false,
           execute: vi.fn(),
           refetch: vi.fn(),
+          setData: vi.fn(),
         };
       }
       return {
@@ -699,6 +715,7 @@ describe("Gateways", () => {
         isLoading: false,
         execute: vi.fn(),
         refetch: vi.fn(),
+        setData: vi.fn(),
       };
     });
 
@@ -759,6 +776,7 @@ describe("Gateways", () => {
       isLoading: false,
       execute: vi.fn(),
       refetch: vi.fn(),
+      setData: vi.fn(),
     });
 
     renderWithProviders(<Gateways />);
@@ -785,6 +803,7 @@ describe("Gateways", () => {
           isLoading: false,
           execute: vi.fn(),
           refetch: vi.fn(),
+          setData: vi.fn(),
         };
       }
 
@@ -795,6 +814,7 @@ describe("Gateways", () => {
           isLoading: false,
           execute: vi.fn(),
           refetch: vi.fn(),
+          setData: vi.fn(),
         };
       }
 
@@ -805,6 +825,7 @@ describe("Gateways", () => {
           isLoading: false,
           execute: vi.fn(),
           refetch: vi.fn(),
+          setData: vi.fn(),
         };
       }
 
@@ -815,6 +836,7 @@ describe("Gateways", () => {
           isLoading: false,
           execute: vi.fn(),
           refetch: vi.fn(),
+          setData: vi.fn(),
         };
       }
 
@@ -824,6 +846,7 @@ describe("Gateways", () => {
         isLoading: false,
         execute: vi.fn(),
         refetch: vi.fn(),
+        setData: vi.fn(),
       };
     });
 
