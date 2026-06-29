@@ -19,28 +19,12 @@ import {
   TableHeader,
   TableRow,
 } from "../ui/table";
+import { useIntl } from "react-intl";
 import { ServerIcon } from "./ServerIcon";
 import { ServerActionsMenu } from "./ServerActionsMenu";
 import type { MCPServer, ServerStatus } from "../../types/server";
 import { Loading } from "../ui/loading";
-
-function formatLastSeen(lastSeen?: string): string {
-  if (!lastSeen) return "Never used";
-
-  const date = new Date(lastSeen);
-  if (Number.isNaN(date.getTime())) return "Never used";
-
-  return date
-    .toLocaleString("sv-SE", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    })
-    .replace(" ", "T");
-}
+import { formatLocalDateTime } from "../../utils/formatDate";
 
 function getLastSeenValue(server: MCPServer): string | undefined {
   return server.lastSeen;
@@ -129,6 +113,7 @@ export function ServersTable({
   onViewDetails,
   onToggleEnabled,
 }: ServersTableProps) {
+  const intl = useIntl();
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const timeoutRef = useRef<number | null>(null);
 
@@ -236,7 +221,7 @@ export function ServersTable({
                   </div>
                 </TableCell>
                 <TableCell className="px-4 py-2.5 text-xs text-neutral-600 dark:text-neutral-400">
-                  {formatLastSeen(lastSeen)}
+                  {formatLocalDateTime(lastSeen, intl.formatMessage({ id: "mcpServer.neverUsed" }))}
                 </TableCell>
                 <TableCell className="px-4 py-2.5">
                   <button
