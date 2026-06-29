@@ -61,7 +61,18 @@ const MOCK_MCP_SERVER = {
   updated_at: "2026-04-28T15:41:31.233168",
 };
 
-test.describe("Gateways page", () => {
+const MOCK_MCP_SERVER_2 = {
+  ...MOCK_MCP_SERVER,
+  id: "mcp-gateway-2",
+  name: "slack-mcp",
+  url: "http://localhost:9001",
+  visibility: "team",
+  tool_count: 2,
+  resource_count: 1,
+  prompt_count: 1,
+};
+
+test.describe("Virtual Servers page", () => {
   test.beforeEach(async ({ page, apiMock }) => {
     // Mock authentication
     await apiMock.mockMe();
@@ -70,11 +81,6 @@ test.describe("Gateways page", () => {
     await page.addInitScript(() => {
       sessionStorage.setItem("mcpgateway_token", "mock-token-12345");
     });
-  });
-
-  test.skip("shows loading state while fetching servers", async () => {
-    // Skip: Loading state is too fast to reliably test in E2E
-    // This is better tested in unit tests with controlled timing
   });
 
   test("shows connect source card when no virtual servers exist", async ({ page }) => {
@@ -115,6 +121,186 @@ test.describe("Gateways page", () => {
 
     await page.getByRole("button", { name: /Create server Make external sources/i }).click();
 
+    await expect(page).toHaveURL(/\/app\/gateways\/create-server$/);
+  });
+
+  test("validates required fields before continuing from create server details", async ({
+    page,
+  }) => {
+    await page.goto("/app/gateways/create-server");
+
+    await page.getByRole("button", { name: "Continue" }).click();
+
+    await expect(page.getByText("Server name is required.")).toBeVisible();
+    await expect(page).toHaveURL(/\/app\/gateways\/create-server$/);
+  });
+
+  test("creates a virtual server when source selection is skipped", async ({ page }) => {
+    let createPayload: unknown = null;
+
+    await page.route("**/servers", async (route) => {
+      expect(route.request().method()).toBe("POST");
+      createPayload = route.request().postDataJSON();
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ...MOCK_VIRTUAL_SERVER,
+          id: "created-without-sources",
+          name: "Private workflow server",
+          visibility: "private",
+          oauthEnabled: true,
+          associatedToolIds: [],
+          associatedResources: [],
+          associatedPrompts: [],
+        }),
+      });
+    });
+
+    await page.goto("/app/gateways/create-server");
+    await page.getByText("Private", { exact: true }).click();
+    await expect(page.getByRole("radio", { name: "Private" })).toBeChecked();
+    await page.getByLabel("Name").fill("Private workflow server");
+    await page.getByRole("switch", { name: "Require OAuth for inbound clients" }).click();
+    await page.getByRole("button", { name: "Optional configuration" }).click();
+    await page.getByLabel("Tags").fill("security, qa");
+    await page.getByLabel("Virtual server description").fill("Routes secured workflow tools.");
+    await page.getByRole("button", { name: "Continue" }).click();
+
+    await expect(page.getByRole("heading", { name: "Connect a source" })).toBeVisible();
+    await page.getByRole("button", { name: "Skip for now" }).click();
+
+    await expect.poll(() => createPayload).not.toBeNull();
+    expect(createPayload).toMatchObject({
+      server: {
+        name: "Private workflow server",
+        description: "Routes secured workflow tools.",
+        tags: ["security", "qa"],
+        associated_tools: [],
+        associated_resources: [],
+        associated_prompts: [],
+        visibility: "private",
+        oauth_enabled: true,
+        oauth_config: {},
+      },
+      visibility: "private",
+    });
+    await expect(page).toHaveURL(/\/app\/gateways$/);
+  });
+
+  test("shows create API errors and allows retry from source selection", async ({ page }) => {
+    let requestCount = 0;
+
+    await page.route("**/servers", async (route) => {
+      expect(route.request().method()).toBe("POST");
+      requestCount += 1;
+      if (requestCount === 1) {
+        await route.fulfill({
+          status: 409,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "Virtual server name already exists" }),
+        });
+        return;
+      }
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ...MOCK_VIRTUAL_SERVER, id: "retry-created" }),
+      });
+    });
+
+    await page.goto("/app/gateways/create-server");
+    await page.getByLabel("Name").fill("Duplicate server");
+    await page.getByRole("button", { name: "Continue" }).click();
+    await page.getByRole("button", { name: "Skip for now" }).click();
+
+    await expect(page.getByRole("alert")).toHaveText("Virtual server name already exists");
+
+    await page.getByRole("button", { name: "Skip for now" }).click();
+    await expect.poll(() => requestCount).toBe(2);
+    await expect(page).toHaveURL(/\/app\/gateways$/);
+  });
+
+  test("shows empty and failed MCP source states during source selection", async ({ page }) => {
+    await page.route("**/gateways?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ gateways: [] }),
+      });
+    });
+
+    await page.goto("/app/gateways/create-server");
+    await page.getByLabel("Name").fill("No source server");
+    await page.getByRole("button", { name: "Continue" }).click();
+    await page
+      .getByRole("button", { name: "Add tools, resources, and prompts from connected sources" })
+      .click();
+
+    await expect(page.getByText("No MCP servers found.")).toBeVisible();
+
+    await page.unroute("**/gateways?*");
+    await page.route("**/gateways?*", async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Unable to load MCP servers" }),
+      });
+    });
+
+    await page.reload();
+    await page.getByLabel("Name").fill("Failed source server");
+    await page.getByRole("button", { name: "Continue" }).click();
+    await page
+      .getByRole("button", { name: "Add tools, resources, and prompts from connected sources" })
+      .click();
+
+    await expect(page.getByRole("alert")).toHaveText("HTTP 500");
+  });
+
+  test("shows component fetch errors before creating from selected MCP sources", async ({
+    page,
+  }) => {
+    await page.route("**/gateways?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ gateways: [MOCK_MCP_SERVER] }),
+      });
+    });
+    await page.route("**/tools?*", async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Unable to load tools" }),
+      });
+    });
+    await page.route("**/resources?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ resources: [] }),
+      });
+    });
+    await page.route("**/prompts?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ prompts: [] }),
+      });
+    });
+
+    await page.goto("/app/gateways/create-server");
+    await page.getByLabel("Name").fill("Broken component server");
+    await page.getByRole("button", { name: "Continue" }).click();
+    await page
+      .getByRole("button", { name: "Add tools, resources, and prompts from connected sources" })
+      .click();
+    await page.getByRole("checkbox", { name: "Select github-mcp" }).check();
+    await page.getByRole("button", { name: "Submit" }).click();
+
+    await expect(page.getByRole("alert")).toHaveText("Unable to load tools");
     await expect(page).toHaveURL(/\/app\/gateways\/create-server$/);
   });
 
@@ -765,6 +951,16 @@ test.describe("Gateways page", () => {
     await expect(detailsPanel.getByText("Create New Issue")).toBeVisible();
     await expect(detailsPanel.getByText("github://repo/{owner}/{repo}")).toHaveCount(0);
     await expect(detailsPanel.getByText("summarize_pull_request")).toHaveCount(0);
+
+    await detailsPanel.getByRole("tab", { name: "Resources" }).click();
+    await expect(detailsPanel.getByText("github://repo/{owner}/{repo}")).toBeVisible();
+    await expect(detailsPanel.getByText("Get Repo Issues")).toHaveCount(0);
+    await expect(detailsPanel.getByText("summarize_pull_request")).toHaveCount(0);
+
+    await detailsPanel.getByRole("tab", { name: "Prompts" }).click();
+    await expect(detailsPanel.getByText("summarize_pull_request")).toBeVisible();
+    await expect(detailsPanel.getByText("Get Repo Issues")).toHaveCount(0);
+    await expect(detailsPanel.getByText("github://repo/{owner}/{repo}")).toHaveCount(0);
   });
 
   test("details panel add source button navigates to edit the virtual server", async ({ page }) => {
@@ -1135,5 +1331,233 @@ test.describe("Gateways page", () => {
       visibility: "public",
     });
     await expect(page).toHaveURL(/\/app\/gateways$/);
+  });
+
+  test("deduplicates components when creating from multiple selected MCP servers", async ({
+    page,
+  }) => {
+    let createPayload: unknown = null;
+
+    await page.route("**/gateways?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ gateways: [MOCK_MCP_SERVER, MOCK_MCP_SERVER_2] }),
+      });
+    });
+    await page.route("**/tools?*", async (route) => {
+      const gatewayId = new URL(route.request().url()).searchParams.get("gateway_id");
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          tools:
+            gatewayId === MOCK_MCP_SERVER.id
+              ? [
+                  { id: "shared-tool", name: "Shared Tool" },
+                  { id: "github-tool", name: "GitHub Tool" },
+                ]
+              : [
+                  { id: "shared-tool", name: "Shared Tool" },
+                  { id: "slack-tool", name: "Slack Tool" },
+                ],
+        }),
+      });
+    });
+    await page.route("**/resources?*", async (route) => {
+      const gatewayId = new URL(route.request().url()).searchParams.get("gateway_id");
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          resources:
+            gatewayId === MOCK_MCP_SERVER.id
+              ? [{ id: "shared-resource", name: "Shared Resource" }]
+              : [
+                  { id: "shared-resource", name: "Shared Resource" },
+                  { id: "slack-resource", name: "Slack Resource" },
+                ],
+        }),
+      });
+    });
+    await page.route("**/prompts?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ prompts: [{ id: "shared-prompt", name: "Shared Prompt" }] }),
+      });
+    });
+    await page.route("**/servers", async (route) => {
+      expect(route.request().method()).toBe("POST");
+      createPayload = route.request().postDataJSON();
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ...MOCK_VIRTUAL_SERVER, id: "deduped-server" }),
+      });
+    });
+
+    await page.goto("/app/gateways/create-server");
+    await page.getByLabel("Name").fill("Deduped server");
+    await page.getByRole("button", { name: "Continue" }).click();
+    await page
+      .getByRole("button", { name: "Add tools, resources, and prompts from connected sources" })
+      .click();
+    await page.getByRole("checkbox", { name: "Select github-mcp" }).check();
+    await page.getByRole("checkbox", { name: "Select slack-mcp" }).check();
+    await page.getByRole("button", { name: "Submit" }).click();
+
+    await expect.poll(() => createPayload).not.toBeNull();
+    expect(createPayload).toMatchObject({
+      server: {
+        associated_tools: ["shared-tool", "github-tool", "slack-tool"],
+        associated_resources: ["shared-resource", "slack-resource"],
+        associated_prompts: ["shared-prompt"],
+      },
+    });
+  });
+
+  test("loads an existing virtual server and updates details with component selections", async ({
+    page,
+  }) => {
+    let updatePayload: unknown = null;
+    const editServer = {
+      ...MOCK_VIRTUAL_SERVER,
+      id: "edit-server-id",
+      name: "Existing server",
+      description: "Before edit",
+      visibility: "team" as const,
+      tags: [{ id: "tag-one", label: "existing" }],
+      associatedToolIds: ["existing-tool-id"],
+      associatedResources: ["existing-resource-id"],
+      associatedPrompts: ["existing-prompt-id"],
+      teamId: "team-1",
+    };
+
+    await page.route("**/gateways?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ gateways: [MOCK_MCP_SERVER] }),
+      });
+    });
+    await page.route("**/tools?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          tools: [
+            { id: "existing-tool-id", name: "Existing Tool" },
+            { id: "new-tool-id", name: "New Tool" },
+          ],
+        }),
+      });
+    });
+    await page.route("**/resources?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          resources: [{ id: "existing-resource-id", name: "Existing Resource" }],
+        }),
+      });
+    });
+    await page.route("**/prompts?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ prompts: [{ id: "existing-prompt-id", name: "Existing Prompt" }] }),
+      });
+    });
+    await page.route(`**/servers/${editServer.id}`, async (route) => {
+      if (route.request().method() === "PUT") {
+        updatePayload = route.request().postDataJSON();
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ ...editServer, name: "Updated server" }),
+        });
+        return;
+      }
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(editServer),
+      });
+    });
+
+    await page.goto(`/app/gateways/create-server?editServerId=${editServer.id}`);
+    await expect(page.getByRole("heading", { name: "Edit server" })).toBeVisible();
+    await expect(page.getByLabel("Name")).toHaveValue("Existing server");
+    await expect(page.getByRole("radio", { name: "Team" })).toBeChecked();
+
+    await page.getByLabel("Name").fill("Updated server");
+    await page.getByLabel("Virtual server description").fill("After edit");
+    await page.getByRole("button", { name: /github-mcp/ }).click();
+    await page.getByRole("checkbox", { name: "Select Existing Tool" }).uncheck();
+    await page.getByRole("checkbox", { name: "Select New Tool" }).check();
+    await page.getByRole("button", { name: "Submit" }).click();
+
+    await expect.poll(() => updatePayload).not.toBeNull();
+    expect(updatePayload).toMatchObject({
+      name: "Updated server",
+      description: "After edit",
+      tags: ["existing"],
+      visibility: "team",
+      oauth_enabled: false,
+      associated_tools: ["new-tool-id"],
+      associated_resources: ["existing-resource-id"],
+      associated_prompts: ["existing-prompt-id"],
+    });
+    await expect(page).toHaveURL(/\/app\/gateways$/);
+  });
+
+  test("shows edit load and update failures", async ({ page }) => {
+    await page.route("**/servers/missing-server", async (route) => {
+      await route.fulfill({
+        status: 404,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Virtual server not found" }),
+      });
+    });
+
+    await page.goto("/app/gateways/create-server?editServerId=missing-server");
+    await expect(page.getByRole("alert")).toHaveText("HTTP 404");
+
+    await page.unroute("**/servers/missing-server");
+    await page.route("**/gateways?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ gateways: [] }),
+      });
+    });
+    await page.route(`**/servers/${MOCK_VIRTUAL_SERVER.id}`, async (route) => {
+      if (route.request().method() === "PUT") {
+        await route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "Update rejected" }),
+        });
+        return;
+      }
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(MOCK_VIRTUAL_SERVER),
+      });
+    });
+
+    await page.goto(`/app/gateways/create-server?editServerId=${MOCK_VIRTUAL_SERVER.id}`);
+    await expect(page.getByRole("heading", { name: "Edit server" })).toBeVisible();
+    await page.getByLabel("Name").fill("Rejected update");
+    await page.getByRole("button", { name: "Submit" }).click();
+
+    await expect(page.getByRole("alert")).toHaveText("Update rejected");
+    await expect(page).toHaveURL(
+      new RegExp(`/app/gateways/create-server\\?editServerId=${MOCK_VIRTUAL_SERVER.id}`),
+    );
   });
 });
