@@ -1203,17 +1203,20 @@ class UserRole(Base):
 
     __tablename__ = "user_roles"
     __table_args__ = (
-        # Partial unique indexes: only one active NON-EXPIRED assignment per (user, role, scope, scope_id) combination
+        # Partial unique indexes: only one active assignment per (user, role, scope, scope_id) combination
         # Need two separate indexes to handle NULL vs non-NULL scope_id cases (SQL NULL != NULL semantics)
-        # Excludes expired assignments: is_active = true AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+        # Note: We only check is_active here (not expires_at) because SQLite forbids non-deterministic
+        # functions like datetime('now') in partial index WHERE clauses. Expiration filtering happens
+        # in the application layer: assign_role_to_user() soft-deletes expired assignments before creating
+        # new ones, and get_user_role_assignment() filters out expired rows.
         Index(
             "uq_user_roles_email_role_scope_null_active",
             "user_email",
             "role_id",
             "scope",
             unique=True,
-            postgresql_where=text("scope_id IS NULL AND is_active = true AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)"),
-            sqlite_where=text("scope_id IS NULL AND is_active = 1 AND (expires_at IS NULL OR expires_at > datetime('now'))"),
+            postgresql_where=text("scope_id IS NULL AND is_active = true"),
+            sqlite_where=text("scope_id IS NULL AND is_active = 1"),
         ),
         Index(
             "uq_user_roles_email_role_scope_id_active",
@@ -1222,8 +1225,8 @@ class UserRole(Base):
             "scope",
             "scope_id",
             unique=True,
-            postgresql_where=text("scope_id IS NOT NULL AND is_active = true AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)"),
-            sqlite_where=text("scope_id IS NOT NULL AND is_active = 1 AND (expires_at IS NULL OR expires_at > datetime('now'))"),
+            postgresql_where=text("scope_id IS NOT NULL AND is_active = true"),
+            sqlite_where=text("scope_id IS NOT NULL AND is_active = 1"),
         ),
     )
 
