@@ -1715,13 +1715,7 @@ class SecurityValidator:
 
                     # Check for dangerous network ranges
                     is_dangerous = (
-                        resolved_ip.is_private
-                        or resolved_ip.is_loopback
-                        or resolved_ip.is_link_local
-                        or resolved_ip.is_unspecified
-                        or resolved_ip.is_multicast
-                        or resolved_ip.is_reserved
-                        or is_cgnat
+                        resolved_ip.is_private or resolved_ip.is_loopback or resolved_ip.is_link_local or resolved_ip.is_unspecified or resolved_ip.is_multicast or resolved_ip.is_reserved or is_cgnat
                     )
 
                     if is_dangerous:
