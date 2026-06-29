@@ -1198,8 +1198,8 @@ class SessionAffinity:
         path: str,
         headers: Dict[str, str],
         body: bytes,
+        auth_context: str,
         query_string: str = "",
-        auth_context: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Forward a Streamable HTTP request to the worker that owns the session via Redis Pub/Sub.
 
@@ -1215,11 +1215,13 @@ class SessionAffinity:
             path: Request path (e.g., /mcp).
             headers: Request headers.
             body: Request body bytes.
-            query_string: Query string if any.
             auth_context: Encoded ``x-contextforge-auth-context`` value carrying the
                 originating worker's already-validated identity, so the owner can
                 dispatch to the trusted internal endpoint without re-authenticating
                 (OAuth bearers and ``MCP_REQUIRE_AUTH=false`` public-only survive).
+                Required and must be non-empty: the Redis hop must always carry a
+                signed auth context.
+            query_string: Query string if any.
 
         Returns:
             Dict with 'status', 'headers', and 'body' from the owner worker's response,
@@ -1230,6 +1232,19 @@ class SessionAffinity:
 
         if not self.is_valid_mcp_session_id(mcp_session_id):
             return None
+
+        # Invariant: a Redis http_forward must always carry a signed auth context. Refuse to
+        # publish an unsigned/missing one rather than relying on the consumer to reject it
+        # (or, worse, accept it). The real Streamable HTTP caller always encodes a context
+        # (an empty {} encodes to a non-empty value), so this only trips on a contract bug.
+        if not auth_context:
+            logger.warning("[HTTP_AFFINITY] Worker %s | Refusing to forward HTTP request without an auth context", WORKER_ID)
+            self._forwarded_request_failures += 1
+            return {
+                "status": 403,
+                "headers": {"content-type": "application/json"},
+                "body": orjson.dumps({"jsonrpc": "2.0", "error": {"code": -32003, "message": "Forwarded auth context is required"}, "id": None}),
+            }
 
         session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
         logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | {method} {path} | Forwarding to worker {owner_worker_id}")

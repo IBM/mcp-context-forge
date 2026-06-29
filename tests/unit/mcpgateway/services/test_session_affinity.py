@@ -1048,7 +1048,7 @@ async def test_forward_to_owner_noop_when_feature_disabled():
     affinity = SessionAffinity()
     with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
         mock_settings.mcpgateway_session_affinity_enabled = False
-        result = await affinity.forward_to_owner("other-worker", "sess-1", "POST", "/mcp", {}, b"")
+        result = await affinity.forward_to_owner("other-worker", "sess-1", "POST", "/mcp", {}, b"", auth_context="ctx")
     assert result is None
 
 
@@ -1062,7 +1062,7 @@ async def test_forward_to_owner_invalid_session_id_returns_none():
     with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
         mock_settings.mcpgateway_session_affinity_enabled = True
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
-        result = await affinity.forward_to_owner("w-1", "bad id", "POST", "/mcp", {}, b"")
+        result = await affinity.forward_to_owner("w-1", "bad id", "POST", "/mcp", {}, b"", auth_context="ctx")
     assert result is None
 
 
@@ -1079,7 +1079,7 @@ async def test_forward_to_owner_returns_none_when_redis_unavailable():
     ):
         mock_settings.mcpgateway_session_affinity_enabled = True
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
-        result = await affinity.forward_to_owner("w-1", "sess-1", "POST", "/mcp", {}, b"")
+        result = await affinity.forward_to_owner("w-1", "sess-1", "POST", "/mcp", {}, b"", auth_context="ctx")
     assert result is None
 
 
@@ -1103,7 +1103,7 @@ async def test_forward_to_owner_decodes_hex_body_from_response():
     ):
         mock_settings.mcpgateway_session_affinity_enabled = True
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
-        result = await affinity.forward_to_owner("other-worker", "sess-1", "POST", "/mcp", {"h": "v"}, b"req-body")
+        result = await affinity.forward_to_owner("other-worker", "sess-1", "POST", "/mcp", {"h": "v"}, b"req-body", auth_context="ctx")
 
     assert result is not None
     assert result["status"] == 200
@@ -1160,13 +1160,12 @@ async def test_forward_to_owner_includes_auth_context_in_redis_payload():
 
 
 @pytest.mark.asyncio
-async def test_forward_to_owner_defaults_auth_context_to_none_when_omitted():
-    """Sender side: when no auth_context is supplied, the field is present and set to None.
+async def test_forward_to_owner_refuses_to_publish_without_auth_context():
+    """Sender side: a missing/empty auth_context is refused before publishing.
 
-    The executor reads ``request.get("auth_context") or ""`` and forwards an
-    empty string header — equivalent to the pre-auth-context behaviour. This
-    test pins the shape so future signature changes don't silently break the
-    contract.
+    The Redis http_forward hop must always carry a signed auth context, so
+    forward_to_owner returns a 403 (and publishes nothing) when handed an empty
+    context, rather than emitting an unsigned payload the consumer would reject.
     """
     # Third-Party
     import orjson
@@ -1183,11 +1182,65 @@ async def test_forward_to_owner_defaults_auth_context_to_none_when_omitted():
     ):
         mock_settings.mcpgateway_session_affinity_enabled = True
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
-        await affinity.forward_to_owner("other-worker", "sess-no-ctx", "POST", "/mcp", {}, b"")
+        result = await affinity.forward_to_owner("other-worker", "sess-no-ctx", "POST", "/mcp", {}, b"", auth_context="")
 
-    forward_data = orjson.loads(fake.published[0][1])
-    assert "auth_context" in forward_data
-    assert forward_data["auth_context"] is None
+    # Refused with a 403, and nothing was published to Redis.
+    assert result is not None and result["status"] == 403
+    assert fake.published == []
+    assert affinity._forwarded_request_failures == 1  # pylint: disable=protected-access
+
+
+@pytest.mark.asyncio
+async def test_public_only_forward_signs_and_consumer_accepts():
+    """Public-only path: publisher encodes a non-empty context and signs it; consumer verifies and dispatches (no integrity 403).
+
+    Directly disproves the ``auth_context=None for public-only`` premise: a permissive-mode
+    (``is_authenticated`` False) context still encodes non-empty, is signed on the Redis hop,
+    and is accepted by the owner-side consumer, which dispatches to ``/_internal/mcp/rpc``.
+    """
+    # Third-Party
+    import orjson
+
+    # First-Party
+    from mcpgateway.auth_context import encode_internal_mcp_auth_context
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+    sid = "sess-public-rt"
+    encoded = encode_internal_mcp_auth_context({"email": None, "teams": [], "is_authenticated": False})
+    assert encoded  # public-only context is non-empty once encoded
+    jsonrpc_body = orjson.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
+
+    # Publisher side: sign + publish.
+    pub_fake = _FakeRedisWithPubSub(response_payload=orjson.dumps({"status": 200, "headers": {}, "body": b"".hex()}))
+    with (
+        patch("mcpgateway.services.session_affinity.settings") as ms,
+        patch("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=pub_fake)),
+    ):
+        ms.mcpgateway_session_affinity_enabled = True
+        ms.mcpgateway_pool_rpc_forward_timeout = 5.0
+        await affinity.forward_to_owner("other-worker", sid, "POST", "/mcp", {}, jsonrpc_body, auth_context=encoded)
+
+    forward_data = orjson.loads(pub_fake.published[0][1])
+    assert forward_data["auth_context"] == encoded  # non-empty context forwarded
+    assert forward_data["auth_context_sig"]  # and signed
+
+    # Consumer side: verify + dispatch (mocked internal endpoint).
+    consumer_fake = _FakeRedis()
+    client = _FakeHttpxClient(response=_FakeHttpResponse(200, text_body="ok"))
+    with (
+        patch("mcpgateway.services.session_affinity.settings") as ms2,
+        patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=client),
+        patch("mcpgateway.services.session_affinity.internal_loopback_base_url", return_value="http://localhost:4444"),
+        patch("mcpgateway.auth_context._expected_internal_mcp_runtime_auth_header", return_value="HMAC"),
+    ):
+        ms2.mcpgateway_pool_rpc_forward_timeout = 5.0
+        await affinity._execute_forwarded_http_request(forward_data, consumer_fake)  # pylint: disable=protected-access
+
+    # Accepted and dispatched to the trusted-internal endpoint, NOT an integrity 403.
+    assert client.last_post_kwargs is not None
+    assert client.last_post_kwargs["url"] == "/_internal/mcp/rpc"
+    assert orjson.loads(consumer_fake.published[0][1])["status"] != 403
 
 
 @pytest.mark.asyncio
@@ -1205,7 +1258,7 @@ async def test_forward_to_owner_times_out_and_returns_none_with_metric_bump():
     ):
         mock_settings.mcpgateway_session_affinity_enabled = True
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 0.05  # short timeout
-        result = await affinity.forward_to_owner("other-worker", "sess-1", "POST", "/mcp", {}, b"")
+        result = await affinity.forward_to_owner("other-worker", "sess-1", "POST", "/mcp", {}, b"", auth_context="ctx")
 
     assert result is None
     assert affinity._forwarded_request_timeouts == 1  # pylint: disable=protected-access
@@ -2035,7 +2088,7 @@ async def test_forward_to_owner_logs_warning_and_returns_none_on_unexpected_erro
     ):
         mock_settings.mcpgateway_session_affinity_enabled = True
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
-        result = await affinity.forward_to_owner("other-worker", "sess-1", "POST", "/mcp", {}, b"")
+        result = await affinity.forward_to_owner("other-worker", "sess-1", "POST", "/mcp", {}, b"", auth_context="ctx")
     assert result is None
     assert affinity._forwarded_request_failures == 1  # pylint: disable=protected-access
 
