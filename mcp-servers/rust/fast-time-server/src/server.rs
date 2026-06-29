@@ -10,9 +10,9 @@
 //! `tools/list` and [`FastTimeServer::dispatch_tool`] for `tools/call`.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
 use rmcp::ErrorData as McpError;
@@ -82,7 +82,9 @@ pub(crate) struct FlakyParams {
     #[schemars(description = "Unique key to track attempt count across retries")]
     key: String,
     #[serde(default)]
-    #[schemars(description = "Number of times to return isError=true before succeeding (default 0)")]
+    #[schemars(
+        description = "Number of times to return isError=true before succeeding (default 0)"
+    )]
     fail_times: Option<u64>,
 }
 
