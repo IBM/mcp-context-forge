@@ -29,7 +29,7 @@ PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" \
 PLUGINS_ENABLED=true \
 PLUGINS_CONFIG_FILE=tests/live_gateway/fixtures/primary_worker_e2e_config.yaml \
 MCPGW_PRIMARY_WORKER_E2E_MARKER="$MARKER" \
-MCPGW_PRIMARY_WORKER_LOCK="$LOCK" \
+PRIMARY_WORKER_LOCK_PATH="$LOCK" \
 DATABASE_URL="sqlite:///$DB" \
 HOST=127.0.0.1 PORT="$PORT" \
   gunicorn -c gunicorn.config.py \

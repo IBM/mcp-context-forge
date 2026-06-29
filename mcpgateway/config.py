@@ -2534,6 +2534,11 @@ class Settings(BaseSettings):
 
     filelock_name: str = "gateway_service_leader.lock"
 
+    # Override path for the primary-worker election lock file used by
+    # mcpgateway/utils/primary_worker.py. Defaults to a port-scoped file in the
+    # system temp dir when unset.
+    primary_worker_lock_path: Optional[str] = None
+
     # Default Roots
     default_roots: List[str] = []
 
