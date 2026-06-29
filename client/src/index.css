@@ -32,6 +32,9 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
 
+  /* Main content area token */
+  --color-main: var(--main);
+
   /* Sidebar-specific tokens */
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
@@ -93,7 +96,10 @@
 
   --radius: 0.625rem;
 
-  /* Sidebar — slightly off-white to distinguish from page background */
+  /* Main content area — slightly off-white to distinguish from sidebar */
+  --main: oklch(0.985 0 0);
+
+  /* Sidebar — white */
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
@@ -146,6 +152,7 @@
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
+  --main: oklch(0.205 0 0);
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);
