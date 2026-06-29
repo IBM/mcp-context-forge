@@ -665,15 +665,13 @@ class RoleService:
             self.db.commit()
             self.db.refresh(user_role)
 
-        logger.info(
-            "Assigned role %s to %s (scope: %s, scope_id: %s)",
-            SecurityValidator.sanitize_log_message(role.name),
-            SecurityValidator.sanitize_log_message(user_email),
-            SecurityValidator.sanitize_log_message(scope),
-            SecurityValidator.sanitize_log_message(scope_id),
-        )
-        return user_role
-            logger.info(f"Assigned role {role.name} to {user_email} (scope: {scope}, scope_id: {scope_id})")
+            logger.info(
+                "Assigned role %s to %s (scope: %s, scope_id: %s)",
+                SecurityValidator.sanitize_log_message(role.name),
+                SecurityValidator.sanitize_log_message(user_email),
+                SecurityValidator.sanitize_log_message(scope),
+                SecurityValidator.sanitize_log_message(scope_id),
+            )
             return user_role
 
         except IntegrityError as e:

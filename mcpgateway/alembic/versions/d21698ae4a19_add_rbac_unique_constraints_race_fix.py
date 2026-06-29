@@ -15,7 +15,7 @@ Changes:
 Supports both PostgreSQL and SQLite databases.
 
 Revision ID: d21698ae4a19
-Revises: 9fb98535724d
+Revises: e198602c3c1e
 Create Date: 2026-05-06 12:35:58.142694
 
 """
@@ -27,7 +27,7 @@ from sqlalchemy import text, inspect
 
 # revision identifiers, used by Alembic.
 revision: str = 'd21698ae4a19'  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = 'w7x8y9z0a1b2'  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = 'e198602c3c1e'  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
