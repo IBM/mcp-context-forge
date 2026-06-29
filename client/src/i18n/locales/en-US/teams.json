@@ -2,6 +2,7 @@
   "teams.all.title": "All Teams",
   "teams.createTeam": "Create team",
   "teams.error.loading": "Error loading teams",
+  "teams.error.loadMore": "Failed to load more teams",
   "teams.loading.sr": "Loading teams, please wait...",
   "teams.loadMore": "Load More",
   "teams.loadMore.aria": "Load more teams",

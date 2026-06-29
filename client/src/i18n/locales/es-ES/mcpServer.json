@@ -1,0 +1,6 @@
+{
+  "mcpServer.title": "Servidores MCP",
+  "mcpServer.delete.success": "{name} eliminado.",
+  "mcpServer.delete.errorTitle": "Error al eliminar el servidor MCP",
+  "mcpServer.neverUsed": "Nunca usado"
+}
