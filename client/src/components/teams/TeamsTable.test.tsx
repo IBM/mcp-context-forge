@@ -85,7 +85,7 @@ describe("TeamsTable", () => {
       />,
     );
 
-    // Formatted as YYYY-MM-DDTHH:mm:ss in the sv-SE locale.
+    // Formatted as YYYY-MM-DDTHH:mm:ss in local time.
     expect(screen.getByText(/^2024-01-01T/)).toBeInTheDocument();
     expect(screen.getByText(/^2024-02-15T/)).toBeInTheDocument();
   });
