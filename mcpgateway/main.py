@@ -1939,7 +1939,8 @@ def _custom_openapi() -> dict:
         description=app.description,
         routes=app.routes,
     )
-    schema["paths"] = {path: val for path, val in schema["paths"].items() if not path.endswith("/") or path == "/"}
+    all_paths = set(schema["paths"])
+    schema["paths"] = {path: val for path, val in schema["paths"].items() if not path.endswith("/") or path == "/" or path.rstrip("/") not in all_paths}
     app.openapi_schema = schema
     return schema
 
