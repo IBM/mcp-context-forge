@@ -17,7 +17,9 @@ import { RouterProvider } from "@/router";
 import { I18nProvider } from "@/i18n";
 import { AuthProvider } from "@/auth/AuthContext";
 import type { ReactElement } from "react";
-import type { Resource } from "@/types/resource";
+import type { ResourceRead } from "@/generated/types";
+
+type Resource = NonNullable<ResourceRead>;
 
 // Helper: create mock resource
 function createMockResource(id: number, gatewaySlug: string, enabled = true): Resource {
@@ -26,7 +28,6 @@ function createMockResource(id: number, gatewaySlug: string, enabled = true): Re
     name: `Resource ${id}`,
     description: `Description for resource ${id}`,
     gatewayId: `gateway-${gatewaySlug}`,
-    gatewaySlug,
     enabled,
     uri: `resource://example/${id}`,
     mimeType: "application/json",
@@ -300,7 +301,6 @@ describe("Resources", () => {
     const mockResources: Resource[] = [
       {
         ...createMockResource(1, ""),
-        gatewaySlug: "",
       },
     ];
 
