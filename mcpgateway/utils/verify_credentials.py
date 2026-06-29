@@ -27,6 +27,7 @@ Examples:
     ...     require_token_expiration = False
     ...     require_jti = False
     ...     validate_token_environment = False
+    ...     derive_key_per_environment = False
     ...     docs_allow_basic_auth = False
     >>> vc.settings = DummySettings()
     >>> jch.settings = DummySettings()
@@ -344,6 +345,12 @@ async def verify_jwt_token(token: str) -> dict:
         if settings.validate_token_environment:
             token_env = payload.get("env")
             if token_env is not None and token_env != settings.environment:
+                logger.warning(
+                    "Rejected token: environment mismatch (token env=%s, server env=%s, sub=%s)",
+                    sanitize_for_log(str(token_env)),
+                    sanitize_for_log(settings.environment),
+                    sanitize_for_log(str(payload.get("sub", "unknown"))),
+                )
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail=f"Token environment mismatch: token is for '{token_env}', server is '{settings.environment}'",
@@ -365,6 +372,17 @@ async def verify_jwt_token(token: str) -> dict:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has expired",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except jwt.InvalidSignatureError:
+        if settings.derive_key_per_environment:
+            logger.warning(
+                "Invalid token signature with per-environment derivation enabled (server env=%s) - possible cross-environment token or key mismatch",
+                sanitize_for_log(settings.environment),
+            )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
             headers={"WWW-Authenticate": "Bearer"},
         )
     except jwt.PyJWTError:
@@ -446,6 +464,7 @@ async def verify_credentials(token: str) -> dict:
         ...     require_token_expiration = False
         ...     require_jti = False
         ...     validate_token_environment = False
+        ...     derive_key_per_environment = False
         ...     docs_allow_basic_auth = False
         >>> vc.settings = DummySettings()
         >>> jch.settings = DummySettings()
@@ -938,6 +957,7 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
         ...     require_token_expiration = False
         ...     require_jti = False
         ...     validate_token_environment = False
+        ...     derive_key_per_environment = False
         ...     docs_allow_basic_auth = False
         >>> vc.settings = DummySettings()
         >>> jch.settings = DummySettings()
@@ -1177,6 +1197,7 @@ async def require_docs_basic_auth(auth_header: str) -> str:
         ...     require_token_expiration = False
         ...     require_jti = False
         ...     validate_token_environment = False
+        ...     derive_key_per_environment = False
         ...     docs_allow_basic_auth = True
         >>> vc.settings = DummySettings()
         >>> import base64, asyncio
@@ -1314,6 +1335,7 @@ async def require_docs_auth_override(
         ...     require_token_expiration = False
         ...     require_jti = False
         ...     validate_token_environment = False
+        ...     derive_key_per_environment = False
         >>> vc.settings = DummySettings()
         >>> jch.settings = DummySettings()
         >>> jch.clear_jwt_caches()
@@ -1411,6 +1433,7 @@ async def require_auth_override(
         ...     require_token_expiration = False
         ...     require_jti = False
         ...     validate_token_environment = False
+        ...     derive_key_per_environment = False
         ...     docs_allow_basic_auth = False
         >>> vc.settings = DummySettings()
         >>> jch.settings = DummySettings()
@@ -1509,6 +1532,7 @@ async def require_auth_header_first(
         ...     require_token_expiration = False
         ...     require_jti = False
         ...     validate_token_environment = False
+        ...     derive_key_per_environment = False
         ...     docs_allow_basic_auth = False
         >>> vc.settings = DummySettings()
         >>> jch.settings = DummySettings()

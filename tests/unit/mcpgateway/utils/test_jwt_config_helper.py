@@ -28,6 +28,8 @@ def mock_settings():
         jwt_secret_key = "supersecret"
         jwt_public_key_path = "public.pem"
         jwt_private_key_path = "private.pem"
+        derive_key_per_environment = False
+        environment = "development"
 
     return MockSettings()
 
@@ -219,6 +221,8 @@ def test_clear_jwt_caches():
     class MockSettings:
         jwt_algorithm = "HS256"
         jwt_secret_key = "test_secret"
+        derive_key_per_environment = False
+        environment = "development"
 
     with patch("mcpgateway.utils.jwt_config_helper.settings", MockSettings()):
         # Warm up cache

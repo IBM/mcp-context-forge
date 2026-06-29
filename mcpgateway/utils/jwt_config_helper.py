@@ -12,6 +12,8 @@ Key files are cached with mtime tracking to avoid repeated disk I/O.
 
 # Standard
 from functools import lru_cache
+import hashlib
+import hmac
 from pathlib import Path
 from typing import Tuple
 
@@ -135,6 +137,33 @@ def _validate_asymmetric_keys(algorithm: str) -> None:
         raise JWTConfigurationError(f"JWT private key path is invalid: {private_key_path}")
 
 
+def _derive_env_key(base_secret: str, environment: str) -> str:
+    """Derive a deterministic per-environment HMAC key from a base secret.
+
+    Uses HMAC-SHA256 keyed by ``base_secret`` over an environment-scoped label so a token
+    signed with one environment's key fails signature verification under another's.
+
+    Args:
+        base_secret: The base secret (``JWT_SECRET_KEY`` or an explicit signing secret).
+        environment: Deployment environment (e.g. ``production``).
+
+    Returns:
+        str: 64-character hex-encoded derived key.
+
+    Raises:
+        JWTConfigurationError: If ``base_secret`` is empty.
+
+    Examples:
+        >>> _derive_env_key("base", "production") == _derive_env_key("base", "development")
+        False
+        >>> len(_derive_env_key("base", "production"))
+        64
+    """
+    if not base_secret:
+        raise JWTConfigurationError("Cannot derive a per-environment key from an empty secret")
+    return hmac.new(base_secret.encode("utf-8"), f"mcpgw-env:{environment}".encode("utf-8"), hashlib.sha256).hexdigest()
+
+
 @lru_cache(maxsize=1)
 def get_jwt_private_key_or_secret() -> str:
     """Get signing key based on configured algorithm (cached).
@@ -155,7 +184,8 @@ def get_jwt_private_key_or_secret() -> str:
 
     if algorithm.startswith("HS"):
         # Handle SecretStr type from Pydantic v2
-        return settings.jwt_secret_key.get_secret_value() if hasattr(settings.jwt_secret_key, "get_secret_value") else settings.jwt_secret_key
+        base = settings.jwt_secret_key.get_secret_value() if hasattr(settings.jwt_secret_key, "get_secret_value") else settings.jwt_secret_key
+        return _derive_env_key(base, settings.environment) if settings.derive_key_per_environment else base
 
     path = Path(settings.jwt_private_key_path)
     if not path.is_absolute():
@@ -183,7 +213,8 @@ def get_jwt_public_key_or_secret() -> str:
 
     if algorithm.startswith("HS"):
         # Handle SecretStr type from Pydantic v2
-        return settings.jwt_secret_key.get_secret_value() if hasattr(settings.jwt_secret_key, "get_secret_value") else settings.jwt_secret_key
+        base = settings.jwt_secret_key.get_secret_value() if hasattr(settings.jwt_secret_key, "get_secret_value") else settings.jwt_secret_key
+        return _derive_env_key(base, settings.environment) if settings.derive_key_per_environment else base
 
     path = Path(settings.jwt_public_key_path)
     if not path.is_absolute():
