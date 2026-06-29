@@ -114,6 +114,33 @@ _REGISTRY_CACHE = None
 _TOOL_LOOKUP_CACHE = None
 
 
+def _resolve_propagation_identity(global_context):
+    """Resolve the end-user identity to propagate to upstream MCP servers.
+
+    Prefers the plugin global context's ``user_context``; falls back to the
+    per-request ``user_identity_var`` set by the transport auth layer
+    (``streamablehttp_transport._set_user_identity_from_dict``).
+
+    The cached virtual-server invocation path calls :meth:`ToolService.invoke_tool`
+    without a ``plugin_global_context`` (see the ``streamablehttp_transport``
+    tool-call handler), so without this fallback identity propagation silently
+    no-ops for virtual-server tool calls while still working on the direct_proxy
+    path. See https://github.com/IBM/mcp-context-forge (vServer identity gap).
+
+    Args:
+        global_context: Optional plugin ``GlobalContext`` carrying ``user_context``.
+
+    Returns:
+        A ``UserContext`` to propagate, or ``None`` if no identity is available.
+    """
+    if global_context is not None and getattr(global_context, "user_context", None):
+        return global_context.user_context
+    # Local import to avoid import cycles at module load time.
+    from mcpgateway.transports.context import user_identity_var  # pylint: disable=import-outside-toplevel
+
+    return user_identity_var.get()
+
+
 def _get_registry_cache():
     """Get registry cache singleton lazily.
 
@@ -4988,8 +5015,9 @@ class ToolService(BaseService):
                             logger.debug("[AFFINITY] Worker %s | Session %s... | Tool: %s | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity", worker_id, session_short, name)
 
                     # Inject identity propagation headers for REST tools
-                    if global_context and global_context.user_context:
-                        headers.update(build_identity_headers(global_context.user_context))
+                    _propagation_identity = _resolve_propagation_identity(global_context)
+                    if _propagation_identity:
+                        headers.update(build_identity_headers(_propagation_identity))
 
                     if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) and not skip_pre_invoke:
                         # Use pre-created Pydantic model from Phase 2 (no ORM access)
@@ -5299,9 +5327,10 @@ class ToolService(BaseService):
                             )
 
                     # Inject identity propagation headers and meta for MCP tools
-                    if global_context and global_context.user_context:
-                        headers.update(build_identity_headers(global_context.user_context))
-                        meta_data = build_identity_meta(global_context.user_context, meta_data)
+                    _propagation_identity = _resolve_propagation_identity(global_context)
+                    if _propagation_identity:
+                        headers.update(build_identity_headers(_propagation_identity))
+                        meta_data = build_identity_meta(_propagation_identity, meta_data)
 
                     # mTLS client cert/key: resolve from payload, then override with runtime gateway if available
                     client_cert_from_payload = gateway_payload.get("client_cert") if has_gateway else None
