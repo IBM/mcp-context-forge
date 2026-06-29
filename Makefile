@@ -15,6 +15,8 @@ SHELL := /bin/bash
 
 # Read values from .env.make
 -include .env.make
+# Read MCPGATEWAY_UI_ENABLED from environment, falling back to .env
+MCPGATEWAY_UI_ENABLED ?= $(shell grep -s '^MCPGATEWAY_UI_ENABLED=' .env | cut -d= -f2 | xargs)
 
 # Rust build configuration (set to 1 to enable Rust builds, 0 to disable)
 # Default is disabled to avoid requiring Rust toolchain for standard builds
@@ -375,16 +377,37 @@ init-secrets: ## Generate secure secrets for the gateway (US-3)
 
 .PHONY: serve serve-ssl serve-granian serve-granian-ssl serve-granian-http2 dev dev-remote stop stop-dev stop-serve run \
         certs certs-jwt certs-jwt-ecdsa certs-all certs-mcp-ca certs-mcp-gateway certs-mcp-plugin certs-mcp-all certs-mcp-check \
-        js-build
+        js-build export-schema
 
 ## --- JS build ----------------------------------------------------------------
+# js-build is gated on MCPGATEWAY_UI_ENABLED.  The config.py default is
+# false; .env.example sets it to true.  Run `cp .env.example .env` (or export
+# MCPGATEWAY_UI_ENABLED=true) before invoking serve/dev targets,
+# otherwise the Admin UI bundle will not be built and the UI will not load.
 js-build:                        ## Install npm dependencies and build JS bundle with Vite (includes client React app)
-	@if command -v npm >/dev/null 2>&1; then \
+	@if [ "$(MCPGATEWAY_UI_ENABLED)" != "true" ]; then \
+		echo ""; \
+		echo "WARNING: JS build skipped — MCPGATEWAY_UI_ENABLED is not set to true."; \
+		echo "         The Admin UI will not load at runtime."; \
+		echo "         Fix: cp .env.example .env  (or export MCPGATEWAY_UI_ENABLED=true)"; \
+		echo ""; \
+	elif command -v npm >/dev/null 2>&1; then \
 		npm install --no-audit --no-fund && npm run build:css && npm run vite:build && \
+		CACHE_TYPE=memory python -c \
+		  "import json; from mcpgateway.main import app; open('client/openapi.json', 'w').write(json.dumps(app.openapi(), indent=2))" && \
+		echo "OpenAPI spec exported to client/openapi.json" && \
 		cd client && npm install --no-audit --no-fund && npm run build; \
 	else \
 		echo "WARNING: npm not found — skipping JS bundle build (admin UI may not load)"; \
 	fi
+
+export-schema:                   ## Export OpenAPI schema directly from the Python app (no running gateway needed)
+	@CACHE_TYPE=memory python -c \
+	  "import json; from mcpgateway.main import app; open('client/openapi.json', 'w').write(json.dumps(app.openapi(), indent=2))"
+	@echo "OpenAPI spec exported to client/openapi.json"
+
+generate-client: export-schema   ## Export OpenAPI schema and regenerate client types (no running gateway needed)
+	@cd client && npm run generate
 
 ## --- Primary servers ---------------------------------------------------------
 serve: install js-build                  ## Run production server with Gunicorn + Uvicorn (default)
@@ -408,8 +431,10 @@ dev:
 	@trap 'echo "🛑 Stopping background processes..."; jobs -p | xargs $(XARGS_FLAGS) kill 2>/dev/null || true' EXIT; \
 	$(MAKE) js-build watch-css & \
 	WATCH_CSS_PID=$$!; \
-	(cd client && npm install --no-audit --no-fund && npm run build:watch > /dev/null 2>&1) & \
-	echo $$! > /tmp/mcpgateway-client-watch.pid; \
+	if [ "$(MCPGATEWAY_UI_ENABLED)" = "true" ]; then \
+		(cd client && npm install --no-audit --no-fund && npm run build:watch > /dev/null 2>&1) & \
+		echo $$! > /tmp/mcpgateway-client-watch.pid; \
+	fi; \
 	TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/' || { kill $$WATCH_CSS_PID 2>/dev/null || true; exit 1; }
 
 .PHONY: dev-echo
