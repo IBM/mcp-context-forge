@@ -1,0 +1,212 @@
+# Location: ./semgrep-rules/mcp/mcp-best-practices.yaml
+# Copyright 2026
+# SPDX-License-Identifier: Apache-2.0
+# Authors: Arnav Sanghi
+#
+# MCP-specific Semgrep rules used by the source scanner (#2217).
+# These rules detect security issues relevant to MCP servers.
+# ============================================================================
+# Purpose of these rules:
+# These rules detect cases where user input could be misused if best practices aren’t followed, such as:
+#
+# - Using arguments without type or value validation
+# - Constructing file paths unsafely → path traversal
+# - Making HTTP requests without validating URLs → SSRF
+# - Reading large files without limits → DoS
+# - Failing to handle errors → crashes or info leaks
+#
+# In short, they catch places where user input could indirectly cause unsafe behavior
+# or reliability/security issues, even if it’s not immediately critical.
+# ============================================================================
+
+rules:
+  # ============================================================================
+  # Input Validation - Foundation of secure MCP servers
+  # ============================================================================
+  - id: mcp-missing-input-validation
+    languages: [python]
+    message: >
+      Tool uses arguments without validation or type checking.
+      Always validate input: check types, formats, lengths, ranges, and allowed values.
+      Example: if not isinstance(args.get("count"), int) or args["count"] > 1000
+    severity: WARNING
+    patterns:
+      - pattern-inside: |
+          def $FUNC(arguments):
+              ...
+      - pattern-either:
+          - pattern: $x = arguments[$KEY]
+          - pattern: $x = args[$KEY]
+    metadata:
+      category: input-validation
+      technology: mcp
+      cwe: CWE-20
+
+  - id: mcp-path-traversal-no-realpath-check
+    languages: [python]
+    message: >
+      File path from arguments used without realpath() or abspath() validation.
+      Always resolve to absolute path and verify it's within allowed base directory.
+      Use: secure_path = os.path.abspath(user_path); assert secure_path.startswith(BASE_DIR)
+    severity: WARNING
+    patterns:
+      - pattern-either:
+          - pattern: os.path.join($BASEDIR, args[$KEY])
+          - pattern: f"{$BASEDIR}/{args[$KEY]}"
+    metadata:
+      category: path-traversal
+      technology: mcp
+      cwe: CWE-22
+
+  - id: mcp-url_protocol-not-validated
+    languages: [python]
+    message: >
+      HTTP request to user-provided URL without protocol validation.
+      Attacker could use file://, localhost, or internal IP addresses.
+      Validate URL starts with http:// or https:// before use.
+    severity: WARNING
+    patterns:
+      - pattern-either:
+          - pattern: requests.get(f"...{args['endpoint']}...")
+          - pattern: urllib.request.urlopen(f"...{args['url']}...")
+    metadata:
+      category: ssrf
+      technology: mcp
+      cwe: CWE-918
+
+  - id: mcp-resource-limit-missing
+    languages: [python]
+    message: >
+      Tool reads entire file or data without size/resource limits.
+      Implement maximum size checks to prevent DoS via large file reads.
+      Example: if file_size > MAX_READ_SIZE: raise ValueError("File too large")
+    severity: WARNING
+    patterns:
+      - pattern: open($FILE).read()
+    metadata:
+      category: dos-prevention
+      technology: mcp
+      cwe: CWE-400
+
+  # ============================================================================
+  # Error Handling & Robustness
+  # ============================================================================
+  - id: mcp-missing-error-handling
+    languages: [python]
+    message: >
+      External call without exception handling. Unhandled exceptions can:
+      1. Leak sensitive information in tracebacks
+      2. Leave database/file connections open
+      3. Crash the tool handler
+      Wrap network, filesystem, and database calls in try-except.
+    severity: WARNING
+    patterns:
+      - pattern-inside: |
+          def $FUNC(...):
+              ...
+      - pattern-either:
+          - pattern: requests.get(...)
+          - pattern: cursor.execute(...)
+          - pattern: file_path.open()
+    metadata:
+      category: error-handling
+      technology: mcp
+      cwe: CWE-248
+
+  - id: mcp-unvalidated-database-query
+    languages: [python]
+    message: >
+      Database query constructed without parameterization.
+      Always use parameterized queries (bind variables) for all user input.
+      Bad: cursor.execute("SELECT * FROM users WHERE id=" + user_id)
+      Good: cursor.execute("SELECT * FROM users WHERE id=?", (user_id,))
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: db.query("SELECT ... " + ...)
+          - pattern: cursor.execute("UPDATE ... " + ...)
+    metadata:
+      category: injection
+      technology: mcp
+      cwe: CWE-89
+
+  # ============================================================================
+  # Shell Safety
+  # ============================================================================
+  - id: mcp-unsafe-shell-metacharacter-handling
+    languages: [python]
+    message: >
+      Shell metacharacters in command could be dangerous even with quoting.
+      Only use quoting as a last resort. Prefer safer approaches:
+      1. Use subprocess with list arguments (no shell=True)
+      2. Use purpose-built libraries instead of shell commands
+    severity: WARNING
+    patterns:
+      - pattern-either:
+          - pattern: shlex.quote(args[$KEY])
+          - pattern: pipes.quote(args[$KEY])
+    metadata:
+      category: injection
+      technology: mcp
+      cwe: CWE-78
+
+  # ============================================================================
+  # Code Quality & Maintainability
+  # ============================================================================
+  - id: mcp-missing-input-type-hints
+    languages: [python]
+    message: >
+      MCP tool function lacks type hints for arguments and return value.
+      Use type hints to document contract and enable static analysis:
+      def my_tool(arguments: Dict[str, str]) -> str:
+    severity: INFO
+    patterns:
+      - pattern: |
+          def $FUNC(arguments):
+              ...
+    metadata:
+      category: best-practices
+      technology: mcp
+      cwe: CWE-1287
+
+  - id: mcp-missing-function-docstring
+    languages: [python]
+    message: >
+      MCP tool function lacks docstring documentation.
+      Document tool purpose, parameters, and return value clearly for maintainability and security review:
+      """
+      Tool purpose.
+      Args: what parameters are expected
+      Returns: what the tool returns and any safety notes
+      """
+    severity: INFO
+    patterns:
+      - pattern-inside: |
+          def $FUNC(...):
+              $BODY
+      - pattern-not: |
+          def $FUNC(...):
+              """..."""
+              ...
+    metadata:
+      category: best-practices
+      technology: mcp
+      cwe: CWE-1287
+
+  - id: mcp-overly-permissive-file-operations
+    languages: [python]
+    message: >
+      File operations may be overly permissive. Restrict file access:
+      1. Only allow reading from specific directories
+      2. Only allow writing to temp/output directories
+      3. Never allow deleting files from untrusted paths
+      4. Use restrictive file permissions (0o644 max)
+    severity: WARNING
+    patterns:
+      - pattern-either:
+          - pattern: os.chmod(...)
+          - pattern: pathlib.Path(...).chmod(...)
+    metadata:
+      category: file-access
+      technology: mcp
+      cwe: CWE-73
