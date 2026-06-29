@@ -141,11 +141,11 @@ class TenantPluginManagerFactory:
                 else:
                     return entry.manager
 
-        if expired is not None:
-            try:
-                await expired.manager.shutdown()
-            except Exception:
-                logger.warning("Failed to shutdown expired manager for context_id=%s", context_id, exc_info=True)
+            if expired is not None:
+                try:
+                    await expired.manager.shutdown()
+                except Exception:
+                    logger.warning("Failed to shutdown expired manager for context_id=%s", context_id, exc_info=True)
 
         async with self._lock:
             inflight = self._inflight.get(context_id)
