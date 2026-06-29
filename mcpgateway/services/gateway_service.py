@@ -738,7 +738,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             logger.warning("OAuth endpoint discovery failed for issuer %s: %s", issuer, _e)
         return raw_oauth_config
 
-    _VALID_SUBJECT_TOKEN_SOURCES = ("inbound_user_jwt", "user_oauth_token")
+    _VALID_SUBJECT_TOKEN_SOURCES = ("inbound_user_jwt",)
     _DEFAULT_REQUESTED_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:access_token"  # nosec B105 - RFC 8693 URI
     # RFC 8693 §3: "jwt" means a generic JWT is being sent, vs "access_token" which implies
     # a token the AS itself previously issued and can recognize as one of its own. CF's inbound
@@ -787,175 +787,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         oauth_config.setdefault("subject_token_type", GatewayService._DEFAULT_SUBJECT_TOKEN_TYPE)
         return oauth_config
 
-    # Conservative TTL when the AS omits expires_in (RFC 8693 makes it optional, L1).
-    # pylint: disable=duplicate-code
-    # Mirrors ToolService's token-exchange helpers below for API parity (both fully tested).
-    _TOKEN_EXCHANGE_FALLBACK_TTL = 60
-
-    async def _resolve_token_exchange_header(self, oauth_config: dict, gateway_id: str, gateway_name: str, app_user_email: str, request_headers: dict) -> dict:
-        """Return an Authorization header with the exchanged token for a gateway connection.
-
-        Calls ``OAuthManager.token_exchange`` directly (not ``get_access_token``) so the
-        real ``expires_in`` drives the cache TTL (B1). Gateway path is Phase 1 only:
-        the subject token always comes from the inbound user's JWT (``inbound_user_jwt``);
-        ``user_oauth_token`` (stored per-user OAuth tokens) is Phase 2 and not supported here.
-
-        Args:
-            oauth_config: Gateway OAuth configuration (grant_type == "token-exchange").
-            gateway_id: Gateway identifier used as a cache key component.
-            gateway_name: Gateway display name, used in error messages and logs.
-            app_user_email: Authenticated end-user email, used as a cache key component.
-            request_headers: Incoming request headers, used to resolve the subject token
-                and for forensic correlation (X-Correlation-ID / X-Request-ID).
-
-        Returns:
-            A dict with a single ``Authorization`` header carrying the exchanged token.
-
-        Raises:
-            GatewayConnectionError: If no usable subject token exists or the exchange fails.
-        """
-        # First-Party
-        from mcpgateway.utils.subject_token import extract_inbound_bearer, looks_like_jwt  # pylint: disable=import-outside-toplevel
-        from mcpgateway.utils.token_exchange_audit import audit_token_exchange  # pylint: disable=import-outside-toplevel
-
-        audience = oauth_config.get("target_audience")
-        user_key = app_user_email or ""
-        # L3: forensic correlation. Pull request/correlation ids from inbound headers when present.
-        rh = request_headers or {}
-        correlation_id = rh.get("x-correlation-id") or rh.get("X-Correlation-ID")
-        request_id = rh.get("x-request-id") or rh.get("X-Request-ID")
-
-        def _coerce_ttl(raw):
-            """Coerce the AS-provided ``expires_in`` into a positive int TTL.
-
-            Args:
-                raw: The raw ``expires_in`` value returned by the authorization server.
-
-            Returns:
-                int: ``raw`` as an integer, or the fallback TTL if ``raw`` is missing
-                or cannot be coerced to ``int`` (L8: never let a non-numeric AS
-                expires_in crash the request).
-            """
-            try:
-                return int(raw) if raw else self._TOKEN_EXCHANGE_FALLBACK_TTL
-            except (TypeError, ValueError):
-                return self._TOKEN_EXCHANGE_FALLBACK_TTL
-
-        cached = await self._token_exchange_cache.get(gateway_id, user_key, audience)
-        if cached:
-            return {"Authorization": f"Bearer {cached}"}
-
-        # P4: short-circuit while a recent failure is still negatively cached (no AS hammering).
-        if await self._token_exchange_cache.is_failed(gateway_id, user_key, audience):
-            # L6: record the degraded-mode denial so an outage burst is observable.
-            logger.debug("token-exchange short-circuited by negative cache for gateway %s", gateway_name, extra={"gateway_id": gateway_id, "correlation_id": correlation_id})
-            raise GatewayConnectionError(f"Token exchange unavailable for gateway '{gateway_name}'. Contact your administrator.")
-
-        # Resolve subject token. inbound_user_jwt must structurally be a JWT (H2);
-        # an opaque CF session/API token is never forwarded to the external AS.
-        subject_token = extract_inbound_bearer(request_headers)
-        if subject_token and not looks_like_jwt(subject_token):
-            subject_token = None
-        if not subject_token:
-            raise GatewayConnectionError(f"User authentication required for token-exchange gateway '{gateway_name}'.")
-
-        # P1: single-flight. Only one coroutine exchanges per {gw,user,aud}; the rest
-        # await the lock and read the freshly-cached token via the double-check below.
-        async with self._token_exchange_cache.lock(gateway_id, user_key, audience):
-            cached = await self._token_exchange_cache.get(gateway_id, user_key, audience)
-            if cached:
-                return {"Authorization": f"Bearer {cached}"}
-
-            scopes = oauth_config.get("scopes") or []
-            started = time.monotonic()
-            try:
-                response = await self.oauth_manager.token_exchange(
-                    token_url=oauth_config["token_url"],
-                    subject_token=subject_token,
-                    client_id=oauth_config.get("client_id", ""),
-                    client_secret=oauth_config.get("client_secret", ""),
-                    audience=audience,
-                    scope=" ".join(scopes) if scopes else None,
-                    requested_token_type=oauth_config.get("requested_token_type", "urn:ietf:params:oauth:token-type:access_token"),
-                    subject_token_type=oauth_config.get("subject_token_type", "urn:ietf:params:oauth:token-type:jwt"),
-                )
-            except Exception as e:
-                latency_ms = int((time.monotonic() - started) * 1000)
-                # H1: caller gets a generic message; AS detail never echoed out.
-                safe_reason = SecurityValidator.sanitize_log_message(str(e))
-                await self._token_exchange_cache.set_failure(gateway_id, user_key, audience)  # P4
-                audit_token_exchange(
-                    user_email=app_user_email,
-                    gateway_id=gateway_id,
-                    target_audience=audience,
-                    success=False,
-                    expires_in=None,
-                    upstream=gateway_name,
-                    error=safe_reason,
-                    latency_ms=latency_ms,
-                    correlation_id=correlation_id,
-                    request_id=request_id,
-                )
-                structured_logger.log(
-                    level="WARNING",
-                    message=f"Token exchange failed for gateway {gateway_name}",
-                    event_type="token_exchange_failed",
-                    user_email=app_user_email,
-                    custom_fields={
-                        "gateway_id": gateway_id,
-                        "target_audience": audience,
-                        "latency_ms": latency_ms,
-                        "error": safe_reason,
-                        "correlation_id": correlation_id,
-                        "request_id": request_id,
-                    },
-                    is_security_event=True,
-                )
-                # L1: keep the stack server-side for debugging (exc_info); message stays sanitized.
-                logger.warning("Token exchange failed for gateway %s: %s", gateway_name, safe_reason, exc_info=True, extra={"gateway_id": gateway_id, "correlation_id": correlation_id})
-                raise GatewayConnectionError(f"Token exchange failed for gateway '{gateway_name}'. Contact your administrator.") from None
-
-            exchanged = response["access_token"]
-            expires_in = _coerce_ttl(response.get("expires_in"))  # L8/L1/B1
-            latency_ms = int((time.monotonic() - started) * 1000)
-            await self._token_exchange_cache.set(gateway_id, user_key, audience, exchanged, expires_in=expires_in)
-            audit_token_exchange(
-                user_email=app_user_email,
-                gateway_id=gateway_id,
-                target_audience=audience,
-                success=True,
-                expires_in=expires_in,
-                upstream=gateway_name,
-                error=None,
-                latency_ms=latency_ms,
-                correlation_id=correlation_id,
-                request_id=request_id,
-            )
-            structured_logger.log(
-                level="INFO",
-                message=f"Token exchange succeeded for gateway {gateway_name}",
-                event_type="token_exchange_succeeded",
-                user_email=app_user_email,
-                custom_fields={
-                    "gateway_id": gateway_id,
-                    "target_audience": audience,
-                    "expires_in": expires_in,
-                    "latency_ms": latency_ms,
-                    "correlation_id": correlation_id,
-                    "request_id": request_id,
-                },
-                is_security_event=True,
-            )
-            return {"Authorization": f"Bearer {exchanged}"}
-
     @staticmethod
     def _sanitize_passthrough_for_token_exchange(passthrough_allowed: Optional[List[str]], grant_type: Optional[str]) -> Optional[List[str]]:
         """Drop ``authorization`` from passthrough when token-exchange owns the header (B3).
 
-        Mirrors ``ToolService._sanitize_passthrough_for_token_exchange`` for API
-        parity. When ``grant_type`` is ``"token-exchange"``, the gateway's
-        exchanged ``Authorization`` header must not be overridden by an inbound
-        caller's JWT via the passthrough allow-list.
+        When ``grant_type`` is ``"token-exchange"``, the gateway's exchanged
+        ``Authorization`` header must not be overridden by an inbound caller's JWT
+        via the passthrough allow-list.
 
         Args:
             passthrough_allowed: The gateway's configured passthrough header allow-list.
@@ -969,73 +807,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if grant_type != "token-exchange" or not passthrough_allowed:
             return passthrough_allowed
         return [h for h in passthrough_allowed if h.lower() != "authorization"]
-
-    async def _invalidate_token_exchange_on_unauthorized(self, status_code: int, oauth_config: Optional[dict], gateway_id: str, app_user_email: Optional[str]) -> None:
-        """Evict the cached exchanged token on an upstream 401 (B2).
-
-        Mirrors ``ToolService._invalidate_token_exchange_on_unauthorized`` for API
-        parity.
-
-        Args:
-            status_code: The HTTP status code returned by the upstream call.
-            oauth_config: Gateway OAuth configuration; a no-op unless
-                ``grant_type == "token-exchange"``.
-            gateway_id: Gateway identifier used as a cache key component.
-            app_user_email: Authenticated end-user email, used as a cache key component.
-        """
-        if status_code != 401:
-            return
-        if not oauth_config or oauth_config.get("grant_type") != "token-exchange":
-            return
-        await self._token_exchange_cache.invalidate(gateway_id, app_user_email or "", oauth_config.get("target_audience"))
-
-    async def _send_with_token_exchange_retry(
-        self,
-        send: Callable[[dict], Awaitable[Any]],
-        headers: dict,
-        oauth_config: Optional[dict],
-        gateway_id: str,
-        gateway_name: str,
-        app_user_email: Optional[str],
-        request_headers: dict,
-    ) -> Any:
-        """Send the upstream request, retrying exactly once on a 401 from a token-exchange gateway (B2).
-
-        Mirrors ``ToolService._send_with_token_exchange_retry`` for API parity.
-        Not currently wired into a forward path: ``GatewayService`` has no
-        per-request outbound forwarding analogous to ``ToolService``'s tool
-        invocation (its ``grant_type == "token-exchange"`` sites are
-        connection-setup/health-check only). Provided here so a future
-        per-request forwarding path can reuse the same retry policy without
-        duplicating it.
-
-        Args:
-            send: An async callable taking a headers dict and returning a response
-                object exposing ``.status_code``.
-            headers: The initial headers to send (including any cached/exchanged
-                ``Authorization`` header).
-            oauth_config: Gateway OAuth configuration; retry only applies when
-                ``grant_type == "token-exchange"``.
-            gateway_id: Gateway identifier used for cache invalidation and re-exchange.
-            gateway_name: Gateway display name, used in error messages and logs.
-            app_user_email: Authenticated end-user email, used for cache keys.
-            request_headers: Incoming request headers, forwarded to
-                ``_resolve_token_exchange_header`` to resolve a fresh subject token.
-
-        Returns:
-            The response object from ``send``, either from the first attempt or
-            the single retry.
-        """
-        resp = await send(headers)
-        if getattr(resp, "status_code", None) != 401:
-            return resp
-        if not oauth_config or oauth_config.get("grant_type") != "token-exchange":
-            return resp
-        await self._invalidate_token_exchange_on_unauthorized(401, oauth_config, gateway_id, app_user_email)
-        fresh = await self._resolve_token_exchange_header(oauth_config, gateway_id, gateway_name, app_user_email, request_headers)
-        return await send(fresh)  # single retry; no loop
-
-    # pylint: enable=duplicate-code
 
     @staticmethod
     def normalize_url(url: str) -> str:

@@ -260,16 +260,20 @@ class OAuthManager:
         if grant_type == "token-exchange":
             if not subject_token:
                 raise OAuthError("Token exchange requires a subject token; the user must be authenticated.")
-            scopes = credentials.get("scopes") or []
+            runtime_creds = await self._prepare_runtime_credentials(credentials, "token-exchange")
+            scopes = runtime_creds.get("scopes") or []
             response = await self.token_exchange(
-                token_url=credentials["token_url"],
+                token_url=runtime_creds["token_url"],
                 subject_token=subject_token,
-                client_id=credentials.get("client_id", ""),
-                client_secret=credentials.get("client_secret", ""),
-                audience=credentials.get("target_audience"),
+                client_id=runtime_creds.get("client_id", ""),
+                client_secret=runtime_creds.get("client_secret", ""),
+                audience=runtime_creds.get("target_audience"),
                 scope=" ".join(scopes) if scopes else None,
-                requested_token_type=credentials.get("requested_token_type", "urn:ietf:params:oauth:token-type:access_token"),
-                subject_token_type=credentials.get("subject_token_type", "urn:ietf:params:oauth:token-type:jwt"),
+                requested_token_type=runtime_creds.get("requested_token_type", "urn:ietf:params:oauth:token-type:access_token"),
+                subject_token_type=runtime_creds.get("subject_token_type", "urn:ietf:params:oauth:token-type:jwt"),
+                ca_certificate=ca_certificate,
+                client_cert=client_cert,
+                client_key=client_key,
             )
             return response["access_token"]
         if grant_type == "authorization_code":
@@ -765,6 +769,9 @@ class OAuthManager:
         scope: Optional[str] = None,
         requested_token_type: str = "urn:ietf:params:oauth:token-type:access_token",
         subject_token_type: str = "urn:ietf:params:oauth:token-type:jwt",
+        ca_certificate: Optional[str] = None,
+        client_cert: Optional[str] = None,
+        client_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         """RFC 8693 token exchange for on-behalf-of flows.
 
@@ -785,6 +792,9 @@ class OAuthManager:
                 (a generic JWT), which is correct for CF's own inbound JWT — as
                 opposed to ``...:access_token``, which per §3 implies a token the
                 AS itself previously issued and can recognize as its own.
+            ca_certificate: Optional custom CA certificate for SSL verification (PEM format).
+            client_cert: Optional client certificate for mTLS (PEM format or file path).
+            client_key: Optional client private key for mTLS (PEM format or file path).
 
         Returns:
             Dict with ``access_token``, ``token_type``, and optionally
@@ -824,8 +834,7 @@ class OAuthManager:
 
         for attempt in range(self.max_retries):
             try:
-                client = await self._get_client()
-                response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
+                response = await self._post_token_request(token_url, token_data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
                 response.raise_for_status()
 
                 token_response = response.json()
