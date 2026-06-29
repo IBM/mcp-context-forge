@@ -332,6 +332,41 @@ def _is_jwt_token(token: str) -> bool:
     return True
 
 
+def _validate_internal_mcp_auth_context(auth_context: Dict[str, Any]) -> None:
+    """Validate a decoded trusted-internal auth context, failing closed on malformed input.
+
+    The public-only RBAC skip in ``_ensure_rpc_permission`` trusts this context, so a
+    public-only context (``is_authenticated is False``) must not carry authenticated-only
+    or elevated attributes. Field types are checked first to avoid downstream confusion
+    (for example a string ``scoped_permissions`` would be iterated per-character).
+
+    Args:
+        auth_context: Decoded auth-context dict from ``decode_internal_mcp_auth_context``.
+
+    Raises:
+        HTTPException: 400 when the context is malformed or a public-only context claims
+            teams, admin, or an identity.
+    """
+    teams = auth_context.get("teams")
+    if teams is not None and not isinstance(teams, list):
+        raise HTTPException(status_code=400, detail="Invalid trusted MCP auth context: teams must be a list")
+
+    scoped_permissions = auth_context.get("scoped_permissions")
+    if scoped_permissions is not None and not isinstance(scoped_permissions, list):
+        raise HTTPException(status_code=400, detail="Invalid trusted MCP auth context: scoped_permissions must be a list")
+
+    # A public-only (unauthenticated) context must map to exactly public privileges.
+    # The RBAC skip relies on this invariant, so reject any contradictory attributes
+    # rather than letting them ride an unauthenticated dispatch.
+    if auth_context.get("is_authenticated") is False:
+        if teams:
+            raise HTTPException(status_code=400, detail="Invalid public-only auth context: teams must be empty")
+        if auth_context.get("is_admin") is True or auth_context.get("permission_is_admin") is True:
+            raise HTTPException(status_code=400, detail="Invalid public-only auth context: admin not permitted")
+        if auth_context.get("email"):
+            raise HTTPException(status_code=400, detail="Invalid public-only auth context: email not permitted")
+
+
 def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
     """Build the authenticated user payload for internal Rust -> Python MCP dispatch.
 
@@ -357,6 +392,10 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
     except Exception as exc:
         logger.debug("Invalid trusted MCP auth context: %s", exc)
         raise HTTPException(status_code=400, detail="Invalid trusted MCP auth context") from exc
+
+    # Fail closed on a malformed or self-contradictory context before it is stored
+    # and trusted by the public-only RBAC skip downstream.
+    _validate_internal_mcp_auth_context(auth_context)
 
     setattr(request.state, "_mcp_internal_auth_context", auth_context)
 
