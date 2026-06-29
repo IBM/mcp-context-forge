@@ -585,8 +585,6 @@ mcpContextForge:
     # Layer 1 (SSE_SEND_TIMEOUT, SSE_RAPID_YIELD_*) is in Transports above.
     MCP_SESSION_POOL_CLEANUP_TIMEOUT: "5.0"   # Layer 2: session cleanup timeout
     SSE_TASK_GROUP_CLEANUP_TIMEOUT: "5.0"     # Layer 2: SSE task group timeout
-    ANYIO_CANCEL_DELIVERY_PATCH_ENABLED: "false" # Layer 3 (EXPERIMENTAL): anyio monkey-patch
-    # ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS: "100"  # only relevant when patch enabled
 
     # ─ Development toggles ─
     DEV_MODE: "false"                # enable dev-mode features

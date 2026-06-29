@@ -1188,13 +1188,6 @@ These settings mitigate CPU spin loops that can occur when SSE/MCP connections a
 | `MCP_SESSION_POOL_CLEANUP_TIMEOUT` | Session `__aexit__` timeout (seconds)            | `5.0`   | float > 0 |
 | `SSE_TASK_GROUP_CLEANUP_TIMEOUT`   | SSE task group cleanup timeout (seconds)         | `5.0`   | float > 0 |
 
-**Layer 3: EXPERIMENTAL - anyio Monkey-Patch**
-
-| Setting                                  | Description                                                   | Default | Options |
-| ---------------------------------------- | ------------------------------------------------------------- | ------- | ------- |
-| `ANYIO_CANCEL_DELIVERY_PATCH_ENABLED`    | Enable anyio `_deliver_cancellation` iteration limit          | `false` | bool    |
-| `ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS`   | Max iterations before forcing termination                     | `100`   | int > 0 |
-
 ---
 
 ## 🐳 Container Configuration
