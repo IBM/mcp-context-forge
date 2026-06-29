@@ -20,7 +20,7 @@ from fastapi import Request
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.transports import sse_transport
-from mcpgateway.transports.sse_transport import SSETransport, _build_sse_frame, _get_sse_cleanup_timeout
+from mcpgateway.transports.sse_transport import SSETransport, _build_sse_frame
 
 
 class _DummyResponse:
@@ -314,67 +314,7 @@ async def test_create_sse_response_rapid_yield_deque(monkeypatch):
     assert len(frames) >= 2
 
 
-def test_anyio_cancel_delivery_patch_toggle(monkeypatch):
-    monkeypatch.setattr(settings, "anyio_cancel_delivery_patch_enabled", False)
-    sse_transport._patch_applied = False
-    assert sse_transport.apply_anyio_cancel_delivery_patch() is False
-    assert sse_transport._patch_applied is False
 
-    monkeypatch.setattr(settings, "anyio_cancel_delivery_patch_enabled", True)
-    monkeypatch.setattr(settings, "anyio_cancel_delivery_max_iterations", 1)
-    sse_transport._patch_applied = False
-
-    original = sse_transport.CancelScope._deliver_cancellation
-    assert sse_transport.apply_anyio_cancel_delivery_patch() is True
-    assert sse_transport._patch_applied is True
-
-    assert sse_transport.remove_anyio_cancel_delivery_patch() is True
-    assert sse_transport.CancelScope._deliver_cancellation is original
-
-
-def test_anyio_cancel_delivery_patch_failure(monkeypatch):
-    monkeypatch.setattr(settings, "anyio_cancel_delivery_patch_enabled", True)
-    sse_transport._patch_applied = False
-
-    def _fail(_max):  # noqa: D401 - test stub
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr(sse_transport, "_create_patched_deliver_cancellation", _fail)
-    assert sse_transport.apply_anyio_cancel_delivery_patch() is False
-
-
-def test_remove_anyio_cancel_delivery_patch_not_applied():
-    sse_transport._patch_applied = False
-    assert sse_transport.remove_anyio_cancel_delivery_patch() is False
-
-
-def test_get_sse_cleanup_timeout_fallback(monkeypatch):
-    class _BadSettings:
-        @property
-        def sse_task_group_cleanup_timeout(self):  # noqa: D401 - property for test
-            raise RuntimeError("boom")
-
-    monkeypatch.setattr(sse_transport, "settings", _BadSettings())
-    assert _get_sse_cleanup_timeout() == 5.0
-
-
-def test_patched_deliver_cancellation_limits_iterations(monkeypatch):
-    calls = []
-
-    def _orig(self, origin):  # noqa: D401 - test stub
-        calls.append((self, origin))
-        return True
-
-    monkeypatch.setattr(sse_transport, "_original_deliver_cancellation", _orig)
-    patched = sse_transport._create_patched_deliver_cancellation(1)
-
-    origin = SimpleNamespace()
-    scope = SimpleNamespace(_cancel_handle="handle")
-
-    assert patched(scope, origin) is True
-    assert patched(scope, origin) is False
-    assert scope._cancel_handle is None
-    assert len(calls) == 1
 
 
 @pytest.mark.asyncio
@@ -429,33 +369,7 @@ async def test_event_source_response_call_runs_tasks():
     response.background.assert_awaited()
 
 
-def test_anyio_cancel_delivery_patch_idempotent(monkeypatch):
-    """Calling apply_anyio_cancel_delivery_patch twice should short-circuit when already applied."""
-    monkeypatch.setattr(sse_transport, "_patch_applied", True)
-    assert sse_transport.apply_anyio_cancel_delivery_patch() is True
 
-
-def test_remove_anyio_cancel_delivery_patch_handles_exception(monkeypatch):
-    """remove_anyio_cancel_delivery_patch should swallow assignment failures and return False."""
-
-    class _BoomCancelScope:
-        def __setattr__(self, _name, _value):  # noqa: D401 - test stub
-            raise RuntimeError("boom")
-
-    monkeypatch.setattr(sse_transport, "_patch_applied", True)
-    monkeypatch.setattr(sse_transport, "CancelScope", _BoomCancelScope())
-    assert sse_transport.remove_anyio_cancel_delivery_patch() is False
-
-
-def test_patched_deliver_cancellation_max_iterations_no_cancel_handle(monkeypatch):
-    """Max-iteration protection should still return False even if cancel handle is missing."""
-    monkeypatch.setattr(sse_transport, "_original_deliver_cancellation", lambda *_args, **_kwargs: True)
-    patched = sse_transport._create_patched_deliver_cancellation(0)
-
-    origin = SimpleNamespace()
-    scope = SimpleNamespace()
-
-    assert patched(scope, origin) is False
 
 
 @pytest.mark.asyncio

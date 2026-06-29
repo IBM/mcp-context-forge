@@ -62,13 +62,7 @@ We implement a **defense-in-depth** approach with three layers:
 └─────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────┐
-│                Layer 3: Last Resort (Experimental)           │
-│         Force-terminate infinite cancellation loops          │
-│   ANYIO_CANCEL_DELIVERY_PATCH_ENABLED/MAX_ITERATIONS        │
-└─────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────┐
-│                    Layer 4: Recovery                         │
+│                    Layer 3: Recovery                         │
 │         Worker recycling cleans up orphaned tasks            │
 │   GUNICORN_MAX_REQUESTS, GUNICORN_MAX_REQUESTS_JITTER       │
 └─────────────────────────────────────────────────────────────┘
@@ -167,64 +161,7 @@ SSE_TASK_GROUP_CLEANUP_TIMEOUT=10.0
 
 ---
 
-## Layer 3: anyio Monkey-Patch (Experimental)
-
-Last resort: directly patch anyio to limit `_deliver_cancellation` iterations.
-
-### Configuration Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ANYIO_CANCEL_DELIVERY_PATCH_ENABLED` | `false` | Enable the monkey-patch. Only enable if Layers 1-2 don't resolve the issue. |
-| `ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS` | `100` | Maximum iterations before forcing termination of the cancellation loop. |
-
-### How It Works
-
-The patch wraps anyio's `_deliver_cancellation` method to add an iteration counter:
-
-```python
-def _patched_deliver_cancellation(self, origin):
-    if not hasattr(origin, "_delivery_iterations"):
-        origin._delivery_iterations = 0
-    origin._delivery_iterations += 1
-
-    if origin._delivery_iterations > max_iterations:
-        logger.warning("anyio cancel delivery exceeded %d iterations, forcing termination", max_iterations)
-        # Clear the cancel handle to break the loop
-        if hasattr(self, "_cancel_handle") and self._cancel_handle is not None:
-            self._cancel_handle = None
-        return False
-
-    return original_deliver_cancellation(self, origin)
-```
-
-### Warnings
-
-!!! warning "Experimental Feature"
-    This patch modifies internal anyio behavior and may:
-
-    - Leave some tasks uncancelled (usually harmless, cleaned up by worker recycling)
-    - Be removed when anyio or MCP SDK fix the upstream issue
-    - Have unknown interactions with future anyio versions
-
-### Recommended Settings
-
-```bash
-# Disabled by default (use Layers 1-2 first)
-ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=false
-
-# If needed, start conservative
-ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=true
-ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS=100
-
-# More aggressive (faster termination, more orphaned tasks)
-ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=true
-ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS=50
-```
-
----
-
-## Layer 4: Worker Recycling
+## Layer 3: Worker Recycling
 
 Gunicorn worker recycling provides a safety net for any orphaned tasks.
 
@@ -263,10 +200,7 @@ SSE_RAPID_YIELD_MAX=50
 MCP_SESSION_POOL_CLEANUP_TIMEOUT=5.0
 SSE_TASK_GROUP_CLEANUP_TIMEOUT=5.0
 
-# Layer 3: Disabled (use only if needed)
-ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=false
-
-# Layer 4: Worker Recycling
+# Layer 3: Worker Recycling
 GUNICORN_MAX_REQUESTS=5000
 GUNICORN_MAX_REQUESTS_JITTER=500
 ```
@@ -283,11 +217,7 @@ SSE_RAPID_YIELD_MAX=25
 MCP_SESSION_POOL_CLEANUP_TIMEOUT=0.5
 SSE_TASK_GROUP_CLEANUP_TIMEOUT=0.5
 
-# Layer 3: Enabled
-ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=true
-ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS=50
-
-# Layer 4: Frequent recycling
+# Layer 3: Frequent recycling
 GUNICORN_MAX_REQUESTS=2000
 GUNICORN_MAX_REQUESTS_JITTER=200
 ```
@@ -304,10 +234,7 @@ SSE_RAPID_YIELD_MAX=100
 MCP_SESSION_POOL_CLEANUP_TIMEOUT=10.0
 SSE_TASK_GROUP_CLEANUP_TIMEOUT=10.0
 
-# Layer 3: Disabled
-ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=false
-
-# Layer 4: Standard recycling
+# Layer 3: Standard recycling
 GUNICORN_MAX_REQUESTS=5000
 GUNICORN_MAX_REQUESTS_JITTER=500
 ```
@@ -357,7 +284,7 @@ The following files were modified to implement this mitigation:
 | File | Changes |
 |------|---------|
 | `mcpgateway/config.py` | Added configuration variables for all layers |
-| `mcpgateway/transports/sse_transport.py` | Added anyio monkey-patch (Layer 3) |
+| `mcpgateway/transports/sse_transport.py` | Added SSE connection protection and cleanup timeouts |
 | `mcpgateway/services/mcp_session_pool.py` | Added cleanup timeout (Layer 2) |
 | `mcpgateway/translate.py` | Added cleanup timeout for streamable HTTP |
 
@@ -376,7 +303,6 @@ The following files were modified to implement this mitigation:
 
 - **PR #XXXX**: Initial cleanup timeout implementation
 - **PR #XXXX**: Added SSE rapid yield detection
-- **PR #XXXX**: Added optional anyio monkey-patch
 - **PR #XXXX**: Consolidated documentation
 
 ---
@@ -385,7 +311,6 @@ The following files were modified to implement this mitigation:
 
 1. **Upstream Fix**: Monitor [anyio#695](https://github.com/agronholm/anyio/issues/695) for resolution
 2. **MCP SDK**: Consider contributing fix to MCP SDK for proper task cancellation handling
-3. **Remove Workarounds**: Once upstream is fixed, remove Layer 3 monkey-patch
 
 ---
 

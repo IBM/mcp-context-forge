@@ -246,9 +246,6 @@
             "ALLOW_PUBLIC_VISIBILITY": {
               "type": "string"
             },
-            "ANYIO_CANCEL_DELIVERY_PATCH_ENABLED": {
-              "type": "string"
-            },
             "APP_DOMAIN": {
               "type": "string",
               "description": "Domain for production CORS origins",

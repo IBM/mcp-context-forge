@@ -695,14 +695,7 @@ services:
       # normal operation.
       - MCP_SESSION_POOL_CLEANUP_TIMEOUT=0.5                    # Session __aexit__ timeout (default: 5.0)
       - SSE_TASK_GROUP_CLEANUP_TIMEOUT=0.5                      # SSE task group timeout (default: 5.0)
-      # ─────────────────────────────────────────────────────────────────────────
-      # Layer 3: EXPERIMENTAL - anyio Monkey-Patch
-      # ─────────────────────────────────────────────────────────────────────────
-      # Last resort: patches anyio to limit _deliver_cancellation iterations.
-      # Enable only if Layers 1-2 don't fully resolve the issue.
-      # WARNING: May be removed when anyio/MCP SDK fix upstream issue.
-      - ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=${ANYIO_CANCEL_DELIVERY_PATCH_ENABLED:-false}  # Experimental workaround; disabled for current AnyIO
-      - ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS=500              # Max iterations before giving up (~60ms recovery)
+
 
       # ═══════════════════════════════════════════════════════════════════════════
       # Execution Metrics Recording
