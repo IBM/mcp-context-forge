@@ -147,7 +147,6 @@ class TenantPluginManagerFactory:
                 except Exception:
                     logger.warning("Failed to shutdown expired manager for context_id=%s", context_id, exc_info=True)
 
-        async with self._lock:
             inflight = self._inflight.get(context_id)
             if inflight is None:
                 inflight = asyncio.create_task(self._build_manager(context_id))
