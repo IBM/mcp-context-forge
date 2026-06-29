@@ -461,6 +461,89 @@ class TestTeamsRouter:
             )
 
     @pytest.mark.asyncio
+    async def test_list_teams_non_admin_does_not_see_others_personal_teams(self, mock_user_context, mock_team, mock_db):
+        """Security: a non-admin caller must only get teams scoped to their own membership.
+
+        The non-admin branch resolves teams via ``get_user_teams(email, include_personal=True)``,
+        which is scoped to the authenticated caller. It must never invoke the admin-only broad
+        listing (``list_teams`` / ``get_teams_count``), which would expose other users' personal
+        teams.
+        """
+        # get_user_teams only ever returns the caller's own teams (service-side scoping).
+        own_team = mock_team
+        own_team.created_by = mock_user_context["email"]
+
+        with mock_permission_check(is_admin=False), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_teams = AsyncMock(return_value=[own_team])
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={str(own_team.id): 1})
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import list_teams
+
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, current_user_ctx=mock_user_context, db=mock_db)
+
+            assert len(result.teams) == 1
+            assert result.teams[0].id == own_team.id
+            # Scoped strictly to the authenticated caller.
+            mock_service.get_user_teams.assert_called_once_with(mock_user_context["email"], include_personal=True)
+            # The admin-only broad listing must never run for a non-admin caller.
+            mock_service.list_teams.assert_not_called()
+            mock_service.get_teams_count.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_list_teams_admin_with_zero_teams(self, mock_admin_context, mock_db):
+        """Edge case: an admin with no visible teams gets an empty list, not an error."""
+        with mock_permission_check(is_admin=True), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.list_teams = AsyncMock(return_value=([], None))
+            mock_service.get_teams_count = AsyncMock(return_value=0)
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={})
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import list_teams
+
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, current_user_ctx=mock_admin_context, db=mock_db)
+
+            assert result.teams == []
+            assert result.total == 0
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com")
+            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com")
+
+    @pytest.mark.asyncio
+    async def test_list_teams_sso_platform_admin_includes_own_personal_team(self, mock_sso_platform_admin_context, mock_team, mock_db):
+        """Security/regression: an SSO platform admin (is_admin=False in DB) must still see their own personal team.
+
+        SSO admins gain admin access via RBAC rather than the DB ``is_admin`` flag, so the admin
+        branch must forward the caller's own email as ``personal_owner_email`` to surface their
+        personal team (issue #5391), while never widening visibility to other users' personal teams.
+        """
+        personal_team = mock_team
+        personal_team.is_personal = True
+        personal_team.created_by = "sso-admin@example.com"
+
+        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService, patch("mcpgateway.routers.teams.PermissionService") as MockPermissionService:
+            mock_perm_service = AsyncMock()
+            mock_perm_service.check_platform_admin_permission = AsyncMock(return_value=True)
+            MockPermissionService.return_value = mock_perm_service
+
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.list_teams = AsyncMock(return_value=([personal_team], None))
+            mock_service.get_teams_count = AsyncMock(return_value=1)
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={str(personal_team.id): 1})
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import list_teams
+
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, current_user_ctx=mock_sso_platform_admin_context, db=mock_db)
+
+            assert len(result.teams) == 1
+            assert result.teams[0].id == personal_team.id
+            # The caller's own email (not a client-supplied value) scopes the personal team.
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="sso-admin@example.com")
+            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="sso-admin@example.com")
+
+    @pytest.mark.asyncio
     async def test_create_team_sso_platform_admin_bypass_limits(self, mock_sso_platform_admin_context, mock_team, mock_db):
         """Test SSO platform_admin can bypass team creation limits."""
         request = TeamCreateRequest(name="New Team", description="A new team", visibility="private", max_members=50)

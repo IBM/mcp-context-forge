@@ -1365,6 +1365,82 @@ curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
   $BASE_URL/a2a/$A2A_ID | jq '.'
 ```
 
+## Team Management
+
+Teams are the unit of multi-tenancy in ContextForge. The `GET /teams` endpoint lists the teams visible to the caller and is the same endpoint that backs the Admin UI Teams page and the team switcher.
+
+Visibility follows the two-layer security model:
+
+- **Platform admins** see all **non-personal** teams plus **their own personal team**. They do *not* see other users' personal teams. (This matches the `/admin/teams/partial` admin view.)
+- **Regular users** see only the teams they are a member of (including their own personal team).
+
+The caller's own personal team is derived from the authenticated identity, never from client input, so this endpoint cannot be used to enumerate other users' personal teams.
+
+### List Teams
+
+```bash
+# List teams visible to the caller (non-paginated response - default)
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/teams | jq '.'
+```
+
+**Response (`TeamListResponse`):**
+```json
+{
+  "teams": [
+    {
+      "id": "team123",
+      "name": "Engineering",
+      "slug": "engineering",
+      "description": "Engineering team",
+      "created_by": "admin@example.com",
+      "is_personal": false,
+      "visibility": "private",
+      "max_members": 100,
+      "member_count": 7,
+      "is_active": true
+    }
+  ],
+  "total": 1
+}
+```
+
+### Pagination
+
+`GET /teams` supports the same query parameters as other main API endpoints:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `skip` | int | `0` | Number of teams to skip (offset). |
+| `limit` | int | `50` | Maximum number of teams to return (capped by `PAGINATION_MAX_PAGE_SIZE`). |
+| `cursor` | string | – | Opaque cursor for cursor-based pagination. |
+| `include_pagination` | bool | `false` | When `true`, return cursor metadata instead of a total count. |
+
+```bash
+# Offset-based pagination
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/teams?skip=50&limit=50" | jq '.'
+
+# Cursor-based pagination (returns CursorPaginatedTeamsResponse)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/teams?include_pagination=true" | jq '.'
+```
+
+**Response with `include_pagination=true` (`CursorPaginatedTeamsResponse`):**
+```json
+{
+  "teams": [ ... ],
+  "nextCursor": "eyJjcmVhdGVkX2F0IjogIjIwMjQtMDEtMDFUMTI6MDA6MDBaIiwgImlkIjogInRlYW0xMjMifQ"
+}
+```
+
+```bash
+# Fetch the next page using the returned cursor
+CURSOR=$(curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/teams?include_pagination=true" | jq -r '.nextCursor')
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/teams?include_pagination=true&cursor=$CURSOR" | jq '.'
+```
+
 ## OpenAPI Specification
 
 ### Get OpenAPI Schema
