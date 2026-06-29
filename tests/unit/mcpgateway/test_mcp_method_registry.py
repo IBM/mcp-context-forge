@@ -1,12 +1,31 @@
 # -*- coding: utf-8 -*-
 """Tests for the MCP method registry and method routing."""
 
+# Standard
+from types import SimpleNamespace
+from unittest.mock import patch
+
 # Third-Party
+import orjson
 import pytest
 
 # First-Party
 from mcpgateway.services.mcp_method_registry import mcp_method_registry, MCPMethodRegistry
 from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
+
+
+class FakeRequest:
+    """Small request double for RPC routing tests."""
+
+    def __init__(self, body: dict) -> None:
+        self._body = orjson.dumps(body)
+        self.headers = {}
+        self.query_params = {}
+        self.state = SimpleNamespace()
+
+    async def body(self) -> bytes:
+        """Return encoded request body."""
+        return self._body
 
 
 class TestMCPMethodRegistry:
@@ -93,29 +112,48 @@ class TestMCPMethodRegistry:
 class TestMCPMethodRouting:
     """Tests for MCP method routing behavior."""
 
-    def test_unknown_mcp_apps_method_returns_method_not_found(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_unknown_mcp_apps_method_returns_method_not_found(self, monkeypatch):
         """Unknown MCP Apps methods should return method-not-found error."""
-        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
-
-        # Simulate RPC handler behavior
         # First-Party
-        from mcpgateway.services.mcp_method_registry import mcp_method_registry
+        from mcpgateway import main as main_mod
 
-        method = "extensions/unknown"
-        assert not mcp_method_registry.is_known_method(method)
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        request = FakeRequest({"jsonrpc": "2.0", "id": "ext-1", "method": "extensions/unknown", "params": {}})
 
-        # This should trigger -32601 error in actual RPC handler
+        response = await main_mod._handle_rpc_authenticated(request, db=SimpleNamespace(), user={"email": "user@example.com"})
 
-    def test_known_mcp_prefix_but_unknown_method(self, monkeypatch):
+        assert response["error"]["code"] == -32601
+        assert response["id"] == "ext-1"
+
+    @pytest.mark.asyncio
+    async def test_known_mcp_prefix_but_unknown_method(self, monkeypatch):
         """Known MCP prefix but unknown method should return method-not-found."""
-        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
-
         # First-Party
-        from mcpgateway.services.mcp_method_registry import mcp_method_registry
+        from mcpgateway import main as main_mod
 
-        # io.modelcontextprotocol/ prefix is known, but /unknown is not
-        method = "io.modelcontextprotocol/unknown"
-        assert not mcp_method_registry.is_known_method(method)
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        request = FakeRequest({"jsonrpc": "2.0", "id": "ext-2", "method": "io.modelcontextprotocol/unknown", "params": {}})
+
+        response = await main_mod._handle_rpc_authenticated(request, db=SimpleNamespace(), user={"email": "user@example.com"})
+
+        assert response["error"]["code"] == -32601
+        assert response["id"] == "ext-2"
+
+    @pytest.mark.asyncio
+    async def test_known_extension_method_without_handler_returns_method_not_found(self, monkeypatch):
+        """Known extension methods still need explicit handler support."""
+        # First-Party
+        from mcpgateway import main as main_mod
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        request = FakeRequest({"jsonrpc": "2.0", "id": "ext-3", "method": "extensions/known", "params": {}})
+
+        with patch("mcpgateway.services.mcp_method_registry.mcp_method_registry.is_known_method", return_value=True):
+            response = await main_mod._handle_rpc_authenticated(request, db=SimpleNamespace(), user={"email": "user@example.com"})
+
+        assert response["error"]["code"] == -32601
+        assert response["id"] == "ext-3"
 
     def test_core_method_precedence(self, monkeypatch):
         """Core MCP methods should be handled first."""
@@ -126,6 +164,3 @@ class TestMCPMethodRouting:
 
         assert mcp_method_registry.is_core_method("tools/call")
         assert mcp_method_registry.is_known_method("tools/call")
-
-        # Core method check should come first in RPC handler
-        # (verified by code inspection in main.py)

@@ -7,20 +7,23 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 import orjson
 import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import MCPAppSession, Resource
+from mcpgateway.common.models import TextContent, ToolResult
 from mcpgateway.services.mcp_apps import (
     mcp_app_session_service,
     MCP_UI_EXTENSION,
     MCPAppsValidationError,
     validate_ui_resource,
 )
-from mcpgateway.services.tool_service import ToolNotFoundError, ToolService
+from mcpgateway.services.resource_service import ResourceNotFoundError
+from mcpgateway.services.tool_service import ToolError, ToolNotFoundError, ToolService
 
 
 @pytest.fixture
@@ -140,6 +143,42 @@ class FakeRequest:
 
 class TestAppBridgeEndpoints:
     """Endpoint-level AppBridge security tests."""
+
+    def test_appbridge_routes_reject_unauthenticated_before_execution(self, monkeypatch):
+        """Unauthenticated AppBridge requests should fail before resource or tool execution."""
+        # First-Party
+        from mcpgateway import main as main_mod
+
+        monkeypatch.setattr(main_mod.settings, "auth_required", True)
+        monkeypatch.setattr(main_mod.settings, "mcp_client_auth_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "mcpgateway_mcp_apps_enabled", True)
+        monkeypatch.setattr("mcpgateway.middleware.rbac.settings.auth_required", True)
+        monkeypatch.setattr("mcpgateway.middleware.rbac.settings.mcp_client_auth_enabled", True)
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+
+        route_app = FastAPI()
+        route_app.include_router(main_mod.utility_router)
+        client = TestClient(route_app, raise_server_exceptions=False)
+        with (
+            patch.object(main_mod.resource_service, "read_resource", new=AsyncMock()) as read_resource_mock,
+            patch.object(main_mod.tool_service, "invoke_tool", new=AsyncMock()) as invoke_tool_mock,
+        ):
+            create_response = client.post(
+                "/mcp/apps/sessions",
+                json={"resourceUri": "ui://widgets/example", "serverId": "server-1"},
+                headers={"mcp-session-id": "mcp-session-1"},
+            )
+            rpc_response = client.post(
+                "/mcp/apps/sessions/app-session-1/rpc",
+                json={"jsonrpc": "2.0", "id": "1", "method": "tools/call", "params": {"name": "helper"}},
+                headers={"mcp-session-id": "mcp-session-1"},
+            )
+        client.close()
+
+        assert create_response.status_code == 401
+        assert rpc_response.status_code == 401
+        read_resource_mock.assert_not_awaited()
+        invoke_tool_mock.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_execute_rpc_initialize_advertises_authorized_extensions(self, monkeypatch, mock_db):
@@ -347,6 +386,30 @@ class TestAppBridgeEndpoints:
         create_mock.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_create_session_denies_invisible_ui_resource_without_persisting(self, monkeypatch, mock_db):
+        """Session creation should fail closed when the caller cannot read the UI resource."""
+        # First-Party
+        from mcpgateway import main as main_mod
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        request = FakeRequest(
+            {"resourceUri": "ui://widgets/private", "serverId": "server-1"},
+            headers={"mcp-session-id": "mcp-session-1"},
+        )
+
+        with (
+            patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
+            patch.object(main_mod, "get_rpc_filter_context", return_value=("user@example.com", ["team-1"], False)),
+            patch.object(main_mod.resource_service, "read_resource", new=AsyncMock(side_effect=ResourceNotFoundError("Resource not found"))) as read_mock,
+            patch.object(main_mod.mcp_app_session_service, "create_session") as create_mock,
+        ):
+            with pytest.raises(ResourceNotFoundError):
+                await main_mod.create_mcp_app_session.__wrapped__(request=request, db=mock_db, user={"email": "user@example.com"})
+
+        read_mock.assert_awaited_once()
+        create_mock.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_rpc_rejects_disabled_malformed_and_missing_session(self, monkeypatch, mock_db):
         """AppBridge RPC should reject disabled, malformed, unsupported, and unbound requests."""
         # First-Party
@@ -526,6 +589,24 @@ class TestAppBridgeEndpoints:
             patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
             patch.object(main_mod, "get_request_identity", return_value=("user@example.com", False)),
             patch.object(main_mod.mcp_app_session_service, "get_valid_session", return_value=valid_app_session),
+            patch.object(main_mod.tool_service, "invoke_tool", new=AsyncMock(side_effect=ToolError("tool failed"))),
+        ):
+            result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("app-session-1", request=request, db=mock_db, user={"email": "user@example.com"})
+        assert result["error"]["code"] == -32000
+
+        with (
+            patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
+            patch.object(main_mod, "get_request_identity", return_value=("user@example.com", False)),
+            patch.object(main_mod.mcp_app_session_service, "get_valid_session", return_value=valid_app_session),
+            patch.object(main_mod.tool_service, "invoke_tool", new=AsyncMock(side_effect=ValueError("bad params"))),
+        ):
+            result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("app-session-1", request=request, db=mock_db, user={"email": "user@example.com"})
+        assert result["error"]["code"] == -32602
+
+        with (
+            patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
+            patch.object(main_mod, "get_request_identity", return_value=("user@example.com", False)),
+            patch.object(main_mod.mcp_app_session_service, "get_valid_session", return_value=valid_app_session),
             patch.object(main_mod.tool_service, "invoke_tool", new=AsyncMock(side_effect=RuntimeError("boom"))),
         ):
             result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("app-session-1", request=request, db=mock_db, user={"email": "user@example.com"})
@@ -535,28 +616,48 @@ class TestAppBridgeEndpoints:
 class TestAppBridgeSessionSecurity:
     """Security tests for AppBridge session validation."""
 
-    def test_wrong_team_access_rejected(self, mock_db, valid_app_session):
-        """AppBridge session should reject access from wrong team."""
-        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+    def _persist_session(self, db, **overrides):
+        """Persist an AppBridge session for predicate tests."""
+        now = datetime.now(timezone.utc)
+        values = {
+            "id": "test-session-id",
+            "mcp_session_id": "mcp-session-123",
+            "user_email": "user@example.com",
+            "server_id": "server-123",
+            "resource_uri": "ui://widgets/example",
+            "token_teams": ["team1"],
+            "created_at": now,
+            "expires_at": now + timedelta(minutes=15),
+        }
+        values.update(overrides)
+        session = MCPAppSession(**values)
+        db.add(session)
+        db.commit()
+        return session
+
+    def test_session_lookup_returns_stored_token_scope(self, test_db):
+        """Valid session lookup should return the stored token scope used by later tool authorization."""
+        self._persist_session(test_db, id="scope-session", token_teams=["team1"])
 
         result = mcp_app_session_service.get_valid_session(
-            mock_db,
-            app_session_id="test-session-id",
+            test_db,
+            app_session_id="scope-session",
             mcp_session_id="mcp-session-123",
             user_email="user@example.com",
             server_id="server-123",
             is_admin=False,
         )
 
-        assert result is None
+        assert result is not None
+        assert result.token_teams == ["team1"]
 
-    def test_wrong_server_access_rejected(self, mock_db, valid_app_session):
+    def test_wrong_server_access_rejected(self, test_db):
         """AppBridge session should reject access from wrong server."""
-        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+        self._persist_session(test_db, id="wrong-server-session")
 
         result = mcp_app_session_service.get_valid_session(
-            mock_db,
-            app_session_id="test-session-id",
+            test_db,
+            app_session_id="wrong-server-session",
             mcp_session_id="mcp-session-123",
             user_email="user@example.com",
             server_id="wrong-server-id",
@@ -565,24 +666,18 @@ class TestAppBridgeSessionSecurity:
 
         assert result is None
 
-    def test_expired_session_rejected(self, mock_db):
+    def test_expired_session_rejected(self, test_db):
         """AppBridge session should reject expired sessions."""
-        expired_session = MCPAppSession(
-            id="test-session-id",
-            mcp_session_id="mcp-session-123",
-            user_email="user@example.com",
-            server_id="server-123",
-            resource_uri="ui://widgets/example",
-            token_teams=["team1"],
+        self._persist_session(
+            test_db,
+            id="expired-session",
             created_at=datetime.now(timezone.utc) - timedelta(hours=1),
-            expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),  # Expired
+            expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
         )
 
-        mock_db.execute.return_value.scalar_one_or_none.return_value = None
-
         result = mcp_app_session_service.get_valid_session(
-            mock_db,
-            app_session_id="test-session-id",
+            test_db,
+            app_session_id="expired-session",
             mcp_session_id="mcp-session-123",
             user_email="user@example.com",
             server_id="server-123",
@@ -591,12 +686,10 @@ class TestAppBridgeSessionSecurity:
 
         assert result is None
 
-    def test_missing_session_rejected(self, mock_db):
+    def test_missing_session_rejected(self, test_db):
         """AppBridge session should reject missing session IDs."""
-        mock_db.execute.return_value.scalar_one_or_none.return_value = None
-
         result = mcp_app_session_service.get_valid_session(
-            mock_db,
+            test_db,
             app_session_id="nonexistent-session",
             mcp_session_id="mcp-session-123",
             user_email="user@example.com",
@@ -606,13 +699,13 @@ class TestAppBridgeSessionSecurity:
 
         assert result is None
 
-    def test_wrong_user_access_rejected(self, mock_db, valid_app_session):
+    def test_wrong_user_access_rejected(self, test_db):
         """AppBridge session should reject access from wrong user (non-admin)."""
-        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+        self._persist_session(test_db, id="wrong-user-session")
 
         result = mcp_app_session_service.get_valid_session(
-            mock_db,
-            app_session_id="test-session-id",
+            test_db,
+            app_session_id="wrong-user-session",
             mcp_session_id="mcp-session-123",
             user_email="different-user@example.com",  # Wrong user
             server_id="server-123",
@@ -621,13 +714,13 @@ class TestAppBridgeSessionSecurity:
 
         assert result is None
 
-    def test_admin_bypass_user_check(self, mock_db, valid_app_session):
+    def test_admin_bypass_user_check(self, test_db):
         """Admin should be able to access any user's session."""
-        mock_db.execute.return_value.scalar_one_or_none.return_value = valid_app_session
+        self._persist_session(test_db, id="admin-bypass-session")
 
         result = mcp_app_session_service.get_valid_session(
-            mock_db,
-            app_session_id="test-session-id",
+            test_db,
+            app_session_id="admin-bypass-session",
             mcp_session_id="mcp-session-123",
             user_email="different-user@example.com",  # Different user
             server_id="server-123",
@@ -635,6 +728,36 @@ class TestAppBridgeSessionSecurity:
         )
 
         assert result is not None
+
+    def test_create_session_rolls_back_on_commit_failure(self, mock_db):
+        """Commit failures during session creation should be rolled back and surfaced."""
+        mock_db.commit.side_effect = RuntimeError("commit failed")
+
+        with pytest.raises(RuntimeError, match="commit failed"):
+            mcp_app_session_service.create_session(
+                mock_db,
+                mcp_session_id="mcp-session-123",
+                user_email="user@example.com",
+                server_id="server-123",
+                resource_uri="ui://widgets/example",
+                token_teams=["team1"],
+            )
+
+        mock_db.rollback.assert_called_once()
+
+    def test_cleanup_expired_sessions_deletes_only_expired_rows(self, test_db):
+        """Expired AppBridge sessions should have an explicit cleanup path."""
+        test_db.query(MCPAppSession).delete()
+        test_db.commit()
+        now = datetime.now(timezone.utc)
+        self._persist_session(test_db, id="cleanup-expired", expires_at=now - timedelta(seconds=1))
+        self._persist_session(test_db, id="cleanup-active", expires_at=now + timedelta(minutes=5))
+
+        deleted_count = mcp_app_session_service.cleanup_expired_sessions(test_db, now=now)
+
+        assert deleted_count == 1
+        assert test_db.get(MCPAppSession, "cleanup-expired") is None
+        assert test_db.get(MCPAppSession, "cleanup-active") is not None
 
 
 class TestAppOnlyToolSecurity:
@@ -776,3 +899,69 @@ class TestAppOnlyToolSecurity:
 
         with pytest.raises(ToolNotFoundError):
             await service.invoke_tool(mock_db, "helper", {}, user_email="user@example.com", server_id="server-1", require_model_visible=True)
+
+    @pytest.mark.asyncio
+    async def test_app_only_tool_visibility_split_end_to_end(self, monkeypatch, mock_db, valid_app_session):
+        """One app-only tool should be hidden from model discovery, denied normally, and accepted through AppBridge."""
+        # First-Party
+        from mcpgateway import main as main_mod
+        from mcpgateway.main import _serialize_mcp_tool_definitions
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        app_only_tool = SimpleNamespace(
+            id="tool-app-only",
+            name="helper",
+            original_name="helper",
+            url=None,
+            description="",
+            original_description="",
+            integration_type="MCP",
+            request_type="SSE",
+            headers={},
+            input_schema={"type": "object"},
+            output_schema=None,
+            annotations={},
+            extension_metadata={MCP_UI_EXTENSION: {"audience": ["app"]}},
+            auth_type=None,
+            jsonpath_filter=None,
+            custom_name=None,
+            custom_name_slug=None,
+            display_name=None,
+            gateway_id=None,
+            grpc_service_id=None,
+            enabled=True,
+            deprecated=False,
+            reachable=True,
+            tags=[],
+            team_id=None,
+            owner_email="user@example.com",
+            visibility="public",
+            query_mapping=None,
+            header_mapping=None,
+            gateway=None,
+        )
+
+        assert _serialize_mcp_tool_definitions([app_only_tool]) == []
+
+        service = ToolService()
+        cache = SimpleNamespace(enabled=False, set=AsyncMock(), set_negative=AsyncMock())
+        monkeypatch.setattr("mcpgateway.services.tool_service._get_tool_lookup_cache", lambda: cache)
+        monkeypatch.setattr(service, "_load_invocable_tools", lambda db, name, server_id=None: [app_only_tool])
+        monkeypatch.setattr(service, "_check_tool_access", AsyncMock(return_value=True))
+        with pytest.raises(ToolNotFoundError):
+            await service.invoke_tool(mock_db, "helper", {}, user_email="user@example.com", server_id="server-1", require_model_visible=True)
+
+        request = FakeRequest(
+            {"jsonrpc": "2.0", "id": "1", "method": "tools/call", "params": {"name": "helper", "arguments": {}}},
+            headers={"mcp-session-id": "mcp-session-123"},
+        )
+        with (
+            patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
+            patch.object(main_mod, "get_request_identity", return_value=("user@example.com", False)),
+            patch.object(main_mod.mcp_app_session_service, "get_valid_session", return_value=valid_app_session),
+            patch.object(main_mod.tool_service, "invoke_tool", new=AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")]))) as invoke_mock,
+        ):
+            result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("app-session-1", request=request, db=mock_db, user={"email": "user@example.com"})
+
+        assert result["result"]["content"][0]["text"] == "ok"
+        assert invoke_mock.await_args.kwargs["require_app_visible"] is True

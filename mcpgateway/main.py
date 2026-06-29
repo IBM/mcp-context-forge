@@ -179,7 +179,15 @@ from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.log_aggregator import get_log_aggregator
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.mcp_apps import apply_tool_meta, build_mcp_apps_capabilities, filter_model_visible_tools, mcp_app_session_service, mcp_apps_enabled, serialize_resource_content_for_mcp
+from mcpgateway.services.mcp_apps import (
+    apply_tool_meta,
+    build_mcp_apps_capabilities,
+    filter_model_visible_tools,
+    get_mcp_app_session_cleanup_service,
+    mcp_app_session_service,
+    mcp_apps_enabled,
+    serialize_resource_content_for_mcp,
+)
 from mcpgateway.services.metrics import setup_metrics
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError
@@ -1618,6 +1626,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await metrics_cleanup_service.start()
             logger.info("Metrics cleanup service initialized (retention: %d days)", settings.metrics_retention_days)
 
+        # Initialize MCP Apps session cleanup service for automatic deletion of expired AppBridge sessions
+        if settings.mcpgateway_mcp_apps_enabled and settings.mcpgateway_mcp_apps_session_cleanup_enabled:
+            mcp_app_session_cleanup_service = get_mcp_app_session_cleanup_service()
+            await mcp_app_session_cleanup_service.start()
+            logger.info("MCP Apps session cleanup service initialized")
+
         # Initialize metrics rollup service for hourly aggregation
         if settings.metrics_rollup_enabled:
             # First-Party
@@ -1851,6 +1865,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
             metrics_cleanup_service = get_metrics_cleanup_service()
             services_to_shutdown.insert(2, metrics_cleanup_service)
+
+        if settings.mcpgateway_mcp_apps_enabled and settings.mcpgateway_mcp_apps_session_cleanup_enabled:
+            mcp_app_session_cleanup_service = get_mcp_app_session_cleanup_service()
+            services_to_shutdown.insert(3, mcp_app_session_cleanup_service)
 
         if dataplane_publisher_service is not None:
             services_to_shutdown.insert(3, dataplane_publisher_service)
@@ -5077,6 +5095,15 @@ def _prepare_request_headers(request_headers: Dict[str, str]) -> Dict[str, str]:
     return _filter_sensitive_headers({k.lower(): v for k, v in request_headers.items()})
 
 
+def _extract_mcp_session_id(request: Request, body: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """Extract the MCP session id from supported transport headers or JSON body fields."""
+    mcp_session_id = request.headers.get("mcp-session-id") or request.headers.get("x-mcp-session-id")
+    if mcp_session_id or not isinstance(body, dict):
+        return mcp_session_id
+    body_session_id = body.get("mcpSessionId") or body.get("mcp_session_id")
+    return body_session_id if isinstance(body_session_id, str) and body_session_id else None
+
+
 @a2a_router.post("/{agent_name}/invoke", response_model=Dict[str, Any])
 @require_permission("a2a.invoke")
 async def invoke_a2a_agent(
@@ -7662,7 +7689,7 @@ async def handle_internal_mcp_initialize(request: Request):
                 user,
                 params=params,
                 server_id=server_id,
-                mcp_session_id=request.headers.get("mcp-session-id") or request.headers.get("x-mcp-session-id"),
+                mcp_session_id=_extract_mcp_session_id(request),
             )
         finally:
             db.close()
@@ -7694,7 +7721,7 @@ async def handle_internal_mcp_session_delete(request: Request):
     """
     _build_internal_mcp_forwarded_user(request)
     auth_context = get_internal_mcp_auth_context(request) or {}
-    mcp_session_id = request.headers.get("mcp-session-id") or request.headers.get("x-mcp-session-id")
+    mcp_session_id = _extract_mcp_session_id(request)
     if not mcp_session_id:
         return ORJSONResponse(status_code=400, content={"detail": "mcp-session-id header is required"})
 
@@ -9843,7 +9870,7 @@ async def _maybe_forward_affinitized_rpc_request(
     request_headers = request.headers
     rpc_client_host = getattr(getattr(request, "client", None), "host", None)
     rpc_from_loopback = rpc_client_host in ("127.0.0.1", "::1") if rpc_client_host else False
-    mcp_session_id = request_headers.get("mcp-session-id") or request_headers.get("x-mcp-session-id")
+    mcp_session_id = _extract_mcp_session_id(request)
     is_internally_forwarded = rpc_from_loopback and request_headers.get("x-forwarded-internally") == "true"
 
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id and method != "initialize" and not is_internally_forwarded:
@@ -10103,7 +10130,7 @@ async def create_mcp_app_session(request: Request, db: Session = Depends(get_db)
     if not resource_uri or not isinstance(resource_uri, str) or not resource_uri.startswith("ui://"):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="resourceUri must use the ui:// scheme")
 
-    mcp_session_id = request.headers.get("mcp-session-id") or request.headers.get("x-mcp-session-id") or body.get("mcpSessionId") or body.get("mcp_session_id")
+    mcp_session_id = _extract_mcp_session_id(request, body)
     if not mcp_session_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="mcp-session-id header is required")
     await _assert_session_owner_or_admin(request, user, mcp_session_id)
@@ -10169,7 +10196,7 @@ async def handle_mcp_app_session_rpc(app_session_id: str, request: Request, db: 
     if method != "tools/call":
         return {"jsonrpc": "2.0", "error": {"code": -32601, "message": f"Method not found: {method}"}, "id": req_id}
 
-    mcp_session_id = request.headers.get("mcp-session-id") or request.headers.get("x-mcp-session-id") or body.get("mcpSessionId") or body.get("mcp_session_id")
+    mcp_session_id = _extract_mcp_session_id(request, body)
     if not mcp_session_id:
         return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
     try:
@@ -10221,6 +10248,22 @@ async def handle_mcp_app_session_rpc(app_session_id: str, request: Request, db: 
         return {"jsonrpc": "2.0", "result": result, "id": req_id}
     except ToolNotFoundError:
         return {"jsonrpc": "2.0", "error": {"code": -32601, "message": f"Tool not found: {name}"}, "id": req_id}
+    except ToolError as exc:
+        logger.info("AppBridge tool call failed with tool error for %s: %s", name, exc)
+        return {"jsonrpc": "2.0", "error": {"code": -32000, "message": str(exc)}, "id": req_id}
+    except PluginViolationError as exc:
+        error_code = -32602
+        if exc.violation and hasattr(exc.violation, "mcp_error_code") and isinstance(exc.violation.mcp_error_code, int):
+            error_code = exc.violation.mcp_error_code
+        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc)}, "id": req_id}
+    except PluginError as exc:
+        error_code = -32603
+        if exc.error and hasattr(exc.error, "mcp_error_code") and isinstance(exc.error.mcp_error_code, int):
+            error_code = exc.error.mcp_error_code
+        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc)}, "id": req_id}
+    except (ValidationError, ValueError) as exc:
+        logger.info("AppBridge tool call received invalid parameters for %s: %s", name, exc)
+        return {"jsonrpc": "2.0", "error": {"code": -32602, "message": str(exc)}, "id": req_id}
     except Exception:
         logger.exception("AppBridge tool call failed for %s", name)
         return {"jsonrpc": "2.0", "error": {"code": -32603, "message": "Internal error"}, "id": req_id}
@@ -10674,7 +10717,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             params["server_id"] = _internal_runtime_server_id
         server_id = params.get("server_id", None)
         cursor = params.get("cursor")  # Extract cursor parameter
-        mcp_session_id = request_headers.get("mcp-session-id") or request_headers.get("x-mcp-session-id")
+        mcp_session_id = _extract_mcp_session_id(request)
 
         # RBAC: Enforce server_id scoping for server-scoped tokens.
         # Extract token scopes once, then:

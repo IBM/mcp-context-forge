@@ -45,7 +45,7 @@ For authenticated MCP initialization requests, the gateway advertises:
   "capabilities": {
     "extensions": {
       "io.modelcontextprotocol/ui": {
-        "version": "2025-06-02",
+        "version": "2026-01-26",
         "resources": {
           "schemes": ["ui://"]
         },
@@ -163,6 +163,10 @@ Allowed CSP directives:
 - `frame-src`
 - `img-src`
 - `media-src`
+- `baseUriDomains`
+- `connectDomains`
+- `frameDomains`
+- `resourceDomains`
 - `script-src`
 - `style-src`
 
@@ -282,6 +286,8 @@ The gateway enforces:
 
 - **Feature flag deny-by-default:** all MCP Apps routes and `ui://` resources
   are unavailable unless `MCPGATEWAY_MCP_APPS_ENABLED=true`.
+- **AppBridge rate limiting:** `/mcp/apps/sessions` and session RPC calls use
+  the high-risk rate limit tier when gateway rate limiting is enabled.
 - **Session ownership before bridge creation:** AppBridge sessions require an
   existing MCP session owned by the same user, unless the requester has admin
   bypass.
@@ -296,7 +302,8 @@ The gateway enforces:
   `X-Context-Forge-Gateway-Id` before invoking tools and uses the stored
   server binding instead.
 - **Short-lived sessions:** sessions expire after
-  `MCPGATEWAY_MCP_APPS_SESSION_TTL` seconds.
+  `MCPGATEWAY_MCP_APPS_SESSION_TTL` seconds. Expired rows are ignored during
+  lookup and cleaned up by the MCP Apps session cleanup service when enabled.
 - **Strict UI policy:** `ui://` resources require explicit CSP and sandbox
   metadata before registration.
 
@@ -312,6 +319,8 @@ resources:
 ```bash
 MCPGATEWAY_MCP_APPS_ENABLED=true
 MCPGATEWAY_MCP_APPS_SESSION_TTL=900
+MCPGATEWAY_MCP_APPS_SESSION_CLEANUP_ENABLED=true
+MCPGATEWAY_MCP_APPS_SESSION_CLEANUP_INTERVAL_SECONDS=300
 ```
 
 Recommended rollout steps:
