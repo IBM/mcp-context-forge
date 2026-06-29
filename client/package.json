@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:e2e": "vite --base=/ --port 5173 --strictPort",
-    "build": "tsc -b && vite build",
+    "build": "npm run generate && tsc -b && vite build",
     "build:watch": "vite build --watch",
     "preview": "vite preview",
     "lint": "eslint src e2e",
@@ -24,6 +24,7 @@
     "e2e:report": "playwright show-report",
     "i18n:extract": "formatjs extract 'src/**/*.{ts,tsx}' --out-file src/i18n/extracted.json --id-interpolation-pattern '[sha512:contenthash:base64:6]'",
     "i18n:compile": "formatjs compile-folder --ast src/i18n/locales src/i18n/compiled",
+    "pregenerate": "test -f openapi.json || (echo 'ERROR: openapi.json not found. Run: make fetch-openapi' && exit 1)",
     "generate": "orval"
   },
   "dependencies": {
