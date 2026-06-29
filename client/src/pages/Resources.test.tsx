@@ -419,7 +419,7 @@ describe("Resources", () => {
         expect(screen.getByText(/gateway-test-gateway Resources/i)).toBeInTheDocument();
       });
 
-      const closeButton = screen.getByLabelText("Close panel");
+      const closeButton = screen.getByRole("button", { name: "Close" });
       await user.click(closeButton);
 
       await waitFor(() => {

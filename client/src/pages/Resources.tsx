@@ -1,7 +1,11 @@
-import { useState, useMemo, memo } from "react";
+import { useState, useMemo, memo, useCallback } from "react";
 import { useIntl } from "react-intl";
 import { Plus, MoreHorizontal, FileText } from "lucide-react";
+import { toast } from "sonner";
 import { useQuery } from "@/hooks/useQuery";
+import { resourcesApi } from "@/api/resources";
+import { ApiError } from "@/api/client";
+import { extractApiErrorDetail } from "@/utils/errors";
 import type { ResourceRead, GatewayRead, CursorPaginatedGatewaysResponse } from "@/generated/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -13,15 +17,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ResourceForm } from "@/components/resources/ResourceForm";
 import { ResourceDetailsPanel } from "@/components/resources/ResourceDetailsPanel";
+import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
 
-/**
- * Card component displaying a single resource
- * Memoized to prevent unnecessary re-renders when parent updates
- *
- * @param resource - Resource to display
- * @param gatewaySlug - Gateway slug for the resource
- * @param onViewResource - Callback when user clicks to view resource details
- */
 function getUriLabel(uri: string): string {
   try {
     return new URL(uri).hostname || uri;
@@ -99,12 +96,6 @@ const ResourceCard = memo(function ResourceCard({
   );
 });
 
-/**
- * Card component for adding new resources
- * Displays informational text about resource auto-discovery
- *
- * @param onAddResource - Callback when user clicks to add resources
- */
 function AddResourcesCard({ onAddResource }: { onAddResource: () => void }) {
   const intl = useIntl();
 
@@ -141,16 +132,13 @@ function AddResourcesCard({ onAddResource }: { onAddResource: () => void }) {
   );
 }
 
-/**
- * Resources page component - displays and manages MCP resources.
- * Renders one card per resource (no gateway grouping).
- * Details panel resolves a human-readable gateway name from gatewayId via gatewayNameById,
- * falling back to the raw gatewayId when the gateway is not in the fetched list.
- */
 export function Resources() {
   const intl = useIntl();
   const [showForm, setShowForm] = useState(false);
   const [selectedResource, setSelectedResource] = useState<NonNullable<ResourceRead> | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteResourceId, setDeleteResourceId] = useState<string | null>(null);
+  const [deleteResourceName, setDeleteResourceName] = useState<string | null>(null);
 
   const { data, isLoading, error, refetch } = useQuery<ResourceRead[]>("/resources?limit=0");
   const { data: gatewaysData } = useQuery<CursorPaginatedGatewaysResponse>(
@@ -185,11 +173,51 @@ export function Resources() {
     setSelectedResource(null);
   };
 
-  /**
-   * @future Implement resource deletion in follow-up PR
-   * Delete functionality will include confirmation dialog
-   */
-  const handleDeleteResource = () => {};
+  const handleDeleteResource = useCallback(
+    (id: string) => {
+      const resource = data?.find((r) => r?.id === id);
+      setDeleteResourceId(id);
+      setDeleteResourceName(resource?.name || id);
+      setDeleteDialogOpen(true);
+    },
+    [data],
+  );
+
+  const confirmDelete = useCallback(async () => {
+    if (!deleteResourceId || !deleteResourceName) return;
+
+    setDeleteDialogOpen(false);
+
+    try {
+      await resourcesApi.delete(deleteResourceId);
+      toast.success(
+        intl.formatMessage({ id: "resources.delete.success" }, { name: deleteResourceName }),
+      );
+      setDeleteResourceId(null);
+      setDeleteResourceName(null);
+      setSelectedResource(null);
+      await refetch();
+    } catch (err) {
+      let errorMessage = intl.formatMessage({ id: "resources.delete.error" });
+
+      if (err instanceof ApiError) {
+        const detail = extractApiErrorDetail(err.body);
+        errorMessage =
+          detail ||
+          intl.formatMessage(
+            { id: "resources.delete.errorWithMessage" },
+            { message: err.message || intl.formatMessage({ id: "resources.delete.errorUnknown" }) },
+          );
+      } else if (err instanceof Error) {
+        errorMessage = intl.formatMessage(
+          { id: "resources.delete.errorWithMessage" },
+          { message: err.message },
+        );
+      }
+
+      toast.error(errorMessage);
+    }
+  }, [deleteResourceId, deleteResourceName, refetch, intl]);
 
   return (
     <div className="p-6">
@@ -258,6 +286,19 @@ export function Resources() {
               onDeleteResource={handleDeleteResource}
             />
           )}
+
+          <ConfirmDialog
+            open={deleteDialogOpen}
+            onOpenChange={setDeleteDialogOpen}
+            onConfirm={confirmDelete}
+            title={intl.formatMessage({ id: "resources.delete.confirm.title" })}
+            description={intl.formatMessage(
+              { id: "resources.delete.confirm.description" },
+              { name: deleteResourceName },
+            )}
+            confirmLabel={intl.formatMessage({ id: "resources.delete.confirm.button" })}
+            variant="destructive"
+          />
         </>
       )}
     </div>

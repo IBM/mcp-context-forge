@@ -28,5 +28,12 @@
   "resources.form.error.nameRequired": "El nombre es obligatorio",
   "resources.form.error.contentRequired": "El contenido es obligatorio",
   "resources.form.error.descriptionMax": "La descripción debe tener 500 caracteres o menos",
-  "resources.form.error.createFailed": "Error al crear el recurso"
+  "resources.form.error.createFailed": "Error al crear el recurso",
+  "resources.delete.confirm.title": "Eliminar recurso",
+  "resources.delete.confirm.description": "¿Está seguro de que desea eliminar \"{name}\"? Esta acción no se puede deshacer.",
+  "resources.delete.confirm.button": "Eliminar",
+  "resources.delete.success": "Recurso \"{name}\" eliminado correctamente",
+  "resources.delete.error": "Error al eliminar el recurso",
+  "resources.delete.errorWithMessage": "Error al eliminar el recurso: {message}",
+  "resources.delete.errorUnknown": "Error desconocido"
 }

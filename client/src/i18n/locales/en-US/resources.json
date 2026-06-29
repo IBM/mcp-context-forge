@@ -28,5 +28,12 @@
   "resources.form.error.nameRequired": "Name is required",
   "resources.form.error.contentRequired": "Content is required",
   "resources.form.error.descriptionMax": "Description must be 500 characters or less",
-  "resources.form.error.createFailed": "Failed to create resource"
+  "resources.form.error.createFailed": "Failed to create resource",
+  "resources.delete.confirm.title": "Delete resource",
+  "resources.delete.confirm.description": "Are you sure you want to delete \"{name}\"? This action cannot be undone.",
+  "resources.delete.confirm.button": "Delete",
+  "resources.delete.success": "Resource \"{name}\" deleted successfully",
+  "resources.delete.error": "Failed to delete resource",
+  "resources.delete.errorWithMessage": "Failed to delete resource: {message}",
+  "resources.delete.errorUnknown": "Unknown error"
 }

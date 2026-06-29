@@ -168,11 +168,13 @@ describe("useResourceForm", () => {
 
       await waitFor(() => expect(capturedBody).toBeDefined());
       expect(capturedBody).toMatchObject({
-        uri: "resource://example/path",
-        name: "My Resource",
-        content: "some content",
-        mimeType: "text/plain",
-        tags: ["a", "b"],
+        resource: {
+          uri: "resource://example/path",
+          name: "My Resource",
+          content: "some content",
+          mimeType: "text/plain",
+          tags: ["a", "b"],
+        },
       });
     });
 

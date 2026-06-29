@@ -28,5 +28,12 @@
   "resources.form.error.nameRequired": "Nome é obrigatório",
   "resources.form.error.contentRequired": "Conteúdo é obrigatório",
   "resources.form.error.descriptionMax": "Descrição deve ter 500 caracteres ou menos",
-  "resources.form.error.createFailed": "Falha ao criar recurso"
+  "resources.form.error.createFailed": "Falha ao criar recurso",
+  "resources.delete.confirm.title": "Excluir recurso",
+  "resources.delete.confirm.description": "Tem certeza de que deseja excluir \"{name}\"? Esta ação não pode ser desfeita.",
+  "resources.delete.confirm.button": "Excluir",
+  "resources.delete.success": "Recurso \"{name}\" excluído com sucesso",
+  "resources.delete.error": "Falha ao excluir o recurso",
+  "resources.delete.errorWithMessage": "Falha ao excluir o recurso: {message}",
+  "resources.delete.errorUnknown": "Erro desconhecido"
 }

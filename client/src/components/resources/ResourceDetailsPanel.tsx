@@ -3,6 +3,7 @@ import type { ResourceRead } from "@/generated/types";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
+import { formatBytes } from "@/utils/format";
 
 interface ResourceDetailsPanelProps {
   resources: NonNullable<ResourceRead>[];
@@ -12,16 +13,6 @@ interface ResourceDetailsPanelProps {
   onDeleteResource: (id: string) => void;
 }
 
-/**
- * Side panel for displaying detailed information about resources in a gateway group
- * Shows resource metadata including URI, description, MIME type, size, and tags
- *
- * @param resources - Array of resources to display
- * @param gatewaySlug - Gateway identifier for the panel title
- * @param open - Whether the panel is visible
- * @param onClose - Callback to close the panel
- * @param onDeleteResource - Callback when delete button is clicked (placeholder for future CRUD)
- */
 export function ResourceDetailsPanel({
   resources,
   gatewaySlug,
@@ -127,12 +118,4 @@ export function ResourceDetailsPanel({
       </SheetContent>
     </Sheet>
   );
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 Bytes";
-  const k = 1024;
-  const sizes = ["Bytes", "KB", "MB", "GB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 }
