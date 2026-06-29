@@ -407,10 +407,23 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         #   Inline style attributes (style="...") are used for animation delays,
         #   positioning, and dynamic styling throughout the application.
         #   This is acceptable per CSP Level 3 guidance since CSS cannot execute
-        #   JavaScript or exfiltrate data (visual-only impact).
+        #   JavaScript directly. While CSS injection can be used for clickjacking
+        #   or UI redressing attacks, these are mitigated by:
+        #   1. X-Frame-Options/frame-ancestors preventing iframe embedding
+        #   2. All inline styles are server-rendered (no user-controlled content)
+        #   3. Authentication required for admin UI (not publicly exposed)
+        #   This is a documented trade-off between security strictness and
+        #   implementation complexity (visual-only impact vs. code-execution risk).
         #   Note: Nonce cannot be used alongside 'unsafe-inline' in style-src because
         #   the nonce takes precedence and causes the browser to ignore 'unsafe-inline',
         #   which would block all style attributes since nonces can only apply to <style> blocks.
+        #
+        # CDN Allowlist Rationale:
+        #   - cdnjs.cloudflare.com: Font Awesome 7.0.1 icons, CodeMirror 5.65.20 (code editor)
+        #   - cdn.jsdelivr.net: Chart.js 4.5.1 (metrics charts), Marked 18.0.3 (markdown rendering),
+        #                       DOMPurify 3.4.2 (XSS sanitization)
+        #   - unpkg.com: Reserved for future use (Alpine.js, HTMX updates)
+        #   All CDN resources use SRI (Subresource Integrity) hashes where supported.
         if not skip_csp_for_docs:
             csp_directives = [
                 "default-src 'self'",
