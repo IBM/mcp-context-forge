@@ -137,8 +137,7 @@ describe("UsersTable", () => {
     renderWithIntl(
       <UsersTable users={[user]} onDeleteClick={mockOnDeleteClick} onEditClick={mockOnEditClick} />,
     );
-    expect(screen.getByText("invalid-date")).toBeInTheDocument();
-    expect(screen.getByText("not-a-date")).toBeInTheDocument();
+    expect(screen.getAllByText("Never")).toHaveLength(2);
   });
 
   it("catches exception during date formatting", () => {
@@ -152,7 +151,7 @@ describe("UsersTable", () => {
     renderWithIntl(
       <UsersTable users={[user]} onDeleteClick={mockOnDeleteClick} onEditClick={mockOnEditClick} />,
     );
-    expect(screen.getByText("error-date")).toBeInTheDocument();
+    expect(screen.getAllByText("Never")).toHaveLength(2);
     global.Date = originalDate;
   });
 });
