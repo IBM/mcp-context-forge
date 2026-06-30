@@ -26,15 +26,16 @@ export function teamSelector() {
           // stripping a team_id that may be newer than the cache.
           const rootPath = window.ROOT_PATH || '';
           fetch(rootPath + '/admin/teams/ids', { credentials: 'same-origin' })
-            .then(function (resp) { return resp.ok ? resp.json() : null; })
-            .then(function (data) {
+            .then((resp) => (resp.ok ? resp.json() : null))
+            .then((data) => {
               const ids = (data && data.team_ids) || [];
-              if (ids.indexOf(requestedTeamId) === -1) {
+              if (!ids.includes(requestedTeamId)) {
                 const cleanUrl = new URL(window.location.href);
                 cleanUrl.searchParams.delete('team_id');
                 if (window.Admin) window.Admin.safeReplaceState({}, '', cleanUrl);
               }
-            });
+            })
+            .catch(() => { /* fail open: don't strip on network error */ });
         }
       }
     },
