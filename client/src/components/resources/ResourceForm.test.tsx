@@ -33,15 +33,16 @@ describe("ResourceForm", () => {
       renderForm();
       expect(screen.getByLabelText(/URI/)).toBeInTheDocument();
       expect(screen.getByLabelText(/Name/)).toBeInTheDocument();
-      expect(screen.getByLabelText(/Description/)).toBeInTheDocument();
+      expect(screen.getByPlaceholderText(/optional description/i)).toBeInTheDocument();
       expect(screen.getByLabelText(/MIME Type/)).toBeInTheDocument();
       expect(screen.getByLabelText(/Content/)).toBeInTheDocument();
+      expect(screen.getByLabelText(/Visibility/)).toBeInTheDocument();
       expect(screen.getByLabelText(/Tags/)).toBeInTheDocument();
     });
 
     it("renders submit and cancel buttons", () => {
       renderForm();
-      expect(screen.getByRole("button", { name: /Create Resource/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Add resources/i })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /Cancel/i })).toBeInTheDocument();
     });
 
@@ -51,16 +52,7 @@ describe("ResourceForm", () => {
     });
   });
 
-  describe("Close button", () => {
-    it("calls onToggle when close button clicked", async () => {
-      const onToggle = vi.fn();
-      const user = userEvent.setup();
-      renderForm({ onToggle });
-
-      await user.click(screen.getByRole("button", { name: /Close form/i }));
-      expect(onToggle).toHaveBeenCalledOnce();
-    });
-
+  describe("Cancel button", () => {
     it("calls onToggle when Cancel button clicked", async () => {
       const onToggle = vi.fn();
       const user = userEvent.setup();
@@ -76,7 +68,7 @@ describe("ResourceForm", () => {
       const user = userEvent.setup();
       renderForm();
 
-      await user.click(screen.getByRole("button", { name: /Create Resource/i }));
+      await user.click(screen.getByRole("button", { name: /Add resources/i }));
 
       await waitFor(() => {
         expect(screen.getAllByRole("alert").length).toBeGreaterThanOrEqual(3);
@@ -89,7 +81,7 @@ describe("ResourceForm", () => {
 
       await user.type(screen.getByLabelText(/Name/), "My Resource");
       await user.type(screen.getByLabelText(/Content/), "content");
-      await user.click(screen.getByRole("button", { name: /Create Resource/i }));
+      await user.click(screen.getByRole("button", { name: /Add resources/i }));
 
       await waitFor(() => {
         expect(screen.getByText(/URI is required/i)).toBeInTheDocument();
@@ -102,7 +94,7 @@ describe("ResourceForm", () => {
 
       await user.type(screen.getByLabelText(/URI/), "resource://example/path");
       await user.type(screen.getByLabelText(/Name/), "My Resource");
-      await user.click(screen.getByRole("button", { name: /Create Resource/i }));
+      await user.click(screen.getByRole("button", { name: /Add resources/i }));
 
       await waitFor(() => {
         expect(screen.getByText(/Content is required/i)).toBeInTheDocument();
@@ -126,10 +118,10 @@ describe("ResourceForm", () => {
       await user.type(screen.getByLabelText(/Name/), "My Resource");
       await user.type(screen.getByLabelText(/Content/), "content");
 
-      await user.click(screen.getByRole("button", { name: /Create Resource/i }));
+      await user.click(screen.getByRole("button", { name: /Add resources/i }));
 
       await waitFor(() => {
-        expect(screen.getByRole("button", { name: /Creating.../i })).toBeDisabled();
+        expect(screen.getByRole("button", { name: /Adding.../i })).toBeDisabled();
       });
     });
 
@@ -141,7 +133,7 @@ describe("ResourceForm", () => {
       await user.type(screen.getByLabelText(/URI/), "resource://example/path");
       await user.type(screen.getByLabelText(/Name/), "My Resource");
       await user.type(screen.getByLabelText(/Content/), "content");
-      await user.click(screen.getByRole("button", { name: /Create Resource/i }));
+      await user.click(screen.getByRole("button", { name: /Add resources/i }));
 
       await waitFor(() => expect(onSuccess).toHaveBeenCalledOnce());
     });
@@ -159,7 +151,7 @@ describe("ResourceForm", () => {
       await user.type(screen.getByLabelText(/URI/), "resource://example/path");
       await user.type(screen.getByLabelText(/Name/), "My Resource");
       await user.type(screen.getByLabelText(/Content/), "content");
-      await user.click(screen.getByRole("button", { name: /Create Resource/i }));
+      await user.click(screen.getByRole("button", { name: /Add resources/i }));
 
       await waitFor(() => {
         expect(screen.getByRole("alert")).toBeInTheDocument();

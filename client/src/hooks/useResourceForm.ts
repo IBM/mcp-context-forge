@@ -5,6 +5,7 @@ import { useQuery } from "@/hooks/useQuery";
 import { sanitizeString } from "@/lib/sanitize";
 import { parseApiError } from "@/lib/errorUtils";
 import type { BodyCreateResourceResourcesPost } from "@/generated/types";
+import type { Visibility } from "@/types/server";
 
 const createResourceFormSchema = (intl: ReturnType<typeof useIntl>) =>
   z.object({
@@ -49,20 +50,34 @@ export interface UseResourceFormReturn {
   name: string;
   content: string;
   description: string;
-  mimeType: string;
+  mimeType: MimeType | "";
   tags: string;
+  visibility: Visibility;
   errors: ResourceFormErrors;
   isSubmitting: boolean;
   setUri: (value: string) => void;
   setName: (value: string) => void;
   setContent: (value: string) => void;
   setDescription: (value: string) => void;
-  setMimeType: (value: string) => void;
+  setMimeType: (value: MimeType | "") => void;
   setTags: (value: string) => void;
+  setVisibility: (value: Visibility) => void;
   validateForm: () => boolean;
   handleSubmit: (event: FormEvent<HTMLFormElement>, onSuccess?: () => void) => Promise<void>;
   getFormData: () => BodyCreateResourceResourcesPost;
 }
+
+export const MIME_TYPES = [
+  "text/plain",
+  "text/markdown",
+  "text/html",
+  "text/csv",
+  "application/json",
+  "application/xml",
+  "application/pdf",
+] as const;
+
+export type MimeType = (typeof MIME_TYPES)[number];
 
 export function useResourceForm(): UseResourceFormReturn {
   const intl = useIntl();
@@ -72,8 +87,9 @@ export function useResourceForm(): UseResourceFormReturn {
   const [name, setName] = useState("");
   const [content, setContent] = useState("");
   const [description, setDescription] = useState("");
-  const [mimeType, setMimeType] = useState("");
+  const [mimeType, setMimeType] = useState<MimeType | "">("");
   const [tags, setTags] = useState("");
+  const [visibility, setVisibility] = useState<Visibility>("public");
   const [errors, setErrors] = useState<ResourceFormErrors>({});
 
   const { execute: createResource, isLoading: isSubmitting } = useQuery<
@@ -95,9 +111,10 @@ export function useResourceForm(): UseResourceFormReturn {
               .map((t) => sanitizeString(t.trim(), 200))
               .filter(Boolean)
           : undefined,
+        visibility,
       },
     };
-  }, [uri, name, content, description, mimeType, tags]);
+  }, [uri, name, content, description, mimeType, tags, visibility]);
 
   const validateForm = useCallback((): boolean => {
     try {
@@ -149,6 +166,7 @@ export function useResourceForm(): UseResourceFormReturn {
     description,
     mimeType,
     tags,
+    visibility,
     errors,
     isSubmitting,
     setUri,
@@ -157,6 +175,7 @@ export function useResourceForm(): UseResourceFormReturn {
     setDescription,
     setMimeType,
     setTags,
+    setVisibility,
     validateForm,
     handleSubmit,
     getFormData,

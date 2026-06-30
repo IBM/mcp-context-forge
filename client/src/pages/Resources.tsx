@@ -37,7 +37,7 @@ const ResourceCard = memo(function ResourceCard({
   const intl = useIntl();
 
   return (
-    <Card size="sm" className="border-neutral-800 bg-neutral-900 rounded-xl pl-0 pr-4 pt-4 pb-4">
+    <Card size="sm" className="rounded-xl pl-0 pr-4 pt-4 pb-4">
       <CardHeader>
         <div className="flex items-center gap-3">
           <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded bg-tool-icon-bg">
@@ -78,13 +78,13 @@ const ResourceCard = memo(function ResourceCard({
       <CardContent>
         <div className="flex flex-wrap gap-1">
           {resource.mimeType && (
-            <span className="inline-flex items-center rounded bg-tool-badge-bg px-1.5 py-1 text-[10px] font-medium leading-none text-white">
+            <span className="inline-flex items-center rounded bg-neutral-100 px-1.5 py-1 text-[10px] font-medium leading-none text-neutral-700 dark:bg-neutral-800 dark:text-white">
               {resource.mimeType}
             </span>
           )}
           {resource.uri && (
             <span
-              className="inline-flex items-center rounded bg-tool-badge-bg px-1.5 py-1 text-[10px] font-medium leading-none text-white"
+              className="inline-flex items-center rounded bg-neutral-100 px-1.5 py-1 text-[10px] font-medium leading-none text-neutral-700 dark:bg-neutral-800 dark:text-white"
               title={resource.uri}
             >
               {getUriLabel(resource.uri)}
@@ -104,7 +104,7 @@ function AddResourcesCard({ onAddResource }: { onAddResource: () => void }) {
       size="sm"
       role="button"
       tabIndex={0}
-      className="border-neutral-800 bg-neutral-900 rounded-xl pl-0 pr-4 pt-4 pb-4 cursor-pointer transition-opacity hover:opacity-90"
+      className="rounded-xl pl-0 pr-4 pt-4 pb-4 cursor-pointer transition-opacity hover:opacity-90"
       onClick={onAddResource}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -115,8 +115,8 @@ function AddResourcesCard({ onAddResource }: { onAddResource: () => void }) {
     >
       <CardHeader>
         <div className="flex items-center gap-3">
-          <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded bg-tool-add-icon-bg shadow-sm">
-            <Plus className="h-3.5 w-3.5 text-tool-add-icon-fg" />
+          <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded bg-neutral-200 shadow-sm dark:bg-white">
+            <Plus className="h-3.5 w-3.5 text-neutral-700 dark:text-neutral-900" />
           </div>
           <span className="text-sm font-semibold text-neutral-900 dark:text-white">
             {intl.formatMessage({ id: "resources.addResources.title" })}
