@@ -23,6 +23,9 @@ from unittest.mock import MagicMock, patch
 from fastapi import APIRouter
 import pytest
 
+# Test Helpers
+from tests.helpers.router_helpers import _collect_paths_recursive, _route_paths
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -71,11 +74,6 @@ def _required_kwargs(**extras) -> dict:
     )
     base.update(extras)
     return base
-
-
-def _route_paths(router: APIRouter) -> list[str]:
-    """Collect all route paths registered on a router."""
-    return [r.path for r in router.routes]
 
 
 def _make_mock_router_module(sentinel_path: str) -> ModuleType:

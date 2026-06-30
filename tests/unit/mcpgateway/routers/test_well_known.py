@@ -15,6 +15,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
+# Test Helpers
+from tests.helpers.router_helpers import _route_paths
+
 # First-Party
 from mcpgateway.routers.well_known import (
     get_base_url_with_protocol,
@@ -252,7 +255,7 @@ def test_v1_prefix_does_not_produce_rfc_violation():
     v1_router = APIRouter(prefix="/v1")
     v1_router.include_router(admin_router)
 
-    final_paths = [route.path for route in v1_router.routes]
+    final_paths = _route_paths(v1_router)
     rfc_violations = [p for p in final_paths if "/.well-known" in p]
     assert rfc_violations == [], f"Including admin_router in /v1 creates RFC 8615 violating paths: {rfc_violations}"
 

@@ -11,6 +11,7 @@ to be missing on that router's legacy routes.
 import pytest
 from fastapi import APIRouter
 
+from tests.helpers.router_helpers import _route_paths
 from mcpgateway.api.v1 import _assemble_routers
 from mcpgateway.config import settings
 from mcpgateway.middleware.deprecation import _LEGACY_PREFIXES
@@ -26,8 +27,7 @@ def extract_router_prefixes(router: APIRouter) -> set[str]:
         Set of unique prefixes (e.g., {"/tools", "/servers"}).
     """
     prefixes = set()
-    for route in router.routes:
-        path = route.path
+    for path in _route_paths(router):
         # Extract first path segment as prefix
         if path.startswith("/"):
             parts = path.split("/")
@@ -210,16 +210,37 @@ def test_llm_admin_router_csrf_dependency():
     )
 
     # Collect all dependency callables across routes under /admin/llm
-    llm_admin_route_deps: list = []
-    for route in test_router.routes:
-        if hasattr(route, "path") and route.path.startswith("/admin/llm"):
-            for dep in getattr(route, "dependencies", []):
-                llm_admin_route_deps.append(dep.dependency)
+    # Use _route_paths to get all paths including nested routers
+    all_paths = _route_paths(test_router)
+    llm_admin_paths = [p for p in all_paths if p.startswith("/admin/llm")]
 
-    assert llm_admin_route_deps, (
+    assert llm_admin_paths, (
         "No routes found under /admin/llm after assembly — "
         "LLM admin router may not be importable in this environment."
     )
+
+    # Now collect dependencies from routes that match these paths
+    llm_admin_route_deps: list = []
+
+    def collect_deps_recursive(router, prefix=""):
+        """Recursively collect dependencies from routes matching /admin/llm paths."""
+        for route in router.routes:
+            if hasattr(route, "path"):
+                full_path = prefix + route.path
+                if full_path.startswith("/admin/llm"):
+                    for dep in getattr(route, "dependencies", []):
+                        llm_admin_route_deps.append(dep.dependency)
+            elif hasattr(route, "original_router"):
+                nested_prefix = prefix + route.include_context.prefix
+                # Check if this _IncludedRouter's prefix matches /admin/llm
+                if nested_prefix.startswith("/admin/llm"):
+                    # Collect dependencies from the _IncludedRouter's include_context
+                    for dep in route.include_context.dependencies:
+                        llm_admin_route_deps.append(dep.dependency)
+                # Recurse into nested router
+                collect_deps_recursive(route.original_router, nested_prefix)
+
+    collect_deps_recursive(test_router)
     assert enforce_admin_csrf in llm_admin_route_deps, (
         "enforce_admin_csrf not found in /admin/llm route dependencies. "
         "Add dependencies=[Depends(enforce_admin_csrf)] to the llm_admin_router include_router call "

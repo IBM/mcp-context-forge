@@ -29,8 +29,11 @@ from unittest.mock import patch
 from fastapi import APIRouter
 import pytest
 
+# Test Helpers
+from tests.helpers.router_helpers import _collect_paths_recursive, _route_paths
+
 # ---------------------------------------------------------------------------
-# Helpers (duplicated from test_api_v1.py intentionally — no shared module)
+# Helpers
 # ---------------------------------------------------------------------------
 
 
@@ -75,10 +78,6 @@ def _required_kwargs(**extras) -> dict:
     )
     base.update(extras)
     return base
-
-
-def _route_paths(router: APIRouter) -> list[str]:
-    return [r.path for r in router.routes]
 
 
 def _make_mock_router_module(sentinel_path: str) -> ModuleType:
