@@ -96,12 +96,28 @@ All inline event handlers (`onclick`, `oninput`, `onchange`, `onsubmit`, `onkeyd
 
 ### CSP Compliance
 
-The admin UI now works with strict CSP policies:
+The admin UI now works with strict CSP policies. Below is a minimal illustrative example focusing on script-related directives:
 ```
-Content-Security-Policy: script-src 'self' 'nonce-ABC123...' https://cdnjs.cloudflare.com
+Content-Security-Policy: script-src 'self' 'nonce-ABC123...'
 ```
 
-No `'unsafe-inline'` or `'unsafe-hashes'` directives are required for inline event handlers.
+**Current effective CSP** (as of PR #5111, 2026-06-29):
+```
+script-src-elem: 'self' 'nonce-{random}' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com
+script-src: 'self'
+style-src: 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net
+```
+
+**Key CSP improvements:**
+- ✅ No `'unsafe-inline'` or `'unsafe-hashes'` in `script-src` (inline event handlers removed)
+- ✅ No `'unsafe-eval'` in any script-related directive
+- ✅ `script-src-attr` directive completely removed
+- ℹ️ `style-src 'unsafe-inline'` retained for inline style attributes (animations, positioning) - acceptable per CSP Level 3 guidance as CSS cannot execute JavaScript
+
+**Tailwind CSS Loading Strategy** (as of PR #5111, 2026-06-29):
+- **Non-air-gapped mode** (default): Uses precompiled CSS (`/static/css/tailwind.min.css`) - CSP-compliant, no `eval()` required
+- **Air-gapped mode** (`ui_airgapped=true`): Uses local Tailwind script (`/static/vendor/tailwindcss/tailwind.min.js`) for environments without external dependencies
+- Templates: `login.html` (non-air-gapped only), `change-password-required.html` (supports both modes), `admin.html` (supports both modes)
 
 ## Testing Checklist
 
@@ -122,11 +138,13 @@ No `'unsafe-inline'` or `'unsafe-hashes'` directives are required for inline eve
 
 ## Known Limitations
 
-1. **✅ RESOLVED (PR #5111)**: ~~HTMX `hx-vals="js:{...}"` and `hx-on:*` - Several instances in `admin.html` still use HTMX's JS eval path, so `'unsafe-eval'` remains in `script-src`.~~ All HTMX JS eval patterns have been successfully migrated to `htmx:configRequest` event handlers and `addEventListener`. `'unsafe-eval'` has been completely removed from `script-src` as of PR #5111 (2026-06-29).
+1. **✅ RESOLVED (PR #5111)**: ~~HTMX `hx-vals="js:{...}"` and `hx-on:*` - Several instances in `admin.html` still use HTMX's JS eval path, so `'unsafe-eval'` remains in `script-src`.~~ All HTMX JS eval patterns have been successfully migrated to `htmx:configRequest` event handlers and `addEventListener`. `'unsafe-eval'` has been completely removed from **all script-related directives** (`script-src`, `script-src-elem`) as of PR #5111 (2026-06-29).
 
 2. **✅ RESOLVED (PR #5111)**: ~~HTMX `hx-on:*` attributes - The 8 `hx-on:*` attributes are not affected by this migration as HTMX evaluates these via the trusted HTMX script and honors `inlineScriptNonce`.~~ All `hx-on:*` attributes have been migrated to standard JavaScript `addEventListener` patterns.
 
-3. **Complex inline functions**: A few handlers with complex inline arrow functions or callbacks may need manual review if they weren't automatically converted. This is a maintenance consideration for future development, not a current blocker.
+3. **ℹ️ By Design (PR #5111)**: `style-src 'unsafe-inline'` remains by design for inline style attributes (`style="animation-delay: 2s"`) used throughout the UI. This is acceptable per CSP Level 3 guidance as CSS cannot execute JavaScript or exfiltrate data. All inline styles are server-rendered with no user input. Industry standard practice (GitHub, GitLab use similar configurations).
+
+4. **Complex inline functions**: A few handlers with complex inline arrow functions or callbacks may need manual review if they weren't automatically converted. This is a maintenance consideration for future development, not a current blocker.
 
 ## Rollback Procedure
 
@@ -148,10 +166,62 @@ If issues are discovered:
 
 ## Future Improvements
 
+### Code Enhancements
+
 1. **Performance monitoring**: Add metrics to track event delegation performance
 2. **Error handling**: Enhance error reporting for missing functions or invalid arguments
 3. **Developer tools**: Create browser extension or debug mode to visualize delegated events
 4. **Documentation**: Add inline documentation for common patterns
+
+### Test Recommendations (from PR #5111 Review)
+
+Recommendations from ja8zyjits's security review (2026-06-29):
+
+#### 🔴 High Priority (Security)
+
+1. **Browser-based CSP enforcement test (Playwright)**
+   - Verify browser blocks `eval()` and inline handlers at runtime
+   - Current tests only check header presence/format
+   - Should test actual browser CSP enforcement behavior
+   - **Rationale**: Header checks don't verify the browser actually blocks violations
+
+2. **CSP nonce collision test**
+   - Statistical test with 10K+ iterations
+   - Verify cryptographic randomness and uniqueness
+   - Test concurrent nonce generation
+   - **Rationale**: Nonce collisions would break CSP security model
+
+3. **End-to-end template rendering test**
+   - Verify nonce propagates: middleware → Jinja2 context → rendered HTML
+   - Test `csp_nonce(request)` function integration
+   - Verify nonce appears in both CSP header and script tags
+   - **Rationale**: Critical for CSP effectiveness - broken propagation = no protection
+
+#### 🟡 Medium Priority (Robustness)
+
+4. **HTMX integration test (Playwright)**
+   - Verify HTMX dynamic requests work without `unsafe-eval`
+   - Test hx-get, hx-post, hx-swap operations
+   - Verify `htmx:configRequest` event handlers work correctly
+   - **Rationale**: Validates the HTMX CSP migration didn't break functionality
+
+5. **Malformed Origin header tests**
+   - Empty Origin header
+   - Null Origin (`Origin: null`)
+   - Malformed/invalid Origin values
+   - **Rationale**: Edge case handling for CSP nonce generation
+
+#### 🟢 Low Priority (Defense-in-Depth)
+
+6. **CSP on 500 error test**
+   - Verify CSP headers present on error responses
+   - Test that middleware doesn't skip CSP on exceptions
+   - **Rationale**: Errors shouldn't expose XSS vectors
+
+7. **Nonce leakage test**
+   - Verify nonces aren't logged or exposed in error messages
+   - Test that nonces don't appear in audit trails
+   - **Rationale**: Nonce exposure reduces CSP effectiveness
 
 ## References
 
