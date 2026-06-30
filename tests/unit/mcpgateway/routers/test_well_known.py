@@ -216,6 +216,47 @@ async def test_server_oauth_protected_resource_redirects_to_rfc9728():
     assert "/.well-known/oauth-protected-resource/servers/server-1/mcp" in redirect_url
 
 
+# ---------- admin_router shape (RFC 8615 regression) ----------
+
+
+def test_admin_router_exists_and_has_single_route():
+    """admin_router must export exactly one route at /admin/well-known."""
+    from mcpgateway.routers.well_known import admin_router
+
+    paths = [route.path for route in admin_router.routes]
+    assert paths == ["/admin/well-known"], f"Unexpected paths in admin_router: {paths}"
+
+
+def test_admin_router_has_no_well_known_paths():
+    """No route in admin_router should start with /.well-known — that would violate RFC 8615 when prefixed with /v1."""
+    from mcpgateway.routers.well_known import admin_router
+
+    violations = [route.path for route in admin_router.routes if route.path.startswith("/.well-known")]
+    assert violations == [], f"RFC 8615 violation: admin_router contains /.well-known paths: {violations}"
+
+
+def test_full_router_has_well_known_paths():
+    """The full `router` must retain all /.well-known/* routes for the app-level mount."""
+    from mcpgateway.routers.well_known import router
+
+    well_known_paths = [route.path for route in router.routes if route.path.startswith("/.well-known")]
+    assert len(well_known_paths) >= 1, "Full router missing /.well-known routes — app-level mount would be broken"
+
+
+def test_v1_prefix_does_not_produce_rfc_violation():
+    """Including admin_router in a /v1-prefixed router must not create any /.well-known paths."""
+    from fastapi import APIRouter
+
+    from mcpgateway.routers.well_known import admin_router
+
+    v1_router = APIRouter(prefix="/v1")
+    v1_router.include_router(admin_router)
+
+    final_paths = [route.path for route in v1_router.routes]
+    rfc_violations = [p for p in final_paths if "/.well-known" in p]
+    assert rfc_violations == [], f"Including admin_router in /v1 creates RFC 8615 violating paths: {rfc_violations}"
+
+
 @pytest.mark.asyncio
 async def test_server_well_known_file_disabled():
     from mcpgateway.routers.server_well_known import server_well_known_file

@@ -5922,6 +5922,14 @@ class TestUtilityFunctions:
         monkeypatch.setattr(main_mod.session_registry, "register_respond_task", MagicMock())
         monkeypatch.setattr(main_mod.asyncio, "create_task", MagicMock(return_value=AsyncMock()))
 
+        # Prevent RBAC wrapper from hitting the plugin manager factory (which also uses
+        # asyncio.create_task internally and would fail with the MagicMock above).
+        import mcpgateway.plugins as _plugins_mod
+
+        _mock_pm = MagicMock()
+        _mock_pm.has_hooks_for.return_value = False
+        monkeypatch.setattr(_plugins_mod, "get_plugin_manager", AsyncMock(return_value=_mock_pm))
+
         remove_session = AsyncMock(side_effect=Exception("boom"))
         monkeypatch.setattr(main_mod.session_registry, "remove_session", remove_session)
 
