@@ -427,6 +427,204 @@ def test_get_streamable_http_auth_context_copies_supported_keys_and_lists():
     assert forwarded["scoped_permissions"] is not original["scoped_permissions"]
 
 
+@pytest.mark.asyncio
+async def test_mint_internal_jwt_for_rpc_returns_none_for_non_oauth():
+    """Should return None when auth_method is not oauth_access_token."""
+    token = tr.user_context_var.set(
+        {
+            "email": "user@example.com",
+            "teams": ["team-a"],
+            "is_authenticated": True,
+            "is_admin": False,
+            "auth_method": "jwt",
+            "token_use": "session",
+        }
+    )
+    try:
+        result = await tr._mint_internal_jwt_for_rpc()
+        assert result is None
+    finally:
+        tr.user_context_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_mint_internal_jwt_for_rpc_returns_none_for_unauthenticated():
+    """Should return None when is_authenticated is False."""
+    token = tr.user_context_var.set(
+        {
+            "email": "user@example.com",
+            "is_authenticated": False,
+            "auth_method": "oauth_access_token",
+        }
+    )
+    try:
+        result = await tr._mint_internal_jwt_for_rpc()
+        assert result is None
+    finally:
+        tr.user_context_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_mint_internal_jwt_for_rpc_returns_none_for_empty_email():
+    """Should return None when email is missing from the auth context."""
+    token = tr.user_context_var.set(
+        {
+            "is_authenticated": True,
+            "auth_method": "oauth_access_token",
+        }
+    )
+    try:
+        result = await tr._mint_internal_jwt_for_rpc()
+        assert result is None
+    finally:
+        tr.user_context_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_mint_internal_jwt_for_rpc_empty_teams():
+    """Should mint an internal JWT with empty teams list."""
+    token = tr.user_context_var.set(
+        {
+            "email": "viewer@example.com",
+            "teams": [],
+            "is_authenticated": True,
+            "is_admin": False,
+            "auth_method": "oauth_access_token",
+            "token_use": "session",
+        }
+    )
+    try:
+        jwt_str = await tr._mint_internal_jwt_for_rpc()
+        import jwt as pyjwt
+
+        claims = pyjwt.decode(jwt_str, options={"verify_signature": False})
+        assert claims["sub"] == "viewer@example.com"
+        assert claims["teams"] == []
+    finally:
+        tr.user_context_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_mint_internal_jwt_for_rpc_round_trip():
+    """Should mint a JWT that passes verify_credentials (round-trip)."""
+    token = tr.user_context_var.set(
+        {
+            "email": "bob@example.com",
+            "teams": ["team-x"],
+            "is_authenticated": True,
+            "is_admin": False,
+            "auth_method": "oauth_access_token",
+            "token_use": "session",
+        }
+    )
+    try:
+        # First-Party
+        from mcpgateway.utils.verify_credentials import verify_credentials
+
+        jwt_str = await tr._mint_internal_jwt_for_rpc()
+        payload = await verify_credentials(jwt_str)
+        assert payload["sub"] == "bob@example.com"
+        assert payload["token_use"] == "session"
+        assert payload["teams"] == ["team-x"]
+    finally:
+        tr.user_context_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_mint_internal_jwt_for_rpc_omits_is_admin_claim():
+    """Minted JWT must not include is_admin claim (security invariant)."""
+    token = tr.user_context_var.set(
+        {
+            "email": "admin@example.com",
+            "teams": None,
+            "is_authenticated": True,
+            "is_admin": True,
+            "auth_method": "oauth_access_token",
+            "token_use": "session",
+        }
+    )
+    try:
+        jwt_str = await tr._mint_internal_jwt_for_rpc()
+        import jwt as pyjwt
+
+        claims = pyjwt.decode(jwt_str, options={"verify_signature": False})
+        assert "is_admin" not in claims
+        assert claims["sub"] == "admin@example.com"
+    finally:
+        tr.user_context_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_mint_internal_jwt_for_rpc_admin_bypass_teams_none():
+    """Admin users with teams=None should get JWT with teams=None (admin bypass)."""
+    token = tr.user_context_var.set(
+        {
+            "email": "admin@example.com",
+            "teams": None,
+            "is_authenticated": True,
+            "is_admin": True,
+            "auth_method": "oauth_access_token",
+            "token_use": "session",
+        }
+    )
+    try:
+        jwt_str = await tr._mint_internal_jwt_for_rpc()
+        import jwt as pyjwt
+
+        claims = pyjwt.decode(jwt_str, options={"verify_signature": False})
+        assert claims["teams"] is None
+        assert claims["sub"] == "admin@example.com"
+    finally:
+        tr.user_context_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_mint_internal_jwt_for_rpc_ttl():
+    """Minted JWT should have 1-minute TTL."""
+    import time
+
+    token = tr.user_context_var.set(
+        {
+            "email": "user@example.com",
+            "teams": ["team-a"],
+            "is_authenticated": True,
+            "is_admin": False,
+            "auth_method": "oauth_access_token",
+            "token_use": "session",
+        }
+    )
+    try:
+        before = time.time()
+        jwt_str = await tr._mint_internal_jwt_for_rpc()
+        import jwt as pyjwt
+
+        claims = pyjwt.decode(jwt_str, options={"verify_signature": False})
+        assert 55 <= (claims["exp"] - before) <= 65
+    finally:
+        tr.user_context_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_mint_internal_jwt_for_rpc_create_jwt_failure_returns_none():
+    """Should return None when create_jwt_token raises an exception."""
+    token = tr.user_context_var.set(
+        {
+            "email": "user@example.com",
+            "teams": ["team-a"],
+            "is_authenticated": True,
+            "is_admin": False,
+            "auth_method": "oauth_access_token",
+            "token_use": "session",
+        }
+    )
+    try:
+        with patch("mcpgateway.transports.streamablehttp_transport.create_jwt_token", side_effect=RuntimeError("JWT signing failed")):
+            result = await tr._mint_internal_jwt_for_rpc()
+            assert result is None
+    finally:
+        tr.user_context_var.reset(token)
+
+
 def test_record_mcp_auth_cache_event_swallows_metrics_errors(monkeypatch):
     """Metrics failures must not break MCP auth cache instrumentation."""
 
@@ -8347,6 +8545,80 @@ async def test_forwarded_post_routes_to_rpc_multipart_body_and_auth_header(monke
 
 
 @pytest.mark.asyncio
+async def test_forwarded_post_with_oauth_exchanges_token(monkeypatch):
+    """When forwarded request is OAuth-authenticated, the IdP token is exchanged for an internal JWT."""
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            raise AssertionError("Should not reach SDK")
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    send, messages = _make_send_collector()
+    scope = _make_scope(
+        "/mcp",
+        method="POST",
+        headers=[
+            (b"x-forwarded-internally", b"true"),
+            (b"authorization", b"Bearer idp-token-abc"),
+        ],
+    )
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b'{"jsonrpc":"2.0","result":{},"id":1}'
+
+    receive = _make_receive_sequence(
+        [
+            {"type": "http.request", "body": b'{"jsonrpc":"2.0","method":"tools/list","id":1}', "more_body": False},
+        ]
+    )
+
+    token = user_context_var.set(
+        {
+            "email": "user@example.com",
+            "teams": ["team-a"],
+            "is_authenticated": True,
+            "is_admin": False,
+            "auth_method": "oauth_access_token",
+            "token_use": "session",
+        }
+    )
+    try:
+        with patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_cls.return_value = mock_client
+
+            await wrapper.handle_streamable_http(scope, receive, send)
+    finally:
+        user_context_var.reset(token)
+
+    await wrapper.shutdown()
+    assert messages[0]["status"] == 200
+
+    forwarded_auth = mock_client.post.call_args.kwargs["headers"]["authorization"]
+    # Must be an exchanged JWT, not the raw IdP token
+    assert forwarded_auth.startswith("Bearer ")
+    assert forwarded_auth != "Bearer idp-token-abc"
+    # Verify it decodes to the expected internal claims
+    import jwt as pyjwt
+
+    claims = pyjwt.decode(forwarded_auth.removeprefix("Bearer "), options={"verify_signature": False})
+    assert claims["sub"] == "user@example.com"
+    assert claims["token_use"] == "session"
+    assert claims["teams"] == ["team-a"]
+
+
+@pytest.mark.asyncio
 async def test_forwarded_post_empty_body_returns_202(monkeypatch):
     """Test forwarded POST with empty body returns 202 (line 1406-1410)."""
 
@@ -9305,6 +9577,96 @@ async def test_local_affinity_post_routes_to_rpc_multipart_and_auth_header(monke
     await wrapper.shutdown()
     assert messages[0]["status"] == 200
     assert mock_client.post.call_args.kwargs["headers"]["authorization"] == "Bearer abc"
+
+
+@pytest.mark.asyncio
+async def test_local_affinity_post_with_oauth_exchanges_token(monkeypatch):
+    """When local-affinity request is OAuth-authenticated, exchange IdP token for internal JWT."""
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            raise AssertionError("Should not reach SDK")
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    send, messages = _make_send_collector()
+    scope = _make_scope(
+        "/mcp",
+        method="POST",
+        headers=[
+            (b"mcp-session-id", b"sess-abc"),
+            (b"authorization", b"Bearer idp-token-xyz"),
+        ],
+    )
+
+    mock_pool = MagicMock()
+    mock_pool.get_session_owner = AsyncMock(return_value="worker-1")
+
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b'{"jsonrpc":"2.0","result":{}}'
+
+    receive = _make_receive_sequence(
+        [
+            {"type": "http.request", "body": b'{"jsonrpc":"2.0","method":"tools/list","id":1}', "more_body": False},
+        ]
+    )
+
+    mock_session_registry = AsyncMock()
+    mock_session_registry.get_session_owner = AsyncMock(return_value="user@example.com")
+
+    token = user_context_var.set(
+        {
+            "email": "user@example.com",
+            "teams": ["team-a"],
+            "is_authenticated": True,
+            "is_admin": False,
+            "auth_method": "oauth_access_token",
+            "token_use": "session",
+        }
+    )
+    try:
+        with (
+            patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
+            patch("mcpgateway.services.session_affinity.WORKER_ID", "worker-1"),
+            patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
+            patch("mcpgateway.transports.streamablehttp_transport._get_shared_session_registry", return_value=mock_session_registry),
+            patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls,
+        ):
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_cls.return_value = mock_client
+
+            await wrapper.handle_streamable_http(scope, receive, send)
+    finally:
+        user_context_var.reset(token)
+
+    await wrapper.shutdown()
+    assert messages[0]["status"] == 200
+
+    forwarded_auth = mock_client.post.call_args.kwargs["headers"]["authorization"]
+    assert forwarded_auth.startswith("Bearer ")
+    assert forwarded_auth != "Bearer idp-token-xyz"
+    import jwt as pyjwt
+
+    claims = pyjwt.decode(forwarded_auth.removeprefix("Bearer "), options={"verify_signature": False})
+    assert claims["sub"] == "user@example.com"
+    assert claims["token_use"] == "session"
+    assert claims["teams"] == ["team-a"]
 
 
 @pytest.mark.asyncio
@@ -17009,6 +17371,7 @@ async def test_normalize_jwt_payload_non_admin_without_db_record():
 
 
 def test_get_scoped_visibility_from_user_context_admin_missing_teams_key():
+    # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context
 
     user_email, token_teams = get_scoped_visibility_from_user_context({"email": "admin@x.com", "is_admin": True})
@@ -17018,6 +17381,7 @@ def test_get_scoped_visibility_from_user_context_admin_missing_teams_key():
 
 
 def test_get_scoped_visibility_from_user_context_admin_with_empty_teams():
+    # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context
 
     user_email, token_teams = get_scoped_visibility_from_user_context({"email": "admin@x.com", "is_admin": True, "teams": []})
@@ -17027,6 +17391,7 @@ def test_get_scoped_visibility_from_user_context_admin_with_empty_teams():
 
 
 def test_get_scoped_visibility_from_user_context_admin_with_team_scope():
+    # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context
 
     user_email, token_teams = get_scoped_visibility_from_user_context({"email": "admin@x.com", "is_admin": True, "teams": ["team1"]})
