@@ -3844,7 +3844,7 @@ pre-commit: uv                     ## 🪄  Run pre-commit tool
 		GOPATH='$(CURDIR)/.cache/go-cache' \
 		GOMODCACHE='$(CURDIR)/.cache/go-mod' \
 		GOCACHE='$(CURDIR)/.cache/go-build' \
-		$(VENV_DIR)/bin/pre-commit run --config .pre-commit-lite.yaml --all-files --show-diff-on-failure"
+		$(VENV_DIR)/bin/pre-commit run --config .pre-commit-config.yaml --all-files --show-diff-on-failure"
 
 RUFF_MODE   ?= check
 RUFF_SELECT ?=

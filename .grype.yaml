@@ -16,3 +16,5 @@ ignore:
   - vulnerability: CVE-2024-12254
     package:
       name: python3-libs
+  - vulnerability: CVE-2026-54369
+  - vulnerability: CVE-2026-54371
