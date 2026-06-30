@@ -4817,7 +4817,6 @@ renderConfig();
     { name:"Pre-commit Checks", file:"pre-commit.yml", desc:"Run all pre-commit hooks (detect-secrets, formatting, AST, security patterns).", triggers:["PR"] },
     { name:"Dependency Review", file:"dependency-review.yml", desc:"Diff dependencies on pyproject.toml changes. Fail on MODERATE+ CVEs or copyleft licenses.", triggers:["push","PR"] },
     { name:"Docker Multiplatform Build", file:"docker-multiplatform.yml", desc:"Build for amd64, arm64, s390x, ppc64le. Cosign keyless signing on tags.", triggers:["push","PR","tag"] },
-    { name:"Docker Release", file:"docker-release.yml", desc:"Re-tag and push Docker image with semantic version on GitHub Release.", triggers:["release"] },
     { name:"Docker Security Scan", file:"docker-scan.yml", desc:"Build locally, generate SBOM with Syft, upload artifact.", triggers:["push","PR"] },
     { name:"Helm Chart Publish", file:"helm-publish.yml", desc:"Lint mcp-stack chart, publish to OCI registry on release.", triggers:["push","PR","release"] },
     { name:"Python Package Build", file:"python-package.yml", desc:"Build sdist and wheel (make dist) on code changes.", triggers:["push","PR"] },

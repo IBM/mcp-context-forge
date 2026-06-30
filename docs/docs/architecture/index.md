@@ -169,7 +169,7 @@ The project maintains production-grade quality through comprehensive GitHub Acti
 **Build & Package Workflows:**
 
 - **Python Package Build** (`python-package.yml`): Multi-version builds (Python 3.10-3.12) with wheel/sdist creation, metadata validation (twine), manifest checking, and package quality assessment (pyroma)
-- **Docker Release** (`docker-release.yml`): Automated container image releases to GitHub Container Registry (GHCR) with semantic versioning
+- **Docker Multiplatform Build** (`docker-multiplatform.yml`): Builds and publishes multiplatform container images (amd64, arm64, s390x, ppc64le) to GHCR; applies semantic version tags and `latest` on `v*` tag push, and signs with Cosign
 
 **Testing & Coverage:**
 
