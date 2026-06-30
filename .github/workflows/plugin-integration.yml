@@ -29,7 +29,7 @@ on:
     merge_group:
     pull_request:
         branches: [main]
-        types: [opened, synchronize, reopened]
+        types: [opened, synchronize, reopened, ready_for_review]
         paths:
             - "pyproject.toml"
             - "uv.lock"
