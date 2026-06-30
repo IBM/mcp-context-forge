@@ -12,6 +12,7 @@ WORKERS="${WORKERS:-2}"
 
 TMP="$(mktemp -d)"
 MARKER="$TMP/marker.log"
+HOOK_MARKER="$TMP/hook_marker.log"
 LOCK="$TMP/primary.lock"
 LOG="$TMP/gunicorn.log"
 DB="$TMP/e2e.db"
@@ -33,6 +34,7 @@ PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" \
 PLUGINS_ENABLED=true \
 PLUGINS_CONFIG_FILE=tests/live_gateway/fixtures/primary_worker_e2e_config.yaml \
 MCPGW_PRIMARY_WORKER_E2E_MARKER="$MARKER" \
+MCPGW_PRIMARY_WORKER_E2E_HOOK_MARKER="$HOOK_MARKER" \
 PRIMARY_WORKER_LOCK_PATH="$LOCK" \
 PRIMARY_WORKER_ELECTION_BACKEND="$BACKEND" \
 PRIMARY_WORKER_REDIS_KEY="$REDIS_KEY" \
@@ -58,8 +60,10 @@ done
 [ "$ready" = 1 ] || { echo "❌ gateway not ready in time"; cat "$LOG"; exit 1; }
 sleep 2  # settle: let every worker finish plugin initialize()
 
-echo "▶ running assertion"
+echo "▶ running assertion (backend=$BACKEND, workers=$WORKERS)"
 PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" \
 MCP_CLI_BASE_URL="http://127.0.0.1:$PORT" \
 MCPGW_PRIMARY_WORKER_E2E_MARKER="$MARKER" \
+MCPGW_PRIMARY_WORKER_E2E_HOOK_MARKER="$HOOK_MARKER" \
+PRIMARY_WORKER_E2E_WORKERS="$WORKERS" \
   pytest tests/live_gateway/plugins/test_primary_worker_e2e.py -v -s --tb=short
