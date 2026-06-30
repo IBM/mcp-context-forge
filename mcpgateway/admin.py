@@ -11934,10 +11934,13 @@ def _validate_json_field(field_name: str, field_value: str) -> tuple[Optional[di
         return (parsed, None)
     except orjson.JSONDecodeError as ex:
         LOGGER.error(f"Invalid JSON in {field_name} field: {str(ex)}")
-        return (None, ORJSONResponse(
-            content={"message": f"Invalid JSON in {field_name} field: {str(ex)}", "success": False},
-            status_code=422,
-        ))
+        return (
+            None,
+            ORJSONResponse(
+                content={"message": f"Invalid JSON in {field_name} field: {str(ex)}", "success": False},
+                status_code=422,
+            ),
+        )
 
 
 def _parse_core_json_fields(form) -> tuple[Optional[dict], Optional[ORJSONResponse]]:
@@ -11976,10 +11979,13 @@ def _parse_core_json_fields(form) -> tuple[Optional[dict], Optional[ORJSONRespon
         )
     except orjson.JSONDecodeError as ex:
         LOGGER.error(f"Invalid JSON in form field: {str(ex)}")
-        return (None, ORJSONResponse(
-            content={"message": f"Invalid JSON in form field: {str(ex)}", "success": False},
-            status_code=422,
-        ))
+        return (
+            None,
+            ORJSONResponse(
+                content={"message": f"Invalid JSON in form field: {str(ex)}", "success": False},
+                status_code=422,
+            ),
+        )
 
 
 def _validate_allowlist_urls(allowlist_raw: str) -> tuple[Optional[list], Optional[ORJSONResponse]]:
@@ -12002,10 +12008,13 @@ def _validate_allowlist_urls(allowlist_raw: str) -> tuple[Optional[list], Option
             parsed = urlparse(url)
             if not parsed.scheme or not parsed.netloc:
                 error_msg = f"Invalid URL in allowlist: {url} (must include scheme and host)"
-                return (None, ORJSONResponse(
-                    content={"message": error_msg, "success": False},
-                    status_code=400,
-                ))
+                return (
+                    None,
+                    ORJSONResponse(
+                        content={"message": error_msg, "success": False},
+                        status_code=400,
+                    ),
+                )
 
             # Enhanced SSRF protection: validate against private IP ranges, cloud metadata, etc.
             if settings.ssrf_protection_enabled:
@@ -12019,16 +12028,22 @@ def _validate_allowlist_urls(allowlist_raw: str) -> tuple[Optional[list], Option
                 except ValueError as ssrf_err:
                     error_msg = f"Security violation in allowlist: {str(ssrf_err)}"
                     LOGGER.error(error_msg)
-                    return (None, ORJSONResponse(
-                        content={"message": error_msg, "success": False},
-                        status_code=400,
-                    ))
+                    return (
+                        None,
+                        ORJSONResponse(
+                            content={"message": error_msg, "success": False},
+                            status_code=400,
+                        ),
+                    )
         except Exception as ex:
             error_msg = f"Invalid URL in allowlist: {url} - {str(ex)}"
-            return (None, ORJSONResponse(
-                content={"message": error_msg, "success": False},
-                status_code=400,
-            ))
+            return (
+                None,
+                ORJSONResponse(
+                    content={"message": error_msg, "success": False},
+                    status_code=400,
+                ),
+            )
     return (allowlist_entries, None)
 
 
@@ -12065,10 +12080,13 @@ def _validate_plugin_chains(plugin_chain_raw: str, field_name: str, available_pl
             if plugin_name not in available_plugins:
                 error_msg = f"Unknown plugin in {field_name}: {plugin_name}"
                 LOGGER.warning(error_msg)
-                return (None, ORJSONResponse(
-                    content={"message": error_msg, "success": False},
-                    status_code=422,
-                ))
+                return (
+                    None,
+                    ORJSONResponse(
+                        content={"message": error_msg, "success": False},
+                        status_code=422,
+                    ),
+                )
     return (plugin_list, None)
 
 
@@ -12110,17 +12128,23 @@ def _validate_timeout_ms(timeout_value_str: str) -> tuple[Optional[int], Optiona
         if timeout_value <= 0:
             error_msg = "Invalid timeout_ms value: must be a positive integer (greater than 0)"
             LOGGER.error(error_msg)
-            return (None, ORJSONResponse(
-                content={"message": error_msg, "success": False},
-                status_code=422,
-            ))
+            return (
+                None,
+                ORJSONResponse(
+                    content={"message": error_msg, "success": False},
+                    status_code=422,
+                ),
+            )
         return (timeout_value, None)
     except ValueError as ex:
         LOGGER.error(f"Invalid timeout_ms value: {str(ex)}")
-        return (None, ORJSONResponse(
-            content={"message": "Invalid timeout_ms value: must be a positive integer", "success": False},
-            status_code=422,
-        ))
+        return (
+            None,
+            ORJSONResponse(
+                content={"message": "Invalid timeout_ms value: must be a positive integer", "success": False},
+                status_code=422,
+            ),
+        )
 
 
 @admin_router.post("/tools/{tool_id}/edit/", response_model=None)
@@ -12292,9 +12316,7 @@ async def admin_edit_tool(
             from mcpgateway.plugins import list_configured_plugin_names
 
             available_plugins = list_configured_plugin_names()
-            plugin_list, error_response = _validate_plugin_chains(
-                plugin_chain_pre_raw, "plugin_chain_pre", available_plugins, settings.plugins.enabled
-            )
+            plugin_list, error_response = _validate_plugin_chains(plugin_chain_pre_raw, "plugin_chain_pre", available_plugins, settings.plugins.enabled)
             if error_response:
                 return error_response
             tool_data["plugin_chain_pre"] = plugin_list
@@ -12309,9 +12331,7 @@ async def admin_edit_tool(
             from mcpgateway.plugins import list_configured_plugin_names
 
             available_plugins = list_configured_plugin_names()
-            plugin_list, error_response = _validate_plugin_chains(
-                plugin_chain_post_raw, "plugin_chain_post", available_plugins, settings.plugins.enabled
-            )
+            plugin_list, error_response = _validate_plugin_chains(plugin_chain_post_raw, "plugin_chain_post", available_plugins, settings.plugins.enabled)
             if error_response:
                 return error_response
             tool_data["plugin_chain_post"] = plugin_list
