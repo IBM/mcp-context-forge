@@ -274,6 +274,121 @@ class TestTokenRevocation:
         assert revocation is not None
         assert revocation.reason == "security"
 
+    def test_revoke_token_invalidates_auth_cache(self, blocklist_service, test_db):
+        """Test that revoking a token invalidates the auth cache."""
+        # First-Party
+        from mcpgateway.db import EmailApiToken, EmailTeam
+
+        # Create a test team
+        team = EmailTeam(
+            id=str(uuid.uuid4()),
+            name="Test Team Cache",
+            slug="test-team-cache",
+            created_by="test@example.com",
+            is_active=True
+        )
+        test_db.add(team)
+        test_db.commit()
+
+        # Create an API token
+        jti = str(uuid.uuid4())
+        api_token = EmailApiToken(
+            id=str(uuid.uuid4()),
+            user_email="test@example.com",
+            team_id=team.id,
+            name="Test Token Cache",
+            jti=jti,
+            token_hash="test_hash",
+            is_active=True
+        )
+        test_db.add(api_token)
+        test_db.commit()
+
+        # Mock asyncio.run to verify it's called without actually running the coroutine
+        with patch("mcpgateway.services.token_blocklist_service.asyncio.run") as mock_asyncio_run:
+            # Revoke the token
+            result = blocklist_service.revoke_token(
+                jti=jti,
+                revoked_by="test@example.com",
+                reason="logout"
+            )
+
+            assert result is True
+
+            # Verify cache invalidation was called (we're outside an async context, so asyncio.run should be called)
+            mock_asyncio_run.assert_called_once()
+
+            # Verify the call was for auth_cache.invalidate_revocation by checking the coroutine name
+            call_args = mock_asyncio_run.call_args
+            coro = call_args[0][0]  # First positional argument
+            assert coro.__name__ == "invalidate_revocation"
+
+    def test_revoke_token_repairs_inconsistent_state(self, blocklist_service, test_db):
+        """Test that revoking an already-revoked token repairs EmailApiToken.is_active if inconsistent."""
+        # First-Party
+        from mcpgateway.db import EmailApiToken, EmailTeam
+
+        # Create a test team
+        team = EmailTeam(
+            id=str(uuid.uuid4()),
+            name="Test Team Repair",
+            slug="test-team-repair",
+            created_by="test@example.com",
+            is_active=True
+        )
+        test_db.add(team)
+        test_db.commit()
+
+        # Create an API token
+        jti = str(uuid.uuid4())
+        api_token = EmailApiToken(
+            id=str(uuid.uuid4()),
+            user_email="test@example.com",
+            team_id=team.id,
+            name="Test Token Repair",
+            jti=jti,
+            token_hash="test_hash",
+            is_active=True
+        )
+        test_db.add(api_token)
+        test_db.commit()
+
+        # Create TokenRevocation entry directly (simulating inconsistent state)
+        revocation = TokenRevocation(
+            jti=jti,
+            revoked_by="system@example.com",
+            reason="idle_timeout"
+        )
+        test_db.add(revocation)
+        test_db.commit()
+
+        # Verify token is still active (inconsistent state)
+        test_db.refresh(api_token)
+        assert api_token.is_active is True
+
+        # Call revoke_token again (idempotent path should repair)
+        result = blocklist_service.revoke_token(
+            jti=jti,
+            revoked_by="test@example.com",
+            reason="logout"
+        )
+
+        assert result is True
+
+        # Refresh the token from database
+        test_db.refresh(api_token)
+
+        # Verify token is now inactive (repaired)
+        assert api_token.is_active is False
+
+        # Verify TokenRevocation still exists with original data
+        revocation_check = test_db.execute(
+            select(TokenRevocation).where(TokenRevocation.jti == jti)
+        ).scalar_one_or_none()
+
+        assert revocation_check is not None
+        assert revocation_check.reason == "idle_timeout"  # Original reason preserved
+
 
 class TestRevocationCheck:
     """Tests for checking if tokens are revoked."""

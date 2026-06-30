@@ -21578,6 +21578,88 @@ class TestTemplateButtonGating:
         html = self._render_tokens_partial(jinja_env, [token_data])
         assert 'data-action="token-revoke"' not in html
 
+    def test_tokens_revoked_badge_takes_priority_over_active_badge(self, jinja_env):
+        """Revoked badge must take priority over active/inactive badges to prevent dual badges."""
+        # Test case 1: Token is revoked and active (inconsistent state pre-fix)
+        revoked_active_token = {
+            "id": "tok-revoked-active",
+            "name": "Revoked Active Token",
+            "description": None,
+            "user_email": "user@example.com",
+            "team_id": None,
+            "team_name": None,
+            "created_at": "2026-04-01T00:00:00",
+            "expires_at": None,
+            "last_used": None,
+            "is_active": True,  # Inconsistent state
+            "is_revoked": True,
+            "revoked_at": "2026-04-02T00:00:00",
+            "revoked_by": "admin@example.com",
+            "revocation_reason": "Test",
+            "tags": [],
+            "server_id": None,
+            "resource_scopes": [],
+            "ip_restrictions": [],
+            "time_restrictions": {},
+            "usage_limits": {},
+            "_json": "{}",
+        }
+
+        # Test case 2: Token is revoked and inactive (correct state post-fix)
+        revoked_inactive_token = {
+            "id": "tok-revoked-inactive",
+            "name": "Revoked Inactive Token",
+            "description": None,
+            "user_email": "user@example.com",
+            "team_id": None,
+            "team_name": None,
+            "created_at": "2026-04-01T00:00:00",
+            "expires_at": None,
+            "last_used": None,
+            "is_active": False,
+            "is_revoked": True,
+            "revoked_at": "2026-04-02T00:00:00",
+            "revoked_by": "admin@example.com",
+            "revocation_reason": "Test",
+            "tags": [],
+            "server_id": None,
+            "resource_scopes": [],
+            "ip_restrictions": [],
+            "time_restrictions": {},
+            "usage_limits": {},
+            "_json": "{}",
+        }
+
+        # Render both tokens
+        html = self._render_tokens_partial(jinja_env, [revoked_active_token, revoked_inactive_token])
+
+        # Verify that "Revoked" badge appears but "Active" and "Inactive" badges do not
+        # for tokens where is_revoked=True
+
+        # Count occurrences of status badges (account for whitespace/newlines in HTML)
+        # Standard
+        import re
+
+        # Search for badges with flexible whitespace matching (including newlines)
+        # The closing tag might be split across lines like: >Revoked</span\n>
+        active_count = len(re.findall(r">Active</span", html))
+        inactive_count = len(re.findall(r">Inactive</span", html))
+        revoked_count = len(re.findall(r">Revoked</span", html))
+
+        # Should have exactly 2 "Revoked" badges (one per token)
+        assert revoked_count == 2, f"Expected 2 'Revoked' badges, found {revoked_count}"
+
+        # Should have NO "Active" or "Inactive" badges when tokens are revoked
+        assert active_count == 0, f"Expected 0 'Active' badges for revoked tokens, found {active_count}"
+        assert inactive_count == 0, f"Expected 0 'Inactive' badges for revoked tokens, found {inactive_count}"
+
+        # Additional verification: ensure template uses {% elif %} not {% if %} for active/inactive
+        # This ensures mutually exclusive badge rendering
+        with open("mcpgateway/templates/tokens_partial.html", encoding="utf-8") as f:
+            template_content = f.read()
+        assert "{% elif token.is_active %}" in template_content, \
+            "Template should use {% elif %} to ensure mutually exclusive badges"
+
 
 class TestAdminGetToolPassesTeamRoles:
     """Tests that admin_get_tool and admin_list_tools pass requesting_user_team_roles."""

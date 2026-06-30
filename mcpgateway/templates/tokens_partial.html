@@ -7,7 +7,12 @@
         <h4 class="text-lg font-medium text-gray-900 dark:text-white">
           {{ token.name }}
         </h4>
-        {% if token.is_active %}
+        {% if token.is_revoked %}
+        <span
+          class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-100"
+          >Revoked</span
+        >
+        {% elif token.is_active %}
         <span
           class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-100"
           >Active</span
@@ -16,11 +21,6 @@
         <span
           class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-100"
           >Inactive</span
-        >
-        {% endif %} {% if token.is_revoked %}
-        <span
-          class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-100"
-          >Revoked</span
         >
         {% endif %} {% if token.team_name %}
         <span
