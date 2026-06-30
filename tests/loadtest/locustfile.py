@@ -1026,8 +1026,8 @@ class ReadOnlyAPIUser(BaseUser):
                 name="/prompts/[id]",
                 catch_response=True,
             ) as response:
-                # 200=Success, 403=Forbidden (read-only), 404=Not found
-                self._validate_json_response(response, allowed_codes=[200, 403, 404])
+                # 200=Success, 403=Forbidden (read-only), 404=Not found, 422=PromptError (missing required args)
+                self._validate_json_response(response, allowed_codes=[200, 403, 404, 422])
 
     @task(2)
     @tag("api", "servers")
@@ -1158,7 +1158,7 @@ class AdminUIUser(BaseUser):
     def admin_events(self):
         """Load admin events stream metadata."""
         with self.client.get("/admin/events", headers=self.auth_headers, name="/admin/events", catch_response=True) as response:
-            self._validate_json_response(response, allowed_codes=[200, 401, 403, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
+            self._validate_status(response, allowed_codes=[200, 401, 403, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(2)
     @tag("admin", "config")
@@ -6440,7 +6440,7 @@ class AuthEmailCRUDUser(BaseUser):
     @tag("auth", "email", "admin", "crud")
     def admin_user_lifecycle(self):
         """POST/GET/PUT/DELETE /auth/email/admin/users - Full lifecycle."""
-        email = f"loadtest-{uuid.uuid4().hex[:8]}@example.com"
+        email = f"loadtest-{uuid.uuid4().hex}@example.com"
         user_data = {
             "email": email,
             "password": "LoadTest123!",  # pragma: allowlist secret
@@ -6504,7 +6504,7 @@ class AuthEmailCRUDUser(BaseUser):
     @tag("auth", "email", "register")
     def email_register_and_delete(self):
         """POST /auth/email/register - Register then delete."""
-        email = f"loadtest-reg-{uuid.uuid4().hex[:8]}@example.com"
+        email = f"loadtest-reg-{uuid.uuid4().hex}@example.com"
         with self.client.post(
             "/auth/email/register",
             json={"email": email, "password": "LoadTest123!", "full_name": "Load Test"},  # pragma: allowlist secret
@@ -7948,7 +7948,7 @@ class AdminUsersOpsUser(BaseUser):
     @tag("admin", "users", "crud")
     def admin_user_lifecycle(self):
         """POST /admin/users -> activate/deactivate -> update -> delete."""
-        email = f"loadtest-adminuser-{uuid.uuid4().hex[:8]}@example.com"
+        email = f"loadtest-adminuser-{uuid.uuid4().hex}@example.com"
         form_data = f"email={email}&password=LoadTest123!&full_name=Load+Test+User"
         with self.client.post(
             "/admin/users",
