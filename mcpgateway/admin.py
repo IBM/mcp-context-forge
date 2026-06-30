@@ -44,6 +44,7 @@ import urllib.parse
 import uuid
 
 # Third-Party
+from cryptography.exceptions import InvalidTag
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
@@ -4130,6 +4131,8 @@ async def admin_ui(
             # Password policy - pass actual requirements dict for user creation
             "password_requirements": PasswordPolicyService.get_password_requirements(is_privileged=False),
             "password_policy_enabled": getattr(settings, "password_policy_enabled", True),
+            # Gateway async lifecycle feature flag
+            "gateway_async_lifecycle_enabled": settings.gateway_async_lifecycle_enabled,
             # Token policy flags
             "require_token_expiration": getattr(settings, "require_token_expiration", True),
             "sri_hashes": load_sri_hashes(),
@@ -9592,7 +9595,13 @@ async def admin_gateways_partial_html(
     for g in gateways_db:
         try:
             gateways_pydantic.append(gateway_service.convert_gateway_to_read(g))
-        except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+        # Exception handling for gateway conversion and auth credential decryption:
+        # - ValidationError: Pydantic schema mismatch in gateway data
+        # - ValueError/KeyError/TypeError: Malformed gateway data structure
+        # - binascii.Error: Invalid base64 encoding in encrypted fields
+        # - InvalidTag: AES-GCM decryption failure for encrypted auth secrets
+        # - AttributeError: Missing gateway attributes during conversion
+        except (ValidationError, ValueError, KeyError, TypeError, AttributeError, binascii.Error, InvalidTag) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert gateway {getattr(g, 'id', 'unknown')} ({getattr(g, 'name', 'unknown')}): {e}")
     _adjust_pagination_for_conversion_failures(pagination, failed_count, len(gateways_pydantic))
@@ -9641,6 +9650,7 @@ async def admin_gateways_partial_html(
             "current_user_email": user_email,
             "is_admin": _is_admin,
             "user_team_roles": _team_roles,
+            "gateway_async_lifecycle_enabled": settings.gateway_async_lifecycle_enabled,
         },
     )
 

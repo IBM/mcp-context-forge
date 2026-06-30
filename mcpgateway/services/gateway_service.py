@@ -5118,6 +5118,31 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway_dict["version"] = getattr(gateway, "version", None)
         gateway_dict["team"] = getattr(gateway, "team", None)
 
+        # Include async lifecycle fields (Issue #5127)
+        # status: str — "pending"|"active"|"deleting"
+        # status_message: Optional[str] — user-facing status text
+        # registration_attempts: int — retry count
+        # next_retry_at: Optional[datetime] — next retry timestamp
+        # last_error: Optional[str] — internal error details (not displayed in UI)
+        # lifecycle_claimed_by: Optional[str] — worker claim ID
+        # lifecycle_claimed_at: Optional[datetime] — claim timestamp
+        # lifecycle_claim_expires_at: Optional[datetime] — claim expiry
+        lifecycle_fields = {
+            "status": "active",
+            "status_message": None,
+            "registration_attempts": 0,
+            "next_retry_at": None,
+            "last_error": None,
+            "lifecycle_claimed_by": None,
+            "lifecycle_claimed_at": None,
+            "lifecycle_claim_expires_at": None,
+        }
+        for field, default in lifecycle_fields.items():
+            value = getattr(gateway, field, default)
+            if field == "registration_attempts":
+                value = value or 0
+            gateway_dict[field] = value
+
         # Populate tool count from the eagerly-loaded tools relationship when available
         tools_rel = gateway.__dict__.get("tools")
         gateway_dict["tool_count"] = len(tools_rel) if tools_rel is not None else 0

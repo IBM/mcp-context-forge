@@ -16,6 +16,7 @@ from playwright.sync_api import expect
 import pytest
 
 # Local
+from mcpgateway.config import Settings
 from .pages.gateways_page import GatewaysPage
 
 logger = logging.getLogger(__name__)
@@ -739,7 +740,7 @@ class TestGatewayActions:
         # which requires explicit RBAC role assignments beyond the is_admin JWT flag.
         delete_status = getattr(gateways_page, "last_delete_status", None)
         if delete_status == 403:
-            pytest.skip(f"Gateway delete blocked by RBAC permissions (allow_admin_bypass=False). HTTP 403 from DELETE endpoint.")
+            pytest.skip("Gateway delete blocked by RBAC permissions (allow_admin_bypass=False). HTTP 403 from DELETE endpoint.")
 
         # Verify gateway was deleted — reload to ensure DB commit is visible
         gateways_page.page.reload(wait_until="domcontentloaded")
@@ -789,6 +790,23 @@ class TestGatewayActions:
         # Status badge should be visible (either Active or Inactive)
         status_cell = first_row.locator("td").nth(5)  # Status column
         expect(status_cell).to_be_visible()
+
+    def test_status_badge_has_data_attribute(self, gateways_page: GatewaysPage):
+        """Test that status badge has a ``data-gateway-status`` attribute."""
+        gateways_page.navigate_to_gateways_tab()
+        gateways_page.wait_for_gateways_table_loaded()
+
+        # Skip if no gateways exist
+        if gateways_page.get_gateway_count() == 0:
+            pytest.skip("No gateways available for testing")
+
+        # Each gateway row's status badge should have the data attribute
+        for i in range(gateways_page.get_gateway_count()):
+            badge_status = gateways_page.get_status_badge_data_attribute(i)
+            assert badge_status is not None, f"Gateway row {i} is missing data-gateway-status"
+            assert badge_status in ("active", "inactive", "pending", "deleting"), (
+                f"Unexpected data-gateway-status value: {badge_status}"
+            )
 
     def test_gateway_visibility_badge(self, gateways_page: GatewaysPage):
         """Test that gateway visibility badge is displayed."""
@@ -903,3 +921,120 @@ class TestGatewayVisibility:
         expect(gateways_page.visibility_private_radio).to_be_checked()
         expect(gateways_page.visibility_public_radio).not_to_be_checked()
         expect(gateways_page.visibility_team_radio).not_to_be_checked()
+
+
+# Module-level skip condition for async lifecycle tests
+_requires_async_lifecycle = pytest.mark.skipif(
+    not Settings().gateway_async_lifecycle_enabled,
+    reason="GATEWAY_ASYNC_LIFECYCLE_ENABLED is not enabled",
+)
+
+
+@pytest.mark.ui
+@pytest.mark.gateways
+@_requires_async_lifecycle
+class TestGatewayAsyncLifecycle:
+    """Test cases for async gateway lifecycle UI features (Issue #5127)."""
+
+    def test_polling_indicator_present(self, gateways_page: GatewaysPage):
+        """Test that the polling indicator element exists when async lifecycle is enabled."""
+        gateways_page.navigate_to_gateways_tab()
+        gateways_page.wait_for_gateways_table_loaded()
+
+        expect(gateways_page.polling_indicator).to_be_visible()
+
+    def test_retry_info_column_present(self, gateways_page: GatewaysPage):
+        """Test that the Retry Info column header is present when async lifecycle is enabled."""
+        gateways_page.navigate_to_gateways_tab()
+        gateways_page.wait_for_gateways_table_loaded()
+
+        expect(gateways_page.retry_info_header).to_be_visible()
+
+    def test_status_badge_for_async_states(self, gateways_page: GatewaysPage):
+        """Test that status badges use correct data attributes for async states."""
+        gateways_page.navigate_to_gateways_tab()
+        gateways_page.wait_for_gateways_table_loaded()
+
+        if gateways_page.get_gateway_count() == 0:
+            pytest.skip("No gateways available for testing")
+
+        for i in range(gateways_page.get_gateway_count()):
+            badge_status = gateways_page.get_status_badge_data_attribute(i)
+            assert badge_status is not None, f"Gateway row {i} is missing data-gateway-status"
+            assert badge_status in ("active", "inactive", "pending", "deleting"), (
+                f"Unexpected data-gateway-status value: {badge_status}"
+            )
+
+    def test_polling_trigger_condition(self, gateways_page: GatewaysPage):
+        """Test that HTMX polling trigger uses conditional data-attribute selector."""
+        gateways_page.navigate_to_gateways_tab()
+        gateways_page.wait_for_gateways_table_loaded()
+
+        assert gateways_page.has_polling_trigger_on_table(), (
+            "Gateways table should have conditional hx-trigger with every 10s and data-gateway-status"
+        )
+
+    def test_action_button_states_match_status(self, gateways_page: GatewaysPage):
+        """Test that action buttons are disabled for pending/deleting gateways, enabled otherwise."""
+        gateways_page.navigate_to_gateways_tab()
+        gateways_page.wait_for_gateways_table_loaded()
+
+        if gateways_page.get_gateway_count() == 0:
+            pytest.skip("No gateways available for testing")
+
+        for i in range(gateways_page.get_gateway_count()):
+            badge_status = gateways_page.get_status_badge_data_attribute(i)
+            assert badge_status is not None
+
+            is_pending_or_deleting = badge_status in ("pending", "deleting")
+
+            edit_disabled = gateways_page.is_action_menu_item_disabled(i, "Edit")
+            assert edit_disabled == is_pending_or_deleting, (
+                f"Row {i} ({badge_status}): Edit disabled={edit_disabled}, expected={is_pending_or_deleting}"
+            )
+
+    def test_delete_button_text_changes_for_pending(self, gateways_page: GatewaysPage):
+        """Test that delete button shows 'Cancel' for pending gateways, 'Delete' otherwise."""
+        gateways_page.navigate_to_gateways_tab()
+        gateways_page.wait_for_gateways_table_loaded()
+
+        if gateways_page.get_gateway_count() == 0:
+            pytest.skip("No gateways available for testing")
+
+        for i in range(gateways_page.get_gateway_count()):
+            badge_status = gateways_page.get_status_badge_data_attribute(i)
+            assert badge_status is not None
+
+            delete_text = gateways_page.get_delete_button_text(i)
+
+            if badge_status == "pending":
+                assert delete_text == "Cancel", (
+                    f"Row {i} (pending): expected 'Cancel', got '{delete_text}'"
+                )
+            else:
+                assert delete_text == "Delete", (
+                    f"Row {i} ({badge_status}): expected 'Delete', got '{delete_text}'"
+                )
+
+    def test_retry_info_content_for_pending_gateway(self, gateways_page: GatewaysPage):
+        """Test that retry info column shows attempts/timestamp for pending, em dash otherwise."""
+        gateways_page.navigate_to_gateways_tab()
+        gateways_page.wait_for_gateways_table_loaded()
+
+        if gateways_page.get_gateway_count() == 0:
+            pytest.skip("No gateways available for testing")
+
+        for i in range(gateways_page.get_gateway_count()):
+            badge_status = gateways_page.get_status_badge_data_attribute(i)
+            assert badge_status is not None
+
+            retry_text = gateways_page.get_retry_info_text(i)
+
+            if badge_status == "pending":
+                assert "Attempts:" in retry_text, (
+                    f"Row {i} (pending): expected 'Attempts:' in retry info, got '{retry_text}'"
+                )
+            else:
+                assert retry_text == "—" or retry_text == "", (
+                    f"Row {i} ({badge_status}): expected em dash in retry info, got '{retry_text}'"
+                )
