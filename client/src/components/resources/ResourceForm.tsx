@@ -10,16 +10,27 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useResourceForm, MIME_TYPES, type MimeType } from "@/hooks/useResourceForm";
+import {
+  useResourceForm,
+  MIME_TYPES,
+  type MimeType,
+  type ResourceFormOptions,
+} from "@/hooks/useResourceForm";
 import type { Visibility } from "@/types/server";
 
-interface ResourceFormProps {
+interface ResourceFormProps extends ResourceFormOptions {
   isOpen: boolean;
   onToggle: () => void;
   onSuccess: () => void;
 }
 
-export function ResourceForm({ isOpen, onToggle, onSuccess }: ResourceFormProps) {
+export function ResourceForm({
+  isOpen,
+  onToggle,
+  onSuccess,
+  onBeforeSubmit,
+  onError,
+}: ResourceFormProps) {
   const intl = useIntl();
   const {
     uri,
@@ -39,7 +50,7 @@ export function ResourceForm({ isOpen, onToggle, onSuccess }: ResourceFormProps)
     setTags,
     setVisibility,
     handleSubmit,
-  } = useResourceForm();
+  } = useResourceForm({ onBeforeSubmit, onError });
 
   if (!isOpen) return null;
 

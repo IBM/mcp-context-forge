@@ -6,7 +6,13 @@ import { useQuery } from "@/hooks/useQuery";
 import { resourcesApi } from "@/api/resources";
 import { ApiError } from "@/api/client";
 import { extractApiErrorDetail } from "@/utils/errors";
-import type { ResourceRead, GatewayRead, CursorPaginatedGatewaysResponse } from "@/generated/types";
+import type {
+  ResourceRead,
+  GatewayRead,
+  CursorPaginatedGatewaysResponse,
+  BodyCreateResourceResourcesPost,
+} from "@/generated/types";
+import { ResourceReadVisibility } from "@/generated/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import {
@@ -140,7 +146,13 @@ export function Resources() {
   const [deleteResourceId, setDeleteResourceId] = useState<string | null>(null);
   const [deleteResourceName, setDeleteResourceName] = useState<string | null>(null);
 
-  const { data, isLoading, error, refetch } = useQuery<ResourceRead[]>("/resources?limit=0");
+  const {
+    data,
+    isLoading,
+    error,
+    refetch,
+    setData: setResourcesData,
+  } = useQuery<ResourceRead[]>("/resources?limit=0");
   const { data: gatewaysData } = useQuery<CursorPaginatedGatewaysResponse>(
     "/gateways?limit=0&include_pagination=true",
     {
@@ -159,6 +171,32 @@ export function Resources() {
       ]),
     );
   }, [gatewaysData]);
+
+  const handleOptimisticAdd = useCallback(
+    (formData: BodyCreateResourceResourcesPost) => {
+      const { resource } = formData;
+      const optimistic: NonNullable<ResourceRead> = {
+        id: "__optimistic__",
+        uri: resource.uri,
+        name: resource.name,
+        description: resource.description ?? null,
+        mimeType: resource.mimeType ?? null,
+        size: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        enabled: true,
+        tags: resource.tags ?? [],
+        visibility:
+          (resource.visibility as ResourceReadVisibility) ?? ResourceReadVisibility.public,
+      };
+      setResourcesData((prev) => [optimistic, ...(prev ?? [])]);
+    },
+    [setResourcesData],
+  );
+
+  const handleOptimisticRollback = useCallback(() => {
+    setResourcesData((prev) => prev?.filter((r) => r?.id !== "__optimistic__") ?? []);
+  }, [setResourcesData]);
 
   const handleFormSuccess = async () => {
     setShowForm(false);
@@ -226,6 +264,8 @@ export function Resources() {
           isOpen={showForm}
           onToggle={() => setShowForm(false)}
           onSuccess={handleFormSuccess}
+          onBeforeSubmit={handleOptimisticAdd}
+          onError={handleOptimisticRollback}
         />
       ) : (
         <>

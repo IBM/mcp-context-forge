@@ -45,6 +45,11 @@ export interface ResourceFormErrors {
   submit?: string;
 }
 
+export interface ResourceFormOptions {
+  onBeforeSubmit?: (data: BodyCreateResourceResourcesPost) => void;
+  onError?: () => void;
+}
+
 export interface UseResourceFormReturn {
   uri: string;
   name: string;
@@ -79,7 +84,8 @@ export const MIME_TYPES = [
 
 export type MimeType = (typeof MIME_TYPES)[number];
 
-export function useResourceForm(): UseResourceFormReturn {
+export function useResourceForm(options: ResourceFormOptions = {}): UseResourceFormReturn {
+  const { onBeforeSubmit, onError } = options;
   const intl = useIntl();
   const schema = useMemo(() => createResourceFormSchema(intl), [intl]);
 
@@ -147,16 +153,20 @@ export function useResourceForm(): UseResourceFormReturn {
 
       if (!validateForm()) return;
 
+      const formData = getFormData();
+      onBeforeSubmit?.(formData);
+
       try {
-        await createResource(getFormData());
+        await createResource(formData);
         setErrors({});
         if (onSuccess) onSuccess();
       } catch (error) {
+        onError?.();
         const fallback = intl.formatMessage({ id: "resources.form.error.createFailed" });
         setErrors({ submit: parseApiError(error, fallback) });
       }
     },
-    [validateForm, getFormData, createResource, intl],
+    [validateForm, getFormData, onBeforeSubmit, createResource, onError, intl],
   );
 
   return {
