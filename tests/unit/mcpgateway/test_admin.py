@@ -58,6 +58,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     _parse_tag_filter_groups,
     _read_request_json,
     _render_user_card_html,
+    _set_admin_csrf_cookie,
     _validated_team_id_param,
     admin_a2a_partial_html,
     admin_activate_user,
@@ -5421,6 +5422,153 @@ class TestAdminUIRoute:
         assert isinstance(response, HTMLResponse)
         context = mock_request.app.state.templates.TemplateResponse.call_args[0][2]
         assert any(t.get("team_id") == "team-1" for t in context["tools"])
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_ui_csrf_with_email_auth_disabled(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """HMAC-bound CSRF token should be issued when email_auth_enabled=False (the original #5325 bug)."""
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = []
+        mock_prompts.return_value = []
+        mock_gateways.return_value = []
+        mock_roots.return_value = []
+
+        monkeypatch.setattr(settings, "email_auth_enabled", False, raising=False)
+
+        mock_csrf_service = MagicMock()
+        mock_csrf_service.generate_csrf_token.return_value = "a" * 64
+
+        with patch("mcpgateway.admin.get_csrf_service", return_value=mock_csrf_service):
+            response = await admin_ui(
+                request=mock_request,
+                team_id=None,
+                include_inactive=False,
+                db=mock_db,
+                user={"email": "admin@example.com", "is_admin": True, "db": mock_db},
+            )
+
+        assert isinstance(response, HTMLResponse)
+        assert response.status_code == 200
+        mock_csrf_service.generate_csrf_token.assert_called_once()
+        call_kwargs = mock_csrf_service.generate_csrf_token.call_args[1]
+        assert "user_id" in call_kwargs and call_kwargs["user_id"] is not None
+        assert "session_id" in call_kwargs and call_kwargs["session_id"] is not None
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_ui_csrf_degraded_on_jwt_failure(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """When create_jwt_token fails, admin_ui should still return 200 with degraded CSRF fallback."""
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = []
+        mock_prompts.return_value = []
+        mock_gateways.return_value = []
+        mock_roots.return_value = []
+
+        mock_csrf_service = MagicMock()
+
+        with (
+            patch("mcpgateway.admin.create_jwt_token", new_callable=AsyncMock) as mock_create_jwt,
+            patch("mcpgateway.admin.LOGGER") as mock_logger,
+            patch("mcpgateway.admin.get_csrf_service", return_value=mock_csrf_service),
+        ):
+            mock_create_jwt.side_effect = RuntimeError("JWT signing failed")
+
+            response = await admin_ui(
+                request=mock_request,
+                team_id=None,
+                include_inactive=False,
+                db=mock_db,
+                user={"email": "admin@example.com", "is_admin": True, "db": mock_db},
+            )
+
+        assert isinstance(response, HTMLResponse)
+        assert response.status_code == 200
+        mock_logger.error.assert_called_once()
+        assert "CSRF protection degraded" in str(mock_logger.error.call_args[0])
+        mock_csrf_service.generate_csrf_token.assert_not_called()
+
+
+class TestAdminCsrfCookie:
+    """Direct unit tests for _set_admin_csrf_cookie HMAC vs random-token branching."""
+
+    @staticmethod
+    def _make_request():
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": ""}
+        request.cookies = {}
+        return request
+
+    def test_set_admin_csrf_cookie_hmac_path(self):
+        """When user_id and session_id are provided, generate_csrf_token should be called."""
+        request = self._make_request()
+        response = MagicMock(spec=Response)
+        mock_csrf_service = MagicMock()
+        mock_csrf_service.generate_csrf_token.return_value = "a" * 64
+
+        with patch("mcpgateway.admin.get_csrf_service", return_value=mock_csrf_service):
+            token = _set_admin_csrf_cookie(request, response, user_id="u1", session_id="s1")
+
+        mock_csrf_service.generate_csrf_token.assert_called_once_with(user_id="u1", session_id="s1")
+        assert token == "a" * 64
+        response.set_cookie.assert_called_once()
+        assert response.set_cookie.call_args[1]["key"] == "mcpgateway_csrf_token"
+
+    def test_set_admin_csrf_cookie_empty_string_takes_hmac_path(self):
+        """Empty-string user_id should NOT silently bypass HMAC (previous bug)."""
+        request = self._make_request()
+        response = MagicMock(spec=Response)
+        mock_csrf_service = MagicMock()
+        mock_csrf_service.generate_csrf_token.return_value = "a" * 64
+
+        with patch("mcpgateway.admin.get_csrf_service", return_value=mock_csrf_service):
+            token = _set_admin_csrf_cookie(request, response, user_id="", session_id="s1")
+
+        mock_csrf_service.generate_csrf_token.assert_called_once_with(user_id="", session_id="s1")
+        assert token == "a" * 64
+
+    def test_set_admin_csrf_cookie_none_fallback(self):
+        """None user_id/session_id should fall back to random token."""
+        request = self._make_request()
+        response = MagicMock(spec=Response)
+        mock_csrf_service = MagicMock()
+
+        with patch("mcpgateway.admin.get_csrf_service", return_value=mock_csrf_service):
+            token = _set_admin_csrf_cookie(request, response, user_id=None, session_id=None)
+
+        mock_csrf_service.generate_csrf_token.assert_not_called()
+        assert isinstance(token, str) and len(token) >= 32
 
 
 class TestRateLimiting:

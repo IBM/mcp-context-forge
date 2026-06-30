@@ -3749,14 +3749,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             claim_filter = or_(DbGateway.lifecycle_claim_expires_at.is_(None), DbGateway.lifecycle_claim_expires_at <= now)
             deleting_ids = db.execute(select(DbGateway.id).where(DbGateway.status == "deleting").where(claim_filter)).scalars().all()
             pending_ids = (
-                db.execute(
-                    select(DbGateway.id)
-                    .where(DbGateway.status == "pending")
-                    .where(or_(DbGateway.next_retry_at.is_(None), DbGateway.next_retry_at <= now))
-                    .where(claim_filter)
-                )
-                .scalars()
-                .all()
+                db.execute(select(DbGateway.id).where(DbGateway.status == "pending").where(or_(DbGateway.next_retry_at.is_(None), DbGateway.next_retry_at <= now)).where(claim_filter)).scalars().all()
             )
         return [*deleting_ids, *(f"pending:{gateway_id}" for gateway_id in pending_ids)]
 
@@ -4933,6 +4926,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         while True:
             try:
                 if self._redis_client and settings.cache_type == "redis":
+
                     async def require_redis_leader() -> bool:
                         """Check for redis leader"""
                         current_leader = await self._redis_client.get(self._leader_key)
@@ -5572,9 +5566,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         stale_resource_ids = []
         if not skip_stale_cleanup and catalog_sync.new_resource_uris is not None:
-            stale_resource_ids = [
-                resource.id for resource in gateway.resources if resource.uri not in catalog_sync.new_resource_uris and _created_via_allowed(getattr(resource, "created_via", None))
-            ]
+            stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in catalog_sync.new_resource_uris and _created_via_allowed(getattr(resource, "created_via", None))]
             if stale_resource_ids:
                 for i in range(0, len(stale_resource_ids), 500):
                     chunk = stale_resource_ids[i : i + 500]
@@ -5585,9 +5577,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         stale_prompt_ids = []
         if not skip_stale_cleanup and catalog_sync.new_prompt_names is not None:
-            stale_prompt_ids = [
-                prompt.id for prompt in gateway.prompts if prompt.original_name not in catalog_sync.new_prompt_names and _created_via_allowed(getattr(prompt, "created_via", None))
-            ]
+            stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.original_name not in catalog_sync.new_prompt_names and _created_via_allowed(getattr(prompt, "created_via", None))]
             if stale_prompt_ids:
                 for i in range(0, len(stale_prompt_ids), 500):
                     chunk = stale_prompt_ids[i : i + 500]
@@ -5601,13 +5591,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if not skip_stale_cleanup:
             gateway.tools = [tool for tool in gateway.tools if tool.original_name in catalog_sync.new_tool_names or not _created_via_allowed(getattr(tool, "created_via", None))]
             if catalog_sync.new_resource_uris is not None:
-                gateway.resources = [
-                    resource for resource in gateway.resources if resource.uri in catalog_sync.new_resource_uris or not _created_via_allowed(getattr(resource, "created_via", None))
-                ]
+                gateway.resources = [resource for resource in gateway.resources if resource.uri in catalog_sync.new_resource_uris or not _created_via_allowed(getattr(resource, "created_via", None))]
             if catalog_sync.new_prompt_names is not None:
-                gateway.prompts = [
-                    prompt for prompt in gateway.prompts if prompt.original_name in catalog_sync.new_prompt_names or not _created_via_allowed(getattr(prompt, "created_via", None))
-                ]
+                gateway.prompts = [prompt for prompt in gateway.prompts if prompt.original_name in catalog_sync.new_prompt_names or not _created_via_allowed(getattr(prompt, "created_via", None))]
 
         tools_removed = len(stale_tool_ids)
         resources_removed = len(stale_resource_ids)

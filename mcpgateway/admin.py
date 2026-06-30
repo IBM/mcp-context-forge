@@ -153,6 +153,7 @@ from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.catalog_service import catalog_service
 from mcpgateway.services.content_security import ContentSizeError, ContentTypeError, TemplateValidationError
+from mcpgateway.services.csrf_service import clear_csrf_cookie, get_csrf_service
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, PasswordValidationError
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.export_service import ExportError, ExportService
@@ -1671,9 +1672,7 @@ def _set_admin_csrf_cookie(request: Request, response: Response, user_id: str | 
     Returns:
         CSRF token value stored in the response cookie.
     """
-    if user_id and session_id:
-        from mcpgateway.services.csrf_service import get_csrf_service
-
+    if user_id is not None and session_id is not None:
         csrf_token = get_csrf_service().generate_csrf_token(user_id=user_id, session_id=session_id)
     else:
         existing_token = request.cookies.get(ADMIN_CSRF_COOKIE_NAME)
@@ -4155,7 +4154,7 @@ async def admin_ui(
     try:
         # Determine the admin user email
         admin_email = get_user_email(user)
-        is_admin_flag = bool(user.get("is_admin") if isinstance(user, dict) else True)
+        is_admin_flag = bool(user.get("is_admin") if isinstance(user, dict) else getattr(user, "is_admin", False))
         full_name = getattr(settings, "platform_admin_full_name", "Platform User")
         if isinstance(user, dict):
             full_name = user.get("full_name") or full_name
@@ -4193,8 +4192,11 @@ async def admin_ui(
                         auth_provider = "keycloak"
 
         # Generate a lightweight session JWT token
-        email_user = db.query(EmailUser).filter(EmailUser.email == admin_email).first()
-        sub_claim = str(email_user.id) if email_user else admin_email
+        if settings.email_auth_enabled:
+            email_user = db.query(EmailUser).filter(EmailUser.email == admin_email).first()
+            sub_claim = str(email_user.id) if email_user else admin_email
+        else:
+            sub_claim = admin_email
         jwt_jti = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
         payload = {
@@ -4214,13 +4216,13 @@ async def admin_ui(
 
         # Set HTTP-only cookie using centralized security cookie utility
         set_auth_cookie(response, token, remember_me=False)
-        LOGGER.debug(f"Set session JWT token cookie for user: {admin_email}")
+        LOGGER.debug("Set session JWT token cookie for user: %s", admin_email)
 
         # Capture user/session identifiers for HMAC-bound CSRF cookie
         csrf_user_id = sub_claim
         csrf_session_id = jwt_jti
     except Exception as e:
-        LOGGER.warning(f"Failed to set JWT token cookie for user {user}: {e}")
+        LOGGER.error("Failed to set JWT token cookie for user %s: %s — CSRF protection degraded (falling back to random token)", get_user_email(user), e)
 
     cookie_action = ui_visibility_config.get("cookie_action")
     if cookie_action:
@@ -4915,9 +4917,6 @@ async def _admin_logout(request: Request) -> Response:
     clear_auth_cookie(response)
 
     # Clear CSRF token cookie
-    # First-Party
-    from mcpgateway.services.csrf_service import clear_csrf_cookie
-
     clear_csrf_cookie(response, settings)
 
     use_secure = (settings.environment == "production") or settings.secure_cookies
