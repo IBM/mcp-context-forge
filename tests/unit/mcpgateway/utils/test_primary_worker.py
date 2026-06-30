@@ -181,3 +181,21 @@ def test_redis_backend_delegates_to_elector(monkeypatch):
 
     monkeypatch.setattr(le, "_elector", _FakeElector(), raising=False)
     assert is_primary_worker() is True
+
+
+def test_default_backend_is_filelock_and_skips_elector(monkeypatch, tmp_path):
+    """Default backend is filelock, and that path never consults the elector."""
+    # First-Party
+    from mcpgateway.config import get_settings
+    import mcpgateway.services.leader_election as le
+
+    # Conservative shipped default — no deployment silently flips to cluster-wide.
+    assert get_settings().__class__.model_fields["primary_worker_election_backend"].default == "filelock"
+
+    # With the filelock backend, is_primary_worker never reaches the elector.
+    monkeypatch.setattr(pw.settings, "primary_worker_election_backend", "filelock", raising=False)
+    seen = []
+    monkeypatch.setattr(le, "get_primary_worker_elector", lambda: seen.append(1) or None)
+    _set_override(monkeypatch, tmp_path / "x.lock")
+    assert is_primary_worker() is True
+    assert seen == []  # filelock path never touched the elector
