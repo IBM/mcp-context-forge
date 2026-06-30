@@ -4,9 +4,12 @@ import { toast } from "sonner";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TeamsTable } from "@/components/teams/TeamsTable";
+import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
 import { useQuery } from "@/hooks/useQuery";
 import { api } from "@/api/client";
+import { deleteTeam } from "@/api/teams";
 import type { Team, TeamsResponse } from "@/types/team";
+import { sanitizeError } from "@/utils/errors";
 
 // Pagination constants
 const DEFAULT_PAGE_SIZE = 10;
@@ -17,6 +20,8 @@ export function Teams() {
   const [allTeams, setAllTeams] = useState<Team[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [teamToDelete, setTeamToDelete] = useState<Team | null>(null);
 
   // Keep the primary list in sync with the selected page size
   const queryPath = useMemo(() => {
@@ -26,7 +31,12 @@ export function Teams() {
   }, [limit]);
 
   // Use useQuery hook for initial data fetching and limit changes
-  const { data: response, error: queryError, isLoading } = useQuery<TeamsResponse>(queryPath);
+  const {
+    data: response,
+    error: queryError,
+    isLoading,
+    refetch,
+  } = useQuery<TeamsResponse>(queryPath);
 
   useEffect(() => {
     if (response) {
@@ -62,6 +72,51 @@ export function Teams() {
   const handleLimitChange = useCallback((newLimit: number) => {
     setLimit(newLimit);
   }, []);
+
+  const handleDelete = useCallback(
+    (teamId: string) => {
+      const team = allTeams.find((t) => t.id === teamId);
+      if (team) {
+        setTeamToDelete(team);
+        setDeleteDialogOpen(true);
+      }
+    },
+    [allTeams],
+  );
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (!teamToDelete) return;
+
+    const idToDelete = teamToDelete.id;
+    const nameToDelete = teamToDelete.name;
+
+    // Optimistic update: snapshot current list, remove immediately, close dialog
+    const previousTeams = allTeams;
+    setAllTeams(allTeams.filter((t) => t.id !== idToDelete));
+    setDeleteDialogOpen(false);
+    setTeamToDelete(null);
+
+    try {
+      await deleteTeam(idToDelete);
+      toast.success(intl.formatMessage({ id: "teams.delete.success" }, { name: nameToDelete }));
+
+      try {
+        // Refetch to resync the list with the server
+        await refetch();
+      } catch (refreshErr) {
+        console.error("Failed to refresh teams after deletion:", sanitizeError(refreshErr));
+      }
+    } catch (err) {
+      // Rollback: restore the list as it was before the optimistic removal
+      setAllTeams(previousTeams);
+
+      const errorMessage = sanitizeError(err);
+      toast.error(intl.formatMessage({ id: "teams.delete.errorTitle" }), {
+        description: errorMessage,
+      });
+      console.error("Failed to delete team:", errorMessage);
+    }
+  }, [allTeams, teamToDelete, intl, refetch]);
 
   return (
     <div className="p-6">
@@ -109,7 +164,7 @@ export function Teams() {
                 </Button>
               </div>
 
-              <TeamsTable teams={teams} isLoading={isLoading} />
+              <TeamsTable teams={teams} isLoading={isLoading} onDelete={handleDelete} />
 
               <div className="flex items-center justify-between mt-6">
                 <div className="flex items-center gap-4">
@@ -173,6 +228,22 @@ export function Teams() {
             </div>
           )}
         </>
+      )}
+
+      {teamToDelete && (
+        <ConfirmDialog
+          open={deleteDialogOpen}
+          onOpenChange={setDeleteDialogOpen}
+          title={intl.formatMessage({ id: "teams.delete.title" })}
+          description={intl.formatMessage(
+            { id: "teams.delete.description" },
+            { name: teamToDelete.name },
+          )}
+          confirmLabel={intl.formatMessage({ id: "common.button.delete" })}
+          cancelLabel={intl.formatMessage({ id: "common.button.cancel" })}
+          variant="destructive"
+          onConfirm={handleDeleteConfirm}
+        />
       )}
     </div>
   );

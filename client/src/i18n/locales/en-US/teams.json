@@ -22,5 +22,9 @@
   "teams.table.actions.label": "Actions for {name}",
   "teams.table.actions.edit": "Edit",
   "teams.table.actions.delete": "Delete",
-  "teams.table.description.view": "View description for {name}"
+  "teams.table.description.view": "View description for {name}",
+  "teams.delete.title": "Delete Team",
+  "teams.delete.description": "Are you sure you want to delete {name}? This action cannot be undone.",
+  "teams.delete.success": "Team {name} deleted successfully",
+  "teams.delete.errorTitle": "Failed to delete team"
 }
