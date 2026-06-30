@@ -159,6 +159,7 @@ dev = [
     "pyroma>=5.0",
     "playwright>=1.58.0",
     "python-owasp-zap-v2.4>=0.1.0",
+    "fakeredis[lua]>=2.36.2",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.2.0",
     "pytest-benchmark>=5.2.3",

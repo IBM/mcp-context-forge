@@ -2539,6 +2539,16 @@ class Settings(BaseSettings):
     # system temp dir when unset.
     primary_worker_lock_path: Optional[str] = None
 
+    # Primary-worker election backend: "filelock" (one primary per host, default)
+    # or "redis" (one primary across instances sharing a Redis).
+    primary_worker_election_backend: Literal["filelock", "redis"] = "filelock"
+    primary_worker_redis_key: str = "mcpgw:primary_worker"
+    primary_worker_lease_ttl: int = Field(default=15, description="Redis lease TTL (secs) for primary-worker election")
+    primary_worker_heartbeat_interval: int = Field(default=5, description="Seconds between primary-worker lease renewals (should be < lease_ttl/2)")
+    # Redis unreachable: fail_closed (no primary) preserves the global guarantee;
+    # filelock_fallback degrades to per-host.
+    primary_worker_redis_unavailable_policy: Literal["fail_closed", "filelock_fallback"] = "fail_closed"
+
     # Default Roots
     default_roots: List[str] = []
 
