@@ -5,11 +5,10 @@ SPDX-License-Identifier: Apache-2.0
 
 Test-only HOOK plugin for the primary-worker e2e.
 
-Unlike the non-hook marker, this plugin declares a hook and is NOT gated on
-is_primary_worker(). Its initialize() appends its PID to
-``MCPGW_PRIMARY_WORKER_E2E_HOOK_MARKER`` on every worker, proving election does
-not suppress hook plugins: with N workers the file has N lines (vs the gated
-non-hook plugin's 1).
+Declares a hook and is NOT gated on is_primary_worker(); its initialize()
+appends its PID to ``MCPGW_PRIMARY_WORKER_E2E_HOOK_MARKER`` on every worker. So
+with N workers the file has N lines, proving election does not suppress hooks
+(vs the gated non-hook plugin's 1).
 """
 
 # Future
