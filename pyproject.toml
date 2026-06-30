@@ -133,6 +133,7 @@ dev = [
     "diff-cover>=10.3.0",
     "dodgy>=0.2.1",
     "faker>=40.28.1",
+    "fakeredis[lua]>=2.36.2",
     "compliance-reference-server",
     "fastmcp>=3.4.2",
     "fawltydeps>=0.20.0",
