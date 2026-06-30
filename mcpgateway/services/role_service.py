@@ -20,6 +20,7 @@ from sqlalchemy import and_, delete, select, update
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.db import Permissions, Role, UserRole, utc_now
 
 logger = logging.getLogger(__name__)
@@ -628,7 +629,13 @@ class RoleService:
         self.db.commit()
         self.db.refresh(user_role)
 
-        logger.info("Assigned role %s to %s (scope: %s, scope_id: %s)", role.name, user_email, scope, scope_id)
+        logger.info(
+            "Assigned role %s to %s (scope: %s, scope_id: %s)",
+            SecurityValidator.sanitize_log_message(role.name),
+            SecurityValidator.sanitize_log_message(user_email),
+            SecurityValidator.sanitize_log_message(scope),
+            SecurityValidator.sanitize_log_message(scope_id),
+        )
         return user_role
 
     async def revoke_role_from_user(self, user_email: str, role_id: str, scope: str, scope_id: Optional[str]) -> bool:
@@ -671,7 +678,13 @@ class RoleService:
         user_role.is_active = False
         self.db.commit()
 
-        logger.info("Revoked role %s from %s (scope: %s, scope_id: %s)", role_id, user_email, scope, scope_id)
+        logger.info(
+            "Revoked role %s from %s (scope: %s, scope_id: %s)",
+            SecurityValidator.sanitize_log_message(role_id),
+            SecurityValidator.sanitize_log_message(user_email),
+            SecurityValidator.sanitize_log_message(scope),
+            SecurityValidator.sanitize_log_message(scope_id),
+        )
         return True
 
     async def get_user_role_assignment(self, user_email: str, role_id: str, scope: str, scope_id: Optional[str]) -> Optional[UserRole]:

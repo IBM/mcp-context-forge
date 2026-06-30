@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway import version as version_module
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, get_db, require_permission
 from mcpgateway.runtime_state import (
     get_runtime_state,
@@ -274,7 +275,7 @@ async def _apply_mode_change(
         new_mode.value,
         previous_override,
         change.version,
-        user.get("email"),
+        SecurityValidator.sanitize_log_message(user.get("email")),
         publish_status.value,
         audit_persisted,
     )

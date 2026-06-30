@@ -592,7 +592,7 @@ class LLMProviderService:
 
         db.delete(provider)
         db.commit()
-        logger.info("Deleted LLM provider: %s (ID: %s)", provider_name, provider_id)
+        logger.info("Deleted LLM provider: %s (ID: %s)", SecurityValidator.sanitize_log_message(provider_name), SecurityValidator.sanitize_log_message(provider_id))
         return True
 
     def set_provider_state(self, db: Session, provider_id: str, activate: Optional[bool] = None) -> LLMProvider:
@@ -807,7 +807,7 @@ class LLMProviderService:
 
         db.delete(model)
         db.commit()
-        logger.info("Deleted LLM model: %s (ID: %s)", model_name, model_id)
+        logger.info("Deleted LLM model: %s (ID: %s)", SecurityValidator.sanitize_log_message(model_name), SecurityValidator.sanitize_log_message(model_id))
         return True
 
     def set_model_state(self, db: Session, model_id: str, activate: Optional[bool] = None) -> LLMModel:

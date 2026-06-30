@@ -930,7 +930,12 @@ class TokenCatalogService:
         except Exception as cache_error:
             logger.debug("Failed to invalidate auth cache for revoked token: %s", cache_error)
 
-        logger.info("Revoked token '%s' (JTI: %s) by %s", token.name, token.jti, revoked_by)
+        logger.info(
+            "Revoked token '%s' (JTI: %s) by %s",
+            SecurityValidator.sanitize_log_message(token.name),
+            SecurityValidator.sanitize_log_message(token.jti),
+            SecurityValidator.sanitize_log_message(revoked_by),
+        )
 
         return True
 
@@ -970,7 +975,12 @@ class TokenCatalogService:
         except Exception as cache_error:
             logger.debug("Failed to invalidate auth cache: %s", cache_error)
 
-        logger.info("Admin revoked token '%s' (JTI: %s) by %s", token.name, token.jti, revoked_by)
+        logger.info(
+            "Admin revoked token '%s' (JTI: %s) by %s",
+            SecurityValidator.sanitize_log_message(token.name),
+            SecurityValidator.sanitize_log_message(token.jti),
+            SecurityValidator.sanitize_log_message(revoked_by),
+        )
         return True
 
     async def is_token_revoked(self, jti: str) -> bool:
