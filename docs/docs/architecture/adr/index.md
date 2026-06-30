@@ -38,12 +38,17 @@ This page tracks all significant design decisions made for ContextForge project,
 | 0031  | Parallel Session Cleanup with asyncio.gather() | Accepted | Performance | 2025-01-15 |
 | 0032  | MCP Session Pool for Connection Reuse | Accepted | Performance | 2025-01-05 |
 | 0033  | Tool Lookup Cache for invoke_tool | Accepted | Performance | 2025-01-20 |
+| 0034  | Centralized Notification Service | Accepted | MCP Protocol | 2026-01-13 |
+| 0034b | SSO Admin Synchronization and Configuration Precedence | Accepted | Security | 2026-01-17 |
 | 0035  | Query Parameter Authentication for Gateways | Accepted | Security | 2026-01-19 |
+| 0036  | Bootstrap Custom Roles from Configuration File | Accepted | Security | 2026-01-25 |
 | 0037  | External Plugin STDIO Launch with Command/Env Overrides | Accepted | Extensibility | 2026-01-28 |
 | 0038  | Experimental Rust Transport Backend (Streamable HTTP) | Superseded | Performance | 2025-12-26 |
+| 0038b | Multi-Worker Session Affinity for SSE and Streamable HTTP | Accepted | Transport | 2025-01-31 |
 | 0039  | Adopt Fully Independent Plugin Crates Architecture | Accepted | Architecture | 2026-02-13 |
 | 0040  | Flexible Admin UI Section Visibility | Accepted | User Interface | 2026-02-16 |
 | 0041  | Top-Level Rust Workspace (Cargo.toml at Repository Root) | Accepted | Architecture | 2026-02-26 |
+| 0041b | End-User Identity Propagation | Accepted | Security | 2026-02-17 |
 | 0042  | Enforce Rust in the Build Process                    | Proposed | Build         | 2026-02-26 |
 | 0043  | Rust MCP Runtime Sidecar with Mode-Based Rollout     | Accepted | Architecture  | 2026-03-14 |
 | 0044  | Module Communication Protocol (gRPC over UDS)        | Proposed | Architecture  | 2026-03-15 |
@@ -51,6 +56,7 @@ This page tracks all significant design decisions made for ContextForge project,
 | 0046  | Shared-Nothing Between Protocol Modules              | Proposed | Architecture  | 2026-03-15 |
 | 0047  | Incremental Migration Over Rewrite                   | Proposed | Architecture  | 2026-03-15 |
 | 0048  | Extract Rust-Backed Plugins First and Preserve Python Examples Separately | Accepted | Architecture | 2026-04-10 |
+| 0048b | A2A v1.0 Protocol Migration                          | Accepted | A2A Protocol  | 2026-06-11 |
 | 0049  | Multi-Protocol Virtual Servers                       | Accepted | Architecture | 2026-04-16 |
 | 0050  | Defer Generic Cluster-Wide Settings Propagation Framework | Accepted | Architecture | 2026-04-18 |
 | 0051  | Swappable MCP Ingress Mount                          | Accepted | Architecture | 2026-04-18 |
