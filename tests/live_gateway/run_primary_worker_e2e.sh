@@ -17,6 +17,10 @@ LOG="$TMP/gunicorn.log"
 DB="$TMP/e2e.db"
 GPID=""
 
+# Election backend: filelock (default) or redis (needs a reachable Redis).
+BACKEND="${ELECTION_BACKEND:-filelock}"
+REDIS_KEY="mcpgw:primary_worker:e2e:$$"
+
 cleanup() {
   [ -n "$GPID" ] && kill "$GPID" 2>/dev/null || true
   [ -n "$GPID" ] && wait "$GPID" 2>/dev/null || true
@@ -30,6 +34,8 @@ PLUGINS_ENABLED=true \
 PLUGINS_CONFIG_FILE=tests/live_gateway/fixtures/primary_worker_e2e_config.yaml \
 MCPGW_PRIMARY_WORKER_E2E_MARKER="$MARKER" \
 PRIMARY_WORKER_LOCK_PATH="$LOCK" \
+PRIMARY_WORKER_ELECTION_BACKEND="$BACKEND" \
+PRIMARY_WORKER_REDIS_KEY="$REDIS_KEY" \
 DATABASE_URL="sqlite:///$DB" \
 HOST=127.0.0.1 PORT="$PORT" \
   gunicorn -c gunicorn.config.py \
