@@ -2083,85 +2083,6 @@ embedded-logs:                             ## Show embedded stack logs
 	$(EMBEDDED_COMPOSE) logs -f --tail=100
 
 # =============================================================================
-# 🚀 PERFORMANCE TESTING STACK - High-capacity configuration
-# =============================================================================
-# help: 🚀 PERFORMANCE TESTING STACK
-# help: performance-up         - Start performance stack (7 gateways, PostgreSQL replica, monitoring)
-# help: performance-down       - Stop performance stack
-# help: performance-clean      - Stop and remove all performance data (volumes)
-# help: performance-logs       - Show performance stack logs
-
-# Compose command for performance testing (uses docker-compose-performance.yml)
-COMPOSE_CMD_PERF := $(shell \
-	if command -v docker &>/dev/null && docker compose version &>/dev/null 2>&1; then \
-		echo "docker compose -f docker-compose-performance.yml"; \
-	elif command -v podman &>/dev/null && podman compose version &>/dev/null 2>&1; then \
-		echo "podman compose -f docker-compose-performance.yml"; \
-	else \
-		echo "docker-compose -f docker-compose-performance.yml"; \
-	fi)
-
-.PHONY: performance-up
-performance-up:                            ## Start performance stack (7 gateways, PostgreSQL replica, monitoring)
-	@echo "🚀 Starting performance testing stack..."
-	@echo "   • 7 gateway replicas"
-	@echo "   • PostgreSQL primary + read replica (streaming replication)"
-	@echo "   • PgBouncer with load balancing"
-	@echo "   • Full monitoring stack"
-	@echo ""
-	# Enable OTEL tracing + JSON console logs for the monitoring profile (Tempo + Loki correlation)
-	LOG_FORMAT=json \
-	OTEL_ENABLE_OBSERVABILITY=true \
-	OTEL_TRACES_EXPORTER=otlp \
-	OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4317 \
-	$(COMPOSE_CMD_PERF) --profile monitoring --profile replica up -d
-	@echo "⏳ Waiting for Grafana to be ready..."
-	@for i in 1 2 3 4 5 6 7 8 9 10 11 12; do \
-		if curl -s -o /dev/null -w '' http://localhost:3000/api/health 2>/dev/null; then break; fi; \
-		sleep 3; \
-	done
-	@# Configure Grafana: star dashboard and set as home
-	@curl -s -X POST -u admin:changeme 'http://localhost:3000/api/user/stars/dashboard/uid/mcp-gateway-overview' >/dev/null 2>&1 || true
-	@curl -s -X PUT -u admin:changeme -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' 'http://localhost:3000/api/org/preferences' >/dev/null 2>&1 || true
-	@curl -s -X PUT -u admin:changeme -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' 'http://localhost:3000/api/user/preferences' >/dev/null 2>&1 || true
-	@echo ""
-	@echo "✅ Performance stack started!"
-	@echo ""
-	@echo "   🌐 Grafana:    http://localhost:3000 (admin/changeme)"
-	@echo "   🔥 Prometheus: http://localhost:9090"
-	@echo "   🧵 Tempo:      http://localhost:3200 (OTLP: 4317 gRPC, 4318 HTTP)"
-	@echo "   🐘 PostgreSQL: Primary + Read Replica (load balanced via PgBouncer)"
-	@echo ""
-	@echo "   📊 Key Dashboards:"
-	@echo "      • ContextForge Overview - main dashboard (set as home)"
-	@echo "      • PostgreSQL Replication - primary/replica stats, lag, distribution"
-	@echo "      • PostgreSQL Database - detailed DB metrics"
-	@echo "      • PgBouncer - connection pool stats"
-	@echo ""
-	@echo "   🏋️ Configuration:"
-	@echo "      • 7 gateway replicas (vs 3 in standard)"
-	@echo "      • PostgreSQL read replica for read scaling"
-	@echo "      • PgBouncer round-robin across primary + replica"
-	@echo ""
-	@echo "   Run load test: make load-test-ui"
-
-.PHONY: performance-down
-performance-down:                          ## Stop performance stack
-	@echo "🚀 Stopping performance stack..."
-	$(COMPOSE_CMD_PERF) --profile monitoring --profile replica down --remove-orphans
-	@echo "✅ Performance stack stopped."
-
-.PHONY: performance-logs
-performance-logs:                          ## Show performance stack logs
-	$(COMPOSE_CMD_PERF) --profile monitoring --profile replica logs -f --tail=100
-
-.PHONY: performance-clean
-performance-clean:                         ## Stop and remove all performance data (volumes)
-	@echo "🚀 Stopping and cleaning performance stack..."
-	$(COMPOSE_CMD_PERF) --profile monitoring --profile replica down -v
-	@echo "✅ Performance stack stopped and volumes removed."
-
-# =============================================================================
 # 🔥 HTTP LOAD TESTING - Locust-based traffic generation
 # =============================================================================
 # help: 🔥 HTTP LOAD TESTING (Locust)
@@ -8313,9 +8234,6 @@ upgrade-validate:                         ## Validate fresh + upgrade + roundtri
 # Intentional broad scan under crates/: workspace-owned crates live here and CI
 # should pick up new maturin crates automatically rather than curating a short list.
 RUST_MATURIN_CRATES := $(shell find crates -type d 2>/dev/null | while read d; do [ -f "$$d/Cargo.toml" ] && [ -f "$$d/pyproject.toml" ] && echo "$$d"; done | sort)
-# Keep rust server helpers discoverable even when samples are managed outside
-# the shared workspace commands.
-RUST_MCP_DIRS := $(shell find mcp-servers/rust -maxdepth 2 -name Cargo.toml -exec dirname {} \; 2>/dev/null | sort -u)
 
 rust-ensure-deps:                       ## Ensure Rust toolchain and maturin are available
 	@if ! command -v rustup > /dev/null 2>&1; then \

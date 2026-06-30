@@ -294,10 +294,6 @@ python3 -m mcpgateway.translate \
 pip install uv # to install uvx, if not already installed
 python3 -m mcpgateway.translate --stdio "uvx mcp-server-git" --expose-sse --port 9000
 
-# Alternative: running the local binary
-# cd mcp-servers/rust/fast-time-server; make build
-# python3 -m mcpgateway.translate --stdio "./dist/fast-time-server -transport=stdio" --expose-sse --port 8002
-
 # NEW: Expose via multiple protocols simultaneously!
 python3 -m mcpgateway.translate \
      --stdio "uvx mcp-server-git" \
@@ -662,7 +658,6 @@ make serve                 # gunicorn on :4444
 Rust workspace note:
 - Workspace-owned Rust crates live under `crates/` and are picked up by the root `Cargo.toml` via `crates/*`.
 - Run `cargo build`, `cargo test`, and `cargo check` from the repo root to cover the shared workspace.
-- Rust sample servers under `mcp-servers/rust/` are usually managed separately; workspace-owned ones are listed explicitly in the root `Cargo.toml`.
 - `make venv install-dev` creates the root `.venv`, which is also reused by the workspace's PyO3/maturin builds.
 
 <details>
