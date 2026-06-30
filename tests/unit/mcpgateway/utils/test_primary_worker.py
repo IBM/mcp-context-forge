@@ -163,3 +163,21 @@ def test_empty_string_override_falls_back_to_default(monkeypatch):
     monkeypatch.setattr(pw.settings, "primary_worker_lock_path", "", raising=False)
     monkeypatch.setattr(pw.settings, "port", 4444, raising=False)
     assert _lock_path().endswith("mcpgw_plugin_primary_4444.lock")
+
+
+def test_redis_backend_delegates_to_elector(monkeypatch):
+    """With the redis backend, is_primary_worker reads the elector (fail closed if unstarted)."""
+    # First-Party
+    import mcpgateway.services.leader_election as le
+
+    monkeypatch.setattr(pw.settings, "primary_worker_election_backend", "redis", raising=False)
+
+    monkeypatch.setattr(le, "_elector", None, raising=False)
+    assert is_primary_worker() is False  # no elector started -> fail closed
+
+    class _FakeElector:
+        started = True
+        is_primary = True
+
+    monkeypatch.setattr(le, "_elector", _FakeElector(), raising=False)
+    assert is_primary_worker() is True

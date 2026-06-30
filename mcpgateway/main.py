@@ -1472,6 +1472,16 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # First-Party
         from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES  # pylint: disable=import-outside-toplevel
 
+        # Start the primary-worker elector before plugins initialize, since a
+        # non-hook plugin may call is_primary_worker() in initialize(). Only the
+        # redis backend needs an elector; the filelock backend stays lazy.
+        if settings.primary_worker_election_backend == "redis":
+            # First-Party
+            from mcpgateway.services.leader_election import start_primary_worker_elector  # pylint: disable=import-outside-toplevel
+
+            await start_primary_worker_elector()
+            logger.info("Primary-worker elector started (backend=redis)")
+
         try:
             init_plugin_manager_factory(
                 yaml_path=settings.plugins.config_file,
@@ -1853,6 +1863,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             services_to_shutdown.insert(3, dataplane_publisher_service)
 
         await shutdown_services(services_to_shutdown)
+
+        # Stop the primary-worker elector (releases the redis lease if held).
+        if settings.primary_worker_election_backend == "redis":
+            # First-Party
+            from mcpgateway.services.leader_election import stop_primary_worker_elector  # pylint: disable=import-outside-toplevel
+
+            await stop_primary_worker_elector()
 
         # Shutdown session-affinity service (before shared HTTP client).
         if settings.mcpgateway_session_affinity_enabled:
