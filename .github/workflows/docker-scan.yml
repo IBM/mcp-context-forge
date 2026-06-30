@@ -135,12 +135,12 @@ jobs:
           tags: ${{ matrix.tag }}
 
   # ---------------------------------------------------------------
-  # Build image and generate SBOM
+  # FedRAMP compliance validation
   # ---------------------------------------------------------------
-  scan:
+  fedramp-compliance:
     needs: [hadolint]
     if: github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'
-    name: Security Scan
+    name: FedRAMP Compliance
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -152,18 +152,6 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-
-      - name: Build image locally
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          file: Containerfile.lite
-          platforms: linux/amd64
-          push: false
-          load: true
-          tags: ${{ env.IMAGE_NAME }}:scan
-          cache-from: type=gha,scope=containerfile-lite-amd64
-          cache-to: type=gha,mode=max,scope=containerfile-lite-amd64
 
       - name: Build image locally (FIPS enabled)
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
@@ -201,16 +189,102 @@ jobs:
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v "${PWD}:/work" \
             anchore/syft:v1.42.3 \
+            "docker:${IMAGE_NAME}:fedramp-validate" -o spdx-json=/work/sbom-fedramp.spdx.json
+
+      - name: Scan SBOM for vulnerabilities (Grype)
+        id: scan-fedramp
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # 7.4.0
+        with:
+          sbom: sbom-fedramp.spdx.json
+          fail-build: true
+          severity-cutoff: high
+          cache-db: true
+          output-format: ${{ github.event_name == 'merge_group' && 'sarif' || 'table' }}
+
+      - name: Display SARIF file (merge_group only)
+        if: always() && github.event_name == 'merge_group'
+        run: |
+          echo "::group::SARIF file contents (FedRAMP)"
+          cat "${{ steps.scan-fedramp.outputs.sarif }}"
+          echo "::endgroup::"
+
+      - name: Upload SARIF to CodeQL
+        if: always() && github.event_name == 'merge_group'
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        with:
+          sarif_file: "${{ steps.scan-fedramp.outputs.sarif }}"
+          category: fedramp-fips
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sbom-fedramp
+          path: sbom-fedramp.spdx.json
+          retention-days: 30
+
+  # ---------------------------------------------------------------
+  # Build image and generate SBOM
+  # ---------------------------------------------------------------
+  scan:
+    needs: [hadolint]
+    if: github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'
+    name: Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build image locally
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: Containerfile.lite
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: ${{ env.IMAGE_NAME }}:scan
+          cache-from: type=gha,scope=containerfile-lite-amd64
+          cache-to: type=gha,mode=max,scope=containerfile-lite-amd64
+
+      - name: Generate SBOM (Syft)
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${PWD}:/work" \
+            anchore/syft:v1.42.3 \
             "docker:${IMAGE_NAME}:scan" -o spdx-json=/work/sbom.spdx.json
 
       - name: Scan SBOM for vulnerabilities (Grype)
         uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        id: scan
         with:
           sbom: sbom.spdx.json
           only-fixed: true
           fail-build: true
           severity-cutoff: high
           cache-db: true
+          output-format: ${{ github.event_name == 'merge_group' && 'sarif' || 'table' }}
+
+      - name: Display SARIF file (merge_group only)
+        if: always() && github.event_name == 'merge_group'
+        run: |
+          echo "::group::SARIF file contents"
+          cat "${{ steps.scan.outputs.sarif }}"
+          echo "::endgroup::"
+
+      - name: Upload SARIF to CodeQL
+        if: always() && github.event_name == 'merge_group'
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        with:
+          sarif_file: "${{ steps.scan.outputs.sarif }}"
+          category: standard
 
       - name: Upload SBOM
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -232,7 +306,7 @@ jobs:
   # ---------------------------------------------------------------
   docker-scan-complete:
     name: Docker Scan Complete
-    needs: [hadolint, container-smoke, scan]
+    needs: [hadolint, container-smoke, fedramp-compliance, scan]
     runs-on: ubuntu-slim
     if: always()
     steps:
@@ -241,6 +315,7 @@ jobs:
           results=(
             "${{ needs.hadolint.result }}"
             "${{ needs.container-smoke.result }}"
+            "${{ needs.fedramp-compliance.result }}"
             "${{ needs.scan.result }}"
           )
           failed=0
