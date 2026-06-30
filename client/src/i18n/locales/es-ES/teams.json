@@ -22,5 +22,9 @@
   "teams.table.actions.label": "Acciones para {name}",
   "teams.table.actions.edit": "Editar",
   "teams.table.actions.delete": "Eliminar",
-  "teams.table.description.view": "Ver descripción de {name}"
+  "teams.table.description.view": "Ver descripción de {name}",
+  "teams.delete.title": "Eliminar equipo",
+  "teams.delete.description": "¿Seguro que quieres eliminar {name}? Esta acción no se puede deshacer.",
+  "teams.delete.success": "Equipo {name} eliminado correctamente",
+  "teams.delete.errorTitle": "No se pudo eliminar el equipo"
 }

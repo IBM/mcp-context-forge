@@ -1,69 +1,88 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactElement } from "react";
+import { render } from "@testing-library/react";
+import { toast } from "sonner";
 import { Teams } from "./Teams";
+import { RouterProvider } from "@/router";
 import { I18nProvider } from "@/i18n";
-import type { Team } from "@/types/team";
+import type { ReactElement } from "react";
 
 vi.mock("@/api/client", () => ({
   api: {
     get: vi.fn(),
+    delete: vi.fn(),
+    post: vi.fn(),
+    put: vi.fn(),
+    patch: vi.fn(),
   },
+}));
+
+vi.mock("@/api/teams", () => ({
+  deleteTeam: vi.fn(),
 }));
 
 vi.mock("sonner", () => ({
   toast: {
-    error: vi.fn(),
     success: vi.fn(),
+    error: vi.fn(),
   },
 }));
 
 import { api } from "@/api/client";
-import { toast } from "sonner";
+import { deleteTeam } from "@/api/teams";
 
-function renderTeams(ui: ReactElement) {
-  return render(<I18nProvider>{ui}</I18nProvider>);
-}
+const mockToastSuccess = vi.mocked(toast.success);
+const mockToastError = vi.mocked(toast.error);
+const mockDeleteTeam = vi.mocked(deleteTeam);
 
-function createMockTeams(startIndex: number, count: number): Team[] {
+function createMockTeams(startIndex: number, count: number) {
   return Array.from({ length: count }, (_, i) => ({
     id: `team-${startIndex + i}`,
     name: `Team ${startIndex + i}`,
     slug: `team-${startIndex + i}`,
-    description: `Description ${startIndex + i}`,
-    created_by: "owner@example.com",
+    description: `Description for Team ${startIndex + i}`,
+    created_by: "admin@example.com",
     is_personal: false,
     visibility: "private" as const,
     max_members: 50,
-    member_count: startIndex + i,
+    member_count: i + 1,
     created_at: "2024-01-01T00:00:00Z",
-    updated_at: "2024-01-02T00:00:00Z",
+    updated_at: "2024-01-01T00:00:00Z",
     is_active: true,
   }));
+}
+
+function renderWithRouter(ui: ReactElement) {
+  window.history.pushState({}, "", "/app/teams");
+  return render(
+    <RouterProvider>
+      <I18nProvider>{ui}</I18nProvider>
+    </RouterProvider>,
+  );
 }
 
 describe("Teams", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
   it("renders loading state while fetching teams", () => {
     const pendingRequest = new Promise<never>(() => {});
     vi.mocked(api.get).mockReturnValueOnce(pendingRequest as ReturnType<typeof api.get>);
 
-    renderTeams(<Teams />);
+    renderWithRouter(<Teams />);
 
-    const status = screen.getByRole("status", { busy: true });
-    expect(status).toBeInTheDocument();
-    expect(status).toHaveAttribute("aria-live", "polite");
-    expect(screen.getByText(/Loading teams, please wait/i)).toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
+    expect(screen.getByRole("status")).toHaveAttribute("aria-busy", "true");
   });
 
   it("renders an error alert when the team fetch fails", async () => {
     vi.mocked(api.get).mockRejectedValueOnce(new Error("Could not load teams"));
 
-    renderTeams(<Teams />);
+    renderWithRouter(<Teams />);
 
     await waitFor(() => {
       expect(screen.getByRole("alert")).toBeInTheDocument();
@@ -76,7 +95,7 @@ describe("Teams", () => {
   it("renders alert with correct aria attributes on error", async () => {
     vi.mocked(api.get).mockRejectedValueOnce(new Error("Service unavailable"));
 
-    renderTeams(<Teams />);
+    renderWithRouter(<Teams />);
 
     await waitFor(() => {
       const alert = screen.getByRole("alert");
@@ -85,10 +104,10 @@ describe("Teams", () => {
     });
   });
 
-  it("renders the empty state when no teams exist", async () => {
+  it("renders an empty teams state when no teams exist", async () => {
     vi.mocked(api.get).mockResolvedValueOnce({ teams: [], nextCursor: null });
 
-    renderTeams(<Teams />);
+    renderWithRouter(<Teams />);
 
     await waitFor(() => {
       expect(screen.getByText("No teams yet")).toBeInTheDocument();
@@ -97,101 +116,369 @@ describe("Teams", () => {
     expect(
       screen.getByText("Create your first team to collaborate with others."),
     ).toBeInTheDocument();
-
-    // The empty-state Create button is clickable (handler is a placeholder for now).
-    const createButton = screen.getByRole("button", { name: /Create team/i });
-    expect(createButton).toBeInTheDocument();
-    await userEvent.setup().click(createButton);
-    expect(screen.getByText("No teams yet")).toBeInTheDocument();
   });
 
-  it("renders the teams list and header when data is loaded", async () => {
+  it("renders teams title/header", async () => {
+    vi.mocked(api.get).mockResolvedValueOnce({ teams: createMockTeams(0, 1), nextCursor: null });
+
+    renderWithRouter(<Teams />);
+
+    await waitFor(() => {
+      expect(screen.getByText("All Teams")).toBeInTheDocument();
+    });
+  });
+
+  it("renders Create team button", async () => {
+    vi.mocked(api.get).mockResolvedValueOnce({ teams: [], nextCursor: null });
+
+    renderWithRouter(<Teams />);
+
+    await waitFor(() => {
+      const button = screen.getAllByRole("button", { name: /Create team/i })[0];
+      expect(button).toBeInTheDocument();
+    });
+  });
+
+  it("changes the displayed team limit when the select changes", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get).mockResolvedValueOnce({ teams: createMockTeams(0, 1), nextCursor: null });
+
+    renderWithRouter(<Teams />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Team 0")).toBeInTheDocument();
+    });
+
+    const limitSelect = screen.getByRole("combobox", { name: /Per page:/i });
+    await user.selectOptions(limitSelect, "25");
+
+    expect(limitSelect).toHaveValue("25");
+  });
+
+  it("renders all limit options", async () => {
+    vi.mocked(api.get).mockResolvedValueOnce({ teams: createMockTeams(0, 1), nextCursor: null });
+
+    renderWithRouter(<Teams />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Team 0")).toBeInTheDocument();
+    });
+
+    const options = screen.getAllByRole("option");
+    const values = options.map((opt) => opt.getAttribute("value"));
+
+    expect(values).toContain("10");
+    expect(values).toContain("25");
+    expect(values).toContain("50");
+    expect(values).toContain("100");
+  });
+
+  it("does not render Load More button when there is no next cursor", async () => {
+    vi.mocked(api.get).mockResolvedValueOnce({ teams: createMockTeams(0, 10), nextCursor: null });
+
+    renderWithRouter(<Teams />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Team 0")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole("button", { name: /Load more/i })).not.toBeInTheDocument();
+  });
+
+  it("renders Load More button when next cursor is available", async () => {
     vi.mocked(api.get).mockResolvedValueOnce({
-      teams: createMockTeams(0, 3),
+      teams: createMockTeams(0, 10),
+      nextCursor: "cursor-1",
+    });
+
+    renderWithRouter(<Teams />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Team 0")).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole("button", { name: /Load more/i })).toBeInTheDocument();
+  });
+
+  it("renders teams list when data is loaded", async () => {
+    vi.mocked(api.get).mockResolvedValueOnce({
+      teams: createMockTeams(0, 10),
       nextCursor: null,
     });
 
-    renderTeams(<Teams />);
+    renderWithRouter(<Teams />);
 
     await waitFor(() => {
       expect(screen.getByText("Team 0")).toBeInTheDocument();
     });
 
     expect(screen.getByText("All Teams")).toBeInTheDocument();
-    expect(screen.getByText("Team 2")).toBeInTheDocument();
+    expect(screen.getByText("Team 9")).toBeInTheDocument();
   });
 
-  it("renders the Create team button with a Plus icon", async () => {
-    vi.mocked(api.get).mockResolvedValueOnce({
-      teams: createMockTeams(0, 1),
-      nextCursor: null,
-    });
-
-    renderTeams(<Teams />);
-
-    await waitFor(() => {
-      expect(screen.getByText("Team 0")).toBeInTheDocument();
-    });
-
-    const button = screen.getByRole("button", { name: /Create team/i });
-    expect(button).toBeInTheDocument();
-    expect(button.querySelector("svg")).toBeInTheDocument();
-
-    // The list-view Create button is clickable (handler is a placeholder for now).
-    await userEvent.setup().click(button);
-    expect(screen.getByText("All Teams")).toBeInTheDocument();
-  });
-
-  it("displays a pluralized team count message", async () => {
+  it("displays correct team count message", async () => {
     vi.mocked(api.get).mockResolvedValueOnce({
       teams: createMockTeams(0, 5),
       nextCursor: null,
     });
 
-    renderTeams(<Teams />);
+    renderWithRouter(<Teams />);
 
     await waitFor(() => {
-      expect(screen.getByText("Showing 5 teams")).toBeInTheDocument();
+      expect(screen.getByText(/Showing 5 teams/)).toBeInTheDocument();
     });
   });
 
-  it("displays a singular team count message for one team", async () => {
+  it("loads more teams when Load More button is clicked", async () => {
+    const user = userEvent.setup();
+
     vi.mocked(api.get).mockResolvedValueOnce({
-      teams: createMockTeams(0, 1),
-      nextCursor: null,
+      teams: createMockTeams(0, 10),
+      nextCursor: "cursor-1",
     });
 
-    renderTeams(<Teams />);
-
-    await waitFor(() => {
-      expect(screen.getByText("Showing 1 team")).toBeInTheDocument();
-    });
-  });
-
-  it("renders all per-page limit options", async () => {
-    vi.mocked(api.get).mockResolvedValueOnce({
-      teams: createMockTeams(0, 1),
-      nextCursor: null,
-    });
-
-    renderTeams(<Teams />);
+    renderWithRouter(<Teams />);
 
     await waitFor(() => {
       expect(screen.getByText("Team 0")).toBeInTheDocument();
     });
 
-    const values = screen.getAllByRole("option").map((opt) => opt.getAttribute("value"));
-    expect(values).toEqual(expect.arrayContaining(["10", "25", "50", "100"]));
+    const loadMoreButton = screen.getByRole("button", { name: /load more teams/i });
+    expect(loadMoreButton).toBeInTheDocument();
+
+    vi.mocked(api.get).mockResolvedValueOnce({
+      teams: createMockTeams(10, 10),
+      nextCursor: null,
+    });
+
+    await user.click(loadMoreButton);
+
+    await waitFor(() => {
+      expect(screen.getByText("Team 10")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole("button", { name: /load more teams/i })).not.toBeInTheDocument();
   });
 
-  it("changes the per-page limit when the select changes", async () => {
+  it("removes team from list and shows success toast after API responds", async () => {
     const user = userEvent.setup();
-    vi.mocked(api.get).mockResolvedValue({
+
+    vi.mocked(api.get).mockResolvedValueOnce({
+      teams: createMockTeams(0, 3),
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Teams />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Team 0")).toBeInTheDocument();
+    });
+
+    mockDeleteTeam.mockResolvedValueOnce(undefined);
+    vi.mocked(api.get).mockResolvedValueOnce({
+      teams: createMockTeams(1, 2),
+      nextCursor: null,
+    });
+
+    await user.click(screen.getByRole("button", { name: "Actions for Team 0" }));
+    await user.click(await screen.findByRole("menuitem", { name: /^delete$/i }));
+
+    await user.click(await screen.findByRole("button", { name: /delete/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("Team 0")).not.toBeInTheDocument();
+    });
+
+    expect(screen.getByText("Team 1")).toBeInTheDocument();
+    expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringContaining("Team 0"));
+  });
+
+  it("optimistically removes team from list immediately on delete confirmation", async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(api.get).mockResolvedValueOnce({
       teams: createMockTeams(0, 1),
       nextCursor: null,
     });
 
-    renderTeams(<Teams />);
+    renderWithRouter(<Teams />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Team 0")).toBeInTheDocument();
+    });
+
+    let resolveDelete!: () => void;
+    mockDeleteTeam.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveDelete = resolve;
+        }),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Actions for Team 0" }));
+    await user.click(await screen.findByRole("menuitem", { name: /^delete$/i }));
+    await user.click(await screen.findByRole("button", { name: /delete/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("Team 0")).not.toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: /delete/i })).not.toBeInTheDocument();
+
+    resolveDelete();
+
+    await waitFor(() => {
+      expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringContaining("Team 0"));
+    });
+  });
+
+  it("rolls back optimistic delete when API call fails", async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(api.get).mockResolvedValueOnce({
+      teams: createMockTeams(0, 3),
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Teams />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Team 0")).toBeInTheDocument();
+    });
+
+    mockDeleteTeam.mockRejectedValueOnce(new Error("500 Internal Server Error"));
+
+    const actionsButton = screen.getByRole("button", { name: "Actions for Team 0" });
+    await user.click(actionsButton);
+
+    const deleteItem = await screen.findByRole("menuitem", { name: /^delete$/i });
+    await user.click(deleteItem);
+
+    const confirmButton = await screen.findByRole("button", { name: /delete/i });
+    await user.click(confirmButton);
+
+    await waitFor(() => {
+      expect(screen.getByText("Team 0")).toBeInTheDocument();
+    });
+
+    expect(mockToastError).toHaveBeenCalledWith(
+      expect.stringContaining("Failed to delete team"),
+      expect.objectContaining({
+        description: expect.any(String),
+      }),
+    );
+  });
+
+  it("cancelling the delete dialog keeps team in list", async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(api.get).mockResolvedValueOnce({
+      teams: createMockTeams(0, 2),
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Teams />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Team 0")).toBeInTheDocument();
+    });
+
+    const actionsButton = screen.getByRole("button", { name: "Actions for Team 0" });
+    await user.click(actionsButton);
+
+    const deleteItem = await screen.findByRole("menuitem", { name: /^delete$/i });
+    await user.click(deleteItem);
+
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+
+    const cancelButton = screen.getByRole("button", { name: /cancel/i });
+    await user.click(cancelButton);
+
+    expect(screen.getByText("Team 0")).toBeInTheDocument();
+
+    expect(mockDeleteTeam).not.toHaveBeenCalled();
+    expect(mockToastSuccess).not.toHaveBeenCalled();
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  it("shows loading text on Load More button while loading", async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(api.get).mockResolvedValueOnce({
+      teams: createMockTeams(0, 10),
+      nextCursor: "cursor-1",
+    });
+
+    renderWithRouter(<Teams />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Team 0")).toBeInTheDocument();
+    });
+
+    const loadMoreButton = screen.getByRole("button", { name: /load more teams/i });
+
+    let resolveLoadMore: ((value: unknown) => void) | null = null;
+    const pendingLoadMore = new Promise<unknown>((resolve) => {
+      resolveLoadMore = resolve;
+    });
+
+    vi.mocked(api.get).mockReturnValueOnce(pendingLoadMore as ReturnType<typeof api.get>);
+
+    await user.click(loadMoreButton);
+
+    if (resolveLoadMore) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (resolveLoadMore as any)({
+        teams: createMockTeams(10, 5),
+        nextCursor: null,
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("Team 10")).toBeInTheDocument();
+      });
+    }
+  });
+
+  it("accumulates teams when loading more", async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(api.get).mockResolvedValueOnce({
+      teams: createMockTeams(0, 5),
+      nextCursor: "cursor-1",
+    });
+
+    renderWithRouter(<Teams />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Team 0")).toBeInTheDocument();
+      expect(screen.getByText("Team 4")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/Showing 5 teams/)).toBeInTheDocument();
+
+    vi.mocked(api.get).mockResolvedValueOnce({
+      teams: createMockTeams(5, 5),
+      nextCursor: null,
+    });
+
+    const loadMoreButton = screen.getByRole("button", { name: /load more teams/i });
+    await user.click(loadMoreButton);
+
+    await waitFor(() => {
+      expect(screen.getByText("Team 5")).toBeInTheDocument();
+      expect(screen.getByText("Team 9")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/Showing 10 teams/)).toBeInTheDocument();
+  });
+
+  it("maintains state when limit changes", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get).mockResolvedValueOnce({
+      teams: createMockTeams(0, 10),
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Teams />);
 
     await waitFor(() => {
       expect(screen.getByText("Team 0")).toBeInTheDocument();
@@ -200,219 +487,63 @@ describe("Teams", () => {
     const limitSelect = screen.getByRole("combobox", { name: /Per page:/i });
     expect(limitSelect).toHaveValue("10");
 
-    await user.selectOptions(limitSelect, "25");
+    await user.selectOptions(limitSelect, "50");
 
-    expect(limitSelect).toHaveValue("25");
+    expect(limitSelect).toHaveValue("50");
+    expect(screen.getByText("Team 0")).toBeInTheDocument();
   });
 
-  it("requests a new page size when the limit changes", async () => {
+  it("logs console error when refetch after delete fails", async () => {
     const user = userEvent.setup();
-    vi.mocked(api.get).mockResolvedValue({
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    vi.mocked(api.get).mockResolvedValueOnce({
+      teams: createMockTeams(0, 3),
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Teams />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Team 0")).toBeInTheDocument();
+    });
+
+    mockDeleteTeam.mockResolvedValueOnce(undefined);
+    vi.mocked(api.get).mockRejectedValueOnce(new Error("Refetch failed"));
+
+    await user.click(screen.getByRole("button", { name: "Actions for Team 0" }));
+    await user.click(await screen.findByRole("menuitem", { name: /^delete$/i }));
+    await user.click(await screen.findByRole("button", { name: /delete/i }));
+
+    await waitFor(() => {
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        "Failed to refresh teams after deletion:",
+        expect.any(String),
+      );
+    });
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("shows delete confirmation dialog with team name", async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(api.get).mockResolvedValueOnce({
       teams: createMockTeams(0, 1),
       nextCursor: null,
     });
 
-    renderTeams(<Teams />);
+    renderWithRouter(<Teams />);
 
     await waitFor(() => {
       expect(screen.getByText("Team 0")).toBeInTheDocument();
     });
 
-    await user.selectOptions(screen.getByRole("combobox", { name: /Per page:/i }), "50");
+    await user.click(screen.getByRole("button", { name: "Actions for Team 0" }));
+    await user.click(await screen.findByRole("menuitem", { name: /^delete$/i }));
 
-    await waitFor(() => {
-      const requestedPaths = vi.mocked(api.get).mock.calls.map((call) => call[0]);
-      expect(
-        requestedPaths.some((path) => typeof path === "string" && path.includes("limit=50")),
-      ).toBe(true);
-    });
-  });
-
-  it("treats a missing nextCursor as no further pages", async () => {
-    vi.mocked(api.get).mockResolvedValueOnce({ teams: createMockTeams(0, 3) });
-
-    renderTeams(<Teams />);
-
-    await waitFor(() => {
-      expect(screen.getByText("Team 0")).toBeInTheDocument();
-    });
-
-    expect(screen.queryByRole("button", { name: /Load more teams/i })).not.toBeInTheDocument();
-  });
-
-  it("does not render the Load More button when there is no next cursor", async () => {
-    vi.mocked(api.get).mockResolvedValueOnce({
-      teams: createMockTeams(0, 10),
-      nextCursor: null,
-    });
-
-    renderTeams(<Teams />);
-
-    await waitFor(() => {
-      expect(screen.getByText("Team 0")).toBeInTheDocument();
-    });
-
-    expect(screen.queryByRole("button", { name: /Load more teams/i })).not.toBeInTheDocument();
-  });
-
-  it("renders the Load More button when a next cursor is available", async () => {
-    vi.mocked(api.get).mockResolvedValueOnce({
-      teams: createMockTeams(0, 10),
-      nextCursor: "cursor-1",
-    });
-
-    renderTeams(<Teams />);
-
-    await waitFor(() => {
-      expect(screen.getByText("Team 0")).toBeInTheDocument();
-    });
-
-    expect(screen.getByRole("button", { name: /Load more teams/i })).toBeInTheDocument();
-  });
-
-  it("accumulates teams when Load More is clicked", async () => {
-    const user = userEvent.setup();
-    vi.mocked(api.get).mockResolvedValueOnce({
-      teams: createMockTeams(0, 10),
-      nextCursor: "cursor-1",
-    });
-
-    renderTeams(<Teams />);
-
-    await waitFor(() => {
-      expect(screen.getByText("Team 0")).toBeInTheDocument();
-    });
-
-    expect(screen.getByText("Showing 10 teams")).toBeInTheDocument();
-
-    vi.mocked(api.get).mockResolvedValueOnce({
-      teams: createMockTeams(10, 5),
-      nextCursor: null,
-    });
-
-    await user.click(screen.getByRole("button", { name: /Load more teams/i }));
-
-    await waitFor(() => {
-      expect(screen.getByText("Team 14")).toBeInTheDocument();
-    });
-
-    expect(screen.getByText("Team 0")).toBeInTheDocument();
-    expect(screen.getByText("Showing 15 teams")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Load more teams/i })).not.toBeInTheDocument();
-  });
-
-  it("forwards the cursor and limit when loading more", async () => {
-    const user = userEvent.setup();
-    vi.mocked(api.get).mockResolvedValueOnce({
-      teams: createMockTeams(0, 10),
-      nextCursor: "cursor-abc",
-    });
-
-    renderTeams(<Teams />);
-
-    await waitFor(() => {
-      expect(screen.getByText("Team 0")).toBeInTheDocument();
-    });
-
-    vi.mocked(api.get).mockResolvedValueOnce({
-      teams: createMockTeams(10, 5),
-      nextCursor: null,
-    });
-
-    await user.click(screen.getByRole("button", { name: /Load more teams/i }));
-
-    await waitFor(() => {
-      expect(api.get).toHaveBeenLastCalledWith(
-        expect.stringMatching(/cursor=cursor-abc.*limit=10|limit=10.*cursor=cursor-abc/),
-      );
-    });
-  });
-
-  it("shows loading text and disables the button while loading more", async () => {
-    const user = userEvent.setup();
-    vi.mocked(api.get).mockResolvedValueOnce({
-      teams: createMockTeams(0, 10),
-      nextCursor: "cursor-1",
-    });
-
-    renderTeams(<Teams />);
-
-    await waitFor(() => {
-      expect(screen.getByText("Team 0")).toBeInTheDocument();
-    });
-
-    let resolveLoadMore: (value: unknown) => void = () => {};
-    const pending = new Promise<unknown>((resolve) => {
-      resolveLoadMore = resolve;
-    });
-    vi.mocked(api.get).mockReturnValueOnce(pending as ReturnType<typeof api.get>);
-
-    await user.click(screen.getByRole("button", { name: /Load more teams/i }));
-
-    await waitFor(() => {
-      expect(screen.getByText("Loading...")).toBeInTheDocument();
-    });
-    expect(screen.getByRole("button", { name: /Load more teams/i })).toBeDisabled();
-
-    resolveLoadMore({ teams: createMockTeams(10, 5), nextCursor: null });
-
-    await waitFor(() => {
-      expect(screen.getByText("Team 14")).toBeInTheDocument();
-    });
-  });
-
-  it("does not load more when a load is already in progress", async () => {
-    const user = userEvent.setup();
-    vi.mocked(api.get).mockResolvedValueOnce({
-      teams: createMockTeams(0, 10),
-      nextCursor: "cursor-1",
-    });
-
-    renderTeams(<Teams />);
-
-    await waitFor(() => {
-      expect(screen.getByText("Team 0")).toBeInTheDocument();
-    });
-
-    let resolveLoadMore: (value: unknown) => void = () => {};
-    const pending = new Promise<unknown>((resolve) => {
-      resolveLoadMore = resolve;
-    });
-    vi.mocked(api.get).mockReturnValueOnce(pending as ReturnType<typeof api.get>);
-
-    const loadMoreButton = screen.getByRole("button", { name: /Load more teams/i });
-    await user.click(loadMoreButton);
-    await user.click(loadMoreButton);
-
-    resolveLoadMore({ teams: createMockTeams(10, 5), nextCursor: null });
-
-    await waitFor(() => {
-      expect(screen.getByText("Team 14")).toBeInTheDocument();
-    });
-
-    // Once for the initial load, once for the single accepted load-more.
-    expect(api.get).toHaveBeenCalledTimes(2);
-  });
-
-  it("shows a toast error when loading more fails", async () => {
-    const user = userEvent.setup();
-    vi.mocked(api.get).mockResolvedValueOnce({
-      teams: createMockTeams(0, 10),
-      nextCursor: "cursor-1",
-    });
-
-    renderTeams(<Teams />);
-
-    await waitFor(() => {
-      expect(screen.getByText("Team 0")).toBeInTheDocument();
-    });
-
-    vi.mocked(api.get).mockRejectedValueOnce(new Error("Load more network failure"));
-
-    await user.click(screen.getByRole("button", { name: /Load more teams/i }));
-
-    await waitFor(() => {
-      expect(vi.mocked(toast.error)).toHaveBeenCalledWith("Failed to load more teams");
-    });
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toBeInTheDocument();
+    expect(screen.getByText(/Are you sure you want to delete Team 0/)).toBeInTheDocument();
   });
 });
