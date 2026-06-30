@@ -2,8 +2,10 @@ import { useEffect, useState } from "react";
 
 import type { PromptRead } from "@/generated/types";
 import { PromptArgsForm } from "./PromptArgsForm";
-import { PromptPreviewPanel } from "./PromptPreviewPanel";
+import { PromptPreviewButton } from "./PromptPreviewButton";
+import { PromptPreviewResult } from "./PromptPreviewResult";
 import { PromptSnippetTabs } from "./PromptSnippetTabs";
+import { usePromptPreview } from "./usePromptPreview";
 
 export interface PromptCodeTabProps {
   prompt: NonNullable<PromptRead>;
@@ -11,14 +13,16 @@ export interface PromptCodeTabProps {
 
 /**
  * The Code tab for the prompt details drawer. Composes the args form, the
- * language-snippet sub-tabs, and the render-only Preview panel.
+ * language-snippet sub-tabs (with the Preview button on the tab row), and
+ * the Preview result below.
  *
- * Public seam for issue #5323: the drawer engineer drops this into the Code
- * tab content slot with `<PromptCodeTab prompt={selected} />` — it owns its
- * own args state and exposes no callbacks.
+ * Public seam for #5323: the drawer engineer drops this into the Code tab
+ * content slot with `<PromptCodeTab prompt={selected} />` — it owns its own
+ * args state and exposes no callbacks.
  */
 export function PromptCodeTab({ prompt }: PromptCodeTabProps) {
   const [args, setArgs] = useState<Record<string, string>>(() => seedArgs(prompt));
+  const preview = usePromptPreview(prompt.id, args);
 
   // Reset args when the user switches to a different prompt within the same
   // drawer instance. Keyed on id so renames don't wipe in-progress input.
@@ -29,8 +33,14 @@ export function PromptCodeTab({ prompt }: PromptCodeTabProps) {
   return (
     <div className="space-y-6">
       <PromptArgsForm args={args} schema={prompt.arguments} onChange={setArgs} />
-      <PromptSnippetTabs promptName={prompt.name} args={args} />
-      <PromptPreviewPanel promptId={prompt.id} args={args} />
+      <div className="space-y-4">
+        <PromptSnippetTabs
+          promptName={prompt.name}
+          args={args}
+          actions={<PromptPreviewButton preview={preview} />}
+        />
+        <PromptPreviewResult preview={preview} />
+      </div>
     </div>
   );
 }
