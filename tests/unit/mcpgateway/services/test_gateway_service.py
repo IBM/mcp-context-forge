@@ -1813,7 +1813,7 @@ class TestGatewayService:
             gateway_update = GatewayUpdate(
                 auth_type="bearer",
                 auth_token="***MASKED***",
-                auth_password="***MASKED***",
+                auth_password="***MASKED***",  # pragma: allowlist secret
                 auth_header_value="***MASKED***",  # pragma: allowlist secret
             )  # This should not update the auth_value  # pragma: allowlist secret
 
