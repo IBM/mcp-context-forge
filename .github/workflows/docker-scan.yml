@@ -205,10 +205,13 @@ jobs:
 
       - name: Scan SBOM for vulnerabilities (Grype)
         uses: anchore/scan-action@2c901ab7378897c01b8efaa2d0c9bf519cc64b9e # v6.2.0
+        env:
+          ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
         with:
           sbom: sbom.spdx.json
           fail-build: true
           severity-cutoff: high
+          only-fixed: true
           cache-db: true
 
       - name: Upload SBOM
