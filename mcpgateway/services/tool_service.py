@@ -89,6 +89,7 @@ from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.token_exchange_cache import TokenExchangeCache
+from mcpgateway.services.token_storage_service import TokenStorageService
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context, get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
@@ -105,6 +106,8 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
+from mcpgateway.utils.subject_token import extract_inbound_bearer, looks_like_jwt
+from mcpgateway.utils.token_exchange_audit import audit_token_exchange
 from mcpgateway.utils.trace_context import format_trace_team_scope
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
@@ -3799,11 +3802,6 @@ class ToolService(BaseService):
         Raises:
             ToolInvocationError: If no usable subject token exists or the exchange fails.
         """
-        # First-Party
-        from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
-        from mcpgateway.utils.subject_token import extract_inbound_bearer, looks_like_jwt  # pylint: disable=import-outside-toplevel
-        from mcpgateway.utils.token_exchange_audit import audit_token_exchange  # pylint: disable=import-outside-toplevel
-
         audience = oauth_config.get("target_audience")
         user_key = app_user_email or ""
         # L3: forensic correlation. Pull request/correlation ids from inbound headers when present.
@@ -3866,7 +3864,7 @@ class ToolService(BaseService):
                     token_url=oauth_config["token_url"],
                     subject_token=subject_token,
                     client_id=oauth_config.get("client_id", ""),
-                    client_secret=oauth_config.get("client_secret", ""),
+                    client_secret=oauth_config.get("client_secret", ""),  # raw encrypted DB value — token_exchange() decrypts inline (client_secret_is_plaintext defaults False)
                     audience=audience,
                     scope=" ".join(scopes) if scopes else None,
                     requested_token_type=oauth_config.get("requested_token_type", "urn:ietf:params:oauth:token-type:access_token"),
@@ -4310,9 +4308,6 @@ class ToolService(BaseService):
             gateway_grant_type = grant_type
             if grant_type == "authorization_code":
                 try:
-                    # First-Party
-                    from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
-
                     with fresh_db_session() as token_db:
                         token_storage = TokenStorageService(token_db)
                         if not app_user_email:
@@ -5530,9 +5525,6 @@ class ToolService(BaseService):
                             # For Authorization Code flow, try to get stored tokens
                             # NOTE: Use fresh_db_session() since the original db was closed
                             try:
-                                # First-Party
-                                from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
-
                                 with fresh_db_session() as token_db:
                                     token_storage = TokenStorageService(token_db)
 
