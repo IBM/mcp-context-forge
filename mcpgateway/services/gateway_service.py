@@ -93,7 +93,7 @@ from mcpgateway.db import ResourceMetric, ResourceSubscription, server_prompt_as
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
-from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, PromptCreate, ResourceCreate, ToolCreate
+from mcpgateway.schemas import GATEWAY_SUPPORTED_TRANSPORTS, GatewayCreate, GatewayRead, GatewayUpdate, PromptCreate, ResourceCreate, ToolCreate
 
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
@@ -4699,10 +4699,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 )
             else:
                 sanitized_url = sanitize_url_for_logging(url, auth_query_params)
-                raise GatewayConnectionError(
-                    f"Unsupported transport '{transport}' for gateway at {sanitized_url}. "
-                    f"Supported transports: SSE, STREAMABLEHTTP"
-                )
+                raise GatewayConnectionError(f"Unsupported transport '{transport}' for gateway at {sanitized_url}. Supported transports: {', '.join(sorted(GATEWAY_SUPPORTED_TRANSPORTS))}")
 
             return capabilities, tools, resources, prompts, validation_errors
         except Exception as e:
@@ -4712,10 +4709,16 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:
                     root_cause = root_cause.exceptions[0]
             sanitized_url = sanitize_url_for_logging(url, auth_query_params)
+
+            # If the root cause is already a GatewayConnectionError, re-raise it
+            # with its original chain intact instead of double-wrapping.
+            if isinstance(root_cause, GatewayConnectionError):
+                raise root_cause
+
             raw_error = str(root_cause) or type(root_cause).__name__
             sanitized_error = sanitize_exception_message(raw_error, auth_query_params)
             logger.error("Gateway initialization failed for %s: %s", sanitized_url, sanitized_error, exc_info=True)
-            raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: {sanitized_error}")
+            raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: {sanitized_error}") from root_cause
 
     def _get_gateways(self, include_inactive: bool = True) -> list[DbGateway]:
         """Sync function for database operations (runs in thread).

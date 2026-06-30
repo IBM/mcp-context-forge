@@ -2053,14 +2053,23 @@ class TestGatewayTransportValidation:
         gw = GatewayCreate(name="gw", url="http://example.com", transport="StreamableHttp")
         assert gw.transport == "STREAMABLEHTTP"
 
-    def test_gateway_create_all_enum_values(self):
-        """GatewayCreate accepts all TransportType enum values."""
+    def test_gateway_create_supported_transports(self):
+        """GatewayCreate accepts only SSE and STREAMABLEHTTP."""
         # First-Party
         from mcpgateway.schemas import GatewayCreate
 
-        for transport in ("SSE", "HTTP", "STDIO", "STREAMABLEHTTP"):
+        for transport in ("SSE", "STREAMABLEHTTP"):
             gw = GatewayCreate(name="gw", url="http://example.com", transport=transport)
             assert gw.transport == transport
+
+    def test_gateway_create_rejects_http_and_stdio(self):
+        """GatewayCreate rejects HTTP and STDIO (not supported at runtime)."""
+        # First-Party
+        from mcpgateway.schemas import GatewayCreate
+
+        for transport in ("HTTP", "STDIO", "http", "stdio"):
+            with pytest.raises(ValidationError, match="Invalid transport type"):
+                GatewayCreate(name="gw", url="http://example.com", transport=transport)
 
     def test_gateway_create_invalid_transport(self):
         """GatewayCreate rejects invalid transport values."""
@@ -2085,6 +2094,17 @@ class TestGatewayTransportValidation:
 
         with pytest.raises(ValidationError, match="Transport must be a string"):
             GatewayCreate(name="gw", url="http://example.com", transport=123)
+
+    def test_gateway_create_whitespace_padded(self):
+        """GatewayCreate strips whitespace from transport values."""
+        # First-Party
+        from mcpgateway.schemas import GatewayCreate
+
+        gw = GatewayCreate(name="gw", url="http://example.com", transport=" sse ")
+        assert gw.transport == "SSE"
+
+        gw = GatewayCreate(name="gw", url="http://example.com", transport="  streamablehttp  ")
+        assert gw.transport == "STREAMABLEHTTP"
 
     def test_gateway_update_valid_transport(self):
         """GatewayUpdate accepts valid transport values (case-insensitive)."""

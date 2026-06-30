@@ -2819,6 +2819,31 @@ class TransportType(str, Enum):
     STREAMABLEHTTP = "STREAMABLEHTTP"
 
 
+# Transports that the gateway API actually supports at runtime.
+# HTTP and STDIO are valid TransportType enum values but are rejected
+# by the service layer; this constant keeps the schema validator in
+# sync so callers get a 422 at the API boundary instead of a 500.
+GATEWAY_SUPPORTED_TRANSPORTS: frozenset[str] = frozenset({"SSE", "STREAMABLEHTTP"})
+
+
+def _validate_transport_string(v: str) -> str:
+    """Validate and normalize a transport string (case-insensitive).
+
+    Args:
+        v: The transport value to validate.
+
+    Returns:
+        Uppercase normalized transport value.
+
+    Raises:
+        ValueError: If the value is not a supported gateway transport.
+    """
+    v_upper = v.strip().upper()
+    if v_upper not in GATEWAY_SUPPORTED_TRANSPORTS:
+        raise ValueError(f"Invalid transport type: '{v}'. Must be one of: {', '.join(sorted(GATEWAY_SUPPORTED_TRANSPORTS))} (case-insensitive)")
+    return v_upper
+
+
 class GatewayCreate(BaseModelWithConfigDict):
     """
     Schema for creating a new gateway.
@@ -3062,8 +3087,8 @@ class GatewayCreate(BaseModelWithConfigDict):
     def validate_transport(cls, v: str) -> str:
         """Validate and normalize transport type (case-insensitive).
 
-        Accepts any case variant of valid TransportType enum values
-        and normalizes to uppercase.
+        Accepts supported gateway transports (SSE, STREAMABLEHTTP) in any
+        case and normalizes to uppercase.
 
         Args:
             v: The transport value to validate.
@@ -3072,18 +3097,11 @@ class GatewayCreate(BaseModelWithConfigDict):
             Uppercase normalized transport value.
 
         Raises:
-            ValueError: If the value is not a valid transport type.
+            ValueError: If the value is not a supported transport type.
         """
         if not isinstance(v, str):
             raise ValueError("Transport must be a string")
-        v_upper = v.strip().upper()
-        allowed = [t.value for t in TransportType.__members__.values()]
-        if v_upper not in allowed:
-            raise ValueError(
-                f"Invalid transport type: '{v}'. "
-                f"Must be one of: {', '.join(allowed)} (case-insensitive)"
-            )
-        return v_upper
+        return _validate_transport_string(v)
 
     @staticmethod
     def _process_auth_fields(info: ValidationInfo) -> Optional[str]:
@@ -3281,8 +3299,8 @@ class GatewayUpdate(BaseModelWithConfigDict):
     def validate_transport(cls, v: Optional[str]) -> Optional[str]:
         """Validate and normalize transport type (case-insensitive).
 
-        Accepts any case variant of valid TransportType enum values
-        and normalizes to uppercase.
+        Accepts supported gateway transports (SSE, STREAMABLEHTTP) in any
+        case and normalizes to uppercase.
 
         Args:
             v: The transport value to validate (may be None for optional field).
@@ -3291,20 +3309,13 @@ class GatewayUpdate(BaseModelWithConfigDict):
             Uppercase normalized transport value, or None.
 
         Raises:
-            ValueError: If the value is not a valid transport type.
+            ValueError: If the value is not a supported transport type.
         """
         if v is None:
             return v
         if not isinstance(v, str):
             raise ValueError("Transport must be a string")
-        v_upper = v.strip().upper()
-        allowed = [t.value for t in TransportType.__members__.values()]
-        if v_upper not in allowed:
-            raise ValueError(
-                f"Invalid transport type: '{v}'. "
-                f"Must be one of: {', '.join(allowed)} (case-insensitive)"
-            )
-        return v_upper
+        return _validate_transport_string(v)
 
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(
