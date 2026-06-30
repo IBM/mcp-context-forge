@@ -180,6 +180,9 @@ For detailed guidance on embedding and section customization, see [Admin UI Cust
 | `MCPGATEWAY_UI_TOOL_TEST_TIMEOUT` | Tool test timeout in milliseconds for the admin UI | `60000` | int |
 | `MCPGATEWAY_MCP_APPS_ENABLED` | Enable MCP Apps capability advertising and AppBridge routes | `false` | bool |
 | `MCPGATEWAY_MCP_APPS_SESSION_TTL` | AppBridge session lifetime in seconds | `900` | int, 1-86400 |
+| `MCPGATEWAY_MCP_APPS_SESSION_CLEANUP_ENABLED` | Enable automatic cleanup of expired AppBridge sessions | `true` | bool |
+| `MCPGATEWAY_MCP_APPS_SESSION_CLEANUP_INTERVAL_SECONDS` | Seconds between expired AppBridge session cleanup runs | `300` | int, 60-86400 |
+| `MCPGATEWAY_MCP_APPS_SESSION_CLEANUP_BATCH_SIZE` | Maximum expired AppBridge sessions to delete per cleanup batch | `1000` | int, 1-100000 |
 
 !!! note "Per-Request UI Hiding"
     For embedded contexts, you can also hide UI sections per-request by adding `?ui_hide=...` to the Admin UI URL.

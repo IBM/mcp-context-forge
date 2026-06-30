@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 MCP_UI_EXTENSION = "io.modelcontextprotocol/ui"
 MCP_UI_DEFAULT_VERSION = "2026-01-26"
+MCP_APP_MIME_TYPE = "text/html;profile=mcp-app"
 
 _ALLOWED_CSP_DIRECTIVES = frozenset(
     {
@@ -80,6 +81,44 @@ def build_mcp_apps_capabilities(*, authorized: bool) -> Dict[str, Any]:
     if not authorized or not mcp_apps_enabled():
         return {}
     return {MCP_UI_EXTENSION: mcp_apps_capability()}
+
+
+def _get_mapping_or_attr(value: Any, key: str) -> Any:
+    """Read ``key`` from either a mapping-like object or a model attribute."""
+    if isinstance(value, dict):
+        return value.get(key)
+    return getattr(value, key, None)
+
+
+def _client_capabilities(context: Any) -> Any:
+    """Best-effort extraction of MCP client capabilities from SDK request context."""
+    capabilities = getattr(context, "client_capabilities", None)
+    if capabilities is not None:
+        return capabilities
+
+    session = getattr(context, "session", None)
+    client_params = getattr(session, "client_params", None)
+    if client_params is None:
+        return None
+    return getattr(client_params, "capabilities", None)
+
+
+def client_supports_mcp_apps(context: Any) -> bool:
+    """Return whether the current MCP client advertised MCP Apps support."""
+    if not mcp_apps_enabled() or context is None:
+        return False
+
+    capabilities = _client_capabilities(context)
+    extensions = _get_mapping_or_attr(capabilities, "extensions")
+    if not isinstance(extensions, dict):
+        return False
+
+    ui_settings = extensions.get(MCP_UI_EXTENSION)
+    if not isinstance(ui_settings, dict):
+        return False
+
+    mime_types = ui_settings.get("mimeTypes") or ui_settings.get("mime_types")
+    return isinstance(mime_types, (list, tuple)) and MCP_APP_MIME_TYPE in mime_types
 
 
 def extension_metadata_value(value: Any) -> Dict[str, Any]:

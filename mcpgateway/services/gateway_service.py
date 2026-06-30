@@ -1719,6 +1719,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     input_schema=tool.input_schema,
                     output_schema=tool.output_schema,
                     annotations=tool.annotations,
+                    extension_metadata=optional_extension_metadata(getattr(tool, "extension_metadata", None)),
                     jsonpath_filter=tool.jsonpath_filter,
                     auth_type=auth_type,
                     auth_value=tool_auth_value,
@@ -1769,10 +1770,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             db_resources = []
             for r in resources:
-                mime_type = mimetypes.guess_type(r.uri)[0] or ("text/plain" if isinstance(r.content, str) else "application/octet-stream")
+                mime_type = getattr(r, "mime_type", None) or mimetypes.guess_type(r.uri)[0] or ("text/plain" if isinstance(r.content, str) else "application/octet-stream")
                 r_team_id = getattr(r, "team_id", None) or team_id
                 r_owner_email = getattr(r, "owner_email", None) or effective_owner
                 r_visibility = getattr(r, "visibility", None) or visibility
+                r_extension_metadata = optional_extension_metadata(getattr(r, "extension_metadata", None))
 
                 # Check if there's an orphaned resource with matching unique key
                 lookup_key = (r_team_id, r_owner_email, r.uri)
@@ -1783,6 +1785,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     existing.description = r.description
                     existing.mime_type = mime_type
                     existing.uri_template = r.uri_template or None
+                    existing.extension_metadata = r_extension_metadata
                     existing.text_content = r.content if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else None
                     existing.binary_content = (
                         r.content.encode() if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else r.content if isinstance(r.content, bytes) else None
@@ -1809,6 +1812,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             description=r.description,
                             mime_type=mime_type,
                             uri_template=r.uri_template or None,
+                            extension_metadata=r_extension_metadata,
                             text_content=r.content if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else None,
                             binary_content=(
                                 r.content.encode()

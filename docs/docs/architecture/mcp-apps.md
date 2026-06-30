@@ -241,7 +241,7 @@ Successful response:
 
 ```json
 {
-  "appSessionId": "5a51a7f8-4aa5-48d9-9aa1-3f4b5f07ed76",
+  "appSessionId": "5a51a7f84aa548d99aa13f4b5f07ed76",
   "resourceUri": "ui://widgets/customer-search",
   "serverId": "server-123",
   "expiresAt": "2026-06-05T15:30:00+00:00"
@@ -321,6 +321,7 @@ MCPGATEWAY_MCP_APPS_ENABLED=true
 MCPGATEWAY_MCP_APPS_SESSION_TTL=900
 MCPGATEWAY_MCP_APPS_SESSION_CLEANUP_ENABLED=true
 MCPGATEWAY_MCP_APPS_SESSION_CLEANUP_INTERVAL_SECONDS=300
+MCPGATEWAY_MCP_APPS_SESSION_CLEANUP_BATCH_SIZE=1000
 ```
 
 Recommended rollout steps:

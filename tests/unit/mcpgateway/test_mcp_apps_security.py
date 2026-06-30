@@ -48,6 +48,33 @@ def valid_app_session(mock_db):
     return session
 
 
+def test_load_invocable_tools_server_scope_matches_original_name(mock_db):
+    """Server-scoped Apps calls may use the upstream tool name embedded in the UI."""
+    service = ToolService()
+    mock_db.execute.return_value.scalars.return_value.all.return_value = []
+
+    service._load_invocable_tools(mock_db, "submit_contact_form", server_id="server-1")
+
+    statement = mock_db.execute.call_args.args[0]
+    compiled = str(statement.compile(compile_kwargs={"literal_binds": True}))
+    assert "tools.name = 'submit_contact_form'" in compiled
+    assert "tools.original_name = 'submit_contact_form'" in compiled
+    assert "server_tool_association.server_id = 'server-1'" in compiled
+
+
+def test_load_invocable_tools_global_scope_uses_registered_name_only(mock_db):
+    """Global tool lookup should not broaden to original_name and become ambiguous."""
+    service = ToolService()
+    mock_db.execute.return_value.scalars.return_value.all.return_value = []
+
+    service._load_invocable_tools(mock_db, "submit_contact_form")
+
+    statement = mock_db.execute.call_args.args[0]
+    compiled = str(statement.compile(compile_kwargs={"literal_binds": True}))
+    assert "tools.name = 'submit_contact_form'" in compiled
+    assert "tools.original_name = 'submit_contact_form'" not in compiled
+
+
 class TestUIResourceSecurity:
     """Security tests for ui:// resource access."""
 
