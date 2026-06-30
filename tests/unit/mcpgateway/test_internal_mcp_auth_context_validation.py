@@ -60,6 +60,14 @@ def test_malformed_types_are_rejected(ctx):
     assert exc.value.status_code == 400
 
 
+@pytest.mark.parametrize("bad", ["false", "true", "False", 0, 1])
+def test_non_bool_is_authenticated_is_rejected(bad):
+    """A non-bool ``is_authenticated`` (e.g. ``"false"`` or ``0``) is rejected so the downstream ``is False`` checks stay reliable."""
+    with pytest.raises(HTTPException) as exc:
+        _validate_internal_mcp_auth_context({"is_authenticated": bad})
+    assert exc.value.status_code == 400
+
+
 def test_public_only_with_none_teams_is_accepted():
     """``teams: None`` on a public-only context is fine (normalised to no teams downstream)."""
     _validate_internal_mcp_auth_context({"is_authenticated": False, "teams": None, "is_admin": False, "email": None})

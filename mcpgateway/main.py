@@ -355,10 +355,17 @@ def _validate_internal_mcp_auth_context(auth_context: Dict[str, Any]) -> None:
     if scoped_permissions is not None and not isinstance(scoped_permissions, list):
         raise HTTPException(status_code=400, detail="Invalid trusted MCP auth context: scoped_permissions must be a list")
 
+    # is_authenticated must be a real bool so the ``is False`` identity checks below (and the
+    # public-only RBAC skip in _ensure_rpc_permission) are reliable. A truthy non-bool like
+    # the string "false" or 0 would slip past ``is False`` and defeat the public-only flooring.
+    is_authenticated = auth_context.get("is_authenticated")
+    if is_authenticated is not None and not isinstance(is_authenticated, bool):
+        raise HTTPException(status_code=400, detail="Invalid trusted MCP auth context: is_authenticated must be a bool")
+
     # A public-only (unauthenticated) context must map to exactly public privileges.
     # The RBAC skip relies on this invariant, so reject any contradictory attributes
     # rather than letting them ride an unauthenticated dispatch.
-    if auth_context.get("is_authenticated") is False:
+    if is_authenticated is False:
         if teams:
             raise HTTPException(status_code=400, detail="Invalid public-only auth context: teams must be empty")
         if auth_context.get("is_admin") is True or auth_context.get("permission_is_admin") is True:
