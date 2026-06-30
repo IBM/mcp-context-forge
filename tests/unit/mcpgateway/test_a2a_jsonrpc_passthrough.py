@@ -176,7 +176,10 @@ class TestJSONRPCPassthroughValidation:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert "2.0" in response.text
+        body = response.json()
+        assert body["jsonrpc"] == "2.0"
+        assert body["error"]["code"] == -32600
+        assert "2.0" in body["error"]["message"]
 
     def test_missing_method(self, mock_auth, auth_headers):
         """Test that missing method is rejected."""
@@ -192,7 +195,10 @@ class TestJSONRPCPassthroughValidation:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert "method" in response.text.lower()
+        body = response.json()
+        assert body["jsonrpc"] == "2.0"
+        assert body["error"]["code"] == -32600
+        assert "method" in body["error"]["message"].lower()
 
     def test_invalid_method_type(self, mock_auth, auth_headers):
         """Test that non-string method is rejected."""
@@ -209,7 +215,10 @@ class TestJSONRPCPassthroughValidation:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert "method" in response.text.lower()
+        body = response.json()
+        assert body["jsonrpc"] == "2.0"
+        assert body["error"]["code"] == -32600
+        assert "method" in body["error"]["message"].lower()
 
     def test_invalid_params_type(self, mock_auth, auth_headers):
         """Test that non-dict params are rejected."""
@@ -226,7 +235,10 @@ class TestJSONRPCPassthroughValidation:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert "params" in response.text.lower()
+        body = response.json()
+        assert body["jsonrpc"] == "2.0"
+        assert body["error"]["code"] == -32600
+        assert "params" in body["error"]["message"].lower()
 
     def test_missing_params_allowed(self, mock_a2a_service, mock_auth, auth_headers):
         """Test that missing params is allowed (defaults to empty dict)."""
@@ -307,9 +319,8 @@ class TestJSONRPCPassthroughSecurity:
         """Test that endpoint requires a2a.invoke permission.
 
         This test verifies that the @require_permission('a2a.invoke') decorator
-        is applied to the route. The decorator is applied at import time, so we
-        verify it indirectly by ensuring authenticated requests succeed (implying
-        RBAC checks passed) while unauthenticated requests are rejected.
+        is applied to the route by ensuring authenticated requests succeed while
+        unauthenticated requests are rejected with 401/403.
         """
         mock_a2a_service.invoke_agent = AsyncMock(return_value={"jsonrpc": "2.0", "result": {}, "id": 1})
 
@@ -328,11 +339,18 @@ class TestJSONRPCPassthroughSecurity:
         )
         assert response.status_code == status.HTTP_200_OK
 
-        # Verify the decorator is present by checking the route's endpoint
-        from mcpgateway.main import invoke_a2a_agent_jsonrpc
-
-        # The @require_permission decorator adds metadata to the function
-        assert hasattr(invoke_a2a_agent_jsonrpc, "__wrapped__") or "a2a.invoke" in str(invoke_a2a_agent_jsonrpc)
+        # Unauthenticated request should be rejected
+        unauth_response = client.post(
+            "/a2a/test-agent/jsonrpc",
+            json={
+                "jsonrpc": "2.0",
+                "method": "SendMessage",
+                "params": {},
+                "id": 1,
+            },
+            # No headers - unauthenticated
+        )
+        assert unauth_response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
 
 
 class TestJSONRPCPassthroughResponseFormat:
