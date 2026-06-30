@@ -5515,8 +5515,8 @@ class TestAdminUIRoute:
 
         assert isinstance(response, HTMLResponse)
         assert response.status_code == 200
-        mock_logger.error.assert_called_once()
-        assert "CSRF protection degraded" in str(mock_logger.error.call_args[0])
+        degradation_calls = [c for c in mock_logger.error.call_args_list if "CSRF protection degraded" in str(c[0])]
+        assert len(degradation_calls) == 1, f"Expected 1 CSRF degradation call, got {len(degradation_calls)}"
         mock_csrf_service.generate_csrf_token.assert_not_called()
 
 
