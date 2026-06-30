@@ -74,14 +74,18 @@ def populate_testcases_table(tool_id, test_cases, run_status, db: Session):
         db.add(test_case_record)
         db.commit()
         db.refresh(test_case_record)
-        logger.info(f"Added tool test case record with empty test cases for tool {SecurityValidator.sanitize_log_message(str(tool_id))} with status {SecurityValidator.sanitize_log_message(str(run_status))}")
+        logger.info(
+            f"Added tool test case record with empty test cases for tool {SecurityValidator.sanitize_log_message(str(tool_id))} with status {SecurityValidator.sanitize_log_message(str(run_status))}"
+        )
     # elif tool_record and test_cases != [] and run_status == 'completed':
     elif tool_record:
         tool_record.test_cases = test_cases
         tool_record.run_status = run_status
         db.commit()
         db.refresh(tool_record)
-        logger.info(f"Updated tool record in table with test cases for tool {SecurityValidator.sanitize_log_message(str(tool_id))} with status {SecurityValidator.sanitize_log_message(str(run_status))}")
+        logger.info(
+            f"Updated tool record in table with test cases for tool {SecurityValidator.sanitize_log_message(str(tool_id))} with status {SecurityValidator.sanitize_log_message(str(run_status))}"
+        )
 
 
 def query_testcases_table(tool_id, db: Session):

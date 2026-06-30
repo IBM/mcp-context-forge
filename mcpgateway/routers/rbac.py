@@ -332,7 +332,9 @@ async def assign_role_to_user(user_email: str, assignment_data: UserRoleAssignRe
             user_email=user_email, role_id=assignment_data.role_id, scope=assignment_data.scope, scope_id=assignment_data.scope_id, granted_by=user["email"], expires_at=assignment_data.expires_at
         )
 
-        logger.info(f"Role assigned: {SecurityValidator.sanitize_log_message(assignment_data.role_id)} to {SecurityValidator.sanitize_log_message(user_email)} by {SecurityValidator.sanitize_log_message(user['email'])}")
+        logger.info(
+            f"Role assigned: {SecurityValidator.sanitize_log_message(assignment_data.role_id)} to {SecurityValidator.sanitize_log_message(user_email)} by {SecurityValidator.sanitize_log_message(user['email'])}"
+        )
         db.commit()
         db.close()
         return UserRoleResponse.model_validate(user_role)
@@ -429,7 +431,9 @@ async def revoke_user_role(
         if not success:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role assignment not found")
 
-        logger.info(f"Role revoked: {SecurityValidator.sanitize_log_message(role_id)} from {SecurityValidator.sanitize_log_message(user_email)} by {SecurityValidator.sanitize_log_message(user['email'])}")
+        logger.info(
+            f"Role revoked: {SecurityValidator.sanitize_log_message(role_id)} from {SecurityValidator.sanitize_log_message(user_email)} by {SecurityValidator.sanitize_log_message(user['email'])}"
+        )
         db.commit()
         db.close()
         return {"message": "Role revoked successfully"}
