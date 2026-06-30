@@ -3,7 +3,6 @@ name: Fast Time Server Image
 on:
   push:
     branches: ["main"]
-    tags: ["v*"]
     paths:
       - "Cargo.toml"
       - "Cargo.lock"

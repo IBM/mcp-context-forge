@@ -2,15 +2,14 @@
 # 🐳  Docker Release Workflow - Tag and Push on GitHub Release
 # ======================================================================
 #
-# This workflow re-tags a Docker image (built by a previous workflow)
-# when a GitHub Release is published, giving it a semantic version tag
-# like `v0.9.0`. It assumes the CI build has already pushed an image
-# tagged with the commit SHA. It verifies all check-runs passed before
-# re-tagging.
+# This workflow releases Docker images when a GitHub Release is published.
+# It re-tags the main image from a CI-built commit SHA manifest and builds
+# release images that are published only from this workflow. It verifies all
+# check-runs passed before publishing.
 #
 # ➤ Trigger: Release published, or manual workflow_dispatch with a tag
 # ➤ Assumes: Existing image tagged with the commit SHA is available
-# ➤ Result: Image re-tagged as `ghcr.io/OWNER/REPO:v0.9.0`
+# ➤ Result: Release images published with semantic version tags
 #
 # ======================================================================
 
@@ -50,7 +49,7 @@ jobs:
        github.event.release.prerelease == false)
 
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 60
 
     permissions:
       contents: read      # read repo info
@@ -203,7 +202,16 @@ jobs:
           echo "All $COMPLETED check-runs on $SHA passed."
 
       # ----------------------------------------------------------------
-      # Step 3  Authenticate with GitHub Container Registry (GHCR)
+      # Step 3  Checkout the release commit for images built by this workflow
+      # ----------------------------------------------------------------
+      - name: Checkout release commit
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ steps.meta.outputs.sha }}
+          persist-credentials: false
+
+      # ----------------------------------------------------------------
+      # Step 4  Authenticate with GitHub Container Registry (GHCR)
       # ----------------------------------------------------------------
       - name: 🔐  Log in to GHCR
         uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
@@ -213,13 +221,18 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # ----------------------------------------------------------------
-      # Step 4  Set up Docker Buildx for multiplatform manifest handling
+      # Step 5  Set up Docker Buildx for multiplatform manifest handling
       # ----------------------------------------------------------------
+      - name: 🛠️  Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        with:
+          platforms: arm64
+
       - name: 🛠️  Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       # ----------------------------------------------------------------
-      # Step 5  Create version tag from existing multiplatform manifest
+      # Step 6  Create version tag from existing multiplatform manifest
       # Note: For multiplatform images, we use 'docker buildx imagetools create'
       # instead of 'docker pull' + 'docker tag' + 'docker push' because:
       # 1. Multiplatform images are manifest lists, not single images
@@ -239,7 +252,22 @@ jobs:
             --tag "${IMAGE}:${TAG}"
 
       # ----------------------------------------------------------------
-      # Step 6  Verify the new version tag
+      # Step 7  Build and publish release images owned by this workflow
+      # ----------------------------------------------------------------
+      - name: Build and push fast-time-server release image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: mcp-servers/rust/fast-time-server/Containerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/ibm/fast-time-server:${{ steps.meta.outputs.tag }}
+          cache-from: type=gha,scope=fast-time-server-image
+          cache-to: type=gha,mode=max,scope=fast-time-server-image
+          provenance: false
+
+      # ----------------------------------------------------------------
+      # Step 8  Verify the new version tags
       # ----------------------------------------------------------------
       - name: 🔍  Verify version tag
         env:
@@ -249,3 +277,7 @@ jobs:
           IMAGE="ghcr.io/$(echo "$REPO" | tr '[:upper:]' '[:lower:]')"
           echo "Inspecting ${IMAGE}:${TAG}"
           docker buildx imagetools inspect "${IMAGE}:${TAG}"
+
+          FAST_TIME_IMAGE="ghcr.io/ibm/fast-time-server"
+          echo "Inspecting ${FAST_TIME_IMAGE}:${TAG}"
+          docker buildx imagetools inspect "${FAST_TIME_IMAGE}:${TAG}"
