@@ -14,6 +14,11 @@ Changes:
 
 Supports both PostgreSQL and SQLite databases.
 
+NOTE: These indexes are ALSO defined in mcpgateway/db.py (__table_args__) for fresh databases.
+This migration only runs on existing databases (if tables already exist). The migration is
+idempotent and checks if indexes exist before creating them, ensuring no conflicts between
+the two definition sources.
+
 Revision ID: d21698ae4a19
 Revises: e198602c3c1e
 Create Date: 2026-05-06 12:35:58.142694

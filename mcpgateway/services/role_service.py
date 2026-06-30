@@ -648,11 +648,26 @@ class RoleService:
             if not existing.is_expired():
                 # Active and not expired - reject the new assignment
                 raise ValueError("User already has this role assignment")
+
             # Active but expired - soft-delete it to allow the new assignment
             # This handles the SQLite limitation where we can't use datetime('now') in partial indexes
-            existing.is_active = False
-            self.db.commit()
-            logger.info("Soft-deleted expired assignment for %s to role %s (scope: %s, scope_id: %s) to allow re-grant", user_email, role_id, scope, scope_id)
+            # Wrap in try/except to handle race where another process soft-deletes concurrently
+            try:
+                existing.is_active = False
+                self.db.commit()
+                logger.info("Soft-deleted expired assignment for %s to role %s (scope: %s, scope_id: %s) to allow re-grant", user_email, role_id, scope, scope_id)
+            except IntegrityError:
+                # Another process modified this row concurrently - rollback and refetch
+                self.db.rollback()
+                logger.info("Concurrent modification detected during expired assignment soft-delete - refetching")
+
+                # Refetch to see the current state
+                existing = await self.get_user_role_assignment(user_email, role_id, scope, scope_id)
+                if existing and existing.is_active and not existing.is_expired():
+                    # Another process already created a fresh assignment
+                    return existing
+                # If no active assignment exists, continue to create new one below
+                logger.info("No active assignment found after concurrent soft-delete race - proceeding with creation")
 
         # Create the assignment with savepoint to handle race conditions
         # If another process created the same assignment concurrently, we'll catch IntegrityError
@@ -683,6 +698,15 @@ class RoleService:
             # Refetch the winner's row
             existing = await self.get_user_role_assignment(user_email, role_id, scope, scope_id)
             if existing:
+                # CRITICAL: Check if the refetched assignment is expired
+                # This handles the race where another process created an expired assignment
+                # or the assignment expired between creation and refetch
+                if existing.is_expired():
+                    logger.warning(f"Refetched assignment for {user_email} to role {role_id} is expired - soft-deleting and retrying")
+                    existing.is_active = False
+                    self.db.commit()
+                    # Raise ValueError to signal that the refetched assignment was expired
+                    raise ValueError(f"Refetched assignment for {user_email} to role {role_id} was expired")
                 return existing
 
             # If we still can't find it, something else went wrong - re-raise
