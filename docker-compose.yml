@@ -1825,9 +1825,6 @@ services:
   # Usage: docker compose --profile resilience up -d
   ###############################################################################
   slow_time_server:
-    build:
-      context: .
-      dockerfile: mcp-servers/rust/slow-time-server/Containerfile
     image: ghcr.io/ibm/cfex-mcp-slow-time-server:latest
     restart: unless-stopped
     networks: [mcpnet]
