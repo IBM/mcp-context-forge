@@ -203,10 +203,10 @@ jobs:
             anchore/syft:v1.42.3 \
             "docker:${IMAGE_NAME}:scan" -o spdx-json=/work/sbom.spdx.json
 
-      - name: Scan for vulnerabilities (Grype)
+      - name: Scan SBOM for vulnerabilities (Grype)
         uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
         with:
-          image: ${{ env.IMAGE_NAME }}:scan
+          sbom: sbom.spdx.json
           only-fixed: true
           fail-build: true
           severity-cutoff: high
