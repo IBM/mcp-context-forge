@@ -40,6 +40,7 @@ from mcpgateway.services.tool_plugin_binding_service import get_bindings_for_too
 logger = logging.getLogger(__name__)
 
 CONTEXT_ID_SEPARATOR = "::"
+DEFAULT_CONTEXT_ID = "__global__"
 
 _LEGACY_MODE_TO_PLUGIN_MODE: dict[str, tuple[PluginMode, Optional[OnError]]] = {
     "enforce": (PluginMode.SEQUENTIAL, None),
@@ -129,13 +130,13 @@ class TenantPluginManagerFactory:
 
     async def get_manager(self, context_id: Optional[str] = None) -> TenantPluginManager:
         """Get or create a TenantPluginManager for the given context."""
-        context_id = context_id or "__global__"
+        context_id = context_id or DEFAULT_CONTEXT_ID
         expired = None
 
         async with self._lock:
             entry = self._managers.get(context_id)
             if entry is not None:
-                if entry.is_expired(self._cache_ttl):
+                if entry.is_expired(self._cache_ttl) and context_id != DEFAULT_CONTEXT_ID:
                     expired = self._managers.pop(context_id, None)
                     logger.debug("Cache TTL expired for context_id=%s, rebuilding", context_id)
                 else:
@@ -167,8 +168,19 @@ class TenantPluginManagerFactory:
     async def _build_manager(self, context_id: str) -> TenantPluginManager:
         """Create, initialise, and cache a new manager for *context_id*."""
         manager = None
+
+        new_config = await self.get_config_from_db(context_id)
+
+        if new_config is None:
+            async with self._lock:
+                default_manager = self._managers.get(DEFAULT_CONTEXT_ID)
+                if default_manager is None:
+                    logger.debug("No default manager available, using base config for context_id=%s", context_id)
+                else:
+                    self._managers[context_id] = _CachedManager(manager=default_manager.manager, created_at=time.monotonic())
+                    return default_manager.manager
+
         try:
-            new_config = await self.get_config_from_db(context_id)
             config = self._merge_tenant_config(new_config)
             config = await self._apply_redis_mode_overrides(config)
 
@@ -409,7 +421,7 @@ class TenantPluginManagerFactory:
     async def invalidate_all(self) -> None:
         """Reload every cached manager concurrently, logging failures."""
         async with self._lock:
-            context_ids = list(self._managers.keys())
+            context_ids = [ctx_id for ctx_id in self._managers.keys() if ctx_id != DEFAULT_CONTEXT_ID]
         results = await asyncio.gather(
             *(self.reload_tenant(ctx_id) for ctx_id in context_ids),
             return_exceptions=True,
