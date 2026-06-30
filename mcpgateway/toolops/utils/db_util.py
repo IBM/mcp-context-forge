@@ -84,7 +84,9 @@ def populate_testcases_table(tool_id, test_cases, run_status, db: Session):
         db.commit()
         db.refresh(tool_record)
         logger.info(
-            f"Updated tool record in table with test cases for tool {SecurityValidator.sanitize_log_message(str(tool_id))} with status {SecurityValidator.sanitize_log_message(str(run_status))}"
+            "Updated tool record in table with test cases for tool %s with status %s",
+            SecurityValidator.sanitize_log_message(str(tool_id)),
+            SecurityValidator.sanitize_log_message(str(run_status)),
         )
 
 
@@ -120,7 +122,7 @@ def query_testcases_table(tool_id, db: Session):
         >>> mock_db.query.assert_called()
     """
     tool_record = db.query(TestCaseRecord).filter_by(tool_id=tool_id).first()
-    logger.info(f"Tool record obtained from table for tool - {SecurityValidator.sanitize_log_message(str(tool_id))}")
+    logger.info("Tool record obtained from table for tool - %s", SecurityValidator.sanitize_log_message(str(tool_id)))
     return tool_record
 
 
@@ -168,9 +170,9 @@ def query_tool_auth(tool_id, db: Session):
     try:
         tool_record = db.query(Tool).filter_by(id=tool_id).first()
         tool_auth = decode_auth(tool_record.auth_value)
-        logger.info(f"Tool auth obtained from table for the tool - {SecurityValidator.sanitize_log_message(str(tool_id))}")
+        logger.info("Tool auth obtained from table for the tool - %s", SecurityValidator.sanitize_log_message(str(tool_id)))
     except Exception as e:
-        logger.error(f"Error in obtaining authorization for the tool - {SecurityValidator.sanitize_log_message(tool_id)} , {SecurityValidator.sanitize_log_message(str(e))}")
+        logger.error("Error in obtaining authorization for the tool - %s , %s", SecurityValidator.sanitize_log_message(tool_id), SecurityValidator.sanitize_log_message(str(e)))
     return tool_auth
 
 
