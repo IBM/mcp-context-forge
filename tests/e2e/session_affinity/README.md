@@ -13,6 +13,7 @@ The in-process complement lives at
 | `counter_server.py` | A minimal stateful MCP counter (per-session state keyed by the upstream `ServerSession`). Run on the host; `COUNTER_PORT` selects the port (`9400` default, `9401` for the multi-upstream test). |
 | `run_reproducers.py` | **Tests 1–5** (admin token): single session ×25; 3 concurrent sessions; two tokens; one session across two counters; owner-worker `kill -9` failover. Proves upstream-session reuse, per-session/token/upstream isolation, and the failover contract. |
 | `run_public_only.py` | **Public-only** session (no token) is served, not RBAC-denied — the multi-worker proof of the trusted-internal public-only dispatch fix. Requires `MCP_REQUIRE_AUTH=false`. |
+| `run_gating.py` | **Kill-switch (flag-off)**: with the stack started `MCPGATEWAY_SESSION_AFFINITY_ENABLED=false`, asserts affinity is dormant — the gateway still serves, no `worker_heartbeat`/`pool_owner` keys are created, and a cross-worker stateful session is not forwarded (reverts to the pre-affinity baseline). The flag-off A/B companion to `run_reproducers.py` (which covers flag-on). |
 
 ## Prerequisites
 
@@ -42,6 +43,9 @@ export MCPGATEWAY_BEARER_TOKEN=$(.venv/bin/python -m mcpgateway.utils.create_jwt
 
 # Public-only (requires the gateway started with MCP_REQUIRE_AUTH=false)
 .venv/bin/python tests/e2e/session_affinity/run_public_only.py
+
+# Kill-switch (requires the gateway started with MCPGATEWAY_SESSION_AFFINITY_ENABLED=false)
+.venv/bin/python tests/e2e/session_affinity/run_gating.py
 ```
 
 Each script prints a per-test `PASS/FAIL` summary and exits non-zero on failure.
