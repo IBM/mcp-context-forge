@@ -160,6 +160,23 @@ class TestGrpcEndpoint:
         mock_grpc.insecure_channel.assert_called_once_with("metadata.google.internal:443")
 
     @patch("mcpgateway.translate_grpc.grpc")
+    async def test_start_validates_target_and_tls_paths_by_default(self, mock_grpc, endpoint_with_tls):
+        """start() validates the target and both TLS paths by default (trusted_local=False)."""
+        mock_grpc.secure_channel.return_value = MagicMock()
+        mock_grpc.ssl_channel_credentials.return_value = MagicMock()
+
+        with (
+            patch("mcpgateway.services.grpc_service._validate_grpc_target") as mock_validate_target,
+            patch("mcpgateway.services.grpc_service._validate_tls_path") as mock_validate_tls,
+            patch("mcpgateway.translate_grpc.asyncio.to_thread", new_callable=AsyncMock, return_value=b"cert_data"),
+            patch.object(endpoint_with_tls, "_discover_services", new_callable=AsyncMock),
+        ):
+            await endpoint_with_tls.start()
+
+        mock_validate_target.assert_called_once_with("secure.example.com:443")
+        assert mock_validate_tls.call_count == 2  # cert + key
+
+    @patch("mcpgateway.translate_grpc.grpc")
     @patch("mcpgateway.translate_grpc.reflection_pb2_grpc")
     @patch("mcpgateway.translate_grpc.reflection_pb2")
     async def test_discover_services_success(self, mock_reflection_pb2, mock_reflection_grpc, mock_grpc, endpoint):
