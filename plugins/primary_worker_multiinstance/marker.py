@@ -5,11 +5,12 @@ SPDX-License-Identifier: Apache-2.0
 
 Test-only plugin for the multi-instance primary-worker e2e.
 
-A non-hook plugin gated on ``is_primary_worker()`` that pushes ``<host>:<pid>``
-to a shared Redis list when primary. Across containers sharing one Redis, exactly
-one process is primary, so the list ends with a single entry — observable across
-containers where a per-container file marker cannot be. Loaded only via its
-fixture config; not a production plugin.
+A non-hook plugin gated on ``is_primary_worker()`` that adds ``<host>:<pid>`` to
+a shared Redis set when primary. Across containers sharing one Redis, exactly one
+process is primary, so the set has a single member — observable across containers
+where a per-container file marker cannot be. A set (not a list) keeps the count
+correct even if ``initialize()`` runs more than once in a process. Loaded only
+via its fixture config; not a production plugin.
 """
 
 # Future
@@ -42,7 +43,7 @@ class MultiInstanceMarkerPlugin(Plugin):
         self._redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
     async def initialize(self) -> None:
-        """Push this process to the shared Redis list when it is the primary."""
+        """Add this process to the shared Redis set when it is the primary."""
         if not is_primary_worker():
             return
         # Third-Party
@@ -50,6 +51,6 @@ class MultiInstanceMarkerPlugin(Plugin):
 
         client = aioredis.from_url(self._redis_url, decode_responses=True)
         try:
-            await client.rpush(self._key, f"{socket.gethostname()}:{os.getpid()}")
+            await client.sadd(self._key, f"{socket.gethostname()}:{os.getpid()}")
         finally:
             await client.aclose()
