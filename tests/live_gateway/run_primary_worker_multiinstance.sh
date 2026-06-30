@@ -14,6 +14,8 @@ PROJECT="mcpgw-pw-e2e"
 COMPOSE="docker compose -p $PROJECT -f docker-compose.yml"
 KEY="mcpgw:primary_worker:e2e:markers"
 REPLICAS="${REPLICAS:-2}"
+# KEEP_UP=1 leaves the stack running afterwards so you can inspect Redis.
+KEEP_UP="${KEEP_UP:-0}"
 
 # Preconditions.
 command -v docker >/dev/null 2>&1 || { echo "SKIP: docker not found"; exit 0; }
@@ -24,7 +26,17 @@ docker image inspect "${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}" >/dev/null 2
 # the image MUST be rebuilt from the current branch ('make docker') for the
 # election backend to be present.
 
-cleanup() { $COMPOSE down --remove-orphans -v >/dev/null 2>&1 || true; }
+cleanup() {
+  if [ "$KEEP_UP" = "1" ]; then
+    echo "▶ KEEP_UP=1: leaving the stack running. Inspect Redis with:"
+    echo "    $COMPOSE exec redis redis-cli GET    mcpgw:primary_worker   # primary's instance id (the lease)"
+    echo "    $COMPOSE exec redis redis-cli TTL    mcpgw:primary_worker   # lease TTL (heartbeat refreshes it)"
+    echo "    $COMPOSE exec redis redis-cli LRANGE $KEY 0 -1   # marker entries (RPUSHed by the primary)"
+    echo "  Tear down with:  $COMPOSE down --remove-orphans -v"
+    return
+  fi
+  $COMPOSE down --remove-orphans -v >/dev/null 2>&1 || true
+}
 trap cleanup EXIT
 
 echo "▶ bringing up redis and clearing the marker key"
