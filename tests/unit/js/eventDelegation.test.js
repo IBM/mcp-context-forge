@@ -312,8 +312,11 @@ describe("eventDelegation", () => {
       expect(mockAdminFunction).toHaveBeenCalledTimes(1);
     });
 
-    it("gracefully handles blur with non-Element target (Firefox compatibility)", () => {
-      const nonElementTarget = { nodeType: 1 }; // Simulates document/window which are not Element instances
+    it("does not raise a global error on blur with a non-Element target (Firefox)", () => {
+      const onError = vi.fn();
+      window.addEventListener("error", onError);
+
+      const nonElementTarget = { nodeType: 9 }; // DOCUMENT_NODE — simulates document, which is not an Element instance
 
       const event = new FocusEvent("blur", { bubbles: true });
       Object.defineProperty(event, "target", {
@@ -321,8 +324,10 @@ describe("eventDelegation", () => {
         writable: false,
       });
 
-      // Dispatching this event should not throw
-      expect(() => document.dispatchEvent(event)).not.toThrow();
+      document.dispatchEvent(event);
+
+      window.removeEventListener("error", onError);
+      expect(onError).not.toHaveBeenCalled();
       expect(mockAdminFunction).not.toHaveBeenCalled();
     });
   });
