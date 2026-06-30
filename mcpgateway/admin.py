@@ -698,9 +698,9 @@ async def get_hidden_sections_for_user(
                 )
             except Exception as e:
                 LOGGER.warning(
-                "Error checking permission %s for user %s: %s",
-                    SecurityValidator.sanitize_log_message(required_permission), 
-                    SecurityValidator.sanitize_log_message(user_email), 
+                    "Error checking permission %s for user %s: %s",
+                    SecurityValidator.sanitize_log_message(required_permission),
+                    SecurityValidator.sanitize_log_message(user_email),
                     SecurityValidator.sanitize_log_message(str(e)),
                 )
                 has_permission = False
