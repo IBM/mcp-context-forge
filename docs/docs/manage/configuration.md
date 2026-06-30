@@ -953,6 +953,11 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `AUTO_REFRESH_SERVERS` | Auto refresh tools/prompts/resources        | `false` | bool    |
 | `FILELOCK_NAME`         | File lock for leader election             | `gateway_service_leader.lock` | string |
 | `PRIMARY_WORKER_LOCK_PATH` | Override path for the primary-worker election lock file (per-host; default is a port-scoped temp file) | (none) | string |
+| `PRIMARY_WORKER_ELECTION_BACKEND` | Primary-worker election: `filelock` (per host) or `redis` (per cluster) | `filelock` | enum |
+| `PRIMARY_WORKER_REDIS_KEY` | Redis lease key for cross-instance election | `mcpgw:primary_worker` | string |
+| `PRIMARY_WORKER_LEASE_TTL` | Redis lease TTL (secs) | `15` | int > 0 |
+| `PRIMARY_WORKER_HEARTBEAT_INTERVAL` | Lease renewal interval (secs; `< ttl/2`) | `5` | int > 0 |
+| `PRIMARY_WORKER_REDIS_UNAVAILABLE_POLICY` | Redis down: `fail_closed` or `filelock_fallback` | `fail_closed` | enum |
 | `DEFAULT_ROOTS`         | Default root paths for resources          | `[]`    | JSON array |
 
 ### Database Connection Pool
