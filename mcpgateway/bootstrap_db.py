@@ -797,6 +797,8 @@ async def bootstrap_resource_assignments(conn: Connection) -> None:
                             )
                             continue
 
+                    # Per-row commits mean some rows may already be persisted if a non-IntegrityError
+                    # is raised mid-loop; those rows are not counted here and won't be retried.
                     total_assigned += assigned_count
 
                 except Exception as e:
