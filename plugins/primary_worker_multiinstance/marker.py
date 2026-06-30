@@ -5,14 +5,11 @@ SPDX-License-Identifier: Apache-2.0
 
 Test-only plugin for the multi-instance primary-worker e2e.
 
-A non-hook plugin gated on ``is_primary_worker()``. When this process is the
-primary, it pushes ``<hostname>:<pid>`` to a Redis list. Across several gateway
-containers sharing one Redis (redis election backend), exactly one process is
-primary, so the list ends up with a single entry — the cross-container proof a
-per-container file marker cannot give.
-
-Loaded only when the gateway is started with this fixture's plugin config; inert
-otherwise. Not a production plugin.
+A non-hook plugin gated on ``is_primary_worker()`` that pushes ``<host>:<pid>``
+to a shared Redis list when primary. Across containers sharing one Redis, exactly
+one process is primary, so the list ends with a single entry — observable across
+containers where a per-container file marker cannot be. Loaded only via its
+fixture config; not a production plugin.
 """
 
 # Future

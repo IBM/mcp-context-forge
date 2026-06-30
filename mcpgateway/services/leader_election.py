@@ -3,18 +3,15 @@
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 
-SPIKE: generic primary-worker elector with two backends.
+Primary-worker elector with two backends.
 
-- ``filelock`` (passive): one primary per host. The OS releases the lock on
-  process exit; no background task. This is the current behavior.
-- ``redis`` (active): one primary across all instances sharing the same Redis.
-  Uses a lease (``SET NX EX``) renewed by an atomic compare-and-renew Lua
-  heartbeat, released by an if-owner Lua, with a follower loop that re-acquires
-  when the lease expires.
+- ``filelock`` (passive): one primary per host; the OS releases the lock on exit.
+- ``redis`` (active): one primary across instances sharing a Redis, via a lease
+  (``SET NX EX``) renewed by an atomic compare-and-renew Lua and released by an
+  if-owner Lua, with a follower loop that re-acquires on expiry.
 
-The public surface is ``start()`` / ``stop()`` / ``is_primary``. Plugins keep
-calling ``is_primary_worker()`` (which reads this elector's cached flag for the
-redis backend).
+Surface: ``start()`` / ``stop()`` / ``is_primary``; ``is_primary_worker()`` reads
+the cached flag for the redis backend.
 """
 
 # Standard
