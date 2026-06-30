@@ -6039,6 +6039,42 @@ async def create_resource(
         raise HTTPException(status_code=415, detail={"error": "Unsupported Media Type", "message": str(e), "mime_type": e.mime_type, "allowed_types": e.allowed_types})
 
 
+@resource_router.get("/test/{resource_uri:path}")
+@require_permission("resources.read")
+async def test_resource_by_uri(
+    resource_uri: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Read a resource by URI and return its content.
+
+    Args:
+        resource_uri (str): URI of the resource to read.
+        request (Request): FastAPI request object for context.
+        db (Session): Database session.
+        user: Authenticated user with permissions.
+
+    Returns:
+        Dict[str, Any]: Dictionary with a ``content`` key containing the resolved resource content.
+
+    Raises:
+        HTTPException: 404 if the resource is not found or not accessible to the caller.
+    """
+    logger.debug("Reading resource by URI %s for user %s", resource_uri, safe_log_user(user))
+    auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+    try:
+        resource_content = await resource_service.read_resource(
+            db, resource_uri=resource_uri, user=auth_user_email, token_teams=auth_token_teams
+        )
+        return {"content": resource_content}
+    except ResourceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error("Error reading resource by URI %s: %s", resource_uri, e)
+        raise
+
+
 @resource_router.get("/{resource_id}")
 @require_permission("resources.read")
 async def read_resource(resource_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Any:

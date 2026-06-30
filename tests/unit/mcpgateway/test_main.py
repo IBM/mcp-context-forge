@@ -1537,6 +1537,83 @@ class TestResourceEndpoints:
             assert "type" in payload
             assert "data" in payload
 
+    @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
+    def test_test_resource_by_uri_success(self, mock_read, test_client, auth_headers):
+        """Test GET /resources/test/{resource_uri} returns 200 with content."""
+        mock_read.return_value = {"hello": "world"}
+        response = test_client.get("/resources/test/resource://example/demo", headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json()["content"] == {"hello": "world"}
+
+    @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
+    def test_test_resource_by_uri_not_found(self, mock_read, test_client, auth_headers):
+        """Test GET /resources/test/{resource_uri} returns 404 when resource missing."""
+        from mcpgateway.services.resource_service import ResourceNotFoundError
+
+        mock_read.side_effect = ResourceNotFoundError("not found")
+        response = test_client.get("/resources/test/resource://example/missing", headers=auth_headers)
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
+    async def test_test_resource_by_uri_generic_exception_reraised(self, mock_read):
+        """Test that non-ResourceNotFoundError exceptions propagate from test_resource_by_uri."""
+        from mcpgateway.main import test_resource_by_uri
+
+        mock_read.side_effect = RuntimeError("boom")
+        mock_request = MagicMock()
+        mock_request.state.token_teams = ["team-a"]
+        mock_request.state.internal_auth_context = None
+        user = {"email": "user@example.com", "is_admin": False, "teams": ["team-a"]}
+        with pytest.raises(RuntimeError, match="boom"):
+            await test_resource_by_uri(
+                resource_uri="resource://host/path",
+                request=mock_request,
+                db=MagicMock(),
+                user=user,
+            )
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
+    async def test_test_resource_by_uri_admin_bypass_scoping(self, mock_read):
+        """Test that admin callers receive token_teams=None (admin bypass) in service call."""
+        from mcpgateway.main import test_resource_by_uri
+
+        mock_read.return_value = {"data": "content"}
+        mock_request = MagicMock()
+        mock_request.state.token_teams = None
+        mock_request.state.internal_auth_context = None
+        admin_user = {"email": "admin@example.com", "is_admin": True, "teams": None}
+        await test_resource_by_uri(
+            resource_uri="resource://host/path",
+            request=mock_request,
+            db=MagicMock(),
+            user=admin_user,
+        )
+        call_kwargs = mock_read.call_args[1]
+        assert call_kwargs["user"] == "admin@example.com"
+        assert call_kwargs["token_teams"] is None
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
+    async def test_test_resource_by_uri_non_admin_team_scoped(self, mock_read):
+        """Test that non-admin callers receive their token_teams in the service call."""
+        from mcpgateway.main import test_resource_by_uri
+
+        mock_read.return_value = {"data": "scoped"}
+        mock_request = MagicMock()
+        mock_request.state.token_teams = ["team-a"]
+        mock_request.state.internal_auth_context = None
+        user = {"email": "user@example.com", "is_admin": False, "teams": ["team-a"]}
+        await test_resource_by_uri(
+            resource_uri="resource://host/path",
+            request=mock_request,
+            db=MagicMock(),
+            user=user,
+        )
+        call_kwargs = mock_read.call_args[1]
+        assert call_kwargs["token_teams"] == ["team-a"]
+
 
 # ----------------------------------------------------- #
 # Prompt Management Tests                               #
