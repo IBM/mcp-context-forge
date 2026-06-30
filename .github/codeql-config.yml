@@ -15,4 +15,4 @@ queries:
 paths-ignore:
   - tests
   - docs
-  - .pre-commit-lite.yaml
+  - .pre-commit-config.yaml
