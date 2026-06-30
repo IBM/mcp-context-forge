@@ -31,7 +31,7 @@ cleanup() {
     echo "▶ KEEP_UP=1: leaving the stack running. Inspect Redis with:"
     echo "    $COMPOSE exec redis redis-cli GET    mcpgw:primary_worker   # primary's instance id (the lease)"
     echo "    $COMPOSE exec redis redis-cli TTL    mcpgw:primary_worker   # lease TTL (heartbeat refreshes it)"
-    echo "    $COMPOSE exec redis redis-cli LRANGE $KEY 0 -1   # marker entries (RPUSHed by the primary)"
+    echo "    $COMPOSE exec redis redis-cli SMEMBERS $KEY   # distinct primary process(es)"
     echo "  Tear down with:  $COMPOSE down --remove-orphans -v"
     return
   fi
@@ -62,9 +62,10 @@ done
 [ "$ready" = 1 ] || { echo "❌ gateways did not become healthy in time"; $COMPOSE ps gateway; exit 1; }
 sleep 3  # settle: ensure every replica finished plugin initialize()
 
-n=$($COMPOSE exec -T redis redis-cli LLEN "$KEY" 2>/dev/null | tr -d '\r')
-echo "▶ primaries across $REPLICAS instances: $n"
-$COMPOSE exec -T redis redis-cli LRANGE "$KEY" 0 -1 2>/dev/null | sed 's/^/    /'
+# Count distinct primary processes (a set, so a process re-initializing counts once).
+n=$($COMPOSE exec -T redis redis-cli SCARD "$KEY" 2>/dev/null | tr -d '\r')
+echo "▶ distinct primaries across $REPLICAS instances: $n"
+$COMPOSE exec -T redis redis-cli SMEMBERS "$KEY" 2>/dev/null | sed 's/^/    /'
 
 [ "$n" = "1" ] || { echo "❌ FAIL: expected exactly 1 primary across $REPLICAS instances, got $n"; exit 1; }
 echo "✅ PASS: exactly one primary elected across $REPLICAS instances (cross-instance election works)"
