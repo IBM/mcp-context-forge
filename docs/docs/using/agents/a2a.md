@@ -223,7 +223,7 @@ curl -X POST "http://localhost:4444/a2a/nonexistent-agent/jsonrpc" \
 
 Common error codes:
 - `-32001`: Agent not found
-- `-32002`: Agent execution error (forwarded from backend agent)
+- `-32603`: Agent execution error (internal error or forwarded from backend agent)
 - `-32600`: Invalid JSON-RPC request format
 - `-32700`: Parse error
 

@@ -5524,16 +5524,31 @@ async def invoke_a2a_agent_jsonrpc(
         # Validate JSON-RPC format
         jsonrpc_version = body.get("jsonrpc")
         if jsonrpc_version != "2.0":
-            raise HTTPException(status_code=400, detail=f"Invalid or missing jsonrpc field. Expected '2.0', got '{jsonrpc_version}'")
+            error_response = {
+                "jsonrpc": "2.0",
+                "error": {"code": -32600, "message": f"Invalid or missing jsonrpc field. Expected '2.0', got '{jsonrpc_version}'"},
+                "id": request_id,
+            }
+            return ORJSONResponse(status_code=400, content=error_response)
 
         method = body.get("method")
         if not method or not isinstance(method, str):
-            raise HTTPException(status_code=400, detail="Missing or invalid 'method' field in JSON-RPC request")
+            error_response = {
+                "jsonrpc": "2.0",
+                "error": {"code": -32600, "message": "Missing or invalid 'method' field in JSON-RPC request"},
+                "id": request_id,
+            }
+            return ORJSONResponse(status_code=400, content=error_response)
 
         # Extract params (can be null/missing for methods that don't require parameters)
         params = body.get("params", {})
         if params is not None and not isinstance(params, dict):
-            raise HTTPException(status_code=400, detail="JSON-RPC 'params' field must be an object or null")
+            error_response = {
+                "jsonrpc": "2.0",
+                "error": {"code": -32600, "message": "JSON-RPC 'params' field must be an object or null"},
+                "id": request_id,
+            }
+            return ORJSONResponse(status_code=400, content=error_response)
 
         logger.debug(f"User {safe_log_user(user)} invoking A2A agent '{agent_name}' via JSON-RPC passthrough with method '{method}'")
 
