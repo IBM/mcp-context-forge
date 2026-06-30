@@ -77,7 +77,16 @@ from mcpgateway.observability import create_span
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.mcp_apps import apply_resource_meta, apply_tool_meta, filter_model_visible_tools, serialize_resource_content_for_mcp
+from mcpgateway.services.mcp_apps import (
+    apply_resource_meta,
+    apply_tool_meta,
+    build_mcp_apps_capabilities,
+    client_supports_mcp_apps,
+    filter_model_visible_tools,
+    is_app_visible_tool,
+    is_model_visible_tool,
+    serialize_resource_content_for_mcp,
+)
 from mcpgateway.services.metrics import (
     mcp_auth_cache_events_counter,
     oauth_verify_events_counter,
@@ -191,10 +200,10 @@ def _safe_str_attr(obj: Any, attr: str) -> Optional[str]:
     return value if isinstance(value, str) else None
 
 
-def _to_mcp_tool(tool: Any) -> types.Tool:
+def _to_mcp_tool(tool: Any, *, name: Optional[str] = None) -> types.Tool:
     """Convert an internal tool record to the MCP transport model."""
     payload: Dict[str, Any] = {
-        "name": tool.name,
+        "name": name or tool.name,
         "title": _safe_str_attr(tool, "title"),
         "description": tool.description or "",
         "inputSchema": tool.input_schema,
@@ -203,6 +212,33 @@ def _to_mcp_tool(tool: Any) -> types.Tool:
     }
     apply_tool_meta(payload, getattr(tool, "extension_metadata", None))
     return types.Tool.model_validate({key: value for key, value in payload.items() if value is not None})
+
+
+def _tool_name_for_apps_client(tool: Any) -> str:
+    """Return the MCP tool name to expose when the client supports MCP Apps."""
+    if is_app_visible_tool(tool) and not is_model_visible_tool(tool):
+        original_name = getattr(tool, "original_name", None)
+        if isinstance(original_name, str) and original_name:
+            return original_name
+    return tool.name
+
+
+def _tools_for_client(tools: Iterable[Any], *, apps_client: bool) -> List[types.Tool]:
+    """Serialize tools for the current client capability profile."""
+    if apps_client:
+        return [_to_mcp_tool(tool, name=_tool_name_for_apps_client(tool)) for tool in tools]
+    return [_to_mcp_tool(tool) for tool in filter_model_visible_tools(tools)]
+
+
+def _request_context_client_supports_mcp_apps() -> bool:
+    """Return whether the current MCP request context came from an Apps-capable client."""
+    try:
+        return client_supports_mcp_apps(mcp_app.request_context)
+    except LookupError:
+        return False
+    except Exception as exc:
+        logger.debug("Unable to inspect MCP Apps client capabilities: %s", exc)
+        return False
 
 
 def _to_mcp_resource(resource: Any) -> types.Resource:
@@ -296,7 +332,23 @@ prompt_service: PromptService = PromptService()
 resource_service: ResourceService = ResourceService()
 completion_service: CompletionService = CompletionService()
 
-mcp_app: Server[Any] = Server("mcp-streamable-http")
+class ContextForgeMCPServer(Server[Any]):
+    """MCP server with ContextForge extension capability advertising."""
+
+    def get_capabilities(self, notification_options: Any, experimental_capabilities: dict[str, dict[str, Any]]) -> types.ServerCapabilities:
+        """Return SDK capabilities plus enabled ContextForge MCP extensions."""
+        capabilities = super().get_capabilities(notification_options, experimental_capabilities)
+        user_context = user_context_var.get()
+        extensions = build_mcp_apps_capabilities(authorized=bool(user_context))
+        if extensions:
+            current_extensions = getattr(capabilities, "extensions", None)
+            merged_extensions = dict(current_extensions) if isinstance(current_extensions, dict) else {}
+            merged_extensions.update(extensions)
+            capabilities.extensions = merged_extensions
+        return capabilities
+
+
+mcp_app: Server[Any] = ContextForgeMCPServer("mcp-streamable-http")
 
 server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id", default="default_server_id")
 # First-Party
@@ -1415,7 +1467,14 @@ async def _close_streamable_http_session(
     return HTTP_200_OK, {"jsonrpc": "2.0", "result": {}}
 
 
-async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Tool]:  # pylint: disable=unused-argument
+async def _proxy_list_tools_to_gateway(
+    gateway: Any,
+    request_headers: dict,
+    user_context: dict,
+    meta: Optional[Any] = None,
+    *,
+    apps_client: bool = False,
+) -> List[types.Tool]:  # pylint: disable=unused-argument
     """Proxy tools/list request directly to remote MCP gateway using MCP SDK.
 
     Args:
@@ -1423,6 +1482,7 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
         request_headers: Request headers from client
         user_context: User context (not used - _meta comes from MCP SDK)
         meta: Request metadata (_meta) from the original request
+        apps_client: Whether the caller advertised MCP Apps support.
 
     Returns:
         List of Tool objects from remote server
@@ -1459,6 +1519,8 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
 
                 # List tools with _meta forwarded
                 result = await session.list_tools(params=_build_paginated_params(meta))
+                if apps_client:
+                    return result.tools
                 return filter_model_visible_tools(result.tools)
 
     except Exception as e:
@@ -1870,6 +1932,7 @@ async def call_tool(
     try:
         async with get_db() as db:
             # Use tool service for all tool invocations (handles direct_proxy internally)
+            apps_client = _request_context_client_supports_mcp_apps()
             result = await tool_service.invoke_tool(
                 db=db,
                 name=name,
@@ -1880,7 +1943,7 @@ async def call_tool(
                 token_teams=token_teams,
                 server_id=server_id,
                 meta_data=meta_data,
-                require_model_visible=True,
+                require_model_visible=not apps_client,
             )
             if not result or not result.content:
                 logger.warning("No content returned by tool: %s", name)
@@ -2247,6 +2310,7 @@ async def list_tools() -> List[types.Tool]:
         typing.List[mcp.types.Tool]
     """
     server_id, request_headers, user_context = await _get_request_context_or_default()
+    apps_client = _request_context_client_supports_mcp_apps()
 
     # Token scope cap: deny early if scoped permissions exclude tools.read
     if _should_enforce_streamable_rbac(user_context):
@@ -2299,7 +2363,7 @@ async def list_tools() -> List[types.Tool]:
                         except (LookupError, AttributeError) as e:
                             logger.debug("No request context available for _meta extraction: %s", e)
 
-                        return await _proxy_list_tools_to_gateway(gateway, request_headers, user_context, meta)
+                        return await _proxy_list_tools_to_gateway(gateway, request_headers, user_context, meta, apps_client=apps_client)
                     if gateway:
                         logger.debug("Gateway %s found but not in direct_proxy mode (mode: %s), using cache mode", gateway_id, getattr(gateway, "gateway_mode", "cache"))
                     else:
@@ -2313,7 +2377,7 @@ async def list_tools() -> List[types.Tool]:
 
                 # Default cache mode: use database
                 tools = await tool_service.list_server_tools(db, server_id, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
-                return [_to_mcp_tool(tool) for tool in filter_model_visible_tools(tools)]
+                return _tools_for_client(tools, apps_client=apps_client)
         except Exception as e:
             logger.error("Error listing tools:%s", e)
             return []
@@ -2321,7 +2385,7 @@ async def list_tools() -> List[types.Tool]:
         try:
             async with get_db() as db:
                 tools, _ = await tool_service.list_tools(db, include_inactive=False, limit=0, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
-                return [_to_mcp_tool(tool) for tool in filter_model_visible_tools(tools)]
+                return _tools_for_client(tools, apps_client=apps_client)
         except Exception as e:
             logger.exception("Error listing tools:%s", e)
             return []
@@ -4418,7 +4482,7 @@ class SessionManagerWrapper:
                 message: ASGI message dict.
             """
             nonlocal captured_session_id
-            if message["type"] == "http.response.start" and settings.mcpgateway_session_affinity_enabled:
+            if message["type"] == "http.response.start" and settings.use_stateful_sessions:
                 # Look for mcp-session-id in response headers
                 response_headers = message.get("headers", [])
                 for header_name, header_value in response_headers:

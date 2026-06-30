@@ -4285,7 +4285,10 @@ class ToolService(BaseService):
         Returns:
             A list of candidate tool ORM rows matching the request.
         """
-        query = select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.name == name)  # pylint: disable=comparison-with-callable
+        name_filter = DbTool.name == name  # pylint: disable=comparison-with-callable
+        if server_id:
+            name_filter = or_(name_filter, DbTool.original_name == name)
+        query = select(DbTool).options(joinedload(DbTool.gateway)).where(name_filter)
         if server_id:
             query = query.join(server_tool_association, DbTool.id == server_tool_association.c.tool_id).where(server_tool_association.c.server_id == server_id)
         return db.execute(query).scalars().all()

@@ -562,6 +562,63 @@ class TestGatewayService:
         assert db_gateway_call.tools[0].original_name == "test_tool"
 
     @pytest.mark.asyncio
+    async def test_register_gateway_preserves_mcp_apps_metadata(self, gateway_service, monkeypatch):
+        """Initial gateway registration preserves MCP Apps tool/resource metadata."""
+        # First-Party
+        from mcpgateway.schemas import ResourceCreate, ToolCreate
+
+        ui_tool_metadata = {MCP_UI_EXTENSION: {"resourceUri": "ui://apps/contact-form", "visibility": ["model"]}}
+        ui_resource_metadata = {
+            MCP_UI_EXTENSION: {
+                "csp": {"connectDomains": [], "resourceDomains": []},
+                "sandbox": ["allow-scripts", "allow-forms"],
+                "permissions": {},
+                "prefersBorder": True,
+            }
+        }
+        tool = ToolCreate(
+            name="open_contact_form",
+            description="Open a contact form",
+            input_schema={"type": "object", "properties": {}},
+            extension_metadata=ui_tool_metadata,
+        )
+        resource = ResourceCreate(
+            uri="ui://apps/contact-form",
+            name="Contact Form App UI",
+            description="Interactive contact form",
+            mime_type="text/html;profile=mcp-app",
+            content="",
+            extension_metadata=ui_resource_metadata,
+        )
+
+        result_ids = MagicMock()
+        result_ids.all.return_value = []
+        result_resources = _make_execute_result(scalars_list=[])
+        db = MagicMock()
+        db.execute = Mock(side_effect=[result_ids, result_resources])
+        db.add = Mock()
+        db.flush = Mock()
+        db.refresh = Mock()
+
+        monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.GatewayRead.model_validate",
+            lambda x: MagicMock(masked=lambda: x),
+        )
+
+        gateway_service._check_gateway_uniqueness = MagicMock(return_value=None)
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {}, "resources": {}}, [tool], [resource], [], []))
+        gateway_service._notify_gateway_added = AsyncMock()
+        gateway_service.convert_gateway_to_read = MagicMock(return_value=MagicMock())
+
+        await gateway_service.register_gateway(db, _make_gateway())
+
+        added_gateway = db.add.call_args[0][0]
+        assert added_gateway.tools[0].extension_metadata == ui_tool_metadata
+        assert added_gateway.resources[0].mime_type == "text/html;profile=mcp-app"
+        assert added_gateway.resources[0].extension_metadata == ui_resource_metadata
+
+    @pytest.mark.asyncio
     async def test_register_gateway_inactive_name_conflict(self, gateway_service, test_db):
         """Test name conflict with an inactive gateway."""
         # Mock an inactive gateway with the same name

@@ -32,6 +32,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 # Third-Party
 from fastapi import HTTPException
 import httpx
+from mcp.server.lowlevel import NotificationOptions
 from mcp.types import PromptArgument
 import pytest
 from starlette.types import Scope
@@ -73,6 +74,20 @@ def test_truthy_is_error_recognizes_snake_and_camel_case_flags():
     assert tr._truthy_is_error(SimpleNamespace(isError=True)) is True
     assert tr._truthy_is_error(SimpleNamespace(is_error=False, isError=False)) is False
     assert tr._truthy_is_error(SimpleNamespace(is_error=1, isError="true")) is False
+
+
+def test_streamable_server_capabilities_advertise_mcp_apps(monkeypatch):
+    """Streamable HTTP initialize capabilities include MCP Apps when enabled."""
+    monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+
+    token = user_context_var.set({"email": "admin@example.com", "is_admin": True})
+    try:
+        server = tr.ContextForgeMCPServer("test-server")
+        capabilities = server.get_capabilities(NotificationOptions(), {})
+    finally:
+        user_context_var.reset(token)
+
+    assert MCP_UI_EXTENSION in capabilities.extensions
 
 
 # ---------------------------------------------------------------------------
@@ -1159,6 +1174,65 @@ async def test_list_tools_projects_mcp_apps_meta(monkeypatch):
     payload = result[0].model_dump(by_alias=True, exclude_none=True)
     assert [tool.name for tool in result] == ["open_widget"]
     assert payload["_meta"]["ui"]["resourceUri"] == "ui://widgets/example"
+
+
+@pytest.mark.asyncio
+async def test_list_tools_apps_client_includes_app_helper_by_original_name(monkeypatch):
+    """Apps-capable clients need app-only helper tools under the names the iframe calls."""
+    # Standard
+    from unittest.mock import PropertyMock
+
+    mock_db = MagicMock()
+    model_tool = SimpleNamespace(
+        name="mcp-apps-open-contact-form",
+        original_name="open_contact_form",
+        title="Open Contact Form",
+        description="Open contact form",
+        input_schema={"type": "object"},
+        output_schema=None,
+        annotations={},
+        extension_metadata={MCP_UI_EXTENSION: {"resourceUri": "ui://apps/contact-form", "visibility": ["model"]}},
+    )
+    app_tool = SimpleNamespace(
+        name="mcp-apps-submit-contact-form",
+        original_name="submit_contact_form",
+        title="Submit Contact Form",
+        description="Submit contact form",
+        input_schema={"type": "object"},
+        output_schema=None,
+        annotations={},
+        extension_metadata={MCP_UI_EXTENSION: {"resourceUri": "ui://apps/contact-form", "visibility": ["app"]}},
+    )
+
+    client_params = SimpleNamespace(
+        capabilities=SimpleNamespace(
+            extensions={
+                MCP_UI_EXTENSION: {
+                    "mimeTypes": ["text/html;profile=mcp-app"],
+                }
+            }
+        )
+    )
+    mock_ctx = SimpleNamespace(meta=None, session=SimpleNamespace(client_params=client_params))
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "list_tools", AsyncMock(return_value=([model_tool, app_tool], None)))
+
+    with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
+        token = server_id_var.set(None)
+        try:
+            result = await list_tools()
+        finally:
+            server_id_var.reset(token)
+
+    assert [tool.name for tool in result] == ["mcp-apps-open-contact-form", "submit_contact_form"]
+    payload = result[1].model_dump(by_alias=True, exclude_none=True)
+    assert payload["_meta"]["ui"]["visibility"] == ["app"]
 
 
 @pytest.mark.asyncio
@@ -3863,6 +3937,57 @@ async def test_call_tool_with_request_context_no_meta(monkeypatch):
         assert isinstance(result[0], types.TextContent)
     finally:
         type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+
+@pytest.mark.asyncio
+async def test_call_tool_apps_client_allows_app_visible_helper_gate(monkeypatch):
+    """Apps-capable clients should not force every tools/call through model visibility."""
+    # Standard
+    from unittest.mock import PropertyMock
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, mcp_app, tool_service
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_content = MagicMock()
+    mock_content.type = "text"
+    mock_content.text = "submitted"
+    mock_content.annotations = None
+    mock_content.meta = None
+    mock_result.content = [mock_content]
+    mock_result.structured_content = None
+    mock_result.model_dump = lambda by_alias=True: {}
+    captured_kwargs = {}
+
+    async def mock_invoke(db, name, arguments, **kwargs):
+        captured_kwargs.update(kwargs)
+        return mock_result
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    client_params = SimpleNamespace(
+        capabilities=SimpleNamespace(
+            extensions={
+                MCP_UI_EXTENSION: {
+                    "mimeTypes": ["text/html;profile=mcp-app"],
+                }
+            }
+        )
+    )
+    mock_ctx = SimpleNamespace(meta=None, session=SimpleNamespace(client_params=client_params))
+
+    monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", mock_invoke)
+
+    with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
+        result = await call_tool("submit_contact_form", {"name": "Ada"})
+
+    assert isinstance(result, list)
+    assert captured_kwargs["require_model_visible"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -9824,6 +9949,52 @@ async def test_send_with_capture_claims_owner_for_new_session(monkeypatch):
     await wrapper.shutdown()
     tr._claim_streamable_session_owner.assert_awaited_once_with("new-session-id", "dev@example.com")
     mock_pool.register_session_owner.assert_called_once_with("new-session-id")
+
+
+@pytest.mark.asyncio
+async def test_send_with_capture_claims_owner_when_affinity_disabled(monkeypatch):
+    """Stateful session ownership must be captured even without multi-worker affinity."""
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            await send_func(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [(b"mcp-session-id", b"new-session-id")],
+                }
+            )
+            await send_func({"type": "http.response.body", "body": b"ok"})
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._claim_streamable_session_owner", AsyncMock(return_value="dev@example.com"))
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    send, _messages = _make_send_collector()
+    scope = _make_scope("/mcp", method="POST", headers=[])
+    token = tr.user_context_var.set(
+        {
+            "email": "dev@example.com",
+            "teams": ["team-1"],
+            "is_authenticated": True,
+            "is_admin": False,
+        }
+    )
+    try:
+        await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+    finally:
+        tr.user_context_var.reset(token)
+        await wrapper.shutdown()
+
+    tr._claim_streamable_session_owner.assert_awaited_once_with("new-session-id", "dev@example.com")
 
 
 @pytest.mark.asyncio
