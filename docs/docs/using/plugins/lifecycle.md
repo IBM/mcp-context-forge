@@ -361,3 +361,8 @@ class InventorySync(Plugin):
 One worker is elected via a file lock; the OS frees it on process exit, so a
 follower takes over. Re-check it each cycle for recurring work. The lock is per
 host and its path is overridable with `PRIMARY_WORKER_LOCK_PATH`.
+
+By default election is per host (`PRIMARY_WORKER_ELECTION_BACKEND=filelock`). For
+a single primary across **multiple instances/replicas**, set the backend to
+`redis`, which elects one primary across all instances sharing the same Redis
+(best-effort under network partitions, so keep side effects idempotent).
