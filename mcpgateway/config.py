@@ -1165,10 +1165,17 @@ class Settings(BaseSettings):
     mcpgateway_bootstrap_roles_in_db_enabled: bool = Field(default=False, description="Enable ContextForge add additional roles in db")
     mcpgateway_bootstrap_roles_in_db_file: str = Field(default="additional_roles_in_db.json", description="Path to add additional roles in db")
 
-    # Elicitation support (MCP 2025-06-18)
+    # Elicitation support (form mode: MCP 2025-06-18; URL mode: SEP-1036, MCP 2025-11-25)
     mcpgateway_elicitation_enabled: bool = Field(default=True, description="Enable elicitation passthrough support (MCP 2025-06-18)")
     mcpgateway_elicitation_timeout: int = Field(default=60, description="Default timeout for elicitation requests in seconds")
     mcpgateway_elicitation_max_concurrent: int = Field(default=100, description="Maximum concurrent elicitation requests")
+    # URL-mode elicitation (SEP-1036; out-of-band flows: OAuth, payments, credential collection)
+    mcpgateway_elicitation_url_mode_enabled: bool = Field(
+        default=True, description="Enable URL-mode elicitation passthrough (mode='url', SEP-1036). When false, URL-mode elicitation/create requests are rejected."
+    )
+    mcpgateway_elicitation_url_require_https: bool = Field(
+        default=True, description="Require URL-mode elicitation URLs to use https:// (SEP-1036 security guidance; rejects non-HTTPS URLs to prevent insecure out-of-band flows)."
+    )
 
     # Security
     skip_ssl_verify: bool = Field(

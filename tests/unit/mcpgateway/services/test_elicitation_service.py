@@ -187,3 +187,112 @@ def test_global_singleton(monkeypatch):
     s2 = svc.ElicitationService()
     svc.set_elicitation_service(s2)
     assert svc.get_elicitation_service() is s2
+
+
+# --------------------------------------------------------------------------- #
+# URL MODE ELICITATION (SEP-1036)
+# --------------------------------------------------------------------------- #
+
+
+def test_pending_elicitation_url_mode_fields():
+    """PendingElicitation tracks url-mode metadata with form-mode defaults."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        form = svc.PendingElicitation("r1", "u", "d", time.time(), 1, "m", {"type": "object", "properties": {}}, loop.create_future())
+        assert form.mode == "form"
+        assert form.url is None
+        assert form.elicitation_id is None
+
+        url = svc.PendingElicitation(
+            request_id="r2",
+            upstream_session_id="u",
+            downstream_session_id="d",
+            created_at=time.time(),
+            timeout=1,
+            message="m",
+            schema=None,
+            future=loop.create_future(),
+            mode="url",
+            url="https://auth.example.com/authorize",
+            elicitation_id="elc_1",
+        )
+        assert url.mode == "url"
+        assert url.url == "https://auth.example.com/authorize"
+        assert url.elicitation_id == "elc_1"
+    finally:
+        loop.close()
+
+
+@pytest.mark.asyncio
+async def test_create_url_elicitation_and_complete():
+    service = svc.ElicitationService(default_timeout=0.5)
+
+    async def consent_later(req_id):
+        await asyncio.sleep(0.05)
+        service.complete_elicitation(req_id, DummyElicitResult("accept"))
+
+    task = asyncio.create_task(service.create_url_elicitation("u", "d", "sign in", "https://auth.example.com/authorize", "elc_42", timeout=0.5))
+
+    for _ in range(30):
+        if service._pending:
+            break
+        await asyncio.sleep(0.02)
+    assert service._pending, "Expected a pending url elicitation"
+
+    pending = service.get_pending_by_elicitation_id("elc_42")
+    assert pending is not None
+    assert pending.mode == "url"
+    assert pending.url == "https://auth.example.com/authorize"
+
+    asyncio.create_task(consent_later(pending.request_id))
+    result = await task
+    assert result.action == "accept"
+
+
+@pytest.mark.asyncio
+async def test_create_url_elicitation_limit_and_timeout():
+    service = svc.ElicitationService(max_concurrent=1, default_timeout=0.01)
+    service._pending = {"1": MagicMock()}
+    with pytest.raises(ValueError):
+        await service.create_url_elicitation("u", "d", "m", "https://e.example.com", "elc_lim")
+
+    service._pending.clear()
+    with pytest.raises(asyncio.TimeoutError):
+        await service.create_url_elicitation("u", "d", "m", "https://e.example.com", "elc_to", timeout=0.001)
+
+
+@pytest.mark.asyncio
+async def test_create_url_elicitation_rejects_insecure_url():
+    service = svc.ElicitationService(default_timeout=0.5)
+    with pytest.raises(ValueError, match="https is required"):
+        await service.create_url_elicitation("u", "d", "m", "http://insecure.example.com", "elc_http", require_https=True)
+    # No pending entry should linger after a validation failure.
+    assert service.get_pending_by_elicitation_id("elc_http") is None
+
+
+def test_get_pending_by_elicitation_id_missing():
+    service = svc.ElicitationService()
+    assert service.get_pending_by_elicitation_id("nope") is None
+
+
+def test_validate_url_success():
+    s = svc.ElicitationService()
+    s._validate_url("https://auth.example.com/authorize?state=abc")
+    # Loopback hosts are allowed over http for local development.
+    s._validate_url("http://localhost:8080/callback", require_https=True)
+    s._validate_url("http://127.0.0.1/callback", require_https=True)
+    # http allowed when https not required.
+    s._validate_url("http://example.com/x", require_https=False)
+
+
+def test_validate_url_failures():
+    s = svc.ElicitationService()
+    with pytest.raises(ValueError, match="non-empty"):
+        s._validate_url("")
+    with pytest.raises(ValueError, match="absolute URL"):
+        s._validate_url("not-a-url")
+    with pytest.raises(ValueError, match="only http/https"):
+        s._validate_url("ftp://example.com/file")
+    with pytest.raises(ValueError, match="https is required"):
+        s._validate_url("http://example.com/insecure", require_https=True)

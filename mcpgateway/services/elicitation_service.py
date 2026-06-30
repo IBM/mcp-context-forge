@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 import logging
 import time
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 from uuid import uuid4
 
 # First-Party
@@ -39,8 +40,12 @@ class PendingElicitation:
         created_at: Unix timestamp when request was created
         timeout: Maximum wait time in seconds
         message: User-facing message describing what input is needed
-        schema: JSON Schema defining expected response structure
+        schema: JSON Schema defining expected response structure (form mode only)
         future: AsyncIO future that resolves to ElicitResult when complete
+        mode: Elicitation mode, "form" (default) or "url" (SEP-1036)
+        url: Target URL for URL-mode elicitation (None for form mode)
+        elicitation_id: Server-provided opaque correlation id for URL-mode
+            elicitations; used to route the later completion notification.
     """
 
     request_id: str
@@ -49,8 +54,11 @@ class PendingElicitation:
     created_at: float
     timeout: float
     message: str
-    schema: Dict[str, Any]
+    schema: Optional[Dict[str, Any]] = None
     future: asyncio.Future = field(default_factory=asyncio.Future)
+    mode: str = "form"
+    url: Optional[str] = None
+    elicitation_id: Optional[str] = None
 
 
 class ElicitationService:
@@ -170,6 +178,97 @@ class ElicitationService:
         finally:
             # Cleanup
             self._pending.pop(request_id, None)
+
+    async def create_url_elicitation(
+        self,
+        upstream_session_id: str,
+        downstream_session_id: str,
+        message: str,
+        url: str,
+        elicitation_id: str,
+        timeout: Optional[float] = None,
+        require_https: bool = True,
+    ) -> ElicitResult:
+        """Create and track a URL-mode elicitation request (SEP-1036).
+
+        URL mode directs the user to an external URL for out-of-band interactions
+        (OAuth, credential collection, payments). No schema is validated; instead
+        the URL is validated and the request awaits the client's consent action.
+
+        Args:
+            upstream_session_id: Session that initiated the request (server)
+            downstream_session_id: Session that will handle the request (client)
+            message: Message to present to the user
+            url: URL the user should navigate to
+            elicitation_id: Server-provided opaque correlation id
+            timeout: Optional timeout override (default: self.default_timeout)
+            require_https: Reject non-HTTPS URLs when True
+
+        Returns:
+            ElicitResult from the client containing the consent action
+
+        Raises:
+            ValueError: If max concurrent limit reached or URL is invalid
+            asyncio.TimeoutError: If request times out waiting for response
+        """
+        # Check concurrent limit
+        if len(self._pending) >= self.max_concurrent:
+            logger.warning("Max concurrent elicitations reached: %s", self.max_concurrent)
+            raise ValueError(f"Maximum concurrent elicitations ({self.max_concurrent}) reached")
+
+        # Validate URL (scheme / https requirement) per SEP-1036 security guidance
+        self._validate_url(url, require_https=require_https)
+
+        # Create tracking entry
+        request_id = str(uuid4())
+        timeout_val = timeout if timeout is not None else self.default_timeout
+        future: asyncio.Future = asyncio.Future()
+
+        elicitation = PendingElicitation(
+            request_id=request_id,
+            upstream_session_id=upstream_session_id,
+            downstream_session_id=downstream_session_id,
+            created_at=time.time(),
+            timeout=timeout_val,
+            message=message,
+            schema=None,
+            future=future,
+            mode="url",
+            url=url,
+            elicitation_id=elicitation_id,
+        )
+
+        self._pending[request_id] = elicitation
+        logger.info(
+            "Created URL elicitation request %s (elicitationId=%s): upstream=%s, downstream=%s, timeout=%ss", request_id, elicitation_id, upstream_session_id, downstream_session_id, timeout_val
+        )
+
+        try:
+            result = await asyncio.wait_for(future, timeout=timeout_val)
+            logger.info("URL elicitation %s completed: action=%s", request_id, result.action)
+            return result
+        except asyncio.TimeoutError:
+            logger.warning("URL elicitation %s timed out after %ss", request_id, timeout_val)
+            raise
+        finally:
+            self._pending.pop(request_id, None)
+
+    def get_pending_by_elicitation_id(self, elicitation_id: str) -> Optional[PendingElicitation]:
+        """Look up a pending URL-mode elicitation by its server-provided id.
+
+        Used to route a ``notifications/elicitation/complete`` notification back to
+        the client session that owns the matching elicitation.
+
+        Args:
+            elicitation_id: The server-provided opaque correlation id
+
+        Returns:
+            PendingElicitation if a matching URL-mode request is pending, else None
+        """
+        for elicitation in self._pending.values():
+            if elicitation.elicitation_id == elicitation_id:
+                return elicitation
+        return None
 
     def complete_elicitation(self, request_id: str, result: ElicitResult) -> bool:
         """Complete a pending elicitation with a result from the client.
@@ -309,6 +408,37 @@ class ElicitationService:
                     logger.warning(f"Property '{prop_name}' has non-standard format '{fmt}'. Allowed formats: {allowed_formats}")
 
         logger.debug("Schema validation passed: %s properties", len(properties))
+
+    def _validate_url(self, url: str, require_https: bool = True):
+        """Validate a URL-mode elicitation target URL (SEP-1036).
+
+        SEP-1036 directs URL mode at sensitive out-of-band flows, so the URL must
+        be absolute and (in production) use HTTPS. ``localhost``/loopback hosts are
+        permitted over HTTP to support local development.
+
+        Args:
+            url: The URL to validate
+            require_https: Reject non-HTTPS URLs (except loopback hosts) when True
+
+        Raises:
+            ValueError: If the URL is empty, not absolute, or violates the scheme policy
+        """
+        if not isinstance(url, str) or not url.strip():
+            raise ValueError("URL-mode elicitation requires a non-empty 'url'")
+
+        parsed = urlparse(url)
+        if not parsed.scheme or not parsed.netloc:
+            raise ValueError(f"Invalid elicitation URL '{url}': must be an absolute URL with scheme and host")
+
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError(f"Invalid elicitation URL scheme '{parsed.scheme}': only http/https are allowed")
+
+        if require_https and parsed.scheme != "https":
+            host = (parsed.hostname or "").lower()
+            if host not in ("localhost", "127.0.0.1", "::1"):
+                raise ValueError(f"Insecure elicitation URL '{url}': https is required (set MCPGATEWAY_ELICITATION_URL_REQUIRE_HTTPS=false to allow http)")
+
+        logger.debug("URL validation passed: %s", url)
 
 
 # Global singleton instance

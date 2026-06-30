@@ -785,29 +785,72 @@ class ListResourceTemplatesResult(BaseModel):
     )
 
 
-# Elicitation types (MCP 2025-06-18)
-class ElicitationCapability(BaseModelWithConfigDict):
-    """Client capability for elicitation operations (MCP 2025-06-18).
+# Elicitation types (form mode: MCP 2025-06-18; URL mode: SEP-1036, MCP 2025-11-25)
 
-    Per MCP spec: Clients that support elicitation MUST declare this capability
-    during initialization. Elicitation allows servers to request structured
-    information from users through the client during interactive workflows.
+# JSON-RPC error code returned by a server when a request cannot proceed until one
+# or more URL-mode elicitations are completed (SEP-1036 "URLElicitationRequiredError").
+URL_ELICITATION_REQUIRED = -32042
 
-    Example:
-        {"capabilities": {"elicitation": {}}}
+
+class FormElicitationCapability(BaseModelWithConfigDict):
+    """Client sub-capability indicating support for form-mode elicitation.
+
+    Present (as ``{}``) inside the ``elicitation`` capability when the client can
+    render in-band structured-input forms (SEP-1036).
     """
 
-    # Empty object per MCP spec, follows MCP SDK pattern
+    model_config = ConfigDict(extra="allow")
+
+
+class UrlElicitationCapability(BaseModelWithConfigDict):
+    """Client sub-capability indicating support for URL-mode elicitation.
+
+    Present (as ``{}``) inside the ``elicitation`` capability when the client can
+    direct the user to an external URL for out-of-band interactions such as OAuth,
+    credential collection, or payments (SEP-1036).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+
+class ElicitationCapability(BaseModelWithConfigDict):
+    """Client capability for elicitation operations.
+
+    Per MCP spec, clients that support elicitation MUST declare this capability
+    during initialization. Elicitation allows servers to request information from
+    users through the client during interactive workflows.
+
+    Form mode (MCP 2025-06-18) was the only mode originally; SEP-1036 (MCP
+    2025-11-25) added URL mode and split the capability into ``form`` and ``url``
+    sub-capabilities. A client MUST support at least one mode. For backwards
+    compatibility, a bare ``{}`` (or any value lacking explicit sub-capabilities)
+    is treated as form-mode support.
+
+    Attributes:
+        form (Optional[FormElicitationCapability]): Present when the client supports
+                        form-mode elicitation (MCP 2025-06-18). None if not advertised.
+        url (Optional[UrlElicitationCapability]): Present when the client supports
+                        URL-mode elicitation (SEP-1036). None if not advertised.
+
+    Example:
+        {"capabilities": {"elicitation": {"form": {}, "url": {}}}}
+    """
+
+    form: Optional[FormElicitationCapability] = None
+    url: Optional[UrlElicitationCapability] = None
+
+    # extra="allow" keeps the legacy empty-object ({}) declaration valid.
     model_config = ConfigDict(extra="allow")
 
 
 class ElicitRequestParams(BaseModelWithConfigDict):
-    """Parameters for elicitation/create requests (MCP spec-compliant).
+    """Parameters for form-mode ``elicitation/create`` requests (MCP 2025-06-18).
 
-    Elicitation requests allow servers to ask for user input with a structured
-    schema. The schema is restricted to flat objects with primitive types only.
+    Form-mode elicitation asks for user input with a structured schema. The schema
+    is restricted to flat objects with primitive types only.
 
     Attributes:
+        mode: Always "form" for this type (the default elicitation mode).
         message: Human-readable message to present to user
         requestedSchema: JSON Schema defining expected response structure.
                         Per MCP spec, must be type 'object' with primitive properties only:
@@ -831,8 +874,70 @@ class ElicitRequestParams(BaseModelWithConfigDict):
         }
     """
 
+    mode: Literal["form"] = "form"
     message: str
     requestedSchema: Dict[str, Any]  # JSON Schema (validated by ElicitationService)  # noqa: N815 (MCP spec requires camelCase)
+    model_config = ConfigDict(extra="allow")
+
+
+class ElicitRequestURLParams(BaseModelWithConfigDict):
+    """Parameters for URL-mode ``elicitation/create`` requests (SEP-1036).
+
+    URL mode directs the user to an external URL for sensitive out-of-band
+    interactions (OAuth flows, credential collection, payments). No schema is
+    requested; the client obtains consent to navigate and the server signals
+    completion via a ``notifications/elicitation/complete`` notification.
+
+    Attributes:
+        mode: Always "url" for this type.
+        message: Human-readable message explaining why the interaction is needed.
+        url: The URL the user should navigate to.
+        elicitationId: Server-unique, opaque identifier correlating the request,
+                       the client's consent response, and the later completion
+                       notification.
+
+    Example:
+        {
+            "mode": "url",
+            "message": "Sign in with your provider to continue",
+            "url": "https://auth.example.com/authorize?...",
+            "elicitationId": "elc_01H..."
+        }
+    """
+
+    mode: Literal["url"] = "url"
+    message: str
+    url: str
+    elicitationId: str  # noqa: N815 (MCP spec requires camelCase)
+    model_config = ConfigDict(extra="allow")
+
+
+class ElicitationRequiredErrorData(BaseModelWithConfigDict):
+    """Error ``data`` payload for a URLElicitationRequiredError (code -32042).
+
+    Returned by a server when a request cannot be processed until one or more
+    URL-mode elicitations are completed (SEP-1036). The gateway forwards this
+    payload through to the originating client unchanged.
+
+    Attributes:
+        elicitations: The URL-mode elicitations that must be completed first.
+    """
+
+    elicitations: List[ElicitRequestURLParams]
+    model_config = ConfigDict(extra="allow")
+
+
+class ElicitCompleteNotificationParams(BaseModelWithConfigDict):
+    """Params for a ``notifications/elicitation/complete`` notification (SEP-1036).
+
+    Sent server→client to inform it that a URL-mode elicitation has completed, so
+    the client may retry a request that previously received a -32042 error.
+
+    Attributes:
+        elicitationId: Identifier of the elicitation that was completed.
+    """
+
+    elicitationId: str  # noqa: N815 (MCP spec requires camelCase)
     model_config = ConfigDict(extra="allow")
 
 
@@ -841,22 +946,28 @@ class ElicitResult(BaseModelWithConfigDict):
 
     The MCP specification defines three distinct user actions to differentiate
     between explicit approval, explicit rejection, and dismissal without choice.
+    The same three-action model applies to both form and URL modes; in URL mode
+    "accept" means the user consented to navigate and ``content`` is omitted.
 
     Attributes:
         action: User's response action:
                 - "accept": User explicitly approved and submitted data
-                             (content field MUST be populated)
+                             (form mode: content populated; URL mode: consent given)
                 - "decline": User explicitly declined the request
                              (content typically None/omitted)
                 - "cancel": User dismissed without making an explicit choice
                             (content typically None/omitted)
         content: Submitted form data matching requestedSchema.
-                Only present when action is "accept".
-                Contains primitive values: str, int, float, bool, or None.
+                Only present when action is "accept" in form mode. Contains
+                primitive values: str, int, float, bool, list[str], or None.
+                Omitted for URL mode.
 
     Examples:
-        Accept response:
+        Accept response (form):
             {"action": "accept", "content": {"name": "John", "email": "john@example.com"}}
+
+        Accept response (url consent):
+            {"action": "accept"}
 
         Decline response:
             {"action": "decline"}
@@ -866,7 +977,7 @@ class ElicitResult(BaseModelWithConfigDict):
     """
 
     action: Literal["accept", "decline", "cancel"]
-    content: Optional[Dict[str, Union[str, int, float, bool, None]]] = None
+    content: Optional[Dict[str, Union[str, int, float, bool, List[str], None]]] = None
     model_config = ConfigDict(extra="allow")
 
 
