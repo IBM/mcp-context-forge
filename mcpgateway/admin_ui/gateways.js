@@ -576,6 +576,26 @@ export const editGateway = async function (gatewayId) {
       }
     }
 
+    // Handle tools_include
+    const toolsIncludeField = safeGetElement("edit-gateway-tools-include");
+    if (toolsIncludeField) {
+      if (gateway.toolsInclude && Array.isArray(gateway.toolsInclude)) {
+        toolsIncludeField.value = gateway.toolsInclude.join(", ");
+      } else {
+        toolsIncludeField.value = "";
+      }
+    }
+
+    // Handle tools_exclude
+    const toolsExcludeField = safeGetElement("edit-gateway-tools-exclude");
+    if (toolsExcludeField) {
+      if (gateway.toolsExclude && Array.isArray(gateway.toolsExclude)) {
+        toolsExcludeField.value = gateway.toolsExclude.join(", ");
+      } else {
+        toolsExcludeField.value = "";
+      }
+    }
+
     openModal("gateway-edit-modal");
     applyVisibilityRestrictions(["edit-gateway-visibility"]); // Disable public radio if restricted, preserve checked state
     console.log("✓ Gateway edit modal loaded successfully");

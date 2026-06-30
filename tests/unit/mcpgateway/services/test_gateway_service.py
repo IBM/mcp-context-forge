@@ -214,6 +214,12 @@ def mock_gateway():
     gw.auth_value = {}
     gw.team_id = 1  # Ensure team_id is a real value, not a MagicMock
 
+    # Tool filter columns default to None on real DbGateway; without explicit
+    # assignment, MagicMock(spec=DbGateway) returns truthy Mocks that would
+    # trigger _apply_tool_filters and wipe the discovered tool list.
+    gw.tools_include = None
+    gw.tools_exclude = None
+
     # Mock email_team relationship and team property
     # Use instance-level assignment (MagicMock allows this)
     mock_email_team = MagicMock()

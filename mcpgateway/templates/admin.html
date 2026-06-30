@@ -5930,6 +5930,40 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
+              <div>
+                <label
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Tools Include Filter</label
+                >
+                <small class="text-gray-500 dark:text-gray-400 block mb-2">
+                  Glob patterns for tools to include (comma-separated, e.g.,
+                  "manage-ticket*, manage-task*"). Only matching tools will be
+                  imported. Leave empty to include all.
+                </small>
+                <input
+                  type="text"
+                  name="tools_include"
+                  placeholder="manage-ticket*, manage-task*"
+                  class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                />
+              </div>
+              <div>
+                <label
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Tools Exclude Filter</label
+                >
+                <small class="text-gray-500 dark:text-gray-400 block mb-2">
+                  Glob patterns for tools to exclude (comma-separated, e.g.,
+                  "manage-project*"). Matching tools will be skipped. Leave
+                  empty to exclude none.
+                </small>
+                <input
+                  type="text"
+                  name="tools_exclude"
+                  placeholder="manage-project*"
+                  class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                />
+              </div>
               <div id="add-gateway-loading" style="display: none">
                 <div class="spinner"></div>
               </div>
@@ -10371,6 +10405,46 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         name="passthrough_headers"
                         id="edit-gateway-passthrough-headers"
                         placeholder="Authorization, X-Tenant-Id, X-Trace-Id"
+                        class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      />
+                    </div>
+                    <div>
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                        >Tools Include Filter</label
+                      >
+                      <small
+                        class="text-gray-500 dark:text-gray-400 block mb-2"
+                      >
+                        Glob patterns for tools to include (comma-separated,
+                        e.g., "manage-ticket*, manage-task*"). Only matching
+                        tools will be imported. Leave empty to include all.
+                      </small>
+                      <input
+                        type="text"
+                        name="tools_include"
+                        id="edit-gateway-tools-include"
+                        placeholder="manage-ticket*, manage-task*"
+                        class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      />
+                    </div>
+                    <div>
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                        >Tools Exclude Filter</label
+                      >
+                      <small
+                        class="text-gray-500 dark:text-gray-400 block mb-2"
+                      >
+                        Glob patterns for tools to exclude (comma-separated,
+                        e.g., "manage-project*"). Matching tools will be
+                        skipped. Leave empty to exclude none.
+                      </small>
+                      <input
+                        type="text"
+                        name="tools_exclude"
+                        id="edit-gateway-tools-exclude"
+                        placeholder="manage-project*"
                         class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       />
                     </div>

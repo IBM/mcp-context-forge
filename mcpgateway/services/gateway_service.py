@@ -46,6 +46,7 @@ import asyncio
 import binascii
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import fnmatch
 import logging
 import mimetypes
 import os
@@ -181,6 +182,40 @@ def _resolve_tool_title(tool) -> Optional[str]:
         if isinstance(ann_title, str):
             return ann_title
     return None
+
+
+def _apply_tool_filters(
+    tools: List,
+    tools_include: Optional[List[str]],
+    tools_exclude: Optional[List[str]],
+) -> List:
+    """Filter a list of tools using fnmatch glob patterns.
+
+    If tools_include is set, only tools whose name matches at least one
+    include pattern are kept.  Then, if tools_exclude is set, tools whose
+    name matches any exclude pattern are removed.
+
+    Args:
+        tools: List of ToolCreate objects (must have a ``name`` attribute).
+        tools_include: Optional whitelist glob patterns.
+        tools_exclude: Optional blacklist glob patterns.
+
+    Returns:
+        Filtered list of tools.
+    """
+    if not tools_include and not tools_exclude:
+        return tools
+
+    filtered = tools
+    if tools_include:
+        filtered = [t for t in filtered if any(fnmatch.fnmatch(t.name, p) for p in tools_include)]
+    if tools_exclude:
+        filtered = [t for t in filtered if not any(fnmatch.fnmatch(t.name, p) for p in tools_exclude)]
+
+    if len(filtered) != len(tools):
+        logger.info(f"Tool filter applied: {len(tools)} discovered -> {len(filtered)} kept (include={tools_include}, exclude={tools_exclude})")
+
+    return filtered
 
 
 # Cache import (lazy to avoid circular dependencies)
@@ -1439,6 +1474,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 auth_value = preparation.auth_value
                 oauth_config = preparation.oauth_config
 
+            # Apply tool include/exclude filters (fnmatch glob patterns)
+            tools = _apply_tool_filters(tools, getattr(gateway, "tools_include", None), getattr(gateway, "tools_exclude", None))
+
             # DbTool.auth_value is Mapped[Optional[str]] (Text), so encode the dict before
             # storing it there. DbGateway.auth_value is Mapped[Optional[Dict]] (JSON) and
             # receives the plain dict directly (see assignment above).
@@ -1687,6 +1725,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 client_key=await self._encrypt_client_key(getattr(gateway, "client_key", None)),
                 # Gateway mode configuration
                 gateway_mode=preparation.gateway_mode,
+                # Tool filtering
+                tools_include=getattr(gateway, "tools_include", None),
+                tools_exclude=getattr(gateway, "tools_exclude", None),
             )
 
             # Add to DB and commit immediately so tools/resources/prompts are visible
@@ -2754,6 +2795,19 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         client_cert=connection_material.client_cert,
                         client_key=connection_material.client_key,
                     )
+
+                    # Apply NEW tool filters so this edit takes effect immediately
+                    # (must read from gateway_update BEFORE persisting to gateway)
+                    _upd_inc = getattr(gateway_update, "tools_include", None)
+                    _upd_exc = getattr(gateway_update, "tools_exclude", None)
+                    effective_include = _upd_inc if _upd_inc is not None else getattr(gateway, "tools_include", None)
+                    effective_exclude = _upd_exc if _upd_exc is not None else getattr(gateway, "tools_exclude", None)
+                    tools = _apply_tool_filters(tools, effective_include, effective_exclude)
+
+                    new_tool_names = [tool.name for tool in tools]
+                    new_resource_uris = [resource.uri for resource in resources]
+                    new_prompt_names = [prompt.name for prompt in prompts]
+
                     if gateway_update.one_time_auth:
                         # For one-time auth, clear auth_type and auth_value after initialization
                         gateway.auth_type = "one_time_auth"
@@ -2801,6 +2855,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     if gateway_update.gateway_mode == "direct_proxy" and not settings.mcpgateway_direct_proxy_enabled:
                         raise GatewayError("direct_proxy gateway mode is disabled. Set MCPGATEWAY_DIRECT_PROXY_ENABLED=true to enable.")
                     gateway.gateway_mode = gateway_update.gateway_mode
+
+                # Update tool filters if provided
+                # An empty list [] means "user cleared the filter" → store None
+                # None means "not provided in this update" → keep existing value
+                if hasattr(gateway_update, "tools_include") and gateway_update.tools_include is not None:
+                    gateway.tools_include = gateway_update.tools_include if gateway_update.tools_include else None
+                if hasattr(gateway_update, "tools_exclude") and gateway_update.tools_exclude is not None:
+                    gateway.tools_exclude = gateway_update.tools_exclude if gateway_update.tools_exclude else None
 
                 # Update metadata fields
                 gateway.updated_at = datetime.now(timezone.utc)
@@ -3252,6 +3314,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             client_cert=act_client_cert,
                             client_key=act_client_key,
                         )
+                        # Apply tool include/exclude filters (fnmatch glob patterns)
+                        tools = _apply_tool_filters(tools, getattr(gateway, "tools_include", None), getattr(gateway, "tools_exclude", None))
+
                         catalog_sync = self._sync_gateway_catalog(
                             db,
                             gateway=gateway,
@@ -5729,6 +5794,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway_auth_query_params = None
         refresh_client_cert = None
         refresh_client_key = None
+        gateway_tools_include = None
+        gateway_tools_exclude = None
 
         if gateway:
             if not gateway.enabled or not gateway.reachable:
@@ -5745,6 +5812,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             gateway_auth_query_params = gateway.auth_query_params
             refresh_client_cert = getattr(gateway, "client_cert", None)
             refresh_client_key = getattr(gateway, "client_key", None)
+            gateway_tools_include = getattr(gateway, "tools_include", None)
+            gateway_tools_exclude = getattr(gateway, "tools_exclude", None)
         else:
             with fresh_db_session() as db:
                 gateway_obj = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
@@ -5768,6 +5837,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 gateway_auth_query_params = gateway_obj.auth_query_params
                 refresh_client_cert = getattr(gateway_obj, "client_cert", None)
                 refresh_client_key = getattr(gateway_obj, "client_key", None)
+                gateway_tools_include = getattr(gateway_obj, "tools_include", None)
+                gateway_tools_exclude = getattr(gateway_obj, "tools_exclude", None)
 
         # Preserve base URL before auth mutation for classification poll-state keys
         gateway_base_url = gateway_url
@@ -5815,6 +5886,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             result["success"] = False
             result["error"] = str(e)
             return result
+
+        # Apply tool include/exclude filters (fnmatch glob patterns)
+        tools = _apply_tool_filters(tools, gateway_tools_include, gateway_tools_exclude)
 
         # For authorization_code OAuth gateways, empty responses may indicate incomplete auth flow
         # Skip only if it's an auth_code gateway with no data (user may not have completed authorization)
