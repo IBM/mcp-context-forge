@@ -1,5 +1,10 @@
 name: Fast Time Server Image
 
+# Build-only CI for the fast-time-server image. This workflow validates that the
+# image builds on PRs/main and primes the buildx GHA cache (scope
+# `fast-time-server-image`). It never publishes — the release image is pushed by
+# docker-release.yml on a published GitHub Release.
+
 on:
   push:
     branches: ["main"]
@@ -41,7 +46,6 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
-      packages: write
 
     steps:
       - name: Checkout
@@ -59,14 +63,6 @@ jobs:
         with:
           version: latest
 
-      - name: Log in to GHCR
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
@@ -74,16 +70,14 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=sha,format=long
-            type=ref,event=tag
-            type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build and push
+      - name: Build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: mcp-servers/rust/fast-time-server/Containerfile
           platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+          push: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=fast-time-server-image
