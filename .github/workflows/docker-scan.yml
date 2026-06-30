@@ -203,11 +203,14 @@ jobs:
             anchore/syft:v1.42.3 \
             "docker:${IMAGE_NAME}:scan" -o spdx-json=/work/sbom.spdx.json
 
-      - name: Install Grype
-        run: curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin v0.91.1
-
-      - name: Scan SBOM for vulnerabilities (Grype)
-        run: grype sbom:sbom.spdx.json --fail-on high --only-fixed
+      - name: Scan for vulnerabilities (Grype)
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        with:
+          image: ${{ env.IMAGE_NAME }}:scan
+          only-fixed: true
+          fail-build: true
+          severity-cutoff: high
+          cache-db: true
 
       - name: Upload SBOM
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
