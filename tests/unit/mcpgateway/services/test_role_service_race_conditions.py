@@ -346,3 +346,284 @@ async def test_assign_role_raises_error_when_refetch_fails():
 
     # Verify rollback was called
     mock_db.rollback.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_assign_role_handles_expired_assignment_soft_delete():
+    """Test that assign_role_to_user soft-deletes expired assignments during IntegrityError handling.
+
+    Covers role_service.py lines 659, 661-662:
+    - Catch IntegrityError during expired assignment soft-delete
+    - Rollback and log concurrent modification
+    - Refetch to see current state
+    """
+    from datetime import datetime, timedelta, timezone
+
+    mock_db = MagicMock()
+    mock_db.begin_nested.side_effect = AttributeError
+
+    # Create mock role
+    mock_role = Role(
+        id=str(uuid.uuid4()),
+        name="test-role",
+        description="Test role",
+        scope="team",
+        permissions=["tools.read"],
+        created_by="admin@example.com",
+        is_system_role=False,
+        is_active=True
+    )
+
+    # Create expired assignment that will trigger soft-delete path
+    expired_assignment = UserRole(
+        id=str(uuid.uuid4()),
+        user_email="user@example.com",
+        role_id=mock_role.id,
+        scope="team",
+        scope_id="team-123",
+        granted_by="admin@example.com",
+        is_active=True,
+        expires_at=datetime.now(timezone.utc) - timedelta(days=1)  # Expired
+    )
+
+    # Create a fresh assignment that will be returned after race condition
+    fresh_assignment = UserRole(
+        id=str(uuid.uuid4()),
+        user_email="user@example.com",
+        role_id=mock_role.id,
+        scope="team",
+        scope_id="team-123",
+        granted_by="other@example.com",
+        is_active=True,
+        expires_at=None
+    )
+
+    role_service = RoleService(mock_db)
+
+    # Mock get_role_by_id
+    async def mock_get_role_by_id(role_id: str):
+        return mock_role
+    role_service.get_role_by_id = mock_get_role_by_id
+
+    # Mock get_user_role_assignment to return expired assignment first, then fresh
+    call_count = [0]
+    async def mock_get_assignment(user_email: str, role_id: str, scope: str, scope_id: str):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            # First call: return expired assignment
+            return expired_assignment
+        elif call_count[0] == 2:
+            # Second call after soft-delete race: return fresh assignment
+            return fresh_assignment
+        return None
+
+    role_service.get_user_role_assignment = mock_get_assignment
+
+    # Mock commit to raise IntegrityError on first commit (during soft-delete)
+    commit_count = [0]
+    def mock_commit():
+        commit_count[0] += 1
+        if commit_count[0] == 1:
+            # First commit (soft-delete) raises IntegrityError
+            raise IntegrityError("UNIQUE constraint failed", {}, None)
+        # Second commit succeeds (no-op for testing)
+        pass
+
+    mock_db.commit = mock_commit
+
+    # Call assign_role_to_user - should handle expired assignment soft-delete race
+    result = await role_service.assign_role_to_user(
+        user_email="user@example.com",
+        role_id=mock_role.id,
+        scope="team",
+        scope_id="team-123",
+        granted_by="admin@example.com"
+    )
+
+    # Verify that the fresh assignment was returned
+    assert result is not None
+    assert result.id == fresh_assignment.id
+    assert result.granted_by == "other@example.com"
+
+    # Verify rollback was called after IntegrityError (line 661)
+    mock_db.rollback.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_assign_role_handles_expired_assignment_no_active_after_race():
+    """Test that assign_role_to_user continues with creation when no active assignment exists after race.
+
+    Covers role_service.py lines 665-666, 668, 670:
+    - Refetch after concurrent modification during expired soft-delete
+    - Check if fresh assignment exists
+    - Continue to creation if no active assignment
+    """
+    from datetime import datetime, timedelta, timezone
+
+    mock_db = MagicMock()
+
+    # Mock begin_nested to work for final creation
+    mock_savepoint = MagicMock()
+    mock_savepoint.__enter__ = MagicMock(return_value=mock_savepoint)
+    mock_savepoint.__exit__ = MagicMock(return_value=None)
+    mock_db.begin_nested.return_value = mock_savepoint
+
+    # Create mock role
+    mock_role = Role(
+        id=str(uuid.uuid4()),
+        name="test-role",
+        description="Test role",
+        scope="team",
+        permissions=["tools.read"],
+        created_by="admin@example.com",
+        is_system_role=False,
+        is_active=True
+    )
+
+    # Create expired assignment
+    expired_assignment = UserRole(
+        id=str(uuid.uuid4()),
+        user_email="user@example.com",
+        role_id=mock_role.id,
+        scope="team",
+        scope_id="team-123",
+        granted_by="admin@example.com",
+        is_active=True,
+        expires_at=datetime.now(timezone.utc) - timedelta(days=1)
+    )
+
+    role_service = RoleService(mock_db)
+
+    # Mock get_role_by_id
+    async def mock_get_role_by_id(role_id: str):
+        return mock_role
+    role_service.get_role_by_id = mock_get_role_by_id
+
+    # Mock get_user_role_assignment to return expired, then None after race
+    call_count = [0]
+    async def mock_get_assignment(user_email: str, role_id: str, scope: str, scope_id: str):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            # First call: return expired assignment
+            return expired_assignment
+        # Second call after soft-delete race: return None (no active assignment)
+        return None
+
+    role_service.get_user_role_assignment = mock_get_assignment
+
+    # Mock commit to raise IntegrityError on first commit, succeed on second
+    commit_count = [0]
+    def mock_commit():
+        commit_count[0] += 1
+        if commit_count[0] == 1:
+            # First commit (soft-delete) raises IntegrityError
+            raise IntegrityError("UNIQUE constraint failed", {}, None)
+        # Second commit succeeds
+        pass
+
+    mock_db.commit = mock_commit
+
+    # Call assign_role_to_user - should proceed with creation after race
+    result = await role_service.assign_role_to_user(
+        user_email="user@example.com",
+        role_id=mock_role.id,
+        scope="team",
+        scope_id="team-123",
+        granted_by="admin@example.com"
+    )
+
+    # Verify that a new assignment was created
+    assert result is not None
+    assert result.user_email == "user@example.com"
+
+    # Verify rollback was called after first IntegrityError
+    mock_db.rollback.assert_called()
+
+    # Verify add was called (line 682) for the new assignment
+    mock_db.add.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_assign_role_handles_refetched_expired_assignment():
+    """Test that assign_role_to_user soft-deletes refetched expired assignments after IntegrityError.
+
+    Covers role_service.py lines 705-707, 709:
+    - Check if refetched assignment is expired after IntegrityError
+    - Soft-delete expired assignment
+    - Raise ValueError to signal retry needed
+    """
+    from datetime import datetime, timedelta, timezone
+
+    mock_db = MagicMock()
+    mock_db.begin_nested.side_effect = AttributeError
+
+    # Create mock role
+    mock_role = Role(
+        id=str(uuid.uuid4()),
+        name="test-role",
+        description="Test role",
+        scope="team",
+        permissions=["tools.read"],
+        created_by="admin@example.com",
+        is_system_role=False,
+        is_active=True
+    )
+
+    # Create expired assignment that will be refetched after IntegrityError
+    expired_assignment = UserRole(
+        id=str(uuid.uuid4()),
+        user_email="user@example.com",
+        role_id=mock_role.id,
+        scope="team",
+        scope_id="team-123",
+        granted_by="admin@example.com",
+        is_active=True,
+        expires_at=datetime.now(timezone.utc) - timedelta(days=1)
+    )
+
+    role_service = RoleService(mock_db)
+
+    # Mock get_role_by_id
+    async def mock_get_role_by_id(role_id: str):
+        return mock_role
+    role_service.get_role_by_id = mock_get_role_by_id
+
+    # Mock get_user_role_assignment
+    call_count = [0]
+    async def mock_get_assignment(user_email: str, role_id: str, scope: str, scope_id: str):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            # First call: return None (no existing assignment)
+            return None
+        # Second call after IntegrityError: return expired assignment
+        return expired_assignment
+
+    role_service.get_user_role_assignment = mock_get_assignment
+
+    # Mock commit to raise IntegrityError on first attempt
+    commit_count = [0]
+    def mock_commit():
+        commit_count[0] += 1
+        if commit_count[0] == 1:
+            # First commit raises IntegrityError
+            raise IntegrityError("UNIQUE constraint failed", {}, None)
+        # Second commit (soft-delete) succeeds
+        pass
+
+    mock_db.commit = mock_commit
+
+    # Call assign_role_to_user - should raise ValueError for expired refetched assignment
+    with pytest.raises(ValueError, match="Refetched assignment.*was expired"):
+        await role_service.assign_role_to_user(
+            user_email="user@example.com",
+            role_id=mock_role.id,
+            scope="team",
+            scope_id="team-123",
+            granted_by="admin@example.com"
+        )
+
+    # Verify that expired assignment was soft-deleted
+    assert expired_assignment.is_active is False
+
+    # Verify commits happened (first attempt + soft-delete)
+    assert commit_count[0] == 2

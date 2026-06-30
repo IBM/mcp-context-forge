@@ -534,3 +534,245 @@ async def test_concurrent_expired_assignment_handling(test_db: Session, test_rol
     # Verify the old assignment was soft-deleted
     test_db.refresh(expired_assignment)
     assert expired_assignment.is_active is False
+
+
+@pytest.mark.asyncio
+async def test_expired_assignment_soft_delete_concurrent_modification(test_db: Session, test_role: Role, test_user: EmailUser):
+    """Test IntegrityError during expired assignment soft-delete is handled.
+
+    Covers role_service.py lines 659, 661-662:
+    - IntegrityError during soft-delete commit
+    - Rollback and refetch
+    - Return fresh assignment if exists
+    """
+    from datetime import datetime, timezone, timedelta
+    from unittest.mock import patch
+    from sqlalchemy.exc import IntegrityError
+
+    role_service = RoleService(test_db)
+
+    # Create an expired active assignment
+    expired_date = datetime.now(timezone.utc) - timedelta(days=1)
+    expired_assignment = UserRole(
+        id=str(uuid.uuid4()),
+        user_email=test_user.email,
+        role_id=test_role.id,
+        scope="team",
+        scope_id="team-soft-delete-race",
+        granted_by="admin@example.com",
+        is_active=True,
+        granted_at=datetime.now(timezone.utc) - timedelta(days=2),
+        expires_at=expired_date
+    )
+    test_db.add(expired_assignment)
+    test_db.commit()
+    test_db.refresh(expired_assignment)
+
+    # Verify it's expired but active
+    assert expired_assignment.is_active is True
+    assert expired_assignment.is_expired() is True
+
+    # Mock commit to raise IntegrityError on first call (soft-delete), then succeed
+    commit_count = [0]
+    original_commit = test_db.commit
+
+    def mock_commit():
+        commit_count[0] += 1
+        if commit_count[0] == 1:
+            # First commit (soft-delete) raises IntegrityError - simulating another process
+            # already modified this row
+            raise IntegrityError("UNIQUE constraint failed", {}, None)
+        # Subsequent commits succeed
+        return original_commit()
+
+    # Create a fresh assignment that will be returned after the race
+    fresh_assignment = UserRole(
+        id=str(uuid.uuid4()),
+        user_email=test_user.email,
+        role_id=test_role.id,
+        scope="team",
+        scope_id="team-soft-delete-race",
+        granted_by="winner@example.com",
+        is_active=True,
+        granted_at=datetime.now(timezone.utc),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=30)
+    )
+
+    # Mock the refetch to return the fresh assignment
+    original_get = role_service.get_user_role_assignment
+    get_count = [0]
+
+    async def mock_get_assignment(user_email: str, role_id: str, scope: str, scope_id: str | None):
+        get_count[0] += 1
+        if get_count[0] == 1:
+            # First call: return expired assignment
+            return expired_assignment
+        # Second call after IntegrityError: return fresh assignment (winner's result)
+        return fresh_assignment
+
+    with patch.object(test_db, 'commit', side_effect=mock_commit):
+        with patch.object(role_service, 'get_user_role_assignment', side_effect=mock_get_assignment):
+            # This should trigger the IntegrityError during soft-delete, rollback, and refetch
+            result = await role_service.assign_role_to_user(
+                user_email=test_user.email,
+                role_id=test_role.id,
+                scope="team",
+                scope_id="team-soft-delete-race",
+                granted_by="loser@example.com"
+            )
+
+    # Verify the fresh assignment (winner's) was returned
+    assert result is not None
+    assert result.id == fresh_assignment.id
+    assert result.granted_by == "winner@example.com"
+    assert result.is_expired() is False
+
+
+@pytest.mark.asyncio
+async def test_expired_assignment_soft_delete_no_active_after_race(test_db: Session, test_role: Role, test_user: EmailUser):
+    """Test continuing with creation when no active assignment exists after soft-delete race.
+
+    Covers role_service.py lines 665-666, 668, 670:
+    - Refetch after IntegrityError during soft-delete
+    - Check if fresh assignment exists
+    - Continue to creation if no active assignment found
+    """
+    from datetime import datetime, timezone, timedelta
+    from unittest.mock import patch, MagicMock
+    from sqlalchemy.exc import IntegrityError
+
+    role_service = RoleService(test_db)
+
+    # Create an expired active assignment
+    expired_date = datetime.now(timezone.utc) - timedelta(days=1)
+    expired_assignment = UserRole(
+        id=str(uuid.uuid4()),
+        user_email=test_user.email,
+        role_id=test_role.id,
+        scope="team",
+        scope_id="team-no-active",
+        granted_by="admin@example.com",
+        is_active=True,
+        granted_at=datetime.now(timezone.utc) - timedelta(days=2),
+        expires_at=expired_date
+    )
+    test_db.add(expired_assignment)
+    test_db.commit()
+    test_db.refresh(expired_assignment)
+
+    # Mock the refetch to return expired then None (another process cleaned up)
+    original_get = role_service.get_user_role_assignment
+    get_count = [0]
+
+    async def mock_get_assignment(user_email: str, role_id: str, scope: str, scope_id: str | None):
+        get_count[0] += 1
+        if get_count[0] == 1:
+            # First call: return expired assignment
+            return expired_assignment
+        elif get_count[0] == 2:
+            # Second call after IntegrityError: return None (no active assignment)
+            # But we need to actually soft-delete the expired one now
+            test_db.query(UserRole).filter_by(id=expired_assignment.id).update({"is_active": False})
+            test_db.commit()
+            return None
+        # Any subsequent calls use the original
+        return await original_get(user_email, role_id, scope, scope_id)
+
+    # Mock commit to raise IntegrityError on first call (soft-delete), then succeed
+    commit_count = [0]
+    original_commit = test_db.commit
+
+    def mock_commit():
+        commit_count[0] += 1
+        if commit_count[0] == 1:
+            # First commit (soft-delete) raises IntegrityError
+            raise IntegrityError("UNIQUE constraint failed", {}, None)
+        # Subsequent commits succeed
+        return original_commit()
+
+    with patch.object(test_db, 'commit', side_effect=mock_commit):
+        with patch.object(role_service, 'get_user_role_assignment', side_effect=mock_get_assignment):
+            # This should proceed with creation after finding no active assignment
+            result = await role_service.assign_role_to_user(
+                user_email=test_user.email,
+                role_id=test_role.id,
+                scope="team",
+                scope_id="team-no-active",
+                granted_by="creator@example.com",
+                expires_at=datetime.now(timezone.utc) + timedelta(days=30)
+            )
+
+    # Verify a new assignment was created
+    assert result is not None
+    assert result.is_active is True
+    assert result.is_expired() is False
+    assert result.granted_by == "creator@example.com"
+
+
+@pytest.mark.asyncio
+async def test_refetched_expired_assignment_soft_delete(test_db: Session, test_role: Role, test_user: EmailUser):
+    """Test soft-deleting refetched expired assignments after IntegrityError.
+
+    Covers role_service.py lines 705-707, 709:
+    - Check if refetched assignment is expired after IntegrityError
+    - Soft-delete expired assignment
+    - Raise ValueError to signal retry needed
+    """
+    from datetime import datetime, timezone, timedelta
+    from unittest.mock import patch
+    from sqlalchemy.exc import IntegrityError
+
+    role_service = RoleService(test_db)
+
+    # Create an expired assignment that will be "created" by the winner
+    expired_date = datetime.now(timezone.utc) - timedelta(days=1)
+    expired_assignment = UserRole(
+        id=str(uuid.uuid4()),
+        user_email=test_user.email,
+        role_id=test_role.id,
+        scope="team",
+        scope_id="team-refetch-expired",
+        granted_by="winner@example.com",
+        is_active=True,
+        granted_at=datetime.now(timezone.utc) - timedelta(days=2),
+        expires_at=expired_date
+    )
+
+    # Mock the assignment query
+    original_get = role_service.get_user_role_assignment
+    get_count = [0]
+
+    async def mock_get_assignment(user_email: str, role_id: str, scope: str, scope_id: str | None):
+        get_count[0] += 1
+        if get_count[0] == 1:
+            # First call: no existing assignment
+            return None
+        # Second call after IntegrityError: return expired assignment (winner created it but it's expired)
+        return expired_assignment
+
+    # Mock commit to raise IntegrityError on first attempt
+    commit_count = [0]
+    original_commit = test_db.commit
+
+    def mock_commit():
+        commit_count[0] += 1
+        if commit_count[0] == 1:
+            # First commit raises IntegrityError (another process created assignment)
+            raise IntegrityError("UNIQUE constraint failed", {}, None)
+        # Second commit (soft-delete) succeeds
+        return original_commit()
+
+    with patch.object(role_service, 'get_user_role_assignment', side_effect=mock_get_assignment):
+        with patch.object(test_db, 'commit', side_effect=mock_commit):
+            # This should raise ValueError when refetched assignment is expired
+            with pytest.raises(ValueError, match="Refetched assignment.*was expired"):
+                await role_service.assign_role_to_user(
+                    user_email=test_user.email,
+                    role_id=test_role.id,
+                    scope="team",
+                    scope_id="team-refetch-expired",
+                    granted_by="loser@example.com"
+                )
+
+    # Verify the expired assignment was soft-deleted
+    assert expired_assignment.is_active is False
