@@ -888,6 +888,11 @@ test-primary-worker-e2e: uv  ## Primary-worker election E2E: boots a local 2-wor
 		|| { echo "❌ Primary-worker e2e failed!"; exit 1; }
 	@echo "✅ Primary-worker e2e passed!"
 
+test-primary-worker-multiinstance:  ## Multi-instance primary-worker E2E: scales the compose gateway to 2 replicas (redis backend), asserts one primary across containers
+	@echo "🧪 Running multi-instance primary-worker e2e (2 gateway replicas + redis; needs Docker + 'make docker')..."
+	@bash tests/live_gateway/run_primary_worker_multiinstance.sh \
+		|| { echo "❌ Multi-instance primary-worker e2e failed!"; exit 1; }
+
 test-mcp-session-isolation: uv  ## MCP session/auth isolation tests for the Rust public transport path
 	@echo "🧪 Running MCP session/auth isolation tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: docker-compose stack rebuilt in Rust edge/full mode"
