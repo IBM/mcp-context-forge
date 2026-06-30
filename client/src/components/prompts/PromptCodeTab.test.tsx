@@ -34,6 +34,13 @@ function mockPrompt(overrides?: Partial<NonNullable<PromptRead>>): NonNullable<P
   };
 }
 
+// Tokens render across many spans (prism-react-renderer), so the active
+// snippet's full text is easier to read off the rendered <pre> element.
+function activeCode(): string {
+  const pre = document.querySelector('[data-slot="tabs-content"][data-state="active"] pre');
+  return pre?.textContent ?? "";
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -44,18 +51,17 @@ describe("PromptCodeTab", () => {
     expect(screen.getByLabelText(/user_name/)).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "curl" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "TypeScript" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /preview/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^preview$/i })).toBeInTheDocument();
   });
 
   it("propagates arg changes into the live snippet", async () => {
     const user = userEvent.setup();
     render(<PromptCodeTab prompt={mockPrompt()} />);
 
-    // Seeded snippet contains the arg with an empty value.
-    expect(screen.getByText(/"user_name":""/)).toBeInTheDocument();
+    expect(activeCode()).toContain('"user_name":""');
 
     await user.type(screen.getByLabelText(/user_name/), "Alice");
-    expect(screen.getByText(/"user_name":"Alice"/)).toBeInTheDocument();
+    expect(activeCode()).toContain('"user_name":"Alice"');
   });
 
   it("passes the typed args to the render API on Preview", async () => {
@@ -64,7 +70,7 @@ describe("PromptCodeTab", () => {
     render(<PromptCodeTab prompt={mockPrompt()} />);
 
     await user.type(screen.getByLabelText(/user_name/), "Bob");
-    await user.click(screen.getByRole("button", { name: /preview/i }));
+    await user.click(screen.getByRole("button", { name: /^preview$/i }));
 
     await waitFor(() =>
       expect(promptsApi.render).toHaveBeenCalledWith(
@@ -78,17 +84,13 @@ describe("PromptCodeTab", () => {
     const { rerender } = render(<PromptCodeTab prompt={mockPrompt({ id: "p1" })} />);
     const input = screen.getByLabelText(/user_name/) as HTMLInputElement;
     input.focus();
-    // simulate change without userEvent.type to keep the test fast
     input.value = "Alice";
     input.dispatchEvent(new Event("input", { bubbles: true }));
 
     rerender(
-      <PromptCodeTab
-        prompt={mockPrompt({ id: "p2", name: "different_prompt" })}
-      />,
+      <PromptCodeTab prompt={mockPrompt({ id: "p2", name: "different_prompt" })} />,
     );
-    // The new prompt's seeded snippet shows the empty value again.
-    expect(screen.getByText(/different_prompt/)).toBeInTheDocument();
+    expect(activeCode()).toContain("different_prompt");
     expect((screen.getByLabelText(/user_name/) as HTMLInputElement).value).toBe("");
   });
 

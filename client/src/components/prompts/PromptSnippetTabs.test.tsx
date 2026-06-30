@@ -8,6 +8,15 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
+// prism-react-renderer breaks the snippet across many <span> tokens, so
+// getByText against the rendered string won't match — read the code
+// element's full textContent instead.
+function activeCode(): string {
+  // Each tab renders a single <pre><code> inside the visible TabsContent.
+  const pre = document.querySelector('[data-slot="tabs-content"][data-state="active"] pre');
+  return pre?.textContent ?? "";
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -23,26 +32,20 @@ describe("PromptSnippetTabs", () => {
 
   it("defaults to the curl snippet on first render", () => {
     render(<PromptSnippetTabs promptName="greet" args={{ user: "Alice" }} />);
-    const visible = screen.getByText(/curl -X POST/, { exact: false });
-    expect(visible).toBeInTheDocument();
-    expect(visible.textContent).toContain('"user":"Alice"');
+    expect(activeCode()).toContain("curl -X POST");
+    expect(activeCode()).toContain('"user":"Alice"');
   });
 
   it("switches to the JSON-RPC snippet when its tab is activated", async () => {
     const user = userEvent.setup();
     render(<PromptSnippetTabs promptName="greet" args={{}} />);
     await user.click(screen.getByRole("tab", { name: "JSON-RPC" }));
-    const panel = screen.getByText(/"method": "prompts\/get"/);
-    expect(panel).toBeInTheDocument();
+    expect(activeCode()).toContain('"method": "prompts/get"');
   });
 
   it("copies the active snippet to the clipboard on click", async () => {
-    // jsdom defines navigator.clipboard via a getter (newer userEvent ships
-    // its own shim too), so plain defineProperty(value) is silently ignored —
-    // spy directly on the existing method instead.
-    const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
-
     const user = userEvent.setup();
+    const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
     render(<PromptSnippetTabs promptName="greet" args={{ user: "Alice" }} />);
     await user.click(screen.getByRole("button", { name: /copy curl snippet/i }));
     expect(writeText).toHaveBeenCalledTimes(1);
@@ -54,16 +57,19 @@ describe("PromptSnippetTabs", () => {
     const { rerender } = render(
       <PromptSnippetTabs promptName="greet" args={{ user: "Alice" }} />,
     );
-    expect(screen.getByText(/"user":"Alice"/)).toBeInTheDocument();
+    expect(activeCode()).toContain('"user":"Alice"');
     rerender(<PromptSnippetTabs promptName="greet" args={{ user: "Bob" }} />);
-    expect(screen.getByText(/"user":"Bob"/)).toBeInTheDocument();
+    expect(activeCode()).toContain('"user":"Bob"');
   });
 
-  it("renders the endpoint + auth footer with the env-var literals", () => {
-    render(<PromptSnippetTabs promptName="greet" args={{}} />);
-    // Footer is rendered per-tab; expect at least one match.
-    const footers = screen.getAllByText(/\$MCPGATEWAY_URL/);
-    expect(footers.length).toBeGreaterThan(0);
-    expect(screen.getAllByText("$MCPGATEWAY_BEARER_TOKEN").length).toBeGreaterThan(0);
+  it("renders the trailing actions slot beside the tab list", () => {
+    render(
+      <PromptSnippetTabs
+        promptName="greet"
+        args={{}}
+        actions={<button type="button">Preview</button>}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Preview" })).toBeInTheDocument();
   });
 });
