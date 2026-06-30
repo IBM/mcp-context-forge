@@ -15,6 +15,7 @@ import json
 import os
 import time
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 from uuid import UUID, uuid4
 
@@ -22,7 +23,6 @@ from uuid import UUID, uuid4
 from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 # First-Party
 from mcpgateway import admin
@@ -157,7 +157,11 @@ async def test_admin_add_gateway_includes_gateway_payload(monkeypatch):
     result = {"id": "gw-1", "status": "pending", "name": "gw"}
     monkeypatch.setattr(admin, "_parse_gateway_data_from_request", AsyncMock(return_value={"name": "gw", "url": "http://example.com", "transport": "SSE"}))
     monkeypatch.setattr(admin, "TeamManagementService", _GatewayPayloadTeamService)
-    monkeypatch.setattr(admin.MetadataCapture, "extract_creation_metadata", MagicMock(return_value={"created_by": "admin@example.com", "created_from_ip": "127.0.0.1", "created_via": "test", "created_user_agent": "pytest"}))
+    monkeypatch.setattr(
+        admin.MetadataCapture,
+        "extract_creation_metadata",
+        MagicMock(return_value={"created_by": "admin@example.com", "created_from_ip": "127.0.0.1", "created_via": "test", "created_user_agent": "pytest"}),
+    )
     monkeypatch.setattr(admin.gateway_service, "register_gateway", AsyncMock(return_value=result))
 
     response = await _unwrap(admin.admin_add_gateway)(request, db, user)
@@ -176,7 +180,11 @@ async def test_admin_update_gateway_rest_includes_gateway_payload(monkeypatch):
     result = {"id": "gw-1", "status": "pending", "name": "gw"}
     monkeypatch.setattr(admin, "_parse_gateway_data_from_request", AsyncMock(return_value={"name": "gw", "url": "http://example.com", "transport": "SSE"}))
     monkeypatch.setattr(admin, "TeamManagementService", _GatewayPayloadTeamService)
-    monkeypatch.setattr(admin.MetadataCapture, "extract_modification_metadata", MagicMock(return_value={"modified_by": "admin@example.com", "modified_from_ip": "127.0.0.1", "modified_via": "test", "modified_user_agent": "pytest"}))
+    monkeypatch.setattr(
+        admin.MetadataCapture,
+        "extract_modification_metadata",
+        MagicMock(return_value={"modified_by": "admin@example.com", "modified_from_ip": "127.0.0.1", "modified_via": "test", "modified_user_agent": "pytest"}),
+    )
     monkeypatch.setattr(admin.gateway_service, "update_gateway", AsyncMock(return_value=result))
 
     response = await _unwrap(admin.admin_update_gateway_rest)("gw-1", request, db, user)
@@ -195,7 +203,11 @@ async def test_admin_edit_gateway_includes_gateway_payload(monkeypatch):
     user = {"email": "admin@example.com"}
     result = {"id": "gw-1", "status": "pending", "name": "gw"}
     monkeypatch.setattr(admin, "TeamManagementService", _GatewayPayloadTeamService)
-    monkeypatch.setattr(admin.MetadataCapture, "extract_modification_metadata", MagicMock(return_value={"modified_by": "admin@example.com", "modified_from_ip": "127.0.0.1", "modified_via": "test", "modified_user_agent": "pytest"}))
+    monkeypatch.setattr(
+        admin.MetadataCapture,
+        "extract_modification_metadata",
+        MagicMock(return_value={"modified_by": "admin@example.com", "modified_from_ip": "127.0.0.1", "modified_via": "test", "modified_user_agent": "pytest"}),
+    )
     monkeypatch.setattr(admin.gateway_service, "update_gateway", AsyncMock(return_value=result))
 
     response = await _unwrap(admin.admin_edit_gateway)("gw-1", request, db, user)
@@ -371,6 +383,7 @@ def test_validate_password_strength_requirement_failures(monkeypatch, password, 
 
 
 def test_admin_module_grpc_import_error_fallback(monkeypatch):
+    # Standard
     import builtins
     import importlib.util
     from pathlib import Path
@@ -434,6 +447,7 @@ async def test_update_global_passthrough_headers_errors(monkeypatch):
     config_update = admin.GlobalConfigUpdate(passthrough_headers=["X-New"])
     update_func = _unwrap(admin.update_global_passthrough_headers)
 
+    # Third-Party
     from sqlalchemy.exc import IntegrityError
 
     db.commit.side_effect = IntegrityError("stmt", {}, None)
@@ -443,6 +457,7 @@ async def test_update_global_passthrough_headers_errors(monkeypatch):
     db.rollback.assert_called()
 
     # Pydantic ValidationError is a subclass of ValueError; ensure it's handled distinctly (422).
+    # Third-Party
     from pydantic import ValidationError
     from pydantic_core import InitErrorDetails
 
@@ -1865,3 +1880,289 @@ def test_get_bundle_js_filename_no_bundles_returns_empty_string(monkeypatch, tmp
     monkeypatch.setattr(admin, "_bundle_js_cache", {"filename": None})
 
     assert admin.get_bundle_js_filename() == ""
+
+
+# ---------------------------------------------------------------------------
+# _set_admin_csrf_cookie tests
+# ---------------------------------------------------------------------------
+
+
+class TestSetAdminCsrfCookie:
+    """Tests for _set_admin_csrf_cookie()."""
+
+    def test_generates_hmac_token_when_user_and_session_provided(self):
+        """When both user_id and session_id are provided, should generate an
+        HMAC-bound CSRF token via the CSRF service."""
+        request = _make_request(root_path="/admin")
+        response = MagicMock()
+
+        result = admin._set_admin_csrf_cookie(request, response, user_id="user-1", session_id="sess-1")
+
+        assert isinstance(result, str)
+        assert len(result) > 0
+        response.set_cookie.assert_called_once()
+        call_kwargs = response.set_cookie.call_args[1]
+        assert call_kwargs["key"] == admin.ADMIN_CSRF_COOKIE_NAME
+        assert call_kwargs["value"] == result
+
+    def test_generates_hmac_token_is_64_char_hex(self):
+        """HMAC-bound token should be 64-char hex (HMAC-SHA256 output)."""
+        request = _make_request(root_path="/admin")
+        response = MagicMock()
+
+        result = admin._set_admin_csrf_cookie(request, response, user_id="user-1", session_id="sess-1")
+
+        assert len(result) == 64
+        assert all(c in "0123456789abcdef" for c in result)
+
+    def test_different_user_ids_produce_different_tokens(self):
+        """Different user_id values should produce different CSRF tokens."""
+        request = _make_request(root_path="/admin")
+        response1 = MagicMock()
+        response2 = MagicMock()
+
+        token1 = admin._set_admin_csrf_cookie(request, response1, user_id="alice", session_id="sess-1")
+        token2 = admin._set_admin_csrf_cookie(request, response2, user_id="bob", session_id="sess-1")
+
+        assert token1 != token2
+
+    def test_different_session_ids_produce_different_tokens(self):
+        """Different session_id values should produce different CSRF tokens."""
+        request = _make_request(root_path="/admin")
+        response1 = MagicMock()
+        response2 = MagicMock()
+
+        token1 = admin._set_admin_csrf_cookie(request, response1, user_id="user-1", session_id="sess-a")
+        token2 = admin._set_admin_csrf_cookie(request, response2, user_id="user-1", session_id="sess-b")
+
+        assert token1 != token2
+
+    def test_falls_back_to_random_token_when_no_ids(self):
+        """When neither user_id nor session_id provided, should use random token."""
+        request = _make_request(root_path="/admin")
+        response = MagicMock()
+
+        result = admin._set_admin_csrf_cookie(request, response)
+
+        assert isinstance(result, str)
+        assert len(result) >= 32
+        response.set_cookie.assert_called_once()
+        call_kwargs = response.set_cookie.call_args[1]
+        assert call_kwargs["key"] == admin.ADMIN_CSRF_COOKIE_NAME
+        assert call_kwargs["value"] == result
+
+    def test_falls_back_to_random_token_when_only_user_id(self):
+        """When only user_id provided without session_id, should fall back to random token."""
+        request = _make_request(root_path="/admin")
+        response = MagicMock()
+
+        result = admin._set_admin_csrf_cookie(request, response, user_id="user-1")
+
+        assert isinstance(result, str)
+        assert len(result) >= 32
+
+    def test_falls_back_to_random_token_when_only_session_id(self):
+        """When only session_id provided without user_id, should fall back to random token."""
+        request = _make_request(root_path="/admin")
+        response = MagicMock()
+
+        result = admin._set_admin_csrf_cookie(request, response, session_id="sess-1")
+
+        assert isinstance(result, str)
+        assert len(result) >= 32
+
+    def test_preserves_existing_valid_token_when_no_ids(self):
+        """When valid token already exists in cookie and no user/session ids, preserve it."""
+        existing_token = "a" * 32
+        request = _make_request(root_path="/admin")
+        request.cookies = {admin.ADMIN_CSRF_COOKIE_NAME: existing_token}
+        response = MagicMock()
+
+        result = admin._set_admin_csrf_cookie(request, response)
+
+        assert result == existing_token
+
+    def test_replaces_short_existing_token_when_no_ids(self):
+        """When existing token is too short (<32 chars), generate a new one."""
+        request = _make_request(root_path="/admin")
+        request.cookies = {admin.ADMIN_CSRF_COOKIE_NAME: "short"}
+        response = MagicMock()
+
+        result = admin._set_admin_csrf_cookie(request, response)
+
+        assert len(result) >= 32
+        assert result != "short"
+
+    def test_replaces_non_string_existing_token_when_no_ids(self):
+        """When existing cookie value is not a string, generate a new token."""
+        request = _make_request(root_path="/admin")
+        request.cookies = {admin.ADMIN_CSRF_COOKIE_NAME: 12345}
+        response = MagicMock()
+
+        result = admin._set_admin_csrf_cookie(request, response)
+
+        assert len(result) >= 32
+
+    def test_sets_cookie_with_correct_security_params(self, monkeypatch):
+        """Cookie should have correct security settings."""
+        monkeypatch.setattr(admin.settings, "environment", "production")
+        monkeypatch.setattr(admin.settings, "secure_cookies", True)
+        request = _make_request(root_path="/admin")
+        response = MagicMock()
+
+        admin._set_admin_csrf_cookie(request, response)
+
+        call_kwargs = response.set_cookie.call_args[1]
+        assert call_kwargs["key"] == admin.ADMIN_CSRF_COOKIE_NAME
+        assert call_kwargs["httponly"] is False
+        assert call_kwargs["samesite"] == "strict"
+        assert call_kwargs["secure"] is True
+        assert call_kwargs["max_age"] >= 300
+        assert call_kwargs["path"] == "/admin"
+
+    def test_return_value_matches_cookie_value(self):
+        """Return value should match what was set in the cookie."""
+        request = _make_request(root_path="/admin")
+        response = MagicMock()
+
+        result = admin._set_admin_csrf_cookie(request, response, user_id="user-1", session_id="sess-1")
+
+        call_kwargs = response.set_cookie.call_args[1]
+        assert call_kwargs["value"] == result
+
+    def test_does_not_preserve_existing_token_when_user_and_session_provided(self):
+        """When user_id/session_id are provided, existing cookie token is ignored
+        and replaced with a fresh HMAC-bound token."""
+        existing_token = "a" * 32
+        request = _make_request(root_path="/admin")
+        request.cookies = {admin.ADMIN_CSRF_COOKIE_NAME: existing_token}
+        response = MagicMock()
+
+        result = admin._set_admin_csrf_cookie(request, response, user_id="user-1", session_id="sess-1")
+
+        assert result != existing_token
+        assert len(result) == 64  # HMAC-SHA256 hex
+
+
+# ---------------------------------------------------------------------------
+# admin_ui CSRF/JWT integration tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_admin_ui_sets_jwt_and_csrf_cookies_when_email_auth_disabled(monkeypatch):
+    """admin_ui should set JWT and HMAC-bound CSRF cookies even when
+    email_auth_enabled is False (the key fix for #5325)."""
+    request = _make_request(root_path="/root")
+    request.cookies = {}
+    mock_db = MagicMock()
+    mock_db.commit = MagicMock()
+    user = {"email": "admin@example.com", "is_admin": True, "db": mock_db}
+
+    _configure_admin_ui_test_dependencies(monkeypatch)
+    # Explicitly disable email auth to test the fix
+    monkeypatch.setattr(admin.settings, "email_auth_enabled", False)
+    create_jwt = AsyncMock(return_value="test-jwt-token")
+    monkeypatch.setattr(admin, "create_jwt_token", create_jwt)
+    mock_db.query.return_value.filter.return_value.first.return_value = None
+
+    response = await admin.admin_ui(request, None, False, mock_db, user=user)
+
+    assert isinstance(response, HTMLResponse)
+    # JWT cookie should be set regardless of email_auth_enabled
+    set_cookie_headers = response.headers.getlist("set-cookie")
+    cookie_text = " ".join(set_cookie_headers)
+    assert "jwt_token=" in cookie_text
+    # CSRF cookie should also be set
+    assert admin.ADMIN_CSRF_COOKIE_NAME + "=" in cookie_text
+
+
+@pytest.mark.asyncio
+async def test_admin_ui_csrf_token_is_hmac_bound_when_jwt_set(monkeypatch):
+    """When admin_ui successfully sets a JWT, the CSRF cookie should contain
+    an HMAC-bound token (64-char hex) not a random one."""
+    request = _make_request(root_path="/root")
+    request.cookies = {}
+    mock_db = MagicMock()
+    mock_db.commit = MagicMock()
+    user = {"email": "admin@example.com", "is_admin": True, "db": mock_db}
+
+    _configure_admin_ui_test_dependencies(monkeypatch)
+    monkeypatch.setattr(admin.settings, "email_auth_enabled", False)
+    create_jwt = AsyncMock(return_value="test-jwt-token")
+    monkeypatch.setattr(admin, "create_jwt_token", create_jwt)
+    mock_db.query.return_value.filter.return_value.first.return_value = None
+
+    response = await admin.admin_ui(request, None, False, mock_db, user=user)
+
+    # The CSRF cookie should have an HMAC-bound value (64-char hex)
+    set_cookie_headers = response.headers.getlist("set-cookie")
+    csrf_cookie = [h for h in set_cookie_headers if admin.ADMIN_CSRF_COOKIE_NAME in h]
+    assert len(csrf_cookie) > 0
+    # Parse the cookie value
+    cookie_header = csrf_cookie[0]
+    prefix = admin.ADMIN_CSRF_COOKIE_NAME + "="
+    if prefix in cookie_header:
+        value_part = cookie_header.split(prefix)[1].split(";")[0].strip()
+        assert len(value_part) == 64
+        assert all(c in "0123456789abcdef" for c in value_part)
+
+
+@pytest.mark.asyncio
+async def test_admin_ui_jwt_failure_still_sets_random_csrf_token(monkeypatch):
+    """If JWT generation fails, admin_ui should still set a random CSRF token
+    (graceful degradation)."""
+    request = _make_request(root_path="/root")
+    request.cookies = {}
+    mock_db = MagicMock()
+    mock_db.commit = MagicMock()
+    user = {"email": "admin@example.com", "db": mock_db}
+
+    _configure_admin_ui_test_dependencies(monkeypatch)
+    monkeypatch.setattr(admin.settings, "email_auth_enabled", False)
+    monkeypatch.setattr(admin, "create_jwt_token", AsyncMock(side_effect=RuntimeError("JWT failure")))
+    mock_db.query.return_value.filter.return_value.first.return_value = None
+
+    response = await admin.admin_ui(request, None, False, mock_db, user=user)
+
+    assert isinstance(response, HTMLResponse)
+    # CSRF cookie should still be set (with random token)
+    set_cookie_headers = response.headers.getlist("set-cookie")
+    cookie_text = " ".join(set_cookie_headers)
+    assert admin.ADMIN_CSRF_COOKIE_NAME + "=" in cookie_text
+
+
+@pytest.mark.asyncio
+async def test_admin_ui_csrf_token_differs_across_requests(monkeypatch):
+    """Each admin_ui call generates a fresh jti, so CSRF tokens should differ."""
+    mock_db = MagicMock()
+    mock_db.commit = MagicMock()
+    user = {"email": "admin@example.com", "is_admin": True, "db": mock_db}
+
+    _configure_admin_ui_test_dependencies(monkeypatch)
+    monkeypatch.setattr(admin.settings, "email_auth_enabled", False)
+    mock_db.query.return_value.filter.return_value.first.return_value = None
+
+    # Use separate requests so TemplateResponse returns distinct response objects
+    request1 = _make_request(root_path="/root")
+    request1.cookies = {}
+    request2 = _make_request(root_path="/root")
+    request2.cookies = {}
+
+    response1 = await admin.admin_ui(request1, None, False, mock_db, user=user)
+    response2 = await admin.admin_ui(request2, None, False, mock_db, user=user)
+
+    def _get_csrf_token(resp):
+        for h in resp.headers.getlist("set-cookie"):
+            if admin.ADMIN_CSRF_COOKIE_NAME in h:
+                prefix = admin.ADMIN_CSRF_COOKIE_NAME + "="
+                return h.split(prefix)[1].split(";")[0].strip()
+        return None
+
+    token1 = _get_csrf_token(response1)
+    token2 = _get_csrf_token(response2)
+
+    assert token1 is not None
+    assert token2 is not None
+    # Different jti values should produce different CSRF tokens
+    assert token1 != token2
