@@ -1990,9 +1990,9 @@ def validate_security_configuration():
             else:
                 logger.warning(
                     "⚠️  UAID_ALLOWED_DOMAINS is empty - cross-gateway routing allows ALL domains. "
-                    "Any UAID-based agent can route to any remote gateway endpoint. "
-                    "RECOMMENDED: Configure UAID_ALLOWED_DOMAINS to restrict routing to trusted gateways only. "
-                    'Example: UAID_ALLOWED_DOMAINS=["trusted-gateway.example.com", "partner.org"]'
+                    + "Any UAID-based agent can route to any remote gateway endpoint. "
+                    + "RECOMMENDED: Configure UAID_ALLOWED_DOMAINS to restrict routing to trusted gateways only. "
+                    + 'Example: UAID_ALLOWED_DOMAINS=["trusted-gateway.example.com", "partner.org"]'
                 )
 
         # Audit logging for explicit security overrides in production
@@ -10405,6 +10405,79 @@ async def handle_internal_mcp_tools_call_metric(request: Request):
     return ORJSONResponse(content={"status": "ok"})
 
 
+async def _handle_tools_list_rpc(
+    request: Request,
+    db: Session,
+    user,
+    tool_svc,
+    server_id: Optional[str],
+    cursor: Optional[str],
+    serializer_func,
+) -> Dict[str, Any]:
+    """Handle tools/list and list_tools RPC methods with shared logic.
+
+    Args:
+        request: The FastAPI request object
+        db: Database session
+        user: Authenticated user with permissions
+        tool_svc: Tool service instance
+        server_id: Optional server ID for server-scoped tool listing
+        cursor: Optional pagination cursor
+        serializer_func: Function to serialize tool definitions (either _serialize_mcp_tool_definitions or _serialize_legacy_tool_payloads)
+
+    Returns:
+        Dictionary containing tools list and optional nextCursor
+
+    Raises:
+        HTTPException: If permission check fails
+    """
+    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
+    _req_email, _req_is_admin = user_email, is_admin
+    _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
+
+    # Admin bypass - only when token has NO team restrictions
+    if is_admin and token_teams is None:
+        # user_email stays as-is (not None) for owner matching (PR #4341 / issue #4694)
+        token_teams = None  # Admin unrestricted
+    elif token_teams is None:
+        token_teams = []  # Non-admin without teams = public-only (secure default)
+
+    if server_id:
+        tools = await tool_svc.list_server_tools(
+            db,
+            server_id,
+            cursor=cursor,
+            user_email=user_email,
+            token_teams=token_teams,
+            requesting_user_email=_req_email,
+            requesting_user_is_admin=_req_is_admin,
+            requesting_user_team_roles=_req_team_roles,
+        )
+        # Release DB connection early to prevent idle-in-transaction under load
+        db.commit()
+        db.close()
+        result = {"tools": serializer_func(tools)}
+    else:
+        tools, next_cursor = await tool_svc.list_tools(
+            db,
+            cursor=cursor,
+            limit=0,
+            user_email=user_email,
+            token_teams=token_teams,
+            requesting_user_email=_req_email,
+            requesting_user_is_admin=_req_is_admin,
+            requesting_user_team_roles=_req_team_roles,
+        )
+        # Release DB connection early to prevent idle-in-transaction under load
+        db.commit()
+        db.close()
+        result = {"tools": serializer_func(tools)}
+        if next_cursor:
+            result["nextCursor"] = next_cursor
+
+    return result
+
+
 async def _handle_rpc_authenticated(request: Request, db: Session, user):
     """Handle RPC requests.
 
@@ -10546,91 +10619,26 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             )
         elif method == "tools/list":
             await _ensure_rpc_permission(user, db, "tools.read", method, request=request)
-            user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-            _req_email, _req_is_admin = user_email, is_admin
-            _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
-            # Admin bypass - only when token has NO team restrictions
-            # Keep user_email for owner matching (PR #4341 / issue #4694)
-            if is_admin and token_teams is None:
-                # user_email stays as-is (not None) for owner matching
-                token_teams = None  # Admin unrestricted
-            elif token_teams is None:
-                token_teams = []  # Non-admin without teams = public-only (secure default)
-            if server_id:
-                tools = await tool_service.list_server_tools(
-                    db,
-                    server_id,
-                    cursor=cursor,
-                    user_email=user_email,
-                    token_teams=token_teams,
-                    requesting_user_email=_req_email,
-                    requesting_user_is_admin=_req_is_admin,
-                    requesting_user_team_roles=_req_team_roles,
-                )
-                # Release DB connection early to prevent idle-in-transaction under load
-                db.commit()
-                db.close()
-                result = {"tools": _serialize_mcp_tool_definitions(tools)}
-            else:
-                tools, next_cursor = await tool_service.list_tools(
-                    db,
-                    cursor=cursor,
-                    limit=0,
-                    user_email=user_email,
-                    token_teams=token_teams,
-                    requesting_user_email=_req_email,
-                    requesting_user_is_admin=_req_is_admin,
-                    requesting_user_team_roles=_req_team_roles,
-                )
-                # Release DB connection early to prevent idle-in-transaction under load
-                db.commit()
-                db.close()
-                result = {"tools": _serialize_mcp_tool_definitions(tools)}
-                if next_cursor:
-                    result["nextCursor"] = next_cursor
+            result = await _handle_tools_list_rpc(
+                request=request,
+                db=db,
+                user=user,
+                tool_svc=tool_service,
+                server_id=server_id,
+                cursor=cursor,
+                serializer_func=_serialize_mcp_tool_definitions,
+            )
         elif method == "list_tools":  # Legacy endpoint
             await _ensure_rpc_permission(user, db, "tools.read", method, request=request)
-            user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-            _req_email, _req_is_admin = user_email, is_admin
-            _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
-            # Admin bypass - only when token has NO team restrictions (token_teams is None)
-            # Keep user_email for owner matching (PR #4341 / issue #4694)
-            # If token has explicit team scope (even empty [] for public-only), respect it
-            if is_admin and token_teams is None:
-                # user_email stays as-is (not None) for owner matching
-                token_teams = None  # Admin unrestricted
-            elif token_teams is None:
-                token_teams = []  # Non-admin without teams = public-only (secure default)
-            if server_id:
-                tools = await tool_service.list_server_tools(
-                    db,
-                    server_id,
-                    cursor=cursor,
-                    user_email=user_email,
-                    token_teams=token_teams,
-                    requesting_user_email=_req_email,
-                    requesting_user_is_admin=_req_is_admin,
-                    requesting_user_team_roles=_req_team_roles,
-                )
-                db.commit()
-                db.close()
-                result = {"tools": _serialize_legacy_tool_payloads(tools)}
-            else:
-                tools, next_cursor = await tool_service.list_tools(
-                    db,
-                    cursor=cursor,
-                    limit=0,
-                    user_email=user_email,
-                    token_teams=token_teams,
-                    requesting_user_email=_req_email,
-                    requesting_user_is_admin=_req_is_admin,
-                    requesting_user_team_roles=_req_team_roles,
-                )
-                db.commit()
-                db.close()
-                result = {"tools": _serialize_legacy_tool_payloads(tools)}
-                if next_cursor:
-                    result["nextCursor"] = next_cursor
+            result = await _handle_tools_list_rpc(
+                request=request,
+                db=db,
+                user=user,
+                tool_svc=tool_service,
+                server_id=server_id,
+                cursor=cursor,
+                serializer_func=_serialize_legacy_tool_payloads,
+            )
         elif method == "list_gateways":
             await _ensure_rpc_permission(user, db, "gateways.read", method, request=request)
             user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
