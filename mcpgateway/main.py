@@ -78,6 +78,7 @@ from mcpgateway import version as version_module
 from mcpgateway.auth import get_current_user, get_user_team_roles, TokenValidationError, validate_token_user
 from mcpgateway.auth_context import (
     decode_internal_mcp_auth_context,
+    encode_internal_mcp_auth_context,
     get_internal_mcp_auth_context,
     get_request_identity,
     get_rpc_filter_context,
@@ -429,6 +430,58 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
         "auth_method": forwarded_auth_method,
         "token_use": auth_context.get("token_use"),
     }
+
+
+def _build_internal_mcp_auth_context_for_rpc(request: Request, user: Any) -> Dict[str, Any]:
+    """Build the trusted-internal auth context for an affinity-forwarded ``/rpc`` request.
+
+    Affinity forwarding of a JSON-RPC ``/rpc`` request must carry the caller's
+    already-validated identity to the owner worker's ``/_internal/mcp/rpc`` dispatch, so the
+    owner does not re-authenticate at the public route boundary (which would 401 OAuth and
+    ``MCP_REQUIRE_AUTH=false`` public-only callers).
+
+    The identity is derived from the verified request state via ``get_rpc_filter_context``
+    (the canonical Layer-1 policy source) and the cached verified JWT payload, never from
+    inbound headers, so token-team and admin semantics are preserved. The result has the
+    same shape ``get_streamable_http_auth_context()`` emits, so the owner-side
+    ``_build_internal_mcp_forwarded_user`` reconstructs both forward paths identically, and
+    it satisfies ``_validate_internal_mcp_auth_context``.
+
+    Args:
+        request: The incoming ``/rpc`` request (already authenticated by the route).
+        user: The user object produced by the auth dependency.
+
+    Returns:
+        Encodable auth-context dict for ``encode_internal_mcp_auth_context``.
+    """
+    email, token_teams, is_admin = get_rpc_filter_context(request, user)
+    # Genuine anonymous / MCP_REQUIRE_AUTH=false public-only callers have no email.
+    is_authenticated = email is not None
+
+    scoped = _extract_scoped_permissions(request)
+    scoped_permissions = sorted(scoped) if scoped else None
+
+    cached = getattr(request.state, "_jwt_verified_payload", None)
+    payload = cached[1] if (isinstance(cached, tuple) and len(cached) == 2 and isinstance(cached[1], dict)) else {}
+    scopes = payload.get("scopes") if isinstance(payload.get("scopes"), dict) else {}
+    scoped_server_id = scopes.get("server_id")
+
+    context: Dict[str, Any] = {
+        "email": email,
+        # Authenticated callers keep their token teams (None == admin bypass); public-only
+        # callers are floored to no teams so _validate_internal_mcp_auth_context accepts them.
+        "teams": token_teams if is_authenticated else [],
+        "is_authenticated": is_authenticated,
+        "is_admin": bool(is_admin) if is_authenticated else False,
+        "permission_is_admin": bool(is_admin) if is_authenticated else False,
+        "auth_method": payload.get("auth_method") or ("jwt" if is_authenticated else "anonymous"),
+        "token_use": payload.get("token_use"),
+    }
+    if scoped_permissions is not None:
+        context["scoped_permissions"] = scoped_permissions
+    if scoped_server_id:
+        context["scoped_server_id"] = scoped_server_id
+    return context
 
 
 def _enforce_internal_mcp_server_scope(request: Request, server_id: str) -> None:
@@ -9861,6 +9914,7 @@ async def _maybe_forward_affinitized_rpc_request(
     params: Dict[str, Any],
     req_id: Any,
     lowered_request_headers: Dict[str, str],
+    user: Any,
 ) -> Optional[Dict[str, Any]]:
     """Forward an MCP request to the owning worker when session affinity requires it.
 
@@ -9870,6 +9924,8 @@ async def _maybe_forward_affinitized_rpc_request(
         params: Parsed JSON-RPC params payload.
         req_id: JSON-RPC request identifier.
         lowered_request_headers: Lower-cased request headers used for forwarding.
+        user: Authenticated user from the route dependency, used to build the verified
+            edge auth context carried to the owner's trusted-internal dispatch.
 
     Returns:
         Forwarded JSON-RPC response payload when affinity forwarding handled the
@@ -9896,9 +9952,14 @@ async def _maybe_forward_affinitized_rpc_request(
             from mcpgateway.services.session_affinity import get_session_affinity  # pylint: disable=import-outside-toplevel
 
             pool = get_session_affinity()
+            # Carry the verified edge identity (built from request state, not headers) so the
+            # owner dispatches to the trusted internal endpoint without re-authenticating, so
+            # OAuth and MCP_REQUIRE_AUTH=false public-only callers survive the rpc forward.
+            encoded_auth_context = encode_internal_mcp_auth_context(_build_internal_mcp_auth_context_for_rpc(request, user))
             forwarded_response = await pool.forward_request_to_owner(
                 mcp_session_id,
                 {"method": method, "params": params, "headers": lowered_request_headers, "req_id": req_id},
+                encoded_auth_context,
             )
             if forwarded_response is not None:
                 logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Forwarded response received", WORKER_ID, session_short, method)
@@ -10156,6 +10217,7 @@ async def handle_internal_mcp_tools_call(request: Request):
             params=params,
             req_id=req_id,
             lowered_request_headers=lowered_request_headers,
+            user=user,
         )
         if forwarded_response is not None:
             return forwarded_response
@@ -10579,6 +10641,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             params=params,
             req_id=req_id,
             lowered_request_headers=_lowered_request_headers(),
+            user=user,
         )
         if forwarded_response is not None:
             return forwarded_response

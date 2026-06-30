@@ -46,6 +46,11 @@ def _sign_forward(request: dict) -> dict:
     from mcpgateway.auth_context import sign_redis_auth_context  # pylint: disable=import-outside-toplevel
 
     ctx = request.get("auth_context")
+    if ctx is None:
+        # Envelopes that don't set a context get a placeholder so the consumer's
+        # required-signature check passes on the happy path.
+        ctx = "ctx"
+        request["auth_context"] = ctx
     if ctx:
         request["auth_context_sig"] = sign_redis_auth_context(request.get("mcp_session_id") or "", ctx)
     return request
@@ -769,7 +774,7 @@ async def test_forward_request_to_owner_noop_when_feature_disabled():
     affinity = SessionAffinity()
     with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
         mock_settings.mcpgateway_session_affinity_enabled = False
-        assert await affinity.forward_request_to_owner("sess-1", {"method": "tools/list"}) is None
+        assert await affinity.forward_request_to_owner("sess-1", {"method": "tools/list"}, "ctx") is None
 
 
 @pytest.mark.asyncio
@@ -782,7 +787,7 @@ async def test_forward_request_to_owner_invalid_session_id_returns_none():
     with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
         mock_settings.mcpgateway_session_affinity_enabled = True
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
-        assert await affinity.forward_request_to_owner("bad id", {"method": "x"}) is None
+        assert await affinity.forward_request_to_owner("bad id", {"method": "x"}, "ctx") is None
 
 
 @pytest.mark.asyncio
@@ -798,7 +803,7 @@ async def test_forward_request_to_owner_none_when_redis_unavailable():
     ):
         mock_settings.mcpgateway_session_affinity_enabled = True
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
-        assert await affinity.forward_request_to_owner("sess-1", {"method": "x"}) is None
+        assert await affinity.forward_request_to_owner("sess-1", {"method": "x"}, "ctx") is None
 
 
 @pytest.mark.asyncio
@@ -815,7 +820,7 @@ async def test_forward_request_to_owner_no_owner_returns_none():
     ):
         mock_settings.mcpgateway_session_affinity_enabled = True
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
-        assert await affinity.forward_request_to_owner("sess-1", {"method": "tools/list"}) is None
+        assert await affinity.forward_request_to_owner("sess-1", {"method": "tools/list"}, "ctx") is None
 
 
 @pytest.mark.asyncio
@@ -834,7 +839,7 @@ async def test_forward_request_to_owner_returns_none_when_we_own_the_session():
     ):
         mock_settings.mcpgateway_session_affinity_enabled = True
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
-        assert await affinity.forward_request_to_owner("sess-1", {"method": "tools/list"}) is None
+        assert await affinity.forward_request_to_owner("sess-1", {"method": "tools/list"}, "ctx") is None
 
 
 @pytest.mark.asyncio
@@ -854,7 +859,7 @@ async def test_forward_request_to_owner_swallows_unexpected_errors_as_none():
     ):
         mock_settings.mcpgateway_session_affinity_enabled = True
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
-        assert await affinity.forward_request_to_owner("sess-1", {"method": "tools/list"}) is None
+        assert await affinity.forward_request_to_owner("sess-1", {"method": "tools/list"}, "ctx") is None
     assert affinity._forwarded_request_failures == 1  # pylint: disable=protected-access
 
 
@@ -1480,7 +1485,7 @@ async def test_forward_request_to_owner_happy_path_via_pubsub():
         mock_settings.mcpgateway_session_affinity_enabled = True
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
         mock_settings.mcpgateway_session_affinity_ttl = 300
-        result = await affinity.forward_request_to_owner("sess-1", {"method": "tools/list"})
+        result = await affinity.forward_request_to_owner("sess-1", {"method": "tools/list"}, "ctx")
 
     assert result == {"jsonrpc": "2.0", "result": {"ok": True}, "id": 1}
     assert affinity._forwarded_requests == 1  # pylint: disable=protected-access
@@ -1507,7 +1512,7 @@ async def test_forward_request_to_owner_raises_and_counts_timeout_when_no_respon
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 0.05  # short
         mock_settings.mcpgateway_session_affinity_ttl = 300
         with pytest.raises(asyncio.TimeoutError):
-            await affinity.forward_request_to_owner("sess-1", {"method": "tools/list"})
+            await affinity.forward_request_to_owner("sess-1", {"method": "tools/list"}, "ctx")
 
     assert affinity._forwarded_request_timeouts == 1  # pylint: disable=protected-access
 
@@ -1530,7 +1535,7 @@ async def test_forward_request_to_owner_reclaims_session_from_dead_worker():
         mock_settings.mcpgateway_session_affinity_enabled = True
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
         mock_settings.mcpgateway_session_affinity_ttl = 300
-        result = await affinity.forward_request_to_owner("sess-1", {"method": "tools/list"})
+        result = await affinity.forward_request_to_owner("sess-1", {"method": "tools/list"}, "ctx")
 
     # We reclaimed + now own it → execute locally (None).
     assert result is None
@@ -1590,13 +1595,13 @@ class _FakeHttpxClient:
             raise self._raise_exc
         return self._response
 
-    async def as_post_rpc(self, *, content=None, headers=None, timeout=None):
+    async def as_post_rpc(self, *, content=None, headers=None, timeout=None, auth_context=None):
         """Adapter so this fake can stand in for ``utils.internal_http.post_rpc_in_process``.
 
         Patching the helper to this method lets the fake capture
-        ``content``/``headers``/``timeout`` for the call-site assertions.
+        ``content``/``headers``/``timeout``/``auth_context`` for the call-site assertions.
         """
-        self.last_post_kwargs = {"content": content, "headers": headers, "timeout": timeout}
+        self.last_post_kwargs = {"content": content, "headers": headers, "timeout": timeout, "auth_context": auth_context}
         if self._raise_exc is not None:
             raise self._raise_exc
         return self._response
@@ -1617,12 +1622,57 @@ async def test_execute_forwarded_request_success_returns_result():
     ):
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
         result = await affinity._execute_forwarded_request(  # pylint: disable=protected-access
-            {"method": "tools/list", "params": {}, "headers": {"Authorization": "Bearer x"}, "req_id": 1, "mcp_session_id": "sess-12345678"}
+            _sign_forward({"method": "tools/list", "params": {}, "headers": {"Authorization": "Bearer x"}, "req_id": 1, "mcp_session_id": "sess-12345678"})
         )
 
     assert result == {"result": {"tools": []}}
     # x-forwarded-internally header is added to prevent loops.
     assert client.last_post_kwargs["headers"].get("x-forwarded-internally") == "true"  # type: ignore[index]
+    # The verified edge context is passed through to the trusted-internal dispatch.
+    assert client.last_post_kwargs["auth_context"]  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_execute_forwarded_request_rejects_forged_signature():
+    """An rpc forward with an invalid auth-context signature is rejected, never dispatched."""
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+    client = _FakeHttpxClient(response=_FakeHttpResponse(200, json_body={"jsonrpc": "2.0", "result": {}, "id": 1}))
+    request = {
+        "method": "tools/list", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "sess-forged",
+        "auth_context": "forged-admin-ctx", "auth_context_sig": "deadbeef" * 8,  # not a valid HMAC
+    }
+    with (
+        patch("mcpgateway.services.session_affinity.settings") as mock_settings,
+        patch("mcpgateway.services.session_affinity.post_rpc_in_process", new=client.as_post_rpc),
+    ):
+        mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
+        result = await affinity._execute_forwarded_request(request)  # pylint: disable=protected-access
+
+    assert result["error"]["code"] == -32003  # integrity rejection
+    assert client.last_post_kwargs is None  # never dispatched
+
+
+@pytest.mark.asyncio
+async def test_execute_forwarded_request_rejects_missing_signature():
+    """An rpc forward with no auth context / signature is rejected, never dispatched (fail closed)."""
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+    client = _FakeHttpxClient(response=_FakeHttpResponse(200, json_body={"jsonrpc": "2.0", "result": {}, "id": 1}))
+    request = {"method": "tools/list", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "sess-nosig"}
+    with (
+        patch("mcpgateway.services.session_affinity.settings") as mock_settings,
+        patch("mcpgateway.services.session_affinity.post_rpc_in_process", new=client.as_post_rpc),
+    ):
+        mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
+        result = await affinity._execute_forwarded_request(request)  # pylint: disable=protected-access
+
+    assert result["error"]["code"] == -32003
+    assert client.last_post_kwargs is None
 
 
 @pytest.mark.asyncio
@@ -1641,7 +1691,7 @@ async def test_execute_forwarded_request_propagates_jsonrpc_error_in_response():
     ):
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
         result = await affinity._execute_forwarded_request(  # pylint: disable=protected-access
-            {"method": "tools/call", "params": {"name": "x"}, "headers": {}, "req_id": 1, "mcp_session_id": "sess-abcd"}
+            _sign_forward({"method": "tools/call", "params": {"name": "x"}, "headers": {}, "req_id": 1, "mcp_session_id": "sess-abcd"})
         )
 
     assert result == {"error": {"code": -32603, "message": "internal"}}
@@ -1661,7 +1711,7 @@ async def test_execute_forwarded_request_maps_non_2xx_http_to_jsonrpc_error():
         patch("mcpgateway.services.session_affinity.post_rpc_in_process", new=client.as_post_rpc),
     ):
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
-        result = await affinity._execute_forwarded_request({"method": "tools/list", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "s"})  # pylint: disable=protected-access
+        result = await affinity._execute_forwarded_request(_sign_forward({"method": "tools/list", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "s"}))  # pylint: disable=protected-access
 
     assert "error" in result
     assert result["error"]["code"] == -32603
@@ -1686,7 +1736,7 @@ async def test_execute_forwarded_request_timeout_returns_timeout_error():
         patch("mcpgateway.services.session_affinity.post_rpc_in_process", new=client.as_post_rpc),
     ):
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
-        result = await affinity._execute_forwarded_request({"method": "tools/list", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "s"})  # pylint: disable=protected-access
+        result = await affinity._execute_forwarded_request(_sign_forward({"method": "tools/list", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "s"}))  # pylint: disable=protected-access
 
     assert result == {"error": {"code": -32603, "message": "Internal request timeout"}}
 
@@ -1705,7 +1755,7 @@ async def test_execute_forwarded_request_generic_error_returns_wrapped_error():
         patch("mcpgateway.services.session_affinity.post_rpc_in_process", new=client.as_post_rpc),
     ):
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
-        result = await affinity._execute_forwarded_request({"method": "tools/list", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "s"})  # pylint: disable=protected-access
+        result = await affinity._execute_forwarded_request(_sign_forward({"method": "tools/list", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "s"}))  # pylint: disable=protected-access
 
     assert result == {"error": {"code": -32603, "message": "boom"}}
 
@@ -2167,7 +2217,7 @@ async def test_forward_request_to_owner_forwards_to_new_owner_when_reclaim_lost(
         mock_settings.mcpgateway_session_affinity_enabled = True
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
         mock_settings.mcpgateway_session_affinity_ttl = 300
-        result = await affinity.forward_request_to_owner("sess-1", {"method": "tools/list"})
+        result = await affinity.forward_request_to_owner("sess-1", {"method": "tools/list"}, "ctx")
 
     assert result == {"result": {"race": "forwarded"}}
     # Forwarded to the new owner's channel (not the dead one).
@@ -2220,7 +2270,7 @@ async def test_execute_forwarded_request_propagates_jsonrpc_error_from_non_2xx_r
         patch("mcpgateway.services.session_affinity.post_rpc_in_process", new=client.as_post_rpc),
     ):
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
-        result = await affinity._execute_forwarded_request({"method": "tools/list", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "sess"})  # pylint: disable=protected-access
+        result = await affinity._execute_forwarded_request(_sign_forward({"method": "tools/list", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "sess"}))  # pylint: disable=protected-access
 
     assert result == {"error": {"code": -32601, "message": "method not found"}}
 
@@ -2241,7 +2291,7 @@ async def test_execute_forwarded_request_handles_non_dict_non_2xx_json_body():
         patch("mcpgateway.services.session_affinity.post_rpc_in_process", new=client.as_post_rpc),
     ):
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
-        result = await affinity._execute_forwarded_request({"method": "tools/list", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "s"})  # pylint: disable=protected-access
+        result = await affinity._execute_forwarded_request(_sign_forward({"method": "tools/list", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "s"}))  # pylint: disable=protected-access
 
     assert "error" in result
     assert result["error"]["code"] == -32603
@@ -2262,7 +2312,7 @@ async def test_execute_forwarded_request_handles_non_2xx_with_non_json_body():
         patch("mcpgateway.services.session_affinity.post_rpc_in_process", new=client.as_post_rpc),
     ):
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
-        result = await affinity._execute_forwarded_request({"method": "tools/list", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "s"})  # pylint: disable=protected-access
+        result = await affinity._execute_forwarded_request(_sign_forward({"method": "tools/list", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "s"}))  # pylint: disable=protected-access
 
     assert "error" in result
     assert result["error"]["code"] == -32603
@@ -2340,7 +2390,7 @@ async def test_forward_request_to_owner_returns_none_when_reclaimed_key_vanishes
         mock_settings.mcpgateway_session_affinity_enabled = True
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
         mock_settings.mcpgateway_session_affinity_ttl = 300
-        result = await affinity.forward_request_to_owner("sess-1", {"method": "tools/list"})
+        result = await affinity.forward_request_to_owner("sess-1", {"method": "tools/list"}, "ctx")
     assert result is None
 
 
@@ -2381,7 +2431,7 @@ async def test_forward_request_to_owner_returns_none_when_reclaim_race_makes_us_
         mock_settings.mcpgateway_session_affinity_enabled = True
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
         mock_settings.mcpgateway_session_affinity_ttl = 300
-        result = await affinity.forward_request_to_owner("sess-1", {"method": "tools/list"})
+        result = await affinity.forward_request_to_owner("sess-1", {"method": "tools/list"}, "ctx")
     assert result is None
 
 

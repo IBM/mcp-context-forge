@@ -1742,9 +1742,16 @@ async def call_tool(
             except Exception as e:
                 logger.error("Failed to pre-register session mapping for Streamable HTTP: %s", e)
 
+            # First-Party
+            from mcpgateway.auth_context import encode_internal_mcp_auth_context  # pylint: disable=import-outside-toplevel
+
+            # Carry the verified edge identity so the owner dispatches to the trusted internal
+            # endpoint without re-authenticating (OAuth / public-only survive the rpc forward).
+            encoded_auth_context = encode_internal_mcp_auth_context(get_streamable_http_auth_context())
             forwarded_response = await pool.forward_request_to_owner(
                 mcp_session_id,
                 {"method": "tools/call", "params": {"name": name, "arguments": arguments, "_meta": meta_data}, "headers": dict(request_headers) if request_headers else {}},
+                encoded_auth_context,
             )
             if forwarded_response is not None:
                 # Request was handled by another worker - convert response to expected format
@@ -4153,22 +4160,28 @@ class SessionManagerWrapper:
                     "x-mcp-session-id": mcp_session_id,  # Pass session for upstream affinity
                     "x-forwarded-internally": "true",  # Prevent infinite forwarding loops
                 }
-                # Forward the inbound gateway auth header (default: Authorization,
-                # or AUTH_HEADER_NAME when customized) so /rpc can re-authenticate
-                # the same caller. Hardcoding "authorization" here would silently
-                # drop auth on deployments using a custom AUTH_HEADER_NAME.
+                # Preserve the inbound gateway auth header (default: Authorization,
+                # or AUTH_HEADER_NAME when customized) so the CSRF bearer short-circuit
+                # keys on it. The trusted endpoint itself authenticates via the encoded
+                # auth context, not this header; hardcoding "authorization" would drop
+                # auth on deployments using a custom AUTH_HEADER_NAME.
                 _gw_auth_lower = _resolve_auth_header_name(settings).lower()
                 if _gw_auth_lower in headers:
                     rpc_headers[_gw_auth_lower] = headers[_gw_auth_lower]
                 # Forward passthrough headers for upstream MCP servers (see #3640).
                 # First-Party
+                from mcpgateway.auth_context import encode_internal_mcp_auth_context  # pylint: disable=import-outside-toplevel
                 from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
 
                 rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
 
-                # Dispatch IN-PROCESS so /rpc executes in this worker (the session
-                # owner) rather than scattering over the shared socket.
-                response = await post_rpc_in_process(content=body, headers=rpc_headers, timeout=30.0)
+                # Dispatch IN-PROCESS to the trusted internal endpoint so it executes in
+                # this worker (the session owner) rather than scattering over the shared
+                # socket. The edge identity established on this request is encoded and
+                # carried as the auth context; this is in-process (no Redis hop), so no
+                # signature is required.
+                encoded_auth_context = encode_internal_mcp_auth_context(get_streamable_http_auth_context())
+                response = await post_rpc_in_process(content=body, headers=rpc_headers, timeout=30.0, auth_context=encoded_auth_context)
 
                 # Return response to client
                 response_headers = [

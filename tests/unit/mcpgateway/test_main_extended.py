@@ -10120,6 +10120,7 @@ class TestRpcHandling:
             params={"name": "echo"},
             req_id="aff-local",
             lowered_request_headers={"mcp-session-id": "sess-123"},
+            user={"email": "u@example.com"},
         )
 
         assert forwarded is None

@@ -12,12 +12,15 @@ context (``is_authenticated is False``) must carry only public privileges, and f
 types must be well-formed, otherwise the dispatch is rejected with HTTP 400.
 """
 
+# Standard
+from unittest.mock import MagicMock, patch
+
 # Third-Party
 from fastapi import HTTPException
 import pytest
 
 # First-Party
-from mcpgateway.main import _validate_internal_mcp_auth_context
+from mcpgateway.main import _build_internal_mcp_auth_context_for_rpc, _validate_internal_mcp_auth_context
 
 
 def test_valid_public_only_context_passes():
@@ -71,3 +74,48 @@ def test_non_bool_is_authenticated_is_rejected(bad):
 def test_public_only_with_none_teams_is_accepted():
     """``teams: None`` on a public-only context is fine (normalised to no teams downstream)."""
     _validate_internal_mcp_auth_context({"is_authenticated": False, "teams": None, "is_admin": False, "email": None})
+
+
+# ---------------------------------------------------------------------------
+# _build_internal_mcp_auth_context_for_rpc — the /rpc forward edge-context builder
+# ---------------------------------------------------------------------------
+
+
+def _rpc_request(payload=None):
+    """A request stand-in carrying an optional cached verified JWT payload."""
+    req = MagicMock()
+    req.state._jwt_verified_payload = ("tok", payload) if payload is not None else None
+    return req
+
+
+def test_rpc_builder_authenticated_shape_passes_validator():
+    """An authenticated /rpc context carries email/teams/scopes and satisfies the validator."""
+    with patch("mcpgateway.main.get_rpc_filter_context", return_value=("u@example.com", ["t1"], False)), patch("mcpgateway.main._extract_scoped_permissions", return_value={"tools.read"}):
+        ctx = _build_internal_mcp_auth_context_for_rpc(_rpc_request({"scopes": {"server_id": "srv-1"}}), {"email": "u@example.com"})
+    assert ctx["email"] == "u@example.com"
+    assert ctx["is_authenticated"] is True
+    assert ctx["teams"] == ["t1"]
+    assert ctx["scoped_permissions"] == ["tools.read"]
+    assert ctx["scoped_server_id"] == "srv-1"
+    _validate_internal_mcp_auth_context(ctx)  # must not raise
+
+
+def test_rpc_builder_anonymous_is_floored_and_passes_validator():
+    """A public-only /rpc context (no email) is floored to public privileges and satisfies the validator."""
+    with patch("mcpgateway.main.get_rpc_filter_context", return_value=(None, None, False)), patch("mcpgateway.main._extract_scoped_permissions", return_value=None):
+        ctx = _build_internal_mcp_auth_context_for_rpc(_rpc_request(None), {})
+    assert ctx["is_authenticated"] is False
+    assert ctx["email"] is None
+    assert ctx["teams"] == []
+    assert ctx["is_admin"] is False
+    _validate_internal_mcp_auth_context(ctx)
+
+
+def test_rpc_builder_admin_bypass_passes_validator():
+    """An admin /rpc context (token_teams None == bypass) keeps is_admin and satisfies the validator."""
+    with patch("mcpgateway.main.get_rpc_filter_context", return_value=("admin@example.com", None, True)), patch("mcpgateway.main._extract_scoped_permissions", return_value=None):
+        ctx = _build_internal_mcp_auth_context_for_rpc(_rpc_request(None), {"email": "admin@example.com", "is_admin": True})
+    assert ctx["is_authenticated"] is True
+    assert ctx["is_admin"] is True
+    assert ctx["teams"] is None
+    _validate_internal_mcp_auth_context(ctx)

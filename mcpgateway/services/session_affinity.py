@@ -749,6 +749,7 @@ class SessionAffinity:
         self,
         mcp_session_id: str,
         request_data: Dict[str, Any],
+        auth_context: str,
         timeout: Optional[float] = None,
     ) -> Optional[Dict[str, Any]]:
         """Forward RPC request to the worker that owns the session owner.
@@ -760,6 +761,9 @@ class SessionAffinity:
         Args:
             mcp_session_id: The MCP session ID from x-mcp-session-id header.
             request_data: The RPC request data to forward.
+            auth_context: Encoded edge auth context (required, non-empty). Signed into
+                the Redis envelope and verified by the owner before the trusted-internal
+                dispatch, so the rpc forward hop carries a tamper-evident identity.
             timeout: Optional timeout in seconds (default from config).
 
         Returns:
@@ -774,6 +778,14 @@ class SessionAffinity:
 
         if not self.is_valid_mcp_session_id(mcp_session_id):
             return None
+
+        # Invariant: the rpc forward hop must always carry a signed auth context, so the
+        # owner can dispatch to the trusted internal endpoint without re-authenticating.
+        # Refuse rather than publish an unsigned envelope the consumer would reject.
+        if not auth_context:
+            logger.warning("[AFFINITY] Worker %s | Refusing to forward RPC request without an auth context", WORKER_ID)
+            self._forwarded_request_failures += 1
+            return {"error": {"code": -32003, "message": "Forwarded auth context is required"}}
 
         effective_timeout = timeout if timeout is not None else settings.mcpgateway_pool_rpc_forward_timeout
 
@@ -842,12 +854,18 @@ class SessionAffinity:
                 await pubsub.subscribe(response_channel)
 
                 try:
-                    # Prepare request with response channel
+                    # First-Party
+                    from mcpgateway.auth_context import sign_redis_auth_context  # pylint: disable=import-outside-toplevel
+
+                    # Prepare request with response channel and a signed auth context.
                     forward_data = {
                         "type": "rpc_forward",
                         **request_data,
                         "response_channel": response_channel,
                         "mcp_session_id": mcp_session_id,
+                        "auth_context": auth_context,
+                        # HMAC over (session id, auth_context); verified by the owner before trust.
+                        "auth_context_sig": sign_redis_auth_context(mcp_session_id, auth_context),
                     }
 
                     # Publish request to owner's channel
@@ -954,7 +972,22 @@ class SessionAffinity:
 
             logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Received forwarded request, executing locally", WORKER_ID, session_short, method)
 
-            # Build headers for the in-process /rpc call - forward original headers
+            # Verify the forwarded auth context before trusting it: forward_request_to_owner
+            # signs the encoded context (bound to this session id) with the auth-encryption
+            # secret. Reject a missing or invalid signature rather than re-stamping an
+            # injected context onto the trusted-internal dispatch (the Redis signing oracle,
+            # here on the rpc channel). Fail closed: do not dispatch.
+            # First-Party
+            from mcpgateway.auth_context import verify_redis_auth_context  # pylint: disable=import-outside-toplevel
+
+            auth_context = request.get("auth_context") or ""
+            auth_context_sig = request.get("auth_context_sig") or ""
+            if not auth_context or not verify_redis_auth_context(mcp_session_id, auth_context, auth_context_sig):
+                logger.warning("[AFFINITY] Worker %s | Session %s... | Rejected forwarded request: missing or invalid auth-context signature", WORKER_ID, session_short)
+                self._forwarded_request_failures += 1
+                return {"error": {"code": -32003, "message": "Forwarded auth context failed integrity verification"}}
+
+            # Build headers for the in-process internal dispatch - forward original headers
             # but add x-forwarded-internally to prevent infinite loops. Relies on the
             # originating transport having already filtered passthrough headers via
             # extract_headers_for_loopback (#3640).
@@ -962,8 +995,9 @@ class SessionAffinity:
             internal_headers["x-forwarded-internally"] = "true"
             internal_headers["content-type"] = "application/json"
 
-            # Dispatch IN-PROCESS so /rpc resolves the bound upstream session from
-            # this worker's registry instead of scattering over the shared socket.
+            # Dispatch IN-PROCESS to the trusted internal endpoint so it resolves the bound
+            # upstream session from this worker's registry instead of scattering over the
+            # shared socket. The verified edge identity rides in auth_context.
             response = await post_rpc_in_process(
                 content=orjson.dumps(
                     {
@@ -973,6 +1007,7 @@ class SessionAffinity:
                         "id": req_id,
                     }
                 ),
+                auth_context=auth_context,
                 headers=internal_headers,
                 timeout=settings.mcpgateway_pool_rpc_forward_timeout,
             )
