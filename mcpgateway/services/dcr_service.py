@@ -310,7 +310,9 @@ class DcrService:
             )
 
         # Auto-register (pass normalized issuer for consistent storage)
-        logger.info("No existing client found for gateway %s, registering new client with %s", SecurityValidator.sanitize_log_message(gateway_id), SecurityValidator.sanitize_log_message(normalized_issuer))
+        logger.info(
+            "No existing client found for gateway %s, registering new client with %s", SecurityValidator.sanitize_log_message(gateway_id), SecurityValidator.sanitize_log_message(normalized_issuer)
+        )
         return await self.register_client(gateway_id, gateway_name, normalized_issuer, redirect_uri, scopes, db)
 
     async def update_client_registration(self, client_record: RegisteredOAuthClient, db: Session) -> RegisteredOAuthClient:

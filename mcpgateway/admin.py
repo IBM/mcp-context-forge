@@ -628,7 +628,9 @@ async def get_hidden_sections_for_user(
         # Hide section if user doesn't have permission
         if not has_permission:
             hidden.add(section)
-            LOGGER.debug(f"Hiding section '{SecurityValidator.sanitize_log_message(section)}' for user {SecurityValidator.sanitize_log_message(user_email)}: missing permission '{SecurityValidator.sanitize_log_message(required_permission)}'")
+            LOGGER.debug(
+                f"Hiding section '{SecurityValidator.sanitize_log_message(section)}' for user {SecurityValidator.sanitize_log_message(user_email)}: missing permission '{SecurityValidator.sanitize_log_message(required_permission)}'"
+            )
 
     return hidden
 
