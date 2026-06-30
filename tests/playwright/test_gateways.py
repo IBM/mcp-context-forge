@@ -963,3 +963,77 @@ class TestGatewayAsyncLifecycle:
             assert badge_status in ("active", "inactive", "pending", "deleting"), (
                 f"Unexpected data-gateway-status value: {badge_status}"
             )
+
+    def test_polling_trigger_condition(self, gateways_page: GatewaysPage):
+        """Test that HTMX polling trigger uses conditional data-attribute selector."""
+        gateways_page.navigate_to_gateways_tab()
+        gateways_page.wait_for_gateways_table_loaded()
+
+        assert gateways_page.has_polling_trigger_on_table(), (
+            "Gateways table should have conditional hx-trigger with every 10s and data-gateway-status"
+        )
+
+    def test_action_button_states_match_status(self, gateways_page: GatewaysPage):
+        """Test that action buttons are disabled for pending/deleting gateways, enabled otherwise."""
+        gateways_page.navigate_to_gateways_tab()
+        gateways_page.wait_for_gateways_table_loaded()
+
+        if gateways_page.get_gateway_count() == 0:
+            pytest.skip("No gateways available for testing")
+
+        for i in range(gateways_page.get_gateway_count()):
+            badge_status = gateways_page.get_status_badge_data_attribute(i)
+            assert badge_status is not None
+
+            is_pending_or_deleting = badge_status in ("pending", "deleting")
+
+            edit_disabled = gateways_page.is_action_menu_item_disabled(i, "Edit")
+            assert edit_disabled == is_pending_or_deleting, (
+                f"Row {i} ({badge_status}): Edit disabled={edit_disabled}, expected={is_pending_or_deleting}"
+            )
+
+    def test_delete_button_text_changes_for_pending(self, gateways_page: GatewaysPage):
+        """Test that delete button shows 'Cancel' for pending gateways, 'Delete' otherwise."""
+        gateways_page.navigate_to_gateways_tab()
+        gateways_page.wait_for_gateways_table_loaded()
+
+        if gateways_page.get_gateway_count() == 0:
+            pytest.skip("No gateways available for testing")
+
+        for i in range(gateways_page.get_gateway_count()):
+            badge_status = gateways_page.get_status_badge_data_attribute(i)
+            assert badge_status is not None
+
+            delete_text = gateways_page.get_delete_button_text(i)
+
+            if badge_status == "pending":
+                assert delete_text == "Cancel", (
+                    f"Row {i} (pending): expected 'Cancel', got '{delete_text}'"
+                )
+            else:
+                assert delete_text == "Delete", (
+                    f"Row {i} ({badge_status}): expected 'Delete', got '{delete_text}'"
+                )
+
+    def test_retry_info_content_for_pending_gateway(self, gateways_page: GatewaysPage):
+        """Test that retry info column shows attempts/timestamp for pending, em dash otherwise."""
+        gateways_page.navigate_to_gateways_tab()
+        gateways_page.wait_for_gateways_table_loaded()
+
+        if gateways_page.get_gateway_count() == 0:
+            pytest.skip("No gateways available for testing")
+
+        for i in range(gateways_page.get_gateway_count()):
+            badge_status = gateways_page.get_status_badge_data_attribute(i)
+            assert badge_status is not None
+
+            retry_text = gateways_page.get_retry_info_text(i)
+
+            if badge_status == "pending":
+                assert "Attempts:" in retry_text, (
+                    f"Row {i} (pending): expected 'Attempts:' in retry info, got '{retry_text}'"
+                )
+            else:
+                assert retry_text == "—" or retry_text == "", (
+                    f"Row {i} ({badge_status}): expected em dash in retry info, got '{retry_text}'"
+                )

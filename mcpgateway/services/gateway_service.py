@@ -5480,14 +5480,29 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway_dict["team"] = getattr(gateway, "team", None)
 
         # Include async lifecycle fields (Issue #5127)
-        gateway_dict["status"] = getattr(gateway, "status", "active")  # str: "pending"|"active"|"deleting"
-        gateway_dict["status_message"] = getattr(gateway, "status_message", None)  # Optional[str]: user-facing status text
-        gateway_dict["registration_attempts"] = getattr(gateway, "registration_attempts", 0)  # int: retry count
-        gateway_dict["next_retry_at"] = getattr(gateway, "next_retry_at", None)  # Optional[datetime]: next retry timestamp
-        gateway_dict["last_error"] = getattr(gateway, "last_error", None)  # Optional[str]: internal error details (not displayed in UI)
-        gateway_dict["lifecycle_claimed_by"] = getattr(gateway, "lifecycle_claimed_by", None)  # Optional[str]: worker claim ID
-        gateway_dict["lifecycle_claimed_at"] = getattr(gateway, "lifecycle_claimed_at", None)  # Optional[datetime]: claim timestamp
-        gateway_dict["lifecycle_claim_expires_at"] = getattr(gateway, "lifecycle_claim_expires_at", None)  # Optional[datetime]: claim expiry
+        # status: str — "pending"|"active"|"deleting"
+        # status_message: Optional[str] — user-facing status text
+        # registration_attempts: int — retry count
+        # next_retry_at: Optional[datetime] — next retry timestamp
+        # last_error: Optional[str] — internal error details (not displayed in UI)
+        # lifecycle_claimed_by: Optional[str] — worker claim ID
+        # lifecycle_claimed_at: Optional[datetime] — claim timestamp
+        # lifecycle_claim_expires_at: Optional[datetime] — claim expiry
+        lifecycle_fields = {
+            "status": "active",
+            "status_message": None,
+            "registration_attempts": 0,
+            "next_retry_at": None,
+            "last_error": None,
+            "lifecycle_claimed_by": None,
+            "lifecycle_claimed_at": None,
+            "lifecycle_claim_expires_at": None,
+        }
+        for field, default in lifecycle_fields.items():
+            value = getattr(gateway, field, default)
+            if field == "registration_attempts":
+                value = value or 0
+            gateway_dict[field] = value
 
         # Populate tool count from the eagerly-loaded tools relationship when available
         tools_rel = gateway.__dict__.get("tools")

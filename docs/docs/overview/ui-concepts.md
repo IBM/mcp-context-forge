@@ -172,6 +172,9 @@ When asynchronous gateway lifecycle operations are enabled (`GATEWAY_ASYNC_LIFEC
 
     The gateways table automatically polls every 10 seconds when pending/deleting gateways exist, updating status and retry counts in real-time without manual page refresh.
 
+    !!! note "UI vs Backend Polling"
+        The UI polls every 10s (hardcoded in the HTMX trigger), while the backend worker polls at the configurable `GATEWAY_ASYNC_LIFECYCLE_POLL_INTERVAL` (default 5s). This design keeps client load low while maintaining responsive updates. Gateway state changes are typically reflected in the UI within 10–15 seconds.
+
     **Action Button States:**
 
     - **Edit** button disabled during pending/deleting operations
