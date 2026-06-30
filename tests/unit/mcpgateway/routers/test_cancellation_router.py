@@ -171,7 +171,7 @@ async def test_cancel_run_broadcasts_notifications(allow_permission, monkeypatch
     mock_registry.get_all_session_ids = AsyncMock(return_value=["s1", "s2"])
     mock_registry.broadcast = AsyncMock()
 
-    monkeypatch.setattr("mcpgateway.routers.cancellation_router.main_module", MagicMock(session_registry=mock_registry))
+    monkeypatch.setattr("mcpgateway.routers.cancellation_router._get_shared_session_registry", MagicMock(return_value=mock_registry))
     monkeypatch.setattr("mcpgateway.routers.cancellation_router.cancellation_service", MagicMock(cancel_run=AsyncMock(return_value=True)))
 
     payload = CancelRequest(requestId="req-1", reason="test")
@@ -190,7 +190,7 @@ async def test_cancel_run_handles_session_errors(allow_permission, monkeypatch):
     mock_registry = MagicMock()
     mock_registry.get_all_session_ids = AsyncMock(side_effect=Exception("boom"))
 
-    monkeypatch.setattr("mcpgateway.routers.cancellation_router.main_module", MagicMock(session_registry=mock_registry))
+    monkeypatch.setattr("mcpgateway.routers.cancellation_router._get_shared_session_registry", MagicMock(return_value=mock_registry))
     monkeypatch.setattr("mcpgateway.routers.cancellation_router.cancellation_service", MagicMock(cancel_run=AsyncMock(return_value=False)))
 
     payload = CancelRequest(requestId="req-2", reason=None)
@@ -209,7 +209,7 @@ async def test_cancel_run_handles_per_session_broadcast_errors(allow_permission,
     mock_registry.get_all_session_ids = AsyncMock(return_value=["s1", "s2"])
     mock_registry.broadcast = AsyncMock(side_effect=[Exception("boom"), None])
 
-    monkeypatch.setattr("mcpgateway.routers.cancellation_router.main_module", MagicMock(session_registry=mock_registry))
+    monkeypatch.setattr("mcpgateway.routers.cancellation_router._get_shared_session_registry", MagicMock(return_value=mock_registry))
     monkeypatch.setattr("mcpgateway.routers.cancellation_router.cancellation_service", MagicMock(cancel_run=AsyncMock(return_value=True)))
 
     payload = CancelRequest(requestId="req-err", reason="test")

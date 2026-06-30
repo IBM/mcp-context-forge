@@ -231,6 +231,30 @@ _ADMIN_PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
 ]
 
 
+def _strip_v1_prefix(path: str) -> str:
+    """Strip a leading /v1 version segment from a normalized path.
+
+    Args:
+        path: Normalized path string (must start with /).
+
+    Returns:
+        Path with the /v1 prefix removed, or the original path if not present.
+
+    Examples:
+        >>> _strip_v1_prefix("/v1/tools")
+        '/tools'
+        >>> _strip_v1_prefix("/v1")
+        '/'
+        >>> _strip_v1_prefix("/tools")
+        '/tools'
+    """
+    if path.startswith("/v1/"):
+        return path[3:]
+    if path == "/v1":
+        return "/"
+    return path
+
+
 def _normalize_llm_api_prefix(prefix: Optional[str]) -> str:
     """Normalize llm_api_prefix to a canonical path prefix.
 
@@ -243,7 +267,13 @@ def _normalize_llm_api_prefix(prefix: Optional[str]) -> str:
     if not prefix:
         return ""
     normalized = "/" + str(prefix).strip().strip("/")
-    return "" if normalized == "/" else normalized
+    if normalized == "/":
+        return ""
+    # Strip the /v1 API version prefix to align with _normalize_path_for_matching.
+    normalized = _strip_v1_prefix(normalized)
+    if normalized == "/":
+        return ""
+    return normalized
 
 
 def _normalize_scope_path(scope_path: str, root_path: str) -> str:
@@ -333,16 +363,36 @@ class TokenScopingMiddleware:
     def _normalize_path_for_matching(self, request_path: str) -> str:
         """Normalize a path for team scoping and permission matching.
 
+        **IMPORTANT:** This method strips the `/v1` API version prefix to ensure
+        scope patterns work consistently across both versioned and legacy routes.
+
+        Examples:
+            - `/v1/tools` → `/tools`
+            - `/tools` → `/tools`
+            - `/v1/admin/users` → `/admin/users`
+            - `/v1` → `/`
+
+        This means:
+            - A pattern `^/tools` matches BOTH `/tools` AND `/v1/tools`
+            - A pattern `^/v1/tools` is normalized to `^/tools` and matches both
+            - **Write patterns WITHOUT the `/v1` prefix for consistency**
+
         Args:
-            request_path: Raw request path.
+            request_path: Raw request path from HTTP request.
 
         Returns:
-            Normalized absolute path suitable for route matching.
+            Normalized path with `/v1` prefix removed (if present).
+
+        See Also:
+            - docs/docs/manage/rbac.md - Token scope pattern documentation
+            - tests/unit/mcpgateway/middleware/test_token_scoping_normalization.py
         """
         normalized = _normalize_scope_path(request_path or "/", settings.app_root_path or "")
         if not normalized.startswith("/"):
-            return f"/{normalized}"
-        return normalized
+            normalized = f"/{normalized}"
+        # Strip the /v1 API version prefix so all patterns match unversioned paths.
+        # This ensures scope patterns work identically for /tools and /v1/tools.
+        return _strip_v1_prefix(normalized)
 
     def _get_normalized_request_path(self, request: Request) -> str:
         """Resolve request path with APP_ROOT_PATH-aware normalization.

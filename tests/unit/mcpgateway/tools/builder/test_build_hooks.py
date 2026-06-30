@@ -22,6 +22,20 @@ import mcpgateway.tools.builder.build_hooks as bh_module
 from mcpgateway.tools.builder.build_hooks import BuildPyWithUI
 
 # ---------------------------------------------------------------------------
+# Build module availability check
+# ---------------------------------------------------------------------------
+
+
+def _has_build_module() -> bool:
+    """Check if the 'build' module is available."""
+    try:
+        import build  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -361,6 +375,7 @@ class TestWheelContents:
         (static / "tailwind.min.css").write_text("/* tailwind */")
         (tmp_path / "pyproject.toml").write_text(_MINIMAL_PYPROJECT)
 
+    @pytest.mark.skipif(not _has_build_module(), reason="build module not installed")
     def test_wheel_contains_bundle_js(self, tmp_path):
         bundle_name = "bundle-deadbeef.js"
         self._setup_project(tmp_path, bundle_name=bundle_name)
@@ -369,6 +384,7 @@ class TestWheelContents:
             names = zf.namelist()
         assert any(bundle_name in n for n in names), f"{bundle_name} not found in wheel: {names}"
 
+    @pytest.mark.skipif(not _has_build_module(), reason="build module not installed")
     def test_wheel_contains_tailwind_css(self, tmp_path):
         self._setup_project(tmp_path)
         wheel = self._build_wheel(tmp_path)
@@ -376,6 +392,7 @@ class TestWheelContents:
             names = zf.namelist()
         assert any("tailwind.min.css" in n for n in names), f"tailwind.min.css not found in wheel: {names}"
 
+    @pytest.mark.skipif(not _has_build_module(), reason="build module not installed")
     def test_wheel_excludes_files_outside_globs(self, tmp_path):
         self._setup_project(tmp_path)
         static = tmp_path / "mcpgateway" / "static"
