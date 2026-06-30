@@ -29,6 +29,11 @@ from unittest.mock import patch
 from fastapi import APIRouter
 import pytest
 
+# First-Party
+from tests.helpers.router_helpers import collect_routes
+
+_route_paths = lambda r: [p for p, *_ in collect_routes(r)]  # noqa: E731
+
 # ---------------------------------------------------------------------------
 # Helpers (duplicated from test_api_v1.py intentionally — no shared module)
 # ---------------------------------------------------------------------------
@@ -75,10 +80,6 @@ def _required_kwargs(**extras) -> dict:
     )
     base.update(extras)
     return base
-
-
-def _route_paths(router: APIRouter) -> list[str]:
-    return [r.path for r in router.routes]
 
 
 def _make_mock_router_module(sentinel_path: str) -> ModuleType:
