@@ -1385,13 +1385,19 @@ async def _send_streamable_http_json_response(send: Send, *, status_code: int, p
         send: ASGI send callable.
         status_code: HTTP status code for the response.
         payload: JSON-serializable response payload.
+
+    Note:
+        Content-Length is NOT manually set here to allow the compression
+        middleware (or ASGI server) to set it correctly after compression.
+        Setting it manually causes "Content-Length mismatch" errors when
+        compression is enabled (issue #5457).
     """
     body = orjson.dumps(payload)
     await send(
         {
             "type": "http.response.start",
             "status": status_code,
-            "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
+            "headers": [(b"content-type", b"application/json")],
         }
     )
     await send({"type": "http.response.body", "body": body})
@@ -4255,21 +4261,50 @@ class SessionManagerWrapper:
                 if mcp_session_id != "not-provided":
                     response_headers.append((b"mcp-session-id", mcp_session_id.encode()))
 
-                await send(
-                    {
-                        "type": "http.response.start",
-                        "status": response.status_code,
-                        "headers": response_headers,
-                    }
-                )
-                await send(
-                    {
-                        "type": "http.response.body",
-                        "body": response.content,
-                    }
-                )
-                logger.debug("[HTTP_AFFINITY_FORWARDED] Response sent | Status: %s", response.status_code)
-                return
+                    # Forward the inbound gateway auth header (default: Authorization,
+                    # or AUTH_HEADER_NAME when customized) so /rpc can re-authenticate
+                    # the same caller. Hardcoding "authorization" here would silently
+                    # drop auth on deployments using a custom AUTH_HEADER_NAME.
+                    _gw_auth_lower = _resolve_auth_header_name(settings).lower()
+                    if _gw_auth_lower in headers:
+                        rpc_headers[_gw_auth_lower] = headers[_gw_auth_lower]
+                    # Forward passthrough headers for upstream MCP servers (see #3640).
+                    # First-Party
+                    from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
+
+                    rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
+
+                    response = await client.post(
+                        f"{internal_loopback_base_url()}/rpc",
+                        content=body,
+                        headers=rpc_headers,
+                        timeout=30.0,
+                    )
+
+                    # Return response to client
+                    # Note: Content-Length is NOT manually set to allow compression
+                    # middleware to set it correctly after compression (issue #5457)
+                    response_headers = [
+                        (b"content-type", b"application/json"),
+                    ]
+                    if mcp_session_id != "not-provided":
+                        response_headers.append((b"mcp-session-id", mcp_session_id.encode()))
+
+                    await send(
+                        {
+                            "type": "http.response.start",
+                            "status": response.status_code,
+                            "headers": response_headers,
+                        }
+                    )
+                    await send(
+                        {
+                            "type": "http.response.body",
+                            "body": response.content,
+                        }
+                    )
+                    logger.debug("[HTTP_AFFINITY_FORWARDED] Response sent | Status: %s", response.status_code)
+                    return
             except Exception as e:
                 logger.error("[HTTP_AFFINITY_FORWARDED] Error routing to /rpc: %s", e)
                 # Fall through to SDK handling as fallback
@@ -4322,8 +4357,11 @@ class SessionManagerWrapper:
 
                     if response:
                         # Send forwarded response back to client
+                        # Note: Content-Length is NOT manually added to allow compression
+                        # middleware to set it correctly after compression (issue #5457).
+                        # We filter out transfer-encoding, content-encoding, and content-length
+                        # from the forwarded headers to let the middleware handle them.
                         response_headers = [(k.encode(), v.encode()) for k, v in response["headers"].items() if k.lower() not in ("transfer-encoding", "content-encoding", "content-length")]
-                        response_headers.append((b"content-length", str(len(response["body"])).encode()))
 
                         await send(
                             {
@@ -4441,11 +4479,12 @@ class SessionManagerWrapper:
                                 timeout=settings.mcpgateway_pool_rpc_forward_timeout,
                             )
 
-                        response_headers = [
-                            (b"content-type", b"application/json"),
-                            (b"content-length", str(len(response.content)).encode()),
-                            (b"mcp-session-id", mcp_session_id.encode()),
-                        ]
+                            # Note: Content-Length is NOT manually set to allow compression
+                            # middleware to set it correctly after compression (issue #5457)
+                            response_headers = [
+                                (b"content-type", b"application/json"),
+                                (b"mcp-session-id", mcp_session_id.encode()),
+                            ]
 
                         await send(
                             {
