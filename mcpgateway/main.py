@@ -6173,9 +6173,7 @@ async def test_resource_by_uri(
     logger.debug("Reading resource by URI %s for user %s", resource_uri, safe_log_user(user))
     auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
     try:
-        resource_content = await resource_service.read_resource(
-            db, resource_uri=resource_uri, user=auth_user_email, token_teams=auth_token_teams
-        )
+        resource_content = await resource_service.read_resource(db, resource_uri=resource_uri, user=auth_user_email, token_teams=auth_token_teams)
         return {"content": resource_content}
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
