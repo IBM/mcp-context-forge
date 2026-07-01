@@ -42,6 +42,7 @@ from mcpgateway.services.tool_service import (
     _get_validator_class_and_check,
     _is_sensitive_tool_header_name,
     _protect_tool_headers_for_storage,
+    _sync_meta_traceparent,
     _validate_header_mapping_targets,
     _validate_mapping_contents,
     apply_mapping_into_target,
@@ -61,6 +62,19 @@ from mcpgateway.utils.services_auth import encode_auth
 
 # Local
 from tests.helpers.admin_mocks import install_admin_user
+
+
+def test_sync_meta_traceparent_updates_existing_value_from_outbound_header():
+    meta = {"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-1111111111111111-01", "existing": True}
+    headers = {
+        "Traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-2222222222222222-01",
+        "traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-3333333333333333-01",
+    }
+
+    result = _sync_meta_traceparent(meta, headers)
+
+    assert result == {"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-3333333333333333-01", "existing": True}
+    assert meta["traceparent"] == "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-1111111111111111-01"
 
 
 @pytest.fixture(autouse=True)
@@ -2973,6 +2987,11 @@ class TestToolService:
         async def mock_sse_client(*_args, **_kwargs):
             yield ("read", "write")
 
+        def inject_headers(headers):
+            traced = dict(headers)
+            traced["traceparent"] = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-3333333333333333-01"
+            return traced
+
         headers_token = request_headers_var.set({"mcp-session-id": "downstream-sse"})
         try:
             with (
@@ -2980,14 +2999,25 @@ class TestToolService:
                 patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
                 patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
                 patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+                patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=inject_headers),
                 patch("mcpgateway.services.tool_service.get_upstream_session_registry", side_effect=RegistryNotInitializedError("not init")),
             ):
-                result = await tool_service.invoke_tool(test_db, "dummy_tool", {"p": "v"}, request_headers=None)
+                result = await tool_service.invoke_tool(
+                    test_db,
+                    "dummy_tool",
+                    {"p": "v"},
+                    request_headers=None,
+                    meta_data={"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-1111111111111111-01"},
+                )
         finally:
             request_headers_var.reset(headers_token)
 
         session_mock.initialize.assert_awaited_once()
-        session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"p": "v"}, meta=None)
+        session_mock.call_tool.assert_awaited_once_with(
+            "dummy_tool",
+            {"p": "v"},
+            meta={"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-3333333333333333-01"},
+        )
         assert result.content[0].text == "sse fallback ok"
 
     @pytest.mark.asyncio
@@ -3078,11 +3108,21 @@ class TestToolService:
             mock_settings.default_passthrough_headers = []
             mock_settings.tool_timeout = 60
 
-            result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
+            result = await tool_service.invoke_tool(
+                test_db,
+                "dummy_tool",
+                {"param": "value"},
+                request_headers=None,
+                meta_data={"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-1111111111111111-01", "source": "api-server-runs"},
+            )
 
         assert result.content[0].text == "MCP response"
-        assert captured_headers["traceparent"].startswith("00-")
+        assert captured_headers["traceparent"] == "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
         assert captured_headers["X-Correlation-ID"] == "corr-123"
+        assert session_mock.call_tool.await_args.kwargs["meta"] == {
+            "traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
+            "source": "api-server-runs",
+        }
         assert span_names[:3] == ["tool.invoke", "mcp.client.call", "mcp.client.initialize"]
         assert "mcp.client.request" in span_names
         assert "mcp.client.response" in span_names
