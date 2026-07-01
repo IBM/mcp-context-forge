@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for sanitized tool pre-invoke hook diagnostics."""
+"""Location: ./tests/unit/mcpgateway/services/test_tool_pre_invoke_logging.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for sanitized tool pre-invoke hook diagnostics.
+"""
 
 # Standard
 import ast

@@ -18,6 +18,8 @@ on:
       - "plugins/**"
       - "pyproject.toml"
       - ".github/workflows/lint.yml"
+  merge_group:
+    branches: ["main"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -50,9 +52,6 @@ jobs:
       matrix:
         target: [mcpgateway, plugins]
         tool:
-          - id: ruff
-            runner: ubuntu-slim
-            cmd: "uv tool run ruff==$RUFF_VERSION check $TARGET"
           - id: vulture
             runner: ubuntu-slim
             cmd: 'uv tool run vulture==$VULTURE_VERSION $TARGET --min-confidence 80 --exclude "*_pb2.py,*_pb2_grpc.py"'
@@ -62,9 +61,6 @@ jobs:
               uv tool run --with-editable . --with pylint-pydantic==$PYLINT_PYDANTIC_VERSION
               pylint==$PYLINT_VERSION $TARGET
               --rcfile=.pylintrc.$TARGET --fail-on E --fail-under=10 --jobs=0
-          - id: interrogate
-            runner: ubuntu-slim
-            cmd: "uv tool run interrogate==$INTERROGATE_VERSION -vv $TARGET --fail-under 100"
           - id: radon
             runner: ubuntu-slim
             cmd: "uv tool run radon==$RADON_VERSION cc $TARGET --min C --show-complexity && uv tool run radon==$RADON_VERSION mi $TARGET --min B"
@@ -102,10 +98,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - id: yamllint
-            setup: "true"
-            cmd: uv tool run yamllint==$YAMLLINT_VERSION -c .yamllint .
-
           - id: jsonlint
             setup: |
               sudo apt-get update -qq

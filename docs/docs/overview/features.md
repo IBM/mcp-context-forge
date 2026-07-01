@@ -6,8 +6,8 @@
     - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
     - Docker Compose (nginx proxy): `http://localhost:8080`
 
-
 ---
+
 
 ## 🌐 Multi-Transport Core
 
@@ -54,6 +54,7 @@
 
 ---
 
+
 ## 🛠 Tool & Server Registry
 
 ??? success "What you can register"
@@ -82,6 +83,97 @@
     ```
 
 ---
+
+
+## 🧠 LLM Providers & Chat
+
+The **LLM Gateway** unifies multiple AI providers behind a single OpenAI-compatible API surface, and provides
+an interactive chat agent that connects LLMs to MCP virtual servers. All LLM features are controlled by the
+master flag `LLMCHAT_ENABLED` (default: `true`).
+
+??? info "LLM Architecture"
+
+    The LLM Gateway consists of three surfaces (all loaded under `LLMCHAT_ENABLED=true`):
+
+    1. **Provider registry** — multi-provider configuration with encrypted API keys, health checks, and
+       auto-synchronization of available models from upstream providers.
+       Supports 12 provider types: OpenAI, Azure OpenAI, Anthropic, AWS Bedrock, Google Vertex, WatsonX,
+       Ollama, OpenAI-compatible, Cohere, Mistral, Groq, and Together.
+
+    2. **OpenAI-compatible proxy** — `POST /v1/chat/completions` and `GET /v1/models`,
+       a drop-in substitute for the OpenAI API. Routes to the configured provider based on the model ID.
+       Returns standard OpenAI chat/completion responses including streaming (SSE).
+
+    3. **Chat agent** — an optional, session-oriented chat layer (`/llmchat/*`) powered by LangChain.
+       Connects a selected LLM to one or more MCP virtual servers, creating a ReAct agent that can invoke
+       MCP tools during conversation. Features include chat history (Redis-backed), streaming responses,
+       thinking/reasoning display, and multi-worker session management.
+
+??? info "LLM Provider Management"
+
+    Providers are configured via the Admin UI (**Settings → LLM Settings**).
+
+    - Add a provider, select the type, enter API keys and
+      configuration parameters. API keys are encrypted at rest.
+    - Each provider can register multiple models with capability flags (chat, streaming, function calling,
+      vision), context windows, and max-output limits.
+    - Auto-sync available models from the provider's API with one click.
+    - Health checks verify connectivity and credentials.
+    - Enable/disable providers and individual models via toggle switches.
+
+??? info "OpenAI-Compatible Proxy"
+
+    The proxy endpoint (`POST /v1/chat/completions`, configurable prefix via `LLM_API_PREFIX`) accepts
+    standard OpenAI request bodies and returns Chat Completion or Chat Completion Chunk responses.
+    Clients never need provider-specific keys or URLs; the gateway resolves the target provider from the
+    database.
+
+    RBAC: requires `llm.invoke` permission for completions, `llm.read` for models endpoint.
+
+??? info "Chat Agent"
+
+    Chat sessions are initialized via `POST /llmchat/connect`: select an MCP virtual server, choose a model,
+    and a LangChain ReAct agent is created. Messages sent over `POST /llmchat/chat` are processed with
+    MCP tool execution feedback interwoven in the conversation.
+
+    Session state, chat history, and model configuration are stored per-user (Redis-backed in multi-worker
+    deployments with automatic cleanup on disconnect).
+
+!!! error "Feature flag"
+
+    All LLM features (proxy, config, admin, chat) are loaded under a single condition: `LLMCHAT_ENABLED=true`.
+    Set `LLMCHAT_ENABLED=false` to completely disable all LLM services.
+
+**See also:**
+    - [LLM Proxy API](../api/llm-proxy.md) — OpenAI-compatible proxy endpoint documentation
+    - [LLM Provider Settings](../manage/llm-settings.md) — Admin UI guide for configuring providers and models
+    - [LLM Chat](../using/clients/llm-chat.md) — Interactive chat agent with MCP tool integration
+
+---
+
+
+## 💰 Cost Control (ToolOps)
+
+??? info "Costs per tool call"
+
+    * Tool-level cost calculation using per-model pricing
+    * Prompt & completion token usage tracking
+    * Cost breakdown per-called with tool-level and total cost summaries
+    * Cost thresholds to prevent runaway spend
+    * Per-tool throttling to control expensive operations
+    * Historical data for optimization
+    * Budget alerts
+
+??? code "Enable ToolOps"
+
+    ```bash
+    # Set in your environment or .env file
+    TOOLOPS_ENABLED=true
+    TOOLOPS_AUTHORIZATION=<token>
+    ```
+
+---
+
 
 ## 🔌 gRPC-to-MCP Translation
 
@@ -134,6 +226,7 @@
 
 ---
 
+
 ## 🖥 Admin UI
 
 ??? abstract "Built with"
@@ -152,6 +245,7 @@
     * **Backwards compatible** - legacy entities show graceful fallbacks
 
 ---
+
 
 ## 🗄 Persistence, Caching & Observability
 
@@ -175,6 +269,7 @@
 
 ---
 
+
 ## 🧩 Dev & Extensibility
 
 ??? summary "Highlights"
@@ -186,6 +281,7 @@
 
 ---
 
+
 ## Next Steps
 
 * **Hands-on Walk-through** → [Quick Start](quick_start.md)
@@ -193,4 +289,5 @@
 * **Admin UI deep dive** → [UI Guide](ui.md)
 
 !!! success "Ready to explore"
-    With transports, federation, and security handled for you, focus on building great **MCP tools, prompts, and agents**-the gateway has your back.
+    With transports, federation, and security handled for you, focus on building great **MCP tools, prompts, and agents**-the gateway
+    has your back.

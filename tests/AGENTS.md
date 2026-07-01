@@ -17,7 +17,6 @@ tests/
 ├── fuzz/             # Fuzzing & property-based testing
 ├── load/             # Load testing scenarios
 ├── loadtest/         # Locust load test configurations
-├── jmeter/           # JMeter performance test plans
 ├── client/           # MCP client testing
 ├── async/            # Async operation tests
 ├── migration/        # Database migration tests
@@ -66,13 +65,6 @@ make dev-query-log                # Dev server with query logging
 make query-log-tail               # Tail query log in another terminal
 make query-log-analyze            # Analyze for N+1 patterns
 make test-db-perf                 # Run performance tests
-
-# JMeter load testing
-make jmeter-rest-baseline         # REST API baseline (1,000 RPS, 10min)
-make jmeter-mcp-baseline          # MCP JSON-RPC baseline (1,000 RPS, 15min)
-make jmeter-load                  # Production load test (4,000 RPS, 30min)
-make jmeter-stress                # Stress test (ramp to 10,000 RPS)
-make jmeter-report                # Generate HTML report from JTL file
 
 # PR readiness
 make doctest test htmlcov smoketest lint-web bandit interrogate pylint verify
@@ -209,6 +201,10 @@ async def test_with_mock():
         result = await function_under_test()
         assert result["status"] == "ok"
 ```
+
+### Asserting on Mocked Call Arguments
+
+For regression tests that assert a specific keyword argument was (or was not) passed to a mocked call, add a small module-level `_assert_*` helper instead of repeating the inspection logic in every test. See `test_*_audit_no_db.py` under `tests/unit/mcpgateway/services/` for the pattern (`_assert_no_db_passed`), which checks `call_args_list` for an absent `db=` kwarg and validates `action`/`resource_type` correctness.
 
 ## Coverage Workflow
 

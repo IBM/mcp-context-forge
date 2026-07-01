@@ -270,7 +270,7 @@ services:
   gateway:
     image: ${IMAGE_LOCAL:-ghcr.io/ibm/mcp-context-forge:latest}
     environment:
-      - DATABASE_URL=postgresql://test_user:test_migration_password_123@postgres:5432/mcp_test  # pragma: allowlist secret
+      - DATABASE_URL=${DATABASE_URL:-postgresql+psycopg://test_user:test_migration_password_123@postgres:5432/mcp_test}  # pragma: allowlist secret
       - REDIS_URL=redis://redis:6379/0
       - MCPGATEWAY_UI_ENABLED=false
       - MCPGATEWAY_ADMIN_API_ENABLED=true

@@ -43,6 +43,8 @@ from mcpgateway.admin import (  # admin_get_metrics,
     _get_latency_heatmap_python,
     _get_latency_percentiles_postgresql,
     _get_latency_percentiles_python,
+    _gateway_result_payload,
+    _gateway_result_status,
     _get_span_entity_performance,
     _get_timeseries_metrics_postgresql,
     _get_timeseries_metrics_python,
@@ -259,6 +261,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
 from mcpgateway.config import settings, UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.schemas import (
+    GatewayRead,
     GatewayTestRequest,
     GlobalConfigRead,
     GlobalConfigUpdate,
@@ -272,7 +275,7 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.export_service import ExportError, ExportService
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNotFoundError, GatewayService
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayLookupConflictError, GatewayNotFoundError, GatewayService
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService
 from mcpgateway.services.logging_service import LoggingService
@@ -2008,6 +2011,16 @@ class TestAdminToolRoutes:
         )
         assert _build_auth_obj_from_form(form) is None
 
+    def test_build_auth_obj_from_form_oauth_raises_422(self, mock_request, mock_db):
+        """_build_auth_obj_from_form raises 422 when auth_type is oauth."""
+        from fastapi import HTTPException
+
+        form = FakeForm({"auth_type": "oauth"})
+        with pytest.raises(HTTPException) as exc_info:
+            _build_auth_obj_from_form(form)
+        assert exc_info.value.status_code == 422
+        assert "oauth" in exc_info.value.detail.lower()
+
     @patch.object(ToolService, "set_tool_state")
     async def test_admin_set_tool_state_various_activate_values(self, mock_toggle_status, mock_request, mock_db):
         """Test setting tool state with various activate values."""
@@ -3259,6 +3272,14 @@ class TestAdminGatewayRoutes:
         with pytest.raises(RuntimeError):
             await admin_get_gateway("gw-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
+    @patch.object(GatewayService, "get_gateway")
+    async def test_admin_get_gateway_conflict_error(self, mock_get_gateway, mock_request, mock_db):
+        mock_get_gateway.side_effect = GatewayLookupConflictError("duplicate slug")
+        with pytest.raises(HTTPException) as excinfo:
+            await admin_get_gateway("gw-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert excinfo.value.status_code == 409
+        assert "ambiguous across multiple visible gateways" in excinfo.value.detail
+
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_valid_auth_types(self, mock_register_gateway, mock_request, mock_db):
         """Test adding gateway with valid authentication types."""
@@ -3347,8 +3368,9 @@ class TestAdminGatewayRoutes:
         assert result.status_code == 422
 
     @patch.object(GatewayService, "update_gateway")
-    async def test_admin_edit_gateway_url_validation(self, mock_update_gateway, mock_request, mock_db):
+    async def test_admin_edit_gateway_url_validation(self, mock_update_gateway, mock_request, mock_db, monkeypatch):
         """Test editing gateway with URL validation."""
+        monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: True)
         # Test with invalid URL
         form_data = FakeForm(
             {
@@ -6761,6 +6783,7 @@ class TestOAuthFunctionality:
             assert gateway_update.oauth_config["client_id"] == "client-id"
             assert gateway_update.oauth_config["client_secret"] == "enc-secret"
             assert gateway_update.oauth_config["scopes"] == ["a", "b", "c"]
+
     @patch.object(GatewayService, "update_gateway")
     async def test_admin_edit_gateway_oauth_with_audience_parameter(self, mock_update_gateway, mock_request, mock_db):
         """Test editing gateway with OAuth audience parameter (for Atlassian, Auth0, etc.)."""
@@ -6797,7 +6820,6 @@ class TestOAuthFunctionality:
             assert gateway_update.oauth_config["audience"] == "api.atlassian.com"
             assert gateway_update.oauth_config["client_id"] == "client-id"
             assert gateway_update.oauth_config["scopes"] == ["read:jira-work", "write:jira-work"]
-
 
     @patch.object(GatewayService, "update_gateway")
     async def test_admin_edit_gateway_oauth_assembled_minimal_fields_covers_false_branches(self, mock_update_gateway, mock_request, mock_db, monkeypatch):
@@ -7519,8 +7541,9 @@ class TestErrorHandlingPaths:
         assert "Service unavailable" in body["message"]
 
     @patch.object(GatewayService, "update_gateway")
-    async def test_admin_update_gateway_rest_validation_error(self, mock_update_gateway, mock_request, mock_db):
+    async def test_admin_update_gateway_rest_validation_error(self, mock_update_gateway, mock_request, mock_db, monkeypatch):
         """Test updating gateway with validation error (covers lines 12600-12601)."""
+        monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: True)
         from mcpgateway.admin import admin_update_gateway_rest
         from pydantic import ValidationError
 
@@ -7660,6 +7683,27 @@ class TestErrorHandlingPaths:
             body = json.loads(result.body)
             assert body["success"] is False
             assert "Failed to delete gateway" in body["message"]
+
+    async def test_admin_delete_gateway_rest_pending_response(self, mock_db):
+        from mcpgateway.admin import admin_delete_gateway_rest
+
+        with patch("mcpgateway.admin.gateway_service.delete_gateway", new_callable=AsyncMock) as mock_delete:
+            mock_delete.return_value = GatewayRead(
+                id="gateway-123",
+                name="gw",
+                url="http://example.com",
+                transport="sse",
+                enabled=True,
+                status="deleting",
+            )
+
+            result = await admin_delete_gateway_rest("gateway-123", mock_db, user={"email": "test-user", "db": mock_db})
+
+            assert isinstance(result, JSONResponse)
+            assert result.status_code == 202
+            body = json.loads(result.body)
+            assert body["success"] is True
+            assert body["gateway"]["status"] == "deleting"
 
 
 class TestImportConfigurationEndpoints:
@@ -16580,6 +16624,27 @@ async def test_admin_delete_gateway_error_inactive_checked_redirect(mock_delete,
 
 
 @pytest.mark.asyncio
+@patch.object(GatewayService, "delete_gateway")
+async def test_admin_delete_gateway_pending_redirect_message(mock_delete, mock_db):
+    request = MagicMock(spec=Request)
+    request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "false"}))
+    request.scope = {"root_path": ""}
+    mock_delete.return_value = GatewayRead(
+        id="gateway-1",
+        name="gw",
+        url="http://example.com",
+        transport="sse",
+        enabled=True,
+        status="deleting",
+    )
+
+    response = await admin_delete_gateway("gateway-1", request, mock_db, user={"email": "user@example.com"})
+
+    assert response.status_code == 303
+    assert "message=Gateway%20deletion%20accepted%20and%20pending%20cleanup." in response.headers["location"]
+
+
+@pytest.mark.asyncio
 @patch.object(ResourceService, "delete_resource")
 async def test_admin_delete_resource_success(mock_delete, mock_db):
     request = MagicMock(spec=Request)
@@ -17485,6 +17550,7 @@ async def test_admin_add_a2a_agent_oauth_assembled_from_form_fields(monkeypatch,
     assert agent_data.oauth_config["client_secret"] == "enc"
     assert agent_data.oauth_config["scopes"] == ["a", "b", "c"]
 
+
 @pytest.mark.asyncio
 async def test_admin_add_a2a_agent_oauth_with_audience(monkeypatch, mock_db):
     """Test adding A2A agent with OAuth audience parameter (for Atlassian, Auth0, etc.)."""
@@ -17759,6 +17825,7 @@ async def test_admin_edit_a2a_agent_oauth_config_invalid_json(monkeypatch, mock_
     assert response.status_code == 200
     agent_update = service.update_agent.call_args.kwargs["agent_data"]
     assert agent_update.oauth_config is None
+
 
 @pytest.mark.asyncio
 async def test_admin_edit_a2a_agent_oauth_with_audience(monkeypatch, mock_db):
@@ -18085,6 +18152,36 @@ class TestUtilityFunctions:
         assert "error=Error%20msg" in result
         assert "include_inactive=true" in result
         assert result.endswith("#catalog")
+
+    def test_build_admin_redirect_with_message(self):
+        result = _build_admin_redirect("", "catalog", message="Saved ok")
+        assert result == "/admin/?message=Saved%20ok#catalog"
+
+    def test_gateway_result_status_for_dict_and_basemodel(self):
+        result_model = GatewayRead(
+            id="gw-1",
+            name="gw",
+            url="http://example.com",
+            transport="sse",
+            enabled=True,
+            status="pending",
+        )
+        assert _gateway_result_status({"status": "deleting"}) == "deleting"
+        assert _gateway_result_status(result_model) == "pending"
+        assert _gateway_result_status({"status": 123}) is None
+
+    def test_gateway_result_payload_for_dict_and_basemodel(self):
+        result_model = GatewayRead(
+            id="gw-1",
+            name="gw",
+            url="http://example.com",
+            transport="sse",
+            enabled=True,
+            status="pending",
+        )
+        assert _gateway_result_payload({"id": "gw-1"}) == {"id": "gw-1"}
+        assert _gateway_result_payload(result_model)["status"] == "pending"
+        assert _gateway_result_payload(MagicMock()) is None
 
     def test_build_admin_redirect_with_invalid_team_id(self):
         result = _build_admin_redirect("", "tools", team_id="invalid-uuid")

@@ -1,3 +1,5 @@
 title: API Reference
 nav:
   - cancellation.md
+  - plugin-bindings-api.md
+  - llm-proxy.md

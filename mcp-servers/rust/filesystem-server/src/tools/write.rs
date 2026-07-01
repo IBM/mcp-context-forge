@@ -94,19 +94,21 @@ pub async fn move_file(
         )
         .await?;
 
-    tokio::fs::rename(&source_canon_path, dest_canon_parent.join(dest_filename))
+    let dest_canon_path = dest_canon_parent.join(dest_filename);
+
+    tokio::fs::rename(&source_canon_path, &dest_canon_path)
         .await
         .with_context(|| {
             format!(
                 "Could not move '{}' to '{}'",
                 source_canon_path.display(),
-                dest_filename.display()
+                dest_canon_path.display()
             )
         })?;
     tracing::info!(
         "Moved file from {} to {}",
         &source_canon_path.display(),
-        dest_canon_parent.join(dest_filename).display()
+        dest_canon_path.display()
     );
     Ok(format!(
         "Successfully moved file from {} to {}",

@@ -21,6 +21,7 @@ import logging
 from pathlib import Path
 import re
 from typing import Any
+import warnings
 
 # Third-Party
 from fastapi import HTTPException, Request, Response
@@ -29,8 +30,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.deprecations import VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE
 
 logger = logging.getLogger(__name__)
+_VALIDATION_MIDDLEWARE_DEPRECATION_LOGGED = False
 
 
 def is_path_traversal(uri: str) -> bool:
@@ -59,7 +62,12 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         Args:
             app: FastAPI application instance
         """
+        global _VALIDATION_MIDDLEWARE_DEPRECATION_LOGGED  # pylint: disable=global-statement
         super().__init__(app)
+        warnings.warn(VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE, DeprecationWarning, stacklevel=2)
+        if not _VALIDATION_MIDDLEWARE_DEPRECATION_LOGGED:
+            logger.warning(VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE)
+            _VALIDATION_MIDDLEWARE_DEPRECATION_LOGGED = True
         self.enabled = settings.experimental_validate_io
         self.strict = settings.validation_strict
         self.sanitize = settings.sanitize_output
@@ -152,23 +160,22 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         # UAIDs have their own validation rules and should not be subject to
         # generic dangerous pattern matching (UAIDs contain semicolons as field separators)
         if value.startswith("uaid:"):
-            # Validate UAID format using the official UAID validator
             try:
                 # First-Party
                 from mcpgateway.utils.uaid import validate_uaid  # pylint: disable=import-outside-toplevel
-
-                is_valid, error_msg = validate_uaid(value)
-                if is_valid:
-                    return  # Valid UAID, skip dangerous pattern check
-                # Invalid UAID: log warning and raise in strict mode, otherwise fall through to dangerous pattern check
-                logger.warning(f"Invalid UAID format for {key}: {error_msg}")
-                if settings.environment not in ("development", "staging") and self.strict:
-                    raise HTTPException(status_code=422, detail=f"Invalid UAID format: {error_msg}")
-                # Non-strict mode: fall through to dangerous pattern check below
             except ImportError:
                 # Fallback if UAID utilities not available - allow UAIDs through
                 logger.debug("UAID validator not available, skipping UAID validation")
                 return
+
+            is_valid, error_msg = validate_uaid(value)
+            if is_valid:
+                return  # Valid UAID, skip dangerous pattern check
+            # Invalid UAID: log warning and raise in strict mode, otherwise fall through to dangerous pattern check
+            logger.warning(f"Invalid UAID format for {key}: {error_msg}")
+            if settings.environment not in ("development", "staging") and self.strict:
+                raise HTTPException(status_code=422, detail=f"Invalid UAID format: {error_msg}")
+            # Non-strict mode: fall through to dangerous pattern check below
 
         # Special handling for identifier fields (_id suffix or 'id')
         if key.endswith("_id") or key == "id":
@@ -226,7 +233,7 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         if ".." in path or "//" in path:
             raise HTTPException(status_code=400, detail="invalid_path: Path traversal detected")
 
-        try:
+        try:  # noqa: PLW0717 - keep validation checks in the path-resolution block.
             resolved_path = Path(path).resolve()
 
             # Check path depth
@@ -255,7 +262,7 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         if not hasattr(response, "body"):
             return response
 
-        try:
+        try:  # noqa: PLW0717 - keep sanitization failures non-fatal.
             body = response.body
             if isinstance(body, bytes):
                 body = body.decode("utf-8", errors="replace")
@@ -265,7 +272,6 @@ class ValidationMiddleware(BaseHTTPMiddleware):
 
             response.body = sanitized.encode("utf-8")
             response.headers["content-length"] = str(len(response.body))
-
         except Exception as e:
             logger.warning("Failed to sanitize response: %s", e)
 

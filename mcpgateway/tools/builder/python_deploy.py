@@ -133,7 +133,6 @@ class MCPStackPython(CICDModule):
             return
 
         with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=self.console) as progress:
-
             for plugin in plugins:
                 plugin_name = plugin.name
 

@@ -35,6 +35,9 @@ from functools import lru_cache
 import html
 import json
 import logging
+import math
+import multiprocessing
+import os
 import re
 import signal
 import sys
@@ -96,11 +99,13 @@ from mcpgateway.db import A2APushNotificationConfig
 from mcpgateway.db import A2ATask as DbA2ATask
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.deprecations import RUST_MCP_RUNTIME_DEPRECATION_MESSAGE, VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE
 from mcpgateway.handlers.sampling import SamplingError, SamplingHandler
 from mcpgateway.middleware.client_disconnect import ClientDisconnectMiddleware
 from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
 from mcpgateway.middleware.forwarded_host import ForwardedHostMiddleware
+from mcpgateway.middleware.header_size_middleware import HeaderSizeMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware, run_pre_request_hooks
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
 from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
@@ -120,6 +125,7 @@ from mcpgateway.plugins import (
     stop_plugin_invalidation_listener,
 )
 from mcpgateway.plugins.violation_codes import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode, VALID_HTTP_STATUS_CODES
+from mcpgateway.routers.openapi_schema_router import router as openapi_schema_router
 from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
@@ -164,9 +170,10 @@ from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictE
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import CompletionError, CompletionService
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, TemplateValidationError
+from mcpgateway.services.dataplane_publisher import DataplanePublisherService
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.export_service import ExportError, ExportService
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayNameConflictError, GatewayNotFoundError
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayLookupConflictError, GatewayNameConflictError, GatewayNotFoundError
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
@@ -178,7 +185,6 @@ from mcpgateway.services.prompt_service import PromptError, PromptLockConflictEr
 from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
 from mcpgateway.services.tag_service import TagService
-from mcpgateway.services.dataplane_publisher import DataplanePublisherService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
 from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import (
@@ -192,7 +198,8 @@ from mcpgateway.transports.streamablehttp_transport import (
 from mcpgateway.utils import uaid as uaid_utils
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
-from mcpgateway.utils.error_formatter import ErrorFormatter
+from mcpgateway.utils.error_formatter import ErrorFormatter, sanitize_validation_error_for_log, should_expose_error_details
+from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filter_sensitive_headers
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -213,7 +220,6 @@ from mcpgateway.utils.verify_credentials import (
     require_docs_auth_override,
 )
 from mcpgateway.validation.jsonrpc import JSONRPCError
-from mcpgateway.version import router as version_router
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -753,12 +759,15 @@ def _serialize_mcp_tool_definition(tool: Any) -> Dict[str, Any]:
         data = {}
 
     name = data.get("name", getattr(tool, "name", None))
+    title = data.get("title", getattr(tool, "title", None))
     description = data.get("description", getattr(tool, "description", None))
     input_schema = data.get("inputSchema", getattr(tool, "input_schema", None))
 
     payload: Dict[str, Any] = {}
     if name is not None:
         payload["name"] = name
+    if title is not None:
+        payload["title"] = title
     if description is not None or name is not None or input_schema is not None:
         payload["description"] = description or ""
     if input_schema is not None:
@@ -1626,6 +1635,23 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         logger.info("All services initialized successfully")
 
+        # Warn about per-worker database connection pool multiplication
+        if os.environ.get("GUNICORN_CMD_ARGS") or os.environ.get("GUNICORN_WORKERS"):
+            cpu_count = multiprocessing.cpu_count()
+            default_workers = min(2 * cpu_count + 1, 16)
+            workers = int(os.environ.get("GUNICORN_WORKERS", str(default_workers)))
+            total_pool = settings.db_pool_size + settings.db_max_overflow
+            total_connections = workers * total_pool
+            logger.warning(
+                "⚠️  DATABASE POOL: Running with %d gunicorn workers. Total max DB connections = workers(%d) * (pool_size + max_overflow) = %d * %d = %d. Ensure PostgreSQL max_connections >= %d. ",
+                workers,
+                workers,
+                workers,
+                total_pool,
+                total_connections,
+                total_connections,
+            )
+
         # Warn about unsafe UAID configuration if A2A is enabled
         if settings.mcpgateway_a2a_enabled:
             uaid_allowed_domains = getattr(settings, "uaid_allowed_domains", [])
@@ -1873,6 +1899,16 @@ async def setup_passthrough_headers():
         logger.warning("⚠️  Base Header Override: ENABLED - Client headers can override gateway headers")
     else:
         logger.info("🔒 Base Header Override: DISABLED - Gateway headers take precedence")
+
+    # SECURITY AUDIT: Startup warning for sensitive header forwarding (Issue #3621 Phase 1)
+    if settings.enable_sensitive_header_passthrough:
+        logger.warning(
+            "🔐 SECURITY AUDIT: Sensitive Header Passthrough ENABLED - "
+            "whitelisted sensitive headers (Authorization, X-API-Key, etc.) will be forwarded to downstream A2A agents. "
+            "Monitor metric 'a2a.downstream_headers.forwarded' for visibility (requires OBSERVABILITY_ENABLED=true). "
+            "Only enable when trusted A2A agents require upstream credentials."
+        )
+
     db_gen = get_db()
     db = next(db_gen)  # pylint: disable=stop-iteration-return
     try:
@@ -1930,7 +1966,6 @@ def validate_security_configuration():
 
         # Warn about ephemeral storage without strict user-in-DB mode
         if not getattr(current_settings, "require_user_in_db", False):
-
             is_ephemeral = ":memory:" in current_settings.database_url or current_settings.database_url == "sqlite:///./mcp.db"
             if is_ephemeral:
                 logger.warning("Using potentially ephemeral storage with platform admin bootstrap enabled. Consider using persistent storage or setting REQUIRE_USER_IN_DB=true for production.")
@@ -1938,7 +1973,6 @@ def validate_security_configuration():
         # Warn about default JWT issuer/audience in non-development environments
         if current_settings.environment != "development":
             if current_settings.jwt_issuer == "mcpgateway":
-
                 logger.warning("Using default JWT_ISSUER in %s environment. Set a unique JWT_ISSUER per environment to prevent cross-environment token acceptance.", current_settings.environment)
             if current_settings.jwt_audience == "mcpgateway-api":
                 logger.warning("Using default JWT_AUDIENCE in %s environment. Set a unique JWT_AUDIENCE per environment to prevent cross-environment token acceptance.", current_settings.environment)
@@ -2142,6 +2176,11 @@ async def request_validation_exception_handler(_request: Request, exc: RequestVa
     Returns:
         JSONResponse: A 422 Unprocessable Entity response with error details.
     """
+    logger.warning("Request validation error on %s: %s", _request.url.path if _request else "unknown", sanitize_validation_error_for_log(exc))
+
+    if not should_expose_error_details():
+        return ORJSONResponse(status_code=422, content={"detail": "An error occurred, please try again."})
+
     if _request.url.path.startswith("/tools"):
         error_details = []
 
@@ -2158,8 +2197,7 @@ async def request_validation_exception_handler(_request: Request, exc: RequestVa
             error_detail = {"type": type_, "loc": loc, "msg": msg, "ctx": ctx_serializable}
             error_details.append(error_detail)
 
-        response_content = {"detail": error_details}
-        return ORJSONResponse(status_code=422, content=response_content)
+        return ORJSONResponse(status_code=422, content={"detail": error_details})
     return await fastapi_default_validation_handler(_request, exc)
 
 
@@ -2608,10 +2646,10 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
     Middleware to protect Admin UI routes (/admin/*) requiring admin privileges.
 
     Exempts login-related paths and static assets:
-    - /admin/login - login page
-    - /admin/logout - logout action
-    - /admin/forgot-password - self-service password reset request page
-    - /admin/reset-password/* - self-service password reset completion page
+    - /v1/admin/login - login page
+    - /v1/admin/logout - logout action
+    - /v1/admin/forgot-password - self-service password reset request page
+    - /v1/admin/reset-password/* - self-service password reset completion page
     - /admin/static/* - static assets
 
     All other /admin/* routes require the user to be authenticated AND be an admin.
@@ -2624,12 +2662,31 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
 
     # Public paths under /admin that do not require prior authentication.
     EXEMPT_PATHS = [
-        "/admin/login",
-        "/admin/logout",
-        "/admin/forgot-password",
-        "/admin/reset-password",
-        "/admin/static",
+        "/v1/admin/login",
+        "/v1/admin/logout",
+        "/v1/admin/forgot-password",
+        "/v1/admin/reset-password",
+        "/admin/static",  # Legacy path
+        "/v1/admin/static",  # Versioned path
     ]
+
+    @staticmethod
+    def _strip_v1(path: str) -> str:
+        """Strip /v1 prefix from path for normalization.
+
+        Args:
+            path: Path to normalize.
+
+        Returns:
+            Path with /v1 prefix removed if present.
+
+        Examples:
+            >>> AdminAuthMiddleware._strip_v1("/v1/admin/login")
+            '/admin/login'
+            >>> AdminAuthMiddleware._strip_v1("/admin/login")
+            '/admin/login'
+        """
+        return path[len("/v1") :] if path.startswith("/v1/") else path
 
     @staticmethod
     def _error_response(request: Request, root_path: str, status_code: int, detail: str, error_param: str = None):
@@ -2693,14 +2750,19 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS":
             return await call_next(request)
 
-        # Check if this is an admin route
-        is_admin_route = scope_path.startswith("/admin")
+        # Check if this is an admin route (versioned /v1/admin/* or legacy /admin/*)
+        is_admin_route = scope_path.startswith("/admin") or scope_path.startswith("/v1/admin")
 
         if not is_admin_route:
             return await call_next(request)
 
+        # Normalize to unversioned path for exempt/permission checks so that
+        # both direct (/v1/admin/login) and proxy-prefixed (/qa/gateway/admin/login)
+        # paths are handled uniformly.
+        check_path = self._strip_v1(scope_path)
+
         # Check if path is exempt (login, logout, static)
-        is_exempt = any(scope_path.startswith(p) for p in self.EXEMPT_PATHS)
+        is_exempt = any(check_path.startswith(self._strip_v1(p)) for p in self.EXEMPT_PATHS)
         if is_exempt:
             return await call_next(request)
 
@@ -3079,11 +3141,18 @@ else:
 # Add security headers middleware
 app.add_middleware(SecurityHeadersMiddleware)
 
+# Add RFC 6585 § 5 header size validation middleware (before rate limiting for early rejection)
+if settings.header_size_validation_enabled:
+    app.add_middleware(HeaderSizeMiddleware)
+    logger.info(
+        f"📏 RFC 6585 header size validation enabled: max_total={settings.max_header_total_size_bytes}B, max_field={settings.max_header_field_size_bytes}B, max_count={settings.max_header_count}"
+    )
+
 # Add rate limiting middleware (after HttpAuthMiddleware for user-aware limiting)
 if settings.rate_limiting_enabled:
     app.add_middleware(RateLimitMiddleware)
     logger.info(
-        f"🚦 Rate limiting enabled: Redis={settings.rate_limiting_redis_enabled}, "
+        f"🚦 RFC 6585 rate limiting enabled: Redis={settings.rate_limiting_redis_enabled}, "
         f"Tiers[CRITICAL={settings.rate_limit_critical_rpm}, "
         f"HIGH={settings.rate_limit_high_rpm}, "
         f"MEDIUM={settings.rate_limit_medium_rpm}, "
@@ -3093,7 +3162,7 @@ if settings.rate_limiting_enabled:
 # Add validation middleware if explicitly enabled
 if settings.validation_middleware_enabled:
     app.add_middleware(ValidationMiddleware)
-    logger.info("🔒 Input validation and output sanitization middleware enabled")
+    logger.warning("🔒 Input validation and output sanitization middleware enabled. %s", VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE)
 else:
     logger.info("🔒 Input validation and output sanitization middleware disabled")
 
@@ -4986,22 +5055,22 @@ async def delete_a2a_agent(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-_SENSITIVE_REQUEST_HEADER_PATTERNS = (
-    re.compile(r"^authorization$", re.IGNORECASE),
-    re.compile(r"^proxy-authorization$", re.IGNORECASE),
-    re.compile(r"^x-api-key$", re.IGNORECASE),
-    re.compile(r"^api-key$", re.IGNORECASE),
-    re.compile(r"^apikey$", re.IGNORECASE),
-    re.compile(r"^x-(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
-    re.compile(r"^cookie$", re.IGNORECASE),
-    re.compile(r"^set-cookie$", re.IGNORECASE),
-    re.compile(r"^host$", re.IGNORECASE),
-)
+def _prepare_request_headers(request_headers: Dict[str, str]) -> Dict[str, str]:
+    """
+    Prepare request headers for A2A agent invocation based on security configuration.
 
+    Phase 1 (Issue #3621): When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true, pass all headers.
+    Filtering happens in a2a_service after checking whitelist.
 
-def _filter_sensitive_headers(headers: Dict[str, str]) -> Dict[str, str]:
-    """Strip sensitive/credential headers from a dict before passing to plugins."""
-    return {k: v for k, v in headers.items() if not any(p.match(k) for p in _SENSITIVE_REQUEST_HEADER_PATTERNS)}
+    Args:
+        request_headers: Raw request headers dictionary
+
+    Returns:
+        Dict[str, str]: Prepared headers (either all headers or filtered headers)
+    """
+    if settings.enable_sensitive_header_passthrough:
+        return {k.lower(): v for k, v in request_headers.items()}
+    return _filter_sensitive_headers({k.lower(): v for k, v in request_headers.items()})
 
 
 @a2a_router.post("/{agent_name}/invoke", response_model=Dict[str, Any])
@@ -5084,9 +5153,10 @@ async def invoke_a2a_agent(
             bearer_token = None
 
         # Extract inbound request metadata for plugin context
-        # Strip sensitive/credential headers before passing to plugins.
+        # When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=false: strip sensitive headers at router level
+        # When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true: pass all headers; service layer filters after whitelist check
         content_type = request.headers.get("content-type")
-        request_headers = _filter_sensitive_headers({k.lower(): v for k, v in request.headers.items()})
+        request_headers = _prepare_request_headers(request.headers)
 
         return await a2a_service.invoke_agent(
             db,
@@ -5176,9 +5246,10 @@ async def invoke_a2a_agent_by_id(
             bearer_token = None
 
         # Extract inbound request metadata for plugin context
-        # Strip sensitive/credential headers before passing to plugins.
+        # When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=false: strip sensitive headers at router level
+        # When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true: pass all headers; service layer filters after whitelist check
         content_type = request.headers.get("content-type")
-        request_headers = _filter_sensitive_headers({k.lower(): v for k, v in request.headers.items()})
+        request_headers = _prepare_request_headers(request.headers)
 
         return await a2a_service.invoke_agent(
             db,
@@ -6902,6 +6973,7 @@ async def list_gateways(
 async def register_gateway(
     gateway: GatewayCreate,
     request: Request,
+    response: Response = None,  # type: ignore[assignment]
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[GatewayRead, JSONResponse]:
@@ -6911,6 +6983,7 @@ async def register_gateway(
     Args:
         gateway: Gateway creation data.
         request: The FastAPI request object for metadata extraction.
+        response: Outgoing response used to set `202 Accepted` for async lifecycle.
         db: Database session.
         user: Authenticated user.
 
@@ -6953,7 +7026,7 @@ async def register_gateway(
 
         logger.debug(f"User {SecurityValidator.sanitize_log_message(user_email)} is creating a new gateway for team {team_id}")
 
-        return await gateway_service.register_gateway(
+        result = await gateway_service.register_gateway(
             db,
             gateway,
             created_by=metadata["created_by"],
@@ -6964,6 +7037,13 @@ async def register_gateway(
             owner_email=user_email,
             visibility=visibility,
         )
+        result_status = getattr(result, "status", None)
+        if result_status is None and isinstance(result, dict):
+            result_status = result.get("status")
+        if result_status == "pending" and response is not None:
+            response.status_code = status.HTTP_202_ACCEPTED
+            response.headers["Retry-After"] = str(max(1, math.ceil(settings.gateway_async_lifecycle_poll_interval)))
+        return result
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_502_BAD_GATEWAY)
@@ -7008,6 +7088,8 @@ async def get_gateway(gateway_id: str, request: Request, db: Session = Depends(g
         gateway = await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
         _enforce_scoped_resource_access(request, db, user, f"/gateways/{gateway_id}")
         return gateway
+    except GatewayLookupConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except GatewayNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -7018,6 +7100,7 @@ async def update_gateway(
     gateway_id: str,
     gateway: GatewayUpdate,
     request: Request,
+    response: Response = None,  # type: ignore[assignment]
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[GatewayRead, JSONResponse]:
@@ -7028,6 +7111,7 @@ async def update_gateway(
         gateway_id: Gateway ID.
         gateway: Gateway update data.
         request (Request): The FastAPI request object for metadata extraction.
+        response: Outgoing response used to set `202 Accepted` for async lifecycle.
         db: Database session.
         user: Authenticated user.
 
@@ -7050,6 +7134,12 @@ async def update_gateway(
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
         )
+        result_status = getattr(result, "status", None)
+        if result_status is None and isinstance(result, dict):
+            result_status = result.get("status")
+        if result_status == "pending" and response is not None:
+            response.status_code = status.HTTP_202_ACCEPTED
+            response.headers["Retry-After"] = str(max(1, math.ceil(settings.gateway_async_lifecycle_poll_interval)))
         db.commit()
         db.close()
         return result
@@ -7077,13 +7167,20 @@ async def update_gateway(
 
 @gateway_router.delete("/{gateway_id}")
 @require_permission("gateways.delete")
-async def delete_gateway(gateway_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_gateway(
+    gateway_id: str,
+    request: Request,
+    response: Response = None,  # type: ignore[assignment]
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Union[Dict[str, str], GatewayRead]:
     """
     Delete a gateway by ID.
 
     Args:
         gateway_id: ID of the gateway.
         request: Incoming FastAPI request (for visibility scope resolution).
+        response: Outgoing response used to set `202 Accepted` for async lifecycle.
         db: Database session.
         user: Authenticated user.
 
@@ -7099,7 +7196,7 @@ async def delete_gateway(gateway_id: str, request: Request, db: Session = Depend
         auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
         current = await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
         has_resources = bool(current.capabilities.get("resources"))
-        await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
+        result = await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
 
         # If the gateway had resources and was successfully deleted, invalidate
         # the whole resource cache. This is needed since the cache holds both
@@ -7110,6 +7207,14 @@ async def delete_gateway(gateway_id: str, request: Request, db: Session = Depend
 
         db.commit()
         db.close()
+        result_status = getattr(result, "status", None)
+        if result_status is None and isinstance(result, dict):
+            result_status = result.get("status")
+        if result_status == "deleting":
+            if response is not None:
+                response.status_code = status.HTTP_202_ACCEPTED
+                response.headers["Retry-After"] = str(max(1, math.ceil(settings.gateway_async_lifecycle_poll_interval)))
+            return result
         return {"status": "success", "message": f"Gateway {gateway_id} deleted"}
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -12006,43 +12111,89 @@ async def cleanup_import_statuses(max_age_hours: int = 24, user=Depends(get_curr
 # Mount static files
 # app.mount("/static", StaticFiles(directory=str(settings.static_dir)), name="static")
 
-# Include routers
-app.include_router(version_router)
-app.include_router(protocol_router)
-app.include_router(tool_router)
-app.include_router(resource_router)
-app.include_router(prompt_router)
-app.include_router(gateway_router)
-app.include_router(root_router)
+# ---------------------------------------------------------------------------
+# Router assembly — centralized /v1 prefix
+# ---------------------------------------------------------------------------
+# All versioned API routes are registered once under /v1 via build_v1_router.
+# Unversioned routes (RFC well-known, OAuth, health, utility, LLM proxy) are
+# mounted directly on `app` below.
+
+# First-Party
+from mcpgateway.api.v1 import build_v1_router  # pylint: disable=import-outside-toplevel  # noqa: E402
+
+v1_router = build_v1_router(
+    settings,
+    protocol_router=protocol_router,
+    tool_router=tool_router,
+    resource_router=resource_router,
+    prompt_router=prompt_router,
+    gateway_router=gateway_router,
+    root_router=root_router,
+    server_router=server_router,
+    metrics_router=metrics_router,
+    tag_router=tag_router,
+    export_import_router=export_import_router,
+    a2a_router=a2a_router,
+)
+app.include_router(v1_router)
+
+# ---------------------------------------------------------------------------
+# Backward-compatible legacy routes (deprecated unversioned aliases for /v1/*)
+# ---------------------------------------------------------------------------
+# Each endpoint now served at /v1/<path> is also mounted at /<path> so that
+# existing clients continue to work.  Responses from these routes receive
+# Sunset / Deprecation / Link headers via DeprecationHeadersMiddleware below.
+if settings.legacy_api_enabled:
+    # First-Party
+    from mcpgateway.api.v1 import build_legacy_router  # pylint: disable=import-outside-toplevel  # noqa: E402
+    from mcpgateway.middleware.deprecation import DeprecationHeadersMiddleware  # pylint: disable=import-outside-toplevel  # noqa: E402
+
+    legacy_router = build_legacy_router(
+        settings,
+        protocol_router=protocol_router,
+        tool_router=tool_router,
+        resource_router=resource_router,
+        prompt_router=prompt_router,
+        gateway_router=gateway_router,
+        root_router=root_router,
+        server_router=server_router,
+        metrics_router=metrics_router,
+        tag_router=tag_router,
+        export_import_router=export_import_router,
+        a2a_router=a2a_router,
+    )
+    app.include_router(legacy_router)
+    app.add_middleware(DeprecationHeadersMiddleware, sunset_date=settings.legacy_api_sunset_date)
+    logger.info("Legacy (unversioned) route shims mounted — sunset: %s", settings.legacy_api_sunset_date)
+else:  # pragma: no cover
+    logger.info("Legacy route shims disabled (LEGACY_API_ENABLED=false)")
+
+# ---------------------------------------------------------------------------
+# Unversioned routes — mounted directly on app (no /v1 prefix)
+# ---------------------------------------------------------------------------
+
+# Internal utility routes (/_internal/*) — must stay at root
 app.include_router(utility_router)
-app.include_router(server_router)
+
+# RFC well-known endpoints (/.well-known/*)
+app.include_router(well_known_router)
+
+# Per-server well-known endpoints (/servers/{id}/.well-known/*)
 app.include_router(server_well_known_router, prefix="/servers")
-app.include_router(metrics_router)
-app.include_router(tag_router)
-app.include_router(export_import_router)
 
-# Compliance report router (admin API)
-if settings.mcpgateway_admin_api_enabled:
-    try:
-        # First-Party
-        from mcpgateway.routers.compliance_router import router as compliance_router
+# OpenAPI schema generation (/v1/tools/generate-schemas-from-openapi)
+# prefix="/v1/tools" is hardcoded in the router — not versioned via v1_router to avoid /v1/v1/tools
+app.include_router(openapi_schema_router)
 
-        app.include_router(compliance_router)
-        logger.info("Compliance router included")
-    except ImportError as e:  # pragma: no cover - optional import guard
-        logger.warning(f"Compliance router not available: {e}")
-else:
-    logger.info("Compliance router not included - admin API disabled")
-
-# Tool plugin bindings router
+# OAuth 2.0 protocol (/oauth/*) — standard location, not versioned
 try:
     # First-Party
-    from mcpgateway.routers.tool_plugin_bindings import router as tool_plugin_bindings_router  # pylint: disable=import-outside-toplevel
+    from mcpgateway.routers.oauth_router import oauth_router  # pylint: disable=import-outside-toplevel
 
-    app.include_router(tool_plugin_bindings_router)
-    logger.info("Tool plugin bindings router included")
-except ImportError as e:
-    logger.error(f"Tool plugin bindings router not available: {e}")
+    app.include_router(oauth_router)
+    logger.info("OAuth router included")
+except ImportError:
+    logger.debug("OAuth router not available")
 
 # A2A agent plugin bindings router
 try:
@@ -12058,7 +12209,7 @@ except ImportError as e:
 if getattr(settings, "structured_logging_enabled", True):
     try:
         # First-Party
-        from mcpgateway.routers.log_search import router as log_search_router
+        from mcpgateway.routers.log_search import router as log_search_router  # pylint: disable=import-outside-toplevel
 
         app.include_router(log_search_router)
         logger.info("Log search router included - structured logging enabled")
@@ -12081,200 +12232,41 @@ if settings.mcpgateway_admin_api_enabled and settings.siem_export_enabled:
 else:
     logger.info("SIEM router not included - admin API or SIEM export disabled")
 
-# Conditionally include observability router if enabled
-if settings.observability_enabled:
-    # First-Party
-    from mcpgateway.routers.observability import router as observability_router
+# NOTE: observability_router and metrics_maintenance_router are mounted via
+# _assemble_routers() → build_v1_router / build_legacy_router above.
+# Direct app.include_router() calls were removed to prevent double-registration
+# and to ensure DeprecationHeadersMiddleware covers their legacy (unversioned) paths.
 
-    app.include_router(observability_router)
-    logger.info("Observability router included - observability API endpoints enabled")
-else:
-    logger.info("Observability router not included - observability disabled")
+# LLM proxy (/v1 or settings.llm_api_prefix) — prefix is runtime-configured,
+# cannot be nested inside the v1_router prefix
 
-# Conditionally include metrics maintenance router if cleanup or rollup is enabled
-if settings.metrics_cleanup_enabled or settings.metrics_rollup_enabled:
-    # First-Party
-    from mcpgateway.routers.metrics_maintenance import router as metrics_maintenance_router
 
-    app.include_router(metrics_maintenance_router)
-    logger.info("Metrics maintenance router included - cleanup/rollup API endpoints enabled")
+def _warn_llm_prefix_collision(llm_prefix: str, gateway_prefix: str = "/v1") -> None:
+    """Warn when llm_api_prefix collides with the gateway versioned prefix."""
+    if llm_prefix == gateway_prefix:
+        logger.warning(
+            "LLM_API_PREFIX=%r conflicts with the gateway %r prefix — set LLM_API_PREFIX to a distinct path (e.g. /llm/v1)",
+            llm_prefix,
+            gateway_prefix,
+        )
 
-# Conditionally include A2A router if A2A features are enabled
-if settings.mcpgateway_a2a_enabled:
-    app.include_router(a2a_router)
-    logger.info("A2A router included - A2A features enabled")
-else:
-    logger.info("A2A router not included - A2A features disabled")
 
-app.include_router(well_known_router)
-
-# Include Email Authentication router if enabled
-if settings.email_auth_enabled:
-    try:
-        # First-Party
-        from mcpgateway.routers.auth import auth_router
-        from mcpgateway.routers.email_auth import email_auth_router
-
-        app.include_router(email_auth_router, prefix="/auth/email", tags=["Email Authentication"])
-        app.include_router(auth_router, tags=["Main Authentication"])
-        logger.info("Authentication routers included - Auth enabled")
-
-        # Include SSO router if enabled
-        if settings.sso_enabled:
-            try:
-                # First-Party
-                from mcpgateway.routers.sso import sso_router
-
-                app.include_router(sso_router, tags=["SSO Authentication"])
-                logger.info("SSO router included - SSO authentication enabled")
-            except ImportError as e:
-                logger.error(f"SSO router not available: {e}")
-        else:
-            logger.info("SSO router not included - SSO authentication disabled")
-    except ImportError as e:
-        logger.error(f"Authentication routers not available: {e}")
-else:
-    logger.info("Email authentication router not included - Email auth disabled")
-
-# Include Team Management router if email auth is enabled
-if settings.email_auth_enabled:
-    try:
-        # First-Party
-        from mcpgateway.routers.teams import teams_router
-
-        app.include_router(teams_router, prefix="/teams", tags=["Teams"])
-        logger.info("Team management router included - Teams enabled with email auth")
-    except ImportError as e:
-        logger.error(f"Team management router not available: {e}")
-else:
-    logger.info("Team management router not included - Email auth disabled")
-
-# Include JWT Token Catalog router if email auth is enabled
-if settings.email_auth_enabled:
-    try:
-        # First-Party
-        from mcpgateway.routers.tokens import router as tokens_router
-
-        app.include_router(tokens_router, tags=["JWT Token Catalog"])
-        logger.info("JWT Token Catalog router included - Token management enabled with email auth")
-    except ImportError as e:
-        logger.error(f"JWT Token Catalog router not available: {e}")
-else:
-    logger.info("JWT Token Catalog router not included - Email auth disabled")
-
-# Include RBAC router if email auth is enabled
-if settings.email_auth_enabled:
-    try:
-        # First-Party
-        from mcpgateway.routers.rbac import router as rbac_router
-
-        app.include_router(rbac_router, tags=["RBAC"])
-        logger.info("RBAC router included - Role-based access control enabled")
-    except ImportError as e:
-        logger.error(f"RBAC router not available: {e}")
-else:
-    logger.info("RBAC router not included - Email auth disabled")
-
-# Include OAuth router
-try:
-    # First-Party
-    from mcpgateway.routers.oauth_router import oauth_router
-
-    app.include_router(oauth_router)
-    logger.info("OAuth router included")
-except ImportError:
-    logger.debug("OAuth router not available")
-
-# Include reverse proxy router if enabled
-if settings.mcpgateway_reverse_proxy_enabled:
-    try:
-        # First-Party
-        from mcpgateway.routers.reverse_proxy import router as reverse_proxy_router
-
-        app.include_router(reverse_proxy_router)
-        logger.info("Reverse proxy router included")
-    except ImportError:
-        logger.debug("Reverse proxy router not available")
-else:
-    logger.info("Reverse proxy router not included - feature disabled")
-
-# Include LLMChat router
 if settings.llmchat_enabled:
     try:
         # First-Party
-        from mcpgateway.routers.llmchat_router import llmchat_router
+        from mcpgateway.routers.llm_proxy_router import llm_proxy_router  # pylint: disable=import-outside-toplevel
 
-        app.include_router(llmchat_router)
-        logger.info("LLM Chat router included")
-    except ImportError:
-        logger.debug("LLM Chat router not available")
-
-    # Include LLM configuration and proxy routers (internal API)
-    try:
-        # First-Party
-        from mcpgateway.admin import enforce_admin_csrf  # pylint: disable=import-outside-toplevel
-        from mcpgateway.routers.llm_admin_router import llm_admin_router
-        from mcpgateway.routers.llm_config_router import llm_config_router
-        from mcpgateway.routers.llm_proxy_router import llm_proxy_router
-
-        app.include_router(llm_config_router, prefix="/llm", tags=["LLM Configuration"])
+        _warn_llm_prefix_collision(settings.llm_api_prefix)
         app.include_router(llm_proxy_router, prefix=settings.llm_api_prefix, tags=["LLM Proxy"])
-        app.include_router(llm_admin_router, prefix="/admin/llm", tags=["LLM Admin"], dependencies=[Depends(enforce_admin_csrf)])
-        logger.info("LLM configuration, proxy, and admin routers included")
+        logger.info(f"LLM proxy router included at prefix {settings.llm_api_prefix}")
     except ImportError as e:
-        logger.debug(f"LLM routers not available: {e}")
+        logger.debug(f"LLM proxy router not available: {e}")
 
-# Include Toolops router
-if settings.toolops_enabled:
-    try:
-        # First-Party
-        from mcpgateway.routers.toolops_router import toolops_router
-
-        app.include_router(toolops_router)
-        logger.info("Toolops router included")
-    except ImportError:
-        logger.debug("Toolops router not available")
-
-# Cancellation router (tool cancellation endpoints)
-if settings.mcpgateway_tool_cancellation_enabled:
-    try:
-        # First-Party
-        from mcpgateway.routers.cancellation_router import router as cancellation_router
-
-        app.include_router(cancellation_router)
-        logger.info("Cancellation router included (tool cancellation enabled)")
-    except ImportError:
-        logger.debug("Orchestrate router not available")
-else:
-    logger.info("Tool cancellation feature disabled - cancellation endpoints not available")
-
-# Feature flags for admin UI and API
+# Feature flags for admin UI (logged for visibility; admin router is inside v1_router)
 UI_ENABLED = settings.mcpgateway_ui_enabled
 ADMIN_API_ENABLED = settings.mcpgateway_admin_api_enabled
 logger.info(f"Admin UI enabled: {UI_ENABLED}")
 logger.info(f"Admin API enabled: {ADMIN_API_ENABLED}")
-
-# Conditional UI and admin API handling
-if ADMIN_API_ENABLED:
-    logger.info("Including admin_router - Admin API enabled")
-    # Lazy import: mcpgateway.admin is a large module (~19k lines, ~120ms cold).
-    # Only load it when the admin API is actually mounted.
-    # First-Party
-    from mcpgateway.admin import admin_router, enforce_admin_csrf, set_logging_service, validate_section_permissions  # pylint: disable=import-outside-toplevel
-
-    set_logging_service(logging_service)
-    app.include_router(admin_router)  # Admin routes imported from admin.py
-
-    # Validate section-to-permission mapping consistency at startup
-    validate_section_permissions(admin_router)
-
-    # Runtime-mode admin endpoints (GET/PATCH /admin/runtime/{mcp,a2a}-mode).
-    # First-Party
-    from mcpgateway.routers.runtime_admin_router import runtime_admin_router  # pylint: disable=import-outside-toplevel
-
-    app.include_router(runtime_admin_router, prefix="/admin/runtime", tags=["Runtime Admin"], dependencies=[Depends(enforce_admin_csrf)])
-else:
-    logger.warning("Admin API routes not mounted - Admin API disabled via MCPGATEWAY_ADMIN_API_ENABLED=False")
 
 
 class MCPRuntimeHeaderTransportWrapper:
@@ -12423,7 +12415,8 @@ def _build_mcp_transport_app():
             )
 
         logger.warning(
-            "MCP runtime mode: %s (boot=%s). Public /mcp dispatches via MCPIngressMount; ingresses=%s; current=%s. Runtime override may flip via PATCH /admin/runtime/mcp-mode.",
+            "%s MCP runtime mode: %s (boot=%s). Public /mcp dispatches via MCPIngressMount; ingresses=%s; current=%s. Runtime override may flip via PATCH /admin/runtime/mcp-mode.",
+            RUST_MCP_RUNTIME_DEPRECATION_MESSAGE,
             _current_mcp_runtime_mode(),
             boot_mode,
             ingress.names(),
@@ -12437,7 +12430,8 @@ def _build_mcp_transport_app():
 
     if _should_mount_public_rust_transport():
         logger.warning(
-            "MCP runtime mode: %s. GET/POST/DELETE /mcp requests will be proxied to %s. MCP session core mode: %s. MCP replay/resume core mode: %s. MCP live stream core mode: %s. MCP affinity core mode: %s. MCP session auth reuse mode: %s.",
+            "%s MCP runtime mode: %s. GET/POST/DELETE /mcp requests will be proxied to %s. MCP session core mode: %s. MCP replay/resume core mode: %s. MCP live stream core mode: %s. MCP affinity core mode: %s. MCP session auth reuse mode: %s.",
+            RUST_MCP_RUNTIME_DEPRECATION_MESSAGE,
             _current_mcp_runtime_mode(),
             settings.experimental_rust_mcp_runtime_uds or settings.experimental_rust_mcp_runtime_url,
             _current_mcp_session_core_mode(),
@@ -12553,7 +12547,7 @@ if UI_ENABLED:
 
     # Redirect root path to admin UI
     @app.get("/")
-    async def root_redirect():
+    async def root_redirect():  # pragma: no cover
         """
         Redirects the root path ("/") to "/admin/".
 

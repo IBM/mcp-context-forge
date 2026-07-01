@@ -1,29 +1,42 @@
-"""Experimental Dataplane publisher service for periodically exporting user configuration to Redis.
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/services/dataplane_publisher.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Experimental Dataplane publisher service for periodically exporting user configuration to Redis.
 NOTE: This publisher backs dataplane wip feature and it is disabled by default.
 Be careful not to overfit production-grade assumptions onto the design.
 """
 
+# Standard
 import asyncio
 from collections import defaultdict
 import logging
 import os
 import socket
 from typing import Any, TypedDict
-from sqlalchemy import select
+
+# Third-Party
 import msgpack
+from sqlalchemy import select
+
+# First-Party
 from mcpgateway.db import (
-    EmailUser,
     EmailTeamMember,
-    Gateway as DbGateway,
-    Prompt as DbPrompt,
-    Resource as DbResource,
-    Server as DbServer,
-    Tool as DbTool,
+    EmailUser,
     fresh_db_session,
+)
+from mcpgateway.db import (
     server_prompt_association,
     server_resource_association,
     server_tool_association,
 )
+from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import Prompt as DbPrompt
+from mcpgateway.db import Resource as DbResource
+from mcpgateway.db import Server as DbServer
+from mcpgateway.db import Tool as DbTool
 from mcpgateway.utils.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
@@ -114,7 +127,7 @@ class DataplanePublisherService:
         while not self._shutdown_event.is_set():
             redis = await get_redis_client()
             if redis is None:
-                logger.error(f"Redis client is unavailable; retrying in {REDIS_PUBLISHER_TIME} seconds.")
+                logger.error("Redis client is unavailable; retrying in %s seconds.", REDIS_PUBLISHER_TIME)
                 await asyncio.sleep(REDIS_PUBLISHER_TIME)
                 continue
 
@@ -136,7 +149,7 @@ class DataplanePublisherService:
                     continue
 
                 # We hold the lock - publish data
-                logger.info(f"Worker {WORKER_ID} publishing dataplane payload...")
+                logger.info("Worker %s publishing dataplane payload...", WORKER_ID)
                 payload = await self.fetch_payload()
 
                 if payload is None:
@@ -152,11 +165,11 @@ class DataplanePublisherService:
                         )
                     try:
                         await pipe.execute()
-                        logger.info(f"Published {len(payload)} user configs")
+                        logger.info("Published %d user configs", len(payload))
                     except Exception as e:
-                        logger.error(f"Could not write dataplane payload to Redis: {e}")
+                        logger.error("Could not write dataplane payload to Redis: %s", e)
             except Exception as e:
-                logger.error(f"Error during publish: {e}")
+                logger.error("Error during publish: %s", e)
             finally:
                 if acquired:
                     # Release lock if we still own it (CAS to prevent stealing)
@@ -170,7 +183,7 @@ class DataplanePublisherService:
                     try:
                         await redis.eval(release_script, 1, PUBLISHER_LOCK_KEY, WORKER_ID)
                     except Exception as e:
-                        logger.warning(f"Failed to release lock: {e}")
+                        logger.warning("Failed to release lock: %s", e)
 
             # Wait for next cycle
             try:
@@ -190,7 +203,6 @@ class DataplanePublisherService:
         result: dict[str, UserConfig] = {}
 
         for user_email, user_data in data.items():
-
             servers = user_data["servers"]
             gateways = user_data["gateways"]
             prompts = user_data["prompts"]
@@ -212,7 +224,6 @@ class DataplanePublisherService:
             virtual_hosts: dict[str, VirtualHostConfig] = {}
 
             for server in servers:
-
                 backends: dict[str, BackendConfig] = {}
 
                 for gateway_id, backend_items in server["backend_items"].items():
@@ -297,7 +308,7 @@ class DataplanePublisherService:
                 }
 
             except Exception as err:
-                logger.error(f"Could not build dataplane payload data from the database: {err}")
+                logger.error("Could not build dataplane payload data from the database: %s", err)
                 return None
 
     def _build_user_data(

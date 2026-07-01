@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import urllib.parse
 
 # Third-Party
+import httpx
 import jwt
 import orjson
 from sqlalchemy import and_, select
@@ -45,6 +46,24 @@ logger = logging.getLogger(__name__)
 
 # Constants
 ADFS_PROVIDER_ID = "adfs"
+
+
+class _NoRedirectPyJWKClient(jwt.PyJWKClient):
+    """PyJWKClient that fetches JWKS via httpx with follow_redirects=False.
+
+    PyJWT's default fetch_data() uses urllib.request.urlopen which follows HTTP
+    redirects transparently, bypassing the same-origin check on jwks_uri.
+    Overriding with httpx (follow_redirects=False) closes the SSRF redirect bypass.
+    """
+
+    def fetch_data(self) -> Any:
+        try:
+            with httpx.Client(follow_redirects=False, timeout=self.timeout) as _client:
+                resp = _client.get(self.uri, headers=self.headers)
+                resp.raise_for_status()
+                return resp.json()
+        except httpx.HTTPError as exc:
+            raise jwt.exceptions.PyJWKClientConnectionError(f'Fail to fetch data from the url, err: "{exc}"') from exc
 
 
 class SSOError(Exception):
@@ -94,7 +113,7 @@ class SSOService:
 
     _OIDC_METADATA_CACHE_TTL_SECONDS = 300
     _oidc_config_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
-    _jwks_client_cache: Dict[str, jwt.PyJWKClient] = {}
+    _jwks_client_cache: Dict[str, _NoRedirectPyJWKClient] = {}
     _STATE_BINDING_SEPARATOR = "."
     _STATE_BINDING_HEX_LEN = 64
     _EMAIL_VERIFIED_CLAIMS: Tuple[str, ...] = (
@@ -181,7 +200,7 @@ class SSOService:
             return orjson.loads(payload_bytes)
 
         except (ValueError, orjson.JSONDecodeError, UnicodeDecodeError) as e:
-            logger.warning(f"Failed to decode JWT claims: {e}")
+            logger.warning("Failed to decode JWT claims: %s", e)
             return None
 
     async def _get_oidc_provider_metadata(self, issuer: str) -> Optional[Dict[str, Any]]:
@@ -246,7 +265,7 @@ class SSOService:
 
         return issuer, jwks_uri
 
-    def _get_jwks_client(self, jwks_uri: str) -> jwt.PyJWKClient:
+    def _get_jwks_client(self, jwks_uri: str) -> _NoRedirectPyJWKClient:
         """Get or create a cached PyJWKClient instance.
 
         Args:
@@ -256,7 +275,7 @@ class SSOService:
             Cached or newly created `PyJWKClient`.
         """
         if jwks_uri not in self._jwks_client_cache:
-            self._jwks_client_cache[jwks_uri] = jwt.PyJWKClient(jwks_uri)
+            self._jwks_client_cache[jwks_uri] = _NoRedirectPyJWKClient(jwks_uri)
         return self._jwks_client_cache[jwks_uri]
 
     async def _verify_oidc_id_token(self, provider: SSOProvider, id_token: str, expected_nonce: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -755,6 +774,9 @@ class SSOService:
         if skipped:
             logger.warning("Ignored unknown SSOProvider fields during creation: %s", skipped)
 
+        if filtered_data.get("trusted_for_api_auth") and not (filtered_data.get("api_audience") or "").strip():
+            raise ValueError("api_audience is required when trusted_for_api_auth is enabled (prevents confused-deputy token acceptance)")
+
         provider = SSOProvider(**filtered_data)
         self.db.add(provider)
         self.db.commit()
@@ -803,6 +825,14 @@ class SSOService:
         for key, value in provider_data.items():
             if hasattr(provider, key):
                 setattr(provider, key, value)
+
+        # Re-check the RESULTING state, not just the incoming payload: a partial
+        # update that only touches api_audience (e.g. clearing it to "") would
+        # otherwise leave a pre-existing trusted_for_api_auth=True provider
+        # accepting tokens for any audience (confused-deputy).
+        if getattr(provider, "trusted_for_api_auth", False) and not (getattr(provider, "api_audience", None) or "").strip():
+            self.db.rollback()
+            raise ValueError("api_audience is required when trusted_for_api_auth is enabled (prevents confused-deputy token acceptance)")
 
         provider.updated_at = utc_now()
         self.db.commit()
@@ -1219,11 +1249,11 @@ class SSOService:
         auth_session = self.db.execute(stmt).scalar_one_or_none()
 
         if not auth_session:
-            logger.warning(f"OAuth callback: no auth session found for state/provider {provider_id}. Possible CSRF or replay.")
+            logger.warning("OAuth callback: no auth session found for state/provider %s. Possible CSRF or replay.", provider_id)
             return None
 
         if auth_session.is_expired:
-            logger.warning(f"OAuth callback: auth session expired for provider {provider_id}.")
+            logger.warning("OAuth callback: auth session expired for provider %s.", provider_id)
             self.db.delete(auth_session)
             self.db.commit()
             return None
@@ -1238,21 +1268,21 @@ class SSOService:
 
         provider = auth_session.provider
         if not provider:
-            logger.error(f"OAuth callback: provider '{provider_id}' not found for auth session.")
+            logger.error("OAuth callback: provider '%s' not found for auth session.", provider_id)
             return None
 
         if not provider.is_enabled:
-            logger.warning(f"OAuth callback: provider '{provider_id}' is disabled.")
+            logger.warning("OAuth callback: provider '%s' is disabled.", provider_id)
             return None
 
         try:
             # Exchange authorization code for tokens
-            logger.info(f"Starting token exchange for provider {provider_id}")
+            logger.info("Starting token exchange for provider %s", provider_id)
             token_data = await self._exchange_code_for_tokens(provider, auth_session, code)
             if not token_data:
-                logger.error(f"Failed to exchange code for tokens for provider {provider_id}")
+                logger.error("Failed to exchange code for tokens for provider %s", provider_id)
                 return None
-            logger.info(f"Token exchange successful for provider {provider_id}")
+            logger.info("Token exchange successful for provider %s", provider_id)
             callback_nonce = getattr(auth_session, "nonce", None)
 
             # For OIDC providers, verify id_token before any claim extraction.
@@ -1285,7 +1315,7 @@ class SSOService:
             # Get user info from provider (pass full token_data for id_token parsing)
             user_info = await self._get_user_info(provider, token_data["access_token"], token_data, expected_nonce=callback_nonce)
             if not user_info:
-                logger.error(f"Failed to get user info for provider {provider_id}")
+                logger.error("Failed to get user info for provider %s", provider_id)
                 return None
 
             # Clean up auth session
@@ -1296,11 +1326,29 @@ class SSOService:
 
         except Exception as e:
             # Clean up auth session on error
-            logger.error(f"OAuth callback failed for provider {provider_id}: {type(e).__name__}: {str(e)}")
+            logger.error("OAuth callback failed for provider %s: %s: %s", provider_id, type(e).__name__, str(e))
             logger.exception("Full traceback for OAuth callback failure:")
             self.db.delete(auth_session)
             self.db.commit()
             return None
+
+    @staticmethod
+    def _build_basic_auth_header(client_id: str, client_secret: str) -> str:
+        """Build an RFC 6749 Section 2.3.1 Basic Auth header value.
+
+        Client credentials are first URL-encoded per RFC 6749 Appendix B,
+        then combined as ``client_id:client_secret`` and base64-encoded.
+
+        Args:
+            client_id: OAuth client ID
+            client_secret: OAuth client secret
+
+        Returns:
+            ``Basic <base64>`` header value
+        """
+        credentials_str = f"{urllib.parse.quote(client_id, safe='')}:{urllib.parse.quote(client_secret, safe='')}"
+        encoded_credentials = base64.b64encode(credentials_str.encode("utf-8")).decode("utf-8")
+        return f"Basic {encoded_credentials}"
 
     async def _exchange_code_for_tokens(self, provider: SSOProvider, auth_session: SSOAuthSession, code: str) -> Optional[Dict[str, Any]]:
         """Exchange authorization code for access tokens.
@@ -1313,24 +1361,41 @@ class SSOService:
         Returns:
             Token response dict or None if failed
         """
-        token_params = {
-            "client_id": provider.client_id,
-            "client_secret": await self._decrypt_secret(provider.client_secret_encrypted),
+        metadata = provider.provider_metadata or {}
+        auth_method = metadata.get("token_endpoint_auth_method", "client_secret_post")
+
+        client_secret = await self._decrypt_secret(provider.client_secret_encrypted)
+
+        token_params: Dict[str, Any] = {
             "code": code,
             "grant_type": "authorization_code",
             "redirect_uri": auth_session.redirect_uri,
             "code_verifier": auth_session.code_verifier,
         }
+        headers = {"Accept": "application/json"}
+
+        if auth_method == "client_secret_basic" and client_secret:
+            headers["Authorization"] = self._build_basic_auth_header(provider.client_id, client_secret)
+            logger.debug("Using HTTP Basic Auth for SSO token endpoint authentication")
+        elif auth_method == "client_secret_basic" and not client_secret:
+            logger.warning("Basic Auth requested but client_secret is missing - falling back to POST body mode")
+            token_params["client_id"] = provider.client_id
+            logger.debug("Using POST body for SSO token endpoint authentication")
+        else:
+            token_params["client_id"] = provider.client_id
+            if client_secret:
+                token_params["client_secret"] = client_secret
+            logger.debug("Using POST body for SSO token endpoint authentication")
 
         # First-Party
         from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
 
         client = await get_http_client()
-        response = await client.post(provider.token_url, data=token_params, headers={"Accept": "application/json"})
+        response = await client.post(provider.token_url, data=token_params, headers=headers)
 
         if response.status_code == 200:
             return response.json()
-        logger.error(f"Token exchange failed for {provider.name}: HTTP {response.status_code} - {response.text}")
+        logger.error("Token exchange failed for %s: HTTP %s - %s", provider.name, response.status_code, response.text)
 
         return None
 
@@ -1364,10 +1429,10 @@ class SSOService:
                 if orgs_response.status_code == 200:
                     user_data["organizations"] = [org["login"] for org in orgs_response.json()]
                 else:
-                    logger.warning(f"Failed to fetch GitHub organizations: HTTP {orgs_response.status_code}")
+                    logger.warning("Failed to fetch GitHub organizations: HTTP %s", orgs_response.status_code)
                     user_data["organizations"] = []
             except Exception as e:
-                logger.warning(f"Error fetching GitHub organizations: {e}")
+                logger.warning("Error fetching GitHub organizations: %s", e)
                 user_data["organizations"] = []
             return
 
@@ -1401,12 +1466,12 @@ class SSOService:
                 user_data["groups"] = entra_groups_from_graph
             elif "groups" in verified_id_token_claims:
                 user_data["groups"] = verified_id_token_claims["groups"]
-                logger.debug(f"Extracted {len(verified_id_token_claims['groups'])} groups from Entra ID token")
+                logger.debug("Extracted %s groups from Entra ID token", len(verified_id_token_claims["groups"]))
 
             # Extract roles from id_token (App Roles)
             if "roles" in verified_id_token_claims:
                 user_data["roles"] = verified_id_token_claims["roles"]
-                logger.debug(f"Extracted {len(verified_id_token_claims['roles'])} roles from Entra ID token")
+                logger.debug("Extracted %s roles from Entra ID token", len(verified_id_token_claims["roles"]))
 
             # Also extract any missing basic claims from id_token
             for claim in ["email", "name", "preferred_username", "oid", "sub"]:
@@ -1415,10 +1480,23 @@ class SSOService:
             return
 
         # Keycloak: merge realm_access, resource_access, and groups from id_token
-        if provider.id == "keycloak" and verified_id_token_claims:
+        # and, failing that, the access_token. Keycloak's built-in "realm roles"
+        # and "client roles" client-scope mappers default access.token.claim=true
+        # but id.token.claim=userinfo.token.claim=false, so on a stock Keycloak
+        # setup these claims are normally present ONLY on the access_token —
+        # never on the userinfo response or id_token. The access_token was
+        # already received directly from the trusted token endpoint, so decoding
+        # it here (without re-verifying the signature) carries the same trust
+        # level as the verified_id_token_claims fallback above.
+        if provider.id == "keycloak":
+            access_token_claims = self._decode_jwt_claims(access_token) or {}
             for claim in ["realm_access", "resource_access", "groups"]:
-                if claim in verified_id_token_claims and claim not in user_data:
+                if claim in user_data:
+                    continue
+                if verified_id_token_claims and claim in verified_id_token_claims:
                     user_data[claim] = verified_id_token_claims[claim]
+                elif claim in access_token_claims:
+                    user_data[claim] = access_token_claims[claim]
             return
 
         # Generic OIDC (including Okta, IBM Verify, and any custom provider):
@@ -1542,9 +1620,17 @@ class SSOService:
                     public_base_url,
                     metadata.get("base_url"),
                 )
-                return self._normalize_user_info(provider, verified_id_token_claims)
+                fallback_claims = dict(verified_id_token_claims)
+                # id_token also lacks realm_access/resource_access/groups by default
+                # on a stock Keycloak setup (see _enrich_user_data_from_claims) -
+                # pull them from the access_token, which carries them by default.
+                access_token_claims = self._decode_jwt_claims(access_token) or {}
+                for claim in ["realm_access", "resource_access", "groups"]:
+                    if claim not in fallback_claims and claim in access_token_claims:
+                        fallback_claims[claim] = access_token_claims[claim]
+                return self._normalize_user_info(provider, fallback_claims)
 
-        logger.error(f"User info request failed for {provider.name}: HTTP {response.status_code} - {response.text}")
+        logger.error("User info request failed for %s: HTTP %s - %s", provider.name, response.status_code, response.text)
 
         return None
 
@@ -1901,7 +1987,7 @@ class SSOService:
             )
             self.db.add(pending)
             self.db.commit()
-            logger.info(f"Created pending approval request for SSO user: {SecurityValidator.sanitize_log_message(email)}")
+            logger.info("Created pending approval request for SSO user: %s", SecurityValidator.sanitize_log_message(email))
             return False
 
         if pending.status == "pending":
@@ -1909,7 +1995,7 @@ class SSOService:
                 pending.status = "expired"
                 self.db.commit()
                 self._reset_pending_approval(pending, incoming_provider, user_info)
-                logger.info(f"Refreshed expired pending approval request for SSO user: {SecurityValidator.sanitize_log_message(email)}")
+                logger.info("Refreshed expired pending approval request for SSO user: %s", SecurityValidator.sanitize_log_message(email))
             return False
 
         if pending.status == "rejected":
@@ -1924,13 +2010,13 @@ class SSOService:
 
         if pending.status == "expired":
             self._reset_pending_approval(pending, incoming_provider, user_info)
-            logger.info(f"Renewed expired pending approval request for SSO user: {SecurityValidator.sanitize_log_message(email)}")
+            logger.info("Renewed expired pending approval request for SSO user: %s", SecurityValidator.sanitize_log_message(email))
             return False
 
         if pending.status == "completed":
             return False
 
-        logger.warning(f"Unknown SSO pending approval status '{pending.status}' for user {SecurityValidator.sanitize_log_message(email)}. Denying by default.")
+        logger.warning("Unknown SSO pending approval status '%s' for user %s. Denying by default.", pending.status, SecurityValidator.sanitize_log_message(email))
         return False
 
     async def authenticate_or_create_user(self, user_info: Dict[str, Any]) -> Optional[str]:
@@ -2032,7 +2118,7 @@ class SSOService:
                 if should_be_admin:
                     # Grant admin access
                     if not current_is_admin:
-                        logger.info(f"Upgrading is_admin to True for {SecurityValidator.sanitize_log_message(email)} based on SSO admin groups")
+                        logger.info("Upgrading is_admin to True for %s based on SSO admin groups", SecurityValidator.sanitize_log_message(email))
                         user.is_admin = True
                         # Track that admin was granted via SSO (only set on initial grant)
                         user.admin_origin = "sso"
@@ -2040,7 +2126,7 @@ class SSOService:
                     # Do NOT change admin_origin if already admin - preserve manual/API grants
                 elif current_is_admin and current_admin_origin == "sso":
                     # User was SSO admin but no longer in admin groups - revoke access
-                    logger.info(f"Revoking is_admin for {SecurityValidator.sanitize_log_message(email)} - removed from SSO admin groups")
+                    logger.info("Revoking is_admin for %s - removed from SSO admin groups", SecurityValidator.sanitize_log_message(email))
                     user.is_admin = False
                     user.admin_origin = None
                     current_is_admin = False
@@ -2053,7 +2139,7 @@ class SSOService:
                 # Belt-and-suspenders: if role sync assigned platform_admin but is_admin is still False
                 # (e.g. user existed before the generic OIDC fix was deployed), promote now.
                 if not current_is_admin and any(ra.get("role_name") == "platform_admin" for ra in role_assignments):
-                    logger.info(f"Promoting is_admin for {SecurityValidator.sanitize_log_message(email)} — platform_admin role assigned via role_mappings")
+                    logger.info("Promoting is_admin for %s — platform_admin role assigned via role_mappings", SecurityValidator.sanitize_log_message(email))
                     user.is_admin = True
                     user.admin_origin = "sso"
                     current_is_admin = True
@@ -2245,8 +2331,14 @@ class SSOService:
 
         # Early exit: Skip role mapping if no configuration exists
         if not role_mappings and not has_entra_admin_groups and not has_generic_admin_groups and not has_provider_default_role:
-            logger.debug(f"No role mappings configured for provider {provider.id}, skipping role sync")
+            logger.debug("No role mappings configured for provider %s, skipping role sync", provider.id)
             return role_assignments
+
+        # Match role_mappings keys case-insensitively, consistent with _should_user_be_admin().
+        # Without this, an IdP group/role casing that differs from the configured mapping key
+        # (e.g. Keycloak role "gateway-admin" vs a mapping key "Gateway-Admin") would silently
+        # skip RBAC role assignment even though is_admin could already be granted.
+        lower_role_mappings = {str(k).lower(): v for k, v in role_mappings.items()}
 
         personal_team_id: Optional[str] = None
         personal_team_checked = False
@@ -2276,9 +2368,9 @@ class SSOService:
                 personal_team = await PersonalTeamService(self.db).get_personal_team(user_email)
                 personal_team_id = personal_team.id if personal_team else None
                 if not personal_team_id:
-                    logger.warning(f"Could not resolve personal team for {SecurityValidator.sanitize_log_message(user_email)}; skipping team-scoped SSO role mapping")
+                    logger.warning("Could not resolve personal team for %s; skipping team-scoped SSO role mapping", SecurityValidator.sanitize_log_message(user_email))
             except Exception as e:
-                logger.error(f"Failed to resolve personal team for {SecurityValidator.sanitize_log_message(user_email)}: {e}. All team-scoped SSO role assignments will be skipped for this login.")
+                logger.error("Failed to resolve personal team for %s: %s. All team-scoped SSO role assignments will be skipped for this login.", SecurityValidator.sanitize_log_message(user_email), e)
                 personal_team_id = None
 
             return personal_team_id
@@ -2289,7 +2381,7 @@ class SSOService:
             for group in user_groups:
                 if group.lower() in admin_groups_lower:
                     role_assignments.append({"role_name": settings.default_admin_role, "scope": "global", "scope_id": None})
-                    logger.debug(f"Mapped EntraID admin group to {settings.default_admin_role} role for {SecurityValidator.sanitize_log_message(user_email)}")
+                    logger.debug("Mapped EntraID admin group to %s role for %s", settings.default_admin_role, SecurityValidator.sanitize_log_message(user_email))
                     break  # Only need one admin assignment
 
         # Handle Generic OIDC admin groups -> admin role
@@ -2298,16 +2390,15 @@ class SSOService:
             for group in user_groups:
                 if group.lower() in admin_groups_lower:
                     role_assignments.append({"role_name": settings.default_admin_role, "scope": "global", "scope_id": None})
-                    logger.debug(f"Mapped Generic OIDC admin group to {settings.default_admin_role} role for {SecurityValidator.sanitize_log_message(user_email)}")
+                    logger.debug("Mapped Generic OIDC admin group to %s role for %s", settings.default_admin_role, SecurityValidator.sanitize_log_message(user_email))
                     break  # Only need one admin assignment
 
         # Batch role lookups: collect all role names that need to be looked up
         role_names_to_lookup = set()
         for group in user_groups:
-            if group in role_mappings:
-                role_name = role_mappings[group]
-                if role_name not in ["admin", settings.default_admin_role]:
-                    role_names_to_lookup.add(role_name)
+            role_name = lower_role_mappings.get(group.lower())
+            if role_name and role_name not in ["admin", settings.default_admin_role]:
+                role_names_to_lookup.add(role_name)
 
         # Add default role to lookup if needed
         if has_provider_default_role and provider_default_role:
@@ -2326,12 +2417,12 @@ class SSOService:
 
         # Process role mappings for ALL providers
         for group in user_groups:
-            if group in role_mappings:
-                role_name = role_mappings[group]
+            role_name = lower_role_mappings.get(group.lower())
+            if role_name:
                 # Special case for "admin" shorthand or configured admin role name
                 if role_name in ["admin", settings.default_admin_role]:
                     role_assignments.append({"role_name": settings.default_admin_role, "scope": "global", "scope_id": None})
-                    logger.debug(f"Mapped group to {settings.default_admin_role} role for {SecurityValidator.sanitize_log_message(user_email)}")
+                    logger.debug("Mapped group to %s role for %s", settings.default_admin_role, SecurityValidator.sanitize_log_message(user_email))
                     continue
 
                 # Use pre-fetched role from cache
@@ -2343,9 +2434,9 @@ class SSOService:
                     # Avoid duplicate assignments
                     if not any(r["role_name"] == role.name and r["scope"] == role.scope and r.get("scope_id") == scope_id for r in role_assignments):
                         role_assignments.append({"role_name": role.name, "scope": role.scope, "scope_id": scope_id})
-                        logger.debug(f"Mapped group to role '{role.name}' for {SecurityValidator.sanitize_log_message(user_email)}")
+                        logger.debug("Mapped group to role '%s' for %s", role.name, SecurityValidator.sanitize_log_message(user_email))
                 else:
-                    logger.warning(f"Role '{role_name}' not found for group mapping")
+                    logger.warning("Role '%s' not found for group mapping", role_name)
 
         # Apply default role if no mappings found
         if not role_assignments and has_provider_default_role and provider_default_role:
@@ -2355,7 +2446,7 @@ class SSOService:
                 if default_role.scope == "team" and resolve_team_scope_to_personal_team and not scope_id:
                     return role_assignments
                 role_assignments.append({"role_name": default_role.name, "scope": default_role.scope, "scope_id": scope_id})
-                logger.info(f"Assigned default role '{default_role.name}' to {SecurityValidator.sanitize_log_message(user_email)}")
+                logger.info("Assigned default role '%s' to %s", default_role.name, SecurityValidator.sanitize_log_message(user_email))
 
         return role_assignments
 
@@ -2385,7 +2476,7 @@ class SSOService:
             role_tuple = (user_role.role.name, user_role.scope, user_role.scope_id)
             if role_tuple not in desired_roles:
                 await role_service.revoke_role_from_user(user_email=user_email, role_id=user_role.role_id, scope=user_role.scope, scope_id=user_role.scope_id)
-                logger.info(f"Revoked SSO role '{user_role.role.name}' from {SecurityValidator.sanitize_log_message(user_email)} (no longer in groups)")
+                logger.info("Revoked SSO role '%s' from %s (no longer in groups)", user_role.role.name, SecurityValidator.sanitize_log_message(user_email))
 
         # Assign new roles
         for assignment in role_assignments:
@@ -2393,7 +2484,7 @@ class SSOService:
                 # Get role by name
                 role = await role_service.get_role_by_name(assignment["role_name"], scope=assignment["scope"])
                 if not role:
-                    logger.warning(f"Role '{assignment['role_name']}' not found, skipping assignment for {SecurityValidator.sanitize_log_message(user_email)}")
+                    logger.warning("Role '%s' not found, skipping assignment for %s", assignment["role_name"], SecurityValidator.sanitize_log_message(user_email))
                     continue
 
                 # Check if assignment already exists
@@ -2404,14 +2495,96 @@ class SSOService:
                     await role_service.assign_role_to_user(
                         user_email=user_email, role_id=role.id, scope=assignment["scope"], scope_id=assignment.get("scope_id"), granted_by=user_email, grant_source="sso"
                     )
-                    logger.info(f"Assigned SSO role '{role.name}' to {SecurityValidator.sanitize_log_message(user_email)}")
+                    logger.info("Assigned SSO role '%s' to %s", role.name, SecurityValidator.sanitize_log_message(user_email))
 
             except Exception as e:
-                logger.warning(f"Failed to assign role '{assignment['role_name']}' to {SecurityValidator.sanitize_log_message(user_email)}: {e}", exc_info=True)
+                logger.warning("Failed to assign role '%s' to %s: %s", assignment["role_name"], SecurityValidator.sanitize_log_message(user_email), e, exc_info=True)
                 try:
                     self.db.rollback()
                 except Exception as rollback_error:
                     logger.error(
-                        f"Database rollback failed after role assignment error for {SecurityValidator.sanitize_log_message(user_email)}: {rollback_error}. Aborting remaining role assignments."
+                        "Database rollback failed after role assignment error for %s: %s. Aborting remaining role assignments.",
+                        SecurityValidator.sanitize_log_message(user_email),
+                        rollback_error,
                     )
                     break
+
+
+# Module-level cache: normalized-issuer -> SSOProvider id, with a short TTL.
+# Avoids a sso_providers SELECT on every external-token request (and on every
+# invalid-issuer / bad-signature spray). Invalidated on provider CRUD.
+_TRUSTED_PROVIDER_CACHE_TTL = 60  # seconds
+_trusted_provider_cache: "dict[str, str]" = {}  # issuer(normalized) -> provider.id
+_trusted_provider_cache_loaded_at: float = 0.0
+
+
+def invalidate_trusted_provider_cache() -> None:
+    """Clear the issuer->provider cache. Call after any provider create/update/delete."""
+    global _trusted_provider_cache_loaded_at
+    _trusted_provider_cache.clear()
+    _trusted_provider_cache_loaded_at = 0.0
+
+
+def _load_trusted_provider_map(db: "Session") -> "dict[str, str]":
+    """(Re)load the normalized-issuer -> provider-id map from the DB.
+
+    Args:
+        db: Request-scoped SQLAlchemy session.
+
+    Returns:
+        Mapping of normalized issuer URL to provider id for enabled,
+        API-trusted providers.
+    """
+    rows = db.query(SSOProvider).filter(SSOProvider.is_enabled.is_(True), SSOProvider.trusted_for_api_auth.is_(True)).all()
+    internal_issuer = settings.jwt_issuer.rstrip("/") if settings.jwt_issuer else None
+    result = {}
+    for p in rows:
+        if not p.issuer:
+            continue
+        normalized = p.issuer.rstrip("/")
+        if internal_issuer and normalized == internal_issuer:
+            logger.warning(
+                "SSOProvider id=%s has issuer matching internal jwt_issuer (%s) — its tokens will never reach the external-IdP path (dead config)",
+                p.id,
+                normalized,
+            )
+        result[normalized] = p.id
+    return result
+
+
+def resolve_trusted_provider_by_issuer(issuer: str, db: "Session") -> "Optional[SSOProvider]":
+    """Return the enabled, API-trusted SSOProvider whose issuer matches ``issuer``.
+
+    The issuer->provider-id map is cached in-memory for ``_TRUSTED_PROVIDER_CACHE_TTL``
+    seconds (finding P1) and invalidated via :func:`invalidate_trusted_provider_cache`.
+    Matching normalizes trailing slashes to mirror ``verify_oauth_access_token``.
+
+    Note: this cache is per-process; in multi-worker deployments, invalidation only
+    affects the worker that handled the CRUD request -- other workers converge within
+    the TTL.
+
+    Args:
+        issuer: The ``iss`` claim from an inbound (unverified) token.
+        db: Request-scoped SQLAlchemy session.
+
+    Returns:
+        The matching SSOProvider, or None.
+    """
+    global _trusted_provider_cache, _trusted_provider_cache_loaded_at
+    if not issuer:
+        return None
+    normalized = issuer.rstrip("/")
+
+    now = monotonic()
+    # Use _trusted_provider_cache_loaded_at (not the map itself) to detect "never loaded",
+    # so an empty map (zero trusted providers - the common case) is still cached and
+    # doesn't trigger a re-scan on every request.
+    if _trusted_provider_cache_loaded_at == 0.0 or (now - _trusted_provider_cache_loaded_at) > _TRUSTED_PROVIDER_CACHE_TTL:
+        _trusted_provider_cache = _load_trusted_provider_map(db)
+        _trusted_provider_cache_loaded_at = now
+
+    provider_id = _trusted_provider_cache.get(normalized)
+    if provider_id is None:
+        return None
+    # Resolve the live ORM object by id (cheap PK lookup; ensures fresh row for validation).
+    return db.query(SSOProvider).filter(SSOProvider.id == provider_id).first()

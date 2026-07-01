@@ -38,16 +38,16 @@
 
 | Server | Description |
 |--------|-------------|
-| `benchmark-server` | Performance benchmarking |
 | `fast-time-server` | Time and date operations |
-| `slow-time-server` | Configurable-latency testing server |
 
 ### Rust
 
 | Server | Description |
 |--------|-------------|
+| `benchmark-server` | Dynamic tools, resources, and prompts for gateway scale testing |
 | `fast-test-server` | Fast testing server |
 | `filesystem-server` | Filesystem operations |
+| `slow-time-server` | Configurable latency and failure simulation for resilience testing |
 
 ## Scaffolding New Servers
 

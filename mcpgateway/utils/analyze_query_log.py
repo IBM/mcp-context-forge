@@ -185,7 +185,7 @@ def print_report(analysis: Dict[str, Any]) -> None:
 
     for endpoint, stats in analysis["endpoint_stats"][:15]:
         n1_marker = "⚠️" if stats["n1_count"] > 0 else "  "
-        print(f"   {endpoint:<40} {stats['count']:>6} {stats['total_queries']:>8} " f"{stats['avg_queries']:>6} {stats['max_queries']:>5} {n1_marker}{stats['n1_count']:>2}")
+        print(f"   {endpoint:<40} {stats['count']:>6} {stats['total_queries']:>8} {stats['avg_queries']:>6} {stats['max_queries']:>5} {n1_marker}{stats['n1_count']:>2}")
 
     # Recommendations
     print("\n💡 RECOMMENDATIONS")

@@ -159,6 +159,7 @@ services:
       # Transport: sse, streamablehttp, http, or all (default: all)
       - TRANSPORT_TYPE=streamablehttp
       # High-level Rust MCP UX:
+      # Deprecated as of 2026-06-11; sunsets on 2026-07-07. Prefer RUST_MCP_MODE=off and the Python MCP transport.
       #   RUST_MCP_MODE=off    -> Python MCP transport
       #   RUST_MCP_MODE=shadow -> Rust sidecar is present, but public /mcp stays on Python for safe fallback
       #   RUST_MCP_MODE=edge   -> direct public /mcp on Rust with managed UDS sidecar defaults
@@ -221,7 +222,7 @@ services:
       - MCP_RUST_TOOLS_CALL_PLAN_TTL_SECONDS=${MCP_RUST_TOOLS_CALL_PLAN_TTL_SECONDS:-30}
       - MCP_RUST_UPSTREAM_SESSION_TTL_SECONDS=${MCP_RUST_UPSTREAM_SESSION_TTL_SECONDS:-300}
       - MCP_RUST_USE_RMCP_UPSTREAM_CLIENT=${MCP_RUST_USE_RMCP_UPSTREAM_CLIENT:-}
-      # High-level Rust A2A UX:
+      # High-level Rust A2A UX (deprecated as of 2026-06-11 and sunsets on 2026-07-07; prefer RUST_A2A_MODE=off):
       #   RUST_A2A_MODE=off    -> Python A2A client path
       #   RUST_A2A_MODE=shadow -> Rust sidecar is present, but A2A invoke stays on Python
       #   RUST_A2A_MODE=edge   -> A2A invoke delegates to the Rust sidecar
@@ -257,8 +258,9 @@ services:
       # WebSocket transport features (disabled by default; opt-in only)
       - MCPGATEWAY_WS_RELAY_ENABLED=${MCPGATEWAY_WS_RELAY_ENABLED:-false}
       - MCPGATEWAY_REVERSE_PROXY_ENABLED=${MCPGATEWAY_REVERSE_PROXY_ENABLED:-false}
-      # Prometheus metrics endpoint (disabled by default; requires JWT auth when enabled)
-      - ENABLE_METRICS=true
+      # Prometheus metrics endpoint (compose enables it by default; requires JWT auth when enabled).
+      # Set ENABLE_METRICS=false to disable it for local or resource-constrained runs.
+      - ENABLE_METRICS=${ENABLE_METRICS:-true}
       # Local compose profile: allow local/private upstream URLs used by bundled test services.
       # Production deployments should override these to stricter values.
       - SSRF_ALLOW_LOCALHOST=${SSRF_ALLOW_LOCALHOST:-true}
@@ -374,6 +376,8 @@ services:
       - PROTECT_ALL_ADMINS=${PROTECT_ALL_ADMINS:-true}
       - PLATFORM_ADMIN_EMAIL=admin@example.com
       - PLATFORM_ADMIN_PASSWORD=changeme
+      # Compose default off so /admin/* REST works without bootstrap redirect; override for production.
+      - PASSWORD_CHANGE_ENFORCEMENT_ENABLED=${PASSWORD_CHANGE_ENFORCEMENT_ENABLED:-true}
       - ACCOUNT_LOCKOUT_NOTIFICATION_ENABLED=${ACCOUNT_LOCKOUT_NOTIFICATION_ENABLED:-true}
       # Self-service password reset (feature flags + hardening controls)
       - PASSWORD_RESET_ENABLED=${PASSWORD_RESET_ENABLED:-true}
@@ -521,8 +525,8 @@ services:
       # NOTE: Keep compression enabled when running without nginx that already has compression
       # Disabling causes throughput drop due to larger payloads
       - COMPRESSION_ENABLED=false
-      # Disable optional middlewares for maximum throughput
-      - VALIDATION_MIDDLEWARE_ENABLED=true
+      # Disable deprecated optional middleware for maximum throughput
+      - VALIDATION_MIDDLEWARE_ENABLED=false
       - JSON_SCHEMA_VALIDATION_STRICT=true
       - TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED=${TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED:-true}
       - TOOL_DESCRIPTION_FORBIDDEN_PATTERNS=${TOOL_DESCRIPTION_FORBIDDEN_PATTERNS:-["&&", ";", "||", "$(", "> ", "< "]}
@@ -697,17 +701,18 @@ services:
       # Last resort: patches anyio to limit _deliver_cancellation iterations.
       # Enable only if Layers 1-2 don't fully resolve the issue.
       # WARNING: May be removed when anyio/MCP SDK fix upstream issue.
-      - ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=true              # Enable workaround - TESTING
+      - ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=${ANYIO_CANCEL_DELIVERY_PATCH_ENABLED:-false}  # Experimental workaround; disabled for current AnyIO
       - ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS=500              # Max iterations before giving up (~60ms recovery)
 
       # ═══════════════════════════════════════════════════════════════════════════
       # Execution Metrics Recording
       # ═══════════════════════════════════════════════════════════════════════════
       # Controls tool/resource/prompt/server/A2A execution metrics (one DB row per operation).
+      # Compose records these metrics by default; set DB_METRICS_RECORDING_ENABLED=false to disable.
       # Disable when using external observability to improve performance.
       # Set to true if you need per-operation metrics in the database.
       # Note: Does NOT affect log aggregation (METRICS_AGGREGATION_ENABLED) or Prometheus.
-      - DB_METRICS_RECORDING_ENABLED=true
+      - DB_METRICS_RECORDING_ENABLED=${DB_METRICS_RECORDING_ENABLED:-true}
 
       # ═══════════════════════════════════════════════════════════════════════════
       # Metrics Configuration
@@ -1526,20 +1531,29 @@ services:
 
   ###############################################################################
   # Fast Time Server - High-performance time/timezone service for MCP
-  # Uses pre-built image by default. On ARM64, build locally:
+  # Defaults to the published GHCR image. Override FAST_TIME_IMAGE when building locally:
   #   FAST_TIME_IMAGE=mcpgateway/fast-time-server:local docker compose build fast_time_server
   ###############################################################################
   fast_time_server:
     image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/fast-time-server:latest}
     build:
-      context: ./mcp-servers/go/fast-time-server
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: mcp-servers/rust/fast-time-server/Containerfile
     restart: unless-stopped
     networks: [mcpnet]
     ports:
       - "8888:8080"    # Map host port 8888 to container port 8080
+    environment:
+      - BIND_ADDRESS=0.0.0.0:8080
+      - RUST_LOG=info
     # Use dual mode for both SSE (/sse) and Streamable HTTP (/http) endpoints
     command: ["-transport=dual", "-listen=0.0.0.0", "-port=8080", "-log-level=info"]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   ###############################################################################
   # Auto-registration service - registers fast_time_server with gateway
@@ -1641,7 +1655,7 @@ services:
             req.add_header('Content-Type', 'application/json')
             if data:
                 req.data = json.dumps(data).encode('utf-8')
-            with urllib.request.urlopen(req) as response:
+            with urllib.request.urlopen(req, timeout=60) as response:
                 return json.loads(response.read().decode('utf-8'))
 
         def api_request_with_retry(method, path, data=None, retries=30, delay=2, retry_statuses=(401, 502, 503)):
@@ -1856,7 +1870,7 @@ services:
             req.add_header('Content-Type', 'application/json')
             if data:
                 req.data = json.dumps(data).encode('utf-8')
-            with urllib.request.urlopen(req) as response:
+            with urllib.request.urlopen(req, timeout=60) as response:
                 return json.loads(response.read().decode('utf-8'))
 
         # Delete existing SSE gateway if present
@@ -1962,8 +1976,8 @@ services:
   ###############################################################################
   slow_time_server:
     build:
-      context: ./mcp-servers/go/slow-time-server
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: mcp-servers/rust/slow-time-server/Containerfile
     image: mcpgateway/slow-time-server:latest
     restart: unless-stopped
     networks: [mcpnet]
@@ -1972,9 +1986,8 @@ services:
     environment:
       - DEFAULT_LATENCY=${SLOW_TIME_LATENCY:-5s}
       - FAILURE_RATE=${SLOW_TIME_FAILURE_RATE:-0.0}
-    command: ["-transport=dual", "-listen=0.0.0.0", "-port=8081", "-log-level=info"]
     healthcheck:
-      test: ["CMD", "/slow-time-server", "-health", "-port=8081"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8081/health"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -2026,7 +2039,7 @@ services:
             req.add_header('Content-Type', 'application/json')
             if data:
                 req.data = json.dumps(data).encode('utf-8')
-            with urllib.request.urlopen(req) as response:
+            with urllib.request.urlopen(req, timeout=60) as response:
                 return json.loads(response.read().decode('utf-8'))
 
         # Delete existing gateway if present
@@ -2043,7 +2056,7 @@ services:
         try:
             result = api_request('POST', '/gateways', {
                 'name': 'slow_time',
-                'url': 'http://slow_time_server:8081/http',
+                'url': 'http://slow_time_server:8081/mcp',
                 'transport': 'STREAMABLEHTTP'
             })
             gateway_id = result.get('id')
@@ -2063,8 +2076,9 @@ services:
   ###############################################################################
   fast_test_server:
     build:
-      context: ./mcp-servers/rust/fast-test-server
-      dockerfile: Containerfile
+      # Context builds the renamed rust fast-time-server crate; image/service name kept as fast-test-server to avoid colliding with the Go fast_time_server.
+      context: .
+      dockerfile: mcp-servers/rust/fast-time-server/Containerfile
     image: mcpgateway/fast-test-server:latest
     restart: unless-stopped
     networks: [mcpnet]
@@ -2141,7 +2155,7 @@ services:
             req.add_header('Content-Type', 'application/json')
             if data:
                 req.data = json.dumps(data).encode('utf-8')
-            with urllib.request.urlopen(req) as response:
+            with urllib.request.urlopen(req, timeout=60) as response:
                 return json.loads(response.read().decode('utf-8'))
 
         def api_request_with_retry(method, path, data=None, retries=30, delay=2, retry_statuses=(401, 403, 502, 503)):
@@ -2262,8 +2276,8 @@ services:
   ###############################################################################
   a2a_echo_agent:
     build:
-      context: ./a2a-agents/go/a2a-echo-agent
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: a2a-agents/rust/a2a-echo-agent/Dockerfile
     image: mcpgateway/a2a-echo-agent:latest
     restart: unless-stopped
     networks: [mcpnet]
@@ -2273,13 +2287,34 @@ services:
       - A2A_ECHO_ADDR=0.0.0.0:9100
       - A2A_ECHO_NAME=a2a-echo-agent
       - A2A_ECHO_PROTOCOL_VERSION=1.0.0
+      - A2A_ECHO_PUBLIC_URL=http://127.0.0.1:9100
       - A2A_ECHO_LOG_LEVEL=info
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:9100/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 64M
+    profiles: ["testing", "sso"]
+
+  ###############################################################################
+  # A2A echo agent v0.3.0 overlay — same image as a2a_echo_agent, different
+  # port + advertised version. One binary serves both 0.3.0 and 1.0.0.
+  ###############################################################################
+  a2a_echo_agent_v0_3_0:
+    image: mcpgateway/a2a-echo-agent:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "9101:9100"
+    environment:
+      - A2A_ECHO_ADDR=0.0.0.0:9100
+      - A2A_ECHO_NAME=a2a-echo-agent-v0-3-0
+      - A2A_ECHO_PROTOCOL_VERSION=0.3.0
+      - A2A_ECHO_PUBLIC_URL=http://127.0.0.1:9101
+      - A2A_ECHO_LOG_LEVEL=info
     deploy:
       resources:
         limits:
@@ -2502,8 +2537,8 @@ services:
   ###############################################################################
   benchmark_server:
     build:
-      context: ./mcp-servers/go/benchmark-server
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: mcp-servers/rust/benchmark-server/Dockerfile
     image: mcpgateway/benchmark-server:latest
     restart: unless-stopped
     networks: [mcpnet]
@@ -2518,8 +2553,11 @@ services:
       # Port range supports up to 100 servers (9000-9099)
       # Actual servers spawned controlled by BENCHMARK_SERVER_COUNT
       - "9000-9099:9000-9099"
-    # Note: No healthcheck - scratch-based Go image has no shell
-    # Verify health via: curl http://localhost:9000/health
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:${BENCHMARK_START_PORT:-9000}/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
     deploy:
       resources:
         limits:

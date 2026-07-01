@@ -183,6 +183,9 @@ The `teams` claim in JWT tokens determines resource visibility. The system follo
 
     **Session tokens:** Admin bypass is determined by the **database** `is_admin` flag, not the JWT `teams` claim. If the DB user is admin, `resolve_session_teams()` returns `None` (admin bypass) regardless of the JWT `teams` state. The JWT `teams` claim cannot narrow an admin session — it only narrows non-admin sessions.
 
+!!! note "External IdP tokens use session semantics"
+    Access tokens accepted from trusted external SSO providers (`SSO_API_TOKEN_AUTH_ENABLED`, see [SSO documentation](sso.md#machine-to-machine-api-auth-with-external-idp-tokens)) are provisioned to a `token_use="session"` identity. `is_admin` and `teams` are resolved exactly as in the **Session tokens** row above — from the persisted local user record via `resolve_session_teams()` — never from claims inside the external token itself.
+
 ### `is_admin`, `teams`, and `token_use` (Mental Model)
 
 These three values are related, but they control different things:

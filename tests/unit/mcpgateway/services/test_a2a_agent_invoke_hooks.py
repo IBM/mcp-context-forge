@@ -308,11 +308,14 @@ class TestA2AInvokePreHook:
         # Third-Party
         from cpex.framework import HttpHeaderPayload
 
+        # Add headers to passthrough whitelist so they pass Layer 1 filtering
+        mock_agent.passthrough_headers = ["x-custom", "x-request-id"]
+
         pm = _make_plugin_manager()
         modified = SimpleNamespace(
             modified_payload=SimpleNamespace(
                 parameters=None,
-                headers=HttpHeaderPayload(root={"X-Custom": "value", "Authorization": "Bearer plugin-added"}),
+                headers=HttpHeaderPayload(root={"X-Custom": "value", "X-Request-ID": "plugin-req-123"}),
             ),
             retry_delay_ms=0,
         )
@@ -343,7 +346,7 @@ class TestA2AInvokePreHook:
         call_args = mock_client.post.call_args
         headers = call_args.kwargs.get("headers", {})
         assert headers.get("X-Custom") == "value"
-        assert headers.get("Authorization") == "Bearer plugin-added"
+        assert headers.get("X-Request-ID") == "plugin-req-123"
 
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")

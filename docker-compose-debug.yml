@@ -997,8 +997,7 @@ services:
 
   ###############################################################################
   # Fast Time Server - High-performance time/timezone service for MCP
-  # Note: This is an amd64-only image. On ARM platforms (Apple Silicon),
-  # emulation may not work properly.
+  # Uses the published multi-arch GHCR image.
   ###############################################################################
   fast_time_server:
     image: ghcr.io/ibm/fast-time-server:latest
@@ -1275,7 +1274,8 @@ services:
   ###############################################################################
   fast_test_server:
     build:
-      context: ./mcp-servers/rust/fast-test-server
+      # Context builds the renamed rust fast-time-server crate; image/service name kept as fast-test-server to avoid colliding with the Go fast_time_server.
+      context: ./mcp-servers/rust/fast-time-server
       dockerfile: Containerfile
     image: mcpgateway/fast-test-server:latest
     restart: unless-stopped
@@ -1390,8 +1390,8 @@ services:
   ###############################################################################
   benchmark_server:
     build:
-      context: ./mcp-servers/go/benchmark-server
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: mcp-servers/rust/benchmark-server/Dockerfile
     image: mcpgateway/benchmark-server:latest
     restart: unless-stopped
     networks: [mcpnet]
@@ -1406,8 +1406,11 @@ services:
       # Port range supports up to 100 servers (9000-9099)
       # Actual servers spawned controlled by BENCHMARK_SERVER_COUNT
       - "9000-9099:9000-9099"
-    # Note: No healthcheck - scratch-based Go image has no shell
-    # Verify health via: curl http://localhost:9000/health
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:${BENCHMARK_START_PORT:-9000}/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
     deploy:
       resources:
         limits:

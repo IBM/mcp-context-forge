@@ -63,13 +63,45 @@ You can bump the version manually or automate it via Git tags or CI/CD.
 
 ## 📁 Release Artifacts
 
-If you need to ship ZIPs or wheels use the project build tooling:
+### Building PyPI Packages
+
+The project uses a custom build hook (`build_hooks/__init__.py`) that automatically generates UI assets during packaging:
 
 ```bash
 make dist
-# or
-python3 -m build
+# or manually:
+BUILD_UI_ASSETS=true python -m build
 ```
+
+This automatically:
+
+1. Cleans old bundle-*.js files
+2. Runs `npm install` (if node_modules doesn't exist)
+3. Runs `npm run vite:build` (generates bundle-*.js)
+4. Runs `npm run build:css` (generates tailwind.min.css)
+5. Builds wheel and sdist with assets included
+
+**Prerequisites**: Node.js and npm must be installed.
+
+**Note**: The `BUILD_UI_ASSETS=true` env var is required to trigger the npm build. Without it, the hook is skipped (preventing unintended `package-lock.json` mutations during `uv sync` or `pip install`).
+
+**Output**: `dist/mcp_contextforge_gateway-{version}-py3-none-any.whl` and `.tar.gz`
+
+**Note**: Built assets (bundle-*.js, tailwind.min.css) are NOT committed to git but ARE included in PyPI packages. Users installing from PyPI get pre-built assets without needing Node.js.
+
+### Verify Assets
+
+```bash
+unzip -l dist/*.whl | grep -E "(bundle-|tailwind.min.css)"
+```
+
+Expected output:
+```
+mcpgateway/static/bundle-<hash>.js
+mcpgateway/static/css/tailwind.min.css
+```
+
+### Distribution
 
 Outputs land under `dist/`. You can then:
 

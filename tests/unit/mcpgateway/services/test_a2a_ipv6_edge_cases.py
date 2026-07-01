@@ -19,6 +19,11 @@ from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentService
 class TestIPv6EdgeCases:
     """Tests for IPv6 address handling in domain validation."""
 
+    @pytest.fixture(autouse=True)
+    def disable_allow_all_domains(self, monkeypatch):
+        """Keep IPv6 allowlist tests in fail-closed mode."""
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allow_all_domains", False)
+
     @pytest.fixture
     def service(self):
         """Create A2AAgentService instance for testing."""

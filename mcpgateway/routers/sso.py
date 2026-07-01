@@ -15,7 +15,8 @@ from urllib.parse import urlparse
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
-from pydantic import BaseModel
+import jwt
+from pydantic import BaseModel, model_validator
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -24,9 +25,11 @@ from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.sso_service import SSOService
+from mcpgateway.services.sso_service import invalidate_trusted_provider_cache, SSOService
+from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.paths import resolve_root_path
+from mcpgateway.utils.verify_credentials import invalidate_external_identity_cache
 
 # Initialize logging
 logging_service = LoggingService()
@@ -52,6 +55,22 @@ class SSOProviderCreateRequest(BaseModel):
     auto_create_users: bool = True
     team_mapping: Dict = {}
     provider_metadata: Dict = {}  # Role mappings, groups_claim config, etc.
+    trusted_for_api_auth: bool = False
+    api_audience: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _require_audience_when_api_trusted(self):
+        """Ensure api_audience is set when trusted_for_api_auth is enabled.
+
+        Returns:
+            SSOProviderCreateRequest: The validated model instance.
+
+        Raises:
+            ValueError: If trusted_for_api_auth is True but api_audience is empty.
+        """
+        if self.trusted_for_api_auth and not (self.api_audience or "").strip():
+            raise ValueError("api_audience is required when trusted_for_api_auth is enabled (prevents confused-deputy token acceptance)")
+        return self
 
 
 class SSOProviderUpdateRequest(BaseModel):
@@ -73,6 +92,22 @@ class SSOProviderUpdateRequest(BaseModel):
     team_mapping: Optional[Dict] = None
     provider_metadata: Optional[Dict] = None  # Role mappings, groups_claim config, etc.
     is_enabled: Optional[bool] = None
+    trusted_for_api_auth: Optional[bool] = None
+    api_audience: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _require_audience_when_api_trusted(self):
+        """Ensure api_audience is provided when enabling trusted_for_api_auth in this update.
+
+        Returns:
+            SSOProviderUpdateRequest: The validated model instance.
+
+        Raises:
+            ValueError: If trusted_for_api_auth is being set to True but api_audience is empty.
+        """
+        if self.trusted_for_api_auth is True and not (self.api_audience or "").strip():
+            raise ValueError("api_audience is required when trusted_for_api_auth is enabled (prevents confused-deputy token acceptance)")
+        return self
 
 
 # Create router
@@ -398,8 +433,46 @@ async def handle_sso_callback(
     if not access_token:
         return RedirectResponse(url=f"{root_path}/admin/login?error=user_creation_failed", status_code=302)
 
+    # Determine redirect URL based on user's admin status and team membership
+    # Decode token to get user info (no verification needed - we just created it)
+    try:
+        payload = jwt.decode(access_token, options={"verify_signature": False})
+        user_data = payload.get("user", {})
+        is_admin = user_data.get("is_admin", False)
+        user_email = user_data.get("email") or payload.get("email")
+    except Exception as e:
+        logger.warning(f"Failed to decode SSO token for redirect determination: {e}")
+        is_admin = False
+        user_email = user_info.get("email")
+
+    # Determine redirect URL
+    redirect_url = f"{root_path}/admin"
+
+    # For non-admin users, try to redirect to their first team's admin view
+    if not is_admin and user_email:
+        try:
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email, include_personal=False)
+
+            if user_teams:
+                # Redirect to first team's admin view
+                # Use first team in list (arbitrary selection - user can switch teams in UI)
+                first_team_id = user_teams[0].id
+                redirect_url = f"{root_path}/admin?team_id={first_team_id}"
+                logger.info(f"Redirecting non-admin SSO user {sanitize_for_log(user_email)} to team-scoped admin: {first_team_id}")
+            else:
+                # User has no teams - redirect to admin gateways view
+                # Redirecting to root (/) would create a loop when Admin UI is enabled,
+                # as root redirects back to /admin/. The gateways section is accessible
+                # to platform_viewer users (who have gateways.read permission).
+                redirect_url = f"{root_path}/admin/#gateways"
+                logger.info(f"Redirecting non-admin SSO user {sanitize_for_log(user_email)} with no teams to admin gateways view")
+        except Exception as e:
+            logger.warning(f"Failed to retrieve teams for SSO user {sanitize_for_log(user_email)}: {e}. Redirecting to /admin")
+            # Fall back to /admin - middleware will handle permission check
+
     # Create redirect response
-    redirect_response = RedirectResponse(url=f"{root_path}/admin", status_code=302)
+    redirect_response = RedirectResponse(url=redirect_url, status_code=302)
 
     # Set secure HTTP-only cookie using the same method as email auth
     # First-Party
@@ -479,6 +552,8 @@ async def create_sso_provider(
     }
     db.commit()
     db.close()
+    invalidate_trusted_provider_cache()
+    await invalidate_external_identity_cache()
     return result
 
 
@@ -516,6 +591,8 @@ async def list_all_sso_providers(
             "is_enabled": provider.is_enabled,
             "trusted_domains": provider.trusted_domains,
             "auto_create_users": provider.auto_create_users,
+            "trusted_for_api_auth": provider.trusted_for_api_auth,
+            "api_audience": provider.api_audience,
             "created_at": provider.created_at,
             "updated_at": provider.updated_at,
         }
@@ -566,6 +643,8 @@ async def get_sso_provider(
         "scope": provider.scope,
         "trusted_domains": provider.trusted_domains,
         "auto_create_users": provider.auto_create_users,
+        "trusted_for_api_auth": provider.trusted_for_api_auth,
+        "api_audience": provider.api_audience,
         "team_mapping": provider.team_mapping,
         "is_enabled": provider.is_enabled,
         "created_at": provider.created_at,
@@ -625,6 +704,8 @@ async def update_sso_provider(
     }
     db.commit()
     db.close()
+    invalidate_trusted_provider_cache()
+    await invalidate_external_identity_cache()
     return result
 
 
@@ -655,6 +736,8 @@ async def delete_sso_provider(
 
     db.commit()
     db.close()
+    invalidate_trusted_provider_cache()
+    await invalidate_external_identity_cache()
     return {"message": f"SSO provider '{provider_id}' deleted successfully"}
 
 

@@ -32,16 +32,18 @@ try:
     # smallest public-API equivalent for crafting a streamable Response.
     # No public alternative exists in current httpx; revisit if/when
     # httpx exposes a stable streaming-response helper.
+    # Third-Party
     from httpx._content import AsyncIteratorByteStream  # noqa: PLC2701 — see comment above
 except ImportError as exc:  # pragma: no cover — surfaces a future httpx refactor
     raise RuntimeError("test_rust_mcp_public_proxy depends on httpx._content.AsyncIteratorByteStream; " "httpx may have moved this private symbol — pin httpx or update the import.") from exc
 
 # First-Party
+import mcpgateway.transports.rust_mcp_public_proxy as public_proxy_mod
 from mcpgateway.transports.rust_mcp_public_proxy import (
-    RustMCPPublicProxyApp,
     _build_forwarded_headers,
     _format_forwarded_for,
     build_rust_public_proxy_app,
+    RustMCPPublicProxyApp,
 )
 
 # ---------------------------------------------------------------------
@@ -267,7 +269,7 @@ async def test_build_forwarded_headers_unknown_client_emits_for_unknown() -> Non
 
 
 @pytest.mark.asyncio
-async def test_proxy_forwards_request_and_streams_response() -> None:
+async def test_proxy_forwards_request_and_streams_response(caplog, monkeypatch) -> None:
     """A successful round-trip: status, body, content-type all passed through."""
     captured: dict = {}
 
@@ -279,12 +281,18 @@ async def test_proxy_forwards_request_and_streams_response() -> None:
 
     proxy = _make_proxy(handler)
     send = _SendCollector()
+    monkeypatch.setattr(public_proxy_mod, "_RUST_MCP_PUBLIC_PROXY_DEPRECATION_LOGGED", False)
+    caplog.set_level("WARNING", logger="mcpgateway.transports.rust_mcp_public_proxy")
 
     await proxy(_make_scope(method="POST", path="/mcp"), _make_receive(b"payload"), send)
 
     assert send.status == 200
     assert send.body == b"hello-from-rust"
     assert send.headers.get("content-type") == "text/plain"
+    assert send.headers.get("deprecation") == "@1781136000"
+    assert send.headers.get("sunset") == "Tue, 07 Jul 2026 00:00:00 GMT"
+    assert send.headers.get("link") == '<https://ibm.github.io/mcp-context-forge/deprecations/>; rel="deprecation"; type="text/html"'
+    assert any("The Rust MCP runtime sidecar is deprecated" in rec.message for rec in caplog.records)
     assert captured["method"] == "POST"
     assert captured["url"].endswith("/mcp")
 
@@ -304,6 +312,8 @@ async def test_proxy_passes_through_auth_failures_unchanged() -> None:
     assert send.status == 401
     assert send.body == b"who are you"
     assert send.headers.get("www-authenticate") == "Bearer"
+    assert send.headers.get("deprecation") == "@1781136000"
+    assert send.headers.get("sunset") == "Tue, 07 Jul 2026 00:00:00 GMT"
 
 
 @pytest.mark.asyncio
@@ -334,6 +344,8 @@ async def test_proxy_strips_hop_by_hop_response_headers() -> None:
     assert "transfer-encoding" not in send.headers
     # Application headers survive.
     assert send.headers.get("content-type") == "application/json"
+    assert send.headers.get("deprecation") == "@1781136000"
+    assert send.headers.get("sunset") == "Tue, 07 Jul 2026 00:00:00 GMT"
 
 
 @pytest.mark.asyncio
@@ -351,6 +363,9 @@ async def test_proxy_returns_502_on_upstream_httpx_error(caplog) -> None:
 
     assert send.status == 502
     assert b"unavailable" in send.body
+    assert send.headers.get("deprecation") == "@1781136000"
+    assert send.headers.get("sunset") == "Tue, 07 Jul 2026 00:00:00 GMT"
+    assert send.headers.get("link") == '<https://ibm.github.io/mcp-context-forge/deprecations/>; rel="deprecation"; type="text/html"'
     assert any("rust-public ingress" in rec.message and "ConnectError" in rec.message for rec in caplog.records)
 
 
@@ -368,6 +383,9 @@ async def test_proxy_returns_500_on_unexpected_exception(caplog) -> None:
     await proxy(_make_scope(), _make_receive(), send)
 
     assert send.status == 500
+    assert send.headers.get("deprecation") == "@1781136000"
+    assert send.headers.get("sunset") == "Tue, 07 Jul 2026 00:00:00 GMT"
+    assert send.headers.get("link") == '<https://ibm.github.io/mcp-context-forge/deprecations/>; rel="deprecation"; type="text/html"'
     assert any("unexpected error" in rec.message for rec in caplog.records)
 
 

@@ -702,7 +702,7 @@ mcpContextForge:
     # ─ Additional Settings (defaults from config.py) ─
     # Validation & sanitization
     EXPERIMENTAL_VALIDATE_IO: "false" # enable experimental input/output validation
-    VALIDATION_MIDDLEWARE_ENABLED: "false" # enable validation middleware for all requests
+    VALIDATION_MIDDLEWARE_ENABLED: "false" # deprecated; prefer endpoint-level and protocol-specific validation
     VALIDATION_STRICT: "true" # reject requests with validation failures
     JSON_SCHEMA_VALIDATION_STRICT: "true" # reject tool registrations with invalid JSON schemas
     SANITIZE_OUTPUT: "true" # strip control characters from responses
@@ -838,7 +838,7 @@ mcpContextForge:
     JWT_ALGORITHM: HS256                   # signing algorithm for JWT tokens
     JWT_AUDIENCE: mcpgateway-api           # JWT audience claim for token validation
     JWT_ISSUER: mcpgateway                 # JWT issuer claim for token validation
-    TOKEN_EXPIRY: "10080"                  # JWT validity (minutes); 10080 = 7 days
+    TOKEN_EXPIRY: "1440"                   # JWT validity (minutes); max allowed: 1440 = 24 hours
     REQUIRE_TOKEN_EXPIRATION: "true"       # require all JWT tokens to have expiration claims
     REQUIRE_JTI: "true"                    # require JTI (JWT ID) claim for revocation support
     REQUIRE_USER_IN_DB: "false"            # require all users to exist in database (disables platform admin bootstrap)
@@ -1477,7 +1477,7 @@ minio:
       memory: 256Mi
 
 ########################################################################
-# MCP-FAST-TIME-SERVER - optional high-performance time server for MCP (go)
+# MCP-FAST-TIME-SERVER - optional high-performance time server for MCP (Rust)
 # Provides a fast implementation including SSE and Streamable HTTP
 ########################################################################
 mcpFastTimeServer:
@@ -1531,7 +1531,7 @@ mcpFastTimeServer:
       successThreshold: 1
       failureThreshold: 8
 
-  # Tiny Go process: ~10 MB runtime footprint
+  # Tiny Go process with a small runtime footprint
   resources:
     limits:
       cpu: 50m           # ~5 % of a core

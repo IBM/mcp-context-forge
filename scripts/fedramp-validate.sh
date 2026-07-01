@@ -79,11 +79,31 @@ check "/app home dir permissions 0750 (RHEL-09-232050)" \
     "stat -c '%a' /app" \
     "750"
 
+# /app must stay group-owned by root (GID 0): OpenShift's arbitrary-UID model always
+# runs containers with GID 0, and 0750 strips "other" access — without group=root,
+# arbitrary-UID pods lose all access to /app (ModuleNotFoundError: No module named
+# 'gunicorn' at startup). Owner-UID match (10001) still works via owner bits regardless.
+check "/app group ownership is root (OpenShift arbitrary-UID compatibility)" \
+    "stat -c '%G' /app" \
+    "root"
+
 # RHEL-09-232045: /app user dotfiles must be 0740 or less permissive
 # -perm /037 matches: group-write (020), group-execute (010), other-rwx (007)
 check "/app dotfiles permissions 0740 or less (RHEL-09-232045)" \
     "find /app -maxdepth 1 -name '.*' -type f -perm /037 -printf '%f\n' | sort | tr '\n' ',' | sed 's/,$//'" \
     ""
+
+# Regression guard for WO issue #68373: "ModuleNotFoundError: No module named
+# 'gunicorn'" at pod startup has surfaced from two independent FIPS-block root
+# causes — (1) /app losing GID-0 access at 0750 (fixed by the group-ownership
+# check above) and (2) subscription-manager (RHEL-09-215010) silently
+# overwriting /usr/bin/python3 with UBI9's system python3 (3.9), breaking the
+# venv interpreter binding. This end-to-end check exercises the actual
+# failure mode directly, so either cause — or any future variant — fails here
+# instead of in a customer pod.
+check "runtime python3 can import gunicorn from the venv (regression: #68373)" \
+    "python3 -c 'import gunicorn; print(\"GUNICORN_OK\")'" \
+    "GUNICORN_OK"
 
 echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="

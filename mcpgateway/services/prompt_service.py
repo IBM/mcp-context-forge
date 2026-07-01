@@ -519,13 +519,13 @@ class PromptService(BaseService):
             # Ensure the result is a list (JSON array)
             if not isinstance(arguments, list):
                 error_msg = f"Arguments must be a JSON array, got {type(arguments).__name__}"
-                logger.error(f"Invalid arguments type{' for ' + context if context else ''}: {error_msg}. " f"Raw value (first 200 chars): {args_value[:200]!r}")
+                logger.error(f"Invalid arguments type{' for ' + context if context else ''}: {error_msg}. Raw value (first 200 chars): {args_value[:200]!r}")
                 raise PromptArgumentsJSONError(field_name="arguments", json_error=error_msg, raw_value=args_value, context=context)
 
             return arguments
         except orjson.JSONDecodeError as json_err:
             # Log the error with context
-            logger.error(f"Invalid JSON in arguments field{' for ' + context if context else ''}: {json_err}. " f"Raw value (first 200 chars): {args_value[:200]!r}")
+            logger.error(f"Invalid JSON in arguments field{' for ' + context if context else ''}: {json_err}. Raw value (first 200 chars): {args_value[:200]!r}")
             # Raise custom exception
             raise PromptArgumentsJSONError(field_name="arguments", json_error=str(json_err), raw_value=args_value, context=context) from json_err
 
@@ -857,17 +857,13 @@ class PromptService(BaseService):
             # Check for existing server with the same name
             if visibility.lower() == "public":
                 # Check for existing public prompt with the same name and gateway_id
-                existing_prompt = db.execute(
-                    select(DbPrompt).where(DbPrompt.name == computed_name, DbPrompt.visibility == "public", DbPrompt.gateway_id == gateway_id)
-                ).scalar_one_or_none()  # pylint: disable=comparison-with-callable
+                existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == computed_name, DbPrompt.visibility == "public", DbPrompt.gateway_id == gateway_id)).scalar_one_or_none()  # pylint: disable=comparison-with-callable
                 if existing_prompt:
                     raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
             elif visibility.lower() == "team":
                 # Check for existing team prompt with the same name and gateway_id
                 existing_prompt = db.execute(
-                    select(DbPrompt).where(
-                        DbPrompt.name == computed_name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id, DbPrompt.gateway_id == gateway_id
-                    )  # pylint: disable=comparison-with-callable
+                    select(DbPrompt).where(DbPrompt.name == computed_name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id, DbPrompt.gateway_id == gateway_id)  # pylint: disable=comparison-with-callable
                 ).scalar_one_or_none()
                 if existing_prompt:
                     raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
@@ -884,7 +880,7 @@ class PromptService(BaseService):
             # Notify subscribers
             await self._notify_prompt_added(db_prompt)
 
-            logger.info(f"Registered prompt: {prompt.name}")
+            logger.info("Registered prompt: %s", prompt.name)
 
             # Structured logging: Audit trail for prompt creation
             audit_trail.log_action(
@@ -906,7 +902,6 @@ class PromptService(BaseService):
                     "import_batch_id": import_batch_id,
                     "federation_source": federation_source,
                 },
-                db=db,
             )
 
             # Structured logging: Log successful prompt creation
@@ -946,7 +941,7 @@ class PromptService(BaseService):
             return PromptRead.model_validate(prompt_dict)
 
         except IntegrityError as ie:
-            logger.error(f"IntegrityErrors in group: {ie}")
+            logger.error("IntegrityErrors in group: %s", ie)
 
             structured_logger.log(
                 level="ERROR",
@@ -993,7 +988,7 @@ class PromptService(BaseService):
             db.rollback()
             # Sanitize pattern_matched to prevent log injection (CWE-117)
             sanitized_pattern = cpe.pattern_matched.replace("\n", "\\n").replace("\r", "\\r")
-            logger.error(f"Malicious pattern detected in prompt template: {sanitized_pattern}")
+            logger.error("Malicious pattern detected in prompt template: %s", sanitized_pattern)
             structured_logger.log(
                 level="ERROR",
                 message="Prompt creation failed - Malicious pattern detected",
@@ -1295,12 +1290,12 @@ class PromptService(BaseService):
                     except TemplateValidationError as tve:
                         # Template validation errors should fail fast, not continue
                         db.rollback()
-                        logger.error(f"Template validation failed for prompt {prompt.name}: {tve.reason}")
+                        logger.error("Template validation failed for prompt %s: %s", prompt.name, tve.reason)
                         raise tve
                     except Exception as e:
                         stats["failed"] += 1
                         stats["errors"].append(f"Failed to process prompt {prompt.name}: {str(e)}")
-                        logger.warning(f"Failed to process prompt {prompt.name} in bulk operation: {str(e)}")
+                        logger.warning("Failed to process prompt %s in bulk operation: %s", prompt.name, str(e))
                         continue
 
                 # Bulk add new prompts
@@ -1339,17 +1334,16 @@ class PromptService(BaseService):
                             "federation_source": federation_source,
                             "conflict_strategy": conflict_strategy,
                         },
-                        db=db,
                     )
 
-                logger.info(f"Bulk registered {len(prompts_to_add)} prompts, updated {len(prompts_to_update)} prompts in chunk")
+                logger.info("Bulk registered %s prompts, updated %s prompts in chunk", len(prompts_to_add), len(prompts_to_update))
 
             except TemplateValidationError:
                 # Template validation errors should fail fast - re-raise immediately
                 raise
             except Exception as e:
                 db.rollback()
-                logger.error(f"Failed to process chunk in bulk prompt registration: {str(e)}")
+                logger.error("Failed to process chunk in bulk prompt registration: %s", str(e))
                 stats["failed"] += len(chunk)
                 stats["errors"].append(f"Chunk processing failed: {str(e)}")
                 continue
@@ -1524,7 +1518,7 @@ class PromptService(BaseService):
                     s.team = team_map.get(s.team_id) if s.team_id else None
                     result.append(self.convert_prompt_to_read(s, include_metrics=False))
                 except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                    logger.exception(f"Failed to convert prompt {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
+                    logger.exception("Failed to convert prompt %s (%s): %s", getattr(s, "id", "unknown"), getattr(s, "name", "unknown"), e)
                     # Continue with remaining prompts instead of failing completely
             # Return appropriate format based on pagination type
             if page is not None:
@@ -1633,7 +1627,7 @@ class PromptService(BaseService):
                 t.team = team_map.get(str(t.team_id)) if t.team_id else None
                 result.append(self.convert_prompt_to_read(t, include_metrics=False))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                logger.exception(f"Failed to convert prompt {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
+                logger.exception("Failed to convert prompt %s (%s): %s", getattr(t, "id", "unknown"), getattr(t, "name", "unknown"), e)
                 # Continue with remaining prompts instead of failing completely
         return result
 
@@ -1755,7 +1749,7 @@ class PromptService(BaseService):
                     t.team = team_map.get(str(t.team_id)) if t.team_id else None
                     result.append(self.convert_prompt_to_read(t, include_metrics=include_metrics))
                 except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                    logger.exception(f"Failed to convert prompt {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
+                    logger.exception("Failed to convert prompt %s (%s): %s", getattr(t, "id", "unknown"), getattr(t, "name", "unknown"), e)
                     # Continue with remaining prompts instead of failing completely
             return result
 
@@ -1970,9 +1964,9 @@ class PromptService(BaseService):
                         "request_id": request_id or "none",
                     },
                 )
-                logger.debug(f"✓ Created prompt.render span: {db_span_id} for prompt: {prompt_id}")
+                logger.debug("✓ Created prompt.render span: %s for prompt: %s", db_span_id, prompt_id)
             except Exception as e:
-                logger.warning(f"Failed to start observability span for prompt rendering: {e}")
+                logger.warning("Failed to start observability span for prompt rendering: %s", e)
                 db_span_id = None
 
         # Create a trace span for OpenTelemetry export (Jaeger, Zipkin, etc.)
@@ -2128,7 +2122,6 @@ class PromptService(BaseService):
                         "arguments_provided": arguments_supplied,
                         "request_id": request_id,
                     },
-                    db=db,
                 )
 
                 structured_logger.log(
@@ -2162,7 +2155,7 @@ class PromptService(BaseService):
                             set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload(result))
 
                 success = True
-                logger.info(f"Retrieved prompt: {prompt.id} successfully")
+                logger.info("Retrieved prompt: %s successfully", prompt.id)
                 return result
 
             except Exception as e:
@@ -2180,7 +2173,7 @@ class PromptService(BaseService):
                             error_message=error_message,
                         )
                     except Exception as metrics_error:
-                        logger.warning(f"Failed to record prompt metric: {metrics_error}")
+                        logger.warning("Failed to record prompt metric: %s", metrics_error)
 
                     # Record server metrics ONLY when the server scoping check passed.
                     # This prevents recording metrics with unvalidated server_id values
@@ -2195,7 +2188,7 @@ class PromptService(BaseService):
                                 error_message=error_message,
                             )
                         except Exception as metrics_error:
-                            logger.warning(f"Failed to record server metric: {metrics_error}")
+                            logger.warning("Failed to record server metric: %s", metrics_error)
 
                 # End database span for observability dashboard
                 if db_span_id and observability_service and not db_span_ended:
@@ -2206,9 +2199,9 @@ class PromptService(BaseService):
                             status_message=error_message if error_message else None,
                         )
                         db_span_ended = True
-                        logger.debug(f"✓ Ended prompt.render span: {db_span_id}")
+                        logger.debug("✓ Ended prompt.render span: %s", db_span_id)
                     except Exception as e:
-                        logger.warning(f"Failed to end observability span for prompt rendering: {e}")
+                        logger.warning("Failed to end observability span for prompt rendering: %s", e)
 
     async def update_prompt(
         self,
@@ -2297,15 +2290,11 @@ class PromptService(BaseService):
             if computed_name != prompt.name:
                 if visibility.lower() == "public":
                     # Lock any conflicting row so concurrent updates cannot race.
-                    existing_prompt = get_for_update(
-                        db, DbPrompt, where=and_(DbPrompt.name == computed_name, DbPrompt.visibility == "public", DbPrompt.id != prompt.id)
-                    )  # pylint: disable=comparison-with-callable
+                    existing_prompt = get_for_update(db, DbPrompt, where=and_(DbPrompt.name == computed_name, DbPrompt.visibility == "public", DbPrompt.id != prompt.id))  # pylint: disable=comparison-with-callable
                     if existing_prompt:
                         raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
                 elif visibility.lower() == "team" and team_id:
-                    existing_prompt = get_for_update(
-                        db, DbPrompt, where=and_(DbPrompt.name == computed_name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id, DbPrompt.id != prompt.id)
-                    )  # pylint: disable=comparison-with-callable
+                    existing_prompt = get_for_update(db, DbPrompt, where=and_(DbPrompt.name == computed_name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id, DbPrompt.id != prompt.id))  # pylint: disable=comparison-with-callable
                     logger.info(f"Existing prompt check result: {existing_prompt}")
                     if existing_prompt:
                         raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
@@ -2313,9 +2302,7 @@ class PromptService(BaseService):
                     existing_prompt = get_for_update(
                         db,
                         DbPrompt,
-                        where=and_(
-                            DbPrompt.name == computed_name, DbPrompt.visibility == "private", DbPrompt.owner_email == owner_email, DbPrompt.id != prompt.id
-                        ),  # pylint: disable=comparison-with-callable
+                        where=and_(DbPrompt.name == computed_name, DbPrompt.visibility == "private", DbPrompt.owner_email == owner_email, DbPrompt.id != prompt.id),  # pylint: disable=comparison-with-callable
                     )
                     if existing_prompt:
                         raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
@@ -2432,7 +2419,6 @@ class PromptService(BaseService):
                 user_agent=modified_user_agent,
                 new_values={"name": prompt.name, "version": prompt.version},
                 context={"modified_via": modified_via},
-                db=db,
             )
 
             structured_logger.log(
@@ -2477,7 +2463,7 @@ class PromptService(BaseService):
             raise
         except IntegrityError as ie:
             db.rollback()
-            logger.error(f"IntegrityErrors in group: {ie}")
+            logger.error("IntegrityErrors in group: %s", ie)
 
             structured_logger.log(
                 level="ERROR",
@@ -2492,7 +2478,7 @@ class PromptService(BaseService):
             raise ie
         except PromptNotFoundError as e:
             db.rollback()
-            logger.error(f"Prompt not found: {e}")
+            logger.error("Prompt not found: %s", e)
 
             structured_logger.log(
                 level="ERROR",
@@ -2507,7 +2493,7 @@ class PromptService(BaseService):
             raise e
         except PromptNameConflictError as pnce:
             db.rollback()
-            logger.error(f"Prompt name conflict: {pnce}")
+            logger.error("Prompt name conflict: %s", pnce)
 
             structured_logger.log(
                 level="WARNING",
@@ -2522,7 +2508,7 @@ class PromptService(BaseService):
             raise pnce
         except ContentSizeError as cse:
             db.rollback()
-            logger.error(f"Prompt template size limit exceeded: {cse.actual_size} bytes (max: {cse.max_size} bytes)")
+            logger.error("Prompt template size limit exceeded: %s bytes (max: %s bytes)", cse.actual_size, cse.max_size)
             structured_logger.log(
                 level="ERROR",
                 message="Prompt update failed - Template size exceeded",
@@ -2542,7 +2528,7 @@ class PromptService(BaseService):
             db.rollback()
             # Sanitize pattern_matched to prevent log injection (CWE-117)
             sanitized_pattern = cpe.pattern_matched.replace("\n", "\\n").replace("\r", "\\r")
-            logger.error(f"Malicious pattern detected in prompt template: {sanitized_pattern}")
+            logger.error("Malicious pattern detected in prompt template: %s", sanitized_pattern)
             structured_logger.log(
                 level="ERROR",
                 message="Prompt update failed - Malicious pattern detected",
@@ -2644,7 +2630,7 @@ class PromptService(BaseService):
                     await self._notify_prompt_activated(prompt)
                 else:
                     await self._notify_prompt_deactivated(prompt)
-                logger.info(f"Prompt {prompt.name} {'activated' if activate else 'deactivated'}")
+                logger.info("Prompt %s %s", prompt.name, "activated" if activate else "deactivated")
 
                 # Structured logging: Audit trail for prompt state change
                 audit_trail.log_action(
@@ -2657,7 +2643,6 @@ class PromptService(BaseService):
                     team_id=prompt.team_id,
                     new_values={"enabled": prompt.enabled},
                     context={"action": "activate" if activate else "deactivate"},
-                    db=db,
                 )
 
                 structured_logger.log(
@@ -2777,7 +2762,6 @@ class PromptService(BaseService):
             resource_name=prompt.name,
             team_id=prompt.team_id,
             context={"include_inactive": include_inactive},
-            db=db,
         )
 
         structured_logger.log(
@@ -2857,7 +2841,7 @@ class PromptService(BaseService):
             db.delete(prompt)
             db.commit()
             await self._notify_prompt_deleted(prompt_info)
-            logger.info(f"Deleted prompt: {prompt_info['name']}")
+            logger.info("Deleted prompt: %s", prompt_info["name"])
 
             # Structured logging: Audit trail for prompt deletion
             audit_trail.log_action(
@@ -2869,7 +2853,6 @@ class PromptService(BaseService):
                 user_email=user_email,
                 team_id=prompt_team_id,
                 old_values={"name": prompt_name},
-                db=db,
             )
 
             # Structured logging: Log successful prompt deletion

@@ -136,7 +136,8 @@ def test_bootstrap_logs_copy_exception(monkeypatch, tmp_path):
     mock_logger = MagicMock()
     monkeypatch.setattr(cli, "logger", mock_logger)
 
-    cli.bootstrap(destination=tmp_path, template_url="https://example.com/repo.git", no_input=True)
+    with pytest.raises(cli.typer.Exit) as excinfo:
+        cli.bootstrap(destination=tmp_path, template_url="https://example.com/repo.git", no_input=True)
 
     cc_func.assert_called_once()
     mock_logger.exception.assert_called_once()

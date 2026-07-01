@@ -45,6 +45,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime as _dt
+import logging
 import sys
 from typing import Any, Dict, List, Optional, Sequence
 import uuid
@@ -55,6 +56,8 @@ import orjson
 
 # First-Party
 from mcpgateway.config import settings
+
+logger = logging.getLogger(__name__)
 
 __all__: Sequence[str] = (
     "create_jwt_token",
@@ -121,14 +124,20 @@ def _create_jwt_token(
         When not provided (empty), configuration values are used as defaults.
     """
     # First-Party
-    from mcpgateway.utils.jwt_config_helper import get_jwt_private_key_or_secret, validate_jwt_algo_and_keys
+    from mcpgateway.utils.jwt_config_helper import _derive_env_key, get_jwt_private_key_or_secret, validate_jwt_algo_and_keys
 
     # Use provided secret/algorithm or fall back to configuration
+    if not algorithm:
+        algorithm = settings.jwt_algorithm
+    if settings.derive_key_per_environment and not getattr(_create_jwt_token, "_derivation_logged", False):
+        logger.info("Per-environment JWT key derivation ACTIVE for environment=%s", settings.environment)
+        _create_jwt_token._derivation_logged = True  # type: ignore[attr-defined]
     if not secret:
         validate_jwt_algo_and_keys()
         secret = get_jwt_private_key_or_secret()
-    if not algorithm:
-        algorithm = settings.jwt_algorithm
+    elif settings.derive_key_per_environment and algorithm.upper().startswith("HS"):
+        # Explicit-secret HS* mints must also be environment-bound (no bypass).
+        secret = _derive_env_key(secret, settings.environment)
 
     payload = data.copy()
     now = _dt.datetime.now(_dt.timezone.utc)
@@ -240,7 +249,12 @@ async def get_jwt_token() -> str:
 
 
 def _decode_jwt_token(token: str, algorithms: List[str] | None = None) -> Dict[str, Any]:
-    """Decode with proper audience and issuer verification.
+    """Decode without signature verification (inspect-only; matches ``--decode`` CLI help).
+
+    With ``DERIVE_KEY_PER_ENVIRONMENT`` enabled the signing key differs from the
+    raw ``JWT_SECRET_KEY``, so a verified decode would fail for tokens minted in
+    the same session.  The CLI ``--decode`` flag is an inspection tool, not a
+    validation path, so signature verification is intentionally skipped.
 
     Args:
         token: JWT token string to decode.
@@ -261,15 +275,10 @@ def _decode_jwt_token(token: str, algorithms: List[str] | None = None) -> Dict[s
         >>> isinstance(default_algo, list)
         True
     """
-    # Get the actual string value from SecretStr if needed
-    secret_key = settings.jwt_secret_key.get_secret_value() if hasattr(settings.jwt_secret_key, "get_secret_value") else settings.jwt_secret_key
     return jwt.decode(
         token,
-        secret_key,
+        options={"verify_signature": False},
         algorithms=algorithms or [DEFAULT_ALGO],
-        audience=settings.jwt_audience,
-        issuer=settings.jwt_issuer,
-        # options={"require": ["exp"]},  # Require expiration
     )
 
 

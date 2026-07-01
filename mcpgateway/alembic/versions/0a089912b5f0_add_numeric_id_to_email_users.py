@@ -1,13 +1,20 @@
-"""add_uuid_id_to_email_users
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/alembic/versions/0a089912b5f0_add_numeric_id_to_email_users.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add_uuid_id_to_email_users
 
 Revision ID: 0a089912b5f0
 Revises: e28566875fa4
 Create Date: 2026-05-25 16:28:22.159471
-
 """
 
+# Standard
 from typing import Sequence, Union
 
+# Third-Party
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy import inspect, text

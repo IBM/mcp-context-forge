@@ -46,8 +46,10 @@ from starlette.responses import Response, StreamingResponse
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.deprecations import DEPRECATION_LINK_VALUE, DEPRECATION_RESPONSE_HEADERS, RUST_MCP_RUNTIME_DEPRECATION_MESSAGE
 
 logger = logging.getLogger(__name__)
+_RUST_MCP_PUBLIC_PROXY_DEPRECATION_LOGGED = False
 
 # Hop-by-hop headers per RFC 7230 §6.1 — must not be forwarded by an
 # intermediary. nginx strips these by default.
@@ -77,6 +79,28 @@ _HOP_BY_HOP_RESPONSE = frozenset(
         "upgrade",
     }
 )
+
+
+def _append_deprecation_headers(headers: dict[str, str]) -> dict[str, str]:
+    """Append standard deprecation metadata for Rust MCP public responses."""
+    headers["Deprecation"] = DEPRECATION_RESPONSE_HEADERS["Deprecation"]
+    headers["Sunset"] = DEPRECATION_RESPONSE_HEADERS["Sunset"]
+    link_name = next((name for name in headers if name.lower() == "link"), None)
+    if link_name:
+        headers[link_name] = f"{headers[link_name]}, {DEPRECATION_LINK_VALUE}"
+    else:
+        headers["Link"] = DEPRECATION_LINK_VALUE
+    return headers
+
+
+def _log_rust_mcp_public_proxy_deprecation_once() -> None:
+    """Log the Rust MCP public proxy deprecation once per process."""
+    global _RUST_MCP_PUBLIC_PROXY_DEPRECATION_LOGGED  # pylint: disable=global-statement
+    if not _RUST_MCP_PUBLIC_PROXY_DEPRECATION_LOGGED:
+        logger.warning(RUST_MCP_RUNTIME_DEPRECATION_MESSAGE)
+        _RUST_MCP_PUBLIC_PROXY_DEPRECATION_LOGGED = True
+
+
 # Forwarded-chain headers are dropped from the inbound request and
 # re-set unconditionally below. This is the no-nginx-in-front case: the
 # immediate hop is the client, so we cannot trust any value they
@@ -219,6 +243,7 @@ class RustMCPPublicProxyApp:
             response = Response(status_code=404, content=b"Not found", media_type="text/plain")
             await response(scope, receive, send)
             return
+        _log_rust_mcp_public_proxy_deprecation_once()
 
         request = Request(scope, receive)
         upstream_path = scope.get("path", "/")
@@ -250,6 +275,7 @@ class RustMCPPublicProxyApp:
                 status_code=502,
                 content=b"Rust MCP public ingress unavailable",
                 media_type="text/plain",
+                headers=_append_deprecation_headers({}),
             )
             await error_response(scope, receive, send)
             return
@@ -267,6 +293,7 @@ class RustMCPPublicProxyApp:
                 status_code=500,
                 content=b"Rust MCP public ingress error",
                 media_type="text/plain",
+                headers=_append_deprecation_headers({}),
             )
             await error_response(scope, receive, send)
             return
@@ -282,7 +309,7 @@ class RustMCPPublicProxyApp:
                 upstream_response.status_code,
             )
 
-        response_headers = {name: value for name, value in upstream_response.headers.items() if name.lower() not in _HOP_BY_HOP_RESPONSE}
+        response_headers = _append_deprecation_headers({name: value for name, value in upstream_response.headers.items() if name.lower() not in _HOP_BY_HOP_RESPONSE})
 
         async def _body_iter():
             """Stream the upstream response body and close the upstream connection on exit.

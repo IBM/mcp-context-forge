@@ -634,6 +634,27 @@ curl -s http://localhost:4444/oauth/registered-clients | jq
 
 ---
 
+## External IdP Bearer Token Rejected on API/MCP
+
+This section covers requests that present an access token issued by an external SSO provider (e.g. Keycloak, Entra ID) directly as a `Bearer` credential to API/MCP endpoints, per [SSO: Machine-to-machine API auth with external IdP tokens](sso.md#machine-to-machine-api-auth-with-external-idp-tokens). Match the symptom to the exact log line emitted by `mcpgateway/utils/verify_credentials.py`.
+
+| Symptom | Likely cause | Check |
+|---------|--------------|-------|
+| Token 401s, **no** `external-idp` log line at all | `SSO_API_TOKEN_AUTH_ENABLED` is `false`, or no provider has `trusted_for_api_auth=true` — external tokens are never inspected and only internal JWT validation runs | `grep SSO_API_TOKEN_AUTH_ENABLED .env`; confirm at least one enabled `SSOProvider` has `trusted_for_api_auth=true` |
+| `external-idp auth denied: missing or invalid issuer claim` | Token has no `iss` claim, or it isn't a parseable JWT | Decode the token and confirm it has a standard `iss` claim |
+| `external-idp auth denied: issuer not trusted (iss=%s)` | No enabled provider's issuer matches the token's `iss`, the matching provider has `trusted_for_api_auth=false`, or the provider is disabled | Compare the token's `iss` (including trailing slash) against the provider's configured issuer; ensure the provider is enabled and `trusted_for_api_auth=true` |
+| `external-idp auth denied: token validation failed (iss=%s)` | Bad signature (wrong/rotated JWKS), expired token, `aud` mismatch with the provider's `api_audience`, or the token is an ID token (not an access token) | Verify the token against the provider's JWKS endpoint, check `exp`, confirm `aud` exactly equals `api_audience`, and confirm `token_use`/token type is an access token |
+| `external-idp auth denied: user not provisionable (iss=%s, provider=%s)` | Token has no `email` claim and was not recognized as a service-principal (`client_credentials`) token | Confirm the token includes an `email` claim for human users, or that it is a genuine `client_credentials` token for service-principal provisioning |
+| `external-idp auth denied: empty email claim (iss=%s, provider=%s)` | `email` claim is present but empty/blank | Check the IdP's claim mapping for the `email` claim |
+| `external-idp auth denied: user not found after provisioning (iss=%s, provider=%s)` | Provisioning ran but the resulting local user could not be loaded (e.g. DB error, race, or the user was deleted immediately after creation) | Check gateway logs around the provisioning call and confirm the `email_users` table has a matching row |
+| `external-idp auth ok: provider=%s principal=%s is_admin=%s teams=%d` | Success — not an error. Use this to confirm which provider/principal/teams a token resolved to | Compare `is_admin`/`teams` against the expected local user record |
+
+### Issuer trailing-slash mismatches
+
+`issuer not trusted` is also the symptom for an issuer string that differs only by a trailing slash (e.g. `https://keycloak.example.com/realms/master` vs `https://keycloak.example.com/realms/master/`). ContextForge normalizes issuers for comparison, but if you configured the provider's issuer manually, ensure it matches the `iss` claim in tokens issued by that realm/tenant exactly (modulo trailing slash).
+
+---
+
 ## Related Documentation
 
 - [OAuth Integration](oauth.md) - Main OAuth setup guide

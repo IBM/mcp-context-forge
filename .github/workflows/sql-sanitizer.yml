@@ -8,7 +8,7 @@ on:
             - "mcpgateway/**"
             - "plugins/**"
             - "crates/sql-sanitizer/**"
-            - "mcp-servers/rust/fast-test-server/**"
+            - "mcp-servers/rust/fast-time-server/**"
             - "pyproject.toml"
             - "uv.lock"
             - ".github/workflows/sql-sanitizer.yml"
@@ -78,8 +78,8 @@ jobs:
             - name: Install Rust stable 1
               run: |
                 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-                echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-                source $HOME/.cargo/env
+                echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+                source "$HOME/.cargo/env"
                 rustc --version
 
 
@@ -160,44 +160,45 @@ jobs:
                     -H "Content-Type: application/json" | yq
 
 
-            - name: Build fast-test-server
-              working-directory: mcp-servers/rust/fast-test-server
+            - name: Build fast-time-server
+              working-directory: mcp-servers/rust/fast-time-server
               run: |
                   cargo build
 
-            - name: Start fast-test-server
+            - name: Start fast-time-server
               run: |
-                  pkill -9 -f "fast-test-server" 2>/dev/null || true
+                  pkill -9 -f "fast-time-server" 2>/dev/null || true
                   sleep 1
 
-                  nohup mcp-servers/rust/fast-test-server/target/debug/fast-test-server \
-                    > fast-test-server.log 2>&1 &
-                  echo $! > fast-test-server.pid
+                  nohup target/debug/fast-time-server \
+                    -transport=dual -listen=0.0.0.0 -port=9080 -log-level=info \
+                    > fast-time-server.log 2>&1 &
+                  echo $! > fast-time-server.pid
 
-                  echo "Waiting for fast-test-server..."
+                  echo "Waiting for fast-time-server..."
                   for i in {1..30}; do
                     if curl -s http://localhost:9080/health >/dev/null 2>&1; then
-                      echo "fast-test-server is up!"
+                      echo "fast-time-server is up!"
                       break
                     fi
-                    echo "Waiting for fast-test-server... (attempt $i)"
+                    echo "Waiting for fast-time-server... (attempt $i)"
                     sleep 2
                   done
 
                   if ! curl -s http://localhost:9080/health >/dev/null 2>&1; then
-                    echo "ERROR: fast-test-server failed to start"
-                    cat fast-test-server.log
+                    echo "ERROR: fast-time-server failed to start"
+                    cat fast-time-server.log
                     exit 1
                   fi
-                  echo "fast-test-server PID: $(cat fast-test-server.pid)"
+                  echo "fast-time-server PID: $(cat fast-time-server.pid)"
 
             - name: Register gateway and create virtual server
               run: |
                   TOKEN="${{ steps.generate_jwt.outputs.token }}"
 
                   if ! curl -s http://localhost:9080/health >/dev/null 2>&1; then
-                    echo "ERROR: fast-test-server is not running"
-                    cat fast-test-server.log
+                    echo "ERROR: fast-time-server is not running"
+                    cat fast-time-server.log
                     exit 1
                   fi
 
@@ -268,10 +269,10 @@ jobs:
 
             - name: Local Node 22 Install
               run: |
-                mkdir -p $GITHUB_WORKSPACE/node22
+                mkdir -p "$GITHUB_WORKSPACE/node22"
                 curl -fsSL https://nodejs.org/dist/v22.22.0/node-v22.22.0-linux-x64.tar.xz -o node22.tar.xz
-                tar -xJf node22.tar.xz --strip-components=1 -C $GITHUB_WORKSPACE/node22
-                $GITHUB_WORKSPACE/node22/bin/node -v
+                tar -xJf node22.tar.xz --strip-components=1 -C "$GITHUB_WORKSPACE/node22"
+                "$GITHUB_WORKSPACE/node22/bin/node" -v
 
             - name: Test sql-sanitizer
               run: |
@@ -316,7 +317,7 @@ jobs:
               with:
                   name: sql-sanitizer-test-logs
                   path: |
-                      fast-test-server.log
+                      fast-time-server.log
                       sql-sanitizer_output.json
                       sql-sanitizer_test.log
                       gateway.log

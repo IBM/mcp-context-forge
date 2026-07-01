@@ -21,10 +21,13 @@ on:
     types: [opened, synchronize, ready_for_review]
     branches: ["main"]
     paths-ignore:
+      - '.dockerignore'
       - 'Containerfile.lite'
       - 'mcpgateway/**'
       - 'plugins/**'
       - 'pyproject.toml'
+      - 'uv.lock'
+      - 'infra/wheels/**'
       - '.github/workflows/docker-multiplatform.yml'
 
 permissions:

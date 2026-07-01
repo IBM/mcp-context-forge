@@ -226,9 +226,9 @@ async def get_oauth_protected_resource(
     if not settings.well_known_enabled:
         raise HTTPException(status_code=404, detail="Not found")
 
-    logger.warning("Deprecated query-param OAuth metadata endpoint called. " "Use RFC 9728 compliant path-based endpoint: " "/.well-known/oauth-protected-resource/servers/{server_id}/mcp")
+    logger.warning("Deprecated query-param OAuth metadata endpoint called. Use RFC 9728 compliant path-based endpoint: /.well-known/oauth-protected-resource/servers/{server_id}/mcp")
     raise HTTPException(
-        status_code=404, detail=("This endpoint is deprecated and non-compliant with RFC 9728. " "Use the path-based endpoint: " "/.well-known/oauth-protected-resource/servers/{server_id}/mcp")
+        status_code=404, detail=("This endpoint is deprecated and non-compliant with RFC 9728. Use the path-based endpoint: /.well-known/oauth-protected-resource/servers/{server_id}/mcp")
     )
 
 
@@ -361,3 +361,15 @@ async def get_well_known_status(user: str = Depends(require_auth)):
         configured_files.append({"path": f"/.well-known/{filename}", "enabled": True, "description": "Custom well-known file", "cache_max_age": settings.well_known_cache_max_age})
 
     return {"enabled": settings.well_known_enabled, "configured_files": configured_files, "supported_files": list(WELL_KNOWN_REGISTRY.keys()), "cache_max_age": settings.well_known_cache_max_age}
+
+
+# Slim router containing only /admin/well-known.  Versioned routers (v1, legacy)
+# include this instead of the full `router` to avoid registering /.well-known/**
+# under a versioned prefix, which would violate RFC 8615.
+admin_router = APIRouter(tags=["well-known"])
+admin_router.add_api_route(
+    "/admin/well-known",
+    get_well_known_status,
+    methods=["GET"],
+    response_model=dict,
+)

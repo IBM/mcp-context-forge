@@ -118,18 +118,18 @@ REDIS_SERVICE = """  redis:
 
 FAST_TIME_SERVER_TEMPLATE = """  fast_time_server:
     build:
-      context: ./mcp-servers/go/fast-time-server
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: mcp-servers/rust/fast-time-server/Containerfile
     container_name: fast_time_server
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    command: ["-transport=sse", "-port=8002"]
+    command: ["-transport=sse", "-addr=0.0.0.0:8002", "-log-level=info"]
     ports:
       - "8002:8002"
     networks:
       - mcpnet
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8002/health || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8002/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -137,7 +137,8 @@ FAST_TIME_SERVER_TEMPLATE = """  fast_time_server:
 
 FAST_TEST_SERVER_TEMPLATE = """  fast_test_server:
     build:
-      context: ./mcp-servers/rust/fast-test-server
+      # Context builds the renamed rust fast-time-server crate; image/service name kept as fast-test-server to avoid colliding with the Go fast_time_server.
+      context: ./mcp-servers/rust/fast-time-server
       dockerfile: Dockerfile
     container_name: fast_test_server
     extra_hosts:
@@ -150,7 +151,7 @@ FAST_TEST_SERVER_TEMPLATE = """  fast_test_server:
     networks:
       - mcpnet
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8880/health || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8880/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -158,8 +159,8 @@ FAST_TEST_SERVER_TEMPLATE = """  fast_test_server:
 
 BENCHMARK_SERVER_TEMPLATE = """  benchmark_server:
     build:
-      context: ./mcp-servers/go/benchmark-server
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: mcp-servers/rust/benchmark-server/Dockerfile
     container_name: benchmark_server
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -169,7 +170,7 @@ BENCHMARK_SERVER_TEMPLATE = """  benchmark_server:
     networks:
       - mcpnet
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:{start_port}/health || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:{start_port}/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -251,7 +252,7 @@ class DockerComposeGenerator:
         # Generate gateway services
         gateway_services = self._generate_gateway_services(num_instances, server, redis_enabled)
 
-        # Generate fast-time server (Go - always included for basic MCP testing)
+        # Generate fast-time server (Rust - always included for basic MCP testing)
         fast_time_server = FAST_TIME_SERVER_TEMPLATE
 
         # Generate fast-test server (Rust - always included for echo/stats tools)

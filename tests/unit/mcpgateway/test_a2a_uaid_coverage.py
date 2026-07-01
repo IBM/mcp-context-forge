@@ -35,6 +35,12 @@ def mock_logging_services():
         yield
 
 
+@pytest.fixture(autouse=True)
+def disable_allow_all_domains(monkeypatch):
+    """Keep UAID allowlist tests fail-closed regardless of ambient settings."""
+    monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allow_all_domains", False)
+
+
 class TestUAIDEndpointParsing:
     """Test coverage for URL parsing edge cases in _validate_uaid_endpoint_domain."""
 

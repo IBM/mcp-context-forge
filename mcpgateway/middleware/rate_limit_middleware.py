@@ -134,7 +134,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self._violation_expiry: Dict[str, float] = {}
         self._store_lock = threading.Lock()
 
-        logger.info(f"RateLimitMiddleware initialized: enabled={self.enabled}, " f"use_redis={self.use_redis}, lockout={self.lockout_enabled}")
+        logger.info(f"RateLimitMiddleware initialized: enabled={self.enabled}, use_redis={self.use_redis}, lockout={self.lockout_enabled}")
 
     def _init_redis(self) -> None:
         """Initialize Redis client for rate limiting."""
@@ -473,7 +473,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 status_code=429,
                 content={
                     "error": "Account locked",
-                    "message": f"Too many rate limit violations. Account locked for {self.lockout_duration_minutes} minutes. " "This may indicate suspicious activity on your account.",
+                    "message": f"Too many rate limit violations. Account locked for {self.lockout_duration_minutes} minutes. This may indicate suspicious activity on your account.",
                     "lockout_duration_minutes": self.lockout_duration_minutes,
                     "reset_in_seconds": self.lockout_duration_minutes * 60,
                 },

@@ -7992,6 +7992,9 @@ class TestToolServiceBulkImport:
         db.commit.assert_called_once()
         db.refresh.assert_called_once_with(db_tool)
         mock_logging_services["audit_trail"].log_action.assert_called_once()
+        audit_kwargs = mock_logging_services["audit_trail"].log_action.call_args.kwargs
+        assert audit_kwargs["action"] == "bulk_create_tools"
+        assert audit_kwargs["details"]["count"] == 1  # 1 added, 1 skipped — only adds counted
 
     def test_process_tool_chunk_team_updates_only(self, mock_logging_services):
         service = ToolService()
@@ -8025,7 +8028,9 @@ class TestToolServiceBulkImport:
         db.add_all.assert_not_called()
         db.commit.assert_called_once()
         mock_logging_services["audit_trail"].log_action.assert_called_once()
-        assert mock_logging_services["audit_trail"].log_action.call_args.kwargs["action"] == "bulk_update_tools"
+        audit_kwargs = mock_logging_services["audit_trail"].log_action.call_args.kwargs
+        assert audit_kwargs["action"] == "bulk_update_tools"
+        assert audit_kwargs["details"]["count"] == 1
 
     def test_process_tool_chunk_private_exception_rolls_back(self):
         service = ToolService()
@@ -8921,6 +8926,7 @@ class TestRustMcpExecutionPlan:
         rows = [
             {
                 "name": "tool-public",
+                "title": None,
                 "description": "desc",
                 "input_schema": {"type": "object"},
                 "output_schema": None,
@@ -8931,6 +8937,7 @@ class TestRustMcpExecutionPlan:
             },
             {
                 "name": "tool-team",
+                "title": "Team Tool",
                 "description": "team-desc",
                 "input_schema": None,
                 "output_schema": {"type": "object"},
@@ -8960,6 +8967,7 @@ class TestRustMcpExecutionPlan:
             },
             {
                 "name": "tool-team",
+                "title": "Team Tool",
                 "description": "team-desc",
                 "inputSchema": {"type": "object", "properties": {}},
                 "annotations": {"title": "Team"},
@@ -10550,6 +10558,7 @@ async def test_list_server_mcp_tool_definitions_creates_span(tool_service):
     db.execute.return_value.mappings.return_value.all.return_value = [
         {
             "name": "tool-one",
+            "title": None,
             "description": "Tool One",
             "input_schema": {"type": "object"},
             "output_schema": None,

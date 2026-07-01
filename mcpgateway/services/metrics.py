@@ -39,6 +39,8 @@ Functions:
 """
 
 # Standard
+from collections.abc import Iterator
+from datetime import datetime, timezone
 import gzip
 import os
 import re
@@ -191,6 +193,115 @@ siem_queue_depth = Gauge(
     "Current SIEM queue depth by destination",
     ["destination"],
 )
+
+gateway_lifecycle_status_gauge = Gauge(
+    "gateway_lifecycle_status",
+    "Current gateway counts by async lifecycle status",
+    ["status"],
+)
+
+gateway_lifecycle_pending_due_gauge = Gauge(
+    "gateway_lifecycle_pending_due",
+    "Current pending gateways whose retry time is due or unset",
+)
+
+gateway_lifecycle_pending_registration_attempts_gauge = Gauge(
+    "gateway_lifecycle_pending_registration_attempts",
+    "Current sum of registration attempts across pending gateways",
+)
+
+
+def _get_gateway_lifecycle_status_gauge():
+    """Return registered lifecycle gauge, recreating it if registry was reset."""
+    collector = _get_registry_collector("gateway_lifecycle_status")
+    if collector is not None:
+        return collector
+    try:
+        return Gauge(
+            "gateway_lifecycle_status",
+            "Current gateway counts by async lifecycle status",
+            ["status"],
+            registry=REGISTRY,
+        )
+    except ValueError:
+        return _get_registry_collector("gateway_lifecycle_status")
+
+
+def _get_gateway_lifecycle_pending_due_gauge():
+    """Return registered pending-due gauge, recreating it if registry was reset."""
+    collector = _get_registry_collector("gateway_lifecycle_pending_due")
+    if collector is not None:
+        return collector
+    try:
+        return Gauge(
+            "gateway_lifecycle_pending_due",
+            "Current pending gateways whose retry time is due or unset",
+            registry=REGISTRY,
+        )
+    except ValueError:
+        return _get_registry_collector("gateway_lifecycle_pending_due")
+
+
+def _get_gateway_lifecycle_pending_registration_attempts_gauge():
+    """Return registered pending-attempts gauge, recreating it if registry was reset."""
+    collector = _get_registry_collector("gateway_lifecycle_pending_registration_attempts")
+    if collector is not None:
+        return collector
+    try:
+        return Gauge(
+            "gateway_lifecycle_pending_registration_attempts",
+            "Current sum of registration attempts across pending gateways",
+            registry=REGISTRY,
+        )
+    except ValueError:
+        return _get_registry_collector("gateway_lifecycle_pending_registration_attempts")
+
+
+def _collect_gateway_lifecycle_metrics() -> tuple[dict[str, int], int, int]:
+    """Collect aggregate lifecycle metrics from gateway rows."""
+    # First-Party
+    from mcpgateway.db import Gateway, fresh_db_session  # pylint: disable=import-outside-toplevel
+
+    lifecycle_counts = {"pending": 0, "active": 0, "deleting": 0}
+    pending_due_count = 0
+    pending_registration_attempts = 0
+    now = datetime.now(timezone.utc)
+    with fresh_db_session() as db:
+        rows: Iterator[tuple[str, int, int, datetime | None]] = db.query(Gateway.status, Gateway.id, Gateway.registration_attempts, Gateway.next_retry_at).all()
+        for status_value, _gateway_id, registration_attempts, next_retry_at in rows:
+            normalized_status = (status_value or "active").strip().lower()
+            if normalized_status in lifecycle_counts:
+                lifecycle_counts[normalized_status] += 1
+            if normalized_status == "pending":
+                pending_registration_attempts += registration_attempts or 0
+                if next_retry_at is None:
+                    pending_due_count += 1
+                else:
+                    if next_retry_at.tzinfo is None:
+                        next_retry_at = next_retry_at.replace(tzinfo=timezone.utc)
+                    if next_retry_at <= now:
+                        pending_due_count += 1
+    return lifecycle_counts, pending_due_count, pending_registration_attempts
+
+
+def _publish_gateway_lifecycle_metrics(lifecycle_counts: dict[str, int], pending_due_count: int, pending_registration_attempts: int) -> None:
+    """Publish collected lifecycle aggregates to Prometheus gauges."""
+    lifecycle_gauge = _get_gateway_lifecycle_status_gauge() or gateway_lifecycle_status_gauge
+    pending_due_gauge = _get_gateway_lifecycle_pending_due_gauge() or gateway_lifecycle_pending_due_gauge
+    pending_attempts_gauge = _get_gateway_lifecycle_pending_registration_attempts_gauge() or gateway_lifecycle_pending_registration_attempts_gauge
+    for status_name, count in lifecycle_counts.items():
+        lifecycle_gauge.labels(status=status_name).set(count)
+    pending_due_gauge.set(pending_due_count)
+    pending_attempts_gauge.set(pending_registration_attempts)
+
+
+def update_gateway_lifecycle_status_metrics() -> None:
+    """Refresh gateway lifecycle status counts from the database."""
+    try:
+        lifecycle_counts, pending_due_count, pending_registration_attempts = _collect_gateway_lifecycle_metrics()
+        _publish_gateway_lifecycle_metrics(lifecycle_counts, pending_due_count, pending_registration_attempts)
+    except Exception:  # nosec B110
+        pass
 
 
 def setup_metrics(app):
@@ -365,6 +476,7 @@ def setup_metrics(app):
             Returns:
                 Response: Prometheus metrics in text exposition format.
             """
+            update_gateway_lifecycle_status_metrics()
             registry = REGISTRY
             if "PROMETHEUS_MULTIPROC_DIR" in os.environ:
                 # Third-Party

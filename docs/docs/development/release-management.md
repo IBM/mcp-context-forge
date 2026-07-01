@@ -195,17 +195,10 @@ Update non-Python dependencies across the repository.
 
 ### 3.1 Rust dependencies
 
-Update the root workspace `Cargo.lock`, plus any standalone Rust server locks outside the workspace, and verify they build and pass tests:
+Update the root workspace `Cargo.lock` and verify the workspace builds and passes tests:
 
 ```bash
-# Update the root Rust workspace lockfile
 cargo update --workspace
-
-# Update standalone Rust MCP server locks
-for manifest in mcp-servers/rust/*/Cargo.toml; do
-  server_dir="$(dirname "$manifest")"
-  (cd "$server_dir" && cargo update)
-done
 
 # Verify build + lint + tests
 make rust-check
@@ -225,7 +218,7 @@ After any Rust dependency update, run cargo-vet before release freeze:
 make rust-vet
 ```
 
-This runs `cargo vet check` against `supply-chain/config.toml`, `supply-chain/audits.toml`, and the trusted audit imports recorded in `supply-chain/imports.lock`. Release CI treats this as a blocking gate for Rust wheels and source distributions.
+The `make rust-vet` target runs `cargo vet check` against `supply-chain/config.toml`, `supply-chain/audits.toml`, and the trusted audit imports recorded in `supply-chain/imports.lock`. Release CI treats this as a blocking gate for Rust wheels and source distributions.
 
 If vetting fails, use the [cargo-vet audit workflow](https://mozilla.github.io/cargo-vet/performing-audits.html) to handle each unvetted crate before tagging:
 
@@ -240,6 +233,12 @@ If vetting fails, use the [cargo-vet audit workflow](https://mozilla.github.io/c
 Audits and exemptions should be reviewed by Rust maintainers or security reviewers who understand the affected crate and the `safe-to-deploy` / `safe-to-run` criteria. Prefer diff audits over exemptions. Exemptions are allowed, but each one reduces the value of the vetting gate and should be revisited with `cargo vet suggest`.
 
 When ContextForge and `cpex-plugins` share Rust dependency changes, apply the same decision in both repositories: run each repo's cargo-vet check, update each repo's `supply-chain/` metadata, or explicitly defer the update in the repo where the audit cannot be completed.
+
+At the end of Rust supply-chain vetting, prune stale cargo-vet exemptions:
+
+```bash
+cargo vet prune
+```
 
 ### 3.3 Go dependencies
 
@@ -352,14 +351,12 @@ All formatting and linting checks must pass with zero errors.
 ### 4.1 Code formatting
 
 ```bash
-make autoflake isort black
+make ruff-format
 ```
 
 | Target | What it checks |
 |--------|----------------|
-| `autoflake` | Removes unused imports and variables |
-| `isort` | Sorts imports (profile=black) |
-| `black` | Formats Python code (line length 200) |
+| `ruff-format` | Formats Python code (includes import sorting and unused code removal) |
 
 !!! note "Pre-commit hooks run automatically"
     The configured pre-commit hooks (whitespace, EOF fixers, detect-secrets, AST checks, etc.) are enforced at commit time and in CI — they do not need a dedicated release step. If a release commit passes pre-commit locally it will pass in CI; otherwise investigate before tagging.
@@ -1009,11 +1006,13 @@ curl -sS -X POST "$BASE_URL/servers/$SERVER_ID/mcp/" \
 Check the plugin framework is healthy via the Admin UI or API. The bearer token must have the `admin.plugins` permission, so generate a platform admin token before calling the endpoint:
 
 ```bash
+export JWT_SECRET_KEY=$(grep '^JWT_SECRET_KEY=' .env | cut -d= -f2-)
+
 export MCPGATEWAY_ADMIN_TOKEN=$(./.venv/bin/python -m mcpgateway.utils.create_jwt_token \
   --username admin@example.com \
   --admin \
   --exp 10080 \
-  --secret "${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}" \
+  --secret "$JWT_SECRET_KEY" \
   --algo HS256 \
   2>/dev/null | tail -n 1)
 
@@ -1206,7 +1205,18 @@ The migration test suite follows an **n-2 support policy** and tests sequential 
 
 ## 14. Manual Testing
 
-These tests verify core user-facing workflows that automated tests do not fully cover. Build and start the compose stack first:
+These tests verify core user-facing workflows that automated tests do not fully cover.
+
+Before starting, ensure `.env` has a real JWT secret (the default `.env` ships with a placeholder that breaks token authentication):
+
+```bash
+# Generate secrets and merge into .env (skip if already done)
+make init-secrets
+# Confirm JWT_SECRET_KEY is no longer the placeholder
+grep JWT_SECRET_KEY .env   # must not contain __REPLACE_ME__
+```
+
+Build and start the compose stack:
 
 ```bash
 make docker-prod && make testing-up
@@ -1217,10 +1227,13 @@ make docker-prod && make testing-up
 Create a token for API and client access:
 
 ```bash
+# JWT_SECRET_KEY must match the value in .env (run make init-secrets if not set)
+export JWT_SECRET_KEY=$(grep '^JWT_SECRET_KEY=' .env | cut -d= -f2-)
+
 export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
   --username admin@example.com \
   --exp 10080 \
-  --secret my-test-key-but-now-longer-than-32-bytes)
+  --secret "$JWT_SECRET_KEY")
 
 export BASE_URL="http://localhost:8080"
 ```
@@ -1247,6 +1260,8 @@ curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $BASE_URL/tools | jq
 ```
 
+**Expected:** Each tool object contains `gateway_id` (UUID of the registering gateway) but no `gateway_name` field — the `/tools` API does not denormalize the gateway name. To resolve a human-readable name, call `GET /gateways/<gateway_id>`. This is by design.
+
 ### 14.3 Register an MCP server via Streamable HTTP
 
 Streamable HTTP transport requires the `--expose-streamable-http` flag and an explicit `"transport":"STREAMABLEHTTP"` field in the registration payload — the gateway does not auto-detect transport from the URL:
@@ -1269,6 +1284,8 @@ curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $BASE_URL/tools | jq
 ```
 
+**Expected:** Tools from both gateways appear in the catalog, each with `gateway_id` populated. As with SSE, `gateway_name` is not included in the response; use `GET /gateways/<gateway_id>` to resolve the name.
+
 ### 14.4 Create a virtual server and export it
 
 The request body must wrap the server fields under a `"server"` key:
@@ -1287,8 +1304,11 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $BASE_URL/servers | 
 Export the configuration for backup verification. Override `HOST`/`PORT` via env — do not use a `--url` flag:
 
 ```bash
-HOST=localhost PORT=8080 python -m mcpgateway.cli export --out release-test-export.json
+MCPGATEWAY_BEARER_TOKEN=$MCPGATEWAY_BEARER_TOKEN HOST=localhost PORT=8080 \
+  python -m mcpgateway.cli export --out release-test-export.json
 ```
+
+**Expected:** The export file contains the virtual server, both registered gateways, and any standalone (local REST) tools. MCP gateway-discovered tools — those imported from an upstream MCP server — are intentionally excluded from the `tools` list in the export. They are considered ephemeral: when the gateway is re-imported, the tools are re-discovered automatically. Only standalone tools created directly via `POST /tools` appear as independent exported entities. Verify that `entities.gateways` contains both `release_test_sse` and `release_test_streamable`, and `entities.servers` contains `release_test_server`.
 
 ### 14.5 Test with MCP Inspector
 
@@ -1312,6 +1332,8 @@ Repeat with **Streamable HTTP**:
 2. Set **URL** to `$BASE_URL/servers/<VIRTUAL_SERVER_UUID>/mcp`
 3. Set the same Authorization header
 4. Verify: tools list loads and tool calls execute correctly
+
+> **Note:** Streamable HTTP is a stateful protocol. Before `tools/list` can be called, the client must complete an `initialize` handshake, which the server responds to with a `Mcp-Session-Id` header. All subsequent requests must include that header. MCP Inspector handles this automatically. Raw `curl` calls that skip `initialize` will receive a `-32600 Missing session ID` error — this is expected protocol behaviour, not a gateway bug.
 
 ### 14.6 Test with VS Code (GitHub Copilot)
 
@@ -1414,14 +1436,14 @@ gh release create vX.Y.Z \
 ```
 
 !!! important "CI triggers on release publish"
-    Publishing the GitHub Release triggers the `docker-release.yml` workflow, which re-tags the multiplatform container image with the release version on GHCR. The release **must not be a draft or prerelease** for this workflow to trigger. It also verifies that all commit checks passed before tagging.
+    Publishing the GitHub Release creates the git tag, which triggers the `docker-multiplatform.yml` workflow. On a `v*` tag push it builds all platform images (amd64, arm64, s390x, ppc64le), creates the multiplatform manifest tagged with the semantic version and `latest`, and signs the image with Cosign.
 
 ### 15.4 Verify CI release pipeline
 
-After publishing, verify that the `docker-release.yml` workflow completes successfully:
+After publishing, verify that the `docker-multiplatform.yml` workflow completes successfully:
 
 ```bash
-gh run list --workflow=docker-release.yml --limit=1
+gh run list --workflow=docker-multiplatform.yml --limit=1
 ```
 
 Confirm the container image is available at `ghcr.io/ibm/mcp-context-forge:vX.Y.Z`.
@@ -1470,7 +1492,7 @@ make install-dev
 make pip-audit
 
 # 2. Rust / Go / JS / CDN dependency updates
-# ... repeat for all Cargo.toml dirs (see Section 3) ...
+cargo update --workspace
 # ... go get -u ./... && go mod tidy for all go.mod dirs ...
 make linting-go-gosec linting-go-govulncheck
 npm update && npm audit && npm audit fix
@@ -1483,7 +1505,7 @@ make docker-prod DOCKER_BUILD_ARGS="--no-cache"
 make test
 
 # 4. Format, lint & security
-make autoflake isort black
+make ruff-format
 make ruff vulture bandit interrogate pylint verify
 make yamllint tomllint jsonlint
 make lint-web

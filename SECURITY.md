@@ -2,7 +2,7 @@
 
 ## ⚠️ Beta Software Notice
 
-**Current Version: 1.0.2**
+**Current Version: 1.0.4**
 
 ContextForge is currently in beta and should be treated as such until the 1.0 release. While we implement comprehensive security measures and follow best practices, important limitations exist:
 
@@ -405,6 +405,42 @@ Starting with 0.1.0:
 
 **Important**: The Admin UI is provided for developer convenience only and should **never be enabled in production deployments**.
 
+### Environment Isolation for JWTs (GHSA-vgf8-3685-66j9)
+
+Tokens must not be valid across DEV/STAGING/PROD.
+
+**Required:**
+- Distinct `JWT_SECRET_KEY` per environment (never share or copy `.env` between environments).
+- Distinct `ENVIRONMENT` value per deployment (`development`, `staging`, or `production`); when
+  relying on `DERIVE_KEY_PER_ENVIRONMENT`, each deployment **must** set a distinct `ENVIRONMENT`
+  — if all deployments keep the default `ENVIRONMENT=development`, derived keys are identical and
+  cross-environment isolation is not achieved.
+- Optionally distinct `JWT_AUDIENCE` / `JWT_ISSUER` per environment.
+- `EMBED_ENVIRONMENT_IN_TOKENS=true` and `VALIDATE_TOKEN_ENVIRONMENT=true` (both on by default).
+- HS\* shared-base-secret setups: `DERIVE_KEY_PER_ENVIRONMENT=true` (counts as a key rotation).
+- RS\*/ES\*: distinct key pairs per environment (derivation does not apply).
+
+**The `env` claim alone is not a security boundary.** With `DERIVE_KEY_PER_ENVIRONMENT=false` and a
+shared `JWT_SECRET_KEY`, anyone holding that secret can mint a token with `env=production` and pass
+validation. The claim is defense-in-depth/diagnostics only; real isolation comes from a distinct or
+derived signing key per environment.
+
+**Derived-key strength inherits the base secret.** `DERIVE_KEY_PER_ENVIRONMENT` re-keys per
+environment but does not strengthen a weak `JWT_SECRET_KEY` — a weak base secret still yields a weak
+derived key. Use a strong, random `JWT_SECRET_KEY` regardless (existing weak-secret checks apply).
+
+**Rollout order:**
+1. Set distinct `JWT_SECRET_KEY` per environment.
+2. Communicate and perform token rotation for long-lived tokens.
+3. Optionally enable `DERIVE_KEY_PER_ENVIRONMENT` (coordinate with same-env federation peers).
+4. Confirm the startup log shows derivation active and no "indistinguishable" warning.
+
+**Federation:** Cross-environment UAID federation is unsupported by design. Same-environment
+federation peers must share `JWT_SECRET_KEY` and `ENVIRONMENT` so derived keys match.
+
+**Scope:** Applies to gateway-issued tokens. External OAuth/SSO/JWKS tokens are governed by issuer
+pinning and are out of scope.
+
 ---
 
 ## 🔒 Defense in Depth Strategy
@@ -755,14 +791,6 @@ This process ensures that security patches not only address vulnerabilities but 
 
 ## 🛡️ Reporting a Vulnerability
 
-If you discover a security vulnerability, please report it privately using [GitHub's built-in reporting feature](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability):
-
-1. Navigate to Security. If you cannot see the "Security" tab, select the dropdown menu, and then click Security.
-2. Click on **"Report a vulnerability"**.
-3. Fill out the form with details about the vulnerability.
-
-This process ensures that your report is handled confidentially and reaches the maintainers directly.
-
-We work closely with security researchers and follow responsible disclosure practices to ensure vulnerabilities are addressed promptly while minimizing risk to users.
+Report a security issue via e-mail or anonymous form to the IBM Product Security Incident Response Team (PSIRT) following the guidelines under the [IBM Security Vulnerability Management](https://www.ibm.com/support/pages/ibm-security-vulnerability-management) pages.
 
 Thank you for helping to keep the project secure!

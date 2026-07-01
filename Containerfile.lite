@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.12
 
 ###############################################################################
 # ContextForge (lite) - OCI-compliant multi-stage container build
@@ -47,11 +47,20 @@ ARG ENABLE_PROFILING=false
 #     --build-arg NODEJS_IMAGE=<internal-registry>/ubi9/nodejs-20:latest \
 #     --build-arg UBI_MINIMAL=<internal-registry>/ubi9/ubi-minimal:latest \
 #     .
-ARG UBI_BASE=registry.access.redhat.com/ubi10/ubi:10.1-1778562845
-ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:10.1-1778561468
-ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:10.1-1778576723
-# s390x wheels stage - pulls pre-built wheels from GHCR
-FROM --platform=linux/s390x ghcr.io/ibm/mcp-context-forge-s390x-wheels:latest AS s390x-wheels
+ARG UBI_BASE=registry.access.redhat.com/ubi10:1781510254
+ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:1781700998
+ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:1781509581
+# Wheel closure stage — used only for s390x and ppc64le where PyPI manylinux
+# binary wheels are unavailable (tiktoken/psycopg/cryptography require native
+# compilation, and psycopg-binary has no s390x wheel at all).
+# For amd64/arm64, WHEELS_REF defaults to UBI_MINIMAL so /wheels is always
+# empty and the install step below always resolves via PyPI.
+# For s390x/ppc64le, the CI pipeline (docker-multiplatform.yml) passes an
+# explicit WHEELS_REF pointing to the lock-hash-tagged wheel image built by
+# the `wheels` job in infra/wheels/Containerfile.
+ARG WHEELS_REF=${UBI_MINIMAL}
+FROM ${WHEELS_REF} AS wheels
+RUN mkdir -p /wheels
 
 ###############################################################################
 # Rust builder stage - builds Rust MCP runtime and local native extensions
@@ -107,6 +116,9 @@ WORKDIR /build
 # Copy workspace and crates (only if ENABLE_RUST=true)
 COPY Cargo.toml Cargo.lock /build/
 COPY crates/ /build/crates/
+COPY mcp-servers/rust/benchmark-server/ /build/mcp-servers/rust/benchmark-server/
+COPY mcp-servers/rust/slow-time-server/ /build/mcp-servers/rust/slow-time-server/
+COPY a2a-agents/rust/a2a-echo-agent/ /build/a2a-agents/rust/a2a-echo-agent/
 
 # Build local native extensions from maturin crates under crates/
 # hadolint ignore=DL3013
@@ -249,13 +261,21 @@ RUN if [ "$(uname -m)" = "s390x" ] || [ "$(uname -m)" = "ppc64le" ]; then \
 # Order is top-to-bottom from least-frequently-changing to most:
 #   1. pyproject.toml (dependency manifest — plugins come from the [plugins]
 #      extra, resolved from PyPI)
-#   2. Native extension wheels from rust-builder (consumed by venv install)
+#   2. The setuptools build_py hook module (pyproject.toml's
+#      [tool.setuptools.cmdclass] points at mcpgateway.tools.builder.build_hooks,
+#      so setuptools must be able to import it while resolving "."'s build
+#      metadata below — copy just this module's import chain, not the rest of
+#      mcpgateway/, to keep the dep layer cache intact for normal source edits)
+#   3. Native extension wheels from rust-builder (consumed by venv install)
 # Everything else (rust binaries, frontend static, app code) is copied AFTER
 # the heavy venv install so those changes don't invalidate the dep layer.
 # ----------------------------------------------------------------------------
 COPY pyproject.toml /app/
+COPY mcpgateway/__init__.py /app/mcpgateway/__init__.py
+COPY mcpgateway/tools/builder/__init__.py /app/mcpgateway/tools/builder/__init__.py
+COPY mcpgateway/tools/builder/build_hooks.py /app/mcpgateway/tools/builder/build_hooks.py
 COPY --from=rust-builder /build/native-extension-wheels/ /tmp/local-native-extension-wheels/
-COPY --from=s390x-wheels /wheels /tmp/s390x-wheels
+COPY --from=wheels /wheels /tmp/wheels
 COPY --chmod=0755 scripts/verify-native-extensions.py /tmp/verify-native-extensions.py
 
 # ----------------------------------------------------------------------------
@@ -276,17 +296,9 @@ RUN set -euo pipefail \
     && . /etc/profile.d/use-openssl.sh \
     && python3 -m venv /app/.venv \
     && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel uv \
-    && if [ "$(uname -m)" = "s390x" ]; then \
-        echo "📦 Installing dependencies for s390x architecture..."; \
-        if [ -d "/tmp/s390x-wheels" ] && [ "$(ls -A /tmp/s390x-wheels/*.whl 2>/dev/null | wc -l)" -gt 0 ]; then \
-            echo "✅ Using pre-built wheels from /tmp/s390x-wheels"; \
-            /app/.venv/bin/uv pip install --no-index --find-links=/tmp/s390x-wheels ".[redis,observability,granian,plugins,llmchat]" \
-            && /app/.venv/bin/uv pip install --no-index --find-links=/tmp/s390x-wheels "psycopg[c]>=3.3.3"; \
-        else \
-            echo "⚠️  Pre-built wheels not found, falling back to building from source (this may take longer)..."; \
-            /app/.venv/bin/uv pip install ".[redis,observability,granian,plugins,llmchat]" \
-            && /app/.venv/bin/uv pip install "psycopg[c]>=3.3.3"; \
-        fi; \
+    && if [ -n "$(ls -A /tmp/wheels/*.whl 2>/dev/null)" ]; then \
+        echo "📦 Hermetic install from prebuilt wheel closure"; \
+        /app/.venv/bin/uv pip install --no-index --find-links=/tmp/wheels ".[redis,observability,granian,plugins,llmchat]" "psycopg[c]>=3.3.3"; \
     else \
         /app/.venv/bin/uv pip install ".[redis,postgres,observability,granian,plugins,llmchat]"; \
     fi \
@@ -298,7 +310,7 @@ RUN set -euo pipefail \
     else \
         echo "⏭️  No local native extensions discovered"; \
     fi \
-    && rm -rf /tmp/local-native-extension-wheels /tmp/s390x-wheels \
+    && rm -rf /tmp/local-native-extension-wheels /tmp/wheels \
     && if [ "$ENABLE_PROFILING" = "true" ]; then \
         echo "📊 Installing profiling tools (memray, py-spy)..."; \
         /app/.venv/bin/uv pip install --no-cache-dir "memray>=1.17.0" && \
@@ -308,9 +320,9 @@ RUN set -euo pipefail \
     fi \
     && /app/.venv/bin/pip uninstall --yes uv pip setuptools wheel \
     && rm -rf /root/.cache /var/cache/dnf \
-    && find /app/.venv -name "*.dist-info" -type d \
+    && (find /app/.venv -name "*.dist-info" -type d \
         \( -name "pip-*" -o -name "setuptools-*" -o -name "wheel-*" -o -name "uv-*" \) \
-        -exec rm -rf {} + 2>/dev/null || true \
+        -exec rm -rf {} + 2>/dev/null || true) \
     && rm -rf /app/.venv/share/python-wheels \
     && rm -rf "/app/"*.egg-info /app/build /app/dist /app/.eggs
 
@@ -380,7 +392,7 @@ LABEL maintainer="Mihai Criveti" \
     org.opencontainers.image.title="mcp/mcpgateway" \
     org.opencontainers.image.description="ContextForge: An enterprise-ready Model Context Protocol Gateway" \
     org.opencontainers.image.licenses="Apache-2.0" \
-    org.opencontainers.image.version="1.0.2"
+    org.opencontainers.image.version="1.0.4"
 
 # ----------------------------------------------------------------------------
 # Install minimal runtime dependencies
@@ -450,6 +462,12 @@ EXPOSE 4444
 #           subscription-manager (RHEL-09-215010), pam_wheel (RHEL-09-432035),
 #           init file perms 0740 (RHEL-09-232045), home dir perms 0750 (RHEL-09-232050),
 #           rootfiles tmpfile.d (RHEL-09-232045), SSH RekeyLimit
+#
+# NOTE: subscription-manager pulls in UBI9's system python3 (3.9) as a
+# dependency, which overwrites /usr/bin/python3 and clobbers the
+# python3 -> python${PYTHON_VERSION} symlink set up earlier — surfacing at
+# runtime as a misleading "ModuleNotFoundError: No module named 'gunicorn'".
+# We re-create the symlink right after the package install below.
 RUN if [ "$ENABLE_FIPS" = "true" ]; then \
         if ! grep -q "release 9" /etc/redhat-release 2>/dev/null; then \
             echo "ERROR: ENABLE_FIPS=true requires UBI 9 base images (UBI_MINIMAL must be ubi9/ubi-minimal)" >&2; \
@@ -458,6 +476,7 @@ RUN if [ "$ENABLE_FIPS" = "true" ]; then \
         microdnf install -y crypto-policies crypto-policies-scripts rootfiles \
             gnutls-utils nss-tools subscription-manager \
         && microdnf clean all \
+        && ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python3 \
         && (test -f /usr/share/crypto-policies/policies/modules/STIG.pmod \
             || printf '# STIG module stub — not shipped in UBI9 minimal\n' \
                > /usr/share/crypto-policies/policies/modules/STIG.pmod) \
@@ -479,6 +498,7 @@ RUN if [ "$ENABLE_FIPS" = "true" ]; then \
             | tee /usr/lib/tmpfiles.d/rootfiles.conf > /etc/tmpfiles.d/rootfiles.conf \
         && find /root -maxdepth 1 -name '.*' -type f -exec chmod 0740 {} \; \
         && chmod 0750 /root \
+        && (chgrp 0 /app 2>/dev/null || true) \
         && (chmod 0750 /app 2>/dev/null || true) \
         && (find /app -maxdepth 1 -name '.*' -type f -exec chmod 0740 {} \; 2>/dev/null || true) \
         && find /home -maxdepth 1 -mindepth 1 -type d -exec chmod 0750 {} \; \

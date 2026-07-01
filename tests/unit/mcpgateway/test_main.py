@@ -1,6 +1,4 @@
 # -*- coding: utf-8 -*-
-
-# -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_main.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
@@ -16,6 +14,7 @@ from copy import deepcopy
 import datetime
 import importlib
 import json
+import logging
 import os
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -937,8 +936,9 @@ class TestServerEndpoints:
         assert response.status_code == 201
         mock_create.assert_called_once()
 
-    def test_create_server_rejects_non_uuid_associated_tools(self, test_client, auth_headers):
+    def test_create_server_rejects_non_uuid_associated_tools(self, test_client, auth_headers, monkeypatch):
         """Test that POST /servers rejects non-UUID values in associated_tools with 422."""
+        monkeypatch.setattr("mcpgateway.main.should_expose_error_details", lambda: True)
         req = {
             "server": {
                 "name": "test_server",
@@ -1992,6 +1992,17 @@ class TestGatewayEndpoints:
         assert response.status_code == 200
         mock_update.assert_called_once()
 
+    @patch("mcpgateway.main.gateway_service.update_gateway")
+    def test_update_gateway_endpoint_secondary_returns_202_for_pending(self, mock_update, test_client, auth_headers):
+        """Async gateway update should return 202 when service reports pending."""
+        mock_update.return_value = {**MOCK_GATEWAY_READ, "status": "pending", "status_message": "Gateway update accepted and pending initialization", "reachable": False}
+        req = {"description": "Updated description"}
+        response = test_client.put("/gateways/1", json=req, headers=auth_headers)
+        assert response.status_code == 202
+        assert response.json()["status"] == "pending"
+        assert response.headers["Retry-After"] == "5"
+        mock_update.assert_called_once()
+
     @patch("mcpgateway.main.gateway_service.delete_gateway")
     @patch("mcpgateway.main.gateway_service.get_gateway")
     def test_delete_gateway_endpoint_no_resources(self, mock_get, mock_delete, test_client, auth_headers):
@@ -2001,6 +2012,18 @@ class TestGatewayEndpoints:
         response = test_client.delete("/gateways/1", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
+        mock_delete.assert_called_once()
+
+    @patch("mcpgateway.main.gateway_service.delete_gateway")
+    @patch("mcpgateway.main.gateway_service.get_gateway")
+    def test_delete_gateway_endpoint_no_resources_returns_202_for_deleting(self, mock_get, mock_delete, test_client, auth_headers):
+        """Async gateway delete should return 202 when service reports deleting."""
+        mock_get.return_value = MagicMock(capabilities={})
+        mock_delete.return_value = {**MOCK_GATEWAY_READ, "status": "deleting", "status_message": "Gateway deletion accepted and pending cleanup", "reachable": False}
+        response = test_client.delete("/gateways/1", headers=auth_headers)
+        assert response.status_code == 202
+        assert response.json()["status"] == "deleting"
+        assert response.headers["Retry-After"] == "5"
         mock_delete.assert_called_once()
 
     @patch("mcpgateway.main.gateway_service.delete_gateway")
@@ -2070,6 +2093,17 @@ class TestGatewayEndpoints:
         mock_create.assert_called_once()
 
     @patch("mcpgateway.main.gateway_service.register_gateway")
+    def test_create_gateway_endpoint_returns_202_for_pending_registration(self, mock_create, test_client, auth_headers):
+        """Async gateway registration should return 202 when service reports pending."""
+        mock_create.return_value = {**MOCK_GATEWAY_READ, "status": "pending", "status_message": "Gateway registration accepted and pending initialization", "reachable": False}
+        req = {"name": "test_gateway", "url": "http://example.com"}
+        response = test_client.post("/gateways/", json=req, headers=auth_headers)
+        assert response.status_code == 202
+        assert response.json()["status"] == "pending"
+        assert response.headers["Retry-After"] == "5"
+        mock_create.assert_called_once()
+
+    @patch("mcpgateway.main.gateway_service.register_gateway")
     def test_create_gateway_endpoint_skipped_tools_in_response(self, mock_create, test_client, auth_headers):
         """POST /gateways/ must include skipped_tools in the response body when tools are skipped (issue #136 Bug C)."""
         skipped = [
@@ -2104,6 +2138,18 @@ class TestGatewayEndpoints:
         assert response.status_code == 404
         mock_get.assert_called_once()
 
+    @patch("mcpgateway.main.gateway_service.get_gateway")
+    def test_get_gateway_endpoint_returns_409_for_ambiguous_identifier(self, mock_get, test_client, auth_headers):
+        """GET /gateways/{id} returns 409 when visible name/slug lookup is ambiguous."""
+        # First-Party
+        from mcpgateway.services.gateway_service import GatewayLookupConflictError
+
+        mock_get.side_effect = GatewayLookupConflictError("shared-name")
+        response = test_client.get("/gateways/shared-name", headers=auth_headers)
+        assert response.status_code == 409
+        assert "ambiguous" in response.json()["detail"]
+        mock_get.assert_called_once()
+
     @patch("mcpgateway.main.gateway_service.update_gateway")
     def test_update_gateway_endpoint(self, mock_update, test_client, auth_headers):
         """Test updating an existing gateway."""
@@ -2111,6 +2157,17 @@ class TestGatewayEndpoints:
         req = {"description": "Updated description"}
         response = test_client.put("/gateways/1", json=req, headers=auth_headers)
         assert response.status_code == 200
+        mock_update.assert_called_once()
+
+    @patch("mcpgateway.main.gateway_service.update_gateway")
+    def test_update_gateway_endpoint_returns_202_for_pending(self, mock_update, test_client, auth_headers):
+        """Async gateway update should return 202 when service reports pending."""
+        mock_update.return_value = {**MOCK_GATEWAY_READ, "status": "pending", "status_message": "Gateway update accepted and pending initialization", "reachable": False}
+        req = {"description": "Updated description"}
+        response = test_client.put("/gateways/1", json=req, headers=auth_headers)
+        assert response.status_code == 202
+        assert response.json()["status"] == "pending"
+        assert response.headers["Retry-After"] == "5"
         mock_update.assert_called_once()
 
     @patch("mcpgateway.main.gateway_service.delete_gateway")
@@ -2122,6 +2179,17 @@ class TestGatewayEndpoints:
         response = test_client.delete("/gateways/1", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
+
+    @patch("mcpgateway.main.gateway_service.delete_gateway")
+    @patch("mcpgateway.main.gateway_service.get_gateway")
+    def test_delete_gateway_endpoint_returns_202_for_deleting(self, mock_get, mock_delete, test_client, auth_headers):
+        """Async gateway delete should return 202 when service reports deleting."""
+        mock_get.return_value = MagicMock(capabilities={})
+        mock_delete.return_value = {**MOCK_GATEWAY_READ, "status": "deleting", "status_message": "Gateway deletion accepted and pending cleanup", "reachable": False}
+        response = test_client.delete("/gateways/1", headers=auth_headers)
+        assert response.status_code == 202
+        assert response.json()["status"] == "deleting"
+        assert response.headers["Retry-After"] == "5"
 
     @patch("mcpgateway.main.gateway_service.set_gateway_state")
     def test_set_gateway_state(self, mock_toggle, test_client, auth_headers):
@@ -5239,6 +5307,100 @@ class TestGetRpcFilterContext:
         assert is_admin is False
         assert any("internal_auth_context email non-string type" in record.message for record in caplog.records)
 
+    # ── Session token admin bypass tests (issue #5232) ────────────────────── #
+
+    def test_session_token_admin_bypass(self):
+        """Session token with token_teams=None and admin DB user returns is_admin=True."""
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"sub": "admin@example.com", "token_use": "session"})
+        mock_request.state.token_teams = None
+        mock_request.state.token_use = "session"
+        user = {"email": "admin@example.com"}
+
+        with patch("mcpgateway.db.SessionLocal") as mock_session_local:
+            mock_db = MagicMock()
+            mock_db_user = MagicMock()
+            mock_db_user.is_admin = True
+            mock_db.query.return_value.filter.return_value.first.return_value = mock_db_user
+            mock_session_local.return_value = mock_db
+
+            email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        assert email == "admin@example.com"
+        assert teams is None
+        assert is_admin is True
+
+    def test_session_token_admin_bypass_missing_user(self):
+        """Session token with token_teams=None but no DB user record does NOT grant bypass."""
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"sub": "ghost@example.com", "token_use": "session"})
+        mock_request.state.token_teams = None
+        mock_request.state.token_use = "session"
+        user = {"email": "ghost@example.com"}
+
+        with patch("mcpgateway.db.SessionLocal") as mock_session_local:
+            mock_db = MagicMock()
+            mock_db.query.return_value.filter.return_value.first.return_value = None
+            mock_session_local.return_value = mock_db
+
+            email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        assert email == "ghost@example.com"
+        assert teams is None
+        assert is_admin is False
+
+    def test_session_token_non_admin(self):
+        """Session token with token_teams=["team1"] (DB non-admin) returns is_admin=False."""
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"sub": "user@example.com", "token_use": "session"})
+        mock_request.state.token_teams = ["team1"]
+        mock_request.state.token_use = "session"
+        user = {"email": "user@example.com"}
+
+        email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        assert email == "user@example.com"
+        assert teams == ["team1"]
+        assert is_admin is False
+
+    def test_session_token_public_only(self):
+        """Session token with token_teams=[] (public-only) returns is_admin=False."""
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"sub": "user@example.com", "token_use": "session"})
+        mock_request.state.token_teams = []
+        mock_request.state.token_use = "session"
+        user = {"email": "user@example.com"}
+
+        email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        assert email == "user@example.com"
+        assert teams == []
+        assert is_admin is False
+
+    def test_api_token_admin_bypass_regression(self):
+        """API token with is_admin=true, teams=null still gets is_admin=True (regression guard)."""
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"teams": None, "is_admin": True})
+        mock_request.state.token_teams = None
+        mock_request.state.token_use = None
+        user = {"email": "admin@example.com"}
+
+        email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        assert email == "admin@example.com"
+        assert teams is None
+        assert is_admin is True
+
 
 # --------------------------------------------------------------------------- #
 # ASGI middleware helper for injecting request.state in tests                  #
@@ -5481,6 +5643,205 @@ def test_startup_succeeds_with_uaid_require_allowlist_false():
 
         # Verify ERROR was logged
         assert mock_logger.error.called
+
+
+def test_db_pool_warning_calculation_with_gunicorn_workers():
+    """Verify DB pool warning calculation when GUNICORN_WORKERS is set."""
+    with patch.dict(os.environ, {"GUNICORN_WORKERS": "4"}):
+        workers = int(os.environ["GUNICORN_WORKERS"])
+        db_pool_size = 15
+        db_max_overflow = 30
+        total_pool = db_pool_size + db_max_overflow
+        total_connections = workers * total_pool
+
+        assert workers == 4
+        assert total_pool == 45
+        assert total_connections == 180
+
+
+def test_db_pool_warning_calculation_with_gunicorn_cmd_args_uses_auto_worker_formula():
+    """Verify DB pool warning uses the same auto worker formula as run-gunicorn.sh."""
+    with (
+        patch.dict(os.environ, {"GUNICORN_CMD_ARGS": "--workers=auto"}, clear=True),
+        patch("mcpgateway.main.multiprocessing.cpu_count", return_value=6),
+    ):
+        workers = int(os.environ.get("GUNICORN_WORKERS", str(min(2 * 6 + 1, 16))))
+        assert workers == 13
+
+
+def test_db_pool_warning_calculation_with_gunicorn_cmd_args_caps_auto_workers_at_16():
+    """Verify DB pool warning caps auto-detected workers the same way as run-gunicorn.sh."""
+    with (
+        patch.dict(os.environ, {"GUNICORN_CMD_ARGS": "--workers=auto"}, clear=True),
+        patch("mcpgateway.main.multiprocessing.cpu_count", return_value=12),
+    ):
+        workers = int(os.environ.get("GUNICORN_WORKERS", str(min(2 * 12 + 1, 16))))
+        assert workers == 16
+
+
+def test_db_pool_warning_not_triggered_without_gunicorn():
+    """Verify DB pool warning condition is false without gunicorn env vars."""
+    with patch.dict(os.environ, {}, clear=True):
+        # Verify the condition that prevents the warning
+        assert os.environ.get("GUNICORN_CMD_ARGS") is None
+        assert os.environ.get("GUNICORN_WORKERS") is None
+
+
+@pytest.mark.asyncio
+async def test_lifespan_logs_db_pool_warning_with_gunicorn_workers(monkeypatch, caplog):
+    """Verify DB pool warning is logged during lifespan startup when GUNICORN_WORKERS is set."""
+    # First-Party
+    import mcpgateway.main as main_mod
+
+    # Set GUNICORN_WORKERS environment variable
+    monkeypatch.setenv("GUNICORN_WORKERS", "4")
+
+    # Mock settings
+    monkeypatch.setattr(main_mod.settings, "db_pool_size", 50)
+    monkeypatch.setattr(main_mod.settings, "db_max_overflow", 10)
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "enable_header_passthrough", False)
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_tool_cancellation_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_elicitation_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "metrics_buffer_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "db_metrics_recording_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "metrics_cleanup_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "metrics_rollup_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "sso_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "metrics_aggregation_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "llmchat_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_a2a_enabled", False)
+
+    # Mock all required services and functions
+    def make_service():
+        service = MagicMock()
+        service.initialize = AsyncMock()
+        service.shutdown = AsyncMock()
+        return service
+
+    for attr in (
+        "tool_service",
+        "resource_service",
+        "prompt_service",
+        "gateway_service",
+        "root_service",
+        "completion_service",
+        "sampling_handler",
+        "resource_cache",
+        "streamable_http_session",
+        "session_registry",
+        "export_service",
+        "import_service",
+        "logging_service",
+        "a2a_service",
+    ):
+        monkeypatch.setattr(main_mod, attr, make_service())
+
+    monkeypatch.setattr(main_mod, "get_plugin_manager", AsyncMock(return_value=None))
+    monkeypatch.setattr(main_mod, "shutdown_plugin_manager_factory", AsyncMock())
+    monkeypatch.setattr(main_mod, "get_redis_client", AsyncMock())
+    monkeypatch.setattr(main_mod, "close_redis_client", AsyncMock())
+    monkeypatch.setattr(main_mod, "validate_security_configuration", MagicMock())
+    monkeypatch.setattr(main_mod, "init_telemetry", MagicMock())
+    monkeypatch.setattr(main_mod, "refresh_slugs_on_startup", MagicMock())
+    monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", AsyncMock())
+    monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", AsyncMock())
+
+    # Mock bootstrap_db to avoid running migrations
+    monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
+
+    main_mod.app.state.update_http_pool_metrics = MagicMock()
+
+    # Run lifespan
+    with caplog.at_level(logging.WARNING):
+        async with main_mod.lifespan(main_mod.app):
+            await asyncio.sleep(0)
+
+    # Verify the warning was logged with correct calculation
+    # workers=4, pool_size=50, max_overflow=10 -> total_pool=60, total_connections=240
+    warning_found = any(
+        "DATABASE POOL: Running with 4 gunicorn workers" in record.message
+        and "240" in record.message
+        for record in caplog.records
+    )
+    assert warning_found, "Expected DB pool warning not found in logs"
+
+
+@pytest.mark.asyncio
+async def test_lifespan_logs_db_pool_warning_with_gunicorn_cmd_args(monkeypatch, caplog):
+    """Verify DB pool warning uses run-gunicorn auto worker detection when env var is absent."""
+    # First-Party
+    import mcpgateway.main as main_mod
+
+    monkeypatch.setenv("GUNICORN_CMD_ARGS", "--workers=auto")
+    monkeypatch.delenv("GUNICORN_WORKERS", raising=False)
+    monkeypatch.setattr(main_mod.multiprocessing, "cpu_count", lambda: 6)
+
+    # Mock settings
+    monkeypatch.setattr(main_mod.settings, "db_pool_size", 100)
+    monkeypatch.setattr(main_mod.settings, "db_max_overflow", 20)
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "enable_header_passthrough", False)
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_tool_cancellation_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_elicitation_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "metrics_buffer_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "db_metrics_recording_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "metrics_cleanup_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "metrics_rollup_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "sso_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "metrics_aggregation_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "llmchat_enabled", False)
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_a2a_enabled", False)
+
+    def make_service():
+        service = MagicMock()
+        service.initialize = AsyncMock()
+        service.shutdown = AsyncMock()
+        return service
+
+    for attr in (
+        "tool_service",
+        "resource_service",
+        "prompt_service",
+        "gateway_service",
+        "root_service",
+        "completion_service",
+        "sampling_handler",
+        "resource_cache",
+        "streamable_http_session",
+        "session_registry",
+        "export_service",
+        "import_service",
+        "logging_service",
+        "a2a_service",
+    ):
+        monkeypatch.setattr(main_mod, attr, make_service())
+
+    monkeypatch.setattr(main_mod, "get_plugin_manager", AsyncMock(return_value=None))
+    monkeypatch.setattr(main_mod, "shutdown_plugin_manager_factory", AsyncMock())
+    monkeypatch.setattr(main_mod, "get_redis_client", AsyncMock())
+    monkeypatch.setattr(main_mod, "close_redis_client", AsyncMock())
+    monkeypatch.setattr(main_mod, "validate_security_configuration", MagicMock())
+    monkeypatch.setattr(main_mod, "init_telemetry", MagicMock())
+    monkeypatch.setattr(main_mod, "refresh_slugs_on_startup", MagicMock())
+    monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", AsyncMock())
+    monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", AsyncMock())
+
+    # Mock bootstrap_db to avoid running migrations
+    monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
+
+    main_mod.app.state.update_http_pool_metrics = MagicMock()
+
+    with caplog.at_level(logging.WARNING):
+        async with main_mod.lifespan(main_mod.app):
+            await asyncio.sleep(0)
+
+    warning_found = any(
+        "DATABASE POOL: Running with 13 gunicorn workers" in record.message
+        and "1560" in record.message
+        for record in caplog.records
+    )
+    assert warning_found, "Expected DB pool warning not found in logs"
 
 
 # ========================================================================== #

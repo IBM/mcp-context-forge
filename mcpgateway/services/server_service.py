@@ -231,14 +231,14 @@ def _associate_server_entities(db: Session, db_server: DbServer, server_in: Serv
             rel.extend(objs)
             if at.model is DbA2AAgent:
                 for obj in objs:
-                    logger.info(f"A2A agent {obj.name} associated with server {db_server.name}")
+                    logger.info("A2A agent %s associated with server %s", obj.name, db_server.name)
         else:
             obj = db.get(at.model, ids[0])
             if not obj:
                 raise ServerError(f"{at.label} with id {ids[0]} does not exist.")
             rel.append(obj)
             if at.model is DbA2AAgent:
-                logger.info(f"A2A agent {obj.name} associated with server {db_server.name}")
+                logger.info("A2A agent %s associated with server %s", obj.name, db_server.name)
 
 
 def _update_server_associations(db: Session, server: DbServer, server_update: ServerUpdate) -> None:
@@ -581,7 +581,7 @@ class ServerService(BaseService):
             'server_read'
         """
         try:
-            logger.info(f"Registering server: {server_in.name}")
+            logger.info("Registering server: %s", server_in.name)
             oauth_config = await protect_oauth_config_for_storage(getattr(server_in, "oauth_config", None))
             # # Create the new server record.
             db_server = DbServer(
@@ -625,9 +625,9 @@ class ServerService(BaseService):
                 raise ServerNameConflictError(server_in.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
             # Set custom UUID if provided
             if server_in.id:
-                logger.info(f"Setting custom UUID for server: {server_in.id}")
+                logger.info("Setting custom UUID for server: %s", server_in.id)
                 db_server.id = server_in.id
-            logger.info(f"Adding server to DB session: {db_server.name}")
+            logger.info("Adding server to DB session: %s", db_server.name)
             db.add(db_server)
 
             _associate_server_entities(db, db_server, server_in)
@@ -651,9 +651,9 @@ class ServerService(BaseService):
                 "associated_resources": [str(resource.id) for resource in db_server.resources],
                 "associated_prompts": [str(prompt.id) for prompt in db_server.prompts],
             }
-            logger.debug(f"Server Data: {server_data}")
+            logger.debug("Server Data: %s", server_data)
             await self._notify_server_added(db_server)
-            logger.info(f"Registered server: {server_in.name}")
+            logger.info("Registered server: %s", server_in.name)
 
             # Structured logging: Audit trail for server creation
             self._audit_trail.log_action(
@@ -694,7 +694,7 @@ class ServerService(BaseService):
             return self.convert_server_to_read(db_server)
         except IntegrityError as ie:
             db.rollback()
-            logger.error(f"IntegrityErrors in group: {ie}")
+            logger.error("IntegrityErrors in group: %s", ie)
 
             # Structured logging: Log database integrity error
             self._structured_logger.log(
@@ -871,7 +871,7 @@ class ServerService(BaseService):
             try:
                 result.append(self.convert_server_to_read(s, include_metrics=include_metrics))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                logger.exception(f"Failed to convert server {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
+                logger.exception("Failed to convert server %s (%s): %s", getattr(s, "id", "unknown"), getattr(s, "name", "unknown"), e)
                 # Continue with remaining servers instead of failing completely
 
         # Return appropriate format based on pagination type
@@ -988,7 +988,7 @@ class ServerService(BaseService):
             try:
                 result.append(self.convert_server_to_read(s, include_metrics=False))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                logger.exception(f"Failed to convert server {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
+                logger.exception("Failed to convert server %s (%s): %s", getattr(s, "id", "unknown"), getattr(s, "name", "unknown"), e)
                 # Continue with remaining servers instead of failing completely
         return result
 
@@ -1127,7 +1127,7 @@ class ServerService(BaseService):
             "associated_resources": [res.id for res in server.resources],
             "associated_prompts": [prompt.id for prompt in server.prompts],
         }
-        logger.debug(f"Server Data: {server_data}")
+        logger.debug("Server Data: %s", server_data)
         # Team name is loaded via server.team property from email_team relationship
         server_read = self.convert_server_to_read(server)
 
@@ -1157,7 +1157,6 @@ class ServerService(BaseService):
             user_id="system",
             team_id=getattr(server, "team_id", None),
             context={"enabled": server.enabled},
-            db=db,
         )
 
         return server_read
@@ -1256,9 +1255,7 @@ class ServerService(BaseService):
                 team_id = server_update.team_id or server.team_id
                 if visibility.lower() == "public":
                     # Check for existing public server with the same name
-                    existing_server = get_for_update(
-                        db, DbServer, where=and_(DbServer.name == server_update.name, DbServer.visibility == "public", DbServer.id != server.id)
-                    )  # pylint: disable=comparison-with-callable
+                    existing_server = get_for_update(db, DbServer, where=and_(DbServer.name == server_update.name, DbServer.visibility == "public", DbServer.id != server.id))  # pylint: disable=comparison-with-callable
                     if existing_server:
                         raise ServerNameConflictError(server_update.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
                 elif visibility.lower() == "team" and team_id:
@@ -1266,9 +1263,7 @@ class ServerService(BaseService):
                     existing_server = get_for_update(
                         db,
                         DbServer,
-                        where=and_(
-                            DbServer.name == server_update.name, DbServer.visibility == "team", DbServer.team_id == team_id, DbServer.id != server.id
-                        ),  # pylint: disable=comparison-with-callable
+                        where=and_(DbServer.name == server_update.name, DbServer.visibility == "team", DbServer.team_id == team_id, DbServer.id != server.id),  # pylint: disable=comparison-with-callable
                     )
                     if existing_server:
                         raise ServerNameConflictError(server_update.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
@@ -1361,7 +1356,7 @@ class ServerService(BaseService):
             await admin_stats_cache.invalidate_tags()
 
             await self._notify_server_updated(server)
-            logger.info(f"Updated server: {server.name}")
+            logger.info("Updated server: %s", server.name)
 
             # Structured logging: Audit trail for server update
             changes = []
@@ -1416,11 +1411,11 @@ class ServerService(BaseService):
                 "associated_resources": [res.id for res in server.resources],
                 "associated_prompts": [prompt.id for prompt in server.prompts],
             }
-            logger.debug(f"Server Data: {server_data}")
+            logger.debug("Server Data: %s", server_data)
             return self.convert_server_to_read(server)
         except IntegrityError as ie:
             db.rollback()
-            logger.error(f"IntegrityErrors in group: {ie}")
+            logger.error("IntegrityErrors in group: %s", ie)
 
             # Structured logging: Log database integrity error
             self._structured_logger.log(
@@ -1437,7 +1432,7 @@ class ServerService(BaseService):
             raise ie
         except ServerNameConflictError as snce:
             db.rollback()
-            logger.error(f"Server name conflict: {snce}")
+            logger.error("Server name conflict: %s", snce)
 
             # Structured logging: Log name conflict error
             self._structured_logger.log(
@@ -1547,7 +1542,7 @@ class ServerService(BaseService):
                     await self._notify_server_activated(server)
                 else:
                     await self._notify_server_deactivated(server)
-                logger.info(f"Server {server.name} {'activated' if activate else 'deactivated'}")
+                logger.info("Server %s %s", server.name, "activated" if activate else "deactivated")
 
                 # Structured logging: Audit trail for server state change
                 self._audit_trail.log_action(
@@ -1588,7 +1583,7 @@ class ServerService(BaseService):
                 "associated_resources": [res.id for res in server.resources],
                 "associated_prompts": [prompt.id for prompt in server.prompts],
             }
-            logger.info(f"Server Data: {server_data}")
+            logger.info("Server Data: %s", server_data)
             return self.convert_server_to_read(server)
         except PermissionError as e:
             # Structured logging: Log permission error
@@ -1674,7 +1669,7 @@ class ServerService(BaseService):
             metrics_cache.invalidate("servers")
 
             await self._notify_server_deleted(server_info)
-            logger.info(f"Deleted server: {server_info['name']}")
+            logger.info("Deleted server: %s", server_info["name"])
 
             # Structured logging: Audit trail for server deletion
             self._audit_trail.log_action(
@@ -2011,7 +2006,7 @@ class ServerService(BaseService):
         if scopes:
             response_data["scopes_supported"] = scopes
 
-        logger.debug(f"Returning OAuth protected resource metadata for server {server_id}")
+        logger.debug("Returning OAuth protected resource metadata for server %s", server_id)
         return response_data
 
 

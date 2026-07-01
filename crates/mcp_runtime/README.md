@@ -1,5 +1,8 @@
 # ContextForge MCP Runtime (Rust)
 
+> Deprecated as of 2026-06-11; sunsets on 2026-07-07. Use the default Python MCP transport path.
+> See [Deprecations](../../docs/docs/deprecations.md).
+
 This crate is the optional Rust MCP sidecar/runtime for `ContextForge`.
 
 It can act as:

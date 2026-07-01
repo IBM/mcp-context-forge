@@ -291,10 +291,14 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 ### Get Gateway Details
 
 ```bash
-# Get specific gateway by ID
+# Get specific gateway by ID, exact name, or exact slug
 export GATEWAY_ID="your-gateway-id"
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/gateways/$GATEWAY_ID | jq '.'
 ```
+
+When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=true`, this same `GET /gateways/{gateway_id}` route is the status polling endpoint for async gateway create, update, and delete. The identifier can be the gateway ID, exact name, or exact slug. If name and slug resolution would be ambiguous across visible gateways, the API returns `409 Conflict`.
+
+One ambiguity example: one visible gateway has `name="team-alpha"` while another visible gateway has `slug="team-alpha"`. Prefer polling by the gateway `id` returned from create/update responses, or keep names and slugs unique within the caller's visible scope.
 
 ### Register a New Gateway
 
@@ -309,6 +313,69 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
     "transport": "STREAMABLEHTTP"
   }' \
   $BASE_URL/gateways | jq '.'
+```
+
+When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=false` (default), gateway registration remains synchronous.
+
+When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=true`, `POST /gateways` returns `202 Accepted` after the gateway row is persisted with `status="pending"`. `202 Accepted` means the work was accepted, not completed. The background lifecycle worker performs MCP initialization and catalog sync after the response returns. Async `POST`, `PUT`, and `DELETE` gateway lifecycle responses also include a `Retry-After` header derived from `GATEWAY_ASYNC_LIFECYCLE_POLL_INTERVAL` so clients have a polling hint.
+
+**Async create response example (`202 Accepted`):**
+
+```json
+{
+  "id": "abc123",
+  "name": "my-mcp-server",
+  "status": "pending",
+  "reachable": false,
+  "registrationAttempts": 0,
+  "nextRetryAt": null,
+  "lastError": null
+}
+```
+
+### Poll Gateway Lifecycle Status
+
+```bash
+# Poll by ID
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/gateways/$GATEWAY_ID | jq '.'
+
+# Poll by exact name
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/gateways/my-mcp-server | jq '.'
+```
+
+Status values:
+
+- `pending` - Create or update accepted, worker still initializing or retrying
+- `active` - Gateway is ready and catalog sync completed
+- `deleting` - Delete accepted, worker cleanup and row removal still in progress
+
+Retry metadata is returned while a gateway is `pending`:
+
+- `registrationAttempts` / `registration_attempts` - Number of failed initialization attempts so far
+- `statusMessage` / `status_message` - Pending acceptance text before first failure, or the latest sanitized lifecycle detail while pending/deleting
+- `nextRetryAt` / `next_retry_at` - Next scheduled retry time, or `null` before first failure
+- `lastError` / `last_error` - Most recent sanitized failure detail, or `null` before first failure
+- `lifecycleClaimedBy`, `lifecycleClaimedAt`, `lifecycleClaimExpiresAt` - Internal worker lease metadata that may appear in admin/API payloads for troubleshooting; clients should not depend on them for business logic
+
+Gateway name is the natural deduplication key for async lifecycle retries. With async lifecycle enabled, retrying `POST /gateways` with the same name while the existing gateway is `pending` returns the current pending record with `202 Accepted`; retrying while the existing gateway is `active` returns `409 Conflict`. Retrying an update while the gateway is already `pending` returns the current pending record with `202 Accepted`. A client-side transport timeout or lost response does not prove server-side failure: poll `GET /gateways/{id|name|slug}` before retrying or deleting.
+
+Pending gateway retries continue with exponential backoff until initialization succeeds or the client sends DELETE. After each failed initialization attempt, the next delay is `min(2 ** (registrationAttempts - 1), 300)` seconds. `nextRetryAt` is the source of truth for when the worker may retry next.
+
+DELETE changes `pending` or `active` gateways to `deleting`; the worker then stops pending retries, performs cleanup, and removes the row. Retrying DELETE while the gateway is already `deleting` is safe: clients should treat the resource as still being removed and keep polling until `404 Not Found`. Once deleted, polling returns `404 Not Found`.
+
+**Pending retry response example (`200 OK`):**
+
+```json
+{
+  "id": "abc123",
+  "name": "my-mcp-server",
+  "status": "pending",
+  "registrationAttempts": 3,
+  "nextRetryAt": "2026-05-01T12:05:32Z",
+  "lastError": "Connection refused: http://127.0.0.1:6666/mcp"
+}
 ```
 
 !!! note "Request Types"
@@ -355,6 +422,8 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
   $BASE_URL/gateways/$GATEWAY_ID | jq '.'
 ```
 
+When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=true`, `PUT /gateways/{id}` returns `202 Accepted` with the updated gateway in `status="pending"`. The worker re-initializes the gateway and refreshes the catalog after the response returns. Poll `GET /gateways/{id|name|slug}` until the gateway becomes `active` again.
+
 ### Enable/Disable Gateway
 
 ```bash
@@ -370,6 +439,8 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
   $BASE_URL/gateways/$GATEWAY_ID | jq '.'
 ```
+
+When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=true`, `DELETE /gateways/{id}` returns `202 Accepted` with `status="deleting"`. The worker completes cleanup and hard deletion on a later polling cycle. Continue polling `GET /gateways/{id|name|slug}` until the route returns `404 Not Found`.
 
 ## Tool Management
 
@@ -1292,6 +1363,82 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 # Delete A2A agent
 curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
   $BASE_URL/a2a/$A2A_ID | jq '.'
+```
+
+## Team Management
+
+Teams are the unit of multi-tenancy in ContextForge. The `GET /teams` endpoint lists the teams visible to the caller and is the same endpoint that backs the Admin UI Teams page and the team switcher.
+
+Visibility follows the two-layer security model:
+
+- **Platform admins** see all **non-personal** teams plus **their own personal team**. They do *not* see other users' personal teams. (This matches the `/admin/teams/partial` admin view.)
+- **Regular users** see only the teams they are a member of (including their own personal team).
+
+The caller's own personal team is derived from the authenticated identity, never from client input, so this endpoint cannot be used to enumerate other users' personal teams.
+
+### List Teams
+
+```bash
+# List teams visible to the caller (non-paginated response - default)
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/teams | jq '.'
+```
+
+**Response (`TeamListResponse`):**
+```json
+{
+  "teams": [
+    {
+      "id": "team123",
+      "name": "Engineering",
+      "slug": "engineering",
+      "description": "Engineering team",
+      "created_by": "admin@example.com",
+      "is_personal": false,
+      "visibility": "private",
+      "max_members": 100,
+      "member_count": 7,
+      "is_active": true
+    }
+  ],
+  "total": 1
+}
+```
+
+### Pagination
+
+`GET /teams` supports the same query parameters as other main API endpoints:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `skip` | int | `0` | Number of teams to skip (offset). |
+| `limit` | int | `50` | Maximum number of teams to return (capped by `PAGINATION_MAX_PAGE_SIZE`). |
+| `cursor` | string | – | Opaque cursor for cursor-based pagination. |
+| `include_pagination` | bool | `false` | When `true`, return cursor metadata instead of a total count. |
+
+```bash
+# Offset-based pagination
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/teams?skip=50&limit=50" | jq '.'
+
+# Cursor-based pagination (returns CursorPaginatedTeamsResponse)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/teams?include_pagination=true" | jq '.'
+```
+
+**Response with `include_pagination=true` (`CursorPaginatedTeamsResponse`):**
+```json
+{
+  "teams": [ ... ],
+  "nextCursor": "eyJjcmVhdGVkX2F0IjogIjIwMjQtMDEtMDFUMTI6MDA6MDBaIiwgImlkIjogInRlYW0xMjMifQ"
+}
+```
+
+```bash
+# Fetch the next page using the returned cursor
+CURSOR=$(curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/teams?include_pagination=true" | jq -r '.nextCursor')
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/teams?include_pagination=true&cursor=$CURSOR" | jq '.'
 ```
 
 ## OpenAPI Specification

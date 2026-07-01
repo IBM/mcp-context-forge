@@ -83,7 +83,7 @@ def _validate_association_ids(v: Any, field_name: str = "associated IDs") -> Any
             try:
                 validated.append(SecurityValidator.validate_uuid(item_str, field_name))
             except ValueError:
-                raise ValueError(f"Invalid ID format: '{item_str}'. " f"{field_name} must contain UUID values, not names. " f"Use UUIDs from the respective entity listings.")
+                raise ValueError(f"Invalid ID format: '{item_str}'. {field_name} must contain UUID values, not names. Use UUIDs from the respective entity listings.")
         return validated
     return v
 
@@ -497,6 +497,14 @@ class AuthenticationValues(BaseModelWithConfigDict):
 
     auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, authheaders or None")
     auth_value: Optional[str] = Field(None, description="Encoded Authentication values")
+
+    @field_validator("auth_type")
+    @classmethod
+    def reject_oauth_auth_type(cls, v: Optional[str]) -> Optional[str]:
+        """Reject oauth as a tool auth_type — OAuth must be configured on the gateway."""
+        if v is not None and v.lower() == "oauth":
+            raise ValueError("auth_type 'oauth' is not supported on tools; configure OAuth on the gateway instead")
+        return v
 
     # Only For tool read and view tool
     username: Optional[str] = Field("", description="Username for basic authentication")
@@ -2857,18 +2865,54 @@ class GatewayCreate(BaseModelWithConfigDict):
     auth_query_param_key: Optional[str] = Field(
         None,
         description="Query parameter name for authentication (e.g., 'api_key', 'tavilyApiKey')",
-        pattern=r"^[a-zA-Z_][a-zA-Z0-9_\-]*$",
     )
     auth_query_param_value: Optional[SecretStr] = Field(
         None,
         description="Query parameter value (API key). Stored encrypted.",
     )
 
+    @field_validator("auth_query_param_key")
+    @classmethod
+    def validate_auth_query_param_key(cls, v: Optional[str]) -> Optional[str]:
+        """Validate query param key format only if provided and non-empty.
+
+        Args:
+            v: Query parameter key to validate
+
+        Returns:
+            The validated query parameter key
+
+        Raises:
+            ValueError: If the key format is invalid
+        """
+        if v is not None and v != "":
+            if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_\-]*$", v):
+                raise ValueError("Query parameter key must start with a letter or underscore, followed by letters, numbers, underscores, or hyphens")
+        return v
+
     # Adding `auth_value` as an alias for better access post-validation
     auth_value: Optional[str] = Field(None, validate_default=True)
 
     # One time auth - do not store the auth in gateway flag
     one_time_auth: Optional[bool] = Field(default=False, description="The authentication should be used only once and not stored in the gateway")
+
+    @field_validator("auth_type", mode="before")
+    @classmethod
+    def normalize_auth_type(cls, v: Any) -> Optional[str]:
+        """Normalize auth_type: convert string 'none' or 'None' to empty string.
+
+        The service layer treats empty string as the clear-auth sentinel.
+        Converting "none" to None would cause the update to be ignored.
+
+        Args:
+            v: The auth_type value (may be string "none" or "None")
+
+        Returns:
+            Empty string if v is "none" or "None", otherwise returns v unchanged
+        """
+        if isinstance(v, str) and v.lower() == "none":
+            return ""
+        return v
 
     tags: Optional[List[Union[str, Dict[str, str]]]] = Field(default_factory=list, description="Tags for categorizing the gateway")
 
@@ -3143,7 +3187,11 @@ class GatewayCreate(BaseModelWithConfigDict):
             # Validation is handled by model_validator
             return None
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, or query_param.")
+        # Handle no authentication (None or already normalized from "none")
+        if auth_type is None or auth_type == "":
+            return None
+
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, query_param, or none.")
 
     @model_validator(mode="after")
     def validate_query_param_auth(self) -> "GatewayCreate":
@@ -3207,6 +3255,24 @@ class GatewayUpdate(BaseModelWithConfigDict):
     # Adding `auth_value` as an alias for better access post-validation
     auth_value: Optional[str] = Field(None, validate_default=True)
 
+    @field_validator("auth_type", mode="before")
+    @classmethod
+    def normalize_auth_type(cls, v: Any) -> Optional[str]:
+        """Normalize auth_type: convert string 'none' or 'None' to empty string.
+
+        The service layer treats empty string as the clear-auth sentinel.
+        Converting "none" to None would cause the update to be ignored.
+
+        Args:
+            v: The auth_type value (may be string "none" or "None")
+
+        Returns:
+            Empty string if v is "none" or "None", otherwise returns v unchanged
+        """
+        if isinstance(v, str) and v.lower() == "none":
+            return ""
+        return v
+
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(
         None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, audience (for Atlassian/Auth0), and resource (RFC 8707)"
@@ -3216,12 +3282,30 @@ class GatewayUpdate(BaseModelWithConfigDict):
     auth_query_param_key: Optional[str] = Field(
         None,
         description="Query parameter name for authentication",
-        pattern=r"^[a-zA-Z_][a-zA-Z0-9_\-]*$",
     )
     auth_query_param_value: Optional[SecretStr] = Field(
         None,
         description="Query parameter value (API key)",
     )
+
+    @field_validator("auth_query_param_key")
+    @classmethod
+    def validate_auth_query_param_key(cls, v: Optional[str]) -> Optional[str]:
+        """Validate query param key format only if provided and non-empty.
+
+        Args:
+            v: Query parameter key to validate
+
+        Returns:
+            The validated query parameter key
+
+        Raises:
+            ValueError: If the key format is invalid
+        """
+        if v is not None and v != "":
+            if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_\-]*$", v):
+                raise ValueError("Query parameter key must start with a letter or underscore, followed by letters, numbers, underscores, or hyphens")
+        return v
 
     # One time auth - do not store the auth in gateway flag
     one_time_auth: Optional[bool] = Field(default=False, description="The authentication should be used only once and not stored in the gateway")
@@ -3460,7 +3544,11 @@ class GatewayUpdate(BaseModelWithConfigDict):
             # Validation is handled by model_validator
             return None
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, or query_param.")
+        # Handle no authentication (None or already normalized from "none")
+        if auth_type is None or auth_type == "":
+            return None
+
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, query_param, or none.")
 
     @model_validator(mode="after")
     def validate_query_param_auth(self) -> "GatewayUpdate":
@@ -3545,6 +3633,14 @@ class GatewayRead(BaseModelWithConfigDict):
     capabilities: Dict[str, Any] = Field(default_factory=dict, description="Gateway capabilities")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Creation timestamp")
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Last update timestamp")
+    status: str = Field(default="active", description="Gateway lifecycle status: pending, active, or deleting")
+    status_message: Optional[str] = Field(default=None, description="Gateway lifecycle status message or failure detail")
+    registration_attempts: int = Field(default=0, description="Number of async lifecycle registration attempts")
+    next_retry_at: Optional[datetime] = Field(default=None, description="Next async lifecycle retry timestamp")
+    last_error: Optional[str] = Field(default=None, description="Most recent async lifecycle error detail")
+    lifecycle_claimed_by: Optional[str] = Field(default=None, description="Worker instance currently claiming async lifecycle work")
+    lifecycle_claimed_at: Optional[datetime] = Field(default=None, description="Timestamp when async lifecycle claim was acquired")
+    lifecycle_claim_expires_at: Optional[datetime] = Field(default=None, description="Timestamp when async lifecycle claim expires")
     enabled: bool = Field(default=True, description="Is the gateway enabled?")
     reachable: bool = Field(default=True, description="Is the gateway reachable/online?")
 
@@ -4661,6 +4757,25 @@ class A2AAgentCreate(BaseModel):
 
     # Adding `auth_value` as an alias for better access post-validation
     auth_value: Optional[str] = Field(None, validate_default=True)
+
+    @field_validator("auth_type", mode="before")
+    @classmethod
+    def normalize_auth_type(cls, v: Any) -> Optional[str]:
+        """Normalize auth_type: convert string 'none' or 'None' to empty string.
+
+        The service layer treats empty string as the clear-auth sentinel.
+        Converting "none" to None would cause auth to not be cleared properly.
+
+        Args:
+            v: The auth_type value (may be string "none" or "None")
+
+        Returns:
+            Empty string if v is "none" or "None", otherwise returns v unchanged
+        """
+        if isinstance(v, str) and v.lower() == "none":
+            return ""
+        return v
+
     tags: List[str] = Field(default_factory=list, description="Tags for categorizing the agent")
 
     # Team scoping fields
@@ -4675,6 +4790,30 @@ class A2AAgentCreate(BaseModel):
     uaid_skills: Optional[list[int]] = Field(default_factory=list, description="Skill IDs for UAID hash generation (deterministic identity)")
     version: Optional[str] = Field(default="1.0.0", description="Agent version for UAID generation")
     uaid_native_id_override: Optional[str] = Field(None, description="Override nativeId in UAID for cross-gateway routing (defaults to endpoint_url if not provided)")
+
+    @field_validator("passthrough_headers")
+    @classmethod
+    def validate_passthrough_headers(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        """Validate passthrough_headers contain valid HTTP header names.
+
+        Args:
+            v: Optional list of header name strings to validate
+
+        Returns:
+            List of validated header names or None
+
+        Raises:
+            ValueError: If any header name is invalid
+        """
+        if v is None:
+            return None
+        # HTTP header name must be a token per RFC 7230 section 3.2
+        # Token chars: alphanumeric, !, #, $, %, &, ', *, +, -, ., ^, _, `, |, ~
+        header_name_pattern = re.compile(r"^[a-zA-Z0-9!#$%&'*+\-.^_`|~]+$")
+        invalid_headers = [h for h in v if not header_name_pattern.match(h)]
+        if invalid_headers:
+            raise ValueError(f"Invalid header names: {', '.join(invalid_headers)}. Header names must contain only valid token characters (RFC 7230).")
+        return v
 
     @field_validator("tags")
     @classmethod
@@ -4909,7 +5048,11 @@ class A2AAgentCreate(BaseModel):
             # Validation is handled by model_validator
             return None
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, or query_param.")
+        # Handle no authentication (None or already normalized from "none")
+        if auth_type is None or auth_type == "":
+            return None
+
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, query_param, or none.")
 
     @model_validator(mode="after")
     def validate_query_param_auth(self) -> "A2AAgentCreate":
@@ -5001,6 +5144,48 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
     uaid_protocol: Optional[str] = Field(default=None, description="Protocol for UAID (a2a, mcp, rest, grpc)")
     version: Optional[str] = Field(default=None, description="Agent version for UAID generation")
     uaid_native_id_override: Optional[str] = Field(None, description="Override nativeId in UAID for cross-gateway routing (defaults to endpoint_url if not provided)")
+
+    @field_validator("passthrough_headers")
+    @classmethod
+    def validate_passthrough_headers(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        """Validate passthrough_headers contain valid HTTP header names.
+
+        Args:
+            v: Optional list of header name strings to validate
+
+        Returns:
+            List of validated header names or None
+
+        Raises:
+            ValueError: If any header name is invalid
+        """
+        if v is None:
+            return None
+        # HTTP header name must be a token per RFC 7230 section 3.2
+        # Token chars: alphanumeric, !, #, $, %, &, ', *, +, -, ., ^, _, `, |, ~
+        header_name_pattern = re.compile(r"^[a-zA-Z0-9!#$%&'*+\-.^_`|~]+$")
+        invalid_headers = [h for h in v if not header_name_pattern.match(h)]
+        if invalid_headers:
+            raise ValueError(f"Invalid header names: {', '.join(invalid_headers)}. Header names must contain only valid token characters (RFC 7230).")
+        return v
+
+    @field_validator("auth_type")
+    @classmethod
+    def normalize_auth_type(cls, v: Any) -> Optional[str]:
+        """Normalize auth_type: convert string 'none' or 'None' to empty string.
+
+        The service layer treats empty string as the clear-auth sentinel.
+        Converting "none" to None would cause the update to be ignored.
+
+        Args:
+            v: The auth_type value (can be str or None)
+
+        Returns:
+            Empty string if v is "none" or "None", otherwise returns v unchanged
+        """
+        if isinstance(v, str) and v.lower() == "none":
+            return ""
+        return v
 
     @field_validator("tags")
     @classmethod
@@ -5239,7 +5424,11 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
             # Validation is handled by model_validator
             return None
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, or query_param.")
+        # Handle no authentication (None or already normalized from "none")
+        if auth_type is None or auth_type == "":
+            return None
+
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, authheaders, query_param, or none.")
 
     @model_validator(mode="after")
     def validate_query_param_auth(self) -> "A2AAgentUpdate":

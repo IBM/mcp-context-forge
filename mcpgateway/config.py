@@ -268,50 +268,50 @@ class Settings(BaseSettings):
     protocol_version: str = "2025-11-25"
     experimental_rust_mcp_runtime_enabled: bool = Field(
         default=False,
-        description="Proxy POST /mcp traffic through the experimental Rust MCP runtime sidecar.",
+        description="Deprecated. Proxy POST /mcp traffic through the experimental Rust MCP runtime sidecar.",
     )
     experimental_rust_mcp_runtime_url: str = Field(
         default="http://127.0.0.1:8787",
-        description="Base URL for the experimental Rust MCP runtime sidecar.",
+        description="Deprecated. Base URL for the experimental Rust MCP runtime sidecar.",
     )
     experimental_rust_mcp_runtime_uds: Optional[str] = Field(
         default=None,
-        description="Optional Unix domain socket path for the experimental Rust MCP runtime sidecar.",
+        description="Deprecated. Optional Unix domain socket path for the experimental Rust MCP runtime sidecar.",
     )
     experimental_rust_mcp_runtime_timeout_seconds: int = Field(
         default=30,
         ge=1,
         le=300,
-        description="Timeout in seconds for Python-to-Rust MCP runtime proxy requests.",
+        description="Deprecated. Timeout in seconds for Python-to-Rust MCP runtime proxy requests.",
     )
     experimental_rust_mcp_session_core_enabled: bool = Field(
         default=False,
-        description="Enable the experimental Rust-owned MCP session metadata core while keeping Python as the fallback transport backend.",
+        description="Deprecated. Enable the experimental Rust-owned MCP session metadata core while keeping Python as the fallback transport backend.",
     )
     experimental_rust_mcp_event_store_enabled: bool = Field(
         default=False,
-        description="Enable the experimental Rust-owned resumable MCP event-store backend for Streamable HTTP sessions.",
+        description="Deprecated. Enable the experimental Rust-owned resumable MCP event-store backend for Streamable HTTP sessions.",
     )
     experimental_rust_mcp_resume_core_enabled: bool = Field(
         default=False,
-        description="Enable the experimental Rust-owned public MCP replay/resume path for GET /mcp with Last-Event-ID while keeping Python fallback available.",
+        description="Deprecated. Enable the experimental Rust-owned public MCP replay/resume path for GET /mcp with Last-Event-ID while keeping Python fallback available.",
     )
     experimental_rust_mcp_live_stream_core_enabled: bool = Field(
         default=False,
-        description="Enable the experimental Rust-owned public MCP live GET /mcp SSE path while keeping Python as the fallback upstream stream source.",
+        description="Deprecated. Enable the experimental Rust-owned public MCP live GET /mcp SSE path while keeping Python as the fallback upstream stream source.",
     )
     experimental_rust_mcp_affinity_core_enabled: bool = Field(
         default=False,
-        description="Enable the experimental Rust-owned MCP session-affinity forwarding path while keeping Python worker forwarding as the fallback.",
+        description="Deprecated. Enable the experimental Rust-owned MCP session-affinity forwarding path while keeping Python worker forwarding as the fallback.",
     )
     experimental_rust_mcp_session_auth_reuse_enabled: bool = Field(
         default=False,
-        description="Enable the experimental Rust-owned MCP session-bound auth-context reuse path for direct public /mcp ingress.",
+        description="Deprecated. Enable the experimental Rust-owned MCP session-bound auth-context reuse path for direct public /mcp ingress.",
     )
     mcp_rust_ingress: Literal["internal", "public"] = Field(
         default="internal",
         description=(
-            "Selects which Rust MCP ingress shape MCPIngressMount uses when boot mode is "
+            "Deprecated. Selects which Rust MCP ingress shape MCPIngressMount uses when boot mode is "
             "edge or full and no shadow override is in effect. 'internal' (default) uses "
             "the trusted Python→Rust forwarder (RustMCPRuntimeProxy) over the internal "
             "listener at MCP_RUST_LISTEN_HTTP/UDS; 'public' uses an nginx-style reverse "
@@ -322,35 +322,33 @@ class Settings(BaseSettings):
     )
     mcp_rust_public_proxy_upstream: str = Field(
         default="http://127.0.0.1:8787",
-        description=(
-            "Upstream URL the 'public' MCP ingress shape forwards to. Defaults to the " "loopback address that matches docker-entrypoint.sh's " "MCP_RUST_PUBLIC_LISTEN_HTTP=0.0.0.0:8787 default."
-        ),
+        description=("Upstream URL the 'public' MCP ingress shape forwards to. Defaults to the loopback address that matches docker-entrypoint.sh's MCP_RUST_PUBLIC_LISTEN_HTTP=0.0.0.0:8787 default."),
     )
     experimental_rust_a2a_runtime_enabled: bool = Field(
         default=False,
-        description="Enable the experimental Rust A2A runtime sidecar for registered A2A agent invocations.",
+        description="Deprecated. Enable the experimental Rust A2A runtime sidecar for registered A2A agent invocations.",
     )
     experimental_rust_a2a_runtime_delegate_enabled: bool = Field(
         default=False,
-        description="Delegate registered A2A agent invocations to the experimental Rust A2A runtime sidecar.",
+        description="Deprecated. Delegate registered A2A agent invocations to the experimental Rust A2A runtime sidecar.",
     )
     experimental_rust_a2a_runtime_managed: bool = Field(
         default=True,
-        description="Whether the gateway should launch and supervise the experimental Rust A2A runtime sidecar locally.",
+        description="Deprecated. Whether the gateway should launch and supervise the experimental Rust A2A runtime sidecar locally.",
     )
     experimental_rust_a2a_runtime_url: str = Field(
         default="http://127.0.0.1:8788",
-        description="Base URL for the experimental Rust A2A runtime sidecar.",
+        description="Deprecated. Base URL for the experimental Rust A2A runtime sidecar.",
     )
     experimental_rust_a2a_runtime_uds: Optional[str] = Field(
         default=None,
-        description="Optional Unix domain socket path for the experimental Rust A2A runtime sidecar.",
+        description="Deprecated. Optional Unix domain socket path for the experimental Rust A2A runtime sidecar.",
     )
     experimental_rust_a2a_runtime_timeout_seconds: int = Field(
         default=30,
         ge=1,
         le=300,
-        description="Timeout in seconds for Python-to-Rust A2A runtime proxy requests.",
+        description="Deprecated. Timeout in seconds for Python-to-Rust A2A runtime proxy requests.",
     )
 
     # Authentication
@@ -387,7 +385,7 @@ class Settings(BaseSettings):
         # RFC 7230 token = 1*tchar; tchar = "!" / "#" / "$" / "%" / "&" / "'"
         # / "*" / "+" / "-" / "." / "^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA
         if not re.fullmatch(r"[A-Za-z0-9!#$%&'*+\-.^_`|~]+", cleaned):
-            raise ValueError(f"AUTH_HEADER_NAME '{v}' is not a valid HTTP header token " "(RFC 7230). Use only ASCII letters, digits, and !#$%&'*+-.^_`|~.")
+            raise ValueError(f"AUTH_HEADER_NAME '{v}' is not a valid HTTP header token (RFC 7230). Use only ASCII letters, digits, and !#$%&'*+-.^_`|~.")
         return cleaned
 
     basic_auth_user: str = "admin"
@@ -420,8 +418,12 @@ class Settings(BaseSettings):
         default=True,
         description="Require all authenticated users to exist in the database. When true, disables the platform admin bootstrap mechanism. Set REQUIRE_USER_IN_DB=false in .env for development environments that use the bootstrap admin path.",
     )
-    embed_environment_in_tokens: bool = Field(default=False, description="Embed environment claim in gateway-issued JWTs for environment isolation")
-    validate_token_environment: bool = Field(default=False, description="Reject tokens with mismatched environment claim (tokens without env claim are allowed)")
+    embed_environment_in_tokens: bool = Field(default=True, description="Embed environment claim in gateway-issued JWTs for environment isolation")
+    validate_token_environment: bool = Field(default=True, description="Reject tokens with mismatched environment claim (tokens without env claim are allowed)")
+    derive_key_per_environment: bool = Field(
+        default=False,
+        description="Derive a per-environment HMAC signing key from JWT_SECRET_KEY so tokens minted in one environment fail signature verification in another (HS* algorithms only). Enabling re-keys tokens; treat as a key rotation.",
+    )
 
     # CSRF Protection Configuration
     csrf_enabled: bool = Field(default=True, description="Enable CSRF protection for state-changing operations")
@@ -458,6 +460,12 @@ class Settings(BaseSettings):
             "/sse",  # Exempt: SSE is a server-sent event stream, not vulnerable to CSRF
             "/message",  # Exempt: MCP SSE message endpoint
             "/rpc",  # Exempt: JSON-RPC is a programmatic protocol, not browser-based
+            "/api/metrics/",
+            "/toolops/",
+            "/tokens",
+            "/teams/",
+            "/llmchat/",
+            "/api/logs/",
         ],
         description="Paths exempt from CSRF protection",
     )
@@ -509,7 +517,7 @@ class Settings(BaseSettings):
         default=False,
         description="Enable experimental Rust native extension for request logging sensitive-data masking",
     )
-    validation_middleware_enabled: bool = Field(default=False, description="Enable validation middleware for all requests")
+    validation_middleware_enabled: bool = Field(default=False, description="Deprecated. Enable validation middleware for all requests")
     client_disconnect_middleware_enabled: bool = Field(default=True, description="Enable client disconnect middleware to cancel handlers on connection close")
     validation_strict: bool = Field(default=True, description="Strict validation mode - reject on violations")
     sanitize_output: bool = Field(default=True, description="Sanitize output to remove control characters")
@@ -570,10 +578,6 @@ class Settings(BaseSettings):
     sso_generic_jwks_uri: Optional[str] = Field(default=None, description="OIDC JWKS endpoint URL for token signature verification")
 
     sso_generic_scope: Optional[str] = Field(default="openid profile email", description="OAuth scopes (space-separated)")
-    sso_generic_groups_claim: str = Field(default="groups", description="JWT claim for generic OIDC groups (e.g. 'groups', 'roles')")
-    sso_generic_admin_groups: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Generic OIDC groups granting platform_admin (CSV/JSON)")
-    sso_generic_role_mappings: Dict[str, str] = Field(default_factory=dict, description="Map generic OIDC groups to ContextForge roles (JSON: {group_name: role_name})")
-    sso_generic_default_role: Optional[str] = Field(default=None, description="Default role for generic OIDC users without a matching group mapping (None = no role assigned)")
 
     sso_generic_groups_claim: str = Field(default="groups", description="JWT claim for Generic OIDC groups (groups/roles/custom)")
     sso_generic_admin_groups: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Generic OIDC groups granting platform_admin role (CSV/JSON)")
@@ -604,6 +608,26 @@ class Settings(BaseSettings):
     # ADFS-specific Settings
     sso_adfs_default_email_domain: Optional[str] = Field(
         default=None, description="Default email domain for ADFS when UPN is plain username (e.g., 'company.com' converts 'user123' to 'user123@company.com')"
+    )
+
+    # External OIDC Bearer Token API Authentication (issue #3567)
+    sso_api_token_auth_enabled: bool = Field(
+        default=False,
+        description=(
+            "Accept access tokens issued by trusted external SSO providers as Bearer "
+            "credentials on API/MCP endpoints, in addition to internally-minted JWTs. "
+            "Each provider must ALSO be opted in via SSOProvider.trusted_for_api_auth. "
+            "Default false preserves internal-JWT-only behavior."
+        ),
+    )
+    external_identity_cache_ttl: int = Field(
+        default=60,
+        description=(
+            "Seconds to cache a provisioned external-IdP identity (per token) to avoid "
+            "re-provisioning on every M2M request. Clamped to the token's own exp. Shared "
+            "across workers via Redis when cache_type=redis. Set 0 to disable caching "
+            "(strict deployments that need immediate team/role remapping)."
+        ),
     )
 
     # MCP Client Authentication
@@ -706,27 +730,25 @@ class Settings(BaseSettings):
 
     ssrf_allow_localhost: bool = Field(
         default=False,
-        description=("Allow localhost/loopback addresses (127.0.0.0/8, ::1). " "Default false for safer production behavior."),
+        description=("Allow localhost/loopback addresses (127.0.0.0/8, ::1). Default false for safer production behavior."),
     )
 
     ssrf_allow_private_networks: bool = Field(
         default=False,
         description=(
-            "Allow RFC 1918 private network addresses (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16). " "When false, private destinations are blocked unless explicitly listed in SSRF_ALLOWED_NETWORKS."
+            "Allow RFC 1918 private network addresses (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16). When false, private destinations are blocked unless explicitly listed in SSRF_ALLOWED_NETWORKS."
         ),
     )
 
     ssrf_allowed_networks: List[str] = Field(
         default_factory=list,
-        description=("Optional CIDR allowlist for internal/private destinations. " "Used when SSRF_ALLOW_PRIVATE_NETWORKS=false to allow specific internal ranges."),
+        description=("Optional CIDR allowlist for internal/private destinations. Used when SSRF_ALLOW_PRIVATE_NETWORKS=false to allow specific internal ranges."),
     )
 
     ssrf_dns_fail_closed: bool = Field(
         default=True,
         description=(
-            "Fail closed on DNS resolution errors. When true, URLs that cannot be resolved "
-            "are rejected. When false, unresolvable hostnames are allowed through "
-            "(hostname blocklist still applies)."
+            "Fail closed on DNS resolution errors. When true, URLs that cannot be resolved are rejected. When false, unresolvable hostnames are allowed through (hostname blocklist still applies)."
         ),
     )
 
@@ -769,7 +791,7 @@ class Settings(BaseSettings):
     uaid_allow_all_domains: bool = Field(
         default=False,
         description=(
-            "DANGEROUS: Allow UAID cross-gateway routing to any domain. " "This bypasses domain allowlist validation and should NEVER be used in production. " "Only enable for development/testing."
+            "DANGEROUS: Allow UAID cross-gateway routing to any domain. This bypasses domain allowlist validation and should NEVER be used in production. Only enable for development/testing."
         ),
     )
 
@@ -1086,7 +1108,7 @@ class Settings(BaseSettings):
     )
     mcpgateway_ui_hide_sections_admin: Annotated[list[str], NoDecode] = Field(
         default_factory=list,
-        description=("CSV/JSON list of UI sections to hide for admin users. " "Same valid values as MCPGATEWAY_UI_HIDE_SECTIONS. " "When unset, admins see all sections."),
+        description=("CSV/JSON list of UI sections to hide for admin users. Same valid values as MCPGATEWAY_UI_HIDE_SECTIONS. When unset, admins see all sections."),
     )
     mcpgateway_ui_hide_header_items_admin: Annotated[list[str], NoDecode] = Field(
         default_factory=list,
@@ -1226,18 +1248,18 @@ class Settings(BaseSettings):
     llmchat_enabled: bool = Field(default=True, description="Enable LLM Chat feature")
     mcpgateway_stdio_transport_enabled: bool = Field(
         default=False,
-        description=("Enable stdio transport for MCP chat client configuration. Disabled by default; " "set true only in trusted environments that intentionally need stdio process execution."),
+        description=("Enable stdio transport for MCP chat client configuration. Disabled by default; set true only in trusted environments that intentionally need stdio process execution."),
     )
     toolops_enabled: bool = Field(default=False, description="Enable ToolOps feature")
     plugins_can_override_rbac: bool = Field(
         default=False,
-        description=("Allow HTTP_AUTH_CHECK_PERMISSION plugins to short-circuit built-in RBAC grants. " "Disabled by default so plugin grant decisions are audit-only unless explicitly enabled."),
+        description=("Allow HTTP_AUTH_CHECK_PERMISSION plugins to short-circuit built-in RBAC grants. Disabled by default so plugin grant decisions are audit-only unless explicitly enabled."),
     )
     plugins_can_override_auth_headers: bool = Field(
         default=False,
         description=(
             "DANGEROUS: Allow pre-request plugin hooks to override auth-sensitive headers "
-            "(authorization, cookie, x-api-key, proxy-authorization) that the client already sent. "
+            "(authorization, cookie, X-API-Key, proxy-authorization) that the client already sent."
             "Disabled by default because a malicious or misconfigured plugin could impersonate any "
             "user by rewriting the Authorization header. Only enable when all loaded plugins are "
             "fully trusted and the deployment requires token exchange (e.g. WXO auth). "
@@ -1274,6 +1296,13 @@ class Settings(BaseSettings):
     llmchat_session_lock_wait: float = Field(default=0.2, description="Seconds between polls")
     llmchat_chat_history_ttl: int = Field(default=3600, description="Seconds for chat history expiry")
     llmchat_chat_history_max_messages: int = Field(default=50, description="Maximum message history to store per user")
+
+    # Legacy (backward-compat) route shims
+    legacy_api_enabled: bool = Field(default=True, description="Mount backward-compat unversioned routes (deprecated aliases for /v1/*). Set false to drop shim routes entirely.")
+    legacy_api_sunset_date: str = Field(
+        default="Sat, 26 Sep 2026 00:00:00 GMT",
+        description="RFC 8594 Sunset header value sent on all legacy (unversioned) route responses. Default is 90 days from 2026-06-26. Recommended: 90+ days for production migrations.",
+    )
 
     # LLM Settings (Internal API for LLM Chat)
     llm_api_prefix: str = Field(default="/v1", description="API prefix for internal LLM endpoints")
@@ -1474,13 +1503,11 @@ class Settings(BaseSettings):
             val = secret_field.get_secret_value()
             if val.lower().startswith("__replace_me__"):
                 if env == "production":
-                    raise SecurityConfigurationError(f"{field_name}: Value is an unset placeholder (__REPLACE_ME__). " "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
+                    raise SecurityConfigurationError(f"{field_name}: Value is an unset placeholder (__REPLACE_ME__). Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
                 logger.warning(f"🔓 SECURITY WARNING - {field_name}: Value is an unset placeholder (__REPLACE_ME__). Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
             if val.lower() in weak_secrets:
                 if env != "development":
-                    raise SecurityConfigurationError(
-                        f"{field_name}: Weak/default secret rejected in '{env}' environment. " "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values."
-                    )
+                    raise SecurityConfigurationError(f"{field_name}: Weak/default secret rejected in '{env}' environment. Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
         # In non-production environments, unset placeholder secrets emit SECURITY WARNINGs but
         # do not block startup. Production always rejects them. Weak secrets are rejected in
         # staging and production; development allows them with warnings from the field validator.
@@ -1499,6 +1526,16 @@ class Settings(BaseSettings):
         # CSRF secret key fallback to JWT secret key
         if not self.csrf_secret_key:
             self.csrf_secret_key = self.jwt_secret_key.get_secret_value()
+
+        # Validate header passthrough feature flag dependencies
+        # Fail if sensitive passthrough is enabled without base feature
+        if self.enable_sensitive_header_passthrough and not self.enable_header_passthrough:
+            raise ValueError(
+                "Configuration error: ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true requires ENABLE_HEADER_PASSTHROUGH=true. "
+                "The sensitive header passthrough feature depends on the base header passthrough feature. "
+                "Please set ENABLE_HEADER_PASSTHROUGH=true in your environment or disable ENABLE_SENSITIVE_HEADER_PASSTHROUGH. "
+                "See .env.example for configuration examples."
+            )
 
         return self
 
@@ -1543,6 +1580,29 @@ class Settings(BaseSettings):
         # Rate limiting warnings
         if self.tool_rate_limit > 1000:
             warnings.append("🚦 Tool rate limit is very high - may allow abuse")
+
+        # Cross-environment token isolation (GHSA-vgf8-3685-66j9)
+        if self.jwt_algorithm.upper().startswith("HS"):
+            hs_indistinguishable = self.jwt_audience == "mcpgateway-api" and self.jwt_issuer == "mcpgateway" and not self.derive_key_per_environment
+            if hs_indistinguishable:
+                warnings.append(
+                    "🌍 Environments are indistinguishable for JWTs - default JWT_AUDIENCE/JWT_ISSUER and no per-environment key. "
+                    "Set a distinct JWT_SECRET_KEY (and ideally JWT_AUDIENCE/JWT_ISSUER) per environment, or enable DERIVE_KEY_PER_ENVIRONMENT, "
+                    "to prevent tokens crossing DEV/STAGING/PROD."
+                )
+            if self.derive_key_per_environment and self.environment == "development":
+                warnings.append(
+                    "🌍 DERIVE_KEY_PER_ENVIRONMENT is enabled but ENVIRONMENT='development' (the default). "
+                    "If all deployments share the same ENVIRONMENT value, derived keys are identical and "
+                    "cross-environment isolation is not achieved. Set a distinct ENVIRONMENT per deployment "
+                    "(e.g., 'staging', 'production')."
+                )
+        else:
+            if not self.jwt_public_key_path or not self.jwt_private_key_path:
+                warnings.append(
+                    "🌍 Asymmetric JWT keys not configured per environment - tokens may be indistinguishable across environments. "
+                    "Use distinct key pairs per environment (DEV/STAGING/PROD); derivation does not apply to asymmetric algorithms."
+                )
 
         return warnings
 
@@ -1835,6 +1895,7 @@ class Settings(BaseSettings):
             r"^/servers/[^/]+/sse$",
             r"^/servers/[^/]+/message$",
             r"^/a2a(?:/|$)",
+            r"^/v1/a2a(?:/|$)",  # versioned a2a endpoint
         ],
         description="Regex patterns to include for tracing (when empty, all paths are eligible before excludes)",
     )
@@ -1947,9 +2008,7 @@ class Settings(BaseSettings):
         default=None,
         ge=1,
         description=(
-            "Seconds between aggregation runs. "
-            "Defaults to metrics_aggregation_window_minutes * 60 when unset. "
-            "Set higher (e.g. 900) to reduce background DB pressure on multi-worker deployments."
+            "Seconds between aggregation runs. Defaults to metrics_aggregation_window_minutes * 60 when unset. Set higher (e.g. 900) to reduce background DB pressure on multi-worker deployments."
         ),
     )
     yield_batch_size: int = Field(
@@ -2464,6 +2523,13 @@ class Settings(BaseSettings):
     # Gateways can override this with their own refresh_interval_seconds
     gateway_auto_refresh_interval: int = Field(default=300, ge=60, description="Default refresh interval in seconds for gateway tools/resources/prompts sync (minimum 60 seconds)")
 
+    # Async gateway lifecycle processing
+    gateway_async_lifecycle_enabled: bool = Field(default=False, description="Enable asynchronous gateway create/update/delete lifecycle processing with 202 Accepted responses")
+    gateway_async_lifecycle_poll_interval: float = Field(default=5.0, gt=0, description="Polling interval in seconds for asynchronous gateway lifecycle background processing")
+    gateway_async_lifecycle_attempt_timeout: float = Field(default=30.0, gt=0, description="Timeout in seconds for one asynchronous gateway lifecycle initialization attempt")
+    gateway_async_lifecycle_lease_seconds: float = Field(default=90.0, gt=0, description="Lease TTL in seconds for DB-backed asynchronous gateway lifecycle claims")
+    gateway_async_lifecycle_shutdown_timeout: float = Field(default=5.0, gt=0, description="Bounded shutdown wait in seconds for gateway maintenance tasks")
+
     # Hot/Cold Server Classification
     # Classify servers by usage (hot = active sessions, cold = inactive) for optimized polling
     # Poll intervals auto-derived: hot = gateway_auto_refresh_interval (1x), cold = 3x
@@ -2580,7 +2646,7 @@ class Settings(BaseSettings):
     )
 
     redis_operation_timeout: float = Field(
-        default=0.5, gt=0.0, description="Timeout for individual Redis operations in seconds (get/set/delete). " "Should be lower than redis_socket_timeout for faster fallback to in-memory cache."
+        default=0.5, gt=0.0, description="Timeout for individual Redis operations in seconds (get/set/delete). Should be lower than redis_socket_timeout for faster fallback to in-memory cache."
     )
     redis_circuit_failure_threshold: int = Field(
         default=3,
@@ -2705,7 +2771,7 @@ class Settings(BaseSettings):
     )
     otel_baggage_header_mappings: str = Field(
         default="[]",
-        description=("JSON array of header-to-baggage mappings. " 'Example: [{"header_name": "X-Tenant-ID", "baggage_key": "tenant.id"}]'),
+        description=('JSON array of header-to-baggage mappings. Example: [{"header_name": "X-Tenant-ID", "baggage_key": "tenant.id"}]'),
     )
     otel_baggage_propagate_to_external: bool = Field(
         default=False,
@@ -2740,9 +2806,7 @@ class Settings(BaseSettings):
     # Experimental dataplane config
     # ===================================
 
-    dataplane_publisher: bool = Field(default=False,
-        description="Send data from CF to Rust experimental dataplane"
-    )
+    dataplane_publisher: bool = Field(default=False, description="Send data from CF to Rust experimental dataplane")
 
     # Well-Known URI Configuration
     # ===================================
@@ -3198,9 +3262,7 @@ Disallow: /
                 db_dir.mkdir(parents=True)
 
     # Validation patterns for safe display (configurable)
-    validation_dangerous_html_pattern: str = (
-        r"<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>"
-    )
+    validation_dangerous_html_pattern: str = r"<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>"
 
     validation_dangerous_js_pattern: str = r"(?i)(?:^|\s|[\"'`<>=])(javascript:|vbscript:|data:\s*[^,]*[;\s]*(javascript|vbscript)|\bon[a-z]+\s*=|<\s*script\b)"
 
@@ -3260,6 +3322,25 @@ Disallow: /
 
     validation_max_method_length: int = 128
 
+    # Tag validation limits (configurable via env) - Issue #5175
+    validation_min_tag_length: int = Field(
+        default=2,
+        description=("Minimum length for individual tags. Tags shorter than this will be rejected. Override with VALIDATION_MIN_TAG_LENGTH environment variable. Minimum: 1, Maximum: 10"),
+        ge=1,
+        le=10,
+    )
+    validation_max_tag_length: int = Field(
+        default=100,
+        description=(
+            "Maximum length for individual tags. Tags longer than this will be rejected. "
+            "Default: 100 characters. Supports system-generated tags, hashes, and namespaced identifiers. "
+            "Override with VALIDATION_MAX_TAG_LENGTH environment variable. "
+            "Minimum: 10, Maximum: 255 (database constraint)"
+        ),
+        ge=10,
+        le=255,
+    )
+
     # Allowed MIME types
     validation_allowed_mime_types: List[str] = [
         "text/plain",
@@ -3303,9 +3384,21 @@ Disallow: /
     rate_limit_lockout_threshold: int = Field(default=5, description="Violations before account lockout")
     rate_limit_lockout_duration_minutes: int = Field(default=15, description="Lockout duration in minutes")
 
+    # RFC 6585 5: 431 Request Header Fields Too Large
+    header_size_validation_enabled: bool = Field(default=True, description="Enable RFC 6585 header size validation (431 responses)")
+    max_header_total_size_bytes: int = Field(default=16384, description="Maximum total size of all headers (16KB default)")
+    max_header_field_size_bytes: int = Field(default=8192, description="Maximum size of individual header field (8KB default)")
+    max_header_count: int = Field(default=100, description="Maximum number of header fields")
+
     # Header passthrough feature (disabled by default for security)
     enable_header_passthrough: bool = Field(default=False, description="Enable HTTP header passthrough feature (WARNING: Security implications - only enable if needed)")
     enable_overwrite_base_headers: bool = Field(default=False, description="Enable overwriting of base headers")
+    enable_sensitive_header_passthrough: bool = Field(
+        default=False,
+        description="Enable passthrough of sensitive headers (Authorization, X-API-Key, etc.) when explicitly whitelisted. "
+        "Requires enable_header_passthrough=true. Default: false for security. "
+        "When enabled, whitelisted sensitive headers bypass router-level filtering.",
+    )
 
     # Passthrough headers configuration
     default_passthrough_headers: List[str] = Field(default_factory=list)

@@ -18,7 +18,6 @@ export default defineConfig({
       "**/tests/fuzz/**",
       "**/tests/load/**",
       "**/tests/loadtest/**",
-      "**/tests/jmeter/**",
     ],
     coverage: {
       provider: "istanbul",

@@ -18,7 +18,7 @@ ContextForge provides comprehensive input validation and output sanitization to 
 # Enable experimental validation (default: false)
 EXPERIMENTAL_VALIDATE_IO=true
 
-# Enable validation middleware (default: false)
+# Deprecated global validation middleware (default: false)
 VALIDATION_MIDDLEWARE_ENABLED=true
 
 # Strict mode - reject on violations (default: true)
@@ -247,6 +247,11 @@ clean_data = SecurityValidator.sanitize_json_response({
 
 ### ValidationMiddleware
 
+!!! warning "Deprecated as of 2026-06-11; sunsets on 2026-07-07"
+    `ValidationMiddleware` is deprecated. Prefer endpoint-level Pydantic
+    validation, `SecurityValidator` helpers, and protocol-specific validation
+    middleware. See [Deprecations](../deprecations.md).
+
 The middleware automatically validates all incoming requests when enabled:
 
 ```python
@@ -321,12 +326,14 @@ mcpgateway_sanitization_operations_total{type="output"} 1234
 
 ## Security Best Practices
 
-### 1. Enable Validation in Production
+### 1. Enable Endpoint and Protocol Validation in Production
 
-Always enable validation in production environments:
+Use endpoint-level Pydantic validation and protocol-specific validation in production.
+Keep the deprecated global validation middleware disabled unless an existing deployment depends on it:
 
 ```bash
 EXPERIMENTAL_VALIDATE_IO=true
+VALIDATION_MIDDLEWARE_ENABLED=false
 VALIDATION_STRICT=true
 SANITIZE_OUTPUT=true
 ```

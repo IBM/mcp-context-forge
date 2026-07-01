@@ -135,6 +135,11 @@ ContextForge supports multiple database backends with full feature parity across
 | `OAUTH_MAX_RETRIES`         | Maximum retries for OAuth token requests                                     | `3`                 | int > 0     |
 | `INSECURE_ALLOW_QUERYPARAM_AUTH` | Enable query parameter authentication for gateways (see security warning) | `false`             | bool        |
 | `INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS` | JSON array of hosts allowed to use query param auth               | `[]`                | JSON array  |
+| `GATEWAY_ASYNC_LIFECYCLE_ENABLED` | Enable `202 Accepted` gateway create, update, and delete with background lifecycle processing | `false` | bool |
+| `GATEWAY_ASYNC_LIFECYCLE_POLL_INTERVAL` | Worker polling interval in seconds for pending/deleting gateways when async lifecycle is enabled | `5.0` | float > 0 |
+| `GATEWAY_ASYNC_LIFECYCLE_ATTEMPT_TIMEOUT` | Timeout in seconds for one async gateway initialization attempt | `30.0` | float > 0 |
+| `GATEWAY_ASYNC_LIFECYCLE_LEASE_SECONDS` | Lease TTL in seconds for DB-backed async lifecycle claims | `90.0` | float > 0 |
+| `GATEWAY_ASYNC_LIFECYCLE_SHUTDOWN_TIMEOUT` | Bounded shutdown wait in seconds for async gateway lifecycle task cancellation | `5.0` | float > 0 |
 
 !!! warning "Query Parameter Authentication (INSECURE)"
     The `INSECURE_ALLOW_QUERYPARAM_AUTH` setting enables API key authentication via URL query parameters. This is inherently insecure (CWE-598) as API keys may appear in proxy logs, browser history, and server access logs. Only enable this when the upstream MCP server (e.g., Tavily) requires this authentication method. Always configure `INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS` to restrict which hosts can use this feature.

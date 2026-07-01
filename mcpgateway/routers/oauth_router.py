@@ -362,9 +362,7 @@ async def _enforce_gateway_access(
 
 
 @oauth_router.get("/authorize/{gateway_id}")
-async def initiate_oauth_flow(
-    gateway_id: str, request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)
-) -> RedirectResponse:  # noqa: ARG001
+async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> RedirectResponse:  # noqa: ARG001
     """Initiates the OAuth 2.0 Authorization Code flow for a specified gateway.
 
     This endpoint retrieves the OAuth configuration for the given gateway, validates that
@@ -381,6 +379,7 @@ async def initiate_oauth_flow(
         request: The FastAPI request object.
         current_user: The authenticated user initiating the OAuth flow.
         db: The database session dependency.
+        popup: Indicates if the OAuth flow is initiated in a popup window.
 
     Returns:
         A redirect response to the OAuth provider's authorization URL.

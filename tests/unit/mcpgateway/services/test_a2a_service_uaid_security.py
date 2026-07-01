@@ -16,6 +16,12 @@ import pytest
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentService
 
 
+@pytest.fixture(autouse=True)
+def disable_allow_all_domains(monkeypatch):
+    """Keep UAID security tests deterministic regardless of env."""
+    monkeypatch.setattr("mcpgateway.config.settings.uaid_allow_all_domains", False)
+
+
 def _make_test_jwt() -> str:
     """Return a syntactically valid JWT for tests that expect token forwarding."""
     # Standard

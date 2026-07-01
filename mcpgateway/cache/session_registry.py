@@ -359,7 +359,7 @@ class SessionRegistry(SessionBackend):
             logger.debug(f"Respond task cancelled for session {session_id}")
         except asyncio.TimeoutError:
             # ESCALATION (Finding 1): Force-disconnect transport to unblock the task
-            logger.warning(f"Respond task cancellation timed out for {session_id}, " f"escalating with transport disconnect")
+            logger.warning(f"Respond task cancellation timed out for {session_id}, escalating with transport disconnect")
 
             # Force-disconnect the transport to unblock any pending I/O
             transport = self._sessions.get(session_id)
@@ -380,7 +380,7 @@ class SessionRegistry(SessionBackend):
                     # Still stuck - move to stuck_tasks for monitoring (Finding 2 fix)
                     self._respond_tasks.pop(session_id, None)
                     self._stuck_tasks[session_id] = task
-                    logger.error(f"Respond task for {session_id} still stuck after escalation, " f"moved to stuck_tasks for monitoring (total stuck: {len(self._stuck_tasks)})")
+                    logger.error(f"Respond task for {session_id} still stuck after escalation, moved to stuck_tasks for monitoring (total stuck: {len(self._stuck_tasks)})")
                 except asyncio.CancelledError:
                     self._respond_tasks.pop(session_id, None)
                     logger.info(f"Respond task cancelled after escalation for {session_id}")
@@ -1570,7 +1570,8 @@ class SessionRegistry(SessionBackend):
                     # Use get_message with timeout instead of blocking listen()
                     try:
                         msg = await asyncio.wait_for(
-                            pubsub.get_message(ignore_subscribe_messages=True, timeout=poll_timeout), timeout=poll_timeout + 0.5  # Slightly longer to account for Redis timeout
+                            pubsub.get_message(ignore_subscribe_messages=True, timeout=poll_timeout),
+                            timeout=poll_timeout + 0.5,  # Slightly longer to account for Redis timeout
                         )
                     except asyncio.TimeoutError:
                         # No message, loop back to check session existence
