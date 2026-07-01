@@ -4439,13 +4439,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         elif grant_type == "token-exchange":
                             # Token-exchange (RFC 8693) requires an inbound end-user JWT as the
                             # subject token. A periodic health check has no associated user
-                            # request, so this grant cannot be satisfied here. Fail closed
-                            # rather than silently falling through to client_credentials.
-                            logger.error("Gateway %s uses token-exchange grant; health checks cannot obtain a subject token outside a user request", gateway_name)
+                            # request, so this grant cannot be satisfied here. Mirror the
+                            # discovery path (_prepare_gateway_registration's connection probe),
+                            # which also cannot obtain a subject token outside a user request and
+                            # skips the probe rather than failing: treating "no subject token" as
+                            # a health-check failure would mark every token-exchange gateway
+                            # permanently unreachable, since no periodic check ever has one.
+                            logger.debug("Gateway %s uses token-exchange grant; skipping health-check probe (no subject token available outside a user request)", gateway_name)
                             if span:
-                                set_span_attribute(span, "health.status", "unhealthy")
-                                set_span_error(span, "Token exchange requires an inbound user JWT; not available on the health-check path")
-                            await self._handle_gateway_failure(gateway)
+                                set_span_attribute(span, "health.status", "skipped")
                             return
                         else:
                             # For Client Credentials flow, get token directly

@@ -490,6 +490,36 @@ class TestToolPathTokenExchange:
         svc._token_exchange_cache.set.assert_not_awaited()
         svc._token_exchange_cache.set_failure.assert_awaited_once()
 
+    async def test_exchange_failure_log_omits_exc_info(self, monkeypatch):
+        # CWE-532: exc_info=True renders str(exc) unredacted as the traceback's final
+        # line regardless of how sanitized the log *message* is, re-leaking AS response
+        # content into the log record. The warning log for a failed exchange must not
+        # request a traceback.
+        # First-Party
+        import mcpgateway.services.tool_service as tsmod
+        from mcpgateway.services.tool_service import ToolInvocationError, ToolService
+
+        svc = ToolService()
+        svc.oauth_manager = MagicMock()
+        svc.oauth_manager.token_exchange = AsyncMock(side_effect=Exception("AS said: refresh_token=super-secret is invalid"))
+        svc._token_exchange_cache = _mock_te_cache(get_return=None)
+
+        mock_warning = MagicMock()
+        monkeypatch.setattr(tsmod.logger, "warning", mock_warning)
+
+        with pytest.raises(ToolInvocationError):
+            await svc._resolve_token_exchange_header(
+                oauth_config=dict(_TE_CFG),
+                gateway_id="gw1",
+                gateway_name="gw",
+                app_user_email="u@e",
+                request_headers={"authorization": f"Bearer {_FAKE_JWT}"},
+            )
+
+        assert mock_warning.called
+        _, kwargs = mock_warning.call_args
+        assert not kwargs.get("exc_info")
+
 
 
 # First-Party

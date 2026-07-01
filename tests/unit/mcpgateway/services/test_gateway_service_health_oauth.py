@@ -491,10 +491,12 @@ class TestCheckSingleGatewayHealthReal:
         service._handle_gateway_failure.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_oauth_token_exchange_health_fails_closed(self):
+    async def test_oauth_token_exchange_health_check_skips_without_failing(self):
         # Token-exchange (RFC 8693) needs an inbound end-user JWT as the subject token.
-        # A periodic health check has no user request, so the grant cannot be satisfied:
-        # the gateway must be marked unhealthy rather than silently falling through.
+        # A periodic health check has no user request, so the grant cannot be satisfied.
+        # It must skip the probe (mirroring the discovery/registration path) rather than
+        # marking the gateway unhealthy -- otherwise every periodic check would fail and
+        # the gateway would be permanently flagged unreachable.
         service = GatewayService()
         service._handle_gateway_failure = AsyncMock()
 
@@ -539,7 +541,7 @@ class TestCheckSingleGatewayHealthReal:
         ):
             await service._check_single_gateway_health(gateway, user_email="user@test.com")
 
-        service._handle_gateway_failure.assert_awaited_once()
+        service._handle_gateway_failure.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_query_param_decryption_applied_and_sse_stream_health_check(self):
