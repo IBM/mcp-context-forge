@@ -4,7 +4,7 @@ import { TOKEN_ENV, URL_ENV, type SnippetInput } from "./constants";
 // object literal for string-keyed/string-valued maps and handles all string
 // escaping (\" \\ \n) consistently with TS double-quoted strings.
 function tsArgsLiteral(args: Record<string, string>, indent: string): string {
-  const entries = Object.entries(args ?? {});
+  const entries = Object.entries(args);
   if (entries.length === 0) return "{}";
   const body = entries
     .map(([key, value]) => `${indent}    ${JSON.stringify(key)}: ${JSON.stringify(value)},`)
@@ -13,10 +13,11 @@ function tsArgsLiteral(args: Record<string, string>, indent: string): string {
 }
 
 export function buildTypescript({ promptName, args }: SnippetInput): string {
+  const encodedName = encodeURIComponent(promptName);
   const argsLiteral = tsArgsLiteral(args, "");
   return [
     `const response = await fetch(`,
-    `  \`\${process.env.${URL_ENV}}/prompts/${promptName}\`,`,
+    `  \`\${process.env.${URL_ENV}}/prompts/${encodedName}\`,`,
     `  {`,
     `    method: "POST",`,
     `    headers: {`,

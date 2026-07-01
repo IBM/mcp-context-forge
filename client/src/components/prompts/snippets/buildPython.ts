@@ -4,7 +4,7 @@ import { TOKEN_ENV, URL_ENV, type SnippetInput } from "./constants";
 // for string-keyed/string-valued dicts (double-quoted keys/values, \" \\ \n
 // escapes line up), so JSON.stringify produces a safe literal.
 function pythonArgsLiteral(args: Record<string, string>, indent: string): string {
-  const entries = Object.entries(args ?? {});
+  const entries = Object.entries(args);
   if (entries.length === 0) return "{}";
   const body = entries
     .map(([key, value]) => `${indent}    ${JSON.stringify(key)}: ${JSON.stringify(value)},`)
@@ -13,13 +13,14 @@ function pythonArgsLiteral(args: Record<string, string>, indent: string): string
 }
 
 export function buildPython({ promptName, args }: SnippetInput): string {
+  const encodedName = encodeURIComponent(promptName);
   const argsLiteral = pythonArgsLiteral(args, "    ");
   return [
     "import os",
     "import requests",
     "",
     "response = requests.post(",
-    `    f"{os.environ['${URL_ENV}']}/prompts/${promptName}",`,
+    `    f"{os.environ['${URL_ENV}']}/prompts/${encodedName}",`,
     `    headers={"Authorization": f"Bearer {os.environ['${TOKEN_ENV}']}"},`,
     `    json=${argsLiteral},`,
     ")",

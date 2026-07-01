@@ -4,11 +4,13 @@ import userEvent from "@testing-library/user-event";
 import { renderWithProviders as render } from "@/test/test-utils";
 import { PromptPreviewButton } from "./PromptPreviewButton";
 
-function makePreview(overrides: Partial<{
-  run: () => Promise<void>;
-  isLoading: boolean;
-  hasRun: boolean;
-}> = {}) {
+function makePreview(
+  overrides: Partial<{
+    run: () => Promise<void>;
+    isLoading: boolean;
+    hasRun: boolean;
+  }> = {},
+) {
   return {
     run: vi.fn().mockResolvedValue(undefined),
     isLoading: false,

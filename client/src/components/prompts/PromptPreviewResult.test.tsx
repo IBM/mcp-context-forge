@@ -29,9 +29,7 @@ describe("PromptPreviewResult", () => {
           result: {
             renderTimeMs: 42,
             rendered: {
-              messages: [
-                { role: "user", content: { type: "text", text: "hi Alice" } },
-              ],
+              messages: [{ role: "user", content: { type: "text", text: "hi Alice" } }],
             },
           },
         })}
@@ -40,7 +38,7 @@ describe("PromptPreviewResult", () => {
     expect(screen.getByText("200 OK")).toBeInTheDocument();
     expect(screen.getByText(/Render 42 ms/)).toBeInTheDocument();
     // The serialized JSON response carries the rendered message text.
-    const pre = document.querySelector('pre');
+    const pre = document.querySelector("pre");
     expect(pre?.textContent ?? "").toContain("hi Alice");
   });
 

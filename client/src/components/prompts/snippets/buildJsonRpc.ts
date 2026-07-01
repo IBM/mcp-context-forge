@@ -7,7 +7,7 @@ export function buildJsonRpc({ promptName, args }: SnippetInput): string {
     method: "prompts/get",
     params: {
       name: promptName,
-      arguments: args ?? {},
+      arguments: args,
     },
   };
   return JSON.stringify(envelope, null, 2);

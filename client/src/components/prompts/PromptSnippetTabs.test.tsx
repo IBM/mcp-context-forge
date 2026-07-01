@@ -54,9 +54,7 @@ describe("PromptSnippetTabs", () => {
   });
 
   it("rebuilds the snippet when args change", () => {
-    const { rerender } = render(
-      <PromptSnippetTabs promptName="greet" args={{ user: "Alice" }} />,
-    );
+    const { rerender } = render(<PromptSnippetTabs promptName="greet" args={{ user: "Alice" }} />);
     expect(activeCode()).toContain('"user":"Alice"');
     rerender(<PromptSnippetTabs promptName="greet" args={{ user: "Bob" }} />);
     expect(activeCode()).toContain('"user":"Bob"');

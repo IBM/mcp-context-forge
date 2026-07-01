@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useIntl } from "react-intl";
 import { toast } from "sonner";
 
@@ -36,6 +36,14 @@ export function usePromptPreview(
   const [isLoading, setLoading] = useState(false);
   const [result, setResult] = useState<PreviewSuccess | null>(null);
   const [error, setError] = useState<PreviewFailure | null>(null);
+
+  // Clear stale result/error when the caller switches to a different prompt.
+  // Without this, a drawer that re-uses one instance across prompts would show
+  // prompt A's rendered messages after the user navigates to prompt B.
+  useEffect(() => {
+    setResult(null);
+    setError(null);
+  }, [promptId]);
 
   const run = useCallback(async () => {
     setLoading(true);

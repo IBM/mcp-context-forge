@@ -45,10 +45,7 @@ export function PromptPreviewResult({ preview }: PromptPreviewResultProps) {
           ·
         </span>
         <span className="text-muted-foreground">
-          {intl.formatMessage(
-            { id: "prompts.details.preview.renderMs" },
-            { ms: renderTimeMs },
-          )}
+          {intl.formatMessage({ id: "prompts.details.preview.renderMs" }, { ms: renderTimeMs })}
         </span>
         {/* TODO(#5448 followup): render `Plugins passed (N)` once the backend
             response exposes a plugin trace. */}
