@@ -49,6 +49,7 @@ from mcpgateway.db import get_for_update
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, PromptMetricsHourly, server_prompt_association
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
+from mcpgateway.plugins.utils import build_request_extensions
 from mcpgateway.schemas import PromptCreate, PromptMetrics, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
@@ -2015,6 +2016,7 @@ class PromptService(BaseService):
                         global_context=global_context,
                         local_contexts=context_table,  # Pass context from previous hooks
                         violations_as_exceptions=True,
+                        extensions=build_request_extensions(),
                     )
 
                     # Use modified payload if provided
@@ -2103,6 +2105,7 @@ class PromptService(BaseService):
                         global_context=global_context,
                         local_contexts=context_table,
                         violations_as_exceptions=True,
+                        extensions=build_request_extensions(),
                     )
                     # Use modified payload if provided
                     result = _coerce_plugin_prompt_result(post_result.modified_payload.result) if post_result.modified_payload else result
