@@ -3900,8 +3900,10 @@ class ToolService(BaseService):
                     },
                     is_security_event=True,
                 )
-                # L1: keep the stack server-side for debugging (exc_info); message stays sanitized.
-                logger.warning("Token exchange failed for gateway %s: %s", gateway_name, safe_reason, exc_info=True, extra={"gateway_id": gateway_id, "correlation_id": correlation_id})
+                # L1: message stays sanitized. exc_info is intentionally omitted -- the traceback's
+                # final line renders str(e) unredacted regardless of how sanitized safe_reason is,
+                # which would re-leak AS response content into the log record (CWE-532).
+                logger.warning("Token exchange failed for gateway %s: %s", gateway_name, safe_reason, extra={"gateway_id": gateway_id, "correlation_id": correlation_id})
                 raise ToolInvocationError(f"Token exchange failed for gateway '{gateway_name}'. Contact your administrator.") from None
 
             exchanged = response["access_token"]

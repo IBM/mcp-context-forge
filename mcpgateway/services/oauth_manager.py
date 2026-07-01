@@ -848,7 +848,7 @@ class OAuthManager:
 
                 token_response = response.json()
                 if "access_token" not in token_response:
-                    raise OAuthError(f"No access_token in token exchange response: {token_response}")
+                    raise OAuthError(f"No access_token in token exchange response: {self._redact_token_response(token_response)}")
 
                 # RFC 8693 §2.2.1: token_type is REQUIRED and MUST be "Bearer" for an
                 # access_token, or "N_A" when issued_token_type is not an access token

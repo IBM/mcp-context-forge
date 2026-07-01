@@ -1179,6 +1179,34 @@ class TestOAuthTokenExchange:
             )
 
     @pytest.mark.asyncio
+    async def test_missing_access_token_error_redacts_sensitive_fields(self):
+        """CWE-532: a malformed response missing access_token may still carry other
+        credential-bearing fields (e.g. refresh_token); those must never be echoed
+        verbatim into the OAuthError raised for this case."""
+        # First-Party
+        from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
+
+        manager = OAuthManager()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"error": "invalid_grant", "refresh_token": "super-secret-refresh-value"}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        manager._get_client = AsyncMock(return_value=mock_client)
+
+        with pytest.raises(OAuthError) as exc_info:
+            await manager.token_exchange(
+                token_url="https://auth.example.com/token",
+                subject_token="token",
+                client_id="client",
+                client_secret="",
+            )
+
+        assert "super-secret-refresh-value" not in str(exc_info.value)
+        assert "[REDACTED]" in str(exc_info.value)
+
+    @pytest.mark.asyncio
     async def test_http_error_retries_and_raises(self):
         # First-Party
         from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
