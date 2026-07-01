@@ -131,7 +131,7 @@ class TestJWTScopesValidation:
         request.cookies = {}
 
         # Mock credentials
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="test-token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="test-token")  # pragma: allowlist secret
 
         # Mock JWT payload with scopes dict containing permissions (API token)
         jwt_payload = {
@@ -177,7 +177,7 @@ class TestJWTScopesValidation:
         request.cookies = {}
 
         # Mock credentials
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="test-token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="test-token")  # pragma: allowlist secret
 
         # Mock JWT payload with scopes dict but no permissions key (API token)
         jwt_payload = {
@@ -224,7 +224,7 @@ class TestJWTScopesValidation:
         request.cookies = {}
 
         # Mock credentials
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="test-token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="test-token")  # pragma: allowlist secret
 
         # Mock JWT payload with malformed scopes (string instead of dict) - API token
         jwt_payload = {
@@ -272,7 +272,7 @@ class TestJWTScopesValidation:
         request.cookies = {}
 
         # Mock credentials
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="test-token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="test-token")  # pragma: allowlist secret
 
         # Mock JWT payload with malformed scopes (list instead of dict) - API token
         jwt_payload = {
