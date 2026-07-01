@@ -1614,6 +1614,51 @@ class TestResourceEndpoints:
         call_kwargs = mock_read.call_args[1]
         assert call_kwargs["token_teams"] == ["team-a"]
 
+    @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
+    def test_test_resource_by_uri_success_verifies_resource_uri_call_arg(self, mock_read, test_client, auth_headers):
+        """Verify read_resource is called with the exact resource_uri captured from the path."""
+        mock_read.return_value = {"key": "value"}
+        test_client.get("/resources/test/resource://example/demo", headers=auth_headers)
+        call_kwargs = mock_read.call_args[1]
+        assert call_kwargs["resource_uri"] == "resource://example/demo"
+
+    @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
+    def test_test_resource_by_uri_not_found_preserves_detail_message(self, mock_read, test_client, auth_headers):
+        """Verify 404 response body includes the error string from ResourceNotFoundError."""
+        from mcpgateway.services.resource_service import ResourceNotFoundError
+
+        mock_read.side_effect = ResourceNotFoundError("resource://example/gone not found")
+        response = test_client.get("/resources/test/resource://example/gone", headers=auth_headers)
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"]
+
+    @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
+    def test_test_resource_by_uri_nested_path_captured(self, mock_read, test_client, auth_headers):
+        """Verify :path param captures multi-segment URIs with interior slashes intact."""
+        mock_read.return_value = {"data": "nested"}
+        test_client.get("/resources/test/resource://host/a/b/c", headers=auth_headers)
+        call_kwargs = mock_read.call_args[1]
+        assert call_kwargs["resource_uri"] == "resource://host/a/b/c"
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
+    async def test_test_resource_by_uri_returns_content_wrapper_for_list(self, mock_read):
+        """Verify response wraps non-dict content (list) in {'content': ...}."""
+        from mcpgateway.main import test_resource_by_uri
+
+        mock_read.return_value = [{"uri": "a"}, {"uri": "b"}]
+        mock_request = MagicMock()
+        mock_request.state.token_teams = []
+        mock_request.state.internal_auth_context = None
+        user = {"email": "u@example.com", "is_admin": False, "teams": []}
+        result = await test_resource_by_uri(
+            resource_uri="resource://host/list",
+            request=mock_request,
+            db=MagicMock(),
+            user=user,
+        )
+        assert result == {"content": [{"uri": "a"}, {"uri": "b"}]}
+
 
 # ----------------------------------------------------- #
 # Prompt Management Tests                               #
