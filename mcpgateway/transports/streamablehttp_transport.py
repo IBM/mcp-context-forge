@@ -332,6 +332,7 @@ prompt_service: PromptService = PromptService()
 resource_service: ResourceService = ResourceService()
 completion_service: CompletionService = CompletionService()
 
+
 class ContextForgeMCPServer(Server[Any]):
     """MCP server with ContextForge extension capability advertising."""
 
