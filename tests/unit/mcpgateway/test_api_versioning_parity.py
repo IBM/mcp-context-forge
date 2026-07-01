@@ -14,6 +14,7 @@ from fastapi import APIRouter
 from mcpgateway.api.v1 import _assemble_routers
 from mcpgateway.config import settings
 from mcpgateway.middleware.deprecation import _LEGACY_PREFIXES
+from tests.helpers.router_helpers import collect_routes
 
 
 def extract_router_prefixes(router: APIRouter) -> set[str]:
@@ -26,8 +27,7 @@ def extract_router_prefixes(router: APIRouter) -> set[str]:
         Set of unique prefixes (e.g., {"/tools", "/servers"}).
     """
     prefixes = set()
-    for route in router.routes:
-        path = route.path
+    for path, *_ in collect_routes(router):
         # Extract first path segment as prefix
         if path.startswith("/"):
             parts = path.split("/")
@@ -209,10 +209,14 @@ def test_llm_admin_router_csrf_dependency():
         a2a_router=APIRouter(),
     )
 
-    # Collect all dependency callables across routes under /admin/llm
+    # Collect all dependency callables across routes under /admin/llm.
+    # On FastAPI ≤ 0.136 deps are on the leaf route; on ≥ 0.137 they live on
+    # the _IncludedRouter wrapper and are returned as include_deps.
     llm_admin_route_deps: list = []
-    for route in test_router.routes:
-        if hasattr(route, "path") and route.path.startswith("/admin/llm"):
+    for path, route, include_deps in collect_routes(test_router):
+        if path.startswith("/admin/llm"):
+            for dep in include_deps:
+                llm_admin_route_deps.append(dep.dependency)
             for dep in getattr(route, "dependencies", []):
                 llm_admin_route_deps.append(dep.dependency)
 

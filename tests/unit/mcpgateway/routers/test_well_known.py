@@ -21,6 +21,7 @@ from mcpgateway.routers.well_known import (
     get_well_known_file_content,
     validate_security_txt,
 )
+from tests.helpers.router_helpers import collect_routes
 
 # ---------- get_base_url_with_protocol ----------
 
@@ -252,7 +253,7 @@ def test_v1_prefix_does_not_produce_rfc_violation():
     v1_router = APIRouter(prefix="/v1")
     v1_router.include_router(admin_router)
 
-    final_paths = [route.path for route in v1_router.routes]
+    final_paths = [p for p, *_ in collect_routes(v1_router)]
     rfc_violations = [p for p in final_paths if "/.well-known" in p]
     assert rfc_violations == [], f"Including admin_router in /v1 creates RFC 8615 violating paths: {rfc_violations}"
 
