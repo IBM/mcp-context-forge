@@ -1615,6 +1615,7 @@ class TestUpdateApiTokenLastUsed:
             "jti": "jti-api-456",
             "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
             "user": {"auth_provider": "api_token"},
+            "scopes": {"permissions": ["*"]},  # API tokens require scopes field
         }
 
         mock_user = EmailUser(
@@ -1663,6 +1664,7 @@ class TestUpdateApiTokenLastUsed:
             "jti": "jti-api-fail-123",
             "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
             "user": {"auth_provider": "api_token"},
+            "scopes": {"permissions": ["*"]},  # API tokens require scopes field
         }
 
         mock_user = EmailUser(
@@ -1751,6 +1753,7 @@ class TestUpdateApiTokenLastUsed:
             "sub": "legacy@example.com",
             "jti": "jti-legacy-999",
             "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+            "scopes": {"permissions": ["*"]},  # API tokens require scopes field
         }
 
         mock_user = EmailUser(
@@ -1798,6 +1801,7 @@ class TestUpdateApiTokenLastUsed:
             "sub": "legacy@example.com",
             "jti": "jti-legacy-fail-888",
             "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+            "scopes": {"permissions": ["*"]},  # API tokens require scopes field
         }
 
         mock_user = EmailUser(
@@ -2165,6 +2169,7 @@ class TestSetAuthMethodFromPayload:
             "sub": "user@example.com",
             "user": {"auth_provider": "api_token"},
             "jti": "jti-123",
+            "scopes": {"permissions": ["*"]},  # API tokens require scopes field
         }
         mock_user = EmailUser(
             email="user@example.com",
@@ -2199,6 +2204,7 @@ class TestSetAuthMethodFromPayload:
             "sub": "user@example.com",
             "user": {},  # no auth_provider
             "jti": "legacy-jti",
+            "scopes": {"permissions": ["*"]},  # API tokens require scopes field
         }
         mock_user = EmailUser(
             email="user@example.com",
