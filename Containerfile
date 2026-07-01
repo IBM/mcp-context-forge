@@ -27,7 +27,7 @@ ARG PYTHON_VERSION=3.12
 ARG ENABLE_RUST=false
 ARG ENABLE_RUST_MCP_RMCP=false
 # Enable profiling tools (memray, py-spy) - off by default for smaller images
-# To enable: docker build --build-arg ENABLE_PROFILING=true -f Containerfile.lite .
+# To enable: docker build --build-arg ENABLE_PROFILING=true -f Containerfile .
 # Usage after enabling:
 #   memray: docker exec -it <container> memray attach <PID> -o /tmp/profile.bin
 #   py-spy: sudo py-spy top --pid $(docker inspect --format '{{.State.Pid}}' <container>)
@@ -41,7 +41,7 @@ ARG ENABLE_PROFILING=false
 # Public registry defaults (registry.access.redhat.com) are for standard builds only.
 #
 # Example (Dreadnought):
-#   docker build -f Containerfile.lite \
+#   docker build -f Containerfile \
 #     --build-arg ENABLE_FIPS=true \
 #     --build-arg UBI_BASE=<internal-registry>/ubi9/ubi:latest \
 #     --build-arg NODEJS_IMAGE=<internal-registry>/ubi9/nodejs-20:latest \
@@ -64,8 +64,8 @@ RUN mkdir -p /wheels
 
 ###############################################################################
 # Rust builder stage - builds Rust MCP runtime and local native extensions
-# To build WITH Rust: docker build --build-arg ENABLE_RUST=true -f Containerfile.lite .
-# To build WITHOUT Rust (default): docker build -f Containerfile.lite .
+# To build WITH Rust: docker build --build-arg ENABLE_RUST=true -f Containerfile .
+# To build WITHOUT Rust (default): docker build -f Containerfile .
 ###############################################################################
 FROM ${UBI_BASE} AS rust-builder
 ARG PYTHON_VERSION=3.12
