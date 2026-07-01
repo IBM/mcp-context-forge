@@ -43,12 +43,6 @@ async def test_add_returns_sum(client: Client) -> None:
 
 
 async def test_tool_error_is_surfaced_as_is_error(client: Client, request) -> None:
-    xfail_on(
-        request,
-        "gateway_proxy",
-        "gateway_virtual",
-        reason="GAP-008: gateway federation drops `boom` (among other tools)",
-    )
     name = await resolve_tool(client, "boom")
     assert name is not None, "boom tool missing on reference target (unexpected)"
     result = await client.call_tool_mcp(name=name, arguments={})

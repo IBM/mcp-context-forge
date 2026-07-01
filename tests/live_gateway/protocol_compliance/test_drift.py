@@ -85,10 +85,6 @@ async def _collect(drift_helper: Callable, collect_fn: Callable) -> dict[str, Op
 # ---------------------------------------------------------------------------
 # Drift probes
 # ---------------------------------------------------------------------------
-@pytest.mark.xfail(
-    strict=False,
-    reason=("GAP-008: gateway federation drops boom/bump_subscribable/mutate_tool_list/" "long_running from upstream — expected drift until federation filter is " "understood or fixed."),
-)
 async def test_drift_tool_names(drift_helper) -> None:
     """Normalized tool-name sets agree across every available target."""
 
