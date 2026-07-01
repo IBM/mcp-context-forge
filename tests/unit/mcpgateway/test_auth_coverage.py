@@ -112,7 +112,7 @@ class TestJWTScopesValidation:
 
     @pytest.mark.asyncio
     async def test_scopes_dict_with_permissions_line_1789_1790(self):
-        """Test JWT with scopes as dict containing permissions list (lines 1789-1790)."""
+        """Test API token JWT with scopes dict containing permissions list (lines 1940-1957)."""
         # Standard
         from types import SimpleNamespace
         from unittest.mock import AsyncMock, patch
@@ -133,9 +133,10 @@ class TestJWTScopesValidation:
         # Mock credentials
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="test-token")
 
-        # Mock JWT payload with scopes dict containing permissions
+        # Mock JWT payload with scopes dict containing permissions (API token)
         jwt_payload = {
             "sub": "user@example.com",
+            "user": {"auth_provider": "api_token"},  # Explicitly API token
             "scopes": {"permissions": ["tools.read", "a2a.execute"]},
             "exp": 9999999999,
         }
@@ -150,7 +151,7 @@ class TestJWTScopesValidation:
         ):
             user = await get_current_user(credentials=credentials, request=request)
 
-            # Verify token_scopes is set correctly on request.state
+            # Verify token_scopes is set correctly for API token
             assert hasattr(request.state, "token_scopes")
             assert request.state.token_scopes == ["tools.read", "a2a.execute"]
             assert user.email == "user@example.com"
@@ -178,9 +179,10 @@ class TestJWTScopesValidation:
         # Mock credentials
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="test-token")
 
-        # Mock JWT payload with scopes dict but no permissions key
+        # Mock JWT payload with scopes dict but no permissions key (API token)
         jwt_payload = {
             "sub": "user@example.com",
+            "user": {"auth_provider": "api_token"},  # Explicitly API token
             "scopes": {"server_id": "srv-123"},  # Has scopes dict but no permissions
             "exp": 9999999999,
         }
@@ -195,7 +197,7 @@ class TestJWTScopesValidation:
         ):
             user = await get_current_user(credentials=credentials, request=request)
 
-            # Verify token_scopes is set to empty list (enforces scope checks, denies all)
+            # Verify token_scopes is set to empty list for API token (enforces scope checks, denies all)
             assert hasattr(request.state, "token_scopes")
             assert request.state.token_scopes == []
             assert user.email == "user@example.com"
@@ -224,14 +226,23 @@ class TestJWTScopesValidation:
         # Mock credentials
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="test-token")
 
-        # Mock JWT payload with malformed scopes (string instead of dict)
+        # Mock JWT payload with malformed scopes (string instead of dict) - API token
         jwt_payload = {
             "sub": "user@example.com",
+            "user": {"auth_provider": "api_token"},  # Must be API token for validation
             "scopes": "tools.read,a2a.execute",  # MALFORMED: should be dict
             "exp": 9999999999,
         }
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+        from mcpgateway.db import EmailUser
+
+        mock_user = EmailUser(email="user@example.com", is_admin=False, is_active=True)
+
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+        ):
             with pytest.raises(HTTPException) as exc_info:
                 await get_current_user(credentials=credentials, request=request)
 
@@ -263,14 +274,23 @@ class TestJWTScopesValidation:
         # Mock credentials
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="test-token")
 
-        # Mock JWT payload with malformed scopes (list instead of dict)
+        # Mock JWT payload with malformed scopes (list instead of dict) - API token
         jwt_payload = {
             "sub": "user@example.com",
+            "user": {"auth_provider": "api_token"},  # Must be API token for validation
             "scopes": ["tools.read", "a2a.execute"],  # MALFORMED: should be dict
             "exp": 9999999999,
         }
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+        from mcpgateway.db import EmailUser
+
+        mock_user = EmailUser(email="user@example.com", is_admin=False, is_active=True)
+
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+        ):
             with pytest.raises(HTTPException) as exc_info:
                 await get_current_user(credentials=credentials, request=request)
 
