@@ -7,9 +7,7 @@ on:
     types: [opened, synchronize, ready_for_review]
     branches: [main, develop]
     paths:
-      - "a2a-agents/rust/**"
       - "crates/**"
-      - "mcp-servers/rust/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
