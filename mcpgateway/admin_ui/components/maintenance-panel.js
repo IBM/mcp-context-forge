@@ -9,7 +9,7 @@ export const maintenancePanel = function (config) {
     rollupResult: null,
     showCleanupConfirm: false,
     showRollupConfirm: false,
-    retentionDays: config?.retentionDays || 7,
+    retentionDays: config?.retentionDays ?? 7,
     deleteAll: false,
     rollupHoursBack: 1,
     includeRollupData: true,
@@ -23,6 +23,10 @@ export const maintenancePanel = function (config) {
       return this.rollupResult?.duration_seconds?.toFixed(2) || '0.00';
     },
 
+    _getToken() {
+      return document.cookie.match(/jwt_token=([^;]+)/)?.[1] || '';
+    },
+
     runCleanup() {
       this.showCleanupConfirm = false;
       this.cleanupLoading = true;
@@ -32,7 +36,7 @@ export const maintenancePanel = function (config) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + (document.cookie.match(/jwt_token=([^;]+)/)?.[1] || '')
+          'Authorization': 'Bearer ' + this._getToken()
         },
         body: JSON.stringify({
           retention_days: this.deleteAll ? 0 : this.retentionDays,
@@ -59,7 +63,7 @@ export const maintenancePanel = function (config) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + (document.cookie.match(/jwt_token=([^;]+)/)?.[1] || '')
+          'Authorization': 'Bearer ' + this._getToken()
         },
         body: JSON.stringify({hours_back: parseInt(this.rollupHoursBack)})
       })
