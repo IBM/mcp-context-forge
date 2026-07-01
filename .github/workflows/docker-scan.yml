@@ -183,19 +183,18 @@ jobs:
             ${{ env.IMAGE_NAME }}:fedramp-validate \
             -c "$(cat scripts/fedramp-validate.sh)"
 
-      - name: Generate SBOM (Syft)
-        run: |
-          docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -v "${PWD}:/work" \
-            anchore/syft:v1.42.3 \
-            "docker:${IMAGE_NAME}:fedramp-validate" -o spdx-json=/work/sbom-fedramp.spdx.json
+      - name: Generate SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # 0.24.0
+        with:
+          image: ${{ env.IMAGE_NAME }}:fedramp-validate
+          output-file: sbom-fedramp.spdx.json
 
       - name: Scan SBOM for vulnerabilities (Grype)
         id: scan-fedramp
         uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # 7.4.0
         with:
           sbom: sbom-fedramp.spdx.json
+          only-fixed: true
           fail-build: true
           severity-cutoff: high
           cache-db: true
@@ -253,13 +252,11 @@ jobs:
           cache-from: type=gha,scope=containerfile-lite-amd64
           cache-to: type=gha,mode=max,scope=containerfile-lite-amd64
 
-      - name: Generate SBOM (Syft)
-        run: |
-          docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -v "${PWD}:/work" \
-            anchore/syft:v1.42.3 \
-            "docker:${IMAGE_NAME}:scan" -o spdx-json=/work/sbom.spdx.json
+      - name: Generate SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # 0.24.0
+        with:
+          image: ${{ env.IMAGE_NAME }}:scan
+          output-file: sbom.spdx.json
 
       - name: Scan SBOM for vulnerabilities (Grype)
         uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
