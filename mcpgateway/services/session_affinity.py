@@ -50,12 +50,17 @@ from mcpgateway.services.upstream_session_registry import (  # re-exported as th
 )
 from mcpgateway.utils.internal_http import (
     internal_loopback_base_url,
-    internal_loopback_verify,
+    post_rpc_in_process,
 )
 
 # Shared session-id validation (downstream MCP session IDs used for affinity).
 # Intentionally strict: protects Redis key/channel construction and log lines.
 _MCP_SESSION_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
+
+# Extract the virtual server id from a Streamable HTTP path (/servers/{id}/mcp)
+# so a forwarded request can be re-routed to the local /rpc dispatcher. Mirrors
+# _SERVER_ID_RE in streamablehttp_transport; kept local to avoid a transport import.
+_SERVER_ID_RE = re.compile(r"^/servers/(?P<server_id>[^/]+)/mcp")
 
 # Worker ID for multi-worker session affinity
 # Uses hostname + PID to be unique across Docker containers (each container has PID 1)
@@ -744,6 +749,7 @@ class SessionAffinity:
         self,
         mcp_session_id: str,
         request_data: Dict[str, Any],
+        auth_context: str,
         timeout: Optional[float] = None,
     ) -> Optional[Dict[str, Any]]:
         """Forward RPC request to the worker that owns the session owner.
@@ -755,6 +761,9 @@ class SessionAffinity:
         Args:
             mcp_session_id: The MCP session ID from x-mcp-session-id header.
             request_data: The RPC request data to forward.
+            auth_context: Encoded edge auth context (required, non-empty). Signed into
+                the Redis envelope and verified by the owner before the trusted-internal
+                dispatch, so the rpc forward hop carries a tamper-evident identity.
             timeout: Optional timeout in seconds (default from config).
 
         Returns:
@@ -769,6 +778,14 @@ class SessionAffinity:
 
         if not self.is_valid_mcp_session_id(mcp_session_id):
             return None
+
+        # Invariant: the rpc forward hop must always carry a signed auth context, so the
+        # owner can dispatch to the trusted internal endpoint without re-authenticating.
+        # Refuse rather than publish an unsigned envelope the consumer would reject.
+        if not auth_context:
+            logger.warning("[AFFINITY] Worker %s | Refusing to forward RPC request without an auth context", WORKER_ID)
+            self._forwarded_request_failures += 1
+            return {"error": {"code": -32003, "message": "Forwarded auth context is required"}}
 
         effective_timeout = timeout if timeout is not None else settings.mcpgateway_pool_rpc_forward_timeout
 
@@ -837,12 +854,18 @@ class SessionAffinity:
                 await pubsub.subscribe(response_channel)
 
                 try:
-                    # Prepare request with response channel
+                    # First-Party
+                    from mcpgateway.auth_context import sign_redis_auth_context  # pylint: disable=import-outside-toplevel
+
+                    # Prepare request with response channel and a signed auth context.
                     forward_data = {
                         "type": "rpc_forward",
                         **request_data,
                         "response_channel": response_channel,
                         "mcp_session_id": mcp_session_id,
+                        "auth_context": auth_context,
+                        # HMAC over (session id, auth_context); verified by the owner before trust.
+                        "auth_context_sig": sign_redis_auth_context(mcp_session_id, auth_context),
                     }
 
                     # Publish request to owner's channel
@@ -949,157 +972,244 @@ class SessionAffinity:
 
             logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Received forwarded request, executing locally", WORKER_ID, session_short, method)
 
-            # Make internal HTTP/HTTPS call to local /rpc endpoint.
-            # This reuses ALL existing method handling logic without duplication.
-            internal_base_url = internal_loopback_base_url()
-            async with httpx.AsyncClient(verify=internal_loopback_verify()) as client:
-                # Build headers for internal request - forward original headers
-                # but add x-forwarded-internally to prevent infinite loops.
-                # Relies on the originating transport having already filtered
-                # passthrough headers via extract_headers_for_loopback (#3640).
-                internal_headers = dict(headers)
-                internal_headers["x-forwarded-internally"] = "true"
-                # Ensure content-type is set
-                internal_headers["content-type"] = "application/json"
+            # Verify the forwarded auth context before trusting it: forward_request_to_owner
+            # signs the encoded context (bound to this session id) with the auth-encryption
+            # secret. Reject a missing or invalid signature rather than re-stamping an
+            # injected context onto the trusted-internal dispatch (the Redis signing oracle,
+            # here on the rpc channel). Fail closed: do not dispatch.
+            # First-Party
+            from mcpgateway.auth_context import verify_redis_auth_context  # pylint: disable=import-outside-toplevel
 
-                response = await client.post(
-                    f"{internal_base_url}/rpc",
-                    json={
+            auth_context = request.get("auth_context") or ""
+            auth_context_sig = request.get("auth_context_sig") or ""
+            if not auth_context or not verify_redis_auth_context(mcp_session_id, auth_context, auth_context_sig):
+                logger.warning("[AFFINITY] Worker %s | Session %s... | Rejected forwarded request: missing or invalid auth-context signature", WORKER_ID, session_short)
+                self._forwarded_request_failures += 1
+                return {"error": {"code": -32003, "message": "Forwarded auth context failed integrity verification"}}
+
+            # Build headers for the in-process internal dispatch - forward original headers
+            # but add x-forwarded-internally to prevent infinite loops. Relies on the
+            # originating transport having already filtered passthrough headers via
+            # extract_headers_for_loopback (#3640).
+            internal_headers = dict(headers)
+            internal_headers["x-forwarded-internally"] = "true"
+            internal_headers["content-type"] = "application/json"
+
+            # Dispatch IN-PROCESS to the trusted internal endpoint so it resolves the bound
+            # upstream session from this worker's registry instead of scattering over the
+            # shared socket. The verified edge identity rides in auth_context.
+            response = await post_rpc_in_process(
+                content=orjson.dumps(
+                    {
                         "jsonrpc": "2.0",
                         "method": method,
                         "params": params,
                         "id": req_id,
-                    },
-                    headers=internal_headers,
-                    timeout=settings.mcpgateway_pool_rpc_forward_timeout,
-                )
-
-                # Gate on HTTP status first: non-2xx responses are errors
-                # even if the body parses as JSON.
-                if not response.is_success:
-                    try:
-                        response_data = response.json()
-                    except ValueError:
-                        response_data = {}
-                    if not isinstance(response_data, dict):
-                        response_data = {}
-
-                    # If body is a JSON-RPC error ({"error": {...}}), propagate it
-                    if "error" in response_data and isinstance(response_data["error"], dict):
-                        logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Forwarded execution completed with error (HTTP %s)", WORKER_ID, session_short, method, response.status_code)
-                        return {"error": response_data["error"]}
-
-                    # Non-JSON-RPC error body (e.g. {"detail": "..."}): map to JSON-RPC error
-                    detail = response_data.get("detail", response.text[:200] or "Unknown error")
-                    logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Forwarded execution failed with HTTP %s", WORKER_ID, session_short, method, response.status_code)
-                    return {
-                        "error": {
-                            "code": -32603,
-                            "message": f"Forwarded request failed (HTTP {response.status_code}): {detail}",
-                        }
                     }
+                ),
+                auth_context=auth_context,
+                headers=internal_headers,
+                timeout=settings.mcpgateway_pool_rpc_forward_timeout,
+            )
 
-                # Parse successful response
-                response_data = response.json()
+            # Gate on HTTP status first: non-2xx responses are errors
+            # even if the body parses as JSON.
+            if not response.is_success:
+                try:
+                    response_data = response.json()
+                except ValueError:
+                    response_data = {}
+                if not isinstance(response_data, dict):
+                    response_data = {}
 
-                # Extract result or error from JSON-RPC response
-                if "error" in response_data:
-                    logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Forwarded execution completed with error", WORKER_ID, session_short, method)
+                # If body is a JSON-RPC error ({"error": {...}}), propagate it
+                if "error" in response_data and isinstance(response_data["error"], dict):
+                    logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Forwarded execution completed with error (HTTP %s)", WORKER_ID, session_short, method, response.status_code)
                     return {"error": response_data["error"]}
-                logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Forwarded execution completed successfully", WORKER_ID, session_short, method)
-                return {"result": response_data.get("result", {})}
+
+                # Non-JSON-RPC error body (e.g. {"detail": "..."}): map to JSON-RPC error
+                detail = response_data.get("detail", response.text[:200] or "Unknown error")
+                logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Forwarded execution failed with HTTP %s", WORKER_ID, session_short, method, response.status_code)
+                return {
+                    "error": {
+                        "code": -32603,
+                        "message": f"Forwarded request failed (HTTP {response.status_code}): {detail}",
+                    }
+                }
+
+            # Parse successful response
+            response_data = response.json()
+
+            # Extract result or error from JSON-RPC response
+            if "error" in response_data:
+                logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Forwarded execution completed with error", WORKER_ID, session_short, method)
+                return {"error": response_data["error"]}
+            logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Forwarded execution completed successfully", WORKER_ID, session_short, method)
+            return {"result": response_data.get("result", {})}
 
         except httpx.TimeoutException:
-            logger.warning("Timeout executing forwarded request: %s", request.get("method"))
+            logger.warning("Timeout executing forwarded request: %s", request.get('method'))
             return {"error": {"code": -32603, "message": "Internal request timeout"}}
         except Exception as e:
             logger.warning("Error executing forwarded request: %s", e)
             return {"error": {"code": -32603, "message": str(e)}}
 
     async def _execute_forwarded_http_request(self, request: Dict[str, Any], redis: Any) -> None:
-        """Execute a forwarded HTTP request locally and return response via Redis.
+        """Execute a forwarded Streamable HTTP request on the owner worker and reply over Redis.
 
-        This method handles full HTTP requests forwarded from other workers for
-        Streamable HTTP transport session affinity. It reconstructs the HTTP request,
-        makes an internal call to the appropriate endpoint, and publishes the response
-        back through Redis.
+        The request lands on the worker that owns the downstream session, so the
+        bound upstream session in this process can serve it. It is dispatched
+        in-process to the trusted-internal ``/_internal/mcp/rpc`` endpoint rather
+        than the public ``/rpc``.
+
+        Public ``/rpc`` only understands ContextForge JWTs and cookies, so an
+        OAuth bearer or an ``MCP_REQUIRE_AUTH=false`` public-only request would
+        401 if re-authenticated there. Instead, the originating worker's
+        already-validated identity rides in ``auth_context`` (the encoded
+        ``x-contextforge-auth-context`` header); with the
+        ``x-contextforge-mcp-runtime: affinity`` marker, the shared-secret HMAC,
+        and the loopback client address, the trusted endpoint accepts the request
+        and reconstructs the same user the edge established.
 
         Args:
             request: Serialized HTTP request data from Redis Pub/Sub containing:
                 - type: "http_forward"
                 - response_channel: Redis channel to publish response to
                 - mcp_session_id: Session identifier
-                - method: HTTP method (GET, POST, DELETE)
-                - path: Request path (e.g., /mcp)
-                - query_string: Query parameters
-                - headers: Request headers dict
-                - body: Hex-encoded request body
-            redis: Redis client for publishing response
+                - method: HTTP method (POST primarily)
+                - path: Original request path (e.g., /servers/{id}/mcp)
+                - headers: Original request headers (lowercased keys)
+                - body: Hex-encoded JSON-RPC request body
+                - auth_context: base64url-encoded auth context from the
+                  originating worker's ``streamable_http_auth()`` result
+            redis: Redis client for publishing the response
         """
-        response_channel = None
+        response_channel = request.get("response_channel")
+
+        async def _publish(status: int, body: bytes, headers: Optional[Dict[str, str]] = None) -> None:
+            """Publish a serialized HTTP response back to the requesting worker."""
+            if redis and response_channel:
+                payload = {"status": status, "headers": headers or {"content-type": "application/json"}, "body": body.hex()}
+                await redis.publish(response_channel, orjson.dumps(payload))
+
         try:
-            response_channel = request.get("response_channel")
             method = request.get("method")
-            path = request.get("path")
-            query_string = request.get("query_string", "")
+            path = request.get("path") or ""
             headers = request.get("headers", {})
             body_hex = request.get("body", "")
             mcp_session_id = request.get("mcp_session_id")
-
-            # Decode hex body back to bytes
+            auth_context_header = request.get("auth_context") or ""
             body = bytes.fromhex(body_hex) if body_hex else b""
 
             session_short = mcp_session_id[:8] if mcp_session_id and len(mcp_session_id) >= 8 else "unknown"
             logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Received forwarded HTTP request: %s %s", WORKER_ID, session_short, method, path)
 
-            # Add internal forwarding headers to prevent loops.
-            # Relies on the originating transport having already filtered
-            # passthrough headers via extract_headers_for_loopback (#3640).
-            internal_headers = dict(headers)
-            internal_headers["x-forwarded-internally"] = "true"
-            internal_headers["x-original-worker"] = request.get("original_worker", "unknown")
+            # Only POST carries a JSON-RPC body that needs upstream dispatch.
+            # DELETE/other lifecycle methods are handled by the originating worker; ack them.
+            if method != "POST":
+                await _publish(200, b'{"jsonrpc":"2.0","result":{}}')
+                return
+            if not body:
+                await _publish(202, b"")
+                return
 
-            # Make internal HTTP/HTTPS request to local endpoint
-            url = f"{internal_loopback_base_url()}{path}"
-            if query_string:
-                url = f"{url}?{query_string}"
+            json_body = orjson.loads(body)
+            rpc_method = json_body.get("method", "") if isinstance(json_body, dict) else ""
 
-            async with httpx.AsyncClient(verify=internal_loopback_verify()) as client:
-                response = await client.request(
-                    method=method,
-                    url=url,
-                    headers=internal_headers,
+            # Notifications need no upstream round-trip.
+            if isinstance(rpc_method, str) and rpc_method.startswith("notifications/"):
+                await _publish(202, b"")
+                return
+
+            # Inject the virtual server id (from the path) into params so the
+            # dispatcher routes to the right virtual server.
+            server_match = _SERVER_ID_RE.search(path)
+            if server_match and isinstance(json_body, dict):
+                if not isinstance(json_body.get("params"), dict):
+                    json_body["params"] = {}
+                json_body["params"]["server_id"] = server_match.group("server_id")
+                body = orjson.dumps(json_body)
+
+            # First-Party - lazy imports avoid a circular dependency with main/transport.
+            from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header, verify_redis_auth_context  # pylint: disable=import-outside-toplevel,protected-access
+            from mcpgateway.main import app  # pylint: disable=import-outside-toplevel,cyclic-import
+            from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
+            from mcpgateway.utils.verify_credentials import _resolve_auth_header_name  # pylint: disable=import-outside-toplevel,protected-access
+
+            # Verify the forwarded auth context before trusting it. forward_to_owner()
+            # signs the encoded context (bound to this session id) with the auth
+            # encryption secret; a Redis writer cannot produce a valid signature
+            # without that secret. Without this check the owner would re-stamp any
+            # injected context with a valid runtime-auth token and dispatch it to the
+            # trusted endpoint (a signing oracle). Fail closed on a missing or invalid
+            # signature: do not dispatch, do not set x-contextforge-auth-context.
+            auth_context_sig = request.get("auth_context_sig") or ""
+            if not auth_context_header or not verify_redis_auth_context(mcp_session_id or "", auth_context_header, auth_context_sig):
+                logger.warning(
+                    "[HTTP_AFFINITY] Worker %s | Session %s... | Rejected forwarded request: missing or invalid auth-context signature",
+                    WORKER_ID,
+                    session_short,
+                )
+                self._forwarded_request_failures += 1
+                req_id = json_body.get("id") if isinstance(json_body, dict) else None
+                await _publish(403, orjson.dumps({"jsonrpc": "2.0", "error": {"code": -32003, "message": "Forwarded auth context failed integrity verification"}, "id": req_id}))
+                return
+
+            # Trust headers for the internal /_internal/mcp/rpc endpoint:
+            # - x-contextforge-mcp-runtime: "affinity" caller marker
+            # - x-contextforge-mcp-runtime-auth: shared-secret HMAC
+            # - x-contextforge-auth-context: the encoded edge auth context, so the
+            #   endpoint reconstructs the same user without re-authenticating.
+            rpc_headers = {
+                "content-type": "application/json",
+                "x-mcp-session-id": mcp_session_id or "",
+                "x-contextforge-mcp-runtime": "affinity",
+                "x-contextforge-mcp-runtime-auth": _expected_internal_mcp_runtime_auth_header(),
+                "x-contextforge-auth-context": auth_context_header,
+            }
+            # Preserve the bearer under the configured auth header (AUTH_HEADER_NAME),
+            # not a hardcoded "authorization": the CSRF bearer short-circuit keys on
+            # the configured header, so a custom header would otherwise be dropped.
+            # This is defense-in-depth; the endpoint trusts the auth-context above.
+            auth_header_name = _resolve_auth_header_name(settings).lower()
+            original_auth = headers.get(auth_header_name) or headers.get(_resolve_auth_header_name(settings))
+            if original_auth:
+                rpc_headers[auth_header_name] = original_auth
+            # Preserve passthrough headers destined for upstream MCP servers (#3640).
+            rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
+
+            # Dispatch IN-PROCESS to the trusted internal endpoint. The explicit
+            # client=("127.0.0.1", 0) tells ASGITransport to set scope["client"]
+            # to a loopback address so the trust check accepts the request.
+            transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 0))
+            async with httpx.AsyncClient(transport=transport, base_url=internal_loopback_base_url()) as client:
+                response = await client.post(
+                    "/_internal/mcp/rpc",
                     content=body,
+                    headers=rpc_headers,
                     timeout=settings.mcpgateway_pool_rpc_forward_timeout,
                 )
 
-                logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Executed locally: %s", WORKER_ID, session_short, response.status_code)
+            logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Executed in-process via /_internal/mcp/rpc: %s", WORKER_ID, session_short, response.status_code)
 
-                # Serialize response for Redis transport
-                response_data = {
-                    "status": response.status_code,
-                    "headers": dict(response.headers),
-                    "body": response.content.hex(),  # Hex encode binary response
-                }
-
-                # Publish response back to requesting worker
-                if redis and response_channel:
-                    await redis.publish(response_channel, orjson.dumps(response_data))
-                    logger.debug("[HTTP_AFFINITY] Published HTTP response to Redis channel: %s", response_channel)
+            resp_headers = {"content-type": "application/json"}
+            if mcp_session_id:
+                resp_headers["mcp-session-id"] = mcp_session_id
+            await _publish(response.status_code, response.content, resp_headers)
 
         except Exception as e:
-            logger.error("Error executing forwarded HTTP request: %s", e)
-            # Try to send error response if possible
-            if redis and response_channel:
-                error_response = {
-                    "status": 500,
-                    "headers": {"content-type": "application/json"},
-                    "body": orjson.dumps({"error": "Internal forwarding error"}).hex(),
-                }
-                try:
-                    await redis.publish(response_channel, orjson.dumps(error_response))
-                except Exception as publish_error:
-                    logger.debug("Failed to publish error response via Redis: %s", publish_error)
+            # Sanitise + truncate the exception message: this except catches anything from the
+            # inner /rpc dispatch (FastAPI handlers, middleware, services), so the exception may
+            # carry request fragments or newlines that would forge log entries (CWE-117).
+            logger.error(
+                "Error executing forwarded HTTP request: %s: %s",
+                type(e).__name__,
+                SecurityValidator.sanitize_log_message(str(e), max_length=500),
+            )
+            try:
+                await _publish(500, orjson.dumps({"error": "Internal forwarding error"}))
+            except Exception as publish_error:
+                logger.debug("Failed to publish error response via Redis: %s", publish_error)
 
     async def get_session_owner(self, mcp_session_id: str) -> Optional[str]:
         """Get the worker ID that owns a Streamable HTTP session.
@@ -1123,6 +1233,7 @@ class SessionAffinity:
         path: str,
         headers: Dict[str, str],
         body: bytes,
+        auth_context: str,
         query_string: str = "",
     ) -> Optional[Dict[str, Any]]:
         """Forward a Streamable HTTP request to the worker that owns the session via Redis Pub/Sub.
@@ -1139,6 +1250,12 @@ class SessionAffinity:
             path: Request path (e.g., /mcp).
             headers: Request headers.
             body: Request body bytes.
+            auth_context: Encoded ``x-contextforge-auth-context`` value carrying the
+                originating worker's already-validated identity, so the owner can
+                dispatch to the trusted internal endpoint without re-authenticating
+                (OAuth bearers and ``MCP_REQUIRE_AUTH=false`` public-only survive).
+                Required and must be non-empty: the Redis hop must always carry a
+                signed auth context.
             query_string: Query string if any.
 
         Returns:
@@ -1150,6 +1267,19 @@ class SessionAffinity:
 
         if not self.is_valid_mcp_session_id(mcp_session_id):
             return None
+
+        # Invariant: a Redis http_forward must always carry a signed auth context. Refuse to
+        # publish an unsigned/missing one rather than relying on the consumer to reject it
+        # (or, worse, accept it). The real Streamable HTTP caller always encodes a context
+        # (an empty {} encodes to a non-empty value), so this only trips on a contract bug.
+        if not auth_context:
+            logger.warning("[HTTP_AFFINITY] Worker %s | Refusing to forward HTTP request without an auth context", WORKER_ID)
+            self._forwarded_request_failures += 1
+            return {
+                "status": 403,
+                "headers": {"content-type": "application/json"},
+                "body": orjson.dumps({"jsonrpc": "2.0", "error": {"code": -32003, "message": "Forwarded auth context is required"}, "id": None}),
+            }
 
         session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
         logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | %s %s | Forwarding to worker %s", WORKER_ID, session_short, method, path, owner_worker_id)
@@ -1169,6 +1299,17 @@ class SessionAffinity:
             response_uuid = uuid.uuid4().hex
             response_channel = f"mcpgw:pool_http_response:{response_uuid}"
 
+            # Sign the forwarded auth context so the owner can verify it was not
+            # forged in Redis transit before re-stamping it with the runtime-auth
+            # token (closes the signing-oracle on the pub/sub hop). The signature
+            # is bound to this session id to block cross-session replay.
+            auth_context_sig = None
+            if auth_context:
+                # First-Party
+                from mcpgateway.auth_context import sign_redis_auth_context  # pylint: disable=import-outside-toplevel
+
+                auth_context_sig = sign_redis_auth_context(mcp_session_id, auth_context)
+
             # Serialize HTTP request for Redis transport
             forward_data = {
                 "type": "http_forward",
@@ -1181,6 +1322,10 @@ class SessionAffinity:
                 "body": body.hex() if body else "",  # Hex encode binary body
                 "original_worker": WORKER_ID,
                 "timestamp": time.time(),
+                # Encoded edge identity; lets the owner dispatch without re-authenticating.
+                "auth_context": auth_context,
+                # HMAC over (session id, auth_context); verified by the owner before trust.
+                "auth_context_sig": auth_context_sig,
             }
 
             # Subscribe to response channel BEFORE publishing request (prevent race)
@@ -1200,7 +1345,7 @@ class SessionAffinity:
                             msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
                             if msg and msg["type"] == "message":
                                 response_data = orjson.loads(msg["data"])
-                                logger.debug("[HTTP_AFFINITY] Received HTTP response via Redis: status=%s", response_data.get("status"))
+                                logger.debug("[HTTP_AFFINITY] Received HTTP response via Redis: status=%s", response_data.get('status'))
 
                                 # Decode hex body back to bytes
                                 body_hex = response_data.get("body", "")
