@@ -1,9 +1,9 @@
-import { useEffect, useRef } from "react";
-import { X, Trash2, FileText } from "lucide-react";
+import { Trash2, FileText } from "lucide-react";
 import type { ResourceRead } from "@/generated/types";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
+import { formatBytes } from "@/utils/format";
 
 interface ResourceDetailsPanelProps {
   resources: NonNullable<ResourceRead>[];
@@ -13,16 +13,6 @@ interface ResourceDetailsPanelProps {
   onDeleteResource: (id: string) => void;
 }
 
-/**
- * Side panel for displaying detailed information about resources in a gateway group
- * Shows resource metadata including URI, description, MIME type, size, and tags
- *
- * @param resources - Array of resources to display
- * @param gatewaySlug - Gateway identifier for the panel title
- * @param open - Whether the panel is visible
- * @param onClose - Callback to close the panel
- * @param onDeleteResource - Callback when delete button is clicked (placeholder for future CRUD)
- */
 export function ResourceDetailsPanel({
   resources,
   gatewaySlug,
@@ -30,30 +20,11 @@ export function ResourceDetailsPanel({
   onClose,
   onDeleteResource,
 }: ResourceDetailsPanelProps) {
-  const closeButtonRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    if (open && closeButtonRef.current) {
-      closeButtonRef.current.focus();
-    }
-  }, [open]);
-
   return (
     <Sheet open={open} onOpenChange={onClose}>
       <SheetContent side="right" className="w-full sm:max-w-2xl overflow-y-auto">
         <SheetHeader className="mb-6">
-          <div className="flex items-center justify-between">
-            <SheetTitle className="text-lg font-semibold">{gatewaySlug} Resources</SheetTitle>
-            <Button
-              ref={closeButtonRef}
-              variant="ghost"
-              size="sm"
-              onClick={onClose}
-              aria-label="Close panel"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
+          <SheetTitle className="text-lg font-semibold">{gatewaySlug} Resources</SheetTitle>
         </SheetHeader>
 
         <div className="space-y-4">
@@ -147,12 +118,4 @@ export function ResourceDetailsPanel({
       </SheetContent>
     </Sheet>
   );
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 Bytes";
-  const k = 1024;
-  const sizes = ["Bytes", "KB", "MB", "GB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 }
