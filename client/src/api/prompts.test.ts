@@ -18,7 +18,7 @@ describe("promptsApi", () => {
   });
 
   describe("render", () => {
-    it("POSTs args to /prompts/:id and returns the rendered prompt", async () => {
+    it("POSTs args to /prompts/:name and returns the rendered prompt", async () => {
       const rendered = {
         messages: [{ role: "user", content: { type: "text", text: "Hello Alice" } }],
       };
@@ -57,12 +57,28 @@ describe("promptsApi", () => {
       );
     });
 
-    it("throws synchronously for an empty ID", () => {
-      expect(() => promptsApi.render("")).toThrow("Invalid prompt ID");
+    it("throws synchronously for an empty name", () => {
+      expect(() => promptsApi.render("")).toThrow("Invalid prompt name");
     });
 
-    it("throws synchronously for an ID with path traversal characters", () => {
-      expect(() => promptsApi.render("../etc/passwd")).toThrow("Invalid prompt ID format");
+    it("throws synchronously for a name with path traversal characters", () => {
+      expect(() => promptsApi.render("../etc/passwd")).toThrow("Invalid prompt name format");
+    });
+
+    it("accepts backend-legal names with spaces and dots", async () => {
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify({ messages: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      await promptsApi.render("my prompt.v2");
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/prompts/my%20prompt.v2"),
+        expect.anything(),
+      );
     });
   });
 });

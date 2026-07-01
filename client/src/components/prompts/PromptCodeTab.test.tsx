@@ -74,7 +74,7 @@ describe("PromptCodeTab", () => {
 
     await waitFor(() =>
       expect(promptsApi.render).toHaveBeenCalledWith(
-        "p1",
+        "greet_user",
         expect.objectContaining({ user_name: "Bob" }),
       ),
     );
