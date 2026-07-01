@@ -622,7 +622,6 @@ class ResourceService(BaseService):
                     "import_batch_id": import_batch_id,
                     "federation_source": federation_source,
                 },
-                db=db,
             )
 
             # Structured logging: Log successful resource creation
@@ -998,7 +997,6 @@ class ResourceService(BaseService):
                             "federation_source": federation_source,
                             "conflict_strategy": conflict_strategy,
                         },
-                        db=db,
                     )
 
                 logger.info("Bulk registered %s resources, updated %s resources in chunk", len(resources_to_add), len(resources_to_update))
@@ -2750,7 +2748,6 @@ class ResourceService(BaseService):
                     context={
                         "action": "activate" if activate else "deactivate",
                     },
-                    db=db,
                 )
 
                 # Structured logging: Log successful resource state change
@@ -3153,7 +3150,6 @@ class ResourceService(BaseService):
                     "modified_via": modified_via,
                     "changes": ", ".join(changes) if changes else "metadata only",
                 },
-                db=db,
             )
 
             # Structured logging: Log successful resource update
@@ -3399,7 +3395,6 @@ class ResourceService(BaseService):
                     "uri": resource_uri,
                     "name": resource_name,
                 },
-                db=db,
             )
 
             # Structured logging: Log successful resource deletion

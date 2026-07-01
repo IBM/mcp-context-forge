@@ -130,15 +130,22 @@ class TenantPluginManagerFactory:
     async def get_manager(self, context_id: Optional[str] = None) -> TenantPluginManager:
         """Get or create a TenantPluginManager for the given context."""
         context_id = context_id or "__global__"
+        expired = None
 
         async with self._lock:
             entry = self._managers.get(context_id)
             if entry is not None:
                 if entry.is_expired(self._cache_ttl):
-                    self._managers.pop(context_id, None)
+                    expired = self._managers.pop(context_id, None)
                     logger.debug("Cache TTL expired for context_id=%s, rebuilding", context_id)
                 else:
                     return entry.manager
+
+            if expired is not None:
+                try:
+                    await expired.manager.shutdown()
+                except Exception:
+                    logger.warning("Failed to shutdown expired manager for context_id=%s", context_id, exc_info=True)
 
             inflight = self._inflight.get(context_id)
             if inflight is None:

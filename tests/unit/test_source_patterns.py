@@ -34,13 +34,13 @@ def _extract_function_source(file_source: str, func_name: str) -> str | None:
 
 
 def test_main_conditionally_registers_cancellation_router() -> None:
-    source = (REPO_ROOT / "mcpgateway" / "main.py").read_text(encoding="utf-8")
+    v1_init = (REPO_ROOT / "mcpgateway" / "api" / "v1" / "__init__.py").read_text(encoding="utf-8")
     for pattern in (
         "if settings.mcpgateway_tool_cancellation_enabled:",
-        "app.include_router(cancellation_router)",
+        "include_router(cancellation_router)",
         "Cancellation router included",
     ):
-        assert pattern in source, f"main.py: missing cancellation router pattern: {pattern}"
+        assert pattern in v1_init, f"api/v1/__init__.py: missing cancellation router pattern: {pattern}"
 
 
 def test_a2a_register_agent_commits_before_creating_tool() -> None:

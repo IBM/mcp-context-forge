@@ -11,9 +11,9 @@ COPY mcp-servers/rust/slow-time-server ./mcp-servers/rust/slow-time-server
 COPY a2a-agents/rust/a2a-echo-agent ./a2a-agents/rust/a2a-echo-agent
 RUN cargo build --release -p a2a-echo-agent
 
-FROM docker.io/library/debian:trixie-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
-    && rm -rf /var/lib/apt/lists/* \
+FROM registry.access.redhat.com/ubi10/ubi-minimal:10.2-1777462752
+RUN microdnf install -y ca-certificates curl shadow-utils \
+    && microdnf clean all \
     && useradd -r -s /bin/false mcpuser
 WORKDIR /app
 COPY --from=builder /app/target/release/a2a-echo-agent /app/a2a-echo-agent

@@ -11,36 +11,32 @@ FROM docker.io/rustlang/rust:nightly-slim AS builder
 
 WORKDIR /app
 
-# Install build dependencies
+# Install build dependencies.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy manifests first for dependency caching
+# Build inside the repo workspace because this crate inherits package metadata
+# and dependencies from the root Cargo.toml.
 COPY Cargo.toml Cargo.lock* ./
+COPY crates ./crates
+COPY mcp-servers/rust/benchmark-server ./mcp-servers/rust/benchmark-server
+COPY mcp-servers/rust/fast-time-server ./mcp-servers/rust/fast-time-server
+COPY mcp-servers/rust/filesystem-server ./mcp-servers/rust/filesystem-server
+COPY mcp-servers/rust/slow-time-server ./mcp-servers/rust/slow-time-server
+COPY a2a-agents/rust/a2a-echo-agent ./a2a-agents/rust/a2a-echo-agent
 
-# Create dummy src to cache dependencies (Docker layer caching optimization)
-RUN mkdir src && echo "fn main() {}" > src/main.rs
-RUN cargo build --release && rm -rf src target/release/deps/fast_time_server* target/release/.fingerprint/fast-time-server*
-
-# Copy actual source
-COPY src ./src
-
-# Build release binary (touch to ensure mtime is newer than cached artifacts)
-RUN touch src/main.rs && cargo build --release
+RUN cargo build --release -p fast-time-server
 
 # =============================================================================
 # Runtime stage - Minimal distroless-like image
 # =============================================================================
-FROM docker.io/library/debian:trixie-slim
+FROM registry.access.redhat.com/ubi10/ubi-minimal:10.2-1777462752
 
 # Install runtime deps (ca-certificates + curl for health checks) and create
 # the non-root mcpuser in a single layer.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates \
-        curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean \
+RUN microdnf install -y ca-certificates curl shadow-utils \
+    && microdnf clean all \
     && useradd -r -s /bin/false mcpuser
 
 WORKDIR /app
@@ -51,10 +47,10 @@ COPY --from=builder /app/target/release/fast-time-server /app/fast-time-server
 USER mcpuser
 
 # Expose default port
-EXPOSE 9080
+EXPOSE 8080
 
 # Environment configuration
-ENV BIND_ADDRESS=0.0.0.0:9080
+ENV BIND_ADDRESS=0.0.0.0:8080
 ENV RUST_LOG=info
 
 # Labels for container registry
@@ -66,6 +62,6 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 # Health check using curl (more reliable than wget in slim images)
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -sf http://localhost:9080/health || exit 1
+    CMD curl -sf http://localhost:8080/health || exit 1
 
 ENTRYPOINT ["/app/fast-time-server"]

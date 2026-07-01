@@ -96,7 +96,7 @@ def on_test_start(environment, **kwargs):
         return
 
     logger.info("=" * 60)
-    logger.info("RUST FAST-TEST-SERVER LOAD TEST (FastHttpUser)")
+    logger.info("RUST FAST-TIME-SERVER LOAD TEST (FastHttpUser)")
     logger.info("=" * 60)
     logger.info(f"Host: {environment.host}")
     logger.info(f"MCP Endpoint: {environment.host}{MCP_PATH}")
@@ -116,7 +116,7 @@ def on_test_stop(environment, **kwargs):
     failure_rate = (total_failures / total_requests * 100) if total_requests > 0 else 0
 
     print("\n" + "=" * 80)
-    print("RUST FAST-TEST-SERVER TEST SUMMARY (FastHttpUser)")
+    print("RUST FAST-TIME-SERVER TEST SUMMARY (FastHttpUser)")
     print("=" * 80)
     print(f"\n{'OVERALL METRICS':^80}")
     print("-" * 80)

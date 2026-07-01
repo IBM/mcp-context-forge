@@ -1126,20 +1126,29 @@ services:
 
   ###############################################################################
   # Fast Time Server - High-performance time/timezone service for MCP
-  # Uses pre-built image by default. On ARM64, build locally:
+  # Defaults to the published GHCR image. Override FAST_TIME_IMAGE when building locally:
   #   FAST_TIME_IMAGE=mcpgateway/fast-time-server:local docker compose build fast_time_server
   ###############################################################################
   fast_time_server:
     image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/fast-time-server:latest}
     build:
-      context: ./mcp-servers/go/fast-time-server
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: mcp-servers/rust/fast-time-server/Containerfile
     restart: unless-stopped
     networks: [mcpnet]
     ports:
       - "8888:8080"    # Map host port 8888 to container port 8080
+    environment:
+      - BIND_ADDRESS=0.0.0.0:8080
+      - RUST_LOG=info
     # Use dual mode for both SSE (/sse) and Streamable HTTP (/http) endpoints
     command: ["-transport=dual", "-listen=0.0.0.0", "-port=8080", "-log-level=info"]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   ###############################################################################
   # Auto-registration service - registers fast_time_server with gateway

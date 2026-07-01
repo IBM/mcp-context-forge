@@ -24,6 +24,7 @@ on:
     branches: ["main"]
     tags: ["v*"]
     paths:
+      - '.dockerignore'
       - 'Containerfile.lite'
       - 'mcpgateway/**'
       - 'plugins/**'
@@ -35,6 +36,7 @@ on:
     types: [opened, synchronize, ready_for_review]
     branches: ["main"]
     paths:
+      - '.dockerignore'
       - 'Containerfile.lite'
       - 'mcpgateway/**'
       - 'plugins/**'
@@ -58,6 +60,69 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  docker-inputs:
+    name: Detect Docker Build Inputs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      changed: ${{ steps.changed.outputs.changed }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check changed Docker build inputs
+        id: changed
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" != "merge_group" ]]; then
+            echo "changed=true" >> "${GITHUB_OUTPUT}"
+            echo "Non-merge-group event; using workflow path filters."
+            exit 0
+          fi
+
+          git fetch --no-tags --prune --depth=1 origin "${{ github.event.repository.default_branch }}"
+          base="$(git merge-base HEAD "origin/${{ github.event.repository.default_branch }}")"
+          changed_paths="$(git diff --name-only "${base}" HEAD)"
+
+          is_docker_build_input() {
+            local path="$1"
+
+            case "${path}" in
+              .dockerignore|Containerfile.lite|pyproject.toml|uv.lock|.github/workflows/docker-multiplatform.yml)
+                return 0
+                ;;
+              infra/wheels/*|mcpgateway/*|plugins/*)
+                return 0
+                ;;
+              *)
+                return 1
+                ;;
+            esac
+          }
+
+          docker_input_changes=()
+
+          while IFS= read -r path; do
+            [[ -z "${path}" ]] && continue
+            if is_docker_build_input "${path}"; then
+              docker_input_changes+=("${path}")
+            fi
+          done <<< "${changed_paths}"
+
+          if ((${#docker_input_changes[@]} == 0)); then
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+            echo "No Docker build inputs changed in this merge group."
+            exit 0
+          fi
+
+          echo "changed=true" >> "${GITHUB_OUTPUT}"
+          printf 'Docker build input changed: %s\n' "${docker_input_changes[@]}"
+
   # ---------------------------------------------------------------
   # Build the full dependency-closure wheel image for s390x and ppc64le only.
   # amd64/arm64 have full PyPI manylinux coverage and do not need a wheel
@@ -68,7 +133,10 @@ jobs:
   # (push/merge_group/workflow_dispatch).
   # ---------------------------------------------------------------
   wheels:
-    if: github.event_name != 'pull_request'
+    if: >-
+      github.event_name != 'pull_request' &&
+      needs.docker-inputs.outputs.changed == 'true'
+    needs: docker-inputs
     name: Build wheels (${{ matrix.suffix }})
     strategy:
       fail-fast: false
@@ -150,9 +218,13 @@ jobs:
     # inspect` when the lock hash is unchanged, so the wait is ~2-3 min in steady
     # state; only a real dependency change pays the full build time. `always() &&
     # needs.wheels.result != 'failure'` tolerates `wheels` being skipped entirely
-    # on PR events.
-    if: always() && needs.wheels.result != 'failure' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
-    needs: wheels
+    # on PR events and merge groups with no Docker build input changes.
+    if: >-
+      always() &&
+      needs.docker-inputs.outputs.changed == 'true' &&
+      needs.wheels.result != 'failure' &&
+      (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    needs: [docker-inputs, wheels]
     name: Build ${{ matrix.suffix }}
     strategy:
       fail-fast: false
@@ -189,8 +261,8 @@ jobs:
       contents: read
       packages: write
 
-    # amd64: builds (no push) on PR and merge queue; full build+push on push
-    # arm64/s390x/ppc64le: builds (no push) on merge queue; full build+push on push
+    # amd64: cache-only validation on PR and merge queue; full build+push on push
+    # arm64/s390x/ppc64le: cache-only validation on merge queue; full build+push on push
     # Condition for build steps: always except PRs skip non-amd64 (build_on_pr)
     # Condition for push-only steps (login, digest): push/workflow_dispatch only
     steps:
@@ -287,7 +359,7 @@ jobs:
             ${{ env.WHEELS_REF && format('WHEELS_REF={0}', env.WHEELS_REF) || '' }}
 
           push: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
-          load: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
+          outputs: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && 'type=cacheonly' || '' }}
 
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -457,12 +529,30 @@ jobs:
   # ---------------------------------------------------------------
   build-complete:
     name: Docker Build Complete
-    needs: build
+    needs: [docker-inputs, wheels, build]
     runs-on: ubuntu-24.04
     if: always()
     steps:
       - name: Check all platform builds passed
         run: |
+          changes_result="${{ needs.docker-inputs.result }}"
+          if [[ "$changes_result" != "success" ]]; then
+            echo "Docker build input detection failed (result: $changes_result)"
+            exit 1
+          fi
+
+          changed="${{ needs.docker-inputs.outputs.changed }}"
+          if [[ "$changed" != "true" ]]; then
+            echo "Docker build skipped — no relevant files changed in this merge group"
+            exit 0
+          fi
+
+          wheels_result="${{ needs.wheels.result }}"
+          if [[ "$wheels_result" == "failure" || "$wheels_result" == "cancelled" ]]; then
+            echo "Docker wheel builds failed (result: $wheels_result)"
+            exit 1
+          fi
+
           result="${{ needs.build.result }}"
           if [[ "$result" == "success" || "$result" == "skipped" ]]; then
             echo "Docker builds passed (result: $result)"
