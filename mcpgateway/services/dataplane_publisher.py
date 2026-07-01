@@ -57,7 +57,7 @@ class BackendConfig(TypedDict):
     name: str
     url: str
     transport: str
-    passthrough_headers: list[str] | None
+    passthrough_headers: list[str]
     allowed_tool_names: list[str]
     allowed_resource_names: list[str]
     allowed_prompt_names: list[str]
@@ -216,7 +216,7 @@ class DataplanePublisherService:
                     "name": gateway["name"],
                     "url": gateway["url"],
                     "transport": gateway["transport"],
-                    "passthrough_headers": gateway["passthrough_headers"],
+                    "passthrough_headers": gateway["passthrough_headers"] or [],
                 }
                 for gateway in gateways
             }

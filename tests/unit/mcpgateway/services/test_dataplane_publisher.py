@@ -374,6 +374,33 @@ def test_create_payload_filters_empty_backends():
     assert result["user@example.com"]["virtual_hosts"]["server1"]["backends"] == {}
 
 
+def test_create_payload_normalizes_null_passthrough_headers():
+    """create_payload() emits an empty list for gateways without passthrough headers."""
+    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
+
+    service = DataplanePublisherService()
+    data = {
+        "user@example.com": {
+            "servers": [
+                {
+                    "id": "server1",
+                    "backend_items": {
+                        "gateway1": {"tools": ["tool1"], "resources": [], "prompts": []},
+                    },
+                }
+            ],
+            "gateways": [{"id": "gateway1", "name": "Gateway 1", "url": "http://localhost:9000", "transport": "sse", "passthrough_headers": None}],
+            "prompts": [],
+            "resources": [],
+        }
+    }
+
+    result = service.create_payload(data)
+
+    backend = result["user@example.com"]["virtual_hosts"]["server1"]["backends"]["gateway1"]
+    assert backend["passthrough_headers"] == []
+
+
 def test_create_payload_handles_missing_references():
     """create_payload() handles missing gateway/resource/prompt references."""
     from mcpgateway.services.dataplane_publisher import DataplanePublisherService
