@@ -1000,4 +1000,69 @@ describe("Gateways", () => {
     expect(screen.queryByText("Failed to fetch resources")).not.toBeInTheDocument();
     expect(screen.queryByText("Failed to fetch prompts")).not.toBeInTheDocument();
   });
+  it("renders an error message when the servers query fails and there are no servers", () => {
+    mockUseQuery.mockReturnValue({
+      data: null,
+      error: new Error("Failed to fetch servers"),
+      isLoading: false,
+      execute: vi.fn(),
+      refetch: vi.fn(),
+    });
+
+    renderWithProviders(<Gateways />);
+
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Error loading virtual servers" })).toBeInTheDocument();
+    expect(screen.getByText("Failed to fetch servers")).toBeInTheDocument();
+  });
+
+  it("renders an error message when the servers query fails and there are existing servers", () => {
+    const mockServer: VirtualServer = {
+      id: "gateway-1",
+      name: "Test Server",
+      description: "Test server",
+      icon: "",
+      createdAt: "2026-04-16T13:23:12Z",
+      updatedAt: "2026-04-16T13:23:12Z",
+      enabled: true,
+      associatedTools: [],
+      associatedToolIds: ["tool1"],
+      associatedResources: [],
+      associatedPrompts: [],
+      associatedA2aAgents: [],
+      metrics: null,
+      tags: [],
+      createdBy: "admin@example.com",
+      createdFromIp: "127.0.0.1",
+      createdVia: "ui",
+      createdUserAgent: "Mozilla/5.0",
+      modifiedBy: null,
+      modifiedFromIp: null,
+      modifiedVia: null,
+      modifiedUserAgent: null,
+      importBatchId: null,
+      federationSource: null,
+      version: 1,
+      teamId: "team-1",
+      team: "Test Team",
+      ownerEmail: "admin@example.com",
+      visibility: "team",
+      oauthEnabled: false,
+      oauthConfig: null,
+    };
+    mockUseQuery.mockReturnValue({
+      data: { servers: [mockServer] },
+      error: new Error("Failed to fetch servers"),
+      isLoading: false,
+      execute: vi.fn(),
+      refetch: vi.fn(),
+    });
+
+    renderWithProviders(<Gateways />);
+
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Error loading virtual servers" })).toBeInTheDocument();
+    expect(screen.getByText("Failed to fetch servers")).toBeInTheDocument();
+    expect(screen.getByText(mockServer.name)).toBeInTheDocument();
+  });
 });

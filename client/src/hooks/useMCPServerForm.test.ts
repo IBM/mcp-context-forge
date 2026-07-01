@@ -93,6 +93,70 @@ describe("useMCPServerForm", () => {
 
       expect(result.current.advancedOpen).toBe(false);
     });
+
+    it("should update visibility", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setVisibility("team");
+      });
+
+      expect(result.current.visibility).toBe("team");
+    });
+
+    it("should update auth setters", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setAuthType("basic");
+        result.current.setAuthUsername("user");
+        result.current.setAuthPassword("pass");
+        result.current.setAuthToken("token");
+        result.current.setOneTimeAuth(true);
+        result.current.setPassthroughHeaders("Authorization");
+        result.current.setCaCertificate("cert");
+        result.current.setBearerToken("bearer");
+        result.current.setCustomHeaders([{ id: "1", key: "x", value: "y" }]);
+        result.current.setOAuthClientId("id");
+        result.current.setOAuthClientSecret("secret");
+        result.current.setOAuthTokenUrl("url");
+        result.current.setOAuthGrantType("password");
+        result.current.setOAuthIssuerUrl("issuer");
+        result.current.setOAuthRedirectUri("redirect");
+        result.current.setOAuthAuthorizationUrl("auth");
+        result.current.setOAuthScopes("scope");
+        result.current.setOAuthStoreTokens(false);
+        result.current.setOAuthAutoRefresh(false);
+        result.current.setOAuthUsername("o_user");
+        result.current.setOAuthPassword("o_pass");
+        result.current.setQueryParamName("param");
+        result.current.setQueryParamApiKey("key");
+      });
+
+      expect(result.current.authType).toBe("basic");
+      expect(result.current.authUsername).toBe("user");
+      expect(result.current.authPassword).toBe("pass");
+      expect(result.current.authToken).toBe("token");
+      expect(result.current.oneTimeAuth).toBe(true);
+      expect(result.current.passthroughHeaders).toBe("Authorization");
+      expect(result.current.caCertificate).toBe("cert");
+      expect(result.current.bearerToken).toBe("bearer");
+      expect(result.current.customHeaders).toEqual([{ id: "1", key: "x", value: "y" }]);
+      expect(result.current.oauthClientId).toBe("id");
+      expect(result.current.oauthClientSecret).toBe("secret");
+      expect(result.current.oauthTokenUrl).toBe("url");
+      expect(result.current.oauthGrantType).toBe("password");
+      expect(result.current.oauthIssuerUrl).toBe("issuer");
+      expect(result.current.oauthRedirectUri).toBe("redirect");
+      expect(result.current.oauthAuthorizationUrl).toBe("auth");
+      expect(result.current.oauthScopes).toBe("scope");
+      expect(result.current.oauthStoreTokens).toBe(false);
+      expect(result.current.oauthAutoRefresh).toBe(false);
+      expect(result.current.oauthUsername).toBe("o_user");
+      expect(result.current.oauthPassword).toBe("o_pass");
+      expect(result.current.queryParamName).toBe("param");
+      expect(result.current.queryParamApiKey).toBe("key");
+    });
   });
 
   describe("Form Validation", () => {
@@ -1494,6 +1558,33 @@ describe("useMCPServerForm", () => {
       await waitFor(() => {
         expect(result.current.errors.submit).toBe("Gateway not found");
       });
+    });
+
+    it("logs error and continues if activation fails during OAuth", async () => {
+      server.use(http.post("/gateways", () => HttpResponse.json({ id: "gw-oauth-activate-fail" })));
+
+      vi.spyOn(serversApi, "triggerOAuthAuthorization").mockResolvedValueOnce({
+        type: "oauth_callback",
+        status: "success",
+      });
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.spyOn(serversApi, "toggleEnabled").mockRejectedValueOnce(new Error("Activation failed"));
+      vi.spyOn(serversApi, "fetchToolsAfterOAuth").mockResolvedValueOnce({ success: true, message: "ok" });
+
+      const { result } = renderHook(() => useMCPServerForm());
+      const mockEvent = { preventDefault: vi.fn() } as unknown as React.FormEvent<HTMLFormElement>;
+
+      await act(async () => {
+        result.current.setName("Test OAuth");
+        result.current.setUrl("http://example.com");
+        result.current.setAuthType("oauth");
+      });
+
+      await act(async () => {
+        await result.current.handleSubmit(mockEvent);
+      });
+
+      expect(consoleErrorSpy).toHaveBeenCalledWith("Failed to activate gateway after OAuth:", "An error occurred. Please try again.");
     });
   });
 });

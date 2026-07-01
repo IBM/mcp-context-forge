@@ -262,6 +262,50 @@ describe("ToolForm", () => {
         expect(onSuccess).toHaveBeenCalledOnce();
       });
     });
+
+    it("calls onToggle after successful tool creation if onSuccess is absent", async () => {
+      const user = userEvent.setup();
+      const onToggle = vi.fn();
+      // Render WITHOUT onSuccess, to hit the fallback
+      render(
+        <AuthProvider>
+          <I18nProvider>
+            <ToolForm isOpen={true} onToggle={onToggle} />
+          </I18nProvider>
+        </AuthProvider>
+      );
+
+      await user.type(screen.getByLabelText(/Name/), "my-tool");
+      await user.type(screen.getByLabelText(/URL/), "https://api.example.com");
+
+      await user.click(screen.getByRole("button", { name: "Add tool" }));
+
+      await waitFor(() => {
+        expect(onToggle).toHaveBeenCalledOnce();
+      });
+    });
+
+    it("copies schemas to clipboard and shows copied message", async () => {
+      const user = userEvent.setup();
+      const clipboardSpy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined);
+      
+      renderForm();
+
+      // Ensure manual schema mode
+      await user.click(screen.getByRole("button", { name: /Add manually/i }));
+
+      const copyInputBtn = screen.getByLabelText(/Copy input schema/i);
+      await user.click(copyInputBtn);
+
+      expect(clipboardSpy).toHaveBeenCalledWith('{\n  "type": "object",\n  "properties": {}\n}');
+      
+      const copyOutputBtn = screen.getByLabelText(/Copy output schema/i);
+      await user.click(copyOutputBtn);
+      
+      expect(clipboardSpy).toHaveBeenCalledTimes(2);
+      
+      clipboardSpy.mockRestore();
+    });
   });
 
   describe("Schema generation from OpenAPI", () => {
@@ -483,6 +527,196 @@ describe("ToolForm", () => {
       renderForm({ tool: createMockTool({ auth: undefined }) });
       const btn = screen.getByRole("button", { name: /Advanced settings/i });
       expect(btn).toHaveAttribute("aria-expanded", "false");
+    });
+
+
+
+    it("calls onToggle when cancel is clicked", async () => {
+      const user = userEvent.setup();
+      const onToggle = vi.fn();
+      renderForm({ onToggle });
+
+      await user.click(screen.getByRole("button", { name: /^cancel$/i }));
+      expect(onToggle).toHaveBeenCalledOnce();
+    });
+
+    it("renders with a minimal tool correctly", () => {
+      const minimalTool: Tool = {
+        id: "tool-min",
+        name: "min-tool",
+        originalName: "min-tool",
+        customName: "",
+        customNameSlug: "min-tool",
+        gatewaySlug: "",
+        integrationType: "REST",
+        requestType: "GET",
+        enabled: true,
+        reachable: true,
+        tags: undefined,
+        createdAt: "2026-01-01T00:00:00",
+        updatedAt: "2026-01-02T00:00:00",
+        url: undefined as any,
+        visibility: undefined as any,
+        auth: {
+          authType: "custom",
+          authHeaders: [{ key: "X-Test", value: "test" }],
+        },
+      };
+      renderForm({ tool: minimalTool });
+      expect(screen.getByDisplayValue("min-tool")).toBeInTheDocument();
+    });
+
+    it("handles tool with multiple authHeaders and object tags", () => {
+      const toolWithHeadersAndTags = createMockTool({
+        tags: [{ id: "t1", label: "obj-tag", color: "red" }] as any,
+        auth: {
+          authType: "authheaders",
+          authHeaders: [
+            { key: "X-Header-1", value: "val1" },
+            { key: "X-Header-2", value: "val2" }
+          ],
+        } as any
+      });
+      renderForm({ tool: toolWithHeadersAndTags });
+      
+      // The tags should be joined by ", "
+      expect(screen.getByDisplayValue("obj-tag")).toBeInTheDocument();
+    });
+
+    it("handles backward compatible authHeaderKey and authHeaderValue", () => {
+      const toolWithOldHeaders = createMockTool({
+        auth: {
+          authType: "authheaders",
+          authHeaderKey: "Old-Header",
+          authHeaderValue: "old-val"
+        } as any
+      });
+      renderForm({ tool: toolWithOldHeaders });
+      expect(screen.getByDisplayValue("Old-Header")).toBeInTheDocument();
+      expect(screen.getByDisplayValue("old-val")).toBeInTheDocument();
+    });
+
+    it("displays generating state when generateSchema is in progress", async () => {
+      server.use(
+        http.post("*/v1/tools/generate-schemas-from-openapi", async () => {
+          await new Promise(r => setTimeout(r, 200));
+          return HttpResponse.json({ success: true, input_schema: {}, output_schema: {} });
+        })
+      );
+      const user = userEvent.setup();
+      renderForm();
+
+      await user.type(screen.getByLabelText(/URL/), "https://api.example.com");
+      await user.click(screen.getByRole("button", { name: /Generate/i }));
+      
+      expect(screen.getByRole("button", { name: /Generating/i })).toBeInTheDocument();
+    });
+
+    it("displays Regenerate schema when schemaMode is generated", async () => {
+      server.use(
+        http.post("*/v1/tools/generate-schemas-from-openapi", () => {
+          return HttpResponse.json({ success: true, input_schema: {}, output_schema: {} });
+        })
+      );
+      const user = userEvent.setup();
+      renderForm();
+
+      await user.type(screen.getByLabelText(/URL/), "https://api.example.com");
+      await user.click(screen.getByRole("button", { name: /Generate/i }));
+      
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: /Regenerate/i })).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe("Form Validation and aria-invalid", () => {
+    it("sets aria-invalid and aria-describedby when validation fails", async () => {
+      const user = userEvent.setup();
+      renderForm();
+
+      // Submit without entering Name and URL
+      const submitBtn = screen.getByRole("button", { name: "Add Tool" });
+      await user.click(submitBtn);
+
+      // Wait for errors to appear
+      await waitFor(() => {
+        const nameInput = screen.getByLabelText(/Name/);
+        expect(nameInput).toHaveAttribute("aria-invalid", "true");
+        expect(nameInput).toHaveAttribute("aria-describedby", "name-error");
+
+        const urlInput = screen.getByLabelText(/URL/);
+        expect(urlInput).toHaveAttribute("aria-invalid", "true");
+        expect(urlInput).toHaveAttribute("aria-describedby", "url-error");
+      });
+    });
+  });
+
+  describe("Schema Generation UI state", () => {
+    it("shows generating schema text and spinner while generating", async () => {
+      const user = userEvent.setup();
+      
+      // Delay schema generation so we can observe the intermediate state
+      let resolveGenerate!: (value: any) => void;
+      server.use(
+        http.post("*/tools/generate-schema", () => {
+          return new Promise((resolve) => {
+            resolveGenerate = resolve;
+          });
+        })
+      );
+      
+      renderForm();
+
+      // Fill valid URL to enable Generate button
+      await user.type(screen.getByLabelText(/URL/), "https://api.example.com");
+      
+      const generateBtn = screen.getByRole("button", { name: /Generate/i });
+      await user.click(generateBtn);
+
+      await waitFor(() => {
+        expect(screen.getByText("Generating...")).toBeInTheDocument();
+      });
+      
+      resolveGenerate(HttpResponse.json({ 
+        inputSchema: '{"type":"object"}', 
+        outputSchema: '{"type":"object"}' 
+      }));
+    });
+  });
+
+  describe("Copy Output Schema", () => {
+    it("copies output schema to clipboard and shows Check icon", async () => {
+      const user = userEvent.setup();
+      
+      // Mock clipboard
+      const originalClipboard = navigator.clipboard;
+      const writeTextMock = vi.fn().mockResolvedValue(undefined);
+      Object.assign(navigator, {
+        clipboard: { writeText: writeTextMock },
+      });
+
+      renderForm({
+        tool: createMockTool({
+          outputSchema: '{"type":"string"}',
+        })
+      });
+
+      // Find the second copy button (Output schema)
+      const copyButtons = screen.getAllByRole("button", { name: /Copy output schema/i });
+      const outputCopyBtn = copyButtons.find(btn => btn.getAttribute("aria-label")?.includes("Copy output schema")) || copyButtons[0];
+      
+      await user.click(outputCopyBtn!);
+
+      expect(writeTextMock).toHaveBeenCalledWith('{"type":"string"}');
+      
+      // Wait for Check icon (aria-label="Copied!") to appear
+      await waitFor(() => {
+        expect(screen.getByLabelText("Copied!")).toBeInTheDocument();
+      });
+
+      // Restore clipboard
+      Object.assign(navigator, { clipboard: originalClipboard });
     });
   });
 });

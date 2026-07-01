@@ -159,6 +159,36 @@ describe("ResourceForm", () => {
       await waitFor(() => expect(onSuccess).toHaveBeenCalledOnce());
     });
 
+    it("fills out optional fields correctly", async () => {
+      const onSuccess = vi.fn();
+      const user = userEvent.setup();
+      renderForm({ onSuccess });
+
+      await user.type(screen.getByLabelText(/URI/), "resource://example/path");
+      await user.type(screen.getByLabelText(/Name/), "My Resource");
+      await user.type(screen.getByLabelText(/Content/), "content");
+      await user.type(screen.getByPlaceholderText(/optional description/i), "Some description");
+      await user.type(screen.getByLabelText(/Tags/), "tag1, tag2");
+      
+      // Select MIME Type
+      const mimeTypeSelect = screen.getByRole("combobox", { name: /MIME Type/i });
+      await user.click(mimeTypeSelect);
+      const mimeTypeOption = await screen.findByRole("option", { name: "application/json" });
+      await user.click(mimeTypeOption);
+      
+      // Select Visibility
+      const visibilitySelect = screen.getByRole("combobox", { name: /Visibility/i });
+      await user.click(visibilitySelect);
+      const visibilityOption = await screen.findByRole("option", { name: /Public/i });
+      await user.click(visibilityOption);
+      
+      // Wait for select portal to close so it doesn't block clicks
+      await waitFor(() => expect(screen.queryByRole("listbox")).not.toBeInTheDocument());
+
+      await user.click(screen.getByRole("button", { name: /Add resources/i }));
+      await waitFor(() => expect(onSuccess).toHaveBeenCalledOnce());
+    });
+
     it("shows submitError above submit button on API failure", async () => {
       server.use(
         http.post("*/resources", () =>
@@ -175,7 +205,7 @@ describe("ResourceForm", () => {
       await user.click(screen.getByRole("button", { name: /Add resources/i }));
 
       await waitFor(() => {
-        expect(screen.getByRole("alert")).toBeInTheDocument();
+        expect(screen.getByText(/URI already exists/i)).toBeInTheDocument();
       });
     });
   });
@@ -229,3 +259,4 @@ describe("ResourceForm", () => {
     });
   });
 });
+

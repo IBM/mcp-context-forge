@@ -682,6 +682,228 @@ describe("useToolForm", () => {
       expect(capturedBody?.auth_password).toBeUndefined();
     });
 
+    it("processes tags with commas and removes empty tags", async () => {
+      let capturedBody: Record<string, unknown> | undefined;
+      server.use(
+        http.post("*/tools", async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({ id: "tool-new" }, { status: 201 });
+        }),
+      );
+
+      const { result } = renderHook(() => useToolForm());
+
+      act(() => {
+        result.current.setName("my-tool");
+        result.current.setUrl("https://api.example.com");
+        result.current.setTags(" tag1 , , tag2 ");
+      });
+
+      await act(async () => {
+        await result.current.handleSubmit({
+          preventDefault: vi.fn(),
+        } as unknown as FormEvent<HTMLFormElement>);
+      });
+
+      expect((capturedBody?.tool as any).tags).toEqual(["tag1", "tag2"]);
+    });
+
+    it("returns false from validateForm if outputSchema is invalid", () => {
+      const { result } = renderHook(() => useToolForm());
+
+      act(() => {
+        result.current.setOutputSchema("invalid json");
+      });
+
+      let isValid;
+      act(() => {
+        isValid = result.current.validateForm();
+      });
+
+      expect(isValid).toBe(false);
+      expect(result.current.errors.schema).toBeDefined();
+    });
+
+    it("returns false from validateForm if inputSchema is invalid", () => {
+      const { result } = renderHook(() => useToolForm());
+
+      act(() => {
+        result.current.setInputSchema("invalid json");
+      });
+
+      let isValid;
+      act(() => {
+        isValid = result.current.validateForm();
+      });
+
+      expect(isValid).toBe(false);
+      expect(result.current.errors.schema).toBeDefined();
+    });
+
+    it("handles successful submission without onSuccess callback", async () => {
+      server.use(
+        http.post("*/tools", () =>
+          HttpResponse.json({ id: "tool-new" }, { status: 201 }),
+        ),
+      );
+
+      const { result } = renderHook(() => useToolForm());
+
+      act(() => {
+        result.current.setName("my-tool");
+        result.current.setUrl("https://api.example.com");
+      });
+
+      await act(async () => {
+        await result.current.handleSubmit({
+          preventDefault: vi.fn(),
+        } as unknown as FormEvent<HTMLFormElement>);
+      });
+
+      expect(result.current.name).toBe(""); // resetForm was called
+    });
+
+    it("handles authheaders update when multiple headers exist and some are changed", async () => {
+      let capturedBody: Record<string, unknown> | undefined;
+      server.use(
+        http.put("*/tools/tool-1", async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({ id: "tool-1" }, { status: 200 });
+        }),
+      );
+
+      const { result } = renderHook(() =>
+        useToolForm({
+          toolId: "tool-1",
+          initialValues: {
+            name: "my-tool",
+            url: "https://api.example.com",
+            requestType: "POST",
+            authType: "custom",
+            customHeaders: [
+              { id: "1", key: "X-Key", value: "*****" }, // pragma: allowlist secret
+            ],
+          },
+        }),
+      );
+
+      // Change the header value
+      act(() => {
+        result.current.setCustomHeaders([
+          { id: "1", key: "X-Key", value: "new-secret" },
+        ]);
+      });
+
+      await act(async () => {
+        await result.current.handleSubmit({
+          preventDefault: vi.fn(),
+        } as unknown as FormEvent<HTMLFormElement>);
+      });
+
+      expect(capturedBody?.auth_type).toBe("authheaders");
+      expect((capturedBody?.auth_headers as any)[0].value).toBe("new-secret");
+    });
+
+    it("handles authheaders update when single header is changed (maxCustomHeaders = 1)", async () => {
+      let capturedBody: Record<string, unknown> | undefined;
+      server.use(
+        http.put("*/tools/tool-1", async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({ id: "tool-1" }, { status: 200 });
+        }),
+      );
+
+      const { result } = renderHook(() =>
+        useToolForm({
+          maxCustomHeaders: 1,
+          toolId: "tool-1",
+          initialValues: {
+            name: "my-tool",
+            url: "https://api.example.com",
+            requestType: "POST",
+            authType: "custom",
+            customHeaders: [
+              { id: "1", key: "X-Key", value: "*****" }, // pragma: allowlist secret
+            ],
+          },
+        }),
+      );
+
+      // Change the header value
+      act(() => {
+        result.current.setCustomHeaders([
+          { id: "1", key: "X-Key", value: "new-secret" },
+        ]);
+      });
+
+      await act(async () => {
+        await result.current.handleSubmit({
+          preventDefault: vi.fn(),
+        } as unknown as FormEvent<HTMLFormElement>);
+      });
+
+      expect(capturedBody?.auth_type).toBe("authheaders");
+      expect(capturedBody?.auth_header_value).toBe("new-secret");
+    });
+
+    it("omits non-REST request types from update payload", async () => {
+      let capturedBody: Record<string, unknown> | undefined;
+      server.use(
+        http.put("*/tools/tool-1", async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({ id: "tool-1" }, { status: 200 });
+        }),
+      );
+
+      const { result } = renderHook(() =>
+        useToolForm({
+          toolId: "tool-1",
+          initialValues: {
+            name: "my-tool",
+            url: "https://api.example.com",
+            requestType: "STREAMABLEHTTP" as any, // Cast since RequestType limits it
+            integrationType: "MCP",
+          },
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleSubmit({
+          preventDefault: vi.fn(),
+        } as unknown as FormEvent<HTMLFormElement>);
+      });
+
+      expect(capturedBody?.requestType).toBeUndefined();
+      expect(capturedBody?.integrationType).toBeUndefined();
+    });
+
+    it("surfaces update failure error for edit mode", async () => {
+      server.use(
+        http.put("*/tools/tool-1", () =>
+          HttpResponse.json({ detail: "Update failed" }, { status: 400 }),
+        ),
+      );
+
+      const { result } = renderHook(() =>
+        useToolForm({
+          toolId: "tool-1",
+          initialValues: {
+            name: "my-tool",
+            url: "https://api.example.com",
+            requestType: "POST",
+          },
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleSubmit({
+          preventDefault: vi.fn(),
+        } as unknown as FormEvent<HTMLFormElement>);
+      });
+
+      expect(result.current.errors.submit).toBe("Update failed");
+    });
+
     it("omits auth fields on update when the secret is still masked (unchanged)", async () => {
       let capturedBody: Record<string, unknown> | undefined;
       server.use(

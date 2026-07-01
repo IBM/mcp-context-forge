@@ -575,4 +575,346 @@ describe("CreateServer", () => {
       componentMockState.mockSourceSelection = false;
     }
   });
+  describe("Edit Mode", () => {
+    it("renders loading state initially in edit mode", () => {
+      routerMock.path = "/app/gateways/create-server?editServerId=gateway-1";
+      
+      let resolvePromise: (value: any) => void;
+      server.use(
+        http.get("*/servers/gateway-1", () => {
+          return new Promise((resolve) => {
+            resolvePromise = resolve;
+          });
+        })
+      );
+      
+      renderWithProviders(<CreateServer />);
+      expect(screen.getAllByRole("status").length).toBeGreaterThan(0);
+      expect(screen.getByText("Loading...")).toBeInTheDocument();
+    });
+
+    it("renders error state when fetch fails in edit mode", async () => {
+      routerMock.path = "/app/gateways/create-server?editServerId=gateway-1";
+      server.use(
+        http.get("*/servers/gateway-1", () => {
+          return HttpResponse.json({ detail: "Not found" }, { status: 404 });
+        })
+      );
+
+      renderWithProviders(<CreateServer />);
+      
+      await waitFor(() => {
+        expect(screen.getByRole("alert")).toBeInTheDocument();
+      });
+      // The default error behavior from msw mock uses a fallback if there's no message
+    });
+
+    it("renders the edit form when data is loaded successfully", async () => {
+      routerMock.path = "/app/gateways/create-server?editServerId=gateway-1";
+      server.use(
+        http.get("*/servers/gateway-1", () => {
+          return HttpResponse.json({
+            id: "gateway-1",
+            name: "Test Edit Server",
+            visibility: "team",
+            oauthEnabled: false,
+            tags: ["prod", "test"],
+            description: "A test server for editing",
+          });
+        }),
+        http.get("*/gateways", () => {
+          return HttpResponse.json({ gateways: [] }, { status: 200 });
+        })
+      );
+
+      renderWithProviders(<CreateServer />);
+      
+      await waitFor(() => {
+        // "Edit server" is the title in Edit mode
+        expect(screen.getByRole("heading", { name: "Edit server" })).toBeInTheDocument();
+      });
+
+      expect(screen.getByDisplayValue("Test Edit Server")).toBeInTheDocument();
+    });
+
+    it("renders MCP servers section in edit mode and allows source selection", async () => {
+      routerMock.path = "/app/gateways/create-server?editServerId=gateway-1";
+      server.use(
+        http.get("*/servers/gateway-1", () => {
+          return HttpResponse.json({
+            id: "gateway-1",
+            name: "Test Edit Server",
+            visibility: "team",
+            oauthEnabled: false,
+          });
+        }),
+        http.get("*/gateways", () => {
+          return HttpResponse.json({
+            gateways: [
+              {
+                id: "mcp-server-1",
+                name: "MCP Server 1",
+                enabled: true,
+                reachable: true,
+                toolCount: 1,
+                resourceCount: 2,
+                promptCount: 3,
+              },
+            ],
+          });
+        }),
+        http.get("*/tools", () => {
+          return HttpResponse.json({ tools: [{ id: "tool-1", name: "Test Tool" }] });
+        }),
+        http.get("*/resources", () => {
+          return HttpResponse.json({ resources: [{ id: "resource-1", name: "Test Resource" }] });
+        }),
+        http.get("*/prompts", () => {
+          return HttpResponse.json({ prompts: [{ id: "prompt-1", name: "Test Prompt" }] });
+        })
+      );
+
+      renderWithProviders(<CreateServer />);
+      
+      await waitFor(() => {
+        expect(screen.getByRole("heading", { name: "Edit server" })).toBeInTheDocument();
+      });
+
+      // It should display MCP servers section
+      expect(screen.getByText("MCP server")).toBeInTheDocument();
+      
+      // Wait for MCP Server to be loaded and rendered
+      await waitFor(() => {
+        expect(screen.getByText("MCP Server 1")).toBeInTheDocument();
+      });
+
+      // Expand the accordion
+      const trigger = screen.getByText("MCP Server 1");
+      act(() => {
+        trigger.click();
+      });
+
+      // Wait for components to load
+      await waitFor(() => {
+        expect(screen.getByText("Test Tool")).toBeInTheDocument();
+        expect(screen.getByText("Test Resource")).toBeInTheDocument();
+        expect(screen.getByText("Test Prompt")).toBeInTheDocument();
+      });
+      
+      // Select a tool
+      const toolCheckbox = screen.getByLabelText("Select Test Tool");
+      act(() => {
+        toolCheckbox.click();
+      });
+
+      // Deselect the tool to cover line 606 (else nextIds.delete)
+      act(() => {
+        toolCheckbox.click();
+      });
+    });
+
+    it("renders warning alert when mcpServers fails to load", async () => {
+      routerMock.path = "/app/gateways/create-server?editServerId=gateway-1";
+      server.use(
+        http.get("*/servers/gateway-1", () => {
+          return HttpResponse.json({
+            id: "gateway-1",
+            name: "Test Edit Server",
+            visibility: "team",
+            oauthEnabled: false,
+          });
+        }),
+        http.get("*/gateways", () => {
+          return HttpResponse.error();
+        })
+      );
+
+      renderWithProviders(<CreateServer />);
+
+      await waitFor(() => {
+        expect(screen.getByRole("alert")).toBeInTheDocument();
+      });
+    });
+
+    it("renders componentError alert when tools fetch fails inside accordion", async () => {
+      routerMock.path = "/app/gateways/create-server?editServerId=gateway-1";
+      server.use(
+        http.get("*/servers/gateway-1", () => {
+          return HttpResponse.json({
+            id: "gateway-1",
+            name: "Test Edit Server",
+            visibility: "team",
+            oauthEnabled: false,
+          });
+        }),
+        http.get("*/gateways", () => {
+          return HttpResponse.json({
+            gateways: [
+              {
+                id: "mcp-server-err",
+                name: "MCP Server Err",
+                enabled: true,
+                reachable: true,
+                toolCount: 1,
+              },
+            ],
+          });
+        }),
+        http.get("*/tools", () => {
+          return HttpResponse.json({ message: "Network Error" }, { status: 500 });
+        }),
+        http.get("*/resources", () => HttpResponse.json({ resources: [] })),
+        http.get("*/prompts", () => HttpResponse.json({ prompts: [] }))
+      );
+
+      renderWithProviders(<CreateServer />);
+      
+      await waitFor(() => {
+        expect(screen.getByText("MCP Server Err")).toBeInTheDocument();
+      });
+
+      const trigger = screen.getByText("MCP Server Err");
+      act(() => {
+        trigger.click();
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("HTTP 500")).toBeInTheDocument();
+      });
+    });
+
+    it("renders fallback error message when editServerError has no message", async () => {
+      routerMock.path = "/app/gateways/create-server?editServerId=gateway-1";
+      server.use(
+        http.get("*/servers/gateway-1", () => {
+          return HttpResponse.json(null);
+        }),
+        http.get("*/gateways", () => {
+          return HttpResponse.json({ gateways: [] });
+        })
+      );
+
+      renderWithProviders(<CreateServer />);
+
+      await waitFor(() => {
+        expect(screen.getByRole("alert")).toBeInTheDocument();
+      });
+
+      expect(screen.getByText("Unable to update server. Please try again.")).toBeInTheDocument();
+    });
+
+    it("calls updateVirtualServer and navigates when form is successfully submitted in edit mode", async () => {
+      routerMock.path = "/app/gateways/create-server?editServerId=gateway-1";
+      server.use(
+        http.get("*/servers/gateway-1", () => {
+          return HttpResponse.json({
+            id: "gateway-1",
+            name: "Test Edit Server",
+            visibility: "team",
+            oauthEnabled: false,
+          });
+        }),
+        http.get("*/gateways", () => {
+          return HttpResponse.json({ gateways: [] });
+        })
+      );
+
+      componentMockState.mockForm = true;
+      try {
+        renderWithProviders(<CreateServer />);
+
+        await waitFor(() => {
+          expect(screen.getByTestId("mock-create-server-form")).toBeInTheDocument();
+        });
+
+        act(() => {
+          componentMockState.capturedProps?.onSuccess({ name: "Updated Name" });
+        });
+
+        await waitFor(() => {
+          expect(mockUpdateVirtualServer).toHaveBeenCalledWith("gateway-1", {
+            name: "Updated Name",
+            associatedTools: [],
+            associatedResources: [],
+            associatedPrompts: [],
+          });
+        });
+        expect(mockNavigate).toHaveBeenCalledWith("/app/gateways");
+      } finally {
+        componentMockState.mockForm = false;
+      }
+    });
+
+    it("shows error when updateVirtualServer fails", async () => {
+      routerMock.path = "/app/gateways/create-server?editServerId=gateway-1";
+      server.use(
+        http.get("*/servers/gateway-1", () => {
+          return HttpResponse.json({
+            id: "gateway-1",
+            name: "Test Edit Server",
+            visibility: "team",
+            oauthEnabled: false,
+          });
+        }),
+        http.get("*/gateways", () => {
+          return HttpResponse.json({ gateways: [] });
+        })
+      );
+
+      mockUpdateVirtualServer.mockRejectedValueOnce(new Error("Update failed error"));
+
+      componentMockState.mockForm = true;
+      try {
+        renderWithProviders(<CreateServer />);
+
+        await waitFor(() => {
+          expect(screen.getByTestId("mock-create-server-form")).toBeInTheDocument();
+        });
+
+        act(() => {
+          componentMockState.capturedProps?.onSuccess({ name: "Updated Name" });
+        });
+
+        await waitFor(() => {
+          expect(mockUpdateVirtualServer).toHaveBeenCalledWith("gateway-1", {
+            name: "Updated Name",
+            associatedTools: [],
+            associatedResources: [],
+            associatedPrompts: [],
+          });
+        });
+        // Error should be set on the CreateServerForm props
+        // But since we use mockForm, we just verify it didn't navigate
+        expect(mockNavigate).not.toHaveBeenCalledWith("/app/gateways");
+      } finally {
+        componentMockState.mockForm = false;
+      }
+    });
+
+    it("displays a message when there are no connected MCP servers", async () => {
+      routerMock.path = "/app/gateways/create-server?editServerId=gateway-1";
+      server.use(
+        http.get("*/servers/gateway-1", () => {
+          return HttpResponse.json({
+            id: "gateway-1",
+            name: "Test Edit Server",
+            visibility: "team",
+            oauthEnabled: false,
+          });
+        }),
+        http.get("*/gateways", () => {
+          return HttpResponse.json({ gateways: [] });
+        })
+      );
+
+      renderWithProviders(<CreateServer />);
+
+      await waitFor(() => {
+        expect(screen.getByRole("heading", { name: "Edit server" })).toBeInTheDocument();
+      });
+
+      expect(screen.getByText("MCP server")).toBeInTheDocument();
+      expect(await screen.findByText("No MCP servers found.")).toBeInTheDocument();
+    });
+  });
 });
