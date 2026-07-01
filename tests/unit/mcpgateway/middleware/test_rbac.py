@@ -510,7 +510,8 @@ class TestTokenScopeChecks:
                 await decorated(user=mock_user)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
-            assert "API token missing required scope: tools.execute" in str(exc_info.value.detail)
+            # Review comment #3: Should use generic error message to avoid permission disclosure
+            assert exc_info.value.detail == "Access denied"
 
     @pytest.mark.asyncio
     async def test_api_token_empty_scopes_denies_all_line_691_692_693(self):
@@ -533,7 +534,8 @@ class TestTokenScopeChecks:
                 await decorated(user=mock_user)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
-            assert "API token missing required scope: tools.read" in str(exc_info.value.detail)
+            # Review comment #3: Should use generic error message to avoid permission disclosure
+            assert exc_info.value.detail == "Access denied"
 
     @pytest.mark.asyncio
     async def test_session_token_skips_scope_check_line_690(self):

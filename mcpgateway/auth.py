@@ -1912,7 +1912,11 @@ async def get_current_user(
             # Store JTI for use in middleware (e.g., token usage logging)
             if jti:
                 request.state.jti = jti
-            # Extract and store token scopes for permission checking (JWT tokens)
+
+            # Set auth_method first (determines if this is API token vs session token)
+            await _set_auth_method_from_payload(payload)
+
+            # Extract and store token scopes for permission checking (JWT API tokens only)
             # This mirrors the database API token behavior at line 1821
             #
             # NAMING NOTE: JWT tokens use nested "scopes.permissions" structure (OAuth 2.0 standard)
@@ -1920,28 +1924,37 @@ async def get_current_user(
             # Both converge to unified "token_scopes" in request.state for consistent enforcement.
             # See docs/security/TOKEN_SCOPE_NAMING.md for full rationale.
             #
-            # SECURITY DESIGN: Two-layer model with intentional token-type differentiation
-            # - Session tokens (no scopes field): Use RBAC only (Layer 2)
+            # SECURITY DESIGN: Two-layer model with explicit token-type classification
+            # - Session tokens (auth_method != "api_token"): Use RBAC only (Layer 2)
             #   Session tokens are tied to users with roles; RBAC controls permissions.
-            # - API tokens (scopes field present): Use scopes + RBAC (Layer 1 + Layer 2)
+            # - API tokens (auth_method == "api_token"): Use scopes + RBAC (Layer 1 + Layer 2)
             #   API tokens are standalone credentials; scopes enforce least-privilege.
             #
-            # SECURITY: Must set token_scopes even for empty dict/list to enforce scope checks.
-            # - scopes dict present (even if {}): API token, enforce scope check
-            # - scopes missing/None: Session token, skip scope check (token_scopes stays None)
-            scopes = payload.get("scopes")
-            if scopes is not None:
-                if isinstance(scopes, dict):
-                    permissions = scopes.get("permissions", [])
-                    # Set token_scopes for ANY API token with scopes field, even if empty
-                    # Empty dict {} or empty list [] means "no permissions granted" → deny all
-                    request.state.token_scopes = permissions
-                else:
+            # SECURITY FIX: Use auth_method classification instead of structural detection
+            # Interactive login JWTs can also have scopes dict (see _set_auth_method_from_payload
+            # line 1348 note), so we must check auth_method, not scopes field presence.
+            #
+            # SECURITY: API tokens MUST have scopes field (even if empty) to enforce Layer 1.
+            # - API token: REQUIRED scopes field → enforce scope check (even if empty = deny all)
+            # - Session token: token_scopes stays None (skip scope check, use RBAC only)
+            if getattr(request.state, "auth_method", None) == "api_token":
+                scopes = payload.get("scopes")
+                if scopes is None:
+                    # CRITICAL: API token missing scopes field is a security bypass of Layer 1
+                    # All API tokens must have scopes field (even if empty dict {}) to enforce least-privilege
+                    logger.warning("JWT API token rejected: missing required 'scopes' field. " "API tokens must include scopes field (even if empty) to enforce Layer 1 scope checks.")
+                    raise HTTPException(status_code=401, detail="Invalid token: missing required scopes field")
+
+                if not isinstance(scopes, dict):
                     # Malformed JWT: scopes field exists but is not a dict
                     # Reject malformed tokens to enforce fail-closed security model
-                    logger.warning(f"JWT token rejected: scopes field is {type(scopes).__name__}, expected dict. " f"Tokens with malformed scopes must be regenerated with correct structure.")
+                    logger.warning(f"JWT API token rejected: scopes field is {type(scopes).__name__}, expected dict. " f"Tokens with malformed scopes must be regenerated with correct structure.")
                     raise HTTPException(status_code=401, detail="Invalid token: malformed scopes field")
-            await _set_auth_method_from_payload(payload)
+
+                permissions = scopes.get("permissions", [])
+                # Set token_scopes for API token, even if empty list
+                # Empty dict {} or empty list [] means "no permissions granted" → deny all
+                request.state.token_scopes = permissions
 
     except HTTPException:
         # Re-raise HTTPException from verify_jwt_token (handles expired/invalid tokens)
