@@ -223,6 +223,25 @@ def get_internal_mcp_auth_context(request: Request) -> Optional[Dict[str, Any]]:
     return None
 
 
+def encode_internal_mcp_auth_context(auth_context: Dict[str, Any]) -> str:
+    """Encode an edge-validated auth context for forwarding to a trusted internal dispatcher.
+
+    Mirror of :func:`decode_internal_mcp_auth_context`. Packages the auth context
+    so a trusted internal dispatcher (e.g. ``/_internal/mcp/rpc``) can use it
+    without re-running authentication. The unpadded base64url shape keeps the
+    value header-safe.
+
+    Args:
+        auth_context: Auth-context dict to encode.
+
+    Returns:
+        Unpadded base64url-encoded JSON payload for the
+        ``x-contextforge-auth-context`` header.
+    """
+    encoded = base64.urlsafe_b64encode(orjson.dumps(auth_context)).decode("ascii")
+    return encoded.rstrip("=")
+
+
 def decode_internal_mcp_auth_context(header_value: str) -> Dict[str, Any]:
     """Decode the trusted internal MCP auth header payload.
 
@@ -291,6 +310,175 @@ def has_valid_internal_mcp_runtime_auth_header(request: Request) -> bool:
     if not provided:
         return False
     return hmac.compare_digest(provided, _expected_internal_mcp_runtime_auth_header())
+
+
+# Redis-transit integrity for forwarded auth context.
+#
+# The header-borne auth context that reaches /_internal/mcp/rpc is gated by the
+# secret-derived runtime-auth token, so a caller must already hold the secret.
+# The session-affinity Redis pub/sub hop is different: a writer to the Redis
+# channel needs no secret, yet the owner worker re-stamps whatever auth context
+# it reads with a valid runtime-auth token before dispatching. That makes the
+# owner a signing oracle for forged contexts. To close it, the publisher signs
+# the encoded auth context (bound to its mcp_session_id) and the consumer
+# verifies the signature before trusting it.
+#
+# These helpers are deliberately separate from the general header-encoding
+# contract (encode/decode_internal_mcp_auth_context), which must stay
+# byte-compatible for the Rust runtime. This is a Redis-specific integrity layer
+# only.
+_REDIS_AUTH_CONTEXT_SIG_DOMAIN = b"mcpgw.redis-auth-ctx.v1"
+_REDIS_AUTH_CONTEXT_SIG_DELIMITER = b"\x1f"  # ASCII unit separator; never present in hex ids or base64url
+
+
+def _redis_auth_context_sig_material(session_id: str, encoded_auth_context: str) -> bytes:
+    """Build the domain-separated HMAC input for a Redis-forwarded auth context.
+
+    The domain tag plus a unit-separator delimiter (which cannot occur in a hex
+    session id or a base64url payload) keeps the field boundaries unambiguous, so
+    distinct ``(session_id, encoded)`` pairs cannot collide onto the same input.
+
+    Args:
+        session_id: The MCP session id the context is bound to.
+        encoded_auth_context: The base64url payload from
+            :func:`encode_internal_mcp_auth_context`.
+
+    Returns:
+        The byte string fed to HMAC.
+    """
+    return (
+        _REDIS_AUTH_CONTEXT_SIG_DOMAIN
+        + _REDIS_AUTH_CONTEXT_SIG_DELIMITER
+        + (session_id or "").encode("utf-8")
+        + _REDIS_AUTH_CONTEXT_SIG_DELIMITER
+        + (encoded_auth_context or "").encode("utf-8")
+    )
+
+
+def sign_redis_auth_context(session_id: str, encoded_auth_context: str) -> str:
+    """Sign an encoded auth context for transit over the session-affinity Redis hop.
+
+    Keyed with ``auth_encryption_secret`` and bound to ``session_id`` so a
+    captured signature cannot be replayed under a different session.
+
+    Args:
+        session_id: The MCP session id the context is bound to.
+        encoded_auth_context: The base64url auth-context payload to protect.
+
+    Returns:
+        Hex-encoded HMAC-SHA256 signature.
+    """
+    return hmac.new(
+        _auth_encryption_secret_value().encode("utf-8"),
+        _redis_auth_context_sig_material(session_id, encoded_auth_context),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def verify_redis_auth_context(session_id: str, encoded_auth_context: str, signature: str) -> bool:
+    """Verify a Redis-forwarded auth-context signature in constant time.
+
+    Args:
+        session_id: The MCP session id the context must be bound to.
+        encoded_auth_context: The base64url auth-context payload that was signed.
+        signature: The hex HMAC-SHA256 signature to check.
+
+    Returns:
+        ``True`` only when ``signature`` is a non-empty, valid signature for the
+        given ``(session_id, encoded_auth_context)`` pair under the current secret.
+    """
+    if not signature:
+        return False
+    expected = sign_redis_auth_context(session_id, encoded_auth_context)
+    return hmac.compare_digest(signature, expected)
+
+
+# Internal-dispatch trust gate, defined once and shared by all callers.
+INTERNAL_MCP_PATH_PREFIX = "/_internal/mcp"
+INTERNAL_A2A_PATH_PREFIX = "/_internal/a2a"
+INTERNAL_RUNTIME_MARKER_HEADER = "x-contextforge-mcp-runtime"
+INTERNAL_AUTH_CONTEXT_HEADER = "x-contextforge-auth-context"
+TRUSTED_INTERNAL_RUNTIME_MARKERS = frozenset({"rust", "affinity"})
+
+
+def _internal_path_requires_auth_context(path: str) -> bool:
+    """Whether an internal route requires an auth context.
+
+    Only ``*/authenticate`` is exempt, since it creates the context; every
+    other internal route must carry one.
+
+    Args:
+        path: The request path to classify.
+
+    Returns:
+        ``False`` for ``*/authenticate``, otherwise ``True``.
+    """
+    return not path.rstrip("/").endswith("/authenticate")
+
+
+def is_trusted_internal_runtime_request(
+    request: Request,
+    *,
+    allowed_prefixes: tuple[str, ...],
+    require_auth_context: bool,
+    path: Optional[str] = None,
+) -> bool:
+    """Return whether a request is a trusted in-process internal-runtime hop.
+
+    The trust boundary is the HMAC header and, when required, the encoded
+    ``x-contextforge-auth-context``. The loopback check is defense in depth,
+    not an independent gate: ProxyHeaders(trusted_hosts="*") lets a direct
+    external caller influence ``request.client.host`` (the replay is hardened
+    separately by stripping forwarded / client-IP headers).
+
+    Args:
+        request: Incoming request to inspect.
+        allowed_prefixes: Internal path prefixes this caller trusts.
+        require_auth_context: Require a non-empty ``x-contextforge-auth-context``.
+        path: Explicit path override for callers that strip a ``root_path``;
+            defaults to ``request.url.path``.
+
+    Returns:
+        ``True`` only when prefix, runtime marker, HMAC, optional auth context,
+        and loopback all hold; otherwise ``False``.
+    """
+    p = path if path is not None else (getattr(getattr(request, "url", None), "path", "") or "")
+    if not any(p == prefix or p.startswith(f"{prefix}/") for prefix in allowed_prefixes):
+        return False
+    if request.headers.get(INTERNAL_RUNTIME_MARKER_HEADER) not in TRUSTED_INTERNAL_RUNTIME_MARKERS:
+        return False
+    if not has_valid_internal_mcp_runtime_auth_header(request):
+        return False
+    if require_auth_context and not request.headers.get(INTERNAL_AUTH_CONTEXT_HEADER):
+        return False
+    client_host = getattr(getattr(request, "client", None), "host", None)
+    return client_host in ("127.0.0.1", "::1")
+
+
+def is_trusted_internal_mcp_request(request: Request, *, path: Optional[str] = None) -> bool:
+    """MCP + A2A internal trust gate with a path-aware auth-context requirement.
+
+    ``*/authenticate`` routes are exempt from the auth-context requirement;
+    every other internal route requires it. ``/_internal/a2a/*`` is trusted
+    only when the A2A feature is enabled.
+
+    Args:
+        request: Incoming request to inspect.
+        path: Explicit path override (e.g. a ``root_path``-stripped path);
+            defaults to ``request.url.path``.
+
+    Returns:
+        ``True`` when the request is a trusted internal MCP/A2A hop.
+    """
+    p = path if path is not None else (getattr(getattr(request, "url", None), "path", "") or "")
+    if p.startswith(f"{INTERNAL_A2A_PATH_PREFIX}/") and not settings.mcpgateway_a2a_enabled:
+        return False
+    return is_trusted_internal_runtime_request(
+        request,
+        allowed_prefixes=(INTERNAL_MCP_PATH_PREFIX, INTERNAL_A2A_PATH_PREFIX),
+        require_auth_context=_internal_path_requires_auth_context(p),
+        path=p,
+    )
 
 
 def get_token_teams_from_request(request: Request) -> Optional[List[str]]:
