@@ -8221,8 +8221,8 @@ async def test_handle_streamable_http_get_nonexistent_server_returns_404_not_405
 
 
 @pytest.mark.asyncio
-async def test_forwarded_non_post_returns_200(monkeypatch):
-    """Test forwarded non-POST request returns 200 OK (line 1385-1389)."""
+async def test_forwarded_non_post_returns_405(monkeypatch):
+    """Test forwarded non-POST request returns 405 Method Not Allowed with warning."""
 
     class DummySessionManager:
         @asynccontextmanager
@@ -8241,8 +8241,8 @@ async def test_forwarded_non_post_returns_200(monkeypatch):
 
     await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
     await wrapper.shutdown()
-    assert messages[0]["status"] == 200
-    assert messages[1]["body"] == b'{"jsonrpc":"2.0","result":{}}'
+    assert messages[0]["status"] == 405
+    assert b"Method not allowed" in messages[1]["body"]
 
 
 @pytest.mark.asyncio
