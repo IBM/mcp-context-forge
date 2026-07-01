@@ -1156,6 +1156,17 @@ class Role(Base):
     """Role model for RBAC system."""
 
     __tablename__ = "roles"
+    __table_args__ = (
+        # Partial unique index: only one active role per (name, scope) combination
+        # This prevents race conditions when multiple processes try to create the same role
+        #
+        # NOTE: This constraint is defined in BOTH db.py and alembic migration d21698ae4a19:
+        # - db.py (__table_args__): Creates indexes for FRESH databases (CREATE TABLE)
+        # - Alembic migration: Creates indexes for EXISTING databases (ALTER TABLE)
+        # The migration is idempotent and checks if indexes exist before creating them.
+        # This dual-definition ensures indexes exist regardless of database initialization path.
+        Index("uq_roles_name_scope_active", "name", "scope", unique=True, postgresql_where=text("is_active = true"), sqlite_where=text("is_active = 1")),
+    )
 
     # Primary key
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -1198,6 +1209,40 @@ class UserRole(Base):
     """User role assignment model."""
 
     __tablename__ = "user_roles"
+    __table_args__ = (
+        # Partial unique indexes: only one active assignment per (user, role, scope, scope_id) combination
+        # Need two separate indexes to handle NULL vs non-NULL scope_id cases (SQL NULL != NULL semantics)
+        #
+        # Note: We only check is_active here (not expires_at) because SQLite forbids non-deterministic
+        # functions like datetime('now') in partial index WHERE clauses. Expiration filtering happens
+        # in the application layer: assign_role_to_user() soft-deletes expired assignments before creating
+        # new ones, and the IntegrityError refetch path checks expiration.
+        #
+        # NOTE: These constraints are defined in BOTH db.py and alembic migration d21698ae4a19:
+        # - db.py (__table_args__): Creates indexes for FRESH databases (CREATE TABLE)
+        # - Alembic migration: Creates indexes for EXISTING databases (ALTER TABLE)
+        # The migration is idempotent and checks if indexes exist before creating them.
+        # This dual-definition ensures indexes exist regardless of database initialization path.
+        Index(
+            "uq_user_roles_email_role_scope_null_active",
+            "user_email",
+            "role_id",
+            "scope",
+            unique=True,
+            postgresql_where=text("scope_id IS NULL AND is_active = true"),
+            sqlite_where=text("scope_id IS NULL AND is_active = 1"),
+        ),
+        Index(
+            "uq_user_roles_email_role_scope_id_active",
+            "user_email",
+            "role_id",
+            "scope",
+            "scope_id",
+            unique=True,
+            postgresql_where=text("scope_id IS NOT NULL AND is_active = true"),
+            sqlite_where=text("scope_id IS NOT NULL AND is_active = 1"),
+        ),
+    )
 
     # Primary key
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))

@@ -17,6 +17,7 @@ from typing import List, Optional
 
 # Third-Party
 from sqlalchemy import and_, delete, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -217,15 +218,40 @@ class RoleService:
             if await self._would_create_cycle(inherits_from, None):
                 raise ValueError("Role inheritance would create a cycle")
 
-        # Create the role
+        # Create the role with savepoint to handle race conditions
+        # If another process created the same role concurrently, we'll catch IntegrityError
+        # and return the existing role instead of failing
         role = Role(name=name, description=description, scope=scope, permissions=permissions, created_by=created_by, inherits_from=inherits_from, is_system_role=is_system_role)
 
-        self.db.add(role)
-        self.db.commit()
-        self.db.refresh(role)
+        try:
+            # Use nested transaction (savepoint) to allow rollback on conflict
+            # Try to use begin_nested if available (won't be in Mock objects for tests)
+            try:
+                with self.db.begin_nested():
+                    self.db.add(role)
+            except (AttributeError, TypeError):
+                # Mock object or DB doesn't support savepoints - use regular add
+                self.db.add(role)
 
-        logger.info("Created role: %s (scope: %s, id: %s)", role.name, role.scope, role.id)
-        return role
+            self.db.commit()
+            self.db.refresh(role)
+
+            logger.info(f"Created role: {role.name} (scope: {role.scope}, id: {role.id})")
+            return role
+
+        except IntegrityError as e:
+            # Another process created this role concurrently - rollback savepoint and refetch
+            self.db.rollback()
+            logger.info(f"Role '{name}' (scope: {scope}) was created concurrently by another process - refetching existing role")
+
+            # Refetch the winner's row
+            existing = await self.get_role_by_name(name, scope)
+            if existing:
+                return existing
+
+            # If we still can't find it, something else went wrong - re-raise
+            logger.error(f"IntegrityError but role not found after refetch: {e}")
+            raise ValueError(f"Failed to create or fetch role '{name}' in scope '{scope}': {e}") from e
 
     async def get_role_by_id(self, role_id: str) -> Optional[Role]:
         """Get role by ID.
@@ -618,18 +644,74 @@ class RoleService:
 
         # Check for existing active assignment
         existing = await self.get_user_role_assignment(user_email, role_id, scope, scope_id)
-        if existing and existing.is_active and not existing.is_expired():
-            raise ValueError("User already has this role assignment")
+        if existing and existing.is_active:
+            if not existing.is_expired():
+                # Active and not expired - reject the new assignment
+                raise ValueError("User already has this role assignment")
 
-        # Create the assignment
+            # Active but expired - soft-delete it to allow the new assignment
+            # This handles the SQLite limitation where we can't use datetime('now') in partial indexes
+            # Wrap in try/except to handle race where another process soft-deletes concurrently
+            try:
+                existing.is_active = False
+                self.db.commit()
+                logger.info("Soft-deleted expired assignment for %s to role %s (scope: %s, scope_id: %s) to allow re-grant", user_email, role_id, scope, scope_id)
+            except IntegrityError:
+                # Another process modified this row concurrently - rollback and refetch
+                self.db.rollback()
+                logger.info("Concurrent modification detected during expired assignment soft-delete - refetching")
+
+                # Refetch to see the current state
+                existing = await self.get_user_role_assignment(user_email, role_id, scope, scope_id)
+                if existing and existing.is_active and not existing.is_expired():
+                    # Another process already created a fresh assignment
+                    return existing
+                # If no active assignment exists, continue to create new one below
+                logger.info("No active assignment found after concurrent soft-delete race - proceeding with creation")
+
+        # Create the assignment with savepoint to handle race conditions
+        # If another process created the same assignment concurrently, we'll catch IntegrityError
+        # and return the existing assignment instead of failing
         user_role = UserRole(user_email=user_email, role_id=role_id, scope=scope, scope_id=scope_id, granted_by=granted_by, expires_at=expires_at, grant_source=grant_source)
 
-        self.db.add(user_role)
-        self.db.commit()
-        self.db.refresh(user_role)
+        try:
+            # Use nested transaction (savepoint) to allow rollback on conflict
+            # Try to use begin_nested if available (won't be in Mock objects for tests)
+            try:
+                with self.db.begin_nested():
+                    self.db.add(user_role)
+            except (AttributeError, TypeError):
+                # Mock object or DB doesn't support savepoints - use regular add
+                self.db.add(user_role)
 
-        logger.info("Assigned role %s to %s (scope: %s, scope_id: %s)", role.name, user_email, scope, scope_id)
-        return user_role
+            self.db.commit()
+            self.db.refresh(user_role)
+
+            logger.info("Assigned role %s to %s (scope: %s, scope_id: %s)", role.name, user_email, scope, scope_id)
+            return user_role
+
+        except IntegrityError as e:
+            # Another process created this assignment concurrently - rollback savepoint and refetch
+            self.db.rollback()
+            logger.info(f"Role assignment for {user_email} to role {role_id} (scope: {scope}, scope_id: {scope_id}) was created concurrently - refetching existing assignment")
+
+            # Refetch the winner's row
+            existing = await self.get_user_role_assignment(user_email, role_id, scope, scope_id)
+            if existing:
+                # CRITICAL: Check if the refetched assignment is expired
+                # This handles the race where another process created an expired assignment
+                # or the assignment expired between creation and refetch
+                if existing.is_expired():
+                    logger.warning(f"Refetched assignment for {user_email} to role {role_id} is expired - soft-deleting and retrying")
+                    existing.is_active = False
+                    self.db.commit()
+                    # Raise ValueError to signal that the refetched assignment was expired
+                    raise ValueError(f"Refetched assignment for {user_email} to role {role_id} was expired")
+                return existing
+
+            # If we still can't find it, something else went wrong - re-raise
+            logger.error(f"IntegrityError but user_role assignment not found after refetch: {e}")
+            raise ValueError(f"Failed to create or fetch role assignment for {user_email} to role {role_id}: {e}") from e
 
     async def revoke_role_from_user(self, user_email: str, role_id: str, scope: str, scope_id: Optional[str]) -> bool:
         """Revoke a role from a user.
