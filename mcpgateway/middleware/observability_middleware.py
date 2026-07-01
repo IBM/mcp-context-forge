@@ -195,6 +195,9 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 attributes={"http.method": http_method, "http.url": http_url},
             )
 
+            # Store span_id in request state for use in route handlers / plugin hook call sites
+            request.state.span_id = span_id
+
         except Exception as e:
             # If trace setup failed, log and continue without tracing
             logger.warning(f"Failed to setup observability trace: {e}")
