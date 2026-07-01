@@ -137,7 +137,7 @@ describe("Resources", () => {
 
     // Form should open
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Add Resource" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Add resources" })).toBeInTheDocument();
     });
   });
 
@@ -158,7 +158,7 @@ describe("Resources", () => {
     await user.keyboard("{Enter}");
 
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Add Resource" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Add resources" })).toBeInTheDocument();
     });
   });
 
@@ -419,7 +419,7 @@ describe("Resources", () => {
         expect(screen.getByText(/gateway-test-gateway Resources/i)).toBeInTheDocument();
       });
 
-      const closeButton = screen.getByLabelText("Close panel");
+      const closeButton = screen.getByRole("button", { name: "Close" });
       await user.click(closeButton);
 
       await waitFor(() => {
@@ -493,7 +493,7 @@ describe("Resources", () => {
       await user.click(screen.getByText("Add resources").closest('[data-slot="card"]')!);
 
       await waitFor(() => {
-        expect(screen.getByRole("heading", { name: "Add Resource" })).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: "Add resources" })).toBeInTheDocument();
       });
 
       await user.click(screen.getByRole("button", { name: /Cancel/i }));
@@ -501,7 +501,7 @@ describe("Resources", () => {
       await waitFor(() => {
         expect(screen.getByText("Add resources")).toBeInTheDocument();
       });
-      expect(screen.queryByRole("heading", { name: "Add Resource" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Add resources" })).not.toBeInTheDocument();
     });
   });
 
