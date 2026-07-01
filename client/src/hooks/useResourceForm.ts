@@ -1,0 +1,180 @@
+import { useState, useCallback, useMemo, type FormEvent } from "react";
+import { useIntl } from "react-intl";
+import { z } from "zod";
+import { useQuery } from "@/hooks/useQuery";
+import { sanitizeString } from "@/lib/sanitize";
+import { parseApiError } from "@/lib/errorUtils";
+import type { BodyCreateResourceResourcesPost } from "@/generated/types";
+import type { Visibility } from "@/types/server";
+
+const createResourceFormSchema = (intl: ReturnType<typeof useIntl>) =>
+  z.object({
+    uri: z.string().min(1, intl.formatMessage({ id: "resources.form.error.uriRequired" })),
+    name: z.string().min(1, intl.formatMessage({ id: "resources.form.error.nameRequired" })),
+    content: z.string().min(1, intl.formatMessage({ id: "resources.form.error.contentRequired" })),
+    description: z
+      .string()
+      .max(500, intl.formatMessage({ id: "resources.form.error.descriptionMax" }))
+      .optional(),
+    mimeType: z.string().optional(),
+    tags: z.string().optional(),
+  });
+
+export type ResourceFormData = z.infer<ReturnType<typeof createResourceFormSchema>>;
+
+export interface ResourceFormErrors {
+  uri?: string;
+  name?: string;
+  content?: string;
+  description?: string;
+  mimeType?: string;
+  tags?: string;
+  submit?: string;
+}
+
+export interface ResourceFormOptions {
+  onBeforeSubmit?: (data: BodyCreateResourceResourcesPost) => void;
+  onError?: () => void;
+}
+
+export interface UseResourceFormReturn {
+  uri: string;
+  name: string;
+  content: string;
+  description: string;
+  mimeType: MimeType | "";
+  tags: string;
+  visibility: Visibility;
+  errors: ResourceFormErrors;
+  isSubmitting: boolean;
+  setUri: (value: string) => void;
+  setName: (value: string) => void;
+  setContent: (value: string) => void;
+  setDescription: (value: string) => void;
+  setMimeType: (value: MimeType | "") => void;
+  setTags: (value: string) => void;
+  setVisibility: (value: Visibility) => void;
+  validateForm: () => boolean;
+  handleSubmit: (event: FormEvent<HTMLFormElement>, onSuccess?: () => void) => Promise<void>;
+  getFormData: () => BodyCreateResourceResourcesPost;
+}
+
+export const MIME_TYPES = [
+  "text/plain",
+  "text/markdown",
+  "text/html",
+  "text/csv",
+  "application/json",
+  "application/xml",
+  "application/pdf",
+] as const;
+
+export type MimeType = (typeof MIME_TYPES)[number];
+
+export function useResourceForm(options: ResourceFormOptions = {}): UseResourceFormReturn {
+  const { onBeforeSubmit, onError } = options;
+  const intl = useIntl();
+  const schema = useMemo(() => createResourceFormSchema(intl), [intl]);
+
+  const [uri, setUri] = useState("");
+  const [name, setName] = useState("");
+  const [content, setContent] = useState("");
+  const [description, setDescription] = useState("");
+  const [mimeType, setMimeType] = useState<MimeType | "">("");
+  const [tags, setTags] = useState("");
+  const [visibility, setVisibility] = useState<Visibility>("public");
+  const [errors, setErrors] = useState<ResourceFormErrors>({});
+
+  const { execute: createResource, isLoading: isSubmitting } = useQuery<
+    unknown,
+    BodyCreateResourceResourcesPost
+  >("/resources", { method: "POST", enabled: false });
+
+  const getFormData = useCallback((): BodyCreateResourceResourcesPost => {
+    return {
+      resource: {
+        uri: sanitizeString(uri, 2000),
+        name: sanitizeString(name, 100),
+        content,
+        description: description ? sanitizeString(description, 500) : undefined,
+        mimeType: mimeType ? sanitizeString(mimeType, 200) : undefined,
+        tags: tags
+          ? tags
+              .split(",")
+              .map((t) => sanitizeString(t.trim(), 200))
+              .filter(Boolean)
+          : undefined,
+        visibility,
+      },
+    };
+  }, [uri, name, content, description, mimeType, tags, visibility]);
+
+  const validateForm = useCallback((): boolean => {
+    try {
+      schema.parse({
+        uri,
+        name,
+        content,
+        description: description || undefined,
+        mimeType: mimeType || undefined,
+        tags: tags || undefined,
+      });
+      setErrors({});
+      return true;
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        const newErrors: ResourceFormErrors = {};
+        error.issues.forEach((issue) => {
+          const path = issue.path[0] as keyof ResourceFormErrors;
+          newErrors[path] = issue.message;
+        });
+        setErrors(newErrors);
+      }
+      return false;
+    }
+  }, [uri, name, content, description, mimeType, tags, schema]);
+
+  const handleSubmit = useCallback(
+    async (event: FormEvent<HTMLFormElement>, onSuccess?: () => void) => {
+      event.preventDefault();
+
+      if (!validateForm()) return;
+
+      const formData = getFormData();
+      onBeforeSubmit?.(formData);
+
+      try {
+        await createResource(formData);
+        setErrors({});
+        if (onSuccess) onSuccess();
+      } catch (error) {
+        onError?.();
+        const fallback = intl.formatMessage({ id: "resources.form.error.createFailed" });
+        setErrors({ submit: parseApiError(error, fallback) });
+      }
+    },
+    [validateForm, getFormData, onBeforeSubmit, createResource, onError, intl],
+  );
+
+  return {
+    uri,
+    name,
+    content,
+    description,
+    mimeType,
+    tags,
+    visibility,
+    errors,
+    isSubmitting,
+    setUri,
+    setName,
+    setContent,
+    setDescription,
+    setMimeType,
+    setTags,
+    setVisibility,
+    validateForm,
+    handleSubmit,
+    getFormData,
+  };
+}
