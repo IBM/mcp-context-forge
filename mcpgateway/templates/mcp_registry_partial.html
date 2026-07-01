@@ -744,6 +744,7 @@ window.Admin.filterByCategory = filterByCategory;
 window.Admin.filterByAuthType = filterByAuthType;
 window.Admin.filterByProvider = filterByProvider;
 window.Admin.registerServerWithApiKey = registerServerWithApiKey;
-window.Admin.showApiKeyModal = showApiKeyModal;
-window.Admin.closeApiKeyModal = closeApiKeyModal;
+// showApiKeyModal / closeApiKeyModal are intentionally NOT registered here —
+// they are provided by the bundled modals.js (registered on window.Admin in
+// admin.js) and must not be overridden by the partial's copies (see #5154).
 </script>

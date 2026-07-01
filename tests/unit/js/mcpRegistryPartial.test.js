@@ -21,17 +21,21 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const TEMPLATE_PATH = path.resolve(__dirname, "../../../mcpgateway/templates/mcp_registry_partial.html");
 
-// The handlers that must be resolvable via window.Admin for executeAction() to
-// dispatch the panel's buttons and filter badges.
+// The partial-specific handlers that must be resolvable via window.Admin for
+// executeAction() to dispatch the panel's buttons and filter badges.
+// showApiKeyModal / closeApiKeyModal are deliberately excluded: they are owned
+// by the bundled modals.js and the partial must not override them (see #5154).
 const EXPECTED_ACTIONS = [
   "refreshCatalog",
   "filterByCategory",
   "filterByAuthType",
   "filterByProvider",
   "registerServerWithApiKey",
-  "showApiKeyModal",
-  "closeApiKeyModal",
 ];
+
+// Handlers the partial must leave to the bundled modals.js (registered in
+// admin.js) rather than shadowing with its own inline copies.
+const BUNDLE_OWNED_ACTIONS = ["showApiKeyModal", "closeApiKeyModal"];
 
 /**
  * Evaluate the partial's inline <script> blocks against the current window.
@@ -83,6 +87,24 @@ describe("mcp_registry_partial window.Admin registration", () => {
     evaluateRegistryScripts();
 
     expect(window.Admin.existingHandler).toBe(existing);
+    for (const action of EXPECTED_ACTIONS) {
+      expect(typeof window.Admin[action]).toBe("function");
+    }
+  });
+
+  it("does not override the bundled showApiKeyModal / closeApiKeyModal", () => {
+    // Simulate the bundle (modals.js via admin.js) having already registered
+    // the canonical modal handlers before the partial's inline script runs.
+    const bundled = Object.fromEntries(BUNDLE_OWNED_ACTIONS.map((name) => [name, vi.fn()]));
+    window.Admin = { ...bundled };
+
+    evaluateRegistryScripts();
+
+    // The partial must leave the bundled implementations untouched...
+    for (const action of BUNDLE_OWNED_ACTIONS) {
+      expect(window.Admin[action]).toBe(bundled[action]);
+    }
+    // ...while still registering its own five handlers.
     for (const action of EXPECTED_ACTIONS) {
       expect(typeof window.Admin[action]).toBe("function");
     }
