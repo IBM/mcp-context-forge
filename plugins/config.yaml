@@ -1218,3 +1218,26 @@ plugins:
     conditions: []
     config:
       context_key: jwt_claims
+
+  # PII Filter (CPEX pilot) — Rust-backed PII detection and masking, trace-aware.
+  # Reads extensions.request.trace_id (see mcpgateway/plugins/utils.py:build_request_extensions)
+  # and, when a trace is active, emits result.metadata["pii_filter"] (counts/type-names only,
+  # never raw matched values) for mcpgateway/plugins/utils.py:record_plugin_metrics() to persist
+  # as a dedicated `plugin.metrics.pii_filter` observability span. mode="enforce" (closer to real
+  # usage than "permissive") is safe here because block_on_detection is false below — detections
+  # are masked/redacted, not blocking, so traced tool calls still succeed end-to-end.
+  - name: "PIIFilter"
+    kind: "cpex_pii_filter.pii_filter.PIIFilterPlugin"
+    description: "Rust-backed PII detection and masking for prompt arguments, tool inputs, and tool outputs"
+    version: "0.3.6"
+    author: "ContextForge Contributors"
+    hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
+    tags: ["pii", "security", "masking", "observability"]
+    mode: "enforce"
+    priority: 20
+    conditions: []
+    config:
+      detect_email: true
+      detect_ssn: true
+      block_on_detection: false
+      log_detections: false
