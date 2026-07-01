@@ -9000,3 +9000,70 @@ class TestTokenExchangeWiring:
         a = {"grant_type": "token-exchange", "client_id": "cf", "token_url": "https://as/token", "target_audience": "https://svc-a"}
         b = {"grant_type": "token-exchange", "client_id": "cf", "token_url": "https://as/token", "target_audience": "https://svc-b"}
         assert not all(a.get(k) == b.get(k) for k in keys)  # differs on target_audience -> not a duplicate
+
+
+class TestTokenExchangeAdminOnlyGate:
+    """A token-exchange gateway sends the caller's JWT to an operator-supplied token_url,
+
+    so creating/modifying one is a platform-admin-only action (AGENTS.md security invariant).
+    _enforce_token_exchange_admin_only is the single choke point both register_gateway and
+    update_gateway route through.
+    """
+
+    _TE_CONFIG = {"grant_type": "token-exchange", "client_id": "cf", "token_url": "https://as/token", "target_audience": "https://svc"}
+
+    @pytest.mark.asyncio
+    async def test_noop_for_non_token_exchange_grant(self):
+        """Any other grant type must never trigger a permission lookup."""
+        with patch("mcpgateway.services.permission_service.PermissionService.check_permission", new_callable=AsyncMock) as mock_check:
+            await GatewayService._enforce_token_exchange_admin_only(Mock(), {"grant_type": "client_credentials"}, "dev@example.com")
+        mock_check.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_noop_when_no_oauth_config(self):
+        """A gateway update that doesn't touch oauth_config must never trigger a permission lookup."""
+        with patch("mcpgateway.services.permission_service.PermissionService.check_permission", new_callable=AsyncMock) as mock_check:
+            await GatewayService._enforce_token_exchange_admin_only(Mock(), None, "dev@example.com")
+        mock_check.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_skips_gate_for_trusted_internal_caller(self):
+        """No requester_email (import/catalog flows) is treated as a trusted internal call."""
+        with patch("mcpgateway.services.permission_service.PermissionService.check_permission", new_callable=AsyncMock) as mock_check:
+            await GatewayService._enforce_token_exchange_admin_only(Mock(), dict(self._TE_CONFIG), None)
+        mock_check.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_denies_non_platform_admin_requester(self):
+        """A developer/team_admin (no wildcard permission) must not configure a token-exchange gateway."""
+        with patch("mcpgateway.services.permission_service.PermissionService.check_permission", new_callable=AsyncMock) as mock_check:
+            mock_check.return_value = False
+            with pytest.raises(PermissionError, match="platform administrator"):
+                await GatewayService._enforce_token_exchange_admin_only(Mock(), dict(self._TE_CONFIG), "developer@example.com")
+        mock_check.assert_awaited_once_with("developer@example.com", "*", allow_admin_bypass=True)
+
+    @pytest.mark.asyncio
+    async def test_allows_platform_admin_requester(self):
+        """A platform admin (wildcard permission) may configure a token-exchange gateway."""
+        with patch("mcpgateway.services.permission_service.PermissionService.check_permission", new_callable=AsyncMock) as mock_check:
+            mock_check.return_value = True
+            await GatewayService._enforce_token_exchange_admin_only(Mock(), dict(self._TE_CONFIG), "admin@example.com")
+
+    @pytest.mark.asyncio
+    async def test_register_gateway_rejects_non_admin_owner(self, gateway_service, test_db):
+        """End-to-end: register_gateway must refuse a token-exchange gateway from a non-admin owner_email."""
+        from mcpgateway.schemas import GatewayCreate
+
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+        gateway_service._check_gateway_uniqueness = Mock(return_value=None)
+
+        cfg = GatewayCreate(
+            name="te-gw-nonadmin",
+            url="https://upstream.example.com",
+            auth_type="oauth",
+            oauth_config=dict(self._TE_CONFIG),
+        )
+        with patch("mcpgateway.services.permission_service.PermissionService.check_permission", new_callable=AsyncMock) as mock_check:
+            mock_check.return_value = False
+            with pytest.raises(PermissionError, match="platform administrator"):
+                await gateway_service.register_gateway(test_db, cfg, owner_email="developer@example.com")

@@ -22,6 +22,20 @@ class TestTokenExchangeCache:
         await c.set("gw1", "alice@e", "aud", "tok-alice", expires_in=3600)
         assert await c.get("gw1", "bob@e", "aud") is None
 
+    async def test_key_does_not_collide_across_component_boundary_shift(self):
+        # A bare ":"-joined key would make ("gw", "a:b", "c") collide with
+        # ("gw", "a", "b:c") -- a crafted target_audience (attacker-controlled
+        # per-gateway config) could shift the boundary and land on another
+        # tuple's cache key, serving that principal's exchanged token instead.
+        key_a = TokenExchangeCache._key("gw", "a:b", "c")
+        key_b = TokenExchangeCache._key("gw", "a", "b:c")
+        assert key_a != key_b
+
+    async def test_no_cross_tuple_leak_via_crafted_audience(self):
+        c = TokenExchangeCache(redis_url=None)
+        await c.set("gw", "a:b", "c", "tok-victim", expires_in=3600)
+        assert await c.get("gw", "a", "b:c") is None
+
     async def test_expiry_skew_treats_near_expiry_as_miss(self):
         c = TokenExchangeCache(redis_url=None, skew_seconds=300)
         await c.set("gw1", "u@e", "aud", "tok", expires_in=3600)

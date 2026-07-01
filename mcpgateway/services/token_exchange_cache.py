@@ -4,6 +4,7 @@
 # Standard
 import asyncio
 from collections import OrderedDict
+import hashlib
 import logging
 import time
 from typing import Optional, Tuple
@@ -72,6 +73,13 @@ class TokenExchangeCache:
     def _key(gateway_id: str, user_email: str, audience: str) -> str:
         """Build the namespaced cache key for a gateway/user/audience tuple.
 
+        Each component is hashed independently (rather than joined with a bare
+        ``:``) before being combined, so no attacker-controlled value (e.g. a
+        ``target_audience`` containing ``:``) can shift the component boundary
+        and collide with a different {gateway, user, audience} tuple — a hex
+        digest never contains the join delimiter, so the combination is
+        unambiguous by construction.
+
         Args:
             gateway_id: Identifier of the target gateway.
             user_email: Email of the user the token was exchanged on behalf of.
@@ -80,7 +88,9 @@ class TokenExchangeCache:
         Returns:
             A namespaced cache key string.
         """
-        return f"token_exchange:{gateway_id}:{user_email}:{audience}"
+        parts = (gateway_id or "", user_email or "", audience or "")
+        hashed = ":".join(hashlib.sha256(part.encode("utf-8")).hexdigest() for part in parts)
+        return f"token_exchange:{hashed}"
 
     def _redis_live(self) -> bool:
         """Return True if Redis should be used (configured and breaker not open). L5.

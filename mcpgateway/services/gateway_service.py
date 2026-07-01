@@ -788,6 +788,39 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         return oauth_config
 
     @staticmethod
+    async def _enforce_token_exchange_admin_only(db: Session, oauth_config: Optional[dict], requester_email: Optional[str]) -> None:
+        """Restrict creating/modifying a token-exchange gateway to platform admins.
+
+        A token-exchange gateway POSTs the caller's inbound JWT to an operator-supplied
+        ``token_url`` as ``subject_token`` (see AGENTS.md's SSRF/egress-boundary note), so
+        a non-admin who can set ``token_url`` could harvest other users' JWTs by pointing
+        it at attacker-controlled infrastructure. No-op for any other grant type.
+
+        Args:
+            db: Database session.
+            oauth_config: Raw gateway oauth_config dict being applied (create or update).
+            requester_email: Email of the user performing the create/update. ``None``/empty
+                means the call originates from a trusted internal flow (config import, which
+                is already gated behind the platform-admin-only ``admin.import`` permission;
+                catalog registration, which applies a bundled/static definition) rather than
+                a request-scoped HTTP caller, so the gate is skipped.
+
+        Raises:
+            PermissionError: If grant_type is token-exchange, a requester_email is present,
+                and that user does not hold the platform-admin wildcard permission.
+        """
+        if not oauth_config or oauth_config.get("grant_type") != "token-exchange" or not requester_email:
+            return
+
+        # First-Party
+        from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+        permission_service = PermissionService(db)
+        is_platform_admin = await permission_service.check_permission(requester_email, "*", allow_admin_bypass=True)
+        if not is_platform_admin:
+            raise PermissionError("Configuring a token-exchange gateway requires platform administrator privileges.")
+
+    @staticmethod
     def _sanitize_passthrough_for_token_exchange(passthrough_allowed: Optional[List[str]], grant_type: Optional[str]) -> Optional[List[str]]:
         """Drop ``authorization`` from passthrough when token-exchange owns the header (B3).
 
@@ -1272,6 +1305,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             authentication_headers = {str(k): str(v) for k, v in decoded.items()}
 
         raw_oauth_config = getattr(gateway, "oauth_config", None)
+        await self._enforce_token_exchange_admin_only(db, raw_oauth_config, owner_email)
         raw_oauth_config = await self._auto_discover_oauth_endpoints(raw_oauth_config)
         raw_oauth_config = self._validate_token_exchange_config(raw_oauth_config)
         oauth_config = await protect_oauth_config_for_storage(raw_oauth_config)
@@ -2630,6 +2664,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # Handle OAuth configuration updates
                 if gateway_update.oauth_config is not None:
                     raw_oauth_update = dict(gateway_update.oauth_config)
+                    await self._enforce_token_exchange_admin_only(db, raw_oauth_update, user_email)
                     raw_oauth_update = await self._auto_discover_oauth_endpoints(raw_oauth_update)
                     raw_oauth_update = self._validate_token_exchange_config(raw_oauth_update)
                     gateway.oauth_config = await protect_oauth_config_for_storage(raw_oauth_update, existing_oauth_config=gateway.oauth_config)

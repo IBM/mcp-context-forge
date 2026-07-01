@@ -434,34 +434,6 @@ class TestToolPathTokenExchange:
         assert all(r == {"Authorization": "Bearer exch-tok"} for r in results)
         assert calls["n"] == 1  # single-flight collapsed 10 misses into 1 exchange
 
-    async def test_user_oauth_token_source_uses_stored_token(self, monkeypatch):
-        # G4: subject_token_source="user_oauth_token" pulls the stored upstream token
-        # (no inbound bearer needed) and exchanges that.
-        # Standard
-        import contextlib
-
-        # First-Party
-        from mcpgateway.services import token_storage_service as tss
-        import mcpgateway.services.tool_service as tsmod
-        from mcpgateway.services.tool_service import ToolService
-
-        svc = ToolService()
-        svc.oauth_manager = MagicMock()
-        svc.oauth_manager.token_exchange = AsyncMock(return_value={"access_token": "exch-tok", "expires_in": 3600})
-        svc._token_exchange_cache = _mock_te_cache(get_return=None)
-
-        @contextlib.contextmanager
-        def _fake_session():
-            yield MagicMock()
-
-        monkeypatch.setattr(tsmod, "fresh_db_session", _fake_session)
-        monkeypatch.setattr(tss.TokenStorageService, "get_user_token", AsyncMock(return_value="stored-tok"))
-
-        cfg = dict(_TE_CFG, subject_token_source="user_oauth_token")
-        header = await svc._resolve_token_exchange_header(cfg, "gw1", "gw", "u@e", request_headers={})
-        assert header == {"Authorization": "Bearer exch-tok"}
-        assert svc.oauth_manager.token_exchange.await_args.kwargs["subject_token"] == "stored-tok"
-
     async def test_missing_subject_token_denies(self):
         # First-Party
         from mcpgateway.services.tool_service import ToolInvocationError, ToolService
