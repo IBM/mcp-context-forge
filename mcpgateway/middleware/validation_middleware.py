@@ -257,8 +257,21 @@ class ValidationMiddleware(BaseHTTPMiddleware):
 
         Returns:
             Response: Sanitized response
+
+        Note:
+            This middleware does NOT set Content-Length for compressed responses
+            to avoid "Content-Length mismatch" errors (issue #5457). Compressed
+            responses must not be sanitized as they are binary data, not text.
         """
         if not hasattr(response, "body"):
+            return response
+
+        # Skip sanitization for compressed responses - they are binary data and cannot
+        # be decoded as UTF-8. Attempting to sanitize compressed data would corrupt it.
+        # Let the compression middleware handle Content-Length for compressed responses.
+        content_encoding = response.headers.get("content-encoding", "")
+        if content_encoding in ("gzip", "br", "zstd", "deflate"):
+            logger.debug("Skipping output sanitization for compressed response (content-encoding: %s)", content_encoding)
             return response
 
         try:  # noqa: PLW0717 - keep sanitization failures non-fatal.
@@ -270,7 +283,10 @@ class ValidationMiddleware(BaseHTTPMiddleware):
             sanitized = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", "", body)
 
             response.body = sanitized.encode("utf-8")
-            response.headers["content-length"] = str(len(response.body))
+            # Only update Content-Length if we actually modified the body AND it's not compressed.
+            # The compression middleware will set Content-Length for compressed responses.
+            if sanitized != body:
+                response.headers["content-length"] = str(len(response.body))
         except Exception as e:
             logger.warning("Failed to sanitize response: %s", e)
 
