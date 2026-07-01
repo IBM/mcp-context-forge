@@ -1537,6 +1537,128 @@ class TestResourceEndpoints:
             assert "type" in payload
             assert "data" in payload
 
+    @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
+    def test_test_resource_by_uri_success(self, mock_read, test_client, auth_headers):
+        """Test GET /resources/test/{resource_uri} returns 200 with content."""
+        mock_read.return_value = {"hello": "world"}
+        response = test_client.get("/resources/test/resource://example/demo", headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json()["content"] == {"hello": "world"}
+
+    @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
+    def test_test_resource_by_uri_not_found(self, mock_read, test_client, auth_headers):
+        """Test GET /resources/test/{resource_uri} returns 404 when resource missing."""
+        from mcpgateway.services.resource_service import ResourceNotFoundError
+
+        mock_read.side_effect = ResourceNotFoundError("not found")
+        response = test_client.get("/resources/test/resource://example/missing", headers=auth_headers)
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
+    async def test_test_resource_by_uri_generic_exception_reraised(self, mock_read):
+        """Test that non-ResourceNotFoundError exceptions propagate from test_resource_by_uri."""
+        from mcpgateway.main import test_resource_by_uri
+
+        mock_read.side_effect = RuntimeError("boom")
+        mock_request = MagicMock()
+        mock_request.state.token_teams = ["team-a"]
+        mock_request.state.internal_auth_context = None
+        user = {"email": "user@example.com", "is_admin": False, "teams": ["team-a"]}
+        with pytest.raises(RuntimeError, match="boom"):
+            await test_resource_by_uri(
+                resource_uri="resource://host/path",
+                request=mock_request,
+                db=MagicMock(),
+                user=user,
+            )
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
+    async def test_test_resource_by_uri_admin_bypass_scoping(self, mock_read):
+        """Test that admin callers receive token_teams=None (admin bypass) in service call."""
+        from mcpgateway.main import test_resource_by_uri
+
+        mock_read.return_value = {"data": "content"}
+        mock_request = MagicMock()
+        mock_request.state.token_teams = None
+        mock_request.state.internal_auth_context = None
+        admin_user = {"email": "admin@example.com", "is_admin": True, "teams": None}
+        await test_resource_by_uri(
+            resource_uri="resource://host/path",
+            request=mock_request,
+            db=MagicMock(),
+            user=admin_user,
+        )
+        call_kwargs = mock_read.call_args[1]
+        assert call_kwargs["user"] == "admin@example.com"
+        assert call_kwargs["token_teams"] is None
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
+    async def test_test_resource_by_uri_non_admin_team_scoped(self, mock_read):
+        """Test that non-admin callers receive their token_teams in the service call."""
+        from mcpgateway.main import test_resource_by_uri
+
+        mock_read.return_value = {"data": "scoped"}
+        mock_request = MagicMock()
+        mock_request.state.token_teams = ["team-a"]
+        mock_request.state.internal_auth_context = None
+        user = {"email": "user@example.com", "is_admin": False, "teams": ["team-a"]}
+        await test_resource_by_uri(
+            resource_uri="resource://host/path",
+            request=mock_request,
+            db=MagicMock(),
+            user=user,
+        )
+        call_kwargs = mock_read.call_args[1]
+        assert call_kwargs["token_teams"] == ["team-a"]
+
+    @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
+    def test_test_resource_by_uri_success_verifies_resource_uri_call_arg(self, mock_read, test_client, auth_headers):
+        """Verify read_resource is called with the exact resource_uri captured from the path."""
+        mock_read.return_value = {"key": "value"}
+        test_client.get("/resources/test/resource://example/demo", headers=auth_headers)
+        call_kwargs = mock_read.call_args[1]
+        assert call_kwargs["resource_uri"] == "resource://example/demo"
+
+    @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
+    def test_test_resource_by_uri_not_found_preserves_detail_message(self, mock_read, test_client, auth_headers):
+        """Verify 404 response body includes the error string from ResourceNotFoundError."""
+        from mcpgateway.services.resource_service import ResourceNotFoundError
+
+        mock_read.side_effect = ResourceNotFoundError("resource://example/gone not found")
+        response = test_client.get("/resources/test/resource://example/gone", headers=auth_headers)
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"]
+
+    @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
+    def test_test_resource_by_uri_nested_path_captured(self, mock_read, test_client, auth_headers):
+        """Verify :path param captures multi-segment URIs with interior slashes intact."""
+        mock_read.return_value = {"data": "nested"}
+        test_client.get("/resources/test/resource://host/a/b/c", headers=auth_headers)
+        call_kwargs = mock_read.call_args[1]
+        assert call_kwargs["resource_uri"] == "resource://host/a/b/c"
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
+    async def test_test_resource_by_uri_returns_content_wrapper_for_list(self, mock_read):
+        """Verify response wraps non-dict content (list) in {'content': ...}."""
+        from mcpgateway.main import test_resource_by_uri
+
+        mock_read.return_value = [{"uri": "a"}, {"uri": "b"}]
+        mock_request = MagicMock()
+        mock_request.state.token_teams = []
+        mock_request.state.internal_auth_context = None
+        user = {"email": "u@example.com", "is_admin": False, "teams": []}
+        result = await test_resource_by_uri(
+            resource_uri="resource://host/list",
+            request=mock_request,
+            db=MagicMock(),
+            user=user,
+        )
+        assert result == {"content": [{"uri": "a"}, {"uri": "b"}]}
+
 
 # ----------------------------------------------------- #
 # Prompt Management Tests                               #
