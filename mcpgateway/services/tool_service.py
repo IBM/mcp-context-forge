@@ -3801,14 +3801,12 @@ class ToolService(BaseService):
 
         # Resolve subject token. inbound_user_jwt must structurally be a JWT (H2);
         # an opaque CF session/API token is never forwarded to the external AS.
-        source = oauth_config.get("subject_token_source", "inbound_user_jwt")
-        if source == "user_oauth_token":
-            with fresh_db_session() as token_db:
-                subject_token = await TokenStorageService(token_db).get_user_token(gateway_id, app_user_email)
-        else:
-            subject_token = extract_inbound_bearer(request_headers)
-            if subject_token and not looks_like_jwt(subject_token):
-                subject_token = None
+        # GatewayService._VALID_SUBJECT_TOKEN_SOURCES only ever persists "inbound_user_jwt"
+        # (config-time validation rejects any other value), so inbound_user_jwt is the only
+        # supported subject_token_source here.
+        subject_token = extract_inbound_bearer(request_headers)
+        if subject_token and not looks_like_jwt(subject_token):
+            subject_token = None
 
         if not subject_token:
             raise ToolInvocationError(f"User authentication required for token-exchange gateway '{gateway_name}'.")
