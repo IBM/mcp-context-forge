@@ -2828,7 +2828,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     logger.warning("Failed to initialize updated gateway: %s", gce)
                     reinit_succeeded = False
                 except Exception as e:
-                    logger.warning("Failed to initialize updated gateway: %s", e)
+                    logger.warning("Failed to initialize updated gateway: %s", sanitize_exception_message(str(e), auth_query_params_decrypted))
                     reinit_succeeded = False
 
                 # Update tags if provided
