@@ -44,11 +44,13 @@ def _validated_team_id(team_id: Optional[str] = Query(None, description="Filter 
         HTTPException: If the team ID is not a valid UUID.
 
     Examples:
-        >>> _validated_team_id(None)
-        >>> _validated_team_id("not-a-uuid")
-        Traceback (most recent call last):
-            ...
-        fastapi.exceptions.HTTPException: 400
+        >>> _validated_team_id(None) is None
+        True
+        >>> try:
+        ...     _validated_team_id("not-a-uuid")
+        ... except Exception as e:
+        ...     e.status_code
+        400
     """
     if team_id is None:
         return None
