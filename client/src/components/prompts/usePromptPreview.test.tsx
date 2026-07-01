@@ -17,8 +17,8 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-function setup(promptId = "greet", args: Record<string, string> = {}) {
-  return renderHook(() => usePromptPreview(promptId, args), {
+function setup(promptName = "greet", args: Record<string, string> = {}) {
+  return renderHook(() => usePromptPreview(promptName, args), {
     wrapper: ({ children }) => <I18nProvider>{children}</I18nProvider>,
   });
 }
@@ -66,19 +66,22 @@ describe("usePromptPreview", () => {
     expect(toast.error).toHaveBeenCalledTimes(1);
   });
 
-  it("clears result and error when promptId changes", async () => {
+  it("clears result and error when promptName changes", async () => {
     vi.mocked(promptsApi.render).mockResolvedValue({ messages: [] });
-    const { result, rerender } = renderHook(({ id }: { id: string }) => usePromptPreview(id, {}), {
-      initialProps: { id: "p1" },
-      wrapper: ({ children }) => <I18nProvider>{children}</I18nProvider>,
-    });
+    const { result, rerender } = renderHook(
+      ({ name }: { name: string }) => usePromptPreview(name, {}),
+      {
+        initialProps: { name: "greet_a" },
+        wrapper: ({ children }) => <I18nProvider>{children}</I18nProvider>,
+      },
+    );
 
     await act(async () => {
       await result.current.run();
     });
     expect(result.current.hasRun).toBe(true);
 
-    rerender({ id: "p2" });
+    rerender({ name: "greet_b" });
     expect(result.current.result).toBeNull();
     expect(result.current.error).toBeNull();
     expect(result.current.hasRun).toBe(false);

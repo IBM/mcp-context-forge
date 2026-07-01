@@ -27,9 +27,12 @@ export interface PromptPreviewState {
  * Owns the render-only Preview lifecycle. Keeps the network call, timing,
  * error parsing, and toast feedback in one place so the visual pieces
  * (button, status row, response body) can be composed independently.
+ *
+ * Addresses the prompt by name (matches what the Code-tab snippets show and
+ * what MCP-spec clients use on the wire).
  */
 export function usePromptPreview(
-  promptId: string,
+  promptName: string,
   args: Record<string, string>,
 ): PromptPreviewState {
   const intl = useIntl();
@@ -43,14 +46,14 @@ export function usePromptPreview(
   useEffect(() => {
     setResult(null);
     setError(null);
-  }, [promptId]);
+  }, [promptName]);
 
   const run = useCallback(async () => {
     setLoading(true);
     setError(null);
     const startedAt = performance.now();
     try {
-      const rendered = await promptsApi.render(promptId, args);
+      const rendered = await promptsApi.render(promptName, args);
       const renderTimeMs = Math.round(performance.now() - startedAt);
       setResult({ rendered, renderTimeMs });
     } catch (err) {
@@ -69,7 +72,7 @@ export function usePromptPreview(
     } finally {
       setLoading(false);
     }
-  }, [promptId, args, intl]);
+  }, [promptName, args, intl]);
 
   return {
     run,

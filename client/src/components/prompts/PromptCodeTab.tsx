@@ -22,7 +22,10 @@ export interface PromptCodeTabProps {
  */
 export function PromptCodeTab({ prompt }: PromptCodeTabProps) {
   const [args, setArgs] = useState<Record<string, string>>(() => seedArgs(prompt));
-  const preview = usePromptPreview(prompt.id, args);
+  // Address the prompt by name — same identifier the snippets show and what
+  // MCP-spec clients use on the wire. See `promptsApi.render` for the full
+  // rationale and the tracked "server-scoped MCP transport" follow-up.
+  const preview = usePromptPreview(prompt.name, args);
 
   // Reset args when the user switches to a different prompt within the same
   // drawer instance. Keyed on id so renames don't wipe in-progress input.
