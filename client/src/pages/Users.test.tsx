@@ -7,9 +7,20 @@ import { RouterProvider } from "@/router";
 import { I18nProvider } from "@/i18n";
 import type { ReactElement } from "react";
 
-vi.mock("@/api/client", () => ({
-  api: {
-    get: vi.fn(),
+vi.mock("@/api/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/api/client")>();
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      get: vi.fn(),
+    },
+  };
+});
+
+vi.mock("@/api/users", () => ({
+  usersApi: {
+    delete: vi.fn(),
   },
 }));
 
@@ -37,6 +48,8 @@ vi.mock("@/components/users/UserForm", () => ({
 }));
 
 import { api } from "@/api/client";
+import { usersApi } from "@/api/users";
+import { ApiError } from "@/api/client";
 
 function createMockUsers(startIndex: number, count: number) {
   return Array.from({ length: count }, (_, i) => ({
@@ -524,5 +537,110 @@ describe("Users", () => {
 
     // Check that api.get was called exactly twice (once for initial load, once for first load more)
     expect(api.get).toHaveBeenCalledTimes(2);
+  });
+
+  describe("Delete User Flow", () => {
+    it("successfully deletes a user", async () => {
+      const user = userEvent.setup();
+      vi.mocked(api.get).mockResolvedValueOnce({
+        users: createMockUsers(0, 2),
+        nextCursor: null,
+      });
+      vi.mocked(usersApi.delete).mockResolvedValueOnce(undefined);
+
+      renderWithRouter(<Users />);
+
+      await waitFor(() => {
+        expect(screen.getByText("user0@example.com")).toBeInTheDocument();
+      });
+
+      // Open action menu for user0
+      const actionMenus = screen.getAllByRole("button", { name: /actions for User 0/i });
+      await user.click(actionMenus[0]);
+
+      // Click delete
+      const deleteMenuItem = screen.getByRole("menuitem", { name: /delete/i });
+      await user.click(deleteMenuItem);
+
+      // Dialog should open, click Confirm/Delete
+      const confirmButton = screen.getByRole("button", { name: /delete/i, hidden: true });
+      await user.click(confirmButton);
+
+      // Expect API call
+      expect(usersApi.delete).toHaveBeenCalledWith("user0@example.com");
+
+      // Verify user is optimistically removed and success toast (if we check for it, but optimistic update is enough)
+      await waitFor(() => {
+        expect(screen.queryByText("user0@example.com")).not.toBeInTheDocument();
+      });
+      expect(screen.getByText("user1@example.com")).toBeInTheDocument();
+    });
+
+    it("rolls back deletion and shows specific error when deleting self", async () => {
+      const user = userEvent.setup();
+      vi.mocked(api.get).mockResolvedValueOnce({
+        users: createMockUsers(0, 1),
+        nextCursor: null,
+      });
+
+      const apiError = new ApiError("Bad Request", 400, "Bad Request");
+      apiError.body = { detail: "cannot delete own account" };
+      vi.mocked(usersApi.delete).mockRejectedValueOnce(apiError);
+
+      renderWithRouter(<Users />);
+
+      await waitFor(() => {
+        expect(screen.getByText("user0@example.com")).toBeInTheDocument();
+      });
+
+      // Open action menu for user0
+      const actionMenus = screen.getAllByRole("button", { name: /actions for User 0/i });
+      await user.click(actionMenus[0]);
+
+      // Click delete
+      const deleteMenuItem = screen.getByRole("menuitem", { name: /delete/i });
+      await user.click(deleteMenuItem);
+
+      // Dialog should open, click Confirm
+      const confirmButton = screen.getByRole("button", { name: /delete/i, hidden: true });
+      await user.click(confirmButton);
+
+      // Verify user comes back after optimistic delete fails
+      await waitFor(() => {
+        expect(screen.getByText("user0@example.com")).toBeInTheDocument();
+      });
+    });
+
+    it("cancels user deletion", async () => {
+      const user = userEvent.setup();
+      vi.mocked(api.get).mockResolvedValueOnce({
+        users: createMockUsers(0, 1),
+        nextCursor: null,
+      });
+
+      renderWithRouter(<Users />);
+
+      await waitFor(() => {
+        expect(screen.getByText("user0@example.com")).toBeInTheDocument();
+      });
+
+      // Open action menu for user0
+      const actionMenus = screen.getAllByRole("button", { name: /actions for User 0/i });
+      await user.click(actionMenus[0]);
+
+      // Click delete
+      const deleteMenuItem = screen.getByRole("menuitem", { name: /delete/i });
+      await user.click(deleteMenuItem);
+
+      // Dialog should open, click Cancel
+      const cancelButton = screen.getByRole("button", { name: /cancel/i, hidden: true });
+      await user.click(cancelButton);
+
+      // Dialog should be gone, user remains
+      await waitFor(() => {
+        expect(screen.getByText("user0@example.com")).toBeInTheDocument();
+      });
+      expect(usersApi.delete).not.toHaveBeenCalled();
+    });
   });
 });

@@ -1067,6 +1067,30 @@ describe("Tools", () => {
       });
     });
 
+    it("shows an error toast when the delete API throws a standard Error", async () => {
+      const mockTools: Tool[] = [createMockTool(1, "test-gateway")];
+      server.use(
+        http.get("/tools", () => HttpResponse.json(mockTools)),
+        http.delete("/tools/tool-1", () => {
+          return HttpResponse.error();
+        }),
+      );
+
+      renderWithRouter(<Tools />);
+      await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
+
+      const user = await openDetailsPanel("test-gateway");
+      await user.click(screen.getByLabelText("More options"));
+      await user.click(await screen.findByText("Delete"));
+
+      await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
+      await user.click(screen.getByRole("button", { name: /^delete$/i }));
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("Failed to delete tool"));
+      });
+    });
+
     it("uses displayName in the dialog description when available", async () => {
       const mockTools: Tool[] = [
         { ...createMockTool(1, "test-gateway"), displayName: "My Custom Tool" },

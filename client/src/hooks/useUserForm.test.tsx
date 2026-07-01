@@ -15,6 +15,7 @@ const messages = {
   "users.form.error.passwordMinLength": "Password must be at least 8 characters",
   "users.form.error.passwordsDoNotMatch": "Passwords do not match",
   "users.form.error.createFailed": "Failed to create user",
+  "users.form.error.updateFailed": "Failed to update user",
 };
 
 const wrapper = ({ children }: { children: ReactNode }) => (
@@ -440,6 +441,80 @@ describe("useUserForm", () => {
         is_active: true,
         password_change_required: false,
       });
+    });
+
+    it("should submit valid form in edit mode and handle success", async () => {
+      mockExecute.mockResolvedValue({ email: "edit@example.com" });
+      const initialUser = {
+        email: "edit@example.com",
+        is_admin: false,
+        is_active: true,
+        password_change_required: false,
+      };
+      const { result } = renderHook(() => useUserForm({ initialUser: initialUser as any }), { wrapper });
+      const onSuccess = vi.fn();
+      const onOptimisticUpdate = vi.fn();
+
+      act(() => {
+        result.current.setFullName("Updated Name");
+      });
+
+      const mockEvent = {
+        preventDefault: vi.fn(),
+      } as unknown as React.FormEvent<HTMLFormElement>;
+
+      await act(async () => {
+        await result.current.handleSubmit(mockEvent, onSuccess, undefined, undefined, onOptimisticUpdate);
+      });
+
+      expect(mockEvent.preventDefault).toHaveBeenCalled();
+      expect(onOptimisticUpdate).toHaveBeenCalledWith("edit@example.com", expect.objectContaining({ full_name: "Updated Name" }));
+      expect(onSuccess).toHaveBeenCalledWith({ email: "edit@example.com" });
+    });
+
+    it("should handle error in edit mode", async () => {
+      mockExecute.mockRejectedValue({
+        body: {
+          message: "Update failed",
+        },
+      });
+      const initialUser = {
+        email: "edit@example.com",
+        is_admin: false,
+        is_active: true,
+        password_change_required: false,
+      };
+      const { result } = renderHook(() => useUserForm({ initialUser: initialUser as any }), { wrapper });
+      const onError = vi.fn();
+
+      act(() => {
+        result.current.setFullName("Updated Name");
+      });
+
+      const mockEvent = {
+        preventDefault: vi.fn(),
+      } as unknown as React.FormEvent<HTMLFormElement>;
+
+      await act(async () => {
+        await result.current.handleSubmit(mockEvent, undefined, undefined, onError);
+      });
+
+      expect(mockEvent.preventDefault).toHaveBeenCalled();
+      expect(onError).toHaveBeenCalled();
+      expect(result.current.errors.submit).toBe("Update failed");
+    });
+
+    it("should clear timeouts on rapid validation", () => {
+      const { result } = renderHook(() => useUserForm(), { wrapper });
+      const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
+
+      act(() => {
+        result.current.validateField("email", "invalid1");
+        result.current.validateField("email", "invalid2");
+      });
+
+      expect(clearTimeoutSpy).toHaveBeenCalled();
+      clearTimeoutSpy.mockRestore();
     });
 
     it("should call onSuccess callback after successful submission", async () => {

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { renderWithProviders } from "@/test/test-utils";
 import { Agents } from "./Agents";
 import { ChangePassword } from "./ChangePassword";
+import { Dashboard } from "./Dashboard";
 import { ForgotPassword } from "./ForgotPassword";
 import { Grpc } from "./Grpc";
 import { LLMModels } from "./LLMModels";
@@ -27,6 +28,11 @@ describe("Simple Page Components", () => {
 
   it("renders ChangePassword page", () => {
     renderWithProviders(<ChangePassword />);
+    expect(document.body).toBeTruthy();
+  });
+
+  it("renders Dashboard page", () => {
+    renderWithProviders(<Dashboard />);
     expect(document.body).toBeTruthy();
   });
 

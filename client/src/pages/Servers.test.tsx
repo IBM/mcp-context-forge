@@ -13,6 +13,8 @@ vi.mock("@/api/client", () => ({
     get: vi.fn(),
     delete: vi.fn(),
     post: vi.fn(),
+    patch: vi.fn(),
+    put: vi.fn(),
   },
 }));
 
@@ -372,5 +374,141 @@ describe("Servers", () => {
     expect(screen.queryByRole("button", { name: /load more servers/i })).not.toBeInTheDocument();
     // Only the initial fetch should have happened
     expect(api.get).toHaveBeenCalledTimes(1);
+  });
+
+  it("logs error when Load More API fails", async () => {
+    const user = userEvent.setup();
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    vi.mocked(api.get).mockResolvedValueOnce({
+      gateways: createMockServers(0, 25),
+      nextCursor: "cursor-1",
+    });
+
+    renderWithRouter(<Servers />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Test Server 0")).toBeInTheDocument();
+    });
+
+    const loadMoreButton = screen.getByRole("button", { name: /load more/i });
+
+    // Mock the second page fetch to reject
+    const mockError = new Error("Failed to fetch");
+    vi.mocked(api.get).mockRejectedValueOnce(mockError);
+
+    await user.click(loadMoreButton);
+
+    await waitFor(() => {
+      expect(consoleErrorSpy).toHaveBeenCalledWith("Failed to load more servers:", mockError);
+    });
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("changes limit when select value changes", async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(api.get).mockResolvedValue({
+      gateways: createMockServers(0, 5),
+      nextCursor: "cursor-1",
+    });
+
+    renderWithRouter(<Servers />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Test Server 0")).toBeInTheDocument();
+    });
+
+    // Check initial limit
+    expect(screen.getAllByText(/Test Server/).length).toBeGreaterThan(0);
+
+    const select = screen.getByLabelText(/Per page:/i);
+    await user.selectOptions(select, "25");
+
+    await waitFor(() => {
+      expect(vi.mocked(api.get)).toHaveBeenCalledWith(
+        expect.stringContaining("limit=25"),
+        undefined,
+        expect.any(AbortSignal),
+      );
+    });
+  });
+
+  it("renders MCPServerForm when Connect is clicked and handles form close", async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(api.get).mockResolvedValue({
+      gateways: createMockServers(0, 5),
+      nextCursor: "cursor-1",
+    });
+
+    renderWithRouter(<Servers />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Test Server 0")).toBeInTheDocument();
+    });
+
+    // Click Connect to open form
+    const connectButton = screen.getByRole("button", { name: /Connect/i });
+    await user.click(connectButton);
+
+    // Form should appear
+    expect(await screen.findByRole("heading", { name: "Connect MCP server" })).toBeInTheDocument();
+
+    // Test onToggle (Cancel)
+    const cancelButton = screen.getByRole("button", { name: /Cancel/i });
+    await user.click(cancelButton);
+
+    // Form should close, table should appear again
+    await waitFor(() => {
+      expect(screen.queryByRole("heading", { name: "Connect MCP server" })).not.toBeInTheDocument();
+      expect(screen.getByText("Test Server 0")).toBeInTheDocument();
+    });
+  });
+
+  it("triggers onSuccess refetch from MCPServerForm submission", async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(api.get).mockImplementation((path) => {
+      if (path.includes("/gateways/server-0")) {
+        return Promise.resolve(mockServerDetails);
+      }
+      return Promise.resolve({
+        gateways: createMockServers(0, 5),
+        nextCursor: "cursor-1",
+      });
+    });
+
+    renderWithRouter(<Servers />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Test Server 0")).toBeInTheDocument();
+    });
+
+    // Edit button opens form with selected server ID
+    const actionsButtons = screen.getAllByRole("button", { name: /actions for/i });
+    await user.click(actionsButtons[0]);
+    const editItem = await screen.findByRole("menuitem", { name: /edit/i });
+    await user.click(editItem);
+
+    // Wait for the form to appear
+    expect(await screen.findByRole("heading", { name: "Edit MCP server" })).toBeInTheDocument();
+
+    // We can simulate a successful submit since the API call in MCPServerForm will use our mock
+    vi.mocked(api.put).mockResolvedValueOnce({});
+    
+    // Fill the required URL field (it uses URL format)
+    const urlInput = screen.getByLabelText(/^URL/i);
+    await user.clear(urlInput);
+    await user.type(urlInput, "http://new-url.example.com");
+
+    const submitButton = screen.getByRole("button", { name: /Save changes/i });
+    await user.click(submitButton);
+
+    // Form should close on success and list should be re-rendered
+    await waitFor(() => {
+      expect(screen.queryByRole("heading", { name: "Edit MCP server" })).not.toBeInTheDocument();
+    });
   });
 });

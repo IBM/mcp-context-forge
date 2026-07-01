@@ -152,6 +152,48 @@ describe("AdvancedSettings", () => {
       await user.type(textarea, "X-Custom-Header");
       expect(handlePassthroughHeadersChange).toHaveBeenCalled();
     });
+
+    it("calls callback handlers for OAuth fields", async () => {
+      const user = userEvent.setup();
+      const onOAuthClientIdChange = vi.fn();
+      const onOAuthClientSecretChange = vi.fn();
+      const onOAuthTokenUrlChange = vi.fn();
+      const onOAuthAuthorizationUrlChange = vi.fn();
+      const onOAuthScopesChange = vi.fn();
+      const onOAuthStoreTokensChange = vi.fn();
+      const onOAuthAutoRefreshChange = vi.fn();
+
+      render(
+        <AdvancedSettings
+          {...makeProps({
+            authType: "oauth",
+            oauthGrantType: "authorization_code",
+            onOAuthClientIdChange,
+            onOAuthClientSecretChange,
+            onOAuthTokenUrlChange,
+            onOAuthAuthorizationUrlChange,
+            onOAuthScopesChange,
+            onOAuthStoreTokensChange,
+            onOAuthAutoRefreshChange,
+          })}
+        />,
+      );
+
+      // Authorization URL should be visible
+      const authUrlInput = screen.getByLabelText(/Authorization URL/i);
+      await user.type(authUrlInput, "https://auth");
+      expect(onOAuthAuthorizationUrlChange).toHaveBeenCalled();
+
+      // Checkbox store tokens
+      const storeTokensCheckbox = screen.getByLabelText(/Store access tokens/i);
+      await user.click(storeTokensCheckbox);
+      expect(onOAuthStoreTokensChange).toHaveBeenCalledWith(true);
+
+      // Checkbox auto refresh
+      const autoRefreshCheckbox = screen.getByLabelText(/Automatically refresh/i);
+      await user.click(autoRefreshCheckbox);
+      expect(onOAuthAutoRefreshChange).toHaveBeenCalledWith(true);
+    });
   });
 
   describe("team visibility — teamId sync (issue #5077)", () => {
