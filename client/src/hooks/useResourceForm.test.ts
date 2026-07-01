@@ -126,6 +126,22 @@ describe("useResourceForm", () => {
       expect(data.resource.tags).toEqual(["tag1", "tag2"]);
     });
 
+    it("sanitizes control characters from string fields", () => {
+      const { result } = renderHook(() => useResourceForm());
+
+      act(() => {
+        result.current.setUri("resource://ex\x00ample/path");
+        result.current.setName("My\x0BResource");
+        result.current.setContent("clean content");
+        result.current.setDescription("desc\x1Fription");
+      });
+
+      const data = result.current.getFormData();
+      expect(data.resource.uri).toBe("resource://example/path");
+      expect(data.resource.name).toBe("MyResource");
+      expect(data.resource.description).toBe("description");
+    });
+
     it("omits optional fields when empty", () => {
       const { result } = renderHook(() => useResourceForm());
 

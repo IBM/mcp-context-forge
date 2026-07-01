@@ -9,28 +9,15 @@ import type { Visibility } from "@/types/server";
 
 const createResourceFormSchema = (intl: ReturnType<typeof useIntl>) =>
   z.object({
-    uri: z
-      .string()
-      .transform((val) => sanitizeString(val, 2000))
-      .pipe(z.string().min(1, intl.formatMessage({ id: "resources.form.error.uriRequired" }))),
-    name: z
-      .string()
-      .transform((val) => sanitizeString(val, 100))
-      .pipe(z.string().min(1, intl.formatMessage({ id: "resources.form.error.nameRequired" }))),
+    uri: z.string().min(1, intl.formatMessage({ id: "resources.form.error.uriRequired" })),
+    name: z.string().min(1, intl.formatMessage({ id: "resources.form.error.nameRequired" })),
     content: z.string().min(1, intl.formatMessage({ id: "resources.form.error.contentRequired" })),
     description: z
       .string()
-      .transform((val) => sanitizeString(val, 500))
-      .pipe(z.string().max(500, intl.formatMessage({ id: "resources.form.error.descriptionMax" })))
+      .max(500, intl.formatMessage({ id: "resources.form.error.descriptionMax" }))
       .optional(),
-    mimeType: z
-      .string()
-      .transform((val) => sanitizeString(val, 200))
-      .optional(),
-    tags: z
-      .string()
-      .transform((val) => sanitizeString(val, 500))
-      .optional(),
+    mimeType: z.string().optional(),
+    tags: z.string().optional(),
   });
 
 export type ResourceFormData = z.infer<ReturnType<typeof createResourceFormSchema>>;

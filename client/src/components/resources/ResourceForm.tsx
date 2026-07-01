@@ -218,9 +218,15 @@ export function ResourceForm({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="public">Public</SelectItem>
-                <SelectItem value="private">Private</SelectItem>
-                <SelectItem value="team">Team</SelectItem>
+                <SelectItem value="public">
+                  {intl.formatMessage({ id: "resources.form.visibility.public" })}
+                </SelectItem>
+                <SelectItem value="private">
+                  {intl.formatMessage({ id: "resources.form.visibility.private" })}
+                </SelectItem>
+                <SelectItem value="team">
+                  {intl.formatMessage({ id: "resources.form.visibility.team" })}
+                </SelectItem>
               </SelectContent>
             </Select>
           </div>
