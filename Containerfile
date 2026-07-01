@@ -1,13 +1,39 @@
+# syntax=docker/dockerfile:1.12
+
 ###############################################################################
-# ContextForge (standard) - Full-featured container build
+# ContextForge (lite) - OCI-compliant multi-stage container build
 #
-# This Dockerfile produces a complete runtime image using ubi10-minimal.
-# It includes optional frontend (Vite) and Tailwind CSS builds.
-# For a lighter build with optional Rust, see Containerfile.lite.
-# For an ultra-slim scratch-based image, see Containerfile.scratch.
+# Purpose: Minimal runtime image using ubi10-minimal, supporting multiplatform
+# builds (amd64, arm64, s390x, ppc64le) with optional Rust native extensions.
+#
+# Distinction from Containerfile (standard):
+#   - This is the RECOMMENDED production build (lighter, faster, ubi10-minimal).
+#   - Containerfile (standard) is a simpler single-stage variant without Rust.
+#   - Containerfile.scratch is an ultra-slim scratch-based image.
+#
+# Key design points:
+#   - Builder stage has full DNF + devel headers for wheel compilation
+#   - Runtime stage uses ubi10-minimal for cross-platform compatibility
+#   - Optional Rust builder stage for native extensions (ENABLE_RUST=true)
+#   - Development headers are dropped from the final image
+#   - Hadolint DL3041 is suppressed to allow "latest patch" RPM usage
 ###############################################################################
 
 ###########################
+# Build-time arguments
+###########################
+# Python major.minor series to track
+ARG PYTHON_VERSION=3.12
+ARG ENABLE_RUST=false
+ARG ENABLE_RUST_MCP_RMCP=false
+# Enable profiling tools (memray, py-spy) - off by default for smaller images
+# To enable: docker build --build-arg ENABLE_PROFILING=true -f Containerfile.lite .
+# Usage after enabling:
+#   memray: docker exec -it <container> memray attach <PID> -o /tmp/profile.bin
+#   py-spy: sudo py-spy top --pid $(docker inspect --format '{{.State.Pid}}' <container>)
+# Note: Container must have SYS_PTRACE capability for attaching to processes
+# See docs/docs/development/profiling.md for detailed usage
+ARG ENABLE_PROFILING=false
 # Base image overrides — defaults to UBI 10; pass UBI 9 values for FedRAMP builds
 #
 # FedRAMP/Dreadnought deployments MUST override these with images pulled from
@@ -15,33 +41,132 @@
 # Public registry defaults (registry.access.redhat.com) are for standard builds only.
 #
 # Example (Dreadnought):
-#   docker build -f Containerfile \
+#   docker build -f Containerfile.lite \
 #     --build-arg ENABLE_FIPS=true \
+#     --build-arg UBI_BASE=<internal-registry>/ubi9/ubi:latest \
 #     --build-arg NODEJS_IMAGE=<internal-registry>/ubi9/nodejs-20:latest \
 #     --build-arg UBI_MINIMAL=<internal-registry>/ubi9/ubi-minimal:latest \
 #     .
-###########################
-ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:10.1-1778561468
-ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:10.1-1778576723
+ARG UBI_BASE=registry.access.redhat.com/ubi10:1781510254
+ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:1781700998
+ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:1781509581
+# Wheel closure stage — used only for s390x and ppc64le where PyPI manylinux
+# binary wheels are unavailable (tiktoken/psycopg/cryptography require native
+# compilation, and psycopg-binary has no s390x wheel at all).
+# For amd64/arm64, WHEELS_REF defaults to UBI_MINIMAL so /wheels is always
+# empty and the install step below always resolves via PyPI.
+# For s390x/ppc64le, the CI pipeline (docker-multiplatform.yml) passes an
+# explicit WHEELS_REF pointing to the lock-hash-tagged wheel image built by
+# the `wheels` job in infra/wheels/Containerfile.
+ARG WHEELS_REF=${UBI_MINIMAL}
+FROM ${WHEELS_REF} AS wheels
+RUN mkdir -p /wheels
 
-###########################
-# Frontend builder stage
-###########################
-FROM node:lts-alpine AS frontend-builder
-WORKDIR /app
+###############################################################################
+# Rust builder stage - builds Rust MCP runtime and local native extensions
+# To build WITH Rust: docker build --build-arg ENABLE_RUST=true -f Containerfile.lite .
+# To build WITHOUT Rust (default): docker build -f Containerfile.lite .
+###############################################################################
+FROM ${UBI_BASE} AS rust-builder
+ARG PYTHON_VERSION=3.12
+ARG ENABLE_RUST
+ARG ENABLE_RUST_MCP_RMCP
 
-# Copy package.json and package-lock.json
-COPY package.json package-lock.json ./
+# Set shell with pipefail for safety
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Install frontend dependencies
-RUN npm ci
+# Only build if ENABLE_RUST=true
+RUN if [ "$ENABLE_RUST" != "true" ]; then \
+        echo "⏭️  Rust builds disabled (set --build-arg ENABLE_RUST=true to enable)"; \
+        mkdir -p /build/native-extension-wheels /build/target/release; \
+        printf '#!/usr/bin/env sh\n' > /build/target/release/contextforge-mcp-runtime; \
+        printf 'echo "Rust MCP runtime not built into this image. Rebuild with --build-arg ENABLE_RUST=true." >&2\n' >> /build/target/release/contextforge-mcp-runtime; \
+        printf 'exit 1\n' >> /build/target/release/contextforge-mcp-runtime; \
+        chmod +x /build/target/release/contextforge-mcp-runtime; \
+        printf '#!/usr/bin/env sh\n' > /build/target/release/contextforge-a2a-runtime; \
+        printf 'echo "Rust A2A runtime not built into this image. Rebuild with --build-arg ENABLE_RUST=true." >&2\n' >> /build/target/release/contextforge-a2a-runtime; \
+        printf 'exit 1\n' >> /build/target/release/contextforge-a2a-runtime; \
+        chmod +x /build/target/release/contextforge-a2a-runtime; \
+        exit 0; \
+    fi
 
-# Copy frontend source files
-COPY mcpgateway/admin_ui/ mcpgateway/admin_ui/
-COPY vite.config.js ./
+# Install system deps + Rust toolchain in a single layer (only if ENABLE_RUST=true)
+# hadolint ignore=DL3041
+RUN if [ "$ENABLE_RUST" = "true" ]; then \
+        dnf upgrade -y && \
+        dnf install -y \
+            python${PYTHON_VERSION} \
+            python${PYTHON_VERSION}-devel \
+            python${PYTHON_VERSION}-pip \
+            gcc \
+            gcc-c++ \
+            openssl-devel \
+            postgresql-devel \
+            libpq-devel \
+            findutils \
+            curl && \
+        update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 && \
+        dnf clean all && \
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable; \
+    fi
+ENV PATH="/root/.cargo/bin:$PATH"
 
-# Run Vite build (cleans old bundles and generates fresh manifest)
-RUN npm run vite:build
+WORKDIR /build
+
+# Copy workspace and crates (only if ENABLE_RUST=true)
+COPY Cargo.toml Cargo.lock /build/
+COPY crates/ /build/crates/
+COPY mcp-servers/rust/benchmark-server/ /build/mcp-servers/rust/benchmark-server/
+COPY mcp-servers/rust/slow-time-server/ /build/mcp-servers/rust/slow-time-server/
+COPY a2a-agents/rust/a2a-echo-agent/ /build/a2a-agents/rust/a2a-echo-agent/
+
+# Build local native extensions from maturin crates under crates/
+# hadolint ignore=DL3013
+RUN if [ "$ENABLE_RUST" = "true" ]; then \
+        mkdir -p /build/native-extension-wheels && \
+        python3 -m pip install --no-cache-dir --upgrade pip "maturin==1.12.6" && \
+        printf '%s\n' \
+            'import pathlib' \
+            'import subprocess' \
+            'import sys' \
+            'import tomllib' \
+            '' \
+            'crates_root = pathlib.Path("/build/crates")' \
+            'wheel_dir = pathlib.Path("/build/native-extension-wheels")' \
+            'for cargo_toml in sorted(crates_root.rglob("Cargo.toml")):' \
+            '    pyproject_toml = cargo_toml.with_name("pyproject.toml")' \
+            '    if not pyproject_toml.exists():' \
+            '        continue' \
+            '    pyproject = tomllib.loads(pyproject_toml.read_text(encoding="utf-8"))' \
+            '    build_system = pyproject.get("build-system", {})' \
+            '    backend = str(build_system.get("build-backend", ""))' \
+            '    requires = [str(item) for item in build_system.get("requires", [])]' \
+            '    if "maturin" not in backend and not any("maturin" in item for item in requires):' \
+            '        continue' \
+            '    crate_dir = cargo_toml.parent' \
+            '    print(f"🦀 Building local native extension: {crate_dir.name}")' \
+            '    subprocess.run([sys.executable, "-m", "maturin", "build", "--release", "--manifest-path", str(cargo_toml), "--out", str(wheel_dir)], check=True)' \
+            'print("✅ Local native extensions built successfully")' \
+            > /tmp/build_local_native_extensions.py && \
+        python3 /tmp/build_local_native_extensions.py && \
+        rm -f /tmp/build_local_native_extensions.py \
+    else \
+        echo "⏭️  Skipping local native extension build"; \
+    fi
+
+# Build MCP + A2A runtime binaries (MCP + A2A in the same RUN share /build/target)
+RUN if [ "$ENABLE_RUST" = "true" ]; then \
+        if [ "$ENABLE_RUST_MCP_RMCP" = "true" ]; then \
+            cargo build --release -p contextforge_mcp_runtime --features rmcp-upstream-client; \
+        else \
+            cargo build --release -p contextforge_mcp_runtime; \
+        fi && \
+        cp /build/target/release/contextforge_mcp_runtime /build/target/release/contextforge-mcp-runtime && \
+        cargo build --release -p contextforge_a2a_runtime && \
+        echo "✅ Rust MCP + A2A runtimes built successfully"; \
+    else \
+        echo "⏭️  Skipping Rust MCP + A2A runtime builds"; \
+    fi
 
 ###############################################################################
 # Node.js builder stage - builds Tailwind CSS
@@ -65,26 +190,56 @@ RUN npm ci && \
     npm run build:css && \
     echo "✅ Tailwind CSS built successfully"
 
-###############################################################################
-# Main application stage
-###############################################################################
-FROM ${UBI_MINIMAL}
-ARG ENABLE_FIPS=false
-LABEL maintainer="Mihai Criveti" \
-      name="mcp/mcpgateway" \
-      version="1.0.0-RC-2" \
-      description="ContextForge: An enterprise-ready Model Context Protocol Gateway"
+###########################
+# Frontend builder stage
+###########################
+FROM ${NODEJS_IMAGE} AS frontend-builder
+WORKDIR /opt/app-root/src
 
-ARG PYTHON_VERSION=3.12
+# Copy package.json and package-lock.json
+COPY --chown=10001:10001 package.json package-lock.json ./
 
-# Install Python and build dependencies
+# Install frontend dependencies
+RUN npm ci
+
+# Create directory structure with correct ownership before Vite build
+USER root
+RUN mkdir -p mcpgateway/static && chown -R 10001:10001 mcpgateway
+USER 10001
+
+# Copy frontend source files
+COPY --chown=10001:10001 mcpgateway/admin_ui/ mcpgateway/admin_ui/
+COPY --chown=10001:10001 vite.config.js ./
+
+# Run Vite build
+RUN npm run vite:build
+
+
+###########################
+# Builder stage
+###########################
+FROM ${UBI_BASE} AS builder
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+
+ARG PYTHON_VERSION
+ARG GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'
+
+# ----------------------------------------------------------------------------
+# 1) Patch the OS
+# 2) Install Python + headers for building wheels
+# 3) Install binutils for strip command and curl for downloading CDN assets
+# 4) Register python3 alternative
+# 5) Clean caches to reduce layer size
+# ----------------------------------------------------------------------------
 # hadolint ignore=DL3041
-RUN microdnf update -y && \
-    microdnf install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-devel gcc git openssl-devel postgresql-devel gcc-c++ && \
-    microdnf clean all
-
-# Set default python3 to the specified version
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1
+RUN set -euo pipefail \
+    && dnf upgrade -y \
+    && dnf install -y --allowerasing \
+        python${PYTHON_VERSION} \
+        python${PYTHON_VERSION}-devel \
+        binutils openssl-devel gcc postgresql-devel gcc-c++ curl libpq-devel \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 \
+    && dnf clean all
 
 WORKDIR /app
 
@@ -98,30 +253,207 @@ RUN if [ "$(uname -m)" = "s390x" ] || [ "$(uname -m)" = "ppc64le" ]; then \
         echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='True'" > /etc/profile.d/use-openssl.sh; \
     else \
         echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'" > /etc/profile.d/use-openssl.sh; \
-    fi
-RUN chmod 644 /etc/profile.d/use-openssl.sh
+    fi \
+    && chmod 644 /etc/profile.d/use-openssl.sh
 
-# Copy project files into container
-COPY . /app
+# ----------------------------------------------------------------------------
+# Copy only the files needed for dependency installation first.
+# Order is top-to-bottom from least-frequently-changing to most:
+#   1. pyproject.toml (dependency manifest — plugins come from the [plugins]
+#      extra, resolved from PyPI)
+#   2. The setuptools build_py hook module (pyproject.toml's
+#      [tool.setuptools.cmdclass] points at mcpgateway.tools.builder.build_hooks,
+#      so setuptools must be able to import it while resolving "."'s build
+#      metadata below — copy just this module's import chain, not the rest of
+#      mcpgateway/, to keep the dep layer cache intact for normal source edits)
+#   3. Native extension wheels from rust-builder (consumed by venv install)
+# Everything else (rust binaries, frontend static, app code) is copied AFTER
+# the heavy venv install so those changes don't invalidate the dep layer.
+# ----------------------------------------------------------------------------
+COPY pyproject.toml /app/
+COPY mcpgateway/__init__.py /app/mcpgateway/__init__.py
+COPY mcpgateway/tools/builder/__init__.py /app/mcpgateway/tools/builder/__init__.py
+COPY mcpgateway/tools/builder/build_hooks.py /app/mcpgateway/tools/builder/build_hooks.py
+COPY --from=rust-builder /build/native-extension-wheels/ /tmp/local-native-extension-wheels/
+COPY --from=wheels /wheels /tmp/wheels
+COPY --chmod=0755 scripts/verify-native-extensions.py /tmp/verify-native-extensions.py
 
-# Copy frontend build artifacts from frontend-builder stage
-COPY --from=frontend-builder /app/mcpgateway/static/ /app/mcpgateway/static/
+# ----------------------------------------------------------------------------
+# Create and populate virtual environment
+#  - Upgrade pip, setuptools, wheel, uv
+#  - Install project dependencies and package
+#  - Include observability packages for OpenTelemetry support
+#  - Install plugins from PyPI (cpex-* packages)
+#  - Install local native extensions from pre-built wheels (if built)
+#  - Optionally install profiling tools (memray, py-spy) if ENABLE_PROFILING=true
+#  - Remove build tools but keep runtime dist-info
+#  - Remove build caches and build artifacts
+# ----------------------------------------------------------------------------
+ARG ENABLE_RUST=false
+ARG ENABLE_RUST_MCP_RMCP=false
+ARG ENABLE_PROFILING=false
+RUN set -euo pipefail \
+    && . /etc/profile.d/use-openssl.sh \
+    && python3 -m venv /app/.venv \
+    && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel uv \
+    && if [ -n "$(ls -A /tmp/wheels/*.whl 2>/dev/null)" ]; then \
+        echo "📦 Hermetic install from prebuilt wheel closure"; \
+        /app/.venv/bin/uv pip install --no-index --find-links=/tmp/wheels ".[redis,observability,granian,plugins,llmchat]" "psycopg[c]>=3.3.3"; \
+    else \
+        /app/.venv/bin/uv pip install ".[redis,postgres,observability,granian,plugins,llmchat]"; \
+    fi \
+    && echo "✅ Plugins installed from PyPI via [plugins] extra" \
+    && if [ "$ENABLE_RUST" = "true" ] && ls "/tmp/local-native-extension-wheels/"*.whl 1> /dev/null 2>&1; then \
+        echo "🦀 Installing local native extensions..."; \
+        /app/.venv/bin/uv pip install --no-cache-dir "/tmp/local-native-extension-wheels/"*.whl && \
+        /app/.venv/bin/python3 /tmp/verify-native-extensions.py && rm /tmp/verify-native-extensions.py; \
+    else \
+        echo "⏭️  No local native extensions discovered"; \
+    fi \
+    && rm -rf /tmp/local-native-extension-wheels /tmp/wheels \
+    && if [ "$ENABLE_PROFILING" = "true" ]; then \
+        echo "📊 Installing profiling tools (memray, py-spy)..."; \
+        /app/.venv/bin/uv pip install --no-cache-dir "memray>=1.17.0" && \
+        /app/.venv/bin/python3 -c "import memray; print('✓ memray installed successfully')"; \
+    else \
+        echo "⏭️  Profiling tools disabled (set --build-arg ENABLE_PROFILING=true to enable)"; \
+    fi \
+    && /app/.venv/bin/pip uninstall --yes uv pip setuptools wheel \
+    && rm -rf /root/.cache /var/cache/dnf \
+    && (find /app/.venv -name "*.dist-info" -type d \
+        \( -name "pip-*" -o -name "setuptools-*" -o -name "wheel-*" -o -name "uv-*" \) \
+        -exec rm -rf {} + 2>/dev/null || true) \
+    && rm -rf /app/.venv/share/python-wheels \
+    && rm -rf "/app/"*.egg-info /app/build /app/dist /app/.eggs
 
-# Copy Tailwind CSS build artifact from node-builder stage
+# ----------------------------------------------------------------------------
+# Copy Rust runtime binaries and frontend static output from their builder
+# stages AFTER the venv install so those changes don't invalidate the heavy
+# dependency layer above.
+# ----------------------------------------------------------------------------
+COPY --from=rust-builder /build/target/release/contextforge-mcp-runtime /app/bin/contextforge-mcp-runtime
+COPY --from=rust-builder /build/target/release/contextforge-a2a-runtime /app/bin/contextforge-a2a-runtime
+COPY --from=frontend-builder /opt/app-root/src/mcpgateway/static/ /app/mcpgateway/static/
+
+# Copy pre-built Tailwind CSS from node-builder
 COPY --from=node-builder /build/mcpgateway/static/css/tailwind.min.css /app/mcpgateway/static/css/
 
 
-# Create virtual environment, upgrade pip and install dependencies using uv for speed
-# Including observability packages for OpenTelemetry support and plugins from PyPI
-# Granian is included as an optional high-performance alternative to Gunicorn
-RUN python3 -m venv /app/.venv && \
-    . /etc/profile.d/use-openssl.sh && \
-    /app/.venv/bin/python3 -m pip install --upgrade pip setuptools pdm uv && \
-    /app/.venv/bin/python3 -m uv pip install ".[redis,postgres,observability,granian,plugins,llmchat]"
+# Optional: Copy run.sh if it's needed in production
+COPY run.sh /app/
 
-# update the user permissions
-RUN chown -R 1001:0 /app && \
-    chmod -R g=u /app
+# ----------------------------------------------------------------------------
+# Download CDN assets for airgapped deployment (writes into /app/mcpgateway/static/vendor/).
+# Placed here so app code changes below don't invalidate this network-bound step.
+# --chmod=0755 lets us skip a follow-up chmod layer.
+# ----------------------------------------------------------------------------
+COPY --chmod=0755 scripts/download-cdn-assets.sh /tmp/download-cdn-assets.sh
+RUN /tmp/download-cdn-assets.sh \
+    && rm /tmp/download-cdn-assets.sh
+
+# ----------------------------------------------------------------------------
+# Application files, ordered from least- to most-frequently-changing so that
+# the more volatile COPYs at the bottom don't invalidate the stable ones above.
+#   - Run/entrypoint scripts (rarely change)           [--chmod=0755 keeps +x]
+#   - gunicorn config + mcp catalog (rare/occasional)
+#   - mcpgateway/ + plugins/ (change most often)
+# ----------------------------------------------------------------------------
+COPY --chmod=0755 run-gunicorn.sh run-granian.sh docker-entrypoint.sh run.sh /app/
+COPY gunicorn.config.py mcp-catalog.yml /app/
+COPY mcpgateway/ /app/mcpgateway/
+COPY plugins/ /app/plugins/
+
+# ----------------------------------------------------------------------------
+# Final pass: compile bytecode with -OO, strip caches, fix OpenShift-compatible
+# ownership. Merged into one layer — all of these are cheap and all get
+# invalidated whenever any app code changes above.
+# ----------------------------------------------------------------------------
+RUN python3 -OO -m compileall -x 'cpex/templates' -q /app/.venv /app/mcpgateway /app/plugins \
+    && find /app -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true \
+    && chown -R 10001:10001 /app
+
+###########################
+# Final runtime stage
+###########################
+# Runtime base: UBI 10 by default; override UBI_MINIMAL build-arg to ubi9/ubi-minimal:latest for FedRAMP builds
+# hadolint ignore=DL3006
+FROM ${UBI_MINIMAL} AS runtime
+ARG ENABLE_FIPS=false
+
+ARG PYTHON_VERSION=3.12
+ARG ENABLE_RUST=false
+ARG ENABLE_RUST_MCP_RMCP=false
+ARG ENABLE_PROFILING=false
+
+# ----------------------------------------------------------------------------
+# OCI image metadata
+# ----------------------------------------------------------------------------
+LABEL maintainer="Mihai Criveti" \
+    org.opencontainers.image.title="mcp/mcpgateway" \
+    org.opencontainers.image.description="ContextForge: An enterprise-ready Model Context Protocol Gateway" \
+    org.opencontainers.image.licenses="Apache-2.0" \
+    org.opencontainers.image.version="1.0.4"
+
+# ----------------------------------------------------------------------------
+# Install minimal runtime dependencies
+# - Python runtime (no devel packages)
+# - ca-certificates for HTTPS
+# - procps-ng for process management (ps command)
+# - shadow-utils for useradd command
+# - gdb for memray attach (only when ENABLE_PROFILING=true)
+# ----------------------------------------------------------------------------
+# Install runtime deps, conditionally add gdb for profiling, create the python3
+# symlink and non-root user — all merged into a single layer since these are
+# stable setup steps that rarely change.
+# hadolint ignore=DL3041
+RUN microdnf upgrade -y --nodocs --setopt=install_weak_deps=0 \
+    && microdnf install -y --nodocs --setopt=install_weak_deps=0 \
+        python${PYTHON_VERSION} \
+        ca-certificates \
+        procps-ng \
+        shadow-utils \
+        libpq \
+    && if [ "$ENABLE_PROFILING" = "true" ]; then \
+        microdnf install -y --nodocs --setopt=install_weak_deps=0 gdb; \
+    fi \
+    && microdnf clean all \
+    && rm -rf /var/cache/yum \
+    && ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python3 \
+    && groupadd --gid 10001 app \
+    && useradd --uid 10001 --gid 10001 --home-dir /app --shell /sbin/nologin --no-create-home --comment app app
+
+# ----------------------------------------------------------------------------
+# Copy the application from the builder stage
+# ----------------------------------------------------------------------------
+COPY --from=builder --chown=10001:10001 /app /app
+
+# ----------------------------------------------------------------------------
+# Ensure our virtual environment binaries have priority in PATH
+# - Don't write bytecode files (we pre-compiled with -OO)
+# - Unbuffered output for better logging
+# - Random hash seed for security
+# - Disable pip cache to save space
+# - Disable pip version check to reduce startup time
+# ----------------------------------------------------------------------------
+ENV PATH="/app/.venv/bin:${PATH}" \
+    PYTHONPATH="/app" \
+    CONTEXTFORGE_ENABLE_RUST_BUILD=${ENABLE_RUST} \
+    CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD=${ENABLE_RUST_MCP_RMCP} \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONHASHSEED=random \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# ----------------------------------------------------------------------------
+# Application working directory
+# ----------------------------------------------------------------------------
+WORKDIR /app
+
+# ----------------------------------------------------------------------------
+# Expose application port
+# ----------------------------------------------------------------------------
+EXPOSE 4444
 
 # hadolint ignore=DL3041
 # FedRAMP compliance block — only active when ENABLE_FIPS=true
@@ -175,17 +507,20 @@ RUN if [ "$ENABLE_FIPS" = "true" ]; then \
         echo "ENABLE_FIPS=false — skipping FedRAMP compliance block"; \
     fi
 
-# Expose the application port
-EXPOSE 4444
+# ----------------------------------------------------------------------------
+# Run as non-root user (10001:10001)
+# ----------------------------------------------------------------------------
+USER 10001:10001
 
-# Set the runtime user
-USER 1001
+# ----------------------------------------------------------------------------
+# Health check
+# ----------------------------------------------------------------------------
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD ["python3", "-c", "import httpx,sys;sys.exit(0 if httpx.get('http://localhost:4444/health',timeout=5).status_code==200 else 1)"]
 
-# Ensure virtual environment binaries are in PATH and project modules resolve
-# even when containers run an alternate Python entrypoint.
-ENV PATH="/app/.venv/bin:$PATH" \
-    PYTHONPATH="/app"
-
+# ----------------------------------------------------------------------------
+# Entrypoint
+# ----------------------------------------------------------------------------
 # HTTP server selection via HTTP_SERVER environment variable:
 #   - gunicorn : Python-based with Uvicorn workers (default)
 #   - granian  : Rust-based HTTP server (alternative)
