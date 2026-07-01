@@ -1470,7 +1470,7 @@ async def _close_streamable_http_session(
 async def _proxy_list_tools_to_gateway(
     gateway: Any,
     request_headers: dict,
-    user_context: dict,
+    _user_context: dict,
     meta: Optional[Any] = None,
     *,
     apps_client: bool = False,
@@ -1480,7 +1480,7 @@ async def _proxy_list_tools_to_gateway(
     Args:
         gateway: Gateway ORM instance
         request_headers: Request headers from client
-        user_context: User context (not used - _meta comes from MCP SDK)
+        _user_context: User context (not used - _meta comes from MCP SDK)
         meta: Request metadata (_meta) from the original request
         apps_client: Whether the caller advertised MCP Apps support.
 
