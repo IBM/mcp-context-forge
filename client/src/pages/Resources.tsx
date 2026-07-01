@@ -1,8 +1,18 @@
-import { useState, useMemo, memo } from "react";
+import { useState, useMemo, memo, useCallback } from "react";
 import { useIntl } from "react-intl";
 import { Plus, MoreHorizontal, FileText } from "lucide-react";
+import { toast } from "sonner";
 import { useQuery } from "@/hooks/useQuery";
-import type { ResourceRead, GatewayRead, CursorPaginatedGatewaysResponse } from "@/generated/types";
+import { resourcesApi } from "@/api/resources";
+import { ApiError } from "@/api/client";
+import { extractApiErrorDetail } from "@/utils/errors";
+import type {
+  ResourceRead,
+  GatewayRead,
+  CursorPaginatedGatewaysResponse,
+  BodyCreateResourceResourcesPost,
+} from "@/generated/types";
+import { ResourceReadVisibility } from "@/generated/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import {
@@ -13,15 +23,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ResourceForm } from "@/components/resources/ResourceForm";
 import { ResourceDetailsPanel } from "@/components/resources/ResourceDetailsPanel";
+import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
 
-/**
- * Card component displaying a single resource
- * Memoized to prevent unnecessary re-renders when parent updates
- *
- * @param resource - Resource to display
- * @param gatewaySlug - Gateway slug for the resource
- * @param onViewResource - Callback when user clicks to view resource details
- */
 function getUriLabel(uri: string): string {
   try {
     return new URL(uri).hostname || uri;
@@ -40,7 +43,7 @@ const ResourceCard = memo(function ResourceCard({
   const intl = useIntl();
 
   return (
-    <Card size="sm" className="border-neutral-800 bg-neutral-900 rounded-xl pl-0 pr-4 pt-4 pb-4">
+    <Card size="sm" className="rounded-xl pl-0 pr-4 pt-4 pb-4">
       <CardHeader>
         <div className="flex items-center gap-3">
           <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded bg-tool-icon-bg">
@@ -81,13 +84,13 @@ const ResourceCard = memo(function ResourceCard({
       <CardContent>
         <div className="flex flex-wrap gap-1">
           {resource.mimeType && (
-            <span className="inline-flex items-center rounded bg-tool-badge-bg px-1.5 py-1 text-[10px] font-medium leading-none text-white">
+            <span className="inline-flex items-center rounded bg-neutral-100 px-1.5 py-1 text-[10px] font-medium leading-none text-neutral-700 dark:bg-neutral-800 dark:text-white">
               {resource.mimeType}
             </span>
           )}
           {resource.uri && (
             <span
-              className="inline-flex items-center rounded bg-tool-badge-bg px-1.5 py-1 text-[10px] font-medium leading-none text-white"
+              className="inline-flex items-center rounded bg-neutral-100 px-1.5 py-1 text-[10px] font-medium leading-none text-neutral-700 dark:bg-neutral-800 dark:text-white"
               title={resource.uri}
             >
               {getUriLabel(resource.uri)}
@@ -99,12 +102,6 @@ const ResourceCard = memo(function ResourceCard({
   );
 });
 
-/**
- * Card component for adding new resources
- * Displays informational text about resource auto-discovery
- *
- * @param onAddResource - Callback when user clicks to add resources
- */
 function AddResourcesCard({ onAddResource }: { onAddResource: () => void }) {
   const intl = useIntl();
 
@@ -113,7 +110,7 @@ function AddResourcesCard({ onAddResource }: { onAddResource: () => void }) {
       size="sm"
       role="button"
       tabIndex={0}
-      className="border-neutral-800 bg-neutral-900 rounded-xl pl-0 pr-4 pt-4 pb-4 cursor-pointer transition-opacity hover:opacity-90"
+      className="rounded-xl pl-0 pr-4 pt-4 pb-4 cursor-pointer transition-opacity hover:opacity-90"
       onClick={onAddResource}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -124,8 +121,8 @@ function AddResourcesCard({ onAddResource }: { onAddResource: () => void }) {
     >
       <CardHeader>
         <div className="flex items-center gap-3">
-          <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded bg-tool-add-icon-bg shadow-sm">
-            <Plus className="h-3.5 w-3.5 text-tool-add-icon-fg" />
+          <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded bg-neutral-200 shadow-sm dark:bg-white">
+            <Plus className="h-3.5 w-3.5 text-neutral-700 dark:text-neutral-900" />
           </div>
           <span className="text-sm font-semibold text-neutral-900 dark:text-white">
             {intl.formatMessage({ id: "resources.addResources.title" })}
@@ -141,18 +138,21 @@ function AddResourcesCard({ onAddResource }: { onAddResource: () => void }) {
   );
 }
 
-/**
- * Resources page component - displays and manages MCP resources.
- * Renders one card per resource (no gateway grouping).
- * Details panel resolves a human-readable gateway name from gatewayId via gatewayNameById,
- * falling back to the raw gatewayId when the gateway is not in the fetched list.
- */
 export function Resources() {
   const intl = useIntl();
   const [showForm, setShowForm] = useState(false);
   const [selectedResource, setSelectedResource] = useState<NonNullable<ResourceRead> | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteResourceId, setDeleteResourceId] = useState<string | null>(null);
+  const [deleteResourceName, setDeleteResourceName] = useState<string | null>(null);
 
-  const { data, isLoading, error, refetch } = useQuery<ResourceRead[]>("/resources?limit=0");
+  const {
+    data,
+    isLoading,
+    error,
+    refetch,
+    setData: setResourcesData,
+  } = useQuery<ResourceRead[]>("/resources?limit=0");
   const { data: gatewaysData } = useQuery<CursorPaginatedGatewaysResponse>(
     "/gateways?limit=0&include_pagination=true",
     {
@@ -172,6 +172,32 @@ export function Resources() {
     );
   }, [gatewaysData]);
 
+  const handleOptimisticAdd = useCallback(
+    (formData: BodyCreateResourceResourcesPost) => {
+      const { resource } = formData;
+      const optimistic: NonNullable<ResourceRead> = {
+        id: "__optimistic__",
+        uri: resource.uri,
+        name: resource.name,
+        description: resource.description ?? null,
+        mimeType: resource.mimeType ?? null,
+        size: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        enabled: true,
+        tags: resource.tags ?? [],
+        visibility:
+          (resource.visibility as ResourceReadVisibility) ?? ResourceReadVisibility.public,
+      };
+      setResourcesData((prev) => [optimistic, ...(prev ?? [])]);
+    },
+    [setResourcesData],
+  );
+
+  const handleOptimisticRollback = useCallback(() => {
+    setResourcesData((prev) => prev?.filter((r) => r?.id !== "__optimistic__") ?? []);
+  }, [setResourcesData]);
+
   const handleFormSuccess = async () => {
     setShowForm(false);
     await refetch();
@@ -185,11 +211,51 @@ export function Resources() {
     setSelectedResource(null);
   };
 
-  /**
-   * @future Implement resource deletion in follow-up PR
-   * Delete functionality will include confirmation dialog
-   */
-  const handleDeleteResource = () => {};
+  const handleDeleteResource = useCallback(
+    (id: string) => {
+      const resource = data?.find((r) => r?.id === id);
+      setDeleteResourceId(id);
+      setDeleteResourceName(resource?.name || id);
+      setDeleteDialogOpen(true);
+    },
+    [data],
+  );
+
+  const confirmDelete = useCallback(async () => {
+    if (!deleteResourceId || !deleteResourceName) return;
+
+    setDeleteDialogOpen(false);
+
+    try {
+      await resourcesApi.delete(deleteResourceId);
+      toast.success(
+        intl.formatMessage({ id: "resources.delete.success" }, { name: deleteResourceName }),
+      );
+      setDeleteResourceId(null);
+      setDeleteResourceName(null);
+      setSelectedResource(null);
+      await refetch();
+    } catch (err) {
+      let errorMessage = intl.formatMessage({ id: "resources.delete.error" });
+
+      if (err instanceof ApiError) {
+        const detail = extractApiErrorDetail(err.body);
+        errorMessage =
+          detail ||
+          intl.formatMessage(
+            { id: "resources.delete.errorWithMessage" },
+            { message: err.message || intl.formatMessage({ id: "resources.delete.errorUnknown" }) },
+          );
+      } else if (err instanceof Error) {
+        errorMessage = intl.formatMessage(
+          { id: "resources.delete.errorWithMessage" },
+          { message: err.message },
+        );
+      }
+
+      toast.error(errorMessage);
+    }
+  }, [deleteResourceId, deleteResourceName, refetch, intl]);
 
   return (
     <div className="p-6">
@@ -198,6 +264,8 @@ export function Resources() {
           isOpen={showForm}
           onToggle={() => setShowForm(false)}
           onSuccess={handleFormSuccess}
+          onBeforeSubmit={handleOptimisticAdd}
+          onError={handleOptimisticRollback}
         />
       ) : (
         <>
@@ -258,6 +326,19 @@ export function Resources() {
               onDeleteResource={handleDeleteResource}
             />
           )}
+
+          <ConfirmDialog
+            open={deleteDialogOpen}
+            onOpenChange={setDeleteDialogOpen}
+            onConfirm={confirmDelete}
+            title={intl.formatMessage({ id: "resources.delete.confirm.title" })}
+            description={intl.formatMessage(
+              { id: "resources.delete.confirm.description" },
+              { name: deleteResourceName },
+            )}
+            confirmLabel={intl.formatMessage({ id: "resources.delete.confirm.button" })}
+            variant="destructive"
+          />
         </>
       )}
     </div>
