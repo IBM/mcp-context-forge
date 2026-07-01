@@ -206,16 +206,19 @@ Passthrough headers are forwarded consistently across all transports:
 | SSE `/servers/{id}/sse` | Loopback | Headers captured at connection time, forwarded in internal `/rpc` calls |
 | WebSocket `/ws` | Loopback | Headers captured at WebSocket handshake, forwarded in internal `/rpc` calls |
 | Streamable HTTP (affinity) | Loopback | Headers extracted per request and forwarded to the affinity target |
+| A2A tools | Direct | Headers filtered by global defaults and the agent `passthrough_headers` allowlist. `TOOL_PRE_INVOKE` receives only non-sensitive headers; outbound A2A invocation receives sensitive headers only when `ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true`. |
 
 For loopback transports (SSE, WebSocket, Streamable HTTP affinity), gateway-internal headers (`Authorization`, `Content-Type`, session IDs, proxy-user identity) are never forwarded — they are filtered at both extraction and merge time for defense-in-depth.
 
 ### Configuration Hierarchy
 
-The system follows this priority order:
+For gateways, the system follows this priority order:
 
 1. **Gateway-specific headers** (highest priority)
 2. **Global configuration** (from database)
 3. **Environment variable defaults** (lowest priority)
+
+For A2A agents, the agent's `passthrough_headers` acts as the per-agent allowlist on top of the global/default passthrough configuration. A2A tool plugin hooks receive only the non-sensitive subset of the effective passthrough headers. Outbound A2A requests receive sensitive headers only when `ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true`; otherwise sensitive headers are stripped even if they are allowlisted.
 
 ### Example Flow
 
@@ -328,6 +331,21 @@ DEFAULT_PASSTHROUGH_HEADERS=["X-Tenant-Id", "X-Trace-Id", "X-Request-Id"]
 }
 ```
 
+### A2A Agent Override
+
+```json
+// Via the A2A agent registration API
+{
+  "name": "hello_world_agent",
+  "endpoint_url": "http://localhost:9999/",
+  "agent_type": "jsonrpc",
+  "passthrough_headers": ["Authorization", "X-Tenant-Id"],
+  "auth_type": "api_key",
+  "auth_value": "your-api-key"
+}
+```
+
+A2A `passthrough_headers` is evaluated with the global passthrough settings. `TOOL_PRE_INVOKE` plugins receive the non-sensitive filtered request headers as `payload.headers`. The outbound A2A call uses the same filtered base headers, and can include sensitive headers such as `Authorization` only when `ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true`. If `auth_type` is `api_key`, the configured API key supplies the outbound `Authorization` header and takes precedence over a base or passthrough `Authorization` value.
 
 ## Usage with One-Time Auth
 

@@ -1096,7 +1096,8 @@ maxclients >= (num_gateway_instances × (REDIS_MAX_CONNECTIONS + RATELIMITER_RED
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
 | `ENABLE_HEADER_PASSTHROUGH`   | Enable HTTP header passthrough feature           | `false`               | bool    |
 | `ENABLE_OVERWRITE_BASE_HEADERS` | Enable overwriting of base headers             | `false`               | bool    |
-| `DEFAULT_PASSTHROUGH_HEADERS` | Default headers to pass through (JSON array)    | `["X-Tenant-Id", "X-Trace-Id"]` | JSON array |
+| `ENABLE_SENSITIVE_HEADER_PASSTHROUGH` | Allow allowlisted sensitive headers to reach outbound A2A invocations. Tool pre-invoke plugin payloads still receive only non-sensitive headers. Requires `ENABLE_HEADER_PASSTHROUGH=true`. | `false` | bool |
+| `DEFAULT_PASSTHROUGH_HEADERS` | Default headers to pass through for gateways and A2A agents; A2A agents can further restrict this with `passthrough_headers` | `["X-Tenant-Id", "X-Trace-Id"]` | JSON array |
 | `GLOBAL_CONFIG_CACHE_TTL`     | In-memory cache TTL for GlobalConfig (seconds)  | `60`                  | int     |
 
 !!! warning "Security Warning"
