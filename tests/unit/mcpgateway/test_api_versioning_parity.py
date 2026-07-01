@@ -16,6 +16,18 @@ from mcpgateway.config import settings
 from mcpgateway.middleware.deprecation import _LEGACY_PREFIXES
 
 
+def _flatten_route_paths(routes: list, prefix: str = "") -> list[str]:
+    """Recursively flatten routes, handling Starlette 1.3+ _IncludedRouter objects."""
+    paths = []
+    for r in routes:
+        if hasattr(r, "path"):
+            paths.append(prefix + r.path)
+        elif hasattr(r, "include_context") and hasattr(r, "original_router"):
+            ctx_prefix = getattr(r.include_context, "prefix", "") or ""
+            paths.extend(_flatten_route_paths(r.original_router.routes, ctx_prefix))
+    return paths
+
+
 def extract_router_prefixes(router: APIRouter) -> set[str]:
     """Extract all route prefixes from an assembled router.
 
@@ -26,8 +38,7 @@ def extract_router_prefixes(router: APIRouter) -> set[str]:
         Set of unique prefixes (e.g., {"/tools", "/servers"}).
     """
     prefixes = set()
-    for route in router.routes:
-        path = route.path
+    for path in _flatten_route_paths(router.routes):
         # Extract first path segment as prefix
         if path.startswith("/"):
             parts = path.split("/")
@@ -209,12 +220,26 @@ def test_llm_admin_router_csrf_dependency():
         a2a_router=APIRouter(),
     )
 
-    # Collect all dependency callables across routes under /admin/llm
+    # Collect all dependency callables across routes under /admin/llm.
+    # Starlette 1.3+ stores include_router results as _IncludedRouter objects;
+    # dependencies from the include_router call live in include_context.dependencies.
     llm_admin_route_deps: list = []
     for route in test_router.routes:
         if hasattr(route, "path") and route.path.startswith("/admin/llm"):
+            # Old Starlette: flattened APIRoute with merged dependencies
             for dep in getattr(route, "dependencies", []):
                 llm_admin_route_deps.append(dep.dependency)
+        elif hasattr(route, "include_context") and hasattr(route, "original_router"):
+            # Starlette 1.3+: _IncludedRouter — dependencies live on include_context
+            ctx_prefix = getattr(route.include_context, "prefix", "") or ""
+            ctx_deps = list(getattr(route.include_context, "dependencies", []) or [])
+            for sub_r in route.original_router.routes:
+                sub_path = ctx_prefix + (sub_r.path if hasattr(sub_r, "path") else "")
+                if sub_path.startswith("/admin/llm"):
+                    for dep in ctx_deps:
+                        llm_admin_route_deps.append(dep.dependency)
+                    for dep in getattr(sub_r, "dependencies", []):
+                        llm_admin_route_deps.append(dep.dependency)
 
     assert llm_admin_route_deps, (
         "No routes found under /admin/llm after assembly — "

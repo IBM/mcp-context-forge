@@ -252,7 +252,17 @@ def test_v1_prefix_does_not_produce_rfc_violation():
     v1_router = APIRouter(prefix="/v1")
     v1_router.include_router(admin_router)
 
-    final_paths = [route.path for route in v1_router.routes]
+    def _flatten(routes, prefix=""):
+        out = []
+        for r in routes:
+            if hasattr(r, "path"):
+                out.append(prefix + r.path)
+            elif hasattr(r, "include_context") and hasattr(r, "original_router"):
+                p = getattr(r.include_context, "prefix", "") or ""
+                out.extend(_flatten(r.original_router.routes, p))
+        return out
+
+    final_paths = _flatten(v1_router.routes)
     rfc_violations = [p for p in final_paths if "/.well-known" in p]
     assert rfc_violations == [], f"Including admin_router in /v1 creates RFC 8615 violating paths: {rfc_violations}"
 

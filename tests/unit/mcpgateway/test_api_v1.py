@@ -73,9 +73,21 @@ def _required_kwargs(**extras) -> dict:
     return base
 
 
+def _flatten_routes(routes: list, prefix: str = "") -> list[str]:
+    """Recursively flatten routes, handling Starlette 1.3+ _IncludedRouter objects."""
+    paths = []
+    for r in routes:
+        if hasattr(r, "path"):
+            paths.append(prefix + r.path)
+        elif hasattr(r, "include_context") and hasattr(r, "original_router"):
+            ctx_prefix = getattr(r.include_context, "prefix", "") or ""
+            paths.extend(_flatten_routes(r.original_router.routes, ctx_prefix))
+    return paths
+
+
 def _route_paths(router: APIRouter) -> list[str]:
     """Collect all route paths registered on a router."""
-    return [r.path for r in router.routes]
+    return _flatten_routes(router.routes)
 
 
 def _make_mock_router_module(sentinel_path: str) -> ModuleType:
