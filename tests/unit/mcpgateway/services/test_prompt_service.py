@@ -920,11 +920,11 @@ class TestPromptService:
         plugin_mgr.has_hooks_for.side_effect = lambda hook: hook in {PromptHookType.PROMPT_PRE_FETCH, PromptHookType.PROMPT_POST_FETCH}
 
         pre_payload = PromptPrehookPayload(prompt_id="1", args={"name": "Alice"})
-        pre_result = SimpleNamespace(modified_payload=pre_payload)
+        pre_result = SimpleNamespace(modified_payload=pre_payload, metadata=None)
 
         modified = PromptResult(messages=[Message(role=Role.ASSISTANT, content=TextContent(type="text", text="post"))], description="post")
         post_payload = PromptPosthookPayload(prompt_id="1", result=modified)
-        post_result = SimpleNamespace(modified_payload=post_payload)
+        post_result = SimpleNamespace(modified_payload=post_payload, metadata=None)
 
         plugin_mgr.invoke_hook = AsyncMock(side_effect=[(pre_result, {"ctx": 1}), (post_result, {"ctx": 1})])
 
@@ -983,11 +983,11 @@ class TestPromptService:
         plugin_mgr.has_hooks_for.side_effect = lambda hook: hook in {PromptHookType.PROMPT_PRE_FETCH, PromptHookType.PROMPT_POST_FETCH}
 
         pre_payload = PromptPrehookPayload(prompt_id="1", args={"name": "Alice"})
-        pre_result = SimpleNamespace(modified_payload=pre_payload)
+        pre_result = SimpleNamespace(modified_payload=pre_payload, metadata=None)
 
         modified = PromptResult(messages=[Message(role=Role.ASSISTANT, content=TextContent(type="text", text="post"))], description="post")
         post_payload = PromptPosthookPayload(prompt_id="1", result=modified)
-        post_result = SimpleNamespace(modified_payload=post_payload)
+        post_result = SimpleNamespace(modified_payload=post_payload, metadata=None)
 
         plugin_mgr.invoke_hook = AsyncMock(side_effect=[(pre_result, {"ctx": 1}), (post_result, {"ctx": 1})])
 
@@ -1080,7 +1080,7 @@ class TestPromptService:
         plugin_mgr.has_hooks_for.side_effect = lambda hook: hook == PromptHookType.PROMPT_PRE_FETCH
 
         pre_payload = PromptPrehookPayload(prompt_id="1", args={"name": "Alice"})
-        pre_result = SimpleNamespace(modified_payload=pre_payload)
+        pre_result = SimpleNamespace(modified_payload=pre_payload, metadata=None)
         plugin_mgr.invoke_hook = AsyncMock(return_value=(pre_result, {"ctx": 1}))
 
         @contextmanager
