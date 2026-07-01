@@ -1942,13 +1942,13 @@ async def get_current_user(
                 if scopes is None:
                     # CRITICAL: API token missing scopes field is a security bypass of Layer 1
                     # All API tokens must have scopes field (even if empty dict {}) to enforce least-privilege
-                    logger.warning("JWT API token rejected: missing required 'scopes' field. " "API tokens must include scopes field (even if empty) to enforce Layer 1 scope checks.")
+                    logger.warning("JWT API token rejected: missing required 'scopes' field. API tokens must include scopes field (even if empty) to enforce Layer 1 scope checks.")
                     raise HTTPException(status_code=401, detail="Invalid token: missing required scopes field")
 
                 if not isinstance(scopes, dict):
                     # Malformed JWT: scopes field exists but is not a dict
                     # Reject malformed tokens to enforce fail-closed security model
-                    logger.warning(f"JWT API token rejected: scopes field is {type(scopes).__name__}, expected dict. " f"Tokens with malformed scopes must be regenerated with correct structure.")
+                    logger.warning(f"JWT API token rejected: scopes field is {type(scopes).__name__}, expected dict. Tokens with malformed scopes must be regenerated with correct structure.")
                     raise HTTPException(status_code=401, detail="Invalid token: malformed scopes field")
 
                 permissions = scopes.get("permissions", [])
