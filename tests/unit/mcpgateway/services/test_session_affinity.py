@@ -35,24 +35,22 @@ def _reset_affinity_singleton():
 
 
 def _sign_forward(request: dict) -> dict:
-    """Attach a valid ``auth_context_sig`` for a forwarded-request payload.
+    """Attach a valid ``forward_sig`` over the whole forwarded envelope.
 
-    ``_execute_forwarded_http_request`` now requires the forwarded auth context to
-    carry a signature bound to its ``mcp_session_id`` (closes the Redis signing
-    oracle). Tests that exercise the happy path build the same signature the
-    publisher (`forward_to_owner`) would, so the consumer accepts and dispatches.
+    The consumers now verify the entire envelope (identity + operation +
+    response_channel), not just the auth context, so tests that exercise the happy
+    path build the same signature the publishers (``forward_to_owner`` /
+    ``forward_request_to_owner``) would. Must be called after the payload is fully
+    built: any field mutated afterwards invalidates the signature.
     """
     # First-Party
-    from mcpgateway.auth_context import sign_redis_auth_context  # pylint: disable=import-outside-toplevel
+    from mcpgateway.auth_context import FORWARD_SIG_FIELD, sign_redis_forward_envelope  # pylint: disable=import-outside-toplevel
 
-    ctx = request.get("auth_context")
-    if ctx is None:
+    if request.get("auth_context") is None:
         # Envelopes that don't set a context get a placeholder so the consumer's
-        # required-signature check passes on the happy path.
-        ctx = "ctx"
-        request["auth_context"] = ctx
-    if ctx:
-        request["auth_context_sig"] = sign_redis_auth_context(request.get("mcp_session_id") or "", ctx)
+        # required-auth-context check passes on the happy path.
+        request["auth_context"] = "ctx"
+    request[FORWARD_SIG_FIELD] = sign_redis_forward_envelope(request)
     return request
 
 
@@ -1228,7 +1226,7 @@ async def test_public_only_forward_signs_and_consumer_accepts():
 
     forward_data = orjson.loads(pub_fake.published[0][1])
     assert forward_data["auth_context"] == encoded  # non-empty context forwarded
-    assert forward_data["auth_context_sig"]  # and signed
+    assert forward_data["forward_sig"]  # and the whole envelope is signed
 
     # Consumer side: verify + dispatch (mocked internal endpoint).
     consumer_fake = _FakeRedis()
@@ -1634,7 +1632,7 @@ async def test_execute_forwarded_request_success_returns_result():
 
 @pytest.mark.asyncio
 async def test_execute_forwarded_request_rejects_forged_signature():
-    """An rpc forward with an invalid auth-context signature is rejected, never dispatched."""
+    """An rpc forward with an invalid envelope signature is rejected, never dispatched."""
     # First-Party
     from mcpgateway.services.session_affinity import SessionAffinity
 
@@ -1642,7 +1640,7 @@ async def test_execute_forwarded_request_rejects_forged_signature():
     client = _FakeHttpxClient(response=_FakeHttpResponse(200, json_body={"jsonrpc": "2.0", "result": {}, "id": 1}))
     request = {
         "method": "tools/list", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "sess-forged",
-        "auth_context": "forged-admin-ctx", "auth_context_sig": "deadbeef" * 8,  # not a valid HMAC
+        "auth_context": "forged-admin-ctx", "forward_sig": "deadbeef" * 8,  # not a valid envelope HMAC
     }
     with (
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,
@@ -2489,7 +2487,7 @@ async def test_execute_forwarded_http_request_rejects_unsigned_context():
     Closes the Redis signing oracle: a writer to the pub/sub channel needs no
     secret, so the owner must not re-stamp an unverified context with a valid
     runtime-auth token. A missing ``auth_context`` (and thus a missing
-    ``auth_context_sig``) fails closed: a 403 is published and the trusted
+    ``forward_sig``) fails closed: a 403 is published and the trusted
     endpoint is never called.
     """
     # Third-Party
@@ -2512,7 +2510,7 @@ async def test_execute_forwarded_http_request_rejects_unsigned_context():
         "headers": {},
         "body": jsonrpc_body.hex(),
         "mcp_session_id": "sess-no-ctx",
-        # No "auth_context"/"auth_context_sig" on purpose: must fail closed.
+        # No "auth_context"/"forward_sig" on purpose: must fail closed.
     }
 
     with (
@@ -2562,7 +2560,7 @@ async def test_execute_forwarded_http_request_rejects_forged_signature():
         "body": jsonrpc_body.hex(),
         "mcp_session_id": "sess-forged",
         "auth_context": "forged-admin-ctx",
-        "auth_context_sig": "deadbeef" * 8,  # not a valid HMAC for this (session, context)
+        "forward_sig": "deadbeef" * 8,  # not a valid HMAC for this envelope
     }
 
     with (
@@ -2581,12 +2579,16 @@ async def test_execute_forwarded_http_request_rejects_forged_signature():
 
 @pytest.mark.asyncio
 async def test_execute_forwarded_http_request_rejects_signature_bound_to_other_session():
-    """A signature valid for a different session id is rejected, blocking cross-session replay."""
+    """A signature valid for a different session id is rejected, blocking cross-session replay.
+
+    ``mcp_session_id`` is part of the signed envelope, so lifting a valid envelope
+    onto another session (by rewriting ``mcp_session_id``) invalidates the signature.
+    """
     # Third-Party
     import orjson
 
     # First-Party
-    from mcpgateway.auth_context import sign_redis_auth_context  # pylint: disable=import-outside-toplevel
+    from mcpgateway.auth_context import FORWARD_SIG_FIELD, sign_redis_forward_envelope  # pylint: disable=import-outside-toplevel
     from mcpgateway.services.session_affinity import SessionAffinity
 
     affinity = SessionAffinity()
@@ -2601,11 +2603,12 @@ async def test_execute_forwarded_http_request_rejects_signature_bound_to_other_s
         "path": "/mcp",
         "headers": {},
         "body": jsonrpc_body.hex(),
-        "mcp_session_id": "attacker-session",
+        "mcp_session_id": "victim-session",
         "auth_context": ctx,
-        # Signature minted for a DIFFERENT session id: must not verify here.
-        "auth_context_sig": sign_redis_auth_context("victim-session", ctx),
     }
+    # Sign for victim-session, then replay under a different session id without re-signing.
+    request[FORWARD_SIG_FIELD] = sign_redis_forward_envelope(request)
+    request["mcp_session_id"] = "attacker-session"
 
     with (
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,
@@ -2683,7 +2686,7 @@ async def test_execute_forwarded_http_request_acks_non_post_lifecycle_requests()
     fake = _FakeRedis()
     client = _FakeHttpxClient(response=_FakeHttpResponse(200, text_body="ok"))
 
-    request = {
+    request = _sign_forward({
         "response_channel": "r",
         "method": "DELETE",
         "path": "/mcp",
@@ -2691,7 +2694,7 @@ async def test_execute_forwarded_http_request_acks_non_post_lifecycle_requests()
         "headers": {},
         "body": "",
         "mcp_session_id": "sess-delete",
-    }
+    })
 
     with (
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,
@@ -2725,14 +2728,14 @@ async def test_execute_forwarded_http_request_acks_notification_method_without_d
     client = _FakeHttpxClient(response=_FakeHttpResponse(200, text_body="should-not-be-used"))
 
     jsonrpc_body = orjson.dumps({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
-    request = {
+    request = _sign_forward({
         "response_channel": "mcpgw:pool_http_response:req-notif",
         "method": "POST",
         "path": "/mcp",
         "headers": {},
         "body": jsonrpc_body.hex(),
         "mcp_session_id": "sess-notif",
-    }
+    })
 
     with (
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,

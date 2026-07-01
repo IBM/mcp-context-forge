@@ -855,18 +855,19 @@ class SessionAffinity:
 
                 try:
                     # First-Party
-                    from mcpgateway.auth_context import sign_redis_auth_context  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.auth_context import FORWARD_SIG_FIELD, sign_redis_forward_envelope  # pylint: disable=import-outside-toplevel
 
-                    # Prepare request with response channel and a signed auth context.
+                    # Prepare request with response channel and the edge auth context.
                     forward_data = {
                         "type": "rpc_forward",
                         **request_data,
                         "response_channel": response_channel,
                         "mcp_session_id": mcp_session_id,
                         "auth_context": auth_context,
-                        # HMAC over (session id, auth_context); verified by the owner before trust.
-                        "auth_context_sig": sign_redis_auth_context(mcp_session_id, auth_context),
                     }
+                    # HMAC over the whole envelope (identity + operation + response_channel);
+                    # verified by the owner before trust so nothing can be tampered or redirected.
+                    forward_data[FORWARD_SIG_FIELD] = sign_redis_forward_envelope(forward_data)
 
                     # Publish request to owner's channel
                     await redis.publish(f"mcpgw:pool_rpc:{owner_id}", orjson.dumps(forward_data))
@@ -972,18 +973,22 @@ class SessionAffinity:
 
             logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Received forwarded request, executing locally", WORKER_ID, session_short, method)
 
-            # Verify the forwarded auth context before trusting it: forward_request_to_owner
-            # signs the encoded context (bound to this session id) with the auth-encryption
-            # secret. Reject a missing or invalid signature rather than re-stamping an
-            # injected context onto the trusted-internal dispatch (the Redis signing oracle,
-            # here on the rpc channel). Fail closed: do not dispatch.
+            # Verify the forwarded envelope before trusting it: forward_request_to_owner
+            # signs the whole envelope (identity + operation + response_channel) with the
+            # auth-encryption secret. Verify the untouched received envelope first, then
+            # require a non-empty auth context, so a tampered, redirected, or unsigned
+            # request is refused rather than re-stamped onto the trusted-internal dispatch
+            # (the Redis signing oracle, here on the rpc channel). Fail closed: do not dispatch.
             # First-Party
-            from mcpgateway.auth_context import verify_redis_auth_context  # pylint: disable=import-outside-toplevel
+            from mcpgateway.auth_context import verify_redis_forward_envelope  # pylint: disable=import-outside-toplevel
 
+            if not verify_redis_forward_envelope(request):
+                logger.warning("[AFFINITY] Worker %s | Session %s... | Rejected forwarded request: missing or invalid envelope signature", WORKER_ID, session_short)
+                self._forwarded_request_failures += 1
+                return {"error": {"code": -32003, "message": "Forwarded auth context failed integrity verification"}}
             auth_context = request.get("auth_context") or ""
-            auth_context_sig = request.get("auth_context_sig") or ""
-            if not auth_context or not verify_redis_auth_context(mcp_session_id, auth_context, auth_context_sig):
-                logger.warning("[AFFINITY] Worker %s | Session %s... | Rejected forwarded request: missing or invalid auth-context signature", WORKER_ID, session_short)
+            if not auth_context:
+                logger.warning("[AFFINITY] Worker %s | Session %s... | Rejected forwarded request: missing auth context", WORKER_ID, session_short)
                 self._forwarded_request_failures += 1
                 return {"error": {"code": -32003, "message": "Forwarded auth context failed integrity verification"}}
 
@@ -1104,6 +1109,27 @@ class SessionAffinity:
             session_short = mcp_session_id[:8] if mcp_session_id and len(mcp_session_id) >= 8 else "unknown"
             logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Received forwarded HTTP request: %s %s", WORKER_ID, session_short, method, path)
 
+            # Verify the forwarded envelope before trusting anything about this request.
+            # forward_to_owner() signs the whole envelope (identity + operation +
+            # response_channel) with the auth-encryption secret; a Redis writer cannot
+            # produce a valid signature without it. Verify the untouched received envelope
+            # first, before any field is decoded or the body is rewritten, and require a
+            # non-empty auth context. Without this the owner would re-stamp an injected or
+            # tampered context with a valid runtime-auth token and dispatch it (a signing
+            # oracle), or honor a redirected response_channel (CWE-347). Fail closed.
+            # First-Party
+            from mcpgateway.auth_context import verify_redis_forward_envelope  # pylint: disable=import-outside-toplevel
+
+            if not verify_redis_forward_envelope(request) or not auth_context_header:
+                logger.warning(
+                    "[HTTP_AFFINITY] Worker %s | Session %s... | Rejected forwarded request: missing or invalid envelope signature",
+                    WORKER_ID,
+                    session_short,
+                )
+                self._forwarded_request_failures += 1
+                await _publish(403, orjson.dumps({"jsonrpc": "2.0", "error": {"code": -32003, "message": "Forwarded auth context failed integrity verification"}, "id": None}))
+                return
+
             # Only POST carries a JSON-RPC body that needs upstream dispatch.
             # DELETE/other lifecycle methods are handled by the originating worker; ack them.
             if method != "POST":
@@ -1131,29 +1157,11 @@ class SessionAffinity:
                 body = orjson.dumps(json_body)
 
             # First-Party - lazy imports avoid a circular dependency with main/transport.
-            from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header, verify_redis_auth_context  # pylint: disable=import-outside-toplevel,protected-access
+            # The forwarded envelope was already verified above, before any field was decoded.
+            from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header  # pylint: disable=import-outside-toplevel,protected-access
             from mcpgateway.main import app  # pylint: disable=import-outside-toplevel,cyclic-import
             from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
             from mcpgateway.utils.verify_credentials import _resolve_auth_header_name  # pylint: disable=import-outside-toplevel,protected-access
-
-            # Verify the forwarded auth context before trusting it. forward_to_owner()
-            # signs the encoded context (bound to this session id) with the auth
-            # encryption secret; a Redis writer cannot produce a valid signature
-            # without that secret. Without this check the owner would re-stamp any
-            # injected context with a valid runtime-auth token and dispatch it to the
-            # trusted endpoint (a signing oracle). Fail closed on a missing or invalid
-            # signature: do not dispatch, do not set x-contextforge-auth-context.
-            auth_context_sig = request.get("auth_context_sig") or ""
-            if not auth_context_header or not verify_redis_auth_context(mcp_session_id or "", auth_context_header, auth_context_sig):
-                logger.warning(
-                    "[HTTP_AFFINITY] Worker %s | Session %s... | Rejected forwarded request: missing or invalid auth-context signature",
-                    WORKER_ID,
-                    session_short,
-                )
-                self._forwarded_request_failures += 1
-                req_id = json_body.get("id") if isinstance(json_body, dict) else None
-                await _publish(403, orjson.dumps({"jsonrpc": "2.0", "error": {"code": -32003, "message": "Forwarded auth context failed integrity verification"}, "id": req_id}))
-                return
 
             # Trust headers for the internal /_internal/mcp/rpc endpoint:
             # - x-contextforge-mcp-runtime: "affinity" caller marker
@@ -1299,16 +1307,8 @@ class SessionAffinity:
             response_uuid = uuid.uuid4().hex
             response_channel = f"mcpgw:pool_http_response:{response_uuid}"
 
-            # Sign the forwarded auth context so the owner can verify it was not
-            # forged in Redis transit before re-stamping it with the runtime-auth
-            # token (closes the signing-oracle on the pub/sub hop). The signature
-            # is bound to this session id to block cross-session replay.
-            auth_context_sig = None
-            if auth_context:
-                # First-Party
-                from mcpgateway.auth_context import sign_redis_auth_context  # pylint: disable=import-outside-toplevel
-
-                auth_context_sig = sign_redis_auth_context(mcp_session_id, auth_context)
+            # First-Party
+            from mcpgateway.auth_context import FORWARD_SIG_FIELD, sign_redis_forward_envelope  # pylint: disable=import-outside-toplevel
 
             # Serialize HTTP request for Redis transport
             forward_data = {
@@ -1324,9 +1324,12 @@ class SessionAffinity:
                 "timestamp": time.time(),
                 # Encoded edge identity; lets the owner dispatch without re-authenticating.
                 "auth_context": auth_context,
-                # HMAC over (session id, auth_context); verified by the owner before trust.
-                "auth_context_sig": auth_context_sig,
             }
+            # Sign the whole envelope (identity + operation + response_channel) so the owner
+            # can verify nothing was forged, tampered, or redirected in Redis transit before
+            # re-stamping it with the runtime-auth token (closes the signing-oracle on the
+            # pub/sub hop, CWE-347). auth_context is non-empty here (guarded above).
+            forward_data[FORWARD_SIG_FIELD] = sign_redis_forward_envelope(forward_data)
 
             # Subscribe to response channel BEFORE publishing request (prevent race)
             async with redis.pubsub() as pubsub:

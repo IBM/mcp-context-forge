@@ -319,77 +319,86 @@ def has_valid_internal_mcp_runtime_auth_header(request: Request) -> bool:
 # The session-affinity Redis pub/sub hop is different: a writer to the Redis
 # channel needs no secret, yet the owner worker re-stamps whatever auth context
 # it reads with a valid runtime-auth token before dispatching. That makes the
-# owner a signing oracle for forged contexts. To close it, the publisher signs
-# the encoded auth context (bound to its mcp_session_id) and the consumer
-# verifies the signature before trusting it.
+# owner a signing oracle for forged contexts. Signing the auth context alone
+# closes the forged-identity oracle, but it does not prove that the verified
+# identity belongs to the *operation* being executed: an attacker with Redis
+# write access could pair a captured signature with a different method, path,
+# body, or response_channel (CWE-347). To close that, the publisher signs the
+# whole forwarded envelope (every operation field, including response_channel so
+# the response cannot be redirected) and the consumer verifies the envelope
+# before dispatch.
 #
 # These helpers are deliberately separate from the general header-encoding
 # contract (encode/decode_internal_mcp_auth_context), which must stay
-# byte-compatible for the Rust runtime. This is a Redis-specific integrity layer
-# only.
-_REDIS_AUTH_CONTEXT_SIG_DOMAIN = b"mcpgw.redis-auth-ctx.v1"
-_REDIS_AUTH_CONTEXT_SIG_DELIMITER = b"\x1f"  # ASCII unit separator; never present in hex ids or base64url
+# byte-compatible for the Rust runtime. The forward signature is Redis-only
+# Python transit metadata: it is stripped by the owning worker before the
+# in-process dispatch and never reaches the Rust runtime, so it does not affect
+# the encoded auth-context wire format.
+FORWARD_SIG_FIELD = "forward_sig"
+_REDIS_FORWARD_ENVELOPE_SIG_DOMAIN = b"mcpgw.redis-fwd-envelope.v1"
+_REDIS_FORWARD_ENVELOPE_SIG_DELIMITER = b"\x1f"  # ASCII unit separator; never present in canonical JSON
 
 
-def _redis_auth_context_sig_material(session_id: str, encoded_auth_context: str) -> bytes:
-    """Build the domain-separated HMAC input for a Redis-forwarded auth context.
+def _redis_forward_envelope_sig_material(envelope: Dict[str, Any]) -> bytes:
+    """Build the domain-separated HMAC input for a Redis-forwarded envelope.
 
-    The domain tag plus a unit-separator delimiter (which cannot occur in a hex
-    session id or a base64url payload) keeps the field boundaries unambiguous, so
-    distinct ``(session_id, encoded)`` pairs cannot collide onto the same input.
+    The signature field itself is excluded, then the remaining envelope is
+    canonicalized with sorted keys so the publisher and the consumer (which has
+    round-tripped the payload through JSON) produce byte-identical material. The
+    domain tag plus a unit separator that cannot occur in the canonical JSON keep
+    the two segments unambiguous.
 
     Args:
-        session_id: The MCP session id the context is bound to.
-        encoded_auth_context: The base64url payload from
-            :func:`encode_internal_mcp_auth_context`.
+        envelope: The forwarded Redis payload. The signature field, if present,
+            is ignored so signing and verification see the same input.
 
     Returns:
         The byte string fed to HMAC.
     """
-    return (
-        _REDIS_AUTH_CONTEXT_SIG_DOMAIN
-        + _REDIS_AUTH_CONTEXT_SIG_DELIMITER
-        + (session_id or "").encode("utf-8")
-        + _REDIS_AUTH_CONTEXT_SIG_DELIMITER
-        + (encoded_auth_context or "").encode("utf-8")
-    )
+    without_sig = {k: v for k, v in envelope.items() if k != FORWARD_SIG_FIELD}
+    canonical = orjson.dumps(without_sig, option=orjson.OPT_SORT_KEYS)
+    return _REDIS_FORWARD_ENVELOPE_SIG_DOMAIN + _REDIS_FORWARD_ENVELOPE_SIG_DELIMITER + canonical
 
 
-def sign_redis_auth_context(session_id: str, encoded_auth_context: str) -> str:
-    """Sign an encoded auth context for transit over the session-affinity Redis hop.
+def sign_redis_forward_envelope(envelope: Dict[str, Any]) -> str:
+    """Sign a full forwarded envelope for transit over the session-affinity Redis hop.
 
-    Keyed with ``auth_encryption_secret`` and bound to ``session_id`` so a
-    captured signature cannot be replayed under a different session.
+    Keyed with ``auth_encryption_secret`` and bound to every operation field in
+    the envelope (method, path, body, headers, response_channel, auth_context,
+    ...), so a captured signature cannot be replayed under a different operation
+    or to a different response channel.
 
     Args:
-        session_id: The MCP session id the context is bound to.
-        encoded_auth_context: The base64url auth-context payload to protect.
+        envelope: The forwarded Redis payload to protect. Any existing signature
+            field is excluded from the signed material.
 
     Returns:
         Hex-encoded HMAC-SHA256 signature.
     """
     return hmac.new(
         _auth_encryption_secret_value().encode("utf-8"),
-        _redis_auth_context_sig_material(session_id, encoded_auth_context),
+        _redis_forward_envelope_sig_material(envelope),
         hashlib.sha256,
     ).hexdigest()
 
 
-def verify_redis_auth_context(session_id: str, encoded_auth_context: str, signature: str) -> bool:
-    """Verify a Redis-forwarded auth-context signature in constant time.
+def verify_redis_forward_envelope(envelope: Dict[str, Any]) -> bool:
+    """Verify a Redis-forwarded envelope signature in constant time.
+
+    Must be called on the untouched received envelope, before any field is
+    decoded or mutated, so the recomputed material matches what was signed.
 
     Args:
-        session_id: The MCP session id the context must be bound to.
-        encoded_auth_context: The base64url auth-context payload that was signed.
-        signature: The hex HMAC-SHA256 signature to check.
+        envelope: The forwarded Redis payload, including its ``forward_sig``.
 
     Returns:
-        ``True`` only when ``signature`` is a non-empty, valid signature for the
-        given ``(session_id, encoded_auth_context)`` pair under the current secret.
+        ``True`` only when the envelope carries a non-empty ``forward_sig`` that
+        is a valid signature for the rest of the envelope under the current secret.
     """
-    if not signature:
+    signature = envelope.get(FORWARD_SIG_FIELD)
+    if not isinstance(signature, str) or not signature:
         return False
-    expected = sign_redis_auth_context(session_id, encoded_auth_context)
+    expected = sign_redis_forward_envelope(envelope)
     return hmac.compare_digest(signature, expected)
 
 
