@@ -4472,6 +4472,54 @@ class TestToolService:
         # Verify result
         assert result.content[0].text == '{\n  "result": "original response"\n}'
 
+    async def test_invoke_tool_pre_invoke_hook_receives_trace_extensions(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """G0: TOOL_PRE_INVOKE (and POST_INVOKE) invoke_hook() calls must receive a CPEX
+        Extensions object carrying the active trace_id/span_id from the observability
+        ContextVars, so plugin hooks can correlate their execution with the request trace.
+        """
+        # Third-Party
+        from cpex.framework import ToolHookType
+        from cpex.framework.models import PluginResult
+
+        # First-Party
+        from mcpgateway.services.observability_service import current_span_id, current_trace_id
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "ok"})
+        tool_service._http_client.request.return_value = mock_response
+
+        mock_pm = Mock()
+        mock_pm.invoke_hook = AsyncMock(return_value=(PluginResult(continue_processing=True, violation=None, modified_payload=None), None))
+
+        trace_token = current_trace_id.set("trace-g0-abc")
+        span_token = current_span_id.set("span-g0-xyz")
+        try:
+            with (
+                patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+                patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "ok"}),
+                patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)),
+            ):
+                await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+        finally:
+            current_trace_id.reset(trace_token)
+            current_span_id.reset(span_token)
+
+        assert mock_pm.invoke_hook.call_count == 2  # Pre and post invoke
+        for hook_call in mock_pm.invoke_hook.await_args_list:
+            assert hook_call.args[0] in (ToolHookType.TOOL_PRE_INVOKE, ToolHookType.TOOL_POST_INVOKE)
+            extensions = hook_call.kwargs["extensions"]
+            assert extensions is not None
+            assert extensions.request.trace_id == "trace-g0-abc"
+            assert extensions.request.span_id == "span-g0-xyz"
+
     async def test_invoke_tool_with_plugin_post_invoke_modified_payload(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         """Test invoking tool with plugin post-invoke hook modifying payload."""
         # Configure tool as REST
@@ -9948,7 +9996,7 @@ class TestRustMcpExecutionPlan:
         mock_pm = MagicMock()
         mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, **_kwargs):  # noqa: ARG001
             modified = ToolPreInvokePayload(
                 name=payload.name,
                 args=payload.args,
@@ -10123,7 +10171,7 @@ class TestRustMcpExecutionPlan:
         mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
 
         # Mock invoke_hook to return modified args and headers
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, **_kwargs):  # noqa: ARG001
             modified = ToolPreInvokePayload(
                 name=payload.name,
                 args={"cleaned_arg": "value"},
@@ -10168,7 +10216,7 @@ class TestRustMcpExecutionPlan:
         mock_pm = MagicMock()
         mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, **_kwargs):  # noqa: ARG001
             modified = ToolPreInvokePayload(name="renamed-tool", args=payload.args)
             return PluginResult(modified_payload=modified, continue_processing=True), {}
 
@@ -10230,7 +10278,7 @@ class TestRustMcpExecutionPlan:
 
         received_headers = {}
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, **_kwargs):  # noqa: ARG001
             received_headers.update(payload.headers.root)
             return PluginResult(continue_processing=True), {}
 
@@ -10271,7 +10319,7 @@ class TestRustMcpExecutionPlan:
 
         received_context = {}
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, **_kwargs):  # noqa: ARG001
             received_context["request_id"] = global_context.request_id
             received_context["user"] = global_context.user
             received_context["state"] = dict(global_context.state) if hasattr(global_context, "state") else {}
@@ -10325,7 +10373,7 @@ class TestRustMcpExecutionPlan:
         mock_pm = MagicMock()
         mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, **_kwargs):  # noqa: ARG001
             received_context["user"] = global_context.user
             return PluginResult(continue_processing=True), {}
 
@@ -10386,7 +10434,7 @@ class TestRustMcpExecutionPlan:
         mock_pm = AsyncMock()
         mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, **_kwargs):  # noqa: ARG001
             received_metadata["keys"] = list(global_context.metadata.keys())
             received_metadata["has_tool"] = TOOL_METADATA in global_context.metadata
             received_metadata["has_gateway"] = GATEWAY_METADATA in global_context.metadata

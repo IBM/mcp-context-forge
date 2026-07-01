@@ -73,6 +73,7 @@ from mcpgateway.db import get_for_update, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, otel_context_active, set_span_attribute, set_span_error
+from mcpgateway.plugins.utils import build_request_extensions
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
@@ -4088,6 +4089,7 @@ class ToolService(BaseService):
                 global_context=hook_global_context,
                 local_contexts=plugin_context_table,
                 violations_as_exceptions=True,
+                extensions=build_request_extensions(),
             )
             _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
             if pre_result.modified_payload:
@@ -4310,6 +4312,7 @@ class ToolService(BaseService):
                 global_context=global_context,
                 local_contexts=context_table,
                 violations_as_exceptions=False,
+                extensions=build_request_extensions(),
             )
             if timeout_post_result and timeout_post_result.retry_delay_ms > 0:
                 raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s", retry_delay_ms=timeout_post_result.retry_delay_ms)
@@ -4965,6 +4968,7 @@ class ToolService(BaseService):
                             global_context=global_context,
                             local_contexts=context_table,  # Pass context from previous hooks
                             violations_as_exceptions=True,
+                            extensions=build_request_extensions(),
                         )
                         _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
                         if pre_result.modified_payload:
@@ -5766,6 +5770,7 @@ class ToolService(BaseService):
                             global_context=global_context,
                             local_contexts=None,
                             violations_as_exceptions=True,
+                            extensions=build_request_extensions(),
                         )
                         _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
                         if pre_result.modified_payload:
@@ -5838,6 +5843,7 @@ class ToolService(BaseService):
                             global_context=global_context,
                             local_contexts=context_table,
                             violations_as_exceptions=True,
+                            extensions=build_request_extensions(),
                         )
                         _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
                         if pre_result.modified_payload:
@@ -5968,6 +5974,7 @@ class ToolService(BaseService):
                             global_context=global_context,
                             local_contexts=context_table,
                             violations_as_exceptions=True,
+                            extensions=build_request_extensions(),
                         )
                         # Use modified payload if provided
                         if post_result.modified_payload:
@@ -6072,6 +6079,7 @@ class ToolService(BaseService):
                             global_context=global_context,
                             local_contexts=context_table,
                             violations_as_exceptions=False,  # Don't let plugin errors mask the original exception
+                            extensions=build_request_extensions(),
                         )
                     except Exception as plugin_exc:
                         logger.debug("Failed to invoke post-invoke plugins on exception: %s", plugin_exc)
