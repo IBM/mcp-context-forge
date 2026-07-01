@@ -143,8 +143,10 @@ class TestPostRpcInProcess:
     bound upstream session, instead of looping back over the shared gunicorn
     socket and scattering to a random worker. The load-bearing details pinned
     here: the transport is ``httpx.ASGITransport`` (proves in-process, not
-    network loopback), the path is exactly ``/rpc`` (not the original request
-    path), and ``content``/``headers``/``timeout`` pass through unchanged.
+    network loopback), the path is exactly ``/_internal/mcp/rpc`` (the
+    trusted-internal route, not the public ``/rpc`` and not the original request
+    path), ``content``/``timeout`` pass through unchanged, and the caller's
+    ``headers`` are preserved while the trust markers are attached on top.
     """
 
     @pytest.mark.asyncio
@@ -157,33 +159,48 @@ class TestPostRpcInProcess:
         bound upstream session.
         """
         with patch("mcpgateway.utils.internal_http.httpx.AsyncClient", _CapturingAsyncClient):
-            await post_rpc_in_process(content=b"{}", headers={"x-forwarded-internally": "true"}, timeout=1.0)
+            await post_rpc_in_process(content=b"{}", headers={"x-forwarded-internally": "true"}, timeout=1.0, auth_context="ctx")
         assert isinstance(_CapturingAsyncClient.last_init_kwargs.get("transport"), httpx.ASGITransport)
 
     @pytest.mark.asyncio
     async def test_posts_to_rpc_endpoint(self):
-        """The helper targets exactly ``/rpc`` — the public JSON-RPC handler."""
+        """The helper targets exactly ``/_internal/mcp/rpc`` — the trusted-internal JSON-RPC route."""
         with patch("mcpgateway.utils.internal_http.httpx.AsyncClient", _CapturingAsyncClient):
-            await post_rpc_in_process(content=b"{}", headers={"x-forwarded-internally": "true"}, timeout=1.0)
-        assert _CapturingAsyncClient.last_post_kwargs["url"] == "/rpc"
+            await post_rpc_in_process(content=b"{}", headers={"x-forwarded-internally": "true"}, timeout=1.0, auth_context="ctx")
+        assert _CapturingAsyncClient.last_post_kwargs["url"] == "/_internal/mcp/rpc"
 
     @pytest.mark.asyncio
     async def test_propagates_content_headers_and_timeout(self):
-        """``content``, ``headers``, and ``timeout`` reach the inner ``.post`` unchanged.
+        """``content`` and ``timeout`` reach the inner ``.post`` unchanged, and the
+        caller's ``headers`` are preserved with the trust markers attached on top.
 
-        Each caller builds its own loop-stop header set; the helper must not
-        mutate or replace them.
+        Each caller builds its own loop-stop header set; the helper must not drop
+        or replace them, but it does add the trusted-internal runtime markers and
+        the encoded auth context.
         """
         headers = {"x-forwarded-internally": "true", "x-mcp-session-id": "abc", "authorization": "Bearer x"}
         body = b'{"jsonrpc":"2.0","method":"tools/list","id":1}'
 
         with patch("mcpgateway.utils.internal_http.httpx.AsyncClient", _CapturingAsyncClient):
-            await post_rpc_in_process(content=body, headers=headers, timeout=7.5)
+            await post_rpc_in_process(content=body, headers=headers, timeout=7.5, auth_context="edge-ctx")
 
         captured = _CapturingAsyncClient.last_post_kwargs
         assert captured["content"] == body
-        assert captured["headers"] == headers
         assert captured["timeout"] == 7.5
+        # Caller headers preserved untouched...
+        for key, value in headers.items():
+            assert captured["headers"][key] == value
+        # ...and the trust markers attached on top.
+        assert captured["headers"]["x-contextforge-mcp-runtime"] == "affinity"
+        assert captured["headers"]["x-contextforge-auth-context"] == "edge-ctx"
+        assert captured["headers"]["x-contextforge-mcp-runtime-auth"]
+
+    @pytest.mark.asyncio
+    async def test_requires_non_empty_auth_context(self):
+        """An empty ``auth_context`` is rejected before any dispatch is attempted."""
+        with patch("mcpgateway.utils.internal_http.httpx.AsyncClient", _CapturingAsyncClient):
+            with pytest.raises(ValueError):
+                await post_rpc_in_process(content=b"{}", headers={}, timeout=1.0, auth_context="")
 
     @pytest.mark.asyncio
     async def test_uses_loopback_base_url(self, monkeypatch):
@@ -196,5 +213,5 @@ class TestPostRpcInProcess:
         monkeypatch.setattr("mcpgateway.utils.internal_http.settings.port", 4444)
         monkeypatch.delenv("SSL", raising=False)
         with patch("mcpgateway.utils.internal_http.httpx.AsyncClient", _CapturingAsyncClient):
-            await post_rpc_in_process(content=b"{}", headers={}, timeout=1.0)
+            await post_rpc_in_process(content=b"{}", headers={}, timeout=1.0, auth_context="ctx")
         assert _CapturingAsyncClient.last_init_kwargs.get("base_url") == "http://127.0.0.1:4444"
