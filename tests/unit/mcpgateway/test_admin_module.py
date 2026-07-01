@@ -476,6 +476,7 @@ async def test_admin_login_handler_paths(monkeypatch):
     mock_db = MagicMock()
 
     monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
+    monkeypatch.setattr(admin.settings, "sso_enabled", False)
     monkeypatch.setattr(admin.settings, "password_change_enforcement_enabled", False)
     monkeypatch.setattr(admin.settings, "detect_default_password_on_login", False)
 
@@ -514,6 +515,7 @@ async def test_admin_login_handler_default_password(monkeypatch):
     mock_db.commit = MagicMock(side_effect=Exception("commit failed"))
 
     monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
+    monkeypatch.setattr(admin.settings, "sso_enabled", False)
     monkeypatch.setattr(admin.settings, "password_change_enforcement_enabled", True)
     monkeypatch.setattr(admin.settings, "detect_default_password_on_login", True)
     monkeypatch.setattr(admin.settings, "require_password_change_for_default_password", True)

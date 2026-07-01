@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import urllib.parse
 
 # Third-Party
+import httpx
 import jwt
 import orjson
 from sqlalchemy import and_, select
@@ -45,6 +46,24 @@ logger = logging.getLogger(__name__)
 
 # Constants
 ADFS_PROVIDER_ID = "adfs"
+
+
+class _NoRedirectPyJWKClient(jwt.PyJWKClient):
+    """PyJWKClient that fetches JWKS via httpx with follow_redirects=False.
+
+    PyJWT's default fetch_data() uses urllib.request.urlopen which follows HTTP
+    redirects transparently, bypassing the same-origin check on jwks_uri.
+    Overriding with httpx (follow_redirects=False) closes the SSRF redirect bypass.
+    """
+
+    def fetch_data(self) -> Any:
+        try:
+            with httpx.Client(follow_redirects=False, timeout=self.timeout) as _client:
+                resp = _client.get(self.uri, headers=self.headers)
+                resp.raise_for_status()
+                return resp.json()
+        except httpx.HTTPError as exc:
+            raise jwt.exceptions.PyJWKClientConnectionError(f'Fail to fetch data from the url, err: "{exc}"') from exc
 
 
 class SSOError(Exception):
@@ -94,7 +113,7 @@ class SSOService:
 
     _OIDC_METADATA_CACHE_TTL_SECONDS = 300
     _oidc_config_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
-    _jwks_client_cache: Dict[str, jwt.PyJWKClient] = {}
+    _jwks_client_cache: Dict[str, _NoRedirectPyJWKClient] = {}
     _STATE_BINDING_SEPARATOR = "."
     _STATE_BINDING_HEX_LEN = 64
     _EMAIL_VERIFIED_CLAIMS: Tuple[str, ...] = (
@@ -246,7 +265,7 @@ class SSOService:
 
         return issuer, jwks_uri
 
-    def _get_jwks_client(self, jwks_uri: str) -> jwt.PyJWKClient:
+    def _get_jwks_client(self, jwks_uri: str) -> _NoRedirectPyJWKClient:
         """Get or create a cached PyJWKClient instance.
 
         Args:
@@ -256,7 +275,7 @@ class SSOService:
             Cached or newly created `PyJWKClient`.
         """
         if jwks_uri not in self._jwks_client_cache:
-            self._jwks_client_cache[jwks_uri] = jwt.PyJWKClient(jwks_uri)
+            self._jwks_client_cache[jwks_uri] = _NoRedirectPyJWKClient(jwks_uri)
         return self._jwks_client_cache[jwks_uri]
 
     async def _verify_oidc_id_token(self, provider: SSOProvider, id_token: str, expected_nonce: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -755,6 +774,9 @@ class SSOService:
         if skipped:
             logger.warning("Ignored unknown SSOProvider fields during creation: %s", skipped)
 
+        if filtered_data.get("trusted_for_api_auth") and not (filtered_data.get("api_audience") or "").strip():
+            raise ValueError("api_audience is required when trusted_for_api_auth is enabled (prevents confused-deputy token acceptance)")
+
         provider = SSOProvider(**filtered_data)
         self.db.add(provider)
         self.db.commit()
@@ -803,6 +825,14 @@ class SSOService:
         for key, value in provider_data.items():
             if hasattr(provider, key):
                 setattr(provider, key, value)
+
+        # Re-check the RESULTING state, not just the incoming payload: a partial
+        # update that only touches api_audience (e.g. clearing it to "") would
+        # otherwise leave a pre-existing trusted_for_api_auth=True provider
+        # accepting tokens for any audience (confused-deputy).
+        if getattr(provider, "trusted_for_api_auth", False) and not (getattr(provider, "api_audience", None) or "").strip():
+            self.db.rollback()
+            raise ValueError("api_audience is required when trusted_for_api_auth is enabled (prevents confused-deputy token acceptance)")
 
         provider.updated_at = utc_now()
         self.db.commit()
@@ -2478,3 +2508,83 @@ class SSOService:
                         rollback_error,
                     )
                     break
+
+
+# Module-level cache: normalized-issuer -> SSOProvider id, with a short TTL.
+# Avoids a sso_providers SELECT on every external-token request (and on every
+# invalid-issuer / bad-signature spray). Invalidated on provider CRUD.
+_TRUSTED_PROVIDER_CACHE_TTL = 60  # seconds
+_trusted_provider_cache: "dict[str, str]" = {}  # issuer(normalized) -> provider.id
+_trusted_provider_cache_loaded_at: float = 0.0
+
+
+def invalidate_trusted_provider_cache() -> None:
+    """Clear the issuer->provider cache. Call after any provider create/update/delete."""
+    global _trusted_provider_cache_loaded_at
+    _trusted_provider_cache.clear()
+    _trusted_provider_cache_loaded_at = 0.0
+
+
+def _load_trusted_provider_map(db: "Session") -> "dict[str, str]":
+    """(Re)load the normalized-issuer -> provider-id map from the DB.
+
+    Args:
+        db: Request-scoped SQLAlchemy session.
+
+    Returns:
+        Mapping of normalized issuer URL to provider id for enabled,
+        API-trusted providers.
+    """
+    rows = db.query(SSOProvider).filter(SSOProvider.is_enabled.is_(True), SSOProvider.trusted_for_api_auth.is_(True)).all()
+    internal_issuer = settings.jwt_issuer.rstrip("/") if settings.jwt_issuer else None
+    result = {}
+    for p in rows:
+        if not p.issuer:
+            continue
+        normalized = p.issuer.rstrip("/")
+        if internal_issuer and normalized == internal_issuer:
+            logger.warning(
+                "SSOProvider id=%s has issuer matching internal jwt_issuer (%s) — its tokens will never reach the external-IdP path (dead config)",
+                p.id,
+                normalized,
+            )
+        result[normalized] = p.id
+    return result
+
+
+def resolve_trusted_provider_by_issuer(issuer: str, db: "Session") -> "Optional[SSOProvider]":
+    """Return the enabled, API-trusted SSOProvider whose issuer matches ``issuer``.
+
+    The issuer->provider-id map is cached in-memory for ``_TRUSTED_PROVIDER_CACHE_TTL``
+    seconds (finding P1) and invalidated via :func:`invalidate_trusted_provider_cache`.
+    Matching normalizes trailing slashes to mirror ``verify_oauth_access_token``.
+
+    Note: this cache is per-process; in multi-worker deployments, invalidation only
+    affects the worker that handled the CRUD request -- other workers converge within
+    the TTL.
+
+    Args:
+        issuer: The ``iss`` claim from an inbound (unverified) token.
+        db: Request-scoped SQLAlchemy session.
+
+    Returns:
+        The matching SSOProvider, or None.
+    """
+    global _trusted_provider_cache, _trusted_provider_cache_loaded_at
+    if not issuer:
+        return None
+    normalized = issuer.rstrip("/")
+
+    now = monotonic()
+    # Use _trusted_provider_cache_loaded_at (not the map itself) to detect "never loaded",
+    # so an empty map (zero trusted providers - the common case) is still cached and
+    # doesn't trigger a re-scan on every request.
+    if _trusted_provider_cache_loaded_at == 0.0 or (now - _trusted_provider_cache_loaded_at) > _TRUSTED_PROVIDER_CACHE_TTL:
+        _trusted_provider_cache = _load_trusted_provider_map(db)
+        _trusted_provider_cache_loaded_at = now
+
+    provider_id = _trusted_provider_cache.get(normalized)
+    if provider_id is None:
+        return None
+    # Resolve the live ORM object by id (cheap PK lookup; ensures fresh row for validation).
+    return db.query(SSOProvider).filter(SSOProvider.id == provider_id).first()

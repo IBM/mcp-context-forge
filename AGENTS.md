@@ -113,6 +113,7 @@ ContextForge implements a **two-layer security model**:
 - **API/legacy tokens**: Missing `teams` key = public-only access (secure default). Admin bypass requires BOTH `teams: null` AND `is_admin: true`. `normalize_token_teams()` in `mcpgateway/auth.py` is the single source of truth.
 - **Session tokens**: Admin bypass is determined by the DB `is_admin` flag, not the JWT `teams` claim. Non-admin sessions can be narrowed via JWT `teams`. `resolve_session_teams()` in `mcpgateway/auth.py` is the single policy point.
 - **Layer 1 only**: Token scoping controls visibility (what you can see). RBAC (Layer 2) is evaluated independently — session-token narrowing does not restrict which team roles are checked for permissions.
+- **External IdP tokens**: identities provisioned from trusted external SSO providers (see `SSO_API_TOKEN_AUTH_ENABLED`) are dispatched through the session-token table above (`resolve_session_teams()`), not the API/legacy table — `is_admin`/`teams` come from the persisted local user record, never from the external token's claims.
 
 ### Security Invariants (Required)
 
@@ -192,6 +193,18 @@ Observability write operations use **independent database sessions** that commit
 - `trace_span()`, `trace_tool_invocation()`, `trace_a2a_request()`
 
 **Pattern**: Follows existing SQL instrumentation approach in `instrumentation/sqlalchemy.py:58-87`
+
+## Audit Trail Transaction Behavior
+
+**Issue #2871 - Separate Session Pattern**
+
+`AuditTrailService.log_action()` (`mcpgateway/services/audit_trail_service.py`) always opens its own `SessionLocal()` when no `db` is supplied, and closes/rolls back that session itself. Callers in `tool_service.py`, `resource_service.py`, `gateway_service.py`, `prompt_service.py`, `server_service.py`, and `admin.py` must **never** pass `db=db` (the caller's request-scoped session) to `log_action()`. In `admin.py`, plugin-view audit logging goes through `log_audit()`, which is a thin wrapper over `log_action()` and inherits the same optional-session behavior.
+
+Passing the shared session caused **"This transaction is inactive"** errors: the main CRUD operation already calls `db.commit()` before the audit call, and reusing that same session for a second commit after it has already committed leaves the session in a state that breaks rollback on subsequent errors.
+
+- `log_action()` swallows its own exceptions internally and returns `None` on failure — it does not propagate them to the caller in production.
+- The main resource (tool/gateway/resource/prompt/server) is committed **before** `log_action()` runs, so an audit-logging failure never rolls back already-persisted data — but callers' generic `except Exception` handlers still call `db.rollback()` and surface an error to the API caller even though the underlying row was already committed.
+- Do not add `db: Session` back to a `log_action()` call site. If a service needs the audit entry guaranteed within the same transaction as the main write, that is a deliberate design change requiring review, not a default.
 
 **Middleware**: `ObservabilityMiddleware` no longer creates `request.state.db`. Each observability operation creates its own short-lived session.
 

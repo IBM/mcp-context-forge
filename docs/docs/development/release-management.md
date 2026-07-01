@@ -1436,14 +1436,14 @@ gh release create vX.Y.Z \
 ```
 
 !!! important "CI triggers on release publish"
-    Publishing the GitHub Release triggers the `docker-release.yml` workflow, which re-tags the multiplatform container image with the release version on GHCR. The release **must not be a draft or prerelease** for this workflow to trigger. It also verifies that all commit checks passed before tagging.
+    Publishing the GitHub Release creates the git tag, which triggers the `docker-multiplatform.yml` workflow. On a `v*` tag push it builds all platform images (amd64, arm64, s390x, ppc64le), creates the multiplatform manifest tagged with the semantic version and `latest`, and signs the image with Cosign.
 
 ### 15.4 Verify CI release pipeline
 
-After publishing, verify that the `docker-release.yml` workflow completes successfully:
+After publishing, verify that the `docker-multiplatform.yml` workflow completes successfully:
 
 ```bash
-gh run list --workflow=docker-release.yml --limit=1
+gh run list --workflow=docker-multiplatform.yml --limit=1
 ```
 
 Confirm the container image is available at `ghcr.io/ibm/mcp-context-forge:vX.Y.Z`.

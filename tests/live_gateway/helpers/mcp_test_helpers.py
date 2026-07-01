@@ -36,7 +36,9 @@ import pytest
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-BASE_URL = os.getenv("MCP_CLI_BASE_URL", "http://127.0.0.1:8080")  # IPv4 explicit — `localhost` resolves IPv6-first under the test conftest's getaddrinfo stub, which docker-compose doesn't bind
+# Force IPv4: localhost can resolve to ::1 first, but compose only publishes the
+# gateway on IPv4, so an IPv6-first client hangs. Covers MCP_CLI_BASE_URL too.
+BASE_URL = os.getenv("MCP_CLI_BASE_URL", "http://127.0.0.1:8080").replace("//localhost", "//127.0.0.1")
 JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")
 ADMIN_EMAIL = os.getenv("PLATFORM_ADMIN_EMAIL", "admin@example.com")
 TOKEN_EXPIRY = os.getenv("MCP_CLI_TOKEN_EXPIRY", "60")  # minutes

@@ -3844,7 +3844,7 @@ pre-commit: uv                     ## 🪄  Run pre-commit tool
 		GOPATH='$(CURDIR)/.cache/go-cache' \
 		GOMODCACHE='$(CURDIR)/.cache/go-mod' \
 		GOCACHE='$(CURDIR)/.cache/go-build' \
-		$(VENV_DIR)/bin/pre-commit run --config .pre-commit-lite.yaml --all-files --show-diff-on-failure"
+		$(VENV_DIR)/bin/pre-commit run --config .pre-commit-config.yaml --all-files --show-diff-on-failure"
 
 RUFF_MODE   ?= check
 RUFF_SELECT ?=
@@ -4764,9 +4764,8 @@ dist: clean uv               ## Build wheel + sdist into ./dist (optionally incl
 	fi
 	@echo '🛠  Python wheel & sdist written to ./dist'
 	@echo ''
-	@echo '💡 To publish both Python and Rust packages:'
+	@echo '💡 To publish the Python package:'
 	@echo '   make publish         # Publish Python package'
-	@echo '   make rust-release-publish  # Publish Rust wheels (if configured)'
 
 wheel: uv                    ## Build wheel only (Python + optionally Rust)
 	@echo "📦 Building Python wheel..."
