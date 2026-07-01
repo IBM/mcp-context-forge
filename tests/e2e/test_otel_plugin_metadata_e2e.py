@@ -6,12 +6,25 @@ Authors: Mihai Criveti
 
 E2E test — Task C1 (Refs #5458).
 
-Proves, against the REAL FastAPI application (``mcpgateway.main.app``, real
-routers, real ``ToolService``, real ``PluginManager``, real ``ObservabilityService``
+Proves, against a REAL gateway request pipeline (the actual ``/tools``,
+``/rpc`` and ``/observability`` routers from ``mcpgateway.main`` /
+``mcpgateway.routers.observability``, the real ``ObservabilityMiddleware``,
+real ``ToolService``, real ``PluginManager``, real ``ObservabilityService``
 backed by a real temp SQLite database), that a genuinely traced HTTP tool-invoke
 request causes the ``pii_filter`` CPEX plugin's metrics to reach
 ``GET /observability/traces/{trace_id}`` -- and that the raw PII value the
 plugin detected never appears anywhere in that response (S1).
+
+These real routers are hosted on a dedicated, per-test ``FastAPI()`` instance
+(see the ``traced_app`` fixture) rather than on the process-wide
+``mcpgateway.main.app`` singleton that other ``tests/e2e/`` modules send real
+requests through: Starlette freezes an app's middleware stack the first time
+any request is dispatched through it, so mutating the shared ``app`` via
+``add_middleware``/``include_router`` from this fixture would be order-dependent
+(and would error) if another e2e test file already sent a request through
+``mcpgateway.main.app`` earlier in the same pytest process/worker. Building a
+fresh app and wiring the same real router objects onto it sidesteps that
+entirely while still exercising the real endpoint/dependency/plugin code.
 
 Chain under test (Phases A + B, this branch):
   1. Client sends ``POST /rpc`` (``tools/call``) with a W3C ``traceparent``
@@ -52,11 +65,20 @@ overridden with admin-bypass mocks, matching established e2e convention in
 this repository) -- RBAC internals are not the subject of this test; the
 trace -> plugin -> observability pipeline is.
 
-Run standalone so the module-level environment setup below (which enables the
-plugin subsystem and observability router/middleware before the first import
-of ``mcpgateway.main``) takes effect cleanly:
+Can be run standalone or as part of the full ``tests/e2e/`` suite (including
+after other e2e modules that already sent requests through
+``mcpgateway.main.app`` in the same process) since ``traced_app`` no longer
+mutates that shared singleton:
 
     python -m pytest tests/e2e/test_otel_plugin_metadata_e2e.py -v
+
+The module-level environment setup below (which enables the plugin subsystem
+and observability feature flags before the first import of ``mcpgateway.main``)
+is kept as a defensive measure -- it ensures ``PLUGINS_ENABLED``/
+``OBSERVABILITY_ENABLED`` are true for any code path that still consults
+``mcpgateway.config.settings`` -- even though the dedicated app built below no
+longer depends on ``mcpgateway.main``'s own top-level
+``if settings.observability_enabled: app.add_middleware(...)`` wiring.
 """
 
 # Future
@@ -95,12 +117,16 @@ except Exception:  # noqa: BLE001 - best-effort cache clear
     pass
 
 # Third-Party
-from cpex.framework import ToolHookType  # noqa: E402
+from cpex.framework import PluginError, PluginViolationError, ToolHookType  # noqa: E402
+from fastapi import FastAPI  # noqa: E402
+from fastapi.exceptions import RequestValidationError  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
 import httpx  # noqa: E402
+from pydantic import ValidationError  # noqa: E402
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
 from sqlalchemy import create_engine  # noqa: E402
+from sqlalchemy.exc import IntegrityError  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
@@ -109,7 +135,17 @@ from mcpgateway.auth import get_current_user  # noqa: E402
 import mcpgateway.db as db_mod  # noqa: E402
 from mcpgateway.db import Base  # noqa: E402
 import mcpgateway.main as main_mod  # noqa: E402
-from mcpgateway.main import app, get_db  # noqa: E402
+from mcpgateway.main import (  # noqa: E402
+    database_exception_handler,
+    get_db,
+    plugin_exception_handler,
+    plugin_violation_exception_handler,
+    request_validation_exception_handler,
+    tool_router,
+    unhandled_exception_handler,
+    utility_router,
+    validation_exception_handler,
+)
 from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware  # noqa: E402
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, get_permission_service  # noqa: E402
 from mcpgateway.plugins import (  # noqa: E402
@@ -157,13 +193,31 @@ def _new_traceparent() -> tuple[str, str]:
 
 @pytest_asyncio.fixture
 async def traced_app(monkeypatch):
-    """Wire a real temp-DB ``mcpgateway.main.app`` with plugins + observability live.
+    """Wire a real temp-DB, dedicated FastAPI app with plugins + observability live.
+
+    Deliberately does NOT reuse the process-wide ``mcpgateway.main.app``
+    singleton -- other ``tests/e2e/`` modules (e.g. ``test_admin_apis.py``,
+    ``test_main_apis.py``) send real requests through that same shared ``app``
+    via ``TestClient``/``AsyncClient``, and Starlette irreversibly freezes an
+    app's middleware stack the first time any request is dispatched through it.
+    Once frozen, any later ``app.add_middleware(...)`` call raises
+    ``RuntimeError: Cannot add middleware after an application has started`` --
+    which would make this fixture order-dependent within a pytest-xdist worker.
+
+    Instead, this fixture builds a brand-new ``FastAPI()`` instance per test and
+    wires the REAL router objects from ``mcpgateway.main`` /
+    ``mcpgateway.routers.observability`` onto it (the actual ``/tools``,
+    ``/rpc`` and ``/observability/...`` endpoints, real dependency callables,
+    real exception handlers) before any request is ever sent through it, so
+    ``add_middleware``/``include_router`` never race a frozen stack. The
+    ``ToolService``/``PluginManager``/``ObservabilityService`` singletons this
+    exercises are still the real, process-wide ones -- only the FastAPI/ASGI
+    app object hosting the routes is dedicated to this test.
 
     Mirrors ``tests/e2e/test_main_apis.py``'s ``temp_db`` fixture (real temp
     SQLite DB, dependency-override auth) plus
     ``tests/integration/test_cross_hook_context_sharing.py``'s pattern of
-    dynamically wiring a real plugin manager and adding middleware to the
-    live ``mcpgateway.main.app`` instance, plus
+    dynamically wiring a real plugin manager, plus
     ``tests/integration/plugins/test_plugin_metrics_consumer_integration.py``'s
     use of a real ``ObservabilityService`` against a real DB.
     """
@@ -204,8 +258,6 @@ async def traced_app(monkeypatch):
         finally:
             db.close()
 
-    app.dependency_overrides[get_db] = override_get_db
-
     # --- Real plugin manager factory, pointed at plugins/config.yaml (with our pii_filter entry) ---
     await shutdown_plugin_manager_factory()
     enable_plugins(True)
@@ -220,13 +272,27 @@ async def traced_app(monkeypatch):
     assert plugin_manager is not None, "Plugin manager factory failed to initialize -- check plugins/config.yaml and that cpex-pii-filter is installed"
     assert plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE), "pii_filter plugin not registered for tool_post_invoke -- check plugins/config.yaml"
 
-    # --- Real observability middleware + router, dynamically wired onto the live app ---
+    # --- Dedicated FastAPI app instance (NOT mcpgateway.main.app) ---
+    # Built fresh, once per test, before any request is ever dispatched through it, so
+    # add_middleware()/include_router() below can never race a frozen middleware stack.
+    # The routers are the REAL router objects imported from mcpgateway.main /
+    # mcpgateway.routers.observability -- same endpoint functions, same Depends(...)
+    # callables, same exception handlers as the production app; only the FastAPI/ASGI
+    # instance hosting them is dedicated to this test.
     observability_service = ObservabilityService()
-    already_wired = any(getattr(mw, "cls", None) is ObservabilityMiddleware for mw in app.user_middleware)
-    if not already_wired:
-        app.add_middleware(ObservabilityMiddleware, enabled=True, service=observability_service)
-    if not any(getattr(r, "path", "").startswith("/observability") for r in app.routes):
-        app.include_router(observability_router)
+    test_app = FastAPI(title="otel-plugin-metadata-e2e")
+    test_app.add_middleware(ObservabilityMiddleware, enabled=True, service=observability_service)
+    test_app.include_router(tool_router)  # real POST /tools (tool registration)
+    test_app.include_router(utility_router)  # real POST /rpc (tools/call dispatch)
+    test_app.include_router(observability_router)  # real GET /observability/traces/{trace_id}
+    test_app.add_exception_handler(Exception, unhandled_exception_handler)
+    test_app.add_exception_handler(RequestValidationError, request_validation_exception_handler)
+    test_app.add_exception_handler(ValidationError, validation_exception_handler)
+    test_app.add_exception_handler(IntegrityError, database_exception_handler)
+    test_app.add_exception_handler(PluginViolationError, plugin_violation_exception_handler)
+    test_app.add_exception_handler(PluginError, plugin_exception_handler)
+
+    test_app.dependency_overrides[get_db] = override_get_db
 
     # --- Auth: dependency-override pattern (mirrors test_admin_apis.py / test_main_apis.py) ---
     mock_email_user = create_mock_email_user(email=ADMIN_EMAIL, full_name="E2E Admin", is_admin=True, is_active=True)
@@ -247,12 +313,12 @@ async def traced_app(monkeypatch):
     def mock_get_permission_service(*args, **kwargs):
         return MockPermissionService(always_grant=True)
 
-    app.dependency_overrides[get_current_user] = lambda: mock_email_user
-    app.dependency_overrides[get_current_user_with_permissions] = mock_get_current_user_with_permissions
-    app.dependency_overrides[require_admin_auth] = mock_require_admin_auth
-    app.dependency_overrides[require_auth] = mock_require_auth
-    app.dependency_overrides[get_jwt_token] = mock_get_jwt_token
-    app.dependency_overrides[get_permission_service] = mock_get_permission_service
+    test_app.dependency_overrides[get_current_user] = lambda: mock_email_user
+    test_app.dependency_overrides[get_current_user_with_permissions] = mock_get_current_user_with_permissions
+    test_app.dependency_overrides[require_admin_auth] = mock_require_admin_auth
+    test_app.dependency_overrides[require_auth] = mock_require_auth
+    test_app.dependency_overrides[get_jwt_token] = mock_get_jwt_token
+    test_app.dependency_overrides[get_permission_service] = mock_get_permission_service
 
     # --- Mock only the outbound network call to the (fictitious) upstream tool backend ---
     upstream_response = httpx.Response(
@@ -266,11 +332,11 @@ async def traced_app(monkeypatch):
     mock_request = AsyncMock(return_value=upstream_response)
     monkeypatch.setattr(tool_service._http_client, "request", mock_request)
 
-    transport = ASGITransport(app=app)
+    transport = ASGITransport(app=test_app)
     async with AsyncClient(transport=transport, base_url="http://e2e-test") as client:
         yield client
 
-    app.dependency_overrides.clear()
+    test_app.dependency_overrides.clear()
     await shutdown_plugin_manager_factory()
     enable_plugins(False)
     engine.dispose()
