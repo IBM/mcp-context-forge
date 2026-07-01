@@ -87,9 +87,7 @@ describe("PromptCodeTab", () => {
     input.value = "Alice";
     input.dispatchEvent(new Event("input", { bubbles: true }));
 
-    rerender(
-      <PromptCodeTab prompt={mockPrompt({ id: "p2", name: "different_prompt" })} />,
-    );
+    rerender(<PromptCodeTab prompt={mockPrompt({ id: "p2", name: "different_prompt" })} />);
     expect(activeCode()).toContain("different_prompt");
     expect((screen.getByLabelText(/user_name/) as HTMLInputElement).value).toBe("");
   });

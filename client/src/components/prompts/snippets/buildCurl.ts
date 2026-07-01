@@ -8,9 +8,10 @@ function bashSingleQuote(value: string): string {
 }
 
 export function buildCurl({ promptName, args }: SnippetInput): string {
-  const body = JSON.stringify(args ?? {});
+  const encodedName = encodeURIComponent(promptName);
+  const body = JSON.stringify(args);
   const lines = [
-    `curl -X POST "$${URL_ENV}/prompts/${promptName}" \\`,
+    `curl -X POST "$${URL_ENV}/prompts/${encodedName}" \\`,
     `  -H "Authorization: Bearer $${TOKEN_ENV}" \\`,
     `  -H "Content-Type: application/json" \\`,
     `  -d '${bashSingleQuote(body)}'`,

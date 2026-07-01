@@ -41,8 +41,12 @@ export const promptsApi = {
    * Render a prompt without invoking an LLM. Runs plugin hooks; returns the
    * MCP `messages` array with template substitutions applied.
    *
-   * Mirrors `POST /prompts/{id}` (`mcpgateway/main.py`, accepts a flat
-   * `Dict[str, str]` body of arg values).
+   * Mirrors `POST /prompts/{id}` (`mcpgateway/main.py`). The gateway endpoint
+   * accepts either the prompt's name or its ID (see
+   * `_find_prompt_by_name_or_id` in `mcpgateway/services/prompt_service.py`),
+   * but this call always passes the ID so we sidestep the "name ambiguous
+   * across scopes" PromptError path. Snippets deliberately use `prompt.name`
+   * because that is what MCP-spec-compliant clients see on the wire.
    */
   render: (id: string, args: Record<string, string> = {}): Promise<RenderedPrompt> => {
     const validId = validatePromptId(id);

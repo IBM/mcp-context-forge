@@ -24,8 +24,7 @@ export function Prompts() {
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
 
   const prompts = useMemo(
-    () =>
-      (data ?? []).filter((p): p is NonNullable<PromptRead> => Boolean(p && p.enabled)),
+    () => (data ?? []).filter((p): p is NonNullable<PromptRead> => Boolean(p && p.enabled)),
     [data],
   );
   const selected = prompts.find((p) => p.id === selectedId);
@@ -33,12 +32,10 @@ export function Prompts() {
   return (
     <div className="space-y-6">
       <header className="space-y-1">
-        <h1 className="text-xl font-semibold text-neutral-900 dark:text-neutral-100">
-          Prompts
-        </h1>
+        <h1 className="text-xl font-semibold text-neutral-900 dark:text-neutral-100">Prompts</h1>
         <p className="text-sm text-muted-foreground">
-          POC scaffold — pick a prompt to exercise the Code tab and Preview action.
-          This page is replaced when the details drawer lands (#5323).
+          POC scaffold — pick a prompt to exercise the Code tab and Preview action. This page is
+          replaced when the details drawer lands (#5323).
         </p>
       </header>
 

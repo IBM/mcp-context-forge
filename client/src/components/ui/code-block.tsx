@@ -1,21 +1,22 @@
 import { Highlight, themes, type Language } from "prism-react-renderer";
-import { useIntl } from "react-intl";
 import { Copy } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { copyToClipboard } from "@/components/gateways/utils";
 import { cn } from "@/lib/utils";
-import { toast } from "sonner";
 
 export type CodeBlockLanguage = "bash" | "json" | "python" | "tsx" | "typescript";
 
 export interface CodeBlockProps {
   code: string;
   language: CodeBlockLanguage;
-  /** Optional human-readable label used in the Copy button aria-label and toast. */
+  /** aria-label for the Copy button; also referenced by callers wiring toasts. */
   copyLabel?: string;
+  /** Invoked when the user clicks Copy. Callers own the clipboard write and any feedback toast. */
+  onCopy?: (code: string) => void;
   /** Hide the built-in Copy affordance. */
   hideCopy?: boolean;
+  /** aria-label fallback when `copyLabel` is not supplied. */
+  copyAriaLabel?: string;
   className?: string;
   /** Pre-element padding override (defaults to p-4). */
   padding?: string;
@@ -37,29 +38,22 @@ const TOKEN_LANGUAGE: Record<CodeBlockLanguage, Language> = {
  *
  * Token coloring comes from the `vsDark` theme; that pairs reasonably well
  * with the rewrite's neutral-900/950 backgrounds without per-token overrides.
+ *
+ * This component is intentionally i18n-free — callers own the copy-feedback
+ * toast so the message can match the caller's domain (prompt, tool, resource).
  */
 export function CodeBlock({
   code,
   language,
   copyLabel,
+  onCopy,
   hideCopy = false,
+  copyAriaLabel,
   className,
   padding = "p-4",
 }: CodeBlockProps) {
-  const intl = useIntl();
   const prismLanguage = TOKEN_LANGUAGE[language];
-
-  const onCopy = () => {
-    copyToClipboard(code);
-    if (copyLabel) {
-      toast.success(
-        intl.formatMessage(
-          { id: "prompts.details.code.copySuccess" },
-          { language: copyLabel },
-        ),
-      );
-    }
-  };
+  const ariaLabel = copyLabel ?? copyAriaLabel ?? "Copy code";
 
   return (
     <div className={cn("relative", className)}>
@@ -76,15 +70,13 @@ export function CodeBlock({
           >
             <code>
               {tokens.map((line, i) => {
-                // prism-react-renderer types `key` loosely as `{}`; use the
-                // map index instead and strip the prop off the spread.
+                // prism-react-renderer types `key` loosely as `{}`; strip it
+                // out of the spread so React uses our map index instead.
                 const { key: _lineKey, ...lineRest } = getLineProps({ line });
-                void _lineKey;
                 return (
                   <div key={i} {...lineRest}>
                     {line.map((token, j) => {
                       const { key: _tokenKey, ...tokenRest } = getTokenProps({ token });
-                      void _tokenKey;
                       return <span key={j} {...tokenRest} />;
                     })}
                   </div>
@@ -100,15 +92,8 @@ export function CodeBlock({
           variant="ghost"
           size="icon-xs"
           className="absolute right-2 top-2 size-7 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100"
-          aria-label={
-            copyLabel
-              ? intl.formatMessage(
-                  { id: "prompts.details.code.copyAriaLabel" },
-                  { language: copyLabel },
-                )
-              : intl.formatMessage({ id: "prompts.details.code.copy" })
-          }
-          onClick={onCopy}
+          aria-label={ariaLabel}
+          onClick={() => onCopy?.(code)}
         >
           <Copy className="size-3.5" />
         </Button>

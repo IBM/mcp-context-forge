@@ -66,6 +66,24 @@ describe("usePromptPreview", () => {
     expect(toast.error).toHaveBeenCalledTimes(1);
   });
 
+  it("clears result and error when promptId changes", async () => {
+    vi.mocked(promptsApi.render).mockResolvedValue({ messages: [] });
+    const { result, rerender } = renderHook(({ id }: { id: string }) => usePromptPreview(id, {}), {
+      initialProps: { id: "p1" },
+      wrapper: ({ children }) => <I18nProvider>{children}</I18nProvider>,
+    });
+
+    await act(async () => {
+      await result.current.run();
+    });
+    expect(result.current.hasRun).toBe(true);
+
+    rerender({ id: "p2" });
+    expect(result.current.result).toBeNull();
+    expect(result.current.error).toBeNull();
+    expect(result.current.hasRun).toBe(false);
+  });
+
   it("flips isLoading while the request is in flight", async () => {
     let resolve: ((value: { messages: never[] }) => void) | undefined;
     vi.mocked(promptsApi.render).mockReturnValue(

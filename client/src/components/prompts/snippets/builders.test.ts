@@ -32,6 +32,11 @@ function extractCurlBody(snippet: string): string {
 // Python and TS both allow (and we emit) trailing commas; strict JSON does
 // not, so strip them before handing off to JSON.parse for the round-trip
 // assertion.
+//
+// NOTE (test-parser only): the `snippet[i - 1] !== "\\"` inString check
+// misparses a literal `\\"` sequence (escaped backslash immediately before a
+// quote). Not exercised by TRICKY_ARGS; if the escape matrix grows, upgrade
+// this to a proper two-state lexer.
 function extractBracedLiteral(snippet: string, prefix: string): string {
   const start = snippet.indexOf(prefix);
   if (start === -1) throw new Error(`prefix not found: ${prefix}`);
@@ -80,9 +85,7 @@ describe("snippet builders — empty args", () => {
   });
 
   it("typescript with empty args emits {}", () => {
-    expect(buildTypescript({ promptName: NAME, args: {} })).toContain(
-      "JSON.stringify({})",
-    );
+    expect(buildTypescript({ promptName: NAME, args: {} })).toContain("JSON.stringify({})");
   });
 });
 
@@ -150,7 +153,7 @@ describe("snippet builders — escape-safety matrix", () => {
   it("dollar-sign values are not shell-expanded inside curl single quotes", () => {
     const snippet = buildCurl({ promptName: NAME, args: { dollarVar: "${INJECTED}" } });
     // Body lives inside single quotes — bash treats $ literally there.
-    expect(snippet).toContain("'{\"dollarVar\":\"${INJECTED}\"}'");
+    expect(snippet).toContain('\'{"dollarVar":"${INJECTED}"}\'');
   });
 
   it("never emits smart quotes — straight ASCII only", () => {
@@ -167,5 +170,30 @@ describe("snippet builders — escape-safety matrix", () => {
     const snippet = buildCurl({ promptName: NAME, args: {} });
     expect(snippet).toContain("$MCPGATEWAY_URL");
     expect(snippet).toContain("$MCPGATEWAY_BEARER_TOKEN");
+  });
+});
+
+describe("snippet builders — URL encoding of prompt name", () => {
+  // Backend name regex allows spaces and dots (^[a-zA-Z0-9_.\- ]+$), so the
+  // snippet URLs must percent-encode or the copied curl/python/typescript
+  // will 400 as an unquoted path.
+
+  it("curl encodes spaces in the URL path", () => {
+    expect(buildCurl({ promptName: "my prompt", args: {} })).toContain("/prompts/my%20prompt");
+  });
+
+  it("python encodes spaces in the URL path", () => {
+    expect(buildPython({ promptName: "my prompt", args: {} })).toContain("/prompts/my%20prompt");
+  });
+
+  it("typescript encodes spaces in the URL path", () => {
+    expect(buildTypescript({ promptName: "my prompt", args: {} })).toContain(
+      "/prompts/my%20prompt",
+    );
+  });
+
+  it("json-rpc carries the raw name as a field value (JSON handles escaping)", () => {
+    const parsed = JSON.parse(buildJsonRpc({ promptName: "my prompt", args: {} }));
+    expect(parsed.params.name).toBe("my prompt");
   });
 });
