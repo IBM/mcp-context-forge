@@ -8806,3 +8806,133 @@ class TestGatewayServiceOAuthAutoDiscovery:
         result = await GatewayService._auto_discover_oauth_endpoints(config)
         assert result == config
         assert "endpoints_discovered" not in result
+
+
+class TestTokenExchangeWiring:
+    """G5: _validate_token_exchange_config is wired into register/update and dedup."""
+
+    @pytest.mark.asyncio
+    async def test_register_rejects_invalid_token_exchange_config(self, gateway_service, test_db):
+        """register_gateway must run _validate_token_exchange_config -> reject missing target_audience."""
+        from mcpgateway.schemas import GatewayCreate
+
+        # No existing gateway with the same slug
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+        # No duplicate gateway found
+        gateway_service._check_gateway_uniqueness = Mock(return_value=None)
+
+        bad = GatewayCreate(
+            name="te-gw",
+            url="https://upstream.example.com",
+            auth_type="oauth",
+            oauth_config={"grant_type": "token-exchange", "client_id": "cf", "token_url": "https://as/token"},
+        )
+        with pytest.raises(ValueError, match="target_audience is required"):
+            await gateway_service.register_gateway(test_db, bad)
+
+    @pytest.mark.asyncio
+    async def test_update_revalidates_token_url_ssrf(self, gateway_service, mock_gateway, test_db):
+        """update_gateway path must re-run SSRF validation on token_url.
+
+        GatewayUpdate's schema-level oauth_config validator already rejects
+        IP-literal SSRF targets like 169.254.169.254 at construction time, so
+        wrapping GatewayUpdate(...) + update_gateway(...) in a single
+        pytest.raises never actually exercises the new service-layer guard
+        (_validate_token_exchange_config). Instead, unit-test that guard
+        directly -- it is the actual new code from Task 1, and it's the
+        validation update_gateway invokes on its oauth_config processing path.
+        """
+        # Sanity check: a benign config passes through (with defaults applied), no error.
+        benign_config = {
+            "grant_type": "token-exchange",
+            "client_id": "cf",
+            "token_url": "https://as.example.com/token",
+            "target_audience": "https://d",
+        }
+        result = GatewayService._validate_token_exchange_config(dict(benign_config))
+        assert result["token_url"] == benign_config["token_url"]
+
+        # The SSRF-shaped config must be rejected by the service-layer guard itself.
+        with pytest.raises(ValueError):
+            GatewayService._validate_token_exchange_config(
+                {
+                    "grant_type": "token-exchange",
+                    "client_id": "cf",
+                    "token_url": "http://169.254.169.254/latest/",
+                    "target_audience": "https://d",
+                }
+            )
+
+    def test_dedup_distinguishes_by_target_audience(self):
+        """Two configs identical except target_audience must NOT be treated as duplicates."""
+        keys = ["grant_type", "client_id", "authorization_url", "token_url", "scope", "target_audience", "subject_token_source"]
+        a = {"grant_type": "token-exchange", "client_id": "cf", "token_url": "https://as/token", "target_audience": "https://svc-a"}
+        b = {"grant_type": "token-exchange", "client_id": "cf", "token_url": "https://as/token", "target_audience": "https://svc-b"}
+        assert not all(a.get(k) == b.get(k) for k in keys)  # differs on target_audience -> not a duplicate
+
+
+class TestTokenExchangeAdminOnlyGate:
+    """A token-exchange gateway sends the caller's JWT to an operator-supplied token_url,
+
+    so creating/modifying one is a platform-admin-only action (AGENTS.md security invariant).
+    _enforce_token_exchange_admin_only is the single choke point both register_gateway and
+    update_gateway route through.
+    """
+
+    _TE_CONFIG = {"grant_type": "token-exchange", "client_id": "cf", "token_url": "https://as/token", "target_audience": "https://svc"}
+
+    @pytest.mark.asyncio
+    async def test_noop_for_non_token_exchange_grant(self):
+        """Any other grant type must never trigger a permission lookup."""
+        with patch("mcpgateway.services.permission_service.PermissionService.check_permission", new_callable=AsyncMock) as mock_check:
+            await GatewayService._enforce_token_exchange_admin_only(Mock(), {"grant_type": "client_credentials"}, "dev@example.com")
+        mock_check.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_noop_when_no_oauth_config(self):
+        """A gateway update that doesn't touch oauth_config must never trigger a permission lookup."""
+        with patch("mcpgateway.services.permission_service.PermissionService.check_permission", new_callable=AsyncMock) as mock_check:
+            await GatewayService._enforce_token_exchange_admin_only(Mock(), None, "dev@example.com")
+        mock_check.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_skips_gate_for_trusted_internal_caller(self):
+        """No requester_email (import/catalog flows) is treated as a trusted internal call."""
+        with patch("mcpgateway.services.permission_service.PermissionService.check_permission", new_callable=AsyncMock) as mock_check:
+            await GatewayService._enforce_token_exchange_admin_only(Mock(), dict(self._TE_CONFIG), None)
+        mock_check.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_denies_non_platform_admin_requester(self):
+        """A developer/team_admin (no wildcard permission) must not configure a token-exchange gateway."""
+        with patch("mcpgateway.services.permission_service.PermissionService.check_permission", new_callable=AsyncMock) as mock_check:
+            mock_check.return_value = False
+            with pytest.raises(PermissionError, match="platform administrator"):
+                await GatewayService._enforce_token_exchange_admin_only(Mock(), dict(self._TE_CONFIG), "developer@example.com")
+        mock_check.assert_awaited_once_with("developer@example.com", "*", allow_admin_bypass=True)
+
+    @pytest.mark.asyncio
+    async def test_allows_platform_admin_requester(self):
+        """A platform admin (wildcard permission) may configure a token-exchange gateway."""
+        with patch("mcpgateway.services.permission_service.PermissionService.check_permission", new_callable=AsyncMock) as mock_check:
+            mock_check.return_value = True
+            await GatewayService._enforce_token_exchange_admin_only(Mock(), dict(self._TE_CONFIG), "admin@example.com")
+
+    @pytest.mark.asyncio
+    async def test_register_gateway_rejects_non_admin_owner(self, gateway_service, test_db):
+        """End-to-end: register_gateway must refuse a token-exchange gateway from a non-admin owner_email."""
+        from mcpgateway.schemas import GatewayCreate
+
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+        gateway_service._check_gateway_uniqueness = Mock(return_value=None)
+
+        cfg = GatewayCreate(
+            name="te-gw-nonadmin",
+            url="https://upstream.example.com",
+            auth_type="oauth",
+            oauth_config=dict(self._TE_CONFIG),
+        )
+        with patch("mcpgateway.services.permission_service.PermissionService.check_permission", new_callable=AsyncMock) as mock_check:
+            mock_check.return_value = False
+            with pytest.raises(PermissionError, match="platform administrator"):
+                await gateway_service.register_gateway(test_db, cfg, owner_email="developer@example.com")

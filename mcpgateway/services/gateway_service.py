@@ -106,6 +106,7 @@ from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.session_affinity import register_gateway_capabilities_for_notifications
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.token_exchange_cache import TokenExchangeCache
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
@@ -641,6 +642,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         self._gateway_failure_counts: dict[str, int] = {}
         self.oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
         self._event_service = EventService(channel_name="mcpgateway:gateway_events")
+        self._token_exchange_cache = TokenExchangeCache(redis_url=getattr(settings, "redis_url", None))
 
         # Per-gateway refresh locks to prevent concurrent refreshes for the same gateway
         self._refresh_locks: Dict[str, asyncio.Lock] = {}
@@ -735,6 +737,109 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         except Exception as _e:  # pylint: disable=broad-except
             logger.warning("OAuth endpoint discovery failed for issuer %s: %s", issuer, _e)
         return raw_oauth_config
+
+    _VALID_SUBJECT_TOKEN_SOURCES = ("inbound_user_jwt",)
+    _DEFAULT_REQUESTED_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:access_token"  # nosec B105 - RFC 8693 URI
+    # RFC 8693 §3: "jwt" means a generic JWT is being sent, vs "access_token" which implies
+    # a token the AS itself previously issued and can recognize as one of its own. CF's inbound
+    # subject token is a CF-issued JWT, not an AS-issued access token, so "jwt" is the correct
+    # default subject_token_type for ASes that enforce the distinction (e.g. Keycloak).
+    _DEFAULT_SUBJECT_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:jwt"  # nosec B105 - RFC 8693 URI
+
+    @staticmethod
+    def _validate_token_exchange_config(oauth_config: dict) -> dict:
+        """Validate and default RFC 8693 token-exchange config. No-op for other grants.
+
+        Args:
+            oauth_config: Raw gateway oauth_config dict.
+
+        Returns:
+            The config with token-exchange defaults applied.
+
+        Raises:
+            ValueError: If grant_type is token-exchange but config is invalid.
+        """
+        if not oauth_config or oauth_config.get("grant_type") != "token-exchange":
+            return oauth_config
+
+        if not oauth_config.get("target_audience"):
+            raise ValueError("target_audience is required for token-exchange grant type")
+        token_url = oauth_config.get("token_url")
+        if not token_url:
+            raise ValueError("token_url is required for token-exchange grant type")
+        # SSRF guard (B4): the user's inbound CF JWT is sent to token_url as the
+        # subject_token, so token_url must pass the same egress validation the
+        # auto-discover path applies to `issuer`. Raises ValueError on internal /
+        # disallowed hosts.
+        try:
+            SecurityValidator.validate_url(token_url, "OAuth token URL")
+        except ValueError as e:
+            # L7: a rejected token_url is a security-relevant config attempt; record it
+            # (sanitized) so the security audit sees attempted SSRF-shaped configs.
+            logger.warning("Rejected token-exchange token_url for SSRF/validation: %s", SecurityValidator.sanitize_log_message(str(e)))
+            raise
+
+        source = oauth_config.setdefault("subject_token_source", "inbound_user_jwt")
+        if source not in GatewayService._VALID_SUBJECT_TOKEN_SOURCES:
+            raise ValueError(f"subject_token_source must be one of {GatewayService._VALID_SUBJECT_TOKEN_SOURCES}, got '{source}'")
+
+        oauth_config.setdefault("requested_token_type", GatewayService._DEFAULT_REQUESTED_TOKEN_TYPE)
+        oauth_config.setdefault("subject_token_type", GatewayService._DEFAULT_SUBJECT_TOKEN_TYPE)
+        return oauth_config
+
+    @staticmethod
+    async def _enforce_token_exchange_admin_only(db: Session, oauth_config: Optional[dict], requester_email: Optional[str]) -> None:
+        """Restrict creating/modifying a token-exchange gateway to platform admins.
+
+        A token-exchange gateway POSTs the caller's inbound JWT to an operator-supplied
+        ``token_url`` as ``subject_token`` (see AGENTS.md's SSRF/egress-boundary note), so
+        a non-admin who can set ``token_url`` could harvest other users' JWTs by pointing
+        it at attacker-controlled infrastructure. No-op for any other grant type.
+
+        Args:
+            db: Database session.
+            oauth_config: Raw gateway oauth_config dict being applied (create or update).
+            requester_email: Email of the user performing the create/update. ``None``/empty
+                means the call originates from a trusted internal flow (config import, which
+                is already gated behind the platform-admin-only ``admin.import`` permission;
+                catalog registration, which applies a bundled/static definition) rather than
+                a request-scoped HTTP caller, so the gate is skipped.
+
+        Raises:
+            PermissionError: If grant_type is token-exchange, a requester_email is present,
+                and that user does not hold the platform-admin wildcard permission.
+        """
+        if not oauth_config or oauth_config.get("grant_type") != "token-exchange" or not requester_email:
+            return
+
+        # First-Party
+        from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+        permission_service = PermissionService(db)
+        is_platform_admin = await permission_service.check_permission(requester_email, "*", allow_admin_bypass=True)
+        if not is_platform_admin:
+            raise PermissionError("Configuring a token-exchange gateway requires platform administrator privileges.")
+
+    @staticmethod
+    def _sanitize_passthrough_for_token_exchange(passthrough_allowed: Optional[List[str]], grant_type: Optional[str]) -> Optional[List[str]]:
+        """Drop ``authorization`` from passthrough when token-exchange owns the header (B3).
+
+        When ``grant_type`` is ``"token-exchange"``, the gateway's exchanged
+        ``Authorization`` header must not be overridden by an inbound caller's JWT
+        via the passthrough allow-list.
+
+        Args:
+            passthrough_allowed: The gateway's configured passthrough header allow-list.
+            grant_type: The OAuth grant type for the target gateway, or ``None``
+                if the gateway is not an OAuth gateway.
+
+        Returns:
+            The list unchanged for any grant type other than ``"token-exchange"``;
+            otherwise a copy with ``authorization`` (case-insensitive) removed.
+        """
+        if grant_type != "token-exchange" or not passthrough_allowed:
+            return passthrough_allowed
+        return [h for h in passthrough_allowed if h.lower() != "authorization"]
 
     @staticmethod
     def normalize_url(url: str) -> str:
@@ -1086,7 +1191,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 new_oauth = oauth_config or {}
 
                 # Compare key OAuth fields
-                oauth_keys = ["grant_type", "client_id", "authorization_url", "token_url", "scope"]
+                oauth_keys = ["grant_type", "client_id", "authorization_url", "token_url", "scope", "target_audience", "subject_token_source"]
                 if all(existing_oauth.get(k) == new_oauth.get(k) for k in oauth_keys):
                     return existing  # Duplicate OAuth config found
 
@@ -1200,7 +1305,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             authentication_headers = {str(k): str(v) for k, v in decoded.items()}
 
         raw_oauth_config = getattr(gateway, "oauth_config", None)
+        await self._enforce_token_exchange_admin_only(db, raw_oauth_config, owner_email)
         raw_oauth_config = await self._auto_discover_oauth_endpoints(raw_oauth_config)
+        raw_oauth_config = self._validate_token_exchange_config(raw_oauth_config)
         oauth_config = await protect_oauth_config_for_storage(raw_oauth_config)
         ca_certificate = getattr(gateway, "ca_certificate", None)
         init_client_cert = getattr(gateway, "client_cert", None)
@@ -2531,7 +2638,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # Handle OAuth configuration updates
                 if gateway_update.oauth_config is not None:
                     raw_oauth_update = dict(gateway_update.oauth_config)
+                    await self._enforce_token_exchange_admin_only(db, raw_oauth_update, user_email)
                     raw_oauth_update = await self._auto_discover_oauth_endpoints(raw_oauth_update)
+                    raw_oauth_update = self._validate_token_exchange_config(raw_oauth_update)
                     gateway.oauth_config = await protect_oauth_config_for_storage(raw_oauth_update, existing_oauth_config=gateway.oauth_config)
 
                 # Handle auth_value updates (both existing and new auth values)
@@ -4327,6 +4436,19 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                     set_span_error(span, "Failed to obtain stored OAuth token")
                                 await self._handle_gateway_failure(gateway)
                                 return
+                        elif grant_type == "token-exchange":
+                            # Token-exchange (RFC 8693) requires an inbound end-user JWT as the
+                            # subject token. A periodic health check has no associated user
+                            # request, so this grant cannot be satisfied here. Mirror the
+                            # discovery path (_prepare_gateway_registration's connection probe),
+                            # which also cannot obtain a subject token outside a user request and
+                            # skips the probe rather than failing: treating "no subject token" as
+                            # a health-check failure would mark every token-exchange gateway
+                            # permanently unreachable, since no periodic check ever has one.
+                            logger.debug("Gateway %s uses token-exchange grant; skipping health-check probe (no subject token available outside a user request)", gateway_name)
+                            if span:
+                                set_span_attribute(span, "health.status", "skipped")
+                            return
                         else:
                             # For Client Credentials flow, get token directly
                             try:
@@ -4681,6 +4803,16 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     except Exception as e:
                         logger.error("Failed to obtain OAuth access token: %s", e)
                         raise GatewayConnectionError(f"OAuth authentication failed: {str(e)}")
+                elif grant_type == "token-exchange":
+                    # Token-exchange (RFC 8693) requires an inbound end-user JWT as the subject
+                    # token. Gateway initialization/registration has no associated user request,
+                    # so the discovery probe cannot be satisfied here. Mirror the
+                    # authorization_code flow above: skip the connection attempt and persist
+                    # the gateway with an empty tool list rather than failing the registration
+                    # call outright. Tool/capability discovery for token-exchange gateways is
+                    # deferred to a later authenticated trigger (e.g. an explicit refresh).
+                    logger.info("Token-exchange gateway configured for '%s'. Skipping discovery probe; tools will be populated on a later authenticated refresh.", url)
+                    return {}, [], [], [], []
 
             capabilities = {}
             tools = []

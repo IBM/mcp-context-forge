@@ -202,7 +202,9 @@ class OAuthManager:
 
         return audience
 
-    async def get_access_token(self, credentials: Dict[str, Any], ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None) -> str:
+    async def get_access_token(
+        self, credentials: Dict[str, Any], ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None, subject_token: Optional[str] = None
+    ) -> str:
         """Get access token based on grant type.
 
         Args:
@@ -210,6 +212,8 @@ class OAuthManager:
             ca_certificate: Optional custom CA certificate for SSL verification (PEM format)
             client_cert: Optional client certificate for mTLS (PEM format or file path)
             client_key: Optional client private key for mTLS (PEM format or file path)
+            subject_token: Optional subject token (e.g. the inbound user's JWT) required
+                for the RFC 8693 ``token-exchange`` grant type
 
         Returns:
             Access token string
@@ -253,6 +257,26 @@ class OAuthManager:
             return await self._client_credentials_flow(credentials, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
         if grant_type == "password":
             return await self._password_flow(credentials, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
+        if grant_type == "token-exchange":
+            if not subject_token:
+                raise OAuthError("Token exchange requires a subject token; the user must be authenticated.")
+            runtime_creds = await self._prepare_runtime_credentials(credentials, "token-exchange")
+            scopes = runtime_creds.get("scopes") or []
+            response = await self.token_exchange(
+                token_url=runtime_creds["token_url"],
+                subject_token=subject_token,
+                client_id=runtime_creds.get("client_id", ""),
+                client_secret=runtime_creds.get("client_secret", ""),
+                audience=runtime_creds.get("target_audience"),
+                scope=" ".join(scopes) if scopes else None,
+                requested_token_type=runtime_creds.get("requested_token_type", "urn:ietf:params:oauth:token-type:access_token"),
+                subject_token_type=runtime_creds.get("subject_token_type", "urn:ietf:params:oauth:token-type:jwt"),
+                ca_certificate=ca_certificate,
+                client_cert=client_cert,
+                client_key=client_key,
+                client_secret_is_plaintext=True,  # _prepare_runtime_credentials already decrypted it
+            )
+            return response["access_token"]
         if grant_type == "authorization_code":
             raise OAuthError("Authorization code flow requires user consent via /oauth/authorize and does not support client_credentials fallback")
         raise ValueError(f"Unsupported grant type: {grant_type}")
@@ -745,6 +769,11 @@ class OAuthManager:
         audience: Optional[str] = None,
         scope: Optional[str] = None,
         requested_token_type: str = "urn:ietf:params:oauth:token-type:access_token",
+        subject_token_type: str = "urn:ietf:params:oauth:token-type:jwt",
+        ca_certificate: Optional[str] = None,
+        client_cert: Optional[str] = None,
+        client_key: Optional[str] = None,
+        client_secret_is_plaintext: bool = False,
     ) -> Dict[str, Any]:
         """RFC 8693 token exchange for on-behalf-of flows.
 
@@ -760,16 +789,35 @@ class OAuthManager:
             audience: Intended audience for the exchanged token.
             scope: Requested scope for the exchanged token.
             requested_token_type: The type of token being requested.
+            subject_token_type: RFC 8693 §3 identifier for the type of token in
+                ``subject_token``. Defaults to ``urn:ietf:params:oauth:token-type:jwt``
+                (a generic JWT), which is correct for CF's own inbound JWT — as
+                opposed to ``...:access_token``, which per §3 implies a token the
+                AS itself previously issued and can recognize as its own.
+            ca_certificate: Optional custom CA certificate for SSL verification (PEM format).
+            client_cert: Optional client certificate for mTLS (PEM format or file path).
+            client_key: Optional client private key for mTLS (PEM format or file path).
+            client_secret_is_plaintext: Set True when the caller has already decrypted
+                ``client_secret`` (e.g. ``get_access_token`` routes through
+                ``_prepare_runtime_credentials``). Skips the inline decrypt block so an
+                already-plaintext secret is never re-run through ``is_encrypted``. The
+                direct ``ToolService`` caller passes the raw encrypted DB value and keeps
+                the default ``False`` so the inline decrypt still runs.
 
         Returns:
             Dict with ``access_token``, ``token_type``, and optionally
             ``expires_in`` and ``scope``.
 
         Raises:
-            OAuthError: If token exchange fails after all retries.
+            OAuthError: If token exchange fails after all retries, or the
+                response ``token_type`` is not ``Bearer`` (RFC 8693 §2.2.1
+                allows ``N_A`` for non-access-token ``issued_token_type``
+                values, but CF only forwards exchanged tokens as
+                ``Authorization: Bearer <token>``).
         """
-        # Decrypt client secret if encrypted
-        if client_secret:
+        # Decrypt client secret if encrypted. Skipped when the caller already decrypted it
+        # (client_secret_is_plaintext=True) to avoid re-running is_encrypted on plaintext.
+        if client_secret and not client_secret_is_plaintext:
             try:
                 settings = get_settings()
                 encryption = get_encryption_service(settings.auth_encryption_secret)
@@ -783,7 +831,7 @@ class OAuthManager:
         token_data: Dict[str, str] = {
             "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
             "subject_token": subject_token,
-            "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",  # nosec B105 - RFC 8693 token type URI, not a credential
+            "subject_token_type": subject_token_type,  # nosec B105 - RFC 8693 token type URI, not a credential
             "requested_token_type": requested_token_type,
             "client_id": client_id,
             "client_secret": client_secret,
@@ -795,19 +843,27 @@ class OAuthManager:
 
         for attempt in range(self.max_retries):
             try:
-                client = await self._get_client()
-                response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
+                response = await self._post_token_request(token_url, token_data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
                 response.raise_for_status()
 
                 token_response = response.json()
                 if "access_token" not in token_response:
-                    raise OAuthError(f"No access_token in token exchange response: {token_response}")
+                    raise OAuthError(f"No access_token in token exchange response: {self._redact_token_response(token_response)}")
+
+                # RFC 8693 §2.2.1: token_type is REQUIRED and MUST be "Bearer" for an
+                # access_token, or "N_A" when issued_token_type is not an access token
+                # (e.g. requested_token_type=jwt for a non-OAuth downstream). CF only
+                # ever forwards the exchanged token as "Authorization: Bearer <token>",
+                # so fail closed rather than mislabel a non-bearer token.
+                token_type = token_response.get("token_type", "Bearer")
+                if not isinstance(token_type, str) or token_type.lower() != "bearer":
+                    raise OAuthError(f"Unsupported token_type '{token_type}' in token exchange response; only 'Bearer' is supported")
 
                 logger.info("Successfully performed RFC 8693 token exchange")
                 return token_response
 
             except httpx.HTTPError as e:
-                logger.warning("Token exchange attempt %s failed: %s", attempt + 1, e)
+                logger.debug("Token exchange attempt %s failed: %s", attempt + 1, e)
                 if attempt == self.max_retries - 1:
                     raise OAuthError(f"Token exchange failed after {self.max_retries} attempts: {e}")
                 await asyncio.sleep(2**attempt)
