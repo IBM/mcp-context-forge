@@ -2,9 +2,9 @@
 
 MCP Apps support lets ContextForge advertise MCP UI capabilities and enforce UI
 metadata while keeping the feature disabled by default for a controlled rollout.
-It introduces a narrow AppBridge path that browser-hosted MCP Apps can use to
-call app-visible tools without exposing normal model-facing tool surfaces or
-gateway-internal routing headers.
+It introduces a narrow AppBridge path that MCP Hosts can use on behalf of
+browser-hosted MCP Apps to call app-visible tools without exposing normal
+model-facing tool surfaces or gateway-internal routing headers.
 
 ## Status and Scope
 
@@ -122,15 +122,15 @@ MCP Apps UI resources use the `ui://` URI scheme and must be HTML:
 {
   "uri": "ui://widgets/customer-search",
   "name": "Customer search widget",
-  "mimeType": "text/html",
+  "mimeType": "text/html;profile=mcp-app",
   "content": "<!doctype html><html>...</html>",
   "extensionMetadata": {
     "io.modelcontextprotocol/ui": {
       "csp": {
-        "default-src": ["'self'"],
-        "connect-src": ["'self'"],
-        "script-src": ["'self'"],
-        "style-src": ["'self'"]
+        "connectDomains": ["https://api.example.com"],
+        "resourceDomains": ["https://cdn.example.com"],
+        "frameDomains": [],
+        "baseUriDomains": []
       },
       "sandbox": ["allow-scripts", "allow-forms"],
       "permissions": []
@@ -142,30 +142,22 @@ MCP Apps UI resources use the `ui://` URI scheme and must be HTML:
 For `ui://` resources, ContextForge requires all of the following:
 
 - MCP Apps must be enabled.
-- `mimeType` must be `text/html`; parameterized values such as
-  `text/html; charset=utf-8` are accepted.
+- Public MCP App resources must use `text/html;profile=mcp-app`. Additional
+  parameters, such as `charset=utf-8`, are accepted when the MCP App profile
+  parameter is present.
 - `extensionMetadata["io.modelcontextprotocol/ui"]` must exist.
 - `csp` must be a non-empty object.
 - `sandbox` must be a non-empty list.
 
 ## CSP and Sandbox Validation
 
-The gateway validates CSP metadata before accepting a UI resource.
+The gateway validates CSP metadata before accepting a UI resource. Public
+resource metadata should use the MCP Apps domain-list keys:
 
-Allowed CSP directives:
-
-- `connect-src`
-- `default-src`
-- `font-src`
-- `frame-src`
-- `img-src`
-- `media-src`
 - `baseUriDomains`
 - `connectDomains`
 - `frameDomains`
 - `resourceDomains`
-- `script-src`
-- `style-src`
 
 Rejected CSP sources:
 
@@ -173,8 +165,8 @@ Rejected CSP sources:
 - `javascript:`
 - `file:`
 - `data:`
-- `script-src 'unsafe-inline'`
-- `script-src 'unsafe-eval'`
+- `'unsafe-inline'`
+- `'unsafe-eval'`
 
 Allowed sandbox tokens:
 
@@ -191,6 +183,11 @@ Permission tokens are optional. When present, each token must be lowercase,
 start with a letter, and contain only letters, digits, or hyphens.
 
 ## AppBridge Flow
+
+AppBridge is Host-mediated. The sandboxed View exchanges JSON-RPC messages
+with the Host through `postMessage`; the Host validates those messages and
+uses the gateway AppBridge endpoints on the View's behalf. The View must not
+receive or store the user's gateway bearer token.
 
 AppBridge requests use short-lived sessions. A session binds four independent
 facts:
@@ -211,16 +208,23 @@ sequenceDiagram
     Gateway-->>Host: capabilities.extensions.io.modelcontextprotocol/ui
     Host->>Gateway: resources/read ui://widget
     Gateway-->>Host: HTML + _meta.ui policy
-    App->>Gateway: POST /mcp/apps/sessions
+    Host->>App: render sandboxed iframe
+    Host->>Gateway: POST /mcp/apps/sessions
     Gateway->>DB: verify resource visibility and store AppBridge session
-    Gateway-->>App: appSessionId, serverId, expiresAt
-    App->>Gateway: POST /mcp/apps/sessions/{id}/rpc tools/call
+    Gateway-->>Host: appSessionId, serverId, expiresAt
+    App->>Host: postMessage JSON-RPC tools/call
+    Host->>Gateway: POST /mcp/apps/sessions/{id}/rpc tools/call
     Gateway->>DB: validate session owner, MCP session, server binding
     Gateway->>Gateway: invoke app-visible tool
-    Gateway-->>App: JSON-RPC result
+    Gateway-->>Host: JSON-RPC result
+    Host-->>App: postMessage JSON-RPC result
 ```
 
 ### Create an AppBridge Session
+
+This is a Host-to-gateway request. The `Authorization` header belongs to the
+Host's authenticated gateway connection and must not be injected into the
+sandboxed View.
 
 ```http
 POST /mcp/apps/sessions
@@ -250,6 +254,10 @@ the gateway reads the requested UI resource with the caller's normal token
 scope and RBAC context.
 
 ### Call an App-Visible Tool
+
+This is also a Host-to-gateway request. The View sends the JSON-RPC payload to
+the Host through AppBridge/postMessage; the Host forwards approved calls to the
+gateway endpoint below.
 
 ```http
 POST /mcp/apps/sessions/5a51a7f8-4aa5-48d9-9aa1-3f4b5f07ed76/rpc
@@ -295,6 +303,9 @@ The gateway enforces:
   session.
 - **Tool visibility split:** app-only helper tools are hidden from model-facing
   `tools/list`; model-only tools are rejected by AppBridge.
+- **Host-mediated View calls:** the sandboxed View talks to the Host through
+  AppBridge messages; gateway bearer credentials remain in the Host or gateway
+  integration layer.
 - **No direct-proxy header trust:** AppBridge strips
   `X-Context-Forge-Gateway-Id` before invoking tools and uses the stored
   server binding instead.

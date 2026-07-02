@@ -14,7 +14,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import MCPAppSession, Resource
+from mcpgateway.db import MCPAppSession
 from mcpgateway.common.models import TextContent, ToolResult
 from mcpgateway.services.mcp_apps import (
     mcp_app_session_service,
@@ -79,23 +79,28 @@ class TestUIResourceSecurity:
     """Security tests for ui:// resource access."""
 
     def _policy(self) -> dict:
-        return {MCP_UI_EXTENSION: {"csp": {"default-src": ["'self'"]}, "sandbox": ["allow-scripts"]}}
+        return {MCP_UI_EXTENSION: {"csp": {"resourceDomains": ["'self'"]}, "sandbox": ["allow-scripts"]}}
 
     def test_unauthorized_ui_resource_read_when_disabled(self, monkeypatch):
         """ui:// resources should be rejected when MCP Apps are disabled."""
         monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", False)
 
         with pytest.raises(MCPAppsValidationError, match="MCP Apps UI resources are disabled"):
-            validate_ui_resource("ui://widgets/example", "text/html", self._policy())
+            validate_ui_resource("ui://widgets/example", "text/html;profile=mcp-app", self._policy())
 
     def test_ui_resource_requires_text_html_mime(self, monkeypatch):
-        """ui:// resources must use text/html MIME type."""
+        """ui:// resources must use MCP App HTML MIME type."""
         monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
 
-        with pytest.raises(MCPAppsValidationError, match="text/html MIME type"):
+        validate_ui_resource("ui://widgets/example", "text/html;profile=mcp-app", self._policy())
+
+        with pytest.raises(MCPAppsValidationError, match="text/html;profile=mcp-app MIME type"):
+            validate_ui_resource("ui://widgets/example", "text/html", self._policy())
+
+        with pytest.raises(MCPAppsValidationError, match="text/html;profile=mcp-app MIME type"):
             validate_ui_resource("ui://widgets/example", "application/json", self._policy())
 
-        with pytest.raises(MCPAppsValidationError, match="text/html MIME type"):
+        with pytest.raises(MCPAppsValidationError, match="text/html;profile=mcp-app MIME type"):
             validate_ui_resource("ui://widgets/example", None, self._policy())
 
     def test_ui_resource_requires_explicit_csp_and_sandbox(self, monkeypatch):
@@ -103,54 +108,54 @@ class TestUIResourceSecurity:
         monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
 
         with pytest.raises(MCPAppsValidationError, match="MCP Apps metadata"):
-            validate_ui_resource("ui://widgets/example", "text/html", None)
+            validate_ui_resource("ui://widgets/example", "text/html;profile=mcp-app", None)
 
         with pytest.raises(MCPAppsValidationError, match="CSP policy"):
-            validate_ui_resource("ui://widgets/example", "text/html", {MCP_UI_EXTENSION: {"sandbox": ["allow-scripts"]}})
+            validate_ui_resource("ui://widgets/example", "text/html;profile=mcp-app", {MCP_UI_EXTENSION: {"sandbox": ["allow-scripts"]}})
 
         with pytest.raises(MCPAppsValidationError, match="sandbox policy"):
-            validate_ui_resource("ui://widgets/example", "text/html", {MCP_UI_EXTENSION: {"csp": {"default-src": ["'self'"]}}})
+            validate_ui_resource("ui://widgets/example", "text/html;profile=mcp-app", {MCP_UI_EXTENSION: {"csp": {"resourceDomains": ["'self'"]}}})
 
     def test_ui_resource_rejects_unsafe_csp(self, monkeypatch):
         """ui:// resources should reject unsafe CSP directives."""
         monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
 
-        # Reject unsafe-inline for script-src
+        # Reject unsafe-inline for resource domains
         with pytest.raises(MCPAppsValidationError, match="'unsafe-inline' is not allowed"):
             validate_ui_resource(
                 "ui://widgets/example",
-                "text/html",
-                {MCP_UI_EXTENSION: {"csp": {"script-src": ["'unsafe-inline'"]}}},
+                "text/html;profile=mcp-app",
+                {MCP_UI_EXTENSION: {"csp": {"resourceDomains": ["'unsafe-inline'"]}, "sandbox": ["allow-scripts"]}},
             )
 
         # Reject wildcard sources
         with pytest.raises(MCPAppsValidationError, match="Wildcard CSP sources are not allowed"):
             validate_ui_resource(
                 "ui://widgets/example",
-                "text/html",
-                {MCP_UI_EXTENSION: {"csp": {"default-src": ["*"]}}},
+                "text/html;profile=mcp-app",
+                {MCP_UI_EXTENSION: {"csp": {"resourceDomains": ["*"]}, "sandbox": ["allow-scripts"]}},
             )
 
         # Reject blocked source prefixes
         with pytest.raises(MCPAppsValidationError, match="Blocked MCP Apps CSP source"):
             validate_ui_resource(
                 "ui://widgets/example",
-                "text/html",
-                {MCP_UI_EXTENSION: {"csp": {"script-src": ["javascript:alert(1)"]}}},
+                "text/html;profile=mcp-app",
+                {MCP_UI_EXTENSION: {"csp": {"resourceDomains": ["javascript:alert(1)"]}, "sandbox": ["allow-scripts"]}},
             )
 
         with pytest.raises(MCPAppsValidationError, match="'unsafe-eval' is not allowed"):
             validate_ui_resource(
                 "ui://widgets/example",
-                "text/html",
-                {MCP_UI_EXTENSION: {"csp": {"script-src": ["'unsafe-eval'"]}, "sandbox": ["allow-scripts"]}},
+                "text/html;profile=mcp-app",
+                {MCP_UI_EXTENSION: {"csp": {"resourceDomains": ["'unsafe-eval'"]}, "sandbox": ["allow-scripts"]}},
             )
 
         with pytest.raises(MCPAppsValidationError, match="Unsupported MCP Apps sandbox token"):
             validate_ui_resource(
                 "ui://widgets/example",
-                "text/html",
-                {MCP_UI_EXTENSION: {"csp": {"default-src": ["'self'"]}, "sandbox": ["allow-scripts", "allow-same-origin"]}},
+                "text/html;profile=mcp-app",
+                {MCP_UI_EXTENSION: {"csp": {"resourceDomains": ["'self'"]}, "sandbox": ["allow-scripts", "allow-same-origin"]}},
             )
 
 

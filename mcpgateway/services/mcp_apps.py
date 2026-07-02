@@ -31,18 +31,10 @@ MCP_APP_MIME_TYPE = "text/html;profile=mcp-app"
 
 _ALLOWED_CSP_DIRECTIVES = frozenset(
     {
-        "connect-src",
-        "default-src",
-        "font-src",
-        "frame-src",
-        "img-src",
-        "media-src",
         "baseUriDomains",
         "connectDomains",
         "frameDomains",
         "resourceDomains",
-        "script-src",
-        "style-src",
     }
 )
 _ALLOWED_SANDBOX_TOKENS = frozenset(
@@ -216,6 +208,16 @@ def _validate_permissions(permissions: Any) -> None:
             raise MCPAppsValidationError(f"Unsupported MCP Apps permission: {permission}")
 
 
+def _is_mcp_app_mime_type(mime_type: Optional[str]) -> bool:
+    """Return whether a MIME type identifies an MCP App HTML resource."""
+    if not mime_type:
+        return False
+    parts = [part.strip().lower() for part in mime_type.split(";")]
+    if parts[0] != "text/html":
+        return False
+    return any(part == "profile=mcp-app" for part in parts[1:])
+
+
 def validate_extension_metadata(value: Optional[Dict[str, Any]]) -> None:
     """Validate stored MCP Apps metadata."""
     if value is None:
@@ -245,8 +247,8 @@ def validate_ui_resource(resource_uri: str, mime_type: Optional[str], extension_
         return
     if not mcp_apps_enabled():
         raise MCPAppsValidationError("MCP Apps UI resources are disabled")
-    if not mime_type or mime_type.split(";", 1)[0].strip().lower() != "text/html":
-        raise MCPAppsValidationError("ui:// resources must use text/html MIME type")
+    if not _is_mcp_app_mime_type(mime_type):
+        raise MCPAppsValidationError("ui:// resources must use text/html;profile=mcp-app MIME type")
     ui = mcp_ui_metadata(extension_metadata)
     if not ui:
         raise MCPAppsValidationError("ui:// resources require MCP Apps metadata")
@@ -311,6 +313,8 @@ def apply_tool_meta(payload: Dict[str, Any], extension_metadata: Optional[Dict[s
     audience = ui.get("visibility", ui.get("audience"))
     if audience is not None:
         ui_meta["visibility"] = _as_string_list(audience, field_name="visibility")
+    else:
+        ui_meta["visibility"] = ["model"]
 
 
 def apply_resource_meta(payload: Dict[str, Any], extension_metadata: Optional[Dict[str, Any]]) -> None:
