@@ -1561,11 +1561,8 @@ async def get_current_user(
         payload = await verify_jwt_token_cached(credentials.credentials, request)
 
         logger.debug("JWT token validated successfully")
-        # Extract user identifier (support both new and legacy token formats)
-        email = payload.get("sub")
-        if email is None:
-            # Try legacy format
-            email = payload.get("email")
+        # Extract user identifier using configured claim
+        email = extract_identity_from_jwt_payload(payload)
 
         if email is None:
             logger.debug("No email/sub found in JWT payload")
@@ -2108,54 +2105,100 @@ def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[Em
         request.state.plugin_global_context = global_context
 
 
-async def get_user_email_from_token(payload: dict, db: Session) -> Optional[str]:
-    """Resolve user email from JWT payload (supports both UUID and email in sub).
+def extract_identity_from_jwt_payload(payload: dict) -> Optional[str]:
+    """Extract user identity from JWT payload using configured claim.
 
-    This helper enables backward-compatible token migration from email-based
-    to user-ID-based tokens. It checks if the 'sub' claim contains a UUID
-    (new format) or an email address (legacy format).
+    Session tokens (token_use: "session") always use "sub" for UUID resolution.
+    API bearer tokens use settings.jwt_user_identity_claim with fallback chain.
+
+    Fallback precedence when configured claim is missing:
+      configured_claim -> sub -> email -> username
 
     Args:
-        payload: JWT payload dictionary containing 'sub' claim
-        db: Database session for user lookup
+        payload: Decoded and verified JWT payload
 
     Returns:
-        User email string if found, None otherwise
+        User identity (email/username/UUID), or None if not found
 
-    Examples:
-        >>> # New format: sub contains UUID
-        >>> payload = {"sub": "550e8400-e29b-41d4-a716-446655440000"}
-        >>> email = await get_user_email_from_token(payload, db)  # doctest: +SKIP
-        >>> email  # doctest: +SKIP
-        'user@example.com'
-
-        >>> # Legacy format: sub contains email
-        >>> payload = {"sub": "user@example.com"}
-        >>> email = await get_user_email_from_token(payload, db)  # doctest: +SKIP
-        >>> email  # doctest: +SKIP
-        'user@example.com'
-
-        >>> # Unknown UUID returns None
-        >>> payload = {"sub": "00000000-0000-0000-0000-000000000000"}
-        >>> email = await get_user_email_from_token(payload, db)  # doctest: +SKIP
-        >>> email is None  # doctest: +SKIP
-        True
+    Note:
+        Logs warning when fallback chain is used (indicates misconfiguration
+        or token from a different issuer).
     """
 
-    sub = payload.get("sub")
-    if not sub:
-        return None
+    # Session tokens always use sub for UUID resolution
+    # (UI/SSO flow depends on this - see auth.py:1624-1630 and auth.py:2154)
+    if payload.get("token_use") == "session":
+        return payload.get("sub") or payload.get("email")
 
-    if not isinstance(sub, str):
-        return None
+    # API tokens: try configured claim first
+    configured_claim = settings.jwt_user_identity_claim
+    raw = payload.get(configured_claim)
 
-    # Try as UUID (new format)
-    try:
-        uuid.UUID(sub)
-        user = db.query(EmailUser).filter(EmailUser.id == sub).first()
-        return user.email if user else None
-    except ValueError:
-        pass
+    if isinstance(raw, str) and raw.strip():
+        return raw
 
-    # Fall back to email (legacy format)
-    return sub
+    # Fallback chain for backward compatibility
+    # (handles tokens that predate configuration or have missing configured claim)
+    fallback_raw = None
+    for claim in ("sub", "email", "username"):
+        val = payload.get(claim)
+        if isinstance(val, str) and val.strip():
+            fallback_raw = val
+            break
+
+    if fallback_raw is not None and configured_claim != "sub":
+        logger.warning(
+            "Configured JWT identity claim '%s' not found in token, " "fell back to alternative claim. Consider updating JWT_USER_IDENTITY_CLAIM or token issuer configuration.",
+            configured_claim,
+            extra={
+                "configured_claim": configured_claim,
+                "fallback_used": True,
+                "token_claims": list(payload.keys()),
+            },
+        )
+
+    return fallback_raw
+
+
+async def get_user_email_from_token(payload: dict, db: Session) -> Optional[str]:
+    """Resolve user email from JWT payload.
+
+    For session tokens: resolves UUID sub -> email via DB lookup.
+    For API tokens: resolves via configured identity claim, with UUID -> email
+    resolution for backward compatibility with UUID-based sub values.
+
+    Args:
+        payload: Decoded JWT payload
+        db: Database session
+
+    Returns:
+        User email, or None if not resolvable
+    """
+
+    # Session tokens: UUID resolution via DB
+    if payload.get("token_use") == "session":
+        sub = payload.get("sub")
+        if not sub or not isinstance(sub, str):
+            return None
+
+        try:
+            uuid.UUID(sub)
+            user = db.query(EmailUser).filter(EmailUser.id == sub).first()
+            return user.email if user else None
+        except ValueError:
+            pass
+
+        # Sub is already an email (legacy format)
+        return sub
+
+    # API tokens: resolve via configured claim, then try UUID -> email for
+    # backward compatibility with tokens carrying UUID sub values.
+    identity = extract_identity_from_jwt_payload(payload)
+    if identity and isinstance(identity, str):
+        try:
+            uuid.UUID(identity)
+            user = db.query(EmailUser).filter(EmailUser.id == identity).first()
+            return user.email if user else None
+        except ValueError:
+            pass
+    return identity

@@ -763,7 +763,7 @@ async def _enforce_revocation_and_active_user(payload: dict) -> None:
             or strict user-in-db mode rejects a missing user.
     """
     # First-Party
-    from mcpgateway.auth import _check_token_revoked_sync, _get_email_by_id_sync, _get_user_by_email_sync
+    from mcpgateway.auth import _check_token_revoked_sync, _get_email_by_id_sync, _get_user_by_email_sync, extract_identity_from_jwt_payload
 
     jti = payload.get("jti")
     if jti:
@@ -775,7 +775,7 @@ async def _enforce_revocation_and_active_user(payload: dict) -> None:
         except Exception as exc:
             logger.warning("Token revocation check failed for JTI %s: %s", jti, exc)
 
-    username = payload.get("sub") or payload.get("email") or payload.get("username")
+    username = extract_identity_from_jwt_payload(payload)
     if not username:
         return
 
@@ -1670,7 +1670,10 @@ async def require_admin_auth(
                     # Decode and verify JWT token (use cached version for performance)
                     payload = await verify_jwt_token_cached(token, request)
                     await _enforce_revocation_and_active_user(payload)
-                    username = payload.get("sub") or payload.get("username")  # Support both new and legacy formats
+                    # First-Party
+                    from mcpgateway.auth import extract_identity_from_jwt_payload  # pylint: disable=import-outside-toplevel
+
+                    username = extract_identity_from_jwt_payload(payload)
 
                     if username:
                         # Get user from database

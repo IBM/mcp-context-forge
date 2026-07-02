@@ -4826,7 +4826,10 @@ async def _admin_logout(request: Request) -> Response:
 
                 payload = await verify_jwt_token_cached(token, request)
                 jti = payload.get("jti")
-                user_id = payload.get("sub") or payload.get("email", "admin")
+                # First-Party
+                from mcpgateway.auth import extract_identity_from_jwt_payload  # pylint: disable=import-outside-toplevel
+
+                user_id = extract_identity_from_jwt_payload(payload) or "admin"
 
                 if jti:
                     blocklist_service = get_token_blocklist_service()

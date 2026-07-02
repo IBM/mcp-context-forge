@@ -2116,7 +2116,10 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     Returns:
         Canonical user context dict with keys email, teams, is_admin, is_authenticated, token_use.
     """
-    email = payload.get("sub") or payload.get("email")
+    # First-Party
+    from mcpgateway.auth import extract_identity_from_jwt_payload  # pylint: disable=import-outside-toplevel
+
+    email = extract_identity_from_jwt_payload(payload)
     jwt_is_admin = payload.get("is_admin", False)
     if not jwt_is_admin:
         user_info = payload.get("user", {})
@@ -4977,7 +4980,10 @@ class _StreamableHttpAuthHandler:
             from mcpgateway.cache.auth_cache import CachedAuthContext, get_auth_cache  # pylint: disable=import-outside-toplevel
 
             jti = user_payload.get("jti")
-            user_email = user_payload.get("sub") or user_payload.get("email")
+            # First-Party
+            from mcpgateway.auth import extract_identity_from_jwt_payload  # pylint: disable=import-outside-toplevel
+
+            user_email = extract_identity_from_jwt_payload(user_payload)
             nested_user = user_payload.get("user", {})
             nested_is_admin = nested_user.get("is_admin", False) if isinstance(nested_user, dict) else False
             is_admin = user_payload.get("is_admin", False) or nested_is_admin

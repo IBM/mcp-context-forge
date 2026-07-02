@@ -146,7 +146,10 @@ class TokenUsageMiddleware:
                     try:
                         payload = await verify_jwt_token_cached(token, request)
                         jti = jti or payload.get("jti")
-                        user_email = user_email or payload.get("sub") or payload.get("email")
+                        # First-Party
+                        from mcpgateway.auth import extract_identity_from_jwt_payload  # pylint: disable=import-outside-toplevel
+
+                        user_email = user_email or extract_identity_from_jwt_payload(payload)
                     except Exception as decode_error:
                         logger.debug(f"Failed to decode token for usage logging: {decode_error}")
                         return

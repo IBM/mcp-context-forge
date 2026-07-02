@@ -93,7 +93,7 @@ def validate_time_restrictions(payload: Dict[str, Any]) -> None:
             extra={
                 "security_event": "time_restriction_validation_error",
                 "error_type": "invalid_field_type",
-                "user": payload.get("sub"),
+                "user": payload.get("sub"),  # Forensic: always use raw sub claim for traceability
             },
         )
         raise HTTPException(
@@ -107,7 +107,7 @@ def validate_time_restrictions(payload: Dict[str, Any]) -> None:
             extra={
                 "security_event": "time_restriction_validation_error",
                 "error_type": "invalid_field_type",
-                "user": payload.get("sub"),
+                "user": payload.get("sub"),  # Forensic: always use raw sub claim for traceability
             },
         )
         raise HTTPException(
@@ -121,7 +121,7 @@ def validate_time_restrictions(payload: Dict[str, Any]) -> None:
             extra={
                 "security_event": "time_restriction_validation_error",
                 "error_type": "invalid_field_type",
-                "user": payload.get("sub"),
+                "user": payload.get("sub"),  # Forensic: always use raw sub claim for traceability
             },
         )
         raise HTTPException(
@@ -139,7 +139,7 @@ def validate_time_restrictions(payload: Dict[str, Any]) -> None:
                 "error_type": "incomplete_time_window",
                 "start_time": start_time_str,
                 "end_time": end_time_str,
-                "user": payload.get("sub"),
+                "user": payload.get("sub"),  # Forensic: always use raw sub claim for traceability
             },
         )
         raise HTTPException(
@@ -157,7 +157,7 @@ def validate_time_restrictions(payload: Dict[str, Any]) -> None:
                     "security_event": "time_restriction_validation_error",
                     "error_type": "invalid_day_names",
                     "invalid_days": list(invalid_days),
-                    "user": payload.get("sub"),
+                    "user": payload.get("sub"),  # Forensic: always use raw sub claim for traceability
                 },
             )
             raise HTTPException(
@@ -175,7 +175,7 @@ def validate_time_restrictions(payload: Dict[str, Any]) -> None:
                 "security_event": "time_restriction_validation_error",
                 "error_type": "invalid_timezone",
                 "timezone": timezone_str,
-                "user": payload.get("sub"),
+                "user": payload.get("sub"),  # Forensic: always use raw sub claim for traceability
             },
         )
         # SECURITY: Fail closed - deny access on invalid timezone to prevent bypass
@@ -197,7 +197,7 @@ def validate_time_restrictions(payload: Dict[str, Any]) -> None:
                 "violation_type": "day_restriction",
                 "current_day": current_day,
                 "allowed_days": allowed_days,
-                "user": payload.get("sub"),
+                "user": payload.get("sub"),  # Forensic: always use raw sub claim for traceability
             },
         )
         raise HTTPException(
@@ -250,7 +250,7 @@ def validate_time_restrictions(payload: Dict[str, Any]) -> None:
                         "start_time": start_time_str,
                         "end_time": end_time_str,
                         "timezone": timezone_str,
-                        "user": payload.get("sub"),
+                        "user": payload.get("sub"),  # Forensic: always use raw sub claim for traceability
                     },
                 )
                 raise HTTPException(
@@ -265,7 +265,7 @@ def validate_time_restrictions(payload: Dict[str, Any]) -> None:
                     "error_type": "invalid_time_format",
                     "start_time": start_time_str,
                     "end_time": end_time_str,
-                    "user": payload.get("sub"),
+                    "user": payload.get("sub"),  # Forensic: always use raw sub claim for traceability
                 },
             )
             # SECURITY: Fail closed - deny access on parsing errors to prevent bypass

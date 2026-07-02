@@ -166,6 +166,25 @@ ContextForge implements a **two-layer security model**:
 
 **Rationale**: The `email` field is the human-readable identifier used throughout AGENTS.md and user-facing documentation. Consistent precedence prevents forensic confusion where an incident review pivots on a logged email that differs from the principal actually evaluated by RBAC.
 
+### JWT Identity Claim Configuration
+
+API bearer token authentication extracts user identity from JWT claims using a configurable claim field:
+
+- **Default**: `sub` claim (maintains backward compatibility)
+- **Configurable via**: `JWT_USER_IDENTITY_CLAIM` environment variable
+- **Common alternatives**: `email`, `preferred_username`, `upn`
+- **Fallback chain**: configured_claim → sub → email → username
+
+**Important**:
+- Session tokens always use `sub` for UUID resolution (not affected by this config)
+- The configured claim must contain a unique identifier matching the user's email in the database
+- SSO/UI login flow uses provider-specific userinfo endpoint (separate from this config)
+
+**Example** (Okta enterprise with opaque sub claim):
+```bash
+JWT_USER_IDENTITY_CLAIM=email  # Use email claim instead of sub
+```
+
 
 ## Observability Transaction Behavior
 

@@ -659,6 +659,8 @@ async def set_user_context_from_token(request: Request, payload: dict, db: Sessi
 
     user_email = await get_user_email_from_token(payload, db)
     request.state.user_email = user_email
+    # Audit/forensic logging: Always use raw 'sub' claim from JWT for traceability.
+    # This is NOT the authentication identity (see user_email for that).
     request.state.user_id = payload.get("sub")
     db_user = await asyncio.to_thread(_get_user_by_email_sync, user_email) if user_email else None
     request.state.is_admin = db_user.is_admin if db_user else False
