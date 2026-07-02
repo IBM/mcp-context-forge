@@ -139,7 +139,14 @@ jobs:
   # s390x/ppc64le runners in the merge queue critical path.
   # ---------------------------------------------------------------
   wheels:
+    # `matrix.suffix != ''` is always true (both arches are non-empty). Its only
+    # purpose is to reference matrix context in the job-level `if`, forcing GitHub
+    # to expand the matrix even when the job is skipped. Without a matrix reference
+    # here, a skipped matrix job collapses to a single check that renders the raw
+    # name template ("Build wheels (${{ matrix.suffix }})"). Forcing expansion lets
+    # each per-arch skipped check render its interpolated name instead.
     if: >-
+      matrix.suffix != '' &&
       github.event_name != 'pull_request' &&
       github.event_name != 'merge_group' &&
       needs.docker-inputs.outputs.changed == 'true'
