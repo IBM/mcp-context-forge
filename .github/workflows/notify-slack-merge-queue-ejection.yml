@@ -1,0 +1,108 @@
+# ======================================================================
+# Notify Slack on Merge Queue Ejection
+# ======================================================================
+#
+# Fires whenever the merge queue destroys a merge group for any reason
+# other than a successful merge, and sends a Slack notification to
+# #contextforge-merge-queue-alerts with:
+#   - PR number, title, and direct link
+#   - PR author
+#   - Ejection reason:
+#       • "manually removed by <user>"  (reason: dequeued)
+#       • "auto-ejected (checks failed or base branch updated)"  (reason: invalidated)
+#
+# Required secret (repo Settings → Secrets and variables → Actions):
+#   SLACK_MERGE_NOTIFICATION_WEBHOOK_URL — Incoming Webhook URL for #contextforge-merge-notifications
+#
+# workflow_dispatch lets you manually trigger this workflow from any branch
+# to verify the Slack integration (secret + action) works end-to-end.
+#
+# ======================================================================
+
+name: Notify Slack on Merge Queue Ejection
+
+on:
+  merge_group:
+    types: [destroyed]
+  workflow_dispatch:
+
+# Each ejection event is unique — never cancel a notification in flight.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.merge_group.head_sha || github.run_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  notify:
+    name: Send Slack merge queue ejection notification
+    # Skip successful merges; always run on manual dispatch for testing.
+    if: github.event.reason != 'merged' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Gather PR info and build Slack payload
+        id: info
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.event.merge_group.head_ref }}
+          REASON: ${{ github.event.reason }}
+          SENDER: ${{ github.event.sender.login }}
+          BASE_REF: ${{ github.event.merge_group.base_ref || 'main' }}
+          REPO: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          # Extract PR number from head_ref (e.g. gh-readonly-queue/main/pr-123-abcdef)
+          PR_NUM=$(echo "$HEAD_REF" | grep -oP 'pr-\K\d+' || true)
+
+          if [[ -n "$PR_NUM" ]]; then
+            PR_DATA=$(gh api "repos/${REPO}/pulls/${PR_NUM}")
+            PR_TITLE=$(echo "$PR_DATA"  | jq -r '.title')
+            PR_URL=$(echo "$PR_DATA"    | jq -r '.html_url')
+            PR_AUTHOR=$(echo "$PR_DATA" | jq -r '.user.login')
+          else
+            # workflow_dispatch fallback — no real merge group context
+            PR_NUM="N/A"
+            PR_TITLE="Manual test dispatch"
+            PR_URL="${SERVER_URL}/${REPO}/pulls"
+            PR_AUTHOR="${ACTOR}"
+          fi
+
+          case "$REASON" in
+            dequeued)    REASON_TEXT="manually removed by \`${SENDER}\`" ;;
+            invalidated) REASON_TEXT="auto-ejected (checks failed or base branch updated)" ;;
+            *)           REASON_TEXT="ejected (reason: ${REASON:-test dispatch})" ;;
+          esac
+
+          SLACK_SUMMARY=":warning: *PR #${PR_NUM} ejected from merge queue*"
+          SLACK_BODY=":warning: *PR ejected from merge queue*
+• *PR:* <${PR_URL}|#${PR_NUM}: ${PR_TITLE}>
+• *Author:* \`${PR_AUTHOR}\`
+• *Reason:* ${REASON_TEXT}
+• *Base branch:* \`${BASE_REF}\`"
+
+          PAYLOAD=$(jq -n \
+            --arg text "$SLACK_SUMMARY" \
+            --arg body "$SLACK_BODY" \
+            '{text: $text, blocks: [{type: "section", text: {type: "mrkdwn", text: $body}}]}')
+
+          {
+            echo "payload<<PAYLOAD_EOF"
+            echo "$PAYLOAD"
+            echo "PAYLOAD_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Send Slack notification
+        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
+        with:
+          webhook: ${{ secrets.SLACK_MERGE_NOTIFICATION_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: ${{ steps.info.outputs.payload }}
