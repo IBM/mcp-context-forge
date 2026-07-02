@@ -68,8 +68,13 @@ STREAMABLE_HTTP_GATEWAY_NAME = f"{RBAC_PREFIX}-streamable-http-gw"
 # Must match docker-compose gateway JWT_SECRET_KEY
 _JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")
 _CLIENT_TIMEOUT = float(os.getenv("MCP_E2E_CLIENT_TIMEOUT", "5.0"))
-_PER_SERVER_ACCESS_ATTEMPTS = 5
-_PER_SERVER_ACCESS_RETRY_DELAY_SECONDS = 0.1
+# Allow-path per-server checks race the dataplane publisher: freshly created
+# users/servers only become visible to the dataplane on the next publisher
+# snapshot (DATAPLANE_PUBLISHER_INTERVAL_SECONDS, default 60s). The default
+# deadline covers one full publish interval plus slack; stacks running a
+# short publisher interval can lower it via MCP_E2E_PUBLISHER_SYNC_DEADLINE.
+_PER_SERVER_ACCESS_SYNC_DEADLINE_SECONDS = float(os.getenv("MCP_E2E_PUBLISHER_SYNC_DEADLINE", "75.0"))
+_PER_SERVER_ACCESS_RETRY_DELAY_SECONDS = 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -468,16 +473,14 @@ def _mcp_tools_list(access_token: str, server_url: str = BASE_URL) -> list:
 
 
 def _mcp_tools_list_after_publisher_sync(access_token: str, server_url: str = BASE_URL) -> list:
-    last_error: Exception | None = None
-    for attempt in range(_PER_SERVER_ACCESS_ATTEMPTS):
+    deadline = time.monotonic() + _PER_SERVER_ACCESS_SYNC_DEADLINE_SECONDS
+    while True:
         try:
             return _mcp_tools_list(access_token, server_url=server_url)
-        except Exception as exc:
-            last_error = exc
-            if attempt < _PER_SERVER_ACCESS_ATTEMPTS - 1:
-                time.sleep(_PER_SERVER_ACCESS_RETRY_DELAY_SECONDS)
-    assert last_error is not None
-    raise last_error
+        except Exception:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(_PER_SERVER_ACCESS_RETRY_DELAY_SECONDS)
 
 
 def _mcp_resources_list(access_token: str, server_url: str = BASE_URL) -> list:
