@@ -15,6 +15,7 @@ from mcpgateway.common.models import ServerCapabilities
 from mcpgateway.services import mcp_apps as mcp_apps_mod
 from mcpgateway.services.mcp_apps import (
     apply_resource_meta,
+    apply_tool_meta,
     build_mcp_apps_capabilities,
     filter_model_visible_tools,
     is_app_visible_tool,
@@ -50,27 +51,30 @@ def test_build_mcp_apps_capabilities_respects_flag_and_authorization(monkeypatch
 def test_validate_extension_metadata_rejects_unsafe_csp() -> None:
     """MCP Apps metadata rejects unsafe CSP sources."""
     with pytest.raises(MCPAppsValidationError, match="'unsafe-inline' is not allowed"):
-        validate_extension_metadata({MCP_UI_EXTENSION: {"csp": {"script-src": ["'unsafe-inline'"]}}})
+        validate_extension_metadata({MCP_UI_EXTENSION: {"csp": {"resourceDomains": ["'unsafe-inline'"]}}})
 
     with pytest.raises(MCPAppsValidationError, match="'unsafe-inline' is not allowed"):
-        validate_extension_metadata({MCP_UI_EXTENSION: {"csp": {"style-src": ["'unsafe-inline'"]}}})
+        validate_extension_metadata({MCP_UI_EXTENSION: {"csp": {"connectDomains": ["'unsafe-inline'"]}}})
 
     with pytest.raises(MCPAppsValidationError, match="Wildcard CSP sources"):
-        validate_extension_metadata({MCP_UI_EXTENSION: {"csp": {"default-src": ["*"]}}})
+        validate_extension_metadata({MCP_UI_EXTENSION: {"csp": {"resourceDomains": ["*"]}}})
 
     with pytest.raises(MCPAppsValidationError, match="Wildcard CSP sources"):
-        validate_extension_metadata({MCP_UI_EXTENSION: {"csp": {"connect-src": ["https://*.evil.example"]}}})
+        validate_extension_metadata({MCP_UI_EXTENSION: {"csp": {"connectDomains": ["https://*.evil.example"]}}})
 
     with pytest.raises(MCPAppsValidationError, match="Blocked MCP Apps CSP source"):
-        validate_extension_metadata({MCP_UI_EXTENSION: {"csp": {"img-src": ["data:image/png;base64,abc"]}}})
+        validate_extension_metadata({MCP_UI_EXTENSION: {"csp": {"resourceDomains": ["data:image/png;base64,abc"]}}})
 
 
 def test_validate_ui_resource_requires_text_html_when_enabled(monkeypatch) -> None:
-    """ui:// resources must be text/html when MCP Apps are enabled."""
+    """ui:// resources must be MCP App HTML when MCP Apps are enabled."""
     monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
 
-    policy = {MCP_UI_EXTENSION: {"csp": {"default-src": ["'self'"]}, "sandbox": ["allow-scripts"]}}
-    validate_ui_resource("ui://example/widget", "text/html", policy)
+    policy = {MCP_UI_EXTENSION: {"csp": {"resourceDomains": ["'self'"]}, "sandbox": ["allow-scripts"]}}
+    validate_ui_resource("ui://example/widget", "text/html;profile=mcp-app", policy)
+    validate_ui_resource("ui://example/widget", "text/html; charset=utf-8; profile=mcp-app", policy)
+    with pytest.raises(MCPAppsValidationError):
+        validate_ui_resource("ui://example/widget", "text/html", policy)
     with pytest.raises(MCPAppsValidationError):
         validate_ui_resource("ui://example/widget", "application/json", policy)
 
@@ -90,7 +94,7 @@ def test_apply_resource_meta_projects_ui_policy(monkeypatch) -> None:
     monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
     payload: dict = {}
 
-    apply_resource_meta(payload, {MCP_UI_EXTENSION: {"csp": {"default-src": ["'self'"]}, "sandbox": ["allow-scripts"], "permissions": ["clipboard-read"]}})
+    apply_resource_meta(payload, {MCP_UI_EXTENSION: {"csp": {"resourceDomains": ["'self'"]}, "sandbox": ["allow-scripts"], "permissions": ["clipboard-read"]}})
 
     assert payload["_meta"]["ui"]["sandbox"] == ["allow-scripts"]
     assert payload["_meta"]["ui"]["permissions"] == ["clipboard-read"]
@@ -131,7 +135,7 @@ def test_merge_mcp_protocol_meta_ignores_missing_ui_and_merges_existing_metadata
         ({MCP_UI_EXTENSION: {"resourceUri": "http://example.com"}}, "resourceUri must use the ui:// scheme"),
         ({MCP_UI_EXTENSION: {"visibility": ["operator"]}}, "visibility entries"),
         ({MCP_UI_EXTENSION: {"csp": "default-src 'self'"}}, "csp must be an object"),
-        ({MCP_UI_EXTENSION: {"csp": {"object-src": ["'none'"]}}}, "Unsupported MCP Apps CSP directive"),
+        ({MCP_UI_EXTENSION: {"csp": {"script-src": ["'self'"]}}}, "Unsupported MCP Apps CSP directive"),
         ({MCP_UI_EXTENSION: {"sandbox": 123}}, "sandbox must be a string or list of strings"),
         ({MCP_UI_EXTENSION: {"permissions": ["clipboard_read"]}}, "Unsupported MCP Apps permission"),
     ],
@@ -160,7 +164,7 @@ def test_validate_extension_metadata_accepts_string_visibility_and_csp_source() 
             MCP_UI_EXTENSION: {
                 "resourceUri": "ui://widgets/example",
                 "visibility": "app",
-                "csp": {"default-src": "'self'"},
+                "csp": {"resourceDomains": "'self'"},
                 "sandbox": "allow-scripts",
                 "permissions": "clipboard-read",
             }
@@ -178,6 +182,17 @@ def test_validate_extension_metadata_accepts_current_app_csp_and_permissions() -
             }
         }
     )
+
+
+def test_apply_tool_meta_emits_default_model_visibility(monkeypatch) -> None:
+    """Tools with UI resources should advertise ContextForge's model-only default."""
+    monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+    payload: dict = {}
+
+    apply_tool_meta(payload, {MCP_UI_EXTENSION: {"resourceUri": "ui://widgets/example"}})
+
+    assert payload["_meta"]["ui"]["resourceUri"] == "ui://widgets/example"
+    assert payload["_meta"]["ui"]["visibility"] == ["model"]
 
 
 def test_apply_resource_meta_noops_without_enabled_extension_or_ui(monkeypatch) -> None:

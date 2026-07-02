@@ -630,7 +630,7 @@ class TestGatewayService:
             name="unsafe_app_tool",
             description="Unsafe upstream metadata",
             input_schema={"type": "object", "properties": {}},
-            extension_metadata={MCP_UI_EXTENSION: {"csp": {"style-src": ["'unsafe-inline'"]}}},
+            extension_metadata={MCP_UI_EXTENSION: {"csp": {"resourceDomains": ["'unsafe-inline'"]}}},
         )
 
         db = MagicMock()
@@ -661,7 +661,7 @@ class TestGatewayService:
             content="",
             extension_metadata={
                 MCP_UI_EXTENSION: {
-                    "csp": {"connect-src": ["https://*.evil.example"]},
+                    "csp": {"connectDomains": ["https://*.evil.example"]},
                     "sandbox": ["allow-scripts"],
                 }
             },

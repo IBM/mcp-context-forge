@@ -653,7 +653,7 @@ class TestResourceReading:
     async def test_read_resource_projects_ui_extension_metadata(self, resource_service, mock_db, mock_resource, monkeypatch):
         """Reading a UI resource should project stored MCP Apps policy into content meta."""
         monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
-        mock_resource.extension_metadata = {MCP_UI_EXTENSION: {"csp": {"default-src": ["'self'"]}, "sandbox": ["allow-scripts"], "permissions": ["clipboard-read"]}}
+        mock_resource.extension_metadata = {MCP_UI_EXTENSION: {"csp": {"resourceDomains": ["'self'"]}, "sandbox": ["allow-scripts"], "permissions": ["clipboard-read"]}}
         mock_scalar = MagicMock()
         mock_scalar.scalar_one_or_none.return_value = mock_resource
         mock_db.execute.return_value = mock_scalar
@@ -1052,8 +1052,8 @@ class TestResourceManagement:
         """Resource updates should validate and persist MCP Apps metadata."""
         monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
         mock_resource.uri = "ui://widgets/example"
-        mock_resource.mime_type = "text/html"
-        metadata = {MCP_UI_EXTENSION: {"csp": {"default-src": ["'self'"]}, "sandbox": ["allow-scripts"]}}
+        mock_resource.mime_type = "text/html;profile=mcp-app"
+        metadata = {MCP_UI_EXTENSION: {"csp": {"resourceDomains": ["'self'"]}, "sandbox": ["allow-scripts"]}}
         update_data = ResourceUpdate(extensionMetadata=metadata)
 
         mock_scalar = MagicMock()
@@ -1903,7 +1903,13 @@ class TestResourceTemplates:
 
         # Create a valid ResourceTemplate object
         template_obj = ResourceTemplate(
-            id="1", uriTemplate="test://template/{id}", name="template", description="Test template", mime_type="text/plain", annotations=None, _meta=None  # alias for uri_template
+            id="1",
+            uriTemplate="test://template/{id}",
+            name="template",
+            description="Test template",
+            mime_type="text/plain",
+            annotations=None,
+            _meta=None,  # alias for uri_template
         )
 
         # Pre-load template cache
@@ -1914,7 +1920,6 @@ class TestResourceTemplates:
 
         # Patch match + extraction to force an error
         with patch.object(service, "_uri_matches_template", return_value=True), patch.object(service, "_extract_template_params", side_effect=Exception("Template error")):
-
             # Assert failure path
             with pytest.raises(ResourceError) as exc_info:
                 await service._read_template_resource(db, uri)
@@ -1949,7 +1954,6 @@ class TestResourceTemplates:
         service._template_cache = {"binary": template}
 
         with patch.object(service, "_uri_matches_template", return_value=True), patch.object(service, "_extract_template_params", return_value={"id": "123"}):
-
             with pytest.raises(ResourceError) as exc_info:
                 await service._read_template_resource(db, uri)
 
