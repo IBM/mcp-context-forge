@@ -82,6 +82,7 @@ class TestMCPMethodRegistry:
 
         # Core methods still recognized
         assert registry.is_known_method("tools/call")
+        assert not registry.is_mcp_apps_method("tools/call", MCP_UI_EXTENSION)
 
         # Currently MCP Apps only uses tools/call, which is also core.
 

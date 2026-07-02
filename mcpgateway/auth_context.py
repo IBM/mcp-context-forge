@@ -441,6 +441,7 @@ def get_rpc_filter_context(request: Request, user) -> tuple[Optional[str], Optio
     if not is_admin and token_teams is None and getattr(request.state, "token_use", None) == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
         db_user_is_admin = None
         if user_email:
+            # First-Party
             from mcpgateway.db import EmailUser, SessionLocal  # lazy import — avoids cycle
 
             _db = SessionLocal()

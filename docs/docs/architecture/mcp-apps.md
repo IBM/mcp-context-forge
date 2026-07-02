@@ -6,9 +6,6 @@ It introduces a narrow AppBridge path that browser-hosted MCP Apps can use to
 call app-visible tools without exposing normal model-facing tool surfaces or
 gateway-internal routing headers.
 
-This page documents the implementation introduced for issue #5009. The broader
-MCP Apps epic remains tracked in the roadmap.
-
 ## Status and Scope
 
 MCP Apps support is feature flagged:

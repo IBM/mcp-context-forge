@@ -48,7 +48,7 @@ from mcpgateway.services.gateway_service import (
     GatewayService,
     OAuthToolValidationError,
 )
-from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
+from mcpgateway.services.mcp_apps import MCPAppsValidationError, MCP_UI_EXTENSION
 
 # ---------------------------------------------------------------------------
 # Helpers & global monkey-patches
@@ -567,6 +567,8 @@ class TestGatewayService:
         # First-Party
         from mcpgateway.schemas import ResourceCreate, ToolCreate
 
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+
         ui_tool_metadata = {MCP_UI_EXTENSION: {"resourceUri": "ui://apps/contact-form", "visibility": ["model"]}}
         ui_resource_metadata = {
             MCP_UI_EXTENSION: {
@@ -617,6 +619,65 @@ class TestGatewayService:
         assert added_gateway.tools[0].extension_metadata == ui_tool_metadata
         assert added_gateway.resources[0].mime_type == "text/html;profile=mcp-app"
         assert added_gateway.resources[0].extension_metadata == ui_resource_metadata
+
+    @pytest.mark.asyncio
+    async def test_register_gateway_rejects_unsafe_federated_mcp_apps_metadata(self, gateway_service, monkeypatch):
+        """Initial gateway registration validates federated MCP Apps metadata."""
+        # First-Party
+        from mcpgateway.schemas import ToolCreate
+
+        tool = ToolCreate(
+            name="unsafe_app_tool",
+            description="Unsafe upstream metadata",
+            input_schema={"type": "object", "properties": {}},
+            extension_metadata={MCP_UI_EXTENSION: {"csp": {"style-src": ["'unsafe-inline'"]}}},
+        )
+
+        db = MagicMock()
+        db.execute = Mock(return_value=_make_execute_result(scalar=None, scalars_list=[]))
+        db.rollback = Mock()
+
+        monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", lambda *_args, **_kwargs: None)
+
+        gateway_service._check_gateway_uniqueness = MagicMock(return_value=None)
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {}, "resources": {}}, [tool], [], [], []))
+
+        with pytest.raises(MCPAppsValidationError, match="'unsafe-inline' is not allowed"):
+            await gateway_service.register_gateway(db, _make_gateway())
+
+    @pytest.mark.asyncio
+    async def test_register_gateway_rejects_unsafe_federated_ui_resource_metadata(self, gateway_service, monkeypatch):
+        """Initial gateway registration validates federated ui:// resource policy."""
+        # First-Party
+        from mcpgateway.schemas import ResourceCreate
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+
+        resource = ResourceCreate(
+            uri="ui://apps/unsafe",
+            name="Unsafe App UI",
+            description="Unsafe upstream UI",
+            mime_type="text/html;profile=mcp-app",
+            content="",
+            extension_metadata={
+                MCP_UI_EXTENSION: {
+                    "csp": {"connect-src": ["https://*.evil.example"]},
+                    "sandbox": ["allow-scripts"],
+                }
+            },
+        )
+
+        db = MagicMock()
+        db.execute = Mock(return_value=_make_execute_result(scalar=None, scalars_list=[]))
+        db.rollback = Mock()
+
+        monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", lambda *_args, **_kwargs: None)
+
+        gateway_service._check_gateway_uniqueness = MagicMock(return_value=None)
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {}, "resources": {}}, [], [resource], [], []))
+
+        with pytest.raises(MCPAppsValidationError, match="Wildcard CSP sources"):
+            await gateway_service.register_gateway(db, _make_gateway())
 
     @pytest.mark.asyncio
     async def test_register_gateway_inactive_name_conflict(self, gateway_service, test_db):

@@ -3940,8 +3940,8 @@ async def test_call_tool_with_request_context_no_meta(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_call_tool_apps_client_allows_app_visible_helper_gate(monkeypatch):
-    """Apps-capable clients should not force every tools/call through model visibility."""
+async def test_call_tool_apps_client_still_requires_model_visibility(monkeypatch):
+    """Apps-capable clients must use AppBridge for app-visible helper tools."""
     # Standard
     from unittest.mock import PropertyMock
 
@@ -3987,7 +3987,7 @@ async def test_call_tool_apps_client_allows_app_visible_helper_gate(monkeypatch)
         result = await call_tool("submit_contact_form", {"name": "Ada"})
 
     assert isinstance(result, list)
-    assert captured_kwargs["require_model_visible"] is False
+    assert captured_kwargs["require_model_visible"] is True
 
 
 # ---------------------------------------------------------------------------
