@@ -12455,7 +12455,8 @@ async def admin_add_gateway(
     _check_public_visibility_allowed(visibility, team_id=team_id)
 
     try:
-        # Handle OAuth client secret encryption if present
+        # OAuth config is already fully assembled and parsed by _parse_gateway_data_from_request
+        # Just handle client secret encryption if present
         oauth_config = data.get("oauth_config")
         if oauth_config and isinstance(oauth_config, dict) and "client_secret" in oauth_config:
             client_secret = oauth_config.get("client_secret")
@@ -12855,10 +12856,11 @@ async def admin_edit_gateway(
             oauth_username = str(form.get("oauth_username", ""))
             oauth_password = str(form.get("oauth_password", ""))
             oauth_scopes_str = str(form.get("oauth_scopes", ""))
-            oauth_audience = str(form.get("oauth_audience", "")).strip()
+            oauth_audience = str(form.get("oauth_audience", ""))
+            oauth_resource_str = str(form.get("oauth_resource", ""))
 
             # If any OAuth field is provided, assemble oauth_config
-            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
+            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id, oauth_resource_str]):
                 oauth_config = {}
 
                 if oauth_grant_type:
@@ -12893,6 +12895,16 @@ async def admin_edit_gateway(
                     scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
                     if scopes:
                         oauth_config["scopes"] = scopes
+
+                # Parse resource (RFC 8707 audience indicator); single value or
+                # comma-separated for multi-resource flows.  Stored as str when one
+                # value, list when multiple, to match the IdP's aud-claim shape.
+                if oauth_resource_str.strip():
+                    resources = [r.strip() for r in oauth_resource_str.split(",") if r.strip()]
+                    if len(resources) == 1:
+                        oauth_config["resource"] = resources[0]
+                    elif resources:
+                        oauth_config["resource"] = resources
 
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_grant_type}, issuer={oauth_issuer}")
 
@@ -16061,10 +16073,11 @@ async def admin_add_a2a_agent(
             oauth_username = str(form.get("oauth_username", ""))
             oauth_password = str(form.get("oauth_password", ""))
             oauth_scopes_str = str(form.get("oauth_scopes", ""))
-            oauth_audience = str(form.get("oauth_audience", "")).strip()
+            oauth_audience = str(form.get("oauth_audience", ""))
+            oauth_resource_str = str(form.get("oauth_resource", ""))
 
             # If any OAuth field is provided, assemble oauth_config
-            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
+            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id, oauth_resource_str]):
                 oauth_config = {}
 
                 if oauth_grant_type:
@@ -16099,6 +16112,16 @@ async def admin_add_a2a_agent(
                     scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
                     if scopes:
                         oauth_config["scopes"] = scopes
+
+                # Parse resource (RFC 8707 audience indicator); single value or
+                # comma-separated for multi-resource flows.  Stored as str when one
+                # value, list when multiple, to match the IdP's aud-claim shape.
+                if oauth_resource_str.strip():
+                    resources = [r.strip() for r in oauth_resource_str.split(",") if r.strip()]
+                    if len(resources) == 1:
+                        oauth_config["resource"] = resources[0]
+                    elif resources:
+                        oauth_config["resource"] = resources
 
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields: grant_type={oauth_grant_type}, issuer={oauth_issuer}")
                 LOGGER.info(f"DEBUG: Complete oauth_config = {oauth_config}")
@@ -16331,10 +16354,11 @@ async def admin_edit_a2a_agent(
             oauth_username = str(form.get("oauth_username", ""))
             oauth_password = str(form.get("oauth_password", ""))
             oauth_scopes_str = str(form.get("oauth_scopes", ""))
-            oauth_audience = str(form.get("oauth_audience", "")).strip()
+            oauth_audience = str(form.get("oauth_audience", ""))
+            oauth_resource_str = str(form.get("oauth_resource", ""))
 
             # If any OAuth field is provided, assemble oauth_config
-            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
+            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id, oauth_resource_str]):
                 oauth_config = {}
 
                 if oauth_grant_type:
@@ -16369,6 +16393,16 @@ async def admin_edit_a2a_agent(
                     scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
                     if scopes:
                         oauth_config["scopes"] = scopes
+
+                # Parse resource (RFC 8707 audience indicator); single value or
+                # comma-separated for multi-resource flows.  Stored as str when one
+                # value, list when multiple, to match the IdP's aud-claim shape.
+                if oauth_resource_str.strip():
+                    resources = [r.strip() for r in oauth_resource_str.split(",") if r.strip()]
+                    if len(resources) == 1:
+                        oauth_config["resource"] = resources[0]
+                    elif resources:
+                        oauth_config["resource"] = resources
 
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_grant_type}, issuer={oauth_issuer}")
 

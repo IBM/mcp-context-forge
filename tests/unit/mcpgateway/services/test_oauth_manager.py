@@ -589,7 +589,7 @@ async def test_exchange_code_for_token_with_basic_auth_non_pkce(oauth_manager):
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
         credentials = {
             "client_id": "test-client",
-            "client_secret": "test-secret",
+            "client_secret": "test-secret", # pragma: allowlist secret
             "token_url": "https://example.com/token",
             "redirect_uri": "https://example.com/callback",
             "token_endpoint_auth_method": "client_secret_basic",

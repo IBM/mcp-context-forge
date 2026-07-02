@@ -107,6 +107,22 @@ class TestTokenValidationResult:
         assert len(errors) == 1
         assert "audience" in errors[0].lower()
 
+    def test_blocking_errors_audience_advisory_when_not_authoritative(self):
+        """audience_match=False is advisory (not blocking) when audience_authoritative=False."""
+        r = TokenValidationResult(is_jwt=True)
+        r.audience_match = False
+        r.audience_authoritative = False
+        r.warnings.append("Token audience mismatch: token aud does not match expected resource or gateway URL")
+        assert r.blocking_errors == []
+
+    def test_blocking_errors_audience_blocking_when_authoritative(self):
+        """audience_match=False is blocking when audience_authoritative=True (default)."""
+        r = TokenValidationResult(is_jwt=True)
+        r.audience_match = False
+        r.audience_authoritative = True
+        r.warnings.append("Token audience mismatch: token aud does not match expected resource or gateway URL")
+        assert len(r.blocking_errors) == 1
+
 
 # ---------- _derive_issuer_from_token_url ----------
 
@@ -276,6 +292,54 @@ class TestValidateOauthTokenClaims:
         result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
 
         assert result.audience_match is False
+
+    def test_audience_match_with_opaque_learned_resource_string(self):
+        """Round-trip: opaque aud (e.g. ServiceNow/Authentik client_id) matches opaque persisted resource."""
+        token = _make_jwt({"aud": "my-servicenow-client-id"})
+        oauth_config = {"resource": "my-servicenow-client-id"}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is True
+        assert not any("audience" in w.lower() for w in result.warnings)
+
+    def test_audience_match_with_opaque_learned_resource_list(self):
+        """Round-trip: opaque aud list matches a learned-resource list with overlap."""
+        token = _make_jwt({"aud": ["my-client-id"]})
+        oauth_config = {"resource": ["my-client-id", "another-id"]}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is True
+        assert not any("audience" in w.lower() for w in result.warnings)
+
+    def test_audience_mismatch_authoritative_when_resource_configured(self):
+        """A configured resource makes audience mismatch authoritative (blocking)."""
+        token = _make_jwt({"aud": "wrong-aud"})
+        oauth_config = {"resource": "configured-resource"}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is False
+        assert result.audience_authoritative is True
+        assert len(result.blocking_errors) == 1
+
+    def test_audience_mismatch_advisory_when_no_resource_configured(self):
+        """Without a configured resource, audience mismatch is advisory (warning, not blocking)."""
+        token = _make_jwt({"aud": "wrong-aud"})
+        oauth_config = {}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is False
+        assert result.audience_authoritative is False
+        assert any("audience" in w.lower() for w in result.warnings)
+        assert result.blocking_errors == []
+
+    def test_audience_match_when_no_resource_authoritative_irrelevant(self):
+        """When audience matches, audience_authoritative stays at default (True) and is not lowered."""
+        token = _make_jwt({"aud": "https://gw.example.com"})
+        oauth_config = {}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is True
+        assert result.audience_authoritative is True
 
     # -- Scope mismatch --
 

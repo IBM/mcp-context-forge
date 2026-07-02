@@ -21,9 +21,32 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import Gateway
-from mcpgateway.routers.oauth_router import ADMIN_CSRF_COOKIE_NAME, enforce_fetch_tools_csrf
+from mcpgateway.routers.oauth_router import ADMIN_CSRF_COOKIE_NAME, _derive_resource_origin, enforce_fetch_tools_csrf
 from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.oauth_manager import OAuthError
+
+
+class TestDeriveResourceOrigin:
+    """Tests for _derive_resource_origin (origin-extraction fallback for auto-derived resource)."""
+
+    @pytest.mark.parametrize(
+        "url,expected",
+        [
+            ("https://api.salesforce.com/platform/mcp/v1/sobject", "https://api.salesforce.com"),
+            ("https://api.example.com:8443/path?q=1#frag", "https://api.example.com:8443"),
+            ("http://localhost:9000/foo", "http://localhost:9000"),
+            ("https://gw.example.com", "https://gw.example.com"),
+            ("https://gw.example.com/", "https://gw.example.com"),
+        ],
+    )
+    def test_extracts_origin(self, url, expected):
+        """Hierarchical URLs return scheme+netloc only."""
+        assert _derive_resource_origin(url) == expected
+
+    @pytest.mark.parametrize("bad_input", [None, "", "   ", "no-scheme.com", "urn:example:resource", "/relative/path"])
+    def test_returns_none_for_non_hierarchical(self, bad_input):
+        """Empty, scheme-less, URN, and relative inputs return None (caller falls back to auto-learn)."""
+        assert _derive_resource_origin(bad_input) is None
 
 
 @pytest.fixture
@@ -351,14 +374,102 @@ class TestPersistLearnedAudience:
 
         db.flush.assert_not_called()
 
-    @pytest.mark.parametrize("falsy_resource", ["", []])
+    @pytest.mark.parametrize("malformed_aud", [42, [], [""], ["valid", 99], "", "   ", {"not": "a string"}])
+    @pytest.mark.asyncio
+    async def test_skips_when_audience_shape_is_malformed(self, malformed_aud, caplog):
+        """Shape validation: numbers, empty containers, mixed lists, and dicts are dropped with a DEBUG breadcrumb."""
+        oauth_result = {"token_aud": malformed_aud}
+
+        gateway = Mock(spec=Gateway)
+        gateway.name = "Test GW"
+        gateway.oauth_config = {"client_id": "cid"}
+
+        db = Mock(spec=Session)
+
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        with caplog.at_level("DEBUG", logger="mcpgateway.routers.oauth_router"):
+            await _persist_learned_audience(gateway, oauth_result, db)
+
+        db.flush.assert_not_called()
+        assert "resource" not in gateway.oauth_config
+        assert any("absent or malformed" in record.message for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_persists_when_no_issuer_configured(self):
+        """Issuer pinning is skipped when oauth_config has no issuer (existing behavior preserved)."""
+        oauth_result = {"token_aud": "client-id-abc", "token_iss": "https://idp.example.com"}
+
+        gateway = Mock(spec=Gateway)
+        gateway.name = "Test GW"
+        gateway.oauth_config = {"client_id": "cid"}
+
+        db = Mock(spec=Session)
+
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        await _persist_learned_audience(gateway, oauth_result, db)
+
+        db.flush.assert_called_once()
+        assert gateway.oauth_config["resource"] == "client-id-abc"
+
+    @pytest.mark.asyncio
+    async def test_persists_when_token_iss_matches_configured_issuer(self):
+        """Issuer pinning passes when the token's iss matches oauth_config['issuer']."""
+        oauth_result = {"token_aud": "client-id-abc", "token_iss": "https://idp.example.com"}
+
+        gateway = Mock(spec=Gateway)
+        gateway.name = "Test GW"
+        gateway.oauth_config = {"client_id": "cid", "issuer": "https://idp.example.com"}
+
+        db = Mock(spec=Session)
+
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        await _persist_learned_audience(gateway, oauth_result, db)
+
+        db.flush.assert_called_once()
+        assert gateway.oauth_config["resource"] == "client-id-abc"
+
+    @pytest.mark.asyncio
+    async def test_skips_when_token_iss_does_not_match_configured_issuer(self):
+        """Cross-IdP bleed prevention: refuse to learn audience when token iss != configured issuer."""
+        oauth_result = {"token_aud": "client-id-abc", "token_iss": "https://wrong-idp.example.com"}
+
+        gateway = Mock(spec=Gateway)
+        gateway.name = "Test GW"
+        gateway.oauth_config = {"client_id": "cid", "issuer": "https://idp.example.com"}
+
+        db = Mock(spec=Session)
+
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        await _persist_learned_audience(gateway, oauth_result, db)
+
+        db.flush.assert_not_called()
+        assert "resource" not in gateway.oauth_config
+
+    @pytest.mark.asyncio
+    async def test_skips_when_token_iss_missing_but_issuer_configured(self):
+        """Issuer pinning treats a missing token iss as a mismatch (refuses to learn)."""
+        oauth_result = {"token_aud": "client-id-abc", "token_iss": None}
+
+        gateway = Mock(spec=Gateway)
+        gateway.name = "Test GW"
+        gateway.oauth_config = {"client_id": "cid", "issuer": "https://idp.example.com"}
+
+        db = Mock(spec=Session)
+
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        await _persist_learned_audience(gateway, oauth_result, db)
+
+        db.flush.assert_not_called()
+
+    @pytest.mark.parametrize("falsy_resource", ["", "   ", [], [""], ["", "  "]])
     @pytest.mark.asyncio
     async def test_persists_when_existing_resource_is_falsy(self, falsy_resource):
-        """Empty string / empty list persisted resource counts as unset; re-learning proceeds.
-
-        This lets an admin clear the field via the gateway update API to trigger
-        re-learning on the next callback (recovery path after stale config).
-        """
+        """Empty/whitespace/falsy persisted resource is treated as unset and re-learning proceeds."""
         oauth_result = {"token_aud": "fresh-client-id"}
 
         gateway = Mock(spec=Gateway)
@@ -373,6 +484,62 @@ class TestPersistLearnedAudience:
 
         db.flush.assert_called_once()
         assert gateway.oauth_config["resource"] == "fresh-client-id"
+
+    @pytest.mark.parametrize(
+        "configured_issuer,token_iss",
+        [
+            ("https://idp.example.com", "https://idp.example.com/"),
+            ("https://idp.example.com/", "https://idp.example.com"),
+            ("https://idp.example.com/", "https://idp.example.com/"),
+            ("https://idp.example.com", "https://idp.example.com"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_issuer_pinning_normalizes_trailing_slash(self, configured_issuer, token_iss):
+        """Trailing slashes are stripped for issuer comparison (matches token_validation_service convention)."""
+        oauth_result = {"token_aud": "client-id-abc", "token_iss": token_iss}
+
+        gateway = Mock(spec=Gateway)
+        gateway.name = "Test GW"
+        gateway.oauth_config = {"client_id": "cid", "issuer": configured_issuer}
+
+        db = Mock(spec=Session)
+
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        await _persist_learned_audience(gateway, oauth_result, db)
+
+        db.flush.assert_called_once()
+        assert gateway.oauth_config["resource"] == "client-id-abc"
+
+    @pytest.mark.asyncio
+    async def test_multi_user_first_writes_second_does_not_overwrite(self):
+        """Multi-user regression guard for first-write-only semantics.
+
+        Two users complete the OAuth flow against the same shared gateway with
+        different audience values (e.g. per-tenant aud, or one user against a
+        legitimately-different tenant of the same IdP).  The first callback
+        learns and persists; the second callback must observe the
+        already-set resource and skip its write entirely.  The first user's
+        learned audience must remain untouched.
+        """
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        gateway = Mock(spec=Gateway)
+        gateway.name = "Shared GW"
+        gateway.oauth_config = {"client_id": "cid"}
+        db = Mock(spec=Session)
+
+        await _persist_learned_audience(gateway, {"token_aud": "user1-tenant-aud"}, db)
+
+        assert gateway.oauth_config["resource"] == "user1-tenant-aud"
+        assert db.flush.call_count == 1
+
+        db.flush.reset_mock()
+        await _persist_learned_audience(gateway, {"token_aud": "user2-tenant-aud"}, db)
+
+        assert gateway.oauth_config["resource"] == "user1-tenant-aud"
+        db.flush.assert_not_called()
 
 
 class TestOAuthRouter:
