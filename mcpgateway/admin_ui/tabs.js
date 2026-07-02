@@ -4,6 +4,7 @@
 import { loadRecentImports } from "./fileTransfer.js";
 import { initializeExportImport } from "./initialization.js";
 import { initializeLLMChat } from "./llmChat.js";
+import { loadFeature } from "./lazy-loader.js";
 import { searchStructuredLogs } from "./logging.js";
 import { loadAggregatedMetrics } from "./metrics.js";
 import { dispatchPluginAction, filterPlugins, populatePluginFilters } from "./plugins.js";
@@ -162,6 +163,49 @@ export const getVisibleSidebarTabs = function () {
   });
 
   return Array.from(new Set(visibleTabs));
+};
+
+// Map tab names to feature modules for lazy loading
+const TAB_FEATURE_MAP = {
+  'tools': 'tools',
+  'servers': 'servers',
+  'gateways': 'gateways',
+  'teams': 'teams',
+  'logs': 'logging',
+  'metrics': 'metrics',
+  'llm-chat': 'llmChat',
+  'llm-models': 'llmModels',
+  'plugins': 'plugins'
+};
+
+/**
+ * Show loading indicator for a tab panel
+ */
+const showTabLoadingIndicator = function(tabName) {
+  const panel = safeGetElement(`${tabName}-panel`);
+  if (!panel) return;
+
+  // Check if loading indicator already exists
+  let indicator = panel.querySelector('.tab-loading-indicator');
+  if (!indicator) {
+    indicator = document.createElement('div');
+    indicator.className = 'tab-loading-indicator fixed top-0 left-0 right-0 bg-blue-500 h-1 z-50';
+    indicator.innerHTML = '<div class="h-full bg-blue-600 animate-pulse"></div>';
+    panel.prepend(indicator);
+  }
+};
+
+/**
+ * Hide loading indicator for a tab panel
+ */
+const hideTabLoadingIndicator = function(tabName) {
+  const panel = safeGetElement(`${tabName}-panel`);
+  if (!panel) return;
+
+  const indicator = panel.querySelector('.tab-loading-indicator');
+  if (indicator) {
+    indicator.remove();
+  }
 };
 
 export const isTabAvailable = function (tabName) {
@@ -382,8 +426,23 @@ export const showTab = function (tabName) {
     }
 
     // Debounced content loading
-    tabSwitchTimeout = setTimeout(() => {
+    tabSwitchTimeout = setTimeout(async () => {
       try {
+        // Lazy load feature module if needed
+        const featureName = TAB_FEATURE_MAP[tabName];
+        if (featureName) {
+          try {
+            showTabLoadingIndicator(tabName);
+            await loadFeature(featureName);
+            hideTabLoadingIndicator(tabName);
+          } catch (error) {
+            console.error(`Failed to load feature for tab ${tabName}:`, error);
+            hideTabLoadingIndicator(tabName);
+            showErrorMessage(`Failed to load ${tabName} features`);
+            return;
+          }
+        }
+
         if (tabName === "overview") {
           // Load overview content if not already loaded
           const overviewPanel = safeGetElement("overview-panel");
