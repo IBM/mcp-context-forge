@@ -74,6 +74,34 @@ describe("Prompts", () => {
     expect(window.location.pathname).toBe("/app/prompts/add");
   });
 
+  it("renders returned prompts as cards with descriptions and tags", async () => {
+    server.use(
+      http.get("/prompts", () =>
+        HttpResponse.json([
+          {
+            id: "prompt-1",
+            name: "summary_prompt",
+            displayName: "Summarize document",
+            originalName: "summary_original",
+            description: "Turns long text into a short summary.",
+            tags: [{ id: "tag-1", label: "summary" }],
+            arguments: [{ name: "content", required: true }],
+          },
+        ]),
+      ),
+    );
+
+    renderPrompts();
+
+    expect(await screen.findByText("Summarize document")).toBeInTheDocument();
+    expect(screen.getByText("Turns long text into a short summary.")).toBeInTheDocument();
+    expect(screen.getByText("summary")).toBeInTheDocument();
+    expect(screen.getByText("content")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "More options for Summarize document" }),
+    ).toBeInTheDocument();
+  });
+
   it("renders loading state", () => {
     server.use(
       http.get("/prompts", async () => {
