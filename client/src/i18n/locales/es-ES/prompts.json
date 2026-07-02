@@ -1,0 +1,9 @@
+{
+  "prompts.title": "Prompts",
+  "prompts.loading": "Cargando prompts, por favor espere...",
+  "prompts.error.loading": "Error al cargar los prompts",
+  "prompts.add.title": "Añadir prompts",
+  "prompts.add.description": "Conecte un servidor MCP para cargar prompts automáticamente, o cree una plantilla reutilizable con argumentos con nombre.",
+  "prompts.card.moreOptionsFor": "Más opciones para {name}",
+  "prompts.card.viewDetails": "Ver detalles"
+}
