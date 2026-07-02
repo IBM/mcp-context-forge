@@ -105,20 +105,23 @@ app is mounted behind a proxy.
 - Tailwind is pre-compiled into `mcpgateway/static/css/tailwind.min.css` from
   `tailwind.config.js` with `darkMode: "class"`.
 
-- Add a custom config block to extend colours/fonts and swap utility classes, for example:
-  ```html
-  <script>
-    tailwind.config = {
-      darkMode: "class",
-      theme: {
-        extend: {
-          colors: { brand: "#1d4ed8", accent: "#f97316" },
-          fontFamily: { display: ['"IBM Plex Sans"', 'sans-serif'] },
-        },
+- To customise colours, fonts, animations or other Tailwind settings, edit `tailwind.config.js` in the project root:
+  ```javascript
+  // tailwind.config.js
+  module.exports = {
+    theme: {
+      extend: {
+        colors: { brand: "#1d4ed8", accent: "#f97316" },
+        fontFamily: { display: ['"IBM Plex Sans"', "sans-serif"] },
       },
-    };
-  </script>
+    },
+  };
   ```
+  After editing, rebuild the CSS:
+  ```bash
+  make build-css       # local development
+  ```
+  For Docker builds, the CSS is compiled during the `node-builder` stage, so changes to `tailwind.config.js` are picked up automatically on the next container build.
 - For bespoke CSS (animations, overrides), append to `admin.css` or include a
   new stylesheet in the `<head>`:
   ```html

@@ -413,7 +413,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         if not skip_csp_for_docs:
             csp_directives = [
                 "default-src 'self'",
-                f"script-src-elem 'self' 'nonce-{csp_nonce}' https://cdnjs.cloudflare.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com",
+                f"script-src-elem 'self' 'nonce-{csp_nonce}' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com",
                 "script-src-attr 'unsafe-inline'",
                 "script-src 'self' 'unsafe-eval'",
                 "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
