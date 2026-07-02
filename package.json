@@ -1,5 +1,6 @@
 {
     "devDependencies": {
+        "@fortawesome/fontawesome-free": "^6.7.2",
         "@biomejs/biome": "^2.4.4",
         "@stylistic/eslint-plugin": "^5.9.0",
         "@stylistic/stylelint-config": "^4.0.0",
@@ -52,6 +53,10 @@
     },
     "dependencies": {
         "@alpinejs/csp": "^3.15.8",
-        "htmx.org": "^2.0.3"
+        "chart.js": "^4.4.7",
+        "codemirror": "^5.65.18",
+        "dompurify": "^3.2.2",
+        "htmx.org": "^2.0.3",
+        "marked": "^15.0.6"
     }
 }
