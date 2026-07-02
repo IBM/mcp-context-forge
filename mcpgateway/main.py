@@ -3286,6 +3286,11 @@ else:
 # If AuthContextMiddleware is already registered, ObservabilityMiddleware wraps it
 # Execution order will be: AuthContext -> Observability -> Request Handler
 # Wire observability adapter into the plugin manager when observability is enabled
+# _service is a module-level global read later in lifespan(); it must always be bound
+# (even when this branch doesn't run at import time) so tests that flip
+# observability_enabled to True after import and then invoke lifespan() don't hit a
+# NameError on the module global.
+_service = None  # pylint: disable=invalid-name
 if settings.observability_enabled:
     # First-Party
     from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware

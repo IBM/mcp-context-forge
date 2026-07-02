@@ -39,7 +39,7 @@ from starlette.responses import Response
 from mcpgateway.config import settings
 from mcpgateway.instrumentation.sqlalchemy import attach_trace_to_session
 from mcpgateway.middleware.path_filter import should_skip_observability
-from mcpgateway.services.observability_service import current_trace_id, ObservabilityService, parse_traceparent
+from mcpgateway.services.observability_service import current_span_id, current_trace_id, ObservabilityService, parse_traceparent
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.trace_redaction import sanitize_trace_text
 
@@ -194,6 +194,15 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 kind="server",
                 attributes={"http.method": http_method, "http.url": http_url},
             )
+
+            # Store span_id in request state for use in route handlers / plugin hook call sites
+            request.state.span_id = span_id
+
+            # Set span_id in context variable for access throughout async call stack
+            # (mirrors current_trace_id.set() above) — deep service-layer call sites
+            # (e.g. tool_service.py, prompt_service.py invoke_hook() sites) don't have
+            # access to the Request object and read this instead.
+            current_span_id.set(span_id)
 
         except Exception as e:
             # If trace setup failed, log and continue without tracing
