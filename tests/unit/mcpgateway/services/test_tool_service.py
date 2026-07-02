@@ -42,6 +42,7 @@ from mcpgateway.services.tool_service import (
     _get_validator_class_and_check,
     _is_sensitive_tool_header_name,
     _protect_tool_headers_for_storage,
+    _sync_meta_traceparent,
     _validate_header_mapping_targets,
     _validate_mapping_contents,
     apply_mapping_into_target,
@@ -61,6 +62,49 @@ from mcpgateway.utils.services_auth import encode_auth
 
 # Local
 from tests.helpers.admin_mocks import install_admin_user
+
+
+def test_sync_meta_traceparent_updates_existing_value_from_outbound_header():
+    meta = {"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-1111111111111111-01", "existing": True}
+    headers = {
+        "Traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-2222222222222222-01",
+        "traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-3333333333333333-01",
+    }
+
+    result = _sync_meta_traceparent(meta, headers)
+
+    assert result == {"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-3333333333333333-01", "existing": True}
+    assert meta["traceparent"] == "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-1111111111111111-01"
+
+
+def test_sync_meta_traceparent_none_meta_returns_none_when_no_traceparent():
+    assert _sync_meta_traceparent(None, {"Authorization": "Bearer token"}) is None
+
+
+def test_sync_meta_traceparent_empty_headers_returns_original_meta():
+    meta = {"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-1111111111111111-01", "existing": True}
+
+    result = _sync_meta_traceparent(meta, {})
+
+    assert result is meta
+
+
+def test_sync_meta_traceparent_case_insensitive_fallback():
+    meta = {"existing": True}
+    headers = {"Traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-2222222222222222-01"}
+
+    result = _sync_meta_traceparent(meta, headers)
+
+    assert result == {"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-2222222222222222-01", "existing": True}
+    assert "traceparent" not in meta
+
+
+def test_sync_meta_traceparent_empty_value_returns_original_meta():
+    meta = {"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-1111111111111111-01"}
+
+    result = _sync_meta_traceparent(meta, {"traceparent": ""})
+
+    assert result is meta
 
 
 @pytest.fixture(autouse=True)
@@ -2973,6 +3017,11 @@ class TestToolService:
         async def mock_sse_client(*_args, **_kwargs):
             yield ("read", "write")
 
+        def inject_headers(headers):
+            traced = dict(headers)
+            traced["traceparent"] = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-3333333333333333-01"
+            return traced
+
         headers_token = request_headers_var.set({"mcp-session-id": "downstream-sse"})
         try:
             with (
@@ -2980,14 +3029,25 @@ class TestToolService:
                 patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
                 patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
                 patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+                patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=inject_headers),
                 patch("mcpgateway.services.tool_service.get_upstream_session_registry", side_effect=RegistryNotInitializedError("not init")),
             ):
-                result = await tool_service.invoke_tool(test_db, "dummy_tool", {"p": "v"}, request_headers=None)
+                result = await tool_service.invoke_tool(
+                    test_db,
+                    "dummy_tool",
+                    {"p": "v"},
+                    request_headers=None,
+                    meta_data={"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-1111111111111111-01"},
+                )
         finally:
             request_headers_var.reset(headers_token)
 
         session_mock.initialize.assert_awaited_once()
-        session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"p": "v"}, meta=None)
+        session_mock.call_tool.assert_awaited_once_with(
+            "dummy_tool",
+            {"p": "v"},
+            meta={"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-3333333333333333-01"},
+        )
         assert result.content[0].text == "sse fallback ok"
 
     @pytest.mark.asyncio
@@ -3078,11 +3138,21 @@ class TestToolService:
             mock_settings.default_passthrough_headers = []
             mock_settings.tool_timeout = 60
 
-            result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
+            result = await tool_service.invoke_tool(
+                test_db,
+                "dummy_tool",
+                {"param": "value"},
+                request_headers=None,
+                meta_data={"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-1111111111111111-01", "source": "api-server-runs"},
+            )
 
         assert result.content[0].text == "MCP response"
-        assert captured_headers["traceparent"].startswith("00-")
+        assert captured_headers["traceparent"] == "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
         assert captured_headers["X-Correlation-ID"] == "corr-123"
+        assert session_mock.call_tool.await_args.kwargs["meta"] == {
+            "traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
+            "source": "api-server-runs",
+        }
         assert span_names[:3] == ["tool.invoke", "mcp.client.call", "mcp.client.initialize"]
         assert "mcp.client.request" in span_names
         assert "mcp.client.response" in span_names
@@ -8390,6 +8460,66 @@ class TestInvokeToolDirect:
 
         assert result == expected_result
         session_mock.call_tool.assert_awaited_once_with(name="remote_tool", arguments={"arg": "val"}, meta=meta_data)
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_direct_syncs_meta_traceparent(self, tool_service, mock_direct_gateway):
+        """Direct remote calls should send matching traceparent values in headers and _meta."""
+        expected_result = MagicMock()
+        meta_data = {
+            "traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-1111111111111111-01",
+            "request_id": "abc-123",
+        }
+        captured_headers = {}
+
+        session_mock = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=expected_result)
+
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = AsyncMock()
+
+        def inject_headers(headers):
+            traced = dict(headers)
+            traced["traceparent"] = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-2222222222222222-01"
+            return traced
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **kwargs):
+            captured_headers.update(kwargs["headers"])
+            yield ("read", "write", None)
+
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=inject_headers),
+            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+
+            result = await tool_service.invoke_tool_direct(
+                gateway_id="gw-direct-1",
+                name="remote_tool",
+                arguments={"arg": "val"},
+                meta_data=meta_data,
+                user_email="user@example.com",
+                token_teams=["team-1"],
+            )
+
+        assert result == expected_result
+        assert captured_headers["traceparent"] == "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-2222222222222222-01"
+        session_mock.call_tool.assert_awaited_once_with(
+            name="remote_tool",
+            arguments={"arg": "val"},
+            meta={
+                "traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-2222222222222222-01",
+                "request_id": "abc-123",
+            },
+        )
+        assert meta_data["traceparent"] == "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-1111111111111111-01"
 
     @pytest.mark.asyncio
     async def test_invoke_tool_direct_gateway_not_found(self, tool_service):

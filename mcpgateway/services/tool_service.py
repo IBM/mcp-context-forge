@@ -189,6 +189,24 @@ def _apply_tool_payload_to_global_context(
         global_context.tenant_id = payload_tenant_id
 
 
+def _sync_meta_traceparent(
+    meta_data: Optional[Dict[str, Any]],
+    request_headers: Mapping[str, str],
+) -> Optional[Dict[str, Any]]:
+    """Return metadata whose traceparent matches the final outbound header."""
+    traceparent = request_headers.get("traceparent")
+    if not traceparent:
+        for key, value in request_headers.items():
+            if key.lower() == "traceparent" and value:
+                traceparent = value
+    if not traceparent:
+        return meta_data
+
+    updated_meta = dict(meta_data or {})
+    updated_meta["traceparent"] = traceparent
+    return updated_meta
+
+
 # Initialize performance tracker, structured logger, audit trail, and metrics buffer for tool operations
 perf_tracker = get_performance_tracker()
 structured_logger = get_structured_logger("tool_service")
@@ -3695,6 +3713,7 @@ class ToolService(BaseService):
                 },
             ):
                 traced_headers = inject_trace_context_headers(headers)
+                meta_data = _sync_meta_traceparent(meta_data, traced_headers)
                 async with streamablehttp_client(url=gateway_url, headers=traced_headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
                     async with ClientSession(read_stream, write_stream) as session:
                         with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
@@ -5467,6 +5486,7 @@ class ToolService(BaseService):
                                     # Inject within the active client span so an upstream service
                                     # can attach beneath this span when it extracts traceparent.
                                     request_headers = inject_trace_context_headers(headers)
+                                    request_meta_data = _sync_meta_traceparent(meta_data, request_headers)
                                     if correlation_id and request_headers:
                                         request_headers["X-Correlation-ID"] = correlation_id
                                     async with sse_client(url=server_url, headers=request_headers, httpx_client_factory=get_httpx_client_factory) as streams:
@@ -5483,7 +5503,7 @@ class ToolService(BaseService):
                                                 },
                                             ):
                                                 with anyio.fail_after(effective_timeout):
-                                                    tool_call_result = await session.call_tool(tool_name_original, arguments, meta=meta_data)
+                                                    tool_call_result = await session.call_tool(tool_name_original, arguments, meta=request_meta_data)
                                             with create_span(
                                                 "mcp.client.response",
                                                 {
@@ -5649,6 +5669,7 @@ class ToolService(BaseService):
                                     # Inject within the active client span so an upstream service
                                     # can attach beneath this span when it extracts traceparent.
                                     request_headers = inject_trace_context_headers(headers)
+                                    request_meta_data = _sync_meta_traceparent(meta_data, request_headers)
                                     if correlation_id and request_headers:
                                         request_headers["X-Correlation-ID"] = correlation_id
                                     async with streamablehttp_client(url=server_url, headers=request_headers, httpx_client_factory=get_httpx_client_factory) as (
@@ -5669,7 +5690,7 @@ class ToolService(BaseService):
                                                 },
                                             ):
                                                 with anyio.fail_after(effective_timeout):
-                                                    tool_call_result = await session.call_tool(tool_name_original, arguments, meta=meta_data)
+                                                    tool_call_result = await session.call_tool(tool_name_original, arguments, meta=request_meta_data)
                                             with create_span(
                                                 "mcp.client.response",
                                                 {
