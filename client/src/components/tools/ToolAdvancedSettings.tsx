@@ -115,7 +115,7 @@ export function ToolAdvancedSettings({
         <Select value={visibility} onValueChange={onVisibilityChange}>
           <SelectTrigger
             id="visibility"
-            className="h-10 w-full border-neutral-300 bg-white dark:border-neutral-700 dark:bg-neutral-950"
+            className="h-10 w-full border-neutral-300 dark:border-neutral-700"
           >
             <SelectValue placeholder="Select visibility" />
           </SelectTrigger>
@@ -196,7 +196,7 @@ export function ToolAdvancedSettings({
           value={responseFilter}
           onChange={(e) => onResponseFilterChange(e.target.value)}
           placeholder="Optional jq expression applied to the upstream response..."
-          className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+          className="rounded-md border-neutral-300 px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:text-neutral-100 dark:placeholder:text-neutral-500"
         />
       </div>
 
@@ -210,7 +210,7 @@ export function ToolAdvancedSettings({
           value={tags}
           onChange={(e) => onTagsChange(e.target.value)}
           placeholder="Add optional tags separated with commas"
-          className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+          className="rounded-md border-neutral-300 px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:text-neutral-100 dark:placeholder:text-neutral-500"
         />
       </div>
 

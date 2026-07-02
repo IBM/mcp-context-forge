@@ -77,7 +77,7 @@ export function OAuth2Auth({
         <Select value={grantType} onValueChange={onGrantTypeChange}>
           <SelectTrigger
             id="oauth-grant-type"
-            className="h-10 w-full border-neutral-300 bg-white dark:border-neutral-700 dark:bg-neutral-950"
+            className="h-10 w-full border-neutral-300 dark:border-neutral-700"
           >
             <SelectValue placeholder="Select grant type" />
           </SelectTrigger>
@@ -105,7 +105,7 @@ export function OAuth2Auth({
           value={issuerUrl}
           onChange={(e) => onIssuerUrlChange(e.target.value)}
           placeholder="e.g. https://auth.example.com"
-          className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+          className="rounded-md border-neutral-300 px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:text-neutral-100 dark:placeholder:text-neutral-500"
         />
         <p className="text-xs text-neutral-600 dark:text-neutral-500">
           {
@@ -129,7 +129,7 @@ export function OAuth2Auth({
             value={redirectUri}
             onChange={(e) => onRedirectUriChange(e.target.value)}
             placeholder="e.g. https://gateway.example.com/oauth/callback"
-            className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+            className="rounded-md border-neutral-300 px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:text-neutral-100 dark:placeholder:text-neutral-500"
           />
           <p className="text-xs text-neutral-600 dark:text-neutral-500">
             {"Copy URI into the OAuth application's allowed redirect URI"}
@@ -155,7 +155,7 @@ export function OAuth2Auth({
               placeholder="e.g. service-account"
               aria-invalid={!!errors?.username}
               aria-describedby={errors?.username ? "oauth-username-error" : undefined}
-              className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+              className="rounded-md border-neutral-300 px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:text-neutral-100 dark:placeholder:text-neutral-500"
             />
             {errors?.username && (
               <p id="oauth-username-error" className="text-sm text-red-500">
@@ -179,7 +179,7 @@ export function OAuth2Auth({
               placeholder="••••••••"
               aria-invalid={!!errors?.password}
               aria-describedby={errors?.password ? "oauth-password-error" : undefined}
-              className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+              className="rounded-md border-neutral-300 px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:text-neutral-100 dark:placeholder:text-neutral-500"
             />
             {errors?.password && (
               <p id="oauth-password-error" className="text-sm text-red-500">
@@ -203,7 +203,7 @@ export function OAuth2Auth({
           value={clientId}
           onChange={(e) => onClientIdChange(e.target.value)}
           placeholder="e.g. 8f3a2c1d-4b5e-4f6a-9c8d-1e2f3a4b5c6"
-          className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+          className="rounded-md border-neutral-300 px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:text-neutral-100 dark:placeholder:text-neutral-500"
         />
         <p className="text-xs text-neutral-600 dark:text-neutral-500">
           Not required for servers that support Dynamic Client Registration (DCR)
@@ -223,7 +223,7 @@ export function OAuth2Auth({
           value={clientSecret}
           onChange={(e) => onClientSecretChange(e.target.value)}
           placeholder="e.g. a1b2c3d4e5f6"
-          className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+          className="rounded-md border-neutral-300 px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:text-neutral-100 dark:placeholder:text-neutral-500"
         />
         <p className="text-xs text-neutral-600 dark:text-neutral-500">
           Not required for servers that support Dynamic Client Registration (DCR)
@@ -244,7 +244,7 @@ export function OAuth2Auth({
           value={tokenUrl}
           onChange={(e) => onTokenUrlChange(e.target.value)}
           placeholder="e.g. https://oauth.example.com/token"
-          className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+          className="rounded-md border-neutral-300 px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:text-neutral-100 dark:placeholder:text-neutral-500"
         />
         <p className="text-xs text-neutral-600 dark:text-neutral-500">
           Exchanges authorization codes or credentials for access tokens
@@ -266,7 +266,7 @@ export function OAuth2Auth({
             value={authorizationUrl}
             onChange={(e) => onAuthorizationUrlChange(e.target.value)}
             placeholder="e.g. https://oauth.example.com/authorize"
-            className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+            className="rounded-md border-neutral-300 px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:text-neutral-100 dark:placeholder:text-neutral-500"
           />
           <p className="text-xs text-neutral-600 dark:text-neutral-500">
             Where users are redirected to log in and grant access
