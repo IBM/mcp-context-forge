@@ -1150,8 +1150,9 @@ class TestResourceAPIs:
         assert response.status_code == 200
         assert response.json()["status"] == "success"
 
-        # Verify it's deleted
-        response = await client.get(f"/resources/{resource_data['resource']['uri']}", headers=TEST_AUTH_HEADER)
+        # Verify it's deleted (use ID-based lookup; URI "test/delete" routes to
+        # /test/{path} which has allow_admin_bypass=False and returns 403 not 404)
+        response = await client.get(f"/resources/{resource_id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 404
 
     # API should probably return 409 instead of 400 for non-existent resource
