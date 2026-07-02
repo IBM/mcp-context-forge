@@ -196,9 +196,49 @@ SSO_OKTA_SCOPE="openid profile email groups address phone"
 # Group mapping for automatic team assignment
 OKTA_GROUP_MAPPING={"ContextForge Admins": "admin-team-uuid", "ContextForge Users": "user-team-uuid"}
 
-# Custom authorization server (if using custom Okta authorization server)
-SSO_OKTA_ISSUER=https://dev-12345.okta.com/oauth2/custom-auth-server-id
+# Authorization server selection (v1.0.1+)
+# - 'default': Custom authorization server (requires Okta API Access Management)
+# - 'org':     Org Authorization Server (no AAM required)
+# - <custom>:  Any custom authorization server ID (e.g., 'aus1a2b3c4d5e6f7g8h9i')
+# Defaults to 'default' for backward compatibility.
+SSO_OKTA_AUTH_SERVER=custom-auth-server-id
+
+# Note: SSO_OKTA_ISSUER should be the Okta domain base URL (e.g., https://dev-12345.okta.com).
+# The /oauth2/{auth_server} path is appended automatically based on SSO_OKTA_AUTH_SERVER.
 ```
+
+### 4.4.1 Org Authorization Server (No API Access Management)
+
+If your Okta tenant does **not** have API Access Management (AAM) licensed, use the
+**Org Authorization Server** instead of the default custom authorization server.
+
+The Org Authorization Server uses `/oauth2/v1/...` endpoints with the issuer set to
+your Okta domain directly (no `/oauth2/...` suffix). Group claims are sourced from
+the OIDC application's claim filter, not the authorization server.
+
+```bash
+# Org Authorization Server configuration
+SSO_OKTA_ENABLED=true
+SSO_OKTA_CLIENT_ID=0oa1b2c3d4e5f6g7h8i9
+SSO_OKTA_CLIENT_SECRET=AbCdEfGhIjKlMnOpQrStUvWxYz1234567890abcdef
+SSO_OKTA_ISSUER=https://acmecorp.okta.com
+SSO_OKTA_AUTH_SERVER=org  # Use Org Authorization Server
+
+# Include groups in ID token via application-level group claim filter
+# (Okta Admin → Applications → [Your App] → Sign On → OpenID Connect ID Token)
+SSO_OKTA_SCOPE="openid profile email groups"
+```
+
+Key differences from the default authorization server:
+
+| Aspect | Default (`default`) | Org (`org`) |
+|--------|---------------------|-------------|
+| Authorization URL | `/oauth2/default/v1/authorize` | `/oauth2/v1/authorize` |
+| Token URL | `/oauth2/default/v1/token` | `/oauth2/v1/token` |
+| Userinfo URL | `/oauth2/default/v1/userinfo` | `/oauth2/v1/userinfo` |
+| Issuer | `/oauth2/default` | bare domain (no suffix) |
+| AAM required | Yes | No |
+| Groups source | Authorization server claims | Application-level group claim filter |
 
 ## Step 5: Restart and Verify Gateway
 

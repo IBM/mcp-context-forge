@@ -177,6 +177,18 @@ def get_predefined_sso_providers() -> List[Dict]:
     # Okta Provider
     if settings.sso_okta_enabled and settings.sso_okta_client_id:
         base_url = settings.sso_okta_issuer or "https://company.okta.com"
+        auth_server = settings.sso_okta_auth_server or "default"
+
+        # Construct authorization server-specific URLs.
+        # Org AS:  /oauth2/v1/... with bare issuer (no API Access Management).
+        # Custom/default: /oauth2/{id}/v1/... with issuer including the path.
+        if auth_server == "org":
+            auth_root = f"{base_url}/oauth2"
+            issuer = base_url
+        else:
+            auth_root = f"{base_url}/oauth2/{auth_server}"
+            issuer = f"{base_url}/oauth2/{auth_server}"
+
         okta_team_mapping: Dict[str, Any] = {}
         if settings.okta_group_mapping:
             try:
@@ -195,10 +207,10 @@ def get_predefined_sso_providers() -> List[Dict]:
                 "provider_type": "oidc",
                 "client_id": settings.sso_okta_client_id,
                 "client_secret": settings.sso_okta_client_secret.get_secret_value() if settings.sso_okta_client_secret else "",
-                "authorization_url": f"{base_url}/oauth2/default/v1/authorize",
-                "token_url": f"{base_url}/oauth2/default/v1/token",
-                "userinfo_url": f"{base_url}/oauth2/default/v1/userinfo",
-                "issuer": f"{base_url}/oauth2/default",
+                "authorization_url": f"{auth_root}/v1/authorize",
+                "token_url": f"{auth_root}/v1/token",
+                "userinfo_url": f"{auth_root}/v1/userinfo",
+                "issuer": issuer,
                 "scope": settings.sso_okta_scope,
                 "trusted_domains": settings.sso_trusted_domains,
                 "auto_create_users": settings.sso_auto_create_users,

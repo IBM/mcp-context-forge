@@ -493,6 +493,14 @@ class Settings(BaseSettings):
     sso_okta_client_secret: Optional[SecretStr] = Field(default=None, description="Okta client secret")
     sso_okta_issuer: Optional[str] = Field(default=None, description="Okta issuer URL")
     sso_okta_scope: str = Field(default="openid profile email", description="Okta OIDC scopes (space-separated)")
+    sso_okta_auth_server: str = Field(
+        default="default",
+        description=(
+            "Okta authorization server ID. Use 'default' (current behavior) for the "
+            "built-in custom authorization server, 'org' for the Org Authorization "
+            "Server (no API Access Management required), or any custom server ID."
+        ),
+    )
     okta_group_mapping: Optional[str] = Field(default=None, description="JSON mapping of Okta group names to team UUIDs")
 
     sso_keycloak_enabled: bool = Field(default=False, description="Enable Keycloak OIDC authentication")
@@ -2313,6 +2321,27 @@ class Settings(BaseSettings):
             # Fallback to comma-separated parsing
             return [item.strip() for item in s.split(",") if item.strip()]
         raise ValueError("Invalid type for SSO_ISSUERS")
+
+    @field_validator("sso_okta_auth_server")
+    @classmethod
+    def validate_okta_auth_server(cls, v: str) -> str:
+        """Validate and normalize the Okta authorization server ID.
+
+        Args:
+            v: Raw authorization server ID from config.
+
+        Returns:
+            Normalized auth server ID, defaulting to 'default' on empty input.
+
+        Raises:
+            ValueError: If the value contains path separators (path traversal prevention).
+        """
+        if not v or not v.strip():
+            return "default"
+        cleaned = v.strip()
+        if "/" in cleaned or "\\" in cleaned:
+            raise ValueError("SSO_OKTA_AUTH_SERVER must not contain path separators")
+        return cleaned
 
     # Resources
     resource_cache_size: int = 1000

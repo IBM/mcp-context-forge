@@ -1767,3 +1767,29 @@ def test_uaid_allowed_domains_accepts_valid_with_port():
     """Verify validator accepts valid public domains with ports."""
     settings = Settings(uaid_allowed_domains=["example.com:8443", "gateway.io:4444"], _env_file=None)
     assert settings.uaid_allowed_domains == ["example.com:8443", "gateway.io:4444"]
+
+
+def test_sso_okta_auth_server_accepts_valid_values():
+    """Valid auth server IDs should be accepted."""
+    for valid in ["org", "default", "aus1234567890", "custom-server", "server_01"]:
+        s = Settings(sso_okta_auth_server=valid, _env_file=None)
+        assert s.sso_okta_auth_server == valid
+
+
+def test_sso_okta_auth_server_rejects_path_traversal():
+    """Auth server ID must not contain path separators."""
+    # First-Party
+    from pydantic import ValidationError
+
+    invalid_ids = ["../oauth2", "a/b", "a\\b", "../../etc/passwd"]
+    for invalid in invalid_ids:
+        with pytest.raises(ValidationError) as exc_info:
+            Settings(sso_okta_auth_server=invalid, _env_file=None)
+        assert "path separators" in str(exc_info.value)
+
+
+def test_sso_okta_auth_server_empty_falls_back_to_default():
+    """Empty or whitespace-only values should fall back to 'default'."""
+    for empty in ["", "  "]:
+        s = Settings(sso_okta_auth_server=empty, _env_file=None)
+        assert s.sso_okta_auth_server == "default"
