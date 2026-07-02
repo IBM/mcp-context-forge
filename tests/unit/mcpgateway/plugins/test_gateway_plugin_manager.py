@@ -651,6 +651,75 @@ class TestGetManager:
         assert result is cached_manager
 
 
+    @pytest.mark.asyncio
+    async def test_default_context_never_expires_from_cache(self, factory):
+        """Default context entry is never evicted due to TTL expiry."""
+        from mcpgateway.plugins.gateway_plugin_manager import DEFAULT_CONTEXT_ID
+
+        default_manager = AsyncMock()
+        import time
+
+        # Create an expired entry for default context
+        factory._managers[DEFAULT_CONTEXT_ID] = _CachedManager(
+            manager=default_manager,
+            created_at=time.monotonic() - 1000  # Very old
+        )
+
+        # Should return cached manager even though TTL expired
+        result = await factory.get_manager(DEFAULT_CONTEXT_ID)
+        assert result is default_manager
+
+    @pytest.mark.asyncio
+    async def test_fallback_to_default_manager_when_no_tenant_config(self, factory):
+        """When tenant has no config and default manager exists, reuse default manager."""
+        from mcpgateway.plugins.gateway_plugin_manager import DEFAULT_CONTEXT_ID
+        import time
+
+        default_manager = AsyncMock()
+        factory._managers[DEFAULT_CONTEXT_ID] = _CachedManager(
+            manager=default_manager,
+            created_at=time.monotonic()
+        )
+
+        # Mock get_config_from_db to return None (no tenant config)
+        with patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=None):
+            result = await factory.get_manager("team-x::tool-y")
+
+        # Should return the default manager
+        assert result is default_manager
+        # Verify it was cached for the tenant context
+        assert "team-x::tool-y" in factory._managers
+        assert factory._managers["team-x::tool-y"].manager is default_manager
+
+    @pytest.mark.asyncio
+    async def test_default_manager_shared_across_tenants_without_config(self, factory):
+        """Multiple tenants without config share the same default manager instance."""
+        from mcpgateway.plugins.gateway_plugin_manager import DEFAULT_CONTEXT_ID
+        import time
+
+        default_manager = AsyncMock()
+        factory._managers[DEFAULT_CONTEXT_ID] = _CachedManager(
+            manager=default_manager,
+            created_at=time.monotonic()
+        )
+
+        with patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=None):
+            result1 = await factory.get_manager("team-a::tool-1")
+            result2 = await factory.get_manager("team-b::tool-2")
+            result3 = await factory.get_manager("team-c::tool-3")
+
+        # All should return the same default manager instance
+        assert result1 is default_manager
+        assert result2 is default_manager
+        assert result3 is default_manager
+
+        # Verify memory efficiency - all point to same instance
+        assert factory._managers["team-a::tool-1"].manager is default_manager
+        assert factory._managers["team-b::tool-2"].manager is default_manager
+        assert factory._managers["team-c::tool-3"].manager is default_manager
+
+
+
 # ---------------------------------------------------------------------------
 # reload_tenant
 # ---------------------------------------------------------------------------
