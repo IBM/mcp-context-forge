@@ -715,6 +715,7 @@ docker run --name mcp-postgres \
 For upgrade instructions, migration guides, and rollback procedures, see:
 
 - **[Upgrade Guide](https://ibm.github.io/mcp-context-forge/manage/upgrade/)** — General upgrade procedures
+- **[MIGRATION.md](./MIGRATION.md)** — Breaking changes and step-by-step upgrade instructions
 - **[CHANGELOG.md](./CHANGELOG.md)** — Version history and breaking changes
 
 ---

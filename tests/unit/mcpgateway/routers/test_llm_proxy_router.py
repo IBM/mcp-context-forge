@@ -229,3 +229,33 @@ async def test_list_models_empty(monkeypatch: pytest.MonkeyPatch):
 
     assert response["object"] == "list"
     assert response["data"] == []
+
+
+# ---------- _warn_llm_prefix_collision ----------
+
+
+def test_warn_llm_prefix_collision_triggers(caplog):
+    """Warning must be emitted when llm_api_prefix matches the gateway /v1 prefix."""
+    import logging
+
+    from mcpgateway.main import _warn_llm_prefix_collision
+
+    with caplog.at_level(logging.WARNING):
+        _warn_llm_prefix_collision("/v1")
+
+    assert any("conflicts with the gateway" in r.message for r in caplog.records), (
+        "Expected a warning about LLM_API_PREFIX=/v1 collision but none was logged"
+    )
+
+
+def test_warn_llm_prefix_collision_silent(caplog):
+    """No warning when llm_api_prefix is distinct from the gateway prefix."""
+    import logging
+
+    from mcpgateway.main import _warn_llm_prefix_collision
+
+    with caplog.at_level(logging.WARNING):
+        _warn_llm_prefix_collision("/llm/v1")
+
+    collision_warnings = [r for r in caplog.records if "conflicts with the gateway" in r.message]
+    assert collision_warnings == [], f"Unexpected collision warning for non-colliding prefix: {collision_warnings}"

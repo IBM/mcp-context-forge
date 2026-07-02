@@ -551,7 +551,7 @@ jobs:
 Add fuzzing to pre-commit pipeline:
 
 ```yaml
-# .pre-commit-lite.yaml
+# .pre-commit-config.yaml
 repos:
 
   - repo: local
