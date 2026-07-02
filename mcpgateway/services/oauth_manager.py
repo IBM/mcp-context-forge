@@ -1595,12 +1595,14 @@ class OAuthManager:
         scopes = runtime_credentials.get("scopes", [])
         if self._should_include_resource_parameter(credentials, scopes):
             if isinstance(resource, list):
-                # RFC 8707 allows multiple resource parameters - use list of tuples
-                form_data: list[tuple[str, str]] = list(token_data.items())
-                for r in resource:
-                    if r:
-                        form_data.append(("resource", r))
-                token_data = form_data  # type: ignore[assignment]
+                # RFC 8707 allows multiple resource parameters.
+                # Keep token_data as a dict with a list value — httpx's encode_urlencoded_data
+                # expands list values into repeated key=value pairs automatically.
+                # Converting to a list of tuples instead causes httpx to treat the payload as
+                # a raw sync iterable (IteratorByteStream) rather than form data, which
+                # raises RuntimeError on AsyncClient ("Attempted to send an sync request
+                # with an AsyncClient instance").
+                token_data["resource"] = [r for r in resource if r]  # type: ignore[assignment]
             else:
                 token_data["resource"] = resource
 
@@ -1706,12 +1708,14 @@ class OAuthManager:
         scopes = runtime_credentials.get("scopes", [])
         if self._should_include_resource_parameter(credentials, scopes):
             if isinstance(resource, list):
-                # RFC 8707 allows multiple resource parameters - use list of tuples
-                form_data: list[tuple[str, str]] = list(token_data.items())
-                for r in resource:
-                    if r:
-                        form_data.append(("resource", r))
-                token_data = form_data  # type: ignore[assignment]
+                # RFC 8707 allows multiple resource parameters.
+                # Keep token_data as a dict with a list value — httpx's encode_urlencoded_data
+                # expands list values into repeated key=value pairs automatically.
+                # Converting to a list of tuples instead causes httpx to treat the payload as
+                # a raw sync iterable (IteratorByteStream) rather than form data, which
+                # raises RuntimeError on AsyncClient ("Attempted to send an sync request
+                # with an AsyncClient instance").
+                token_data["resource"] = [r for r in resource if r]  # type: ignore[assignment]
             else:
                 token_data["resource"] = resource
 
