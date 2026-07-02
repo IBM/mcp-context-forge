@@ -22,7 +22,7 @@
 
 - Rust MCP runtime sidecar, Rust A2A runtime sidecar, and ValidationMiddleware are deprecated as of 2026-06-11 and will sunset on 2026-07-07. Use the Python MCP transport path, the Python A2A invocation path, and endpoint-level Pydantic or protocol-specific validation instead. See [Deprecations](docs/docs/deprecations.md).
 
-## [1.0.4] - 2026-06-22 - Rust Server Migration, Security Fixes, and Build Hardening
+## [1.0.4] - 2026-06-23 - Rust Server Migration, Security Fixes, and Build Hardening
 
 ### Overview
 
@@ -120,12 +120,7 @@ Release 1.0.4 consolidates **35+ PRs** focused on **Rust server migration**, **s
 | [#5275](https://github.com/IBM/mcp-context-forge/pull/5275) | chore: update code owners for certain topics | brian-hussey |
 | [#5012](https://github.com/IBM/mcp-context-forge/pull/5012) | chore: skip full CI for secrets baseline commits | lucarlig |
 | [#4749](https://github.com/IBM/mcp-context-forge/pull/4749) | chore(logging): migrate f-string log calls to lazy %-style | msureshkumar88 |
-| – | chore(docker): update UBI image versions | msureshkumar88 |
-| – | fix(deps): update cryptography and msgpack | cafalchio |
-| – | chore: addressed dependabot security dependency issues | – |
-| – | chore: refresh Go dependencies | – |
-| – | chore: update Python versions in container images | – |
-| – | chore: code quality gates pass | – |
+| [#5311](https://github.com/IBM/mcp-context-forge/pull/5311) | chore: Release  | cafalchio |
 
 ## [1.0.3] - 2026-06-10 - Auth & JWT Cleanup, Admin UI Fixes, FedRAMP/FIPS Hardening, and Bug Fixes
 
