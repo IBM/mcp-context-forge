@@ -140,6 +140,30 @@ async def test_dispatch_end_span_failure_logs_warning(mock_request, mock_call_ne
 
 
 @pytest.mark.asyncio
+async def test_dispatch_session_close_failure_logs_debug(mock_request, mock_call_next):
+    """Test that session close failures in finally block are logged at debug level."""
+    middleware = ObservabilityMiddleware(app=None, enabled=True)
+
+    mock_session = MagicMock()
+    mock_session.close.side_effect = Exception("close failed")
+
+    with (
+        patch("mcpgateway.db.SessionLocal", return_value=mock_session),
+        patch.object(middleware.service, "start_trace", return_value="trace123"),
+        patch.object(middleware.service, "start_span", return_value="span123"),
+        patch.object(middleware.service, "end_span"),
+        patch.object(middleware.service, "end_trace"),
+        patch("mcpgateway.middleware.observability_middleware.logger.debug") as mock_debug,
+        patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False),
+    ):
+        response = await middleware.dispatch(mock_request, mock_call_next)
+        assert response.status_code == 200
+        # Verify debug log was called for close failure
+        debug_calls = [str(call) for call in mock_debug.call_args_list]
+        assert any("Failed to close observability session" in str(call) for call in debug_calls)
+
+
+@pytest.mark.asyncio
 async def test_dispatch_end_trace_failure_logs_warning(mock_request, mock_call_next):
     middleware = ObservabilityMiddleware(app=None, enabled=True)
 
@@ -153,6 +177,35 @@ async def test_dispatch_end_trace_failure_logs_warning(mock_request, mock_call_n
     ):
         response = await middleware.dispatch(mock_request, mock_call_next)
         assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_dispatch_trace_setup_failure_with_session_close_failure(mock_request, mock_call_next):
+    """Test that trace setup failure with session close failure is handled gracefully.
+
+    This test covers lines 213-214 in observability_middleware.py where the session
+    close operation in the exception handler also fails.
+    """
+    middleware = ObservabilityMiddleware(app=None, enabled=True)
+
+    mock_session = MagicMock()
+    # Make session close fail
+    mock_session.close.side_effect = Exception("close failed")
+
+    with (
+        patch("mcpgateway.db.SessionLocal", return_value=mock_session),
+        patch.object(middleware.service, "start_trace", side_effect=Exception("trace setup failed")),
+        patch("mcpgateway.middleware.observability_middleware.logger.warning") as mock_warning,
+        patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False),
+    ):
+        # Should continue without tracing despite both failures
+        response = await middleware.dispatch(mock_request, mock_call_next)
+        assert response.status_code == 200
+        # Verify warning was logged for trace setup failure
+        mock_warning.assert_called_once()
+        assert "Failed to setup observability trace" in str(mock_warning.call_args)
+        # Session close failure should be silently caught (lines 213-214)
+        mock_session.close.assert_called_once()
         mock_warning.assert_called()
 
 
@@ -212,11 +265,6 @@ def mock_observability_service():
     return service
 
 
-# Test removed - obsolete after #3883
-# Middleware no longer creates or manages request sessions.
-# Each observability operation creates its own independent session.
-
-
 @pytest.mark.asyncio
 async def test_get_db_reuses_middleware_session():
     """Test that get_db() reuses the session from ObservabilityMiddleware."""
@@ -240,10 +288,6 @@ async def test_get_db_reuses_middleware_session():
         next(db_generator)
     except StopIteration:
         pass
-
-    # Verify get_db() commits the middleware session (Issue #3731 fix)
-    # Transaction control is now delegated to get_db(), not middleware
-    # Verify the session is NOT closed (middleware will handle that)
 
 
 @pytest.mark.asyncio
@@ -272,14 +316,3 @@ async def test_get_db_creates_own_session_when_no_middleware_session():
             next(db_generator)
         except StopIteration:
             pass
-
-        # Verify the session was committed and closed
-
-
-# Test removed - obsolete after #3883
-# Middleware no longer creates request sessions. Each observability operation
-# creates its own independent session. See test_middleware_no_session_management() in
-# test_observability_middleware_transactions.py for the updated behavior.
-
-# Tests removed - obsolete after #3883
-# Middleware no longer creates or manages database sessions, so no rollback/invalidate operations.
