@@ -33,7 +33,9 @@ function renderAddPrompt() {
 async function fillRequiredFields() {
   const user = userEvent.setup();
   await user.type(screen.getByLabelText(/name/i), "Greeting prompt");
-  await user.type(screen.getByLabelText(/template/i), "Hello {{ name }}");
+  fireEvent.change(screen.getByLabelText(/template/i), {
+    target: { value: "Hello {{ name }}" },
+  });
   return user;
 }
 
@@ -49,6 +51,39 @@ describe("AddPrompt", () => {
       logout: vi.fn(),
       setSelectedTeamId: vi.fn(),
     });
+  });
+
+  it("submits valid prompt data and returns to the prompts page", async () => {
+    mockUseAuthContext.mockReturnValue({
+      selectedTeamId: "team-123",
+      user: null,
+      isAuthenticated: true,
+      isLoading: false,
+      login: vi.fn(),
+      logout: vi.fn(),
+      setSelectedTeamId: vi.fn(),
+    });
+    mockCreatePrompt.mockResolvedValue({
+      id: "prompt-1",
+      name: "Greeting prompt",
+    });
+
+    renderAddPrompt();
+    const user = await fillRequiredFields();
+    await user.click(screen.getByRole("button", { name: "Add Tool" }));
+
+    await waitFor(() => {
+      expect(mockCreatePrompt).toHaveBeenCalledWith({
+        name: "Greeting prompt",
+        visibility: "public",
+        template: "Hello {{ name }}",
+        arguments: "",
+        description: "",
+        tags: "",
+        teamId: "team-123",
+      });
+    });
+    expect(window.location.pathname).toBe("/app/prompts");
   });
 
   it("renders create failures inline in the form", async () => {
