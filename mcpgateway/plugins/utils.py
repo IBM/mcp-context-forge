@@ -141,7 +141,7 @@ def record_plugin_metrics(trace_id: Optional[str], result_metadata: Optional[Dic
         # First-Party (deferred to avoid a circular import with mcpgateway.services.__init__,
         # mirroring build_request_extensions() above).
         from mcpgateway.db import SessionLocal  # pylint: disable=import-outside-toplevel
-        from mcpgateway.services.observability_service import ObservabilityService  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.observability_service import ObservabilityService  # pylint: disable=import-outside-toplevel,cyclic-import
 
         plugin_items = list(result_metadata.items())
         if len(plugin_items) > _MAX_PLUGINS_PER_CALL:
