@@ -9877,6 +9877,6 @@ class TestInvokeToolLookupLogic:
             mock_cache.get = AsyncMock(return_value=None)
             mock_cache_fn.return_value = mock_cache
 
-            # Even though user_email matches owner, public-only token should deny access
+            # Non-owner with public-only token cannot access any private tool (#4473: owner would be allowed)
             with pytest.raises(ToolNotFoundError, match="not found"):
-                await tool_service.invoke_tool(db, "test_tool", {}, user_email="me@test.com", token_teams=[])
+                await tool_service.invoke_tool(db, "test_tool", {}, user_email="nobody@test.com", token_teams=[])

@@ -54,12 +54,12 @@ def _check_server_access(server: DbServer, user_email: Optional[str], token_team
     if not user_email:
         return False
 
+    if server.visibility == "private" and server.owner_email and server.owner_email == user_email:
+        return True
+
     is_public_only_token = token_teams is not None and len(token_teams) == 0
     if is_public_only_token:
         return False
-
-    if server.visibility == "private" and server.owner_email and server.owner_email == user_email:
-        return True
 
     if server.visibility == "team":
         if token_teams is None:

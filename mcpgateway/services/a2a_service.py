@@ -524,14 +524,14 @@ class A2AAgentService(BaseService):
         if not user_email:
             return False
 
+        # Owner can access their own private agents (ownership overrides token scoping)
+        if agent.visibility == "private" and agent.owner_email and agent.owner_email == user_email:
+            return True
+
         # Public-only tokens (empty teams array) can ONLY access public agents
         is_public_only_token = token_teams is not None and len(token_teams) == 0
         if is_public_only_token:
             return False  # Already checked public above
-
-        # Owner can access their own private agents
-        if agent.visibility == "private" and agent.owner_email and agent.owner_email == user_email:
-            return True
 
         # Team agents: check team membership
         # token_teams=None with user_email set → admin context, allow all team agents if caller is admin
@@ -576,7 +576,9 @@ class A2AAgentService(BaseService):
 
         query = db.query(DbA2AAgent.id).filter(DbA2AAgent.enabled.is_(True))
 
-        # Build visibility predicate matching _check_agent_access rules.
+        # Build visibility predicate for the listing path.
+        # Intentionally diverges from _check_agent_access: listing suppresses owner rows
+        # for public-only tokens, consistent with base_service._apply_access_control.
         visibility_filters = [DbA2AAgent.visibility == "public"]
         caller_is_admin = token_teams is None and user_email is not None and is_user_admin(db, user_email)
 

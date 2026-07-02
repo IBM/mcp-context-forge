@@ -1062,8 +1062,8 @@ class TestA2AAgentService:
         assert await service._check_agent_access(mock_db, agent, user_email="someone@example.com", token_teams=["other"]) is False
 
         agent.visibility = "private"
-        # Public-only tokens (token_teams=[]) cannot access private agents even as owner
-        assert await service._check_agent_access(mock_db, agent, user_email="owner@example.com", token_teams=[]) is False
+        # Owner with a public-only token (token_teams=[]) should still be allowed (ownership overrides token scoping, #4473)
+        assert await service._check_agent_access(mock_db, agent, user_email="owner@example.com", token_teams=[]) is True
         # Team-scoped tokens: owner can access their own private agents
         assert await service._check_agent_access(mock_db, agent, user_email="owner@example.com", token_teams=["team-1"]) is True
         assert await service._check_agent_access(mock_db, agent, user_email="other@example.com", token_teams=["team-1"]) is False
@@ -3876,8 +3876,13 @@ class TestCancelTask:
         assert result["status"]["state"] == "canceled"
 
     @pytest.mark.asyncio
-    async def test_cancel_task_public_only_user_denied_for_private(self, service, mock_db):
-        """Public-only user (empty teams) cannot cancel private agent tasks."""
+    async def test_cancel_task_owner_allowed_with_public_only_token(self, service, mock_db):
+        """Owner can cancel their own private agent tasks even with a public-only token.
+
+        Ownership overrides token scoping — the owner must be able to manage
+        their own private agents regardless of which teams their JWT is scoped to.
+        Regression test for issue #4473.
+        """
         task = self._make_task("submitted")
         agent = MagicMock()
         agent.visibility = "private"
@@ -3885,7 +3890,7 @@ class TestCancelTask:
         self._setup_task_and_agent(mock_db, task, agent)
 
         result = await service.cancel_task(mock_db, "task-1", user_email="user@test.com", token_teams=[])
-        assert result is None
+        assert result is not None
 
     @pytest.mark.asyncio
     async def test_cancel_task_hidden_when_agent_deleted(self, service, mock_db):
@@ -5010,8 +5015,13 @@ class TestGetTask:
         assert result["id"] == "t1"
 
     @pytest.mark.asyncio
-    async def test_public_only_user_cannot_see_private_agent_task(self, service, mock_db):
-        """Public-only user (empty teams) cannot see tasks for private agents."""
+    async def test_owner_can_see_private_agent_task_with_public_only_token(self, service, mock_db):
+        """Owner can see their own private agent tasks even with a public-only token.
+
+        Ownership overrides token scoping — the owner must be able to view and manage
+        their own private agents regardless of which teams their JWT is scoped to.
+        Regression test for issue #4473.
+        """
         task = MagicMock()
         task.a2a_agent_id = "agent-1"
         agent = MagicMock()
@@ -5021,7 +5031,7 @@ class TestGetTask:
 
         result = await service.get_task(mock_db, "t1", user_email="user@test.com", token_teams=[])
 
-        assert result is None
+        assert result is not None
 
 
 class TestListTasks:

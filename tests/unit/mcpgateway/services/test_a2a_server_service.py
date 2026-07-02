@@ -426,12 +426,14 @@ class TestCheckServerAccess:
         assert _check_server_access(server, None, ["team-a"]) is False
 
     # -- Public-only token (empty teams) ------------------------------------
+    # Owner with token_teams=[] is allowed (ownership overrides token scoping, #4473).
+    # Non-owner with token_teams=[] is still denied.
 
-    def test_empty_teams_denied_for_private(self):
+    def test_empty_teams_owner_allowed_for_private(self):
         from mcpgateway.services.a2a_server_service import _check_server_access
 
         server = self._make_server(visibility="private", owner_email="user@test.com")
-        assert _check_server_access(server, "user@test.com", []) is False
+        assert _check_server_access(server, "user@test.com", []) is True
 
     def test_empty_teams_denied_for_team(self):
         from mcpgateway.services.a2a_server_service import _check_server_access

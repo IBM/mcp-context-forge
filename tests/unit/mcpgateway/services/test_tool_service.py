@@ -6356,11 +6356,11 @@ class TestToolAccessAuthorization:
 
     @pytest.mark.asyncio
     async def test_check_tool_access_public_only_token_denied_private(self, tool_service, mock_db):
-        """Public-only tokens (token_teams=[]) should only access public tools."""
+        """Public-only tokens (token_teams=[]) deny access to private tools for non-owners."""
         private_tool = {"id": "1", "visibility": "private", "owner_email": "owner@test.com", "team_id": None}
 
-        # Even owner with public-only token is denied
-        assert await tool_service._check_tool_access(mock_db, private_tool, user_email="owner@test.com", token_teams=[]) is False
+        # Non-owner with a public-only token is denied (#4473: owner would be allowed)
+        assert await tool_service._check_tool_access(mock_db, private_tool, user_email="other@test.com", token_teams=[]) is False
 
     @pytest.mark.asyncio
     async def test_get_tool_access_denied_raises_not_found(self, tool_service, mock_db):

@@ -27,7 +27,6 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
 from mcpgateway.services.tool_service import ToolNotFoundError, ToolService
-from tests.helpers.admin_mocks import install_admin_user
 
 
 @pytest.fixture
@@ -186,8 +185,13 @@ class TestToolAccessChecks:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_private_tool_denied_to_owner_with_public_only_token(self, tool_service, mock_db):
-        """Private tools should NOT be accessible to owner if they have a public-only token."""
+    async def test_private_tool_accessible_to_owner_with_public_only_token(self, tool_service, mock_db):
+        """Private tools should be accessible to the owner even with a public-only token.
+
+        Ownership overrides token scoping — the owner must be able to view and edit
+        their own private tools regardless of which teams their JWT is scoped to.
+        Regression test for issue #4473.
+        """
         tool_payload = {
             "id": "tool-123",
             "visibility": "private",
@@ -195,9 +199,9 @@ class TestToolAccessChecks:
             "team_id": None,
         }
 
-        # Owner with a public-only token (token_teams=[]) should be denied
+        # Owner with a public-only token (token_teams=[]) should still be allowed
         result = await tool_service._check_tool_access(mock_db, tool_payload, user_email="owner@example.com", token_teams=[])
-        assert result is False
+        assert result is True
 
     @pytest.mark.asyncio
     async def test_private_tool_denied_to_non_owner(self, tool_service, mock_db):
@@ -314,13 +318,18 @@ class TestResourceAccessChecks:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_private_resource_denied_to_owner_with_public_only_token(self, resource_service, mock_db):
-        """Private resources should NOT be accessible to owner with public-only token."""
+    async def test_private_resource_accessible_to_owner_with_public_only_token(self, resource_service, mock_db):
+        """Private resources should be accessible to the owner even with a public-only token.
+
+        Ownership overrides token scoping — the owner must be able to view and edit
+        their own private resources regardless of which teams their JWT is scoped to.
+        Regression test for issue #4473.
+        """
         mock_resource = create_mock_resource(visibility="private", owner_email="owner@example.com")
 
-        # Owner with public-only token should be denied
+        # Owner with a public-only token (token_teams=[]) should still be allowed
         result = await resource_service._check_resource_access(mock_db, mock_resource, user_email="owner@example.com", token_teams=[])
-        assert result is False
+        assert result is True
 
     @pytest.mark.asyncio
     async def test_team_resource_accessible_to_team_member(self, resource_service, mock_db):
@@ -355,6 +364,18 @@ class TestResourceAccessChecks:
         result = await resource_service._check_resource_access(mock_db, mock_resource, user_email=None, token_teams=None)
         assert result is True
 
+    @pytest.mark.asyncio
+    async def test_non_owner_public_only_token_denied_private_resource(self, resource_service, mock_db):
+        """Non-owner with public-only token must still be denied access to private resources.
+
+        Symmetry test: the owner check in _check_resource_access requires owner_email == user_email,
+        so a different user with token_teams=[] must still be denied. Guards against future
+        refactors accidentally broadening the owner check.
+        """
+        mock_resource = create_mock_resource(visibility="private", owner_email="owner@example.com")
+        result = await resource_service._check_resource_access(mock_db, mock_resource, user_email="other@example.com", token_teams=[])
+        assert result is False
+
 
 class TestPromptAccessChecks:
     """Tests for prompt access authorization."""
@@ -385,13 +406,18 @@ class TestPromptAccessChecks:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_private_prompt_denied_to_owner_with_public_only_token(self, prompt_service, mock_db):
-        """Private prompts should NOT be accessible to owner with public-only token."""
+    async def test_private_prompt_accessible_to_owner_with_public_only_token(self, prompt_service, mock_db):
+        """Private prompts should be accessible to the owner even with a public-only token.
+
+        Ownership overrides token scoping — the owner must be able to view and edit
+        their own private prompts regardless of which teams their JWT is scoped to.
+        Regression test for issue #4473.
+        """
         mock_prompt = create_mock_prompt(visibility="private", owner_email="owner@example.com")
 
-        # Owner with public-only token should be denied
+        # Owner with a public-only token (token_teams=[]) should still be allowed
         result = await prompt_service._check_prompt_access(mock_db, mock_prompt, user_email="owner@example.com", token_teams=[])
-        assert result is False
+        assert result is True
 
     @pytest.mark.asyncio
     async def test_team_prompt_accessible_to_team_member(self, prompt_service, mock_db):
@@ -425,6 +451,18 @@ class TestPromptAccessChecks:
         mock_prompt = create_mock_prompt(visibility="team", owner_email="owner@example.com", team_id="team-abc")
         result = await prompt_service._check_prompt_access(mock_db, mock_prompt, user_email=None, token_teams=None)
         assert result is True
+
+    @pytest.mark.asyncio
+    async def test_non_owner_public_only_token_denied_private_prompt(self, prompt_service, mock_db):
+        """Non-owner with public-only token must still be denied access to private prompts.
+
+        Symmetry test: the owner check in _check_prompt_access requires owner_email == user_email,
+        so a different user with token_teams=[] must still be denied. Guards against future
+        refactors accidentally broadening the owner check.
+        """
+        mock_prompt = create_mock_prompt(visibility="private", owner_email="owner@example.com")
+        result = await prompt_service._check_prompt_access(mock_db, mock_prompt, user_email="other@example.com", token_teams=[])
+        assert result is False
 
 
 class TestInvokeToolAuthorization:
@@ -1447,12 +1485,22 @@ class TestServerAccessCheckMatrix:
         assert await service._check_server_access(MagicMock(), self._server("team", team_id="team-x"), user_email=None, token_teams=["team-x"]) is False
 
     @pytest.mark.asyncio
-    async def test_public_only_token_denies_non_public(self, service):
-        """(email, []) public-only token: covers server_service.py line 1025-1027."""
+    async def test_public_only_token_denies_team_resources(self, service):
+        """(email, []) public-only token: team-visibility server is denied."""
         s_team = self._server("team", team_id="team-x")
-        s_private = self._server("private", owner_email="user@test.com")
         assert await service._check_server_access(MagicMock(), s_team, user_email="user@test.com", token_teams=[]) is False
-        assert await service._check_server_access(MagicMock(), s_private, user_email="user@test.com", token_teams=[]) is False
+
+    @pytest.mark.asyncio
+    async def test_owner_with_public_only_token_allowed_private_server(self, service):
+        """Owner with token_teams=[] must be allowed to access their own private server (fix for issue #4473)."""
+        s_private = self._server("private", owner_email="user@test.com")
+        assert await service._check_server_access(MagicMock(), s_private, user_email="user@test.com", token_teams=[]) is True
+
+    @pytest.mark.asyncio
+    async def test_non_owner_public_only_token_denied_private_server(self, service):
+        """Non-owner with token_teams=[] must still be denied access to private servers."""
+        s_private = self._server("private", owner_email="owner@test.com")
+        assert await service._check_server_access(MagicMock(), s_private, user_email="other@test.com", token_teams=[]) is False
 
     @pytest.mark.asyncio
     async def test_own_private_allowed(self, service):
@@ -1520,12 +1568,22 @@ class TestGatewayAccessCheckMatrix:
         assert await service._check_gateway_access(MagicMock(), self._gw("team", team_id="team-x"), user_email=None, token_teams=["team-x"]) is False
 
     @pytest.mark.asyncio
-    async def test_public_only_token_denies_non_public(self, service):
-        """(email, []) public-only token: covers line 2742-2744."""
+    async def test_public_only_token_denies_team_resources(self, service):
+        """(email, []) public-only token: team-visibility gateway is denied."""
         g_team = self._gw("team", team_id="team-x")
-        g_private = self._gw("private", owner_email="user@test.com")
         assert await service._check_gateway_access(MagicMock(), g_team, user_email="user@test.com", token_teams=[]) is False
-        assert await service._check_gateway_access(MagicMock(), g_private, user_email="user@test.com", token_teams=[]) is False
+
+    @pytest.mark.asyncio
+    async def test_owner_with_public_only_token_allowed_private_gateway(self, service):
+        """Owner with token_teams=[] must be allowed to access their own private gateway (fix for issue #4473)."""
+        g_private = self._gw("private", owner_email="user@test.com")
+        assert await service._check_gateway_access(MagicMock(), g_private, user_email="user@test.com", token_teams=[]) is True
+
+    @pytest.mark.asyncio
+    async def test_non_owner_public_only_token_denied_private_gateway(self, service):
+        """Non-owner with token_teams=[] must still be denied access to private gateways."""
+        g_private = self._gw("private", owner_email="owner@test.com")
+        assert await service._check_gateway_access(MagicMock(), g_private, user_email="other@test.com", token_teams=[]) is False
 
     @pytest.mark.asyncio
     async def test_own_private_allowed(self, service):
@@ -1552,3 +1610,51 @@ class TestGatewayAccessCheckMatrix:
 
         assert allowed is True
         mock_tms_cls.return_value.get_user_teams.assert_awaited_once_with("user@test.com")
+
+
+class TestA2AServerAccessCheck:
+    """Branch coverage for _check_server_access (a2a_server_service.py).
+
+    The function is module-level (not a method) and synchronous. Tests mirror
+    the same shapes covered by TestServerAccessCheckMatrix and
+    TestGatewayAccessCheckMatrix.
+    """
+
+    def _server(self, visibility, owner_email=None, team_id=None):
+        s = SimpleNamespace(visibility=visibility, owner_email=owner_email, team_id=team_id)
+        return s
+
+    def test_anonymous_admin_bypass_denies_private(self):
+        """(None, None) admin bypass: private denied, team allowed."""
+        from mcpgateway.services.a2a_server_service import _check_server_access
+
+        assert _check_server_access(self._server("private", owner_email="o@t.com"), user_email=None, token_teams=None) is False
+        assert _check_server_access(self._server("team", team_id="t"), user_email=None, token_teams=None) is True
+
+    def test_no_user_email_denied(self):
+        """No user_email → denied regardless of visibility."""
+        from mcpgateway.services.a2a_server_service import _check_server_access
+
+        assert _check_server_access(self._server("team", team_id="t"), user_email=None, token_teams=["t"]) is False
+
+    def test_owner_with_public_only_token_allowed(self):
+        """Owner with token_teams=[] must be allowed to access their own private server (fix for issue #4473)."""
+        from mcpgateway.services.a2a_server_service import _check_server_access
+
+        s = self._server("private", owner_email="user@test.com")
+        assert _check_server_access(s, user_email="user@test.com", token_teams=[]) is True
+
+    def test_non_owner_public_only_token_denied(self):
+        """Non-owner with token_teams=[] must still be denied access to private a2a servers."""
+        from mcpgateway.services.a2a_server_service import _check_server_access
+
+        s = self._server("private", owner_email="owner@test.com")
+        assert _check_server_access(s, user_email="other@test.com", token_teams=[]) is False
+
+    def test_team_member_via_jwt_token_teams(self):
+        """Token with matching team_id allows access to team-visibility server."""
+        from mcpgateway.services.a2a_server_service import _check_server_access
+
+        s = self._server("team", team_id="team-x")
+        assert _check_server_access(s, user_email="user@test.com", token_teams=["team-x"]) is True
+        assert _check_server_access(s, user_email="user@test.com", token_teams=["team-y"]) is False

@@ -1819,14 +1819,14 @@ class PromptService(BaseService):
         if not user_email:
             return False
 
+        # Owner can access their own private prompts (ownership overrides token scoping)
+        if visibility == "private" and prompt_owner_email and prompt_owner_email == user_email:
+            return True
+
         # Public-only tokens (empty teams array) can ONLY access public prompts
         is_public_only_token = token_teams is not None and len(token_teams) == 0
         if is_public_only_token:
             return False  # Already checked public above
-
-        # Owner can access their own private prompts
-        if visibility == "private" and prompt_owner_email and prompt_owner_email == user_email:
-            return True
 
         # Team prompts: check team membership (matches list_prompts behavior)
         if prompt_team_id:

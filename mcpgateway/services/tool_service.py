@@ -1246,14 +1246,14 @@ class ToolService(BaseService):
         if not user_email:
             return False
 
+        # Owner can access their own private tools (ownership overrides token scoping)
+        if visibility == "private" and tool_owner_email and tool_owner_email == user_email:
+            return True
+
         # Public-only tokens (empty teams array) can ONLY access public tools
         is_public_only_token = token_teams is not None and len(token_teams) == 0
         if is_public_only_token:
             return False  # Already checked public above
-
-        # Owner can access their own private tools
-        if visibility == "private" and tool_owner_email and tool_owner_email == user_email:
-            return True
 
         # Team tools: check team membership (matches list_tools behavior)
         if tool_team_id:
