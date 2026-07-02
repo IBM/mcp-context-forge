@@ -36,9 +36,11 @@ function getUriLabel(uri: string): string {
 const ResourceCard = memo(function ResourceCard({
   resource,
   onViewResource,
+  onDeleteResource,
 }: {
   resource: NonNullable<ResourceRead>;
   onViewResource: (resource: NonNullable<ResourceRead>) => void;
+  onDeleteResource: (id: string) => void;
 }) {
   const intl = useIntl();
 
@@ -75,6 +77,12 @@ const ResourceCard = memo(function ResourceCard({
             <DropdownMenuContent align="end">
               <DropdownMenuItem onClick={() => onViewResource(resource)}>
                 {intl.formatMessage({ id: "resources.card.viewDetails" })}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => onDeleteResource(resource.id)}
+                className="text-destructive focus:text-destructive"
+              >
+                {intl.formatMessage({ id: "common.button.delete" })}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -224,18 +232,23 @@ export function Resources() {
   const confirmDelete = useCallback(async () => {
     if (!deleteResourceId || !deleteResourceName) return;
 
+    const resourceId = deleteResourceId;
+    const resourceName = deleteResourceName;
+    const previousData = data;
+
+    setResourcesData((prev) => prev?.filter((r) => r?.id !== resourceId) ?? []);
     setDeleteDialogOpen(false);
+    setDeleteResourceId(null);
+    setDeleteResourceName(null);
+    setSelectedResource(null);
 
     try {
-      await resourcesApi.delete(deleteResourceId);
-      toast.success(
-        intl.formatMessage({ id: "resources.delete.success" }, { name: deleteResourceName }),
-      );
-      setDeleteResourceId(null);
-      setDeleteResourceName(null);
-      setSelectedResource(null);
+      await resourcesApi.delete(resourceId);
+      toast.success(intl.formatMessage({ id: "resources.delete.success" }, { name: resourceName }));
       await refetch();
     } catch (err) {
+      setResourcesData(previousData);
+
       let errorMessage = intl.formatMessage({ id: "resources.delete.error" });
 
       if (err instanceof ApiError) {
@@ -255,7 +268,7 @@ export function Resources() {
 
       toast.error(errorMessage);
     }
-  }, [deleteResourceId, deleteResourceName, refetch, intl]);
+  }, [deleteResourceId, deleteResourceName, data, setResourcesData, refetch, intl]);
 
   return (
     <div className="p-6">
@@ -308,6 +321,7 @@ export function Resources() {
                     key={resource.id}
                     resource={resource}
                     onViewResource={handleResourceClick}
+                    onDeleteResource={handleDeleteResource}
                   />
                 ))}
             </div>
