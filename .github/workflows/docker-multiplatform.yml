@@ -266,7 +266,10 @@ jobs:
             build_on_pr: false
             build_on_merge_group: false   # push and workflow_dispatch only — not merge queue
 
-    runs-on: ${{ matrix.runner }}
+    # Use a cheap ubuntu-24.04 runner when this matrix entry's gate would skip all
+    # work steps anyway (merge_group or PR with build_on_merge_group/build_on_pr=false).
+    # This avoids acquiring scarce s390x/ppc64le native runner slots for no-op jobs.
+    runs-on: ${{ (github.event_name == 'merge_group' && matrix.build_on_merge_group != true || github.event_name == 'pull_request' && matrix.build_on_pr != true) && 'ubuntu-24.04' || matrix.runner }}
     timeout-minutes: 60
     permissions:
       contents: read
