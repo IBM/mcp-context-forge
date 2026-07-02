@@ -183,6 +183,9 @@ function handleDelegatedChange(event) {
   if (args.length === 0) {
     if (target.type === 'checkbox') {
       args.push(target.checked);
+    } else if (target.type === 'file') {
+      // For file inputs, don't push any args - the handler needs the event object
+      // File handlers access event.target.files directly from the event parameter
     } else {
       args.push(target.value);
     }

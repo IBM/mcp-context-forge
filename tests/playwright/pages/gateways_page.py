@@ -248,7 +248,59 @@ class GatewaysPage(BasePage):
     @property
     def oauth_username_input(self) -> Locator:
         """OAuth username input (for password grant)."""
-        return self.page.locator("#oauth-username-gw")
+        return self.add_gateway_form.locator('[name="oauth_username"]')
+
+    # ==================== CA Certificate Upload Elements ====================
+
+    @property
+    def ca_certificate_upload_input(self) -> Locator:
+        """CA certificate file upload input (hidden)."""
+        return self.page.locator("#upload-ca-certificate")
+
+    @property
+    def ca_certificate_drop_zone(self) -> Locator:
+        """CA certificate drag-and-drop zone."""
+        return self.page.locator("#ca-certificate-upload-drop-zone")
+
+    @property
+    def ca_certificate_feedback(self) -> Locator:
+        """CA certificate validation feedback element."""
+        return self.page.locator("#ca-certificate-feedback")
+
+    def upload_ca_certificate(self, file_path: str) -> None:
+        """Upload a CA certificate file.
+
+        Args:
+            file_path: Path to the certificate file to upload.
+        """
+        self.ca_certificate_upload_input.set_input_files(file_path)
+
+    def upload_multiple_ca_certificates(self, file_paths: list[str]) -> None:
+        """Upload multiple CA certificate files.
+
+        Args:
+            file_paths: List of paths to certificate files to upload.
+        """
+        self.ca_certificate_upload_input.set_input_files(file_paths)
+
+    def get_ca_certificate_feedback_text(self) -> str:
+        """Get the text content of the CA certificate feedback element.
+
+        Returns:
+            The feedback text, or empty string if not visible.
+        """
+        try:
+            return self.ca_certificate_feedback.text_content() or ""
+        except PlaywrightError:
+            return ""
+
+    def wait_for_ca_certificate_validation(self, timeout: int = 5000) -> None:
+        """Wait for CA certificate validation feedback to appear.
+
+        Args:
+            timeout: Maximum time to wait in milliseconds.
+        """
+        self.ca_certificate_feedback.wait_for(state="visible", timeout=timeout)
 
     @property
     def oauth_password_input(self) -> Locator:
