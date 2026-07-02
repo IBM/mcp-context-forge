@@ -6661,6 +6661,7 @@ class TestRpcHandling:
 
         init_result = MagicMock()
         init_result.model_dump.return_value = {"protocolVersion": "2025-11-25", "capabilities": {}}
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", False)
         monkeypatch.setattr("mcpgateway.main.session_registry.claim_session_owner", AsyncMock(return_value="user@example.com"))
         handle_initialize_logic = AsyncMock(return_value=init_result)
         monkeypatch.setattr("mcpgateway.main.session_registry.handle_initialize_logic", handle_initialize_logic)
@@ -10081,6 +10082,7 @@ class TestRpcHandling:
 
         init_result = MagicMock()
         init_result.model_dump.return_value = {"capabilities": {}}
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", False)
         monkeypatch.setattr("mcpgateway.main.session_registry.handle_initialize_logic", AsyncMock(return_value=init_result))
         monkeypatch.setattr("mcpgateway.main.session_registry.claim_session_owner", AsyncMock(return_value="user@example.com"))
 
@@ -10114,6 +10116,7 @@ class TestRpcHandling:
 
         init_result = MagicMock()
         init_result.model_dump.return_value = {"capabilities": {}}
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", False)
         claim_owner = AsyncMock(return_value="user@example.com")
         monkeypatch.setattr("mcpgateway.main.session_registry.claim_session_owner", claim_owner)
         monkeypatch.setattr("mcpgateway.main.session_registry.handle_initialize_logic", AsyncMock(return_value=init_result))

@@ -2153,7 +2153,7 @@ class TestCoerceToToolResult:
         """
         # Third-party — use the real MCP SDK type so the test fails if a
         # future SDK bump renames / restructures fields.
-        # First-Party
+        # Third-Party
         from mcp import types as mcp_types  # pylint: disable=import-outside-toplevel
 
         sdk_result = mcp_types.CallToolResult(
@@ -2190,7 +2190,7 @@ class TestCoerceToToolResult:
         which matters for observability and debugging across the
         gateway ↔ upstream boundary.
         """
-        # First-Party
+        # Third-Party
         from mcp import types as mcp_types  # pylint: disable=import-outside-toplevel
 
         meta_payload = {"trace_id": "abc-123", "request_id": "r-42"}
@@ -5493,6 +5493,49 @@ class TestInvokeToolCachePaths:
 
 class TestUpdateToolBranches:
     @pytest.mark.asyncio
+    async def test_list_server_mcp_tool_definitions_projects_and_filters_extension_metadata(self, tool_service, monkeypatch):
+        """Server MCP definitions should include extension metadata and hide app-only tools."""
+        # First-Party
+        from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        db = MagicMock()
+        rows = [
+            {
+                "name": "open_widget",
+                "title": None,
+                "description": "Open widget",
+                "input_schema": {"type": "object"},
+                "output_schema": None,
+                "annotations": None,
+                "extension_metadata": {MCP_UI_EXTENSION: {"audience": ["model"]}},
+            },
+            {
+                "name": "widget_helper",
+                "title": None,
+                "description": "Helper",
+                "input_schema": None,
+                "output_schema": None,
+                "annotations": {},
+                "extension_metadata": {MCP_UI_EXTENSION: {"audience": ["app"]}},
+            },
+        ]
+        db.execute.return_value.mappings.return_value.all.return_value = rows
+
+        result = await tool_service.list_server_mcp_tool_definitions(db, "server-1")
+
+        assert result == [
+            {
+                "name": "open_widget",
+                "description": "Open widget",
+                "inputSchema": {"type": "object"},
+                "annotations": {},
+                "extensionMetadata": {MCP_UI_EXTENSION: {"audience": ["model"]}},
+            }
+        ]
+        db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_update_multiple_fields(self, tool_service):
         """Updating multiple optional fields covers many branches."""
         tool = MagicMock(spec=DbTool)
@@ -5553,6 +5596,58 @@ class TestUpdateToolBranches:
         assert tool.modified_user_agent == "curl/8.0"
         # custom_name auto-updated when name == custom_name and custom_name is None
         assert tool.custom_name == "new_name"
+
+    @pytest.mark.asyncio
+    async def test_update_tool_accepts_extension_metadata(self, tool_service):
+        """Updating a tool should validate and persist extension metadata."""
+        # First-Party
+        from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
+
+        tool = MagicMock(spec=DbTool)
+        tool.id = "t1"
+        tool.name = "tool"
+        tool.custom_name = "tool"
+        tool.version = 1
+        tool.team_id = None
+        tool.owner_email = "owner@example.com"
+        tool.visibility = "public"
+        tool.gateway_id = None
+        tool.headers = {}
+
+        tool_update = MagicMock(spec=ToolUpdate)
+        for attr in (
+            "name",
+            "custom_name",
+            "displayName",
+            "title",
+            "url",
+            "description",
+            "integration_type",
+            "request_type",
+            "headers",
+            "input_schema",
+            "output_schema",
+            "annotations",
+            "jsonpath_filter",
+            "visibility",
+            "auth",
+            "tags",
+        ):
+            setattr(tool_update, attr, None)
+        metadata = {MCP_UI_EXTENSION: {"audience": ["model"], "resourceUri": "ui://widgets/example"}}
+        tool_update.extension_metadata = metadata
+
+        db = MagicMock()
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=tool),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "t1"}),
+        ):
+            result = await tool_service.update_tool(db, "t1", tool_update)
+
+        assert result == {"id": "t1"}
+        assert tool.extension_metadata == metadata
+        assert tool.version == 2
 
     @pytest.mark.asyncio
     async def test_version_none_initializes_to_1(self, tool_service):
@@ -6173,7 +6268,7 @@ class TestInvokeToolRestTimeout:
     @pytest.mark.asyncio
     async def test_rest_timeout_triggers_cb_and_post_hook_and_metrics_counter_failure(self, tool_service):
         """REST tool timeout should trigger cb timeout state and post-invoke hook; metrics counter failures are swallowed."""
-        # First-Party
+        # Third-Party
         from cpex.framework import ToolHookType
 
         tp = _make_tool_payload(integration_type="REST", request_type="GET")
@@ -6224,7 +6319,7 @@ class TestInvokeToolRestTimeout:
     @pytest.mark.asyncio
     async def test_rest_timeout_with_plugin_manager_no_context_and_no_post_hook(self, tool_service):
         """Covers branches where plugin manager is present but no context_table and no TOOL_POST_INVOKE hook."""
-        # First-Party
+        # Third-Party
         from cpex.framework import ToolHookType
 
         tp = _make_tool_payload(integration_type="REST", request_type="GET")
@@ -6333,7 +6428,7 @@ class TestInvokeToolRestPreInvokeModifiedPayload:
     @pytest.mark.asyncio
     async def test_rest_pre_invoke_modified_payload_with_headers_none(self, tool_service):
         """Pre-invoke hook that modifies args but provides headers=None should not overwrite headers."""
-        # First-Party
+        # Third-Party
         from cpex.framework import ToolHookType
 
         tp = _make_tool_payload(integration_type="REST", request_type="GET", jsonpath_filter="")
@@ -6688,7 +6783,7 @@ class TestInvokeToolRestSuccess:
         # for federated MCP calls in production. A gateway-type stand-in would
         # only trip the first ``getattr(..., "is_error")`` branch and hide the
         # camelCase path from regression coverage.
-        # First-Party
+        # Third-Party
         from mcp import types as mcp_types  # pylint: disable=import-outside-toplevel
 
         tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
@@ -7305,7 +7400,7 @@ class TestInvokeToolPluginContext:
     @pytest.mark.asyncio
     async def test_global_context_updated_with_server_id_and_email(self, tool_service):
         """Plugin global context is updated with gateway_id and user email."""
-        # First-Party
+        # Third-Party
         from cpex.framework.models import GlobalContext
 
         tp = _make_tool_payload(integration_type="REST", request_type="GET", gateway_id="gw-42")
@@ -7354,7 +7449,7 @@ class TestInvokeToolPluginContext:
     @pytest.mark.asyncio
     async def test_global_context_not_updated_when_gateway_id_missing_and_user_already_set(self, tool_service):
         """Covers the false branches for global_context.server_id/user propagation."""
-        # First-Party
+        # Third-Party
         from cpex.framework.models import GlobalContext
 
         tp = _make_tool_payload(integration_type="REST", request_type="GET", gateway_id=None, jsonpath_filter="")
@@ -7994,7 +8089,7 @@ class TestInvokeToolA2A:
     @pytest.mark.asyncio
     async def test_a2a_pre_invoke_modifies_payload_headers_and_custom_format_without_trailing_slash(self, tool_service):
         """A2A custom agents without trailing slash use custom format; pre-invoke can rewrite headers/args."""
-        # First-Party
+        # Third-Party
         from cpex.framework import ToolHookType
 
         tp = _make_tool_payload(
@@ -8468,7 +8563,7 @@ class TestInvokeToolA2A:
     @pytest.mark.asyncio
     async def test_a2a_timeout_triggers_cb_context_and_post_hook(self, tool_service):
         """A2A timeout should mark cb_timeout_failure on contexts and invoke TOOL_POST_INVOKE hook."""
-        # First-Party
+        # Third-Party
         from cpex.framework import ToolHookType
 
         tp = _make_tool_payload(
@@ -8653,9 +8748,8 @@ class TestInvokeToolMcpSse:
         upstream MCP server. The header that reaches the SSE client must be the
         plugin-injected value.
         """
-        # First-Party
-        from cpex.framework import HttpHeaderPayload, ToolPreInvokePayload
-        from cpex.framework import PluginResult
+        # Third-Party
+        from cpex.framework import HttpHeaderPayload, PluginResult, ToolPreInvokePayload
 
         tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
         gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "authorization_code"})
@@ -8685,7 +8779,7 @@ class TestInvokeToolMcpSse:
             async def __aexit__(self, *exc):
                 return False
 
-        # First-Party
+        # Third-Party
         from cpex.framework import ToolHookType
 
         mock_pm = MagicMock()
@@ -9309,7 +9403,7 @@ class TestInvokeToolMcpSseTimeoutAndErrors:
     @pytest.mark.asyncio
     async def test_mcp_sse_timeout_triggers_post_hook_and_cb_context(self, tool_service):
         """Timeout during MCP SSE invocation should mark cb_timeout_failure and invoke TOOL_POST_INVOKE."""
-        # First-Party
+        # Third-Party
         from cpex.framework import ToolHookType
 
         tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
@@ -9437,7 +9531,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
     @pytest.mark.asyncio
     async def test_streamablehttp_pool_not_initialized_falls_back_and_plugin_pre_invoke_no_metadata_no_modified_payload(self, tool_service):
         """Covers pool-not-initialized fallback + MCP pre-invoke branches for missing metadata/modified_payload."""
-        # First-Party
+        # Third-Party
         from cpex.framework import ToolHookType
 
         tp = _make_tool_payload(integration_type="MCP", request_type="StreamableHTTP", gateway_id="gw-uuid-1", jsonpath_filter="")
@@ -9506,8 +9600,10 @@ class TestInvokeToolMcpStreamableHttpCoverage:
     @pytest.mark.asyncio
     async def test_streamablehttp_uses_registry_and_modified_payload_with_headers_none(self, tool_service):
         """Covers registry StreamableHTTP path + modified_payload headers=None branch (#4205)."""
-        # First-Party
+        # Third-Party
         from cpex.framework import ToolHookType
+
+        # First-Party
         from mcpgateway.transports.context import request_headers_var
 
         tp = _make_tool_payload(integration_type="MCP", request_type="StreamableHTTP", gateway_id="gw-uuid-1", jsonpath_filter="")
@@ -9568,7 +9664,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
     @pytest.mark.asyncio
     async def test_streamablehttp_timeout_triggers_post_hook_without_context(self, tool_service):
         """Covers StreamableHTTP timeout handler plugin branches when context_table is falsy."""
-        # First-Party
+        # Third-Party
         from cpex.framework import ToolHookType
 
         tp = _make_tool_payload(integration_type="MCP", request_type="StreamableHTTP", gateway_id="gw-uuid-1", jsonpath_filter="")

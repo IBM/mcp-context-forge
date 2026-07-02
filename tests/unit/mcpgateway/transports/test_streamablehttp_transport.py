@@ -32,6 +32,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 # Third-Party
 from fastapi import HTTPException
 import httpx
+from mcp.server.lowlevel import NotificationOptions
 from mcp.types import PromptArgument
 import pytest
 from starlette.types import Scope
@@ -41,6 +42,7 @@ from starlette.types import Scope
 # Import module under test - we only need the specific classes / functions
 # ---------------------------------------------------------------------------
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
+from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
 from mcpgateway.transports import streamablehttp_transport as tr  # noqa: E402
 from mcpgateway.transports.streamablehttp_transport import (
     _MCPGATEWAY_CONTEXT_KEY,
@@ -59,12 +61,33 @@ streamable_http_auth = tr.streamable_http_auth
 SessionManagerWrapper = tr.SessionManagerWrapper
 
 
+def _read_content(result):
+    """Return the first SDK read-resource helper content item."""
+    assert isinstance(result, list)
+    assert len(result) == 1
+    return result[0].content
+
+
 def test_truthy_is_error_recognizes_snake_and_camel_case_flags():
     """``_truthy_is_error`` must support gateway and MCP SDK result shapes."""
     assert tr._truthy_is_error(SimpleNamespace(is_error=True)) is True
     assert tr._truthy_is_error(SimpleNamespace(isError=True)) is True
     assert tr._truthy_is_error(SimpleNamespace(is_error=False, isError=False)) is False
     assert tr._truthy_is_error(SimpleNamespace(is_error=1, isError="true")) is False
+
+
+def test_streamable_server_capabilities_advertise_mcp_apps(monkeypatch):
+    """Streamable HTTP initialize capabilities include MCP Apps when enabled."""
+    monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+
+    token = user_context_var.set({"email": "admin@example.com", "is_admin": True})
+    try:
+        server = tr.ContextForgeMCPServer("test-server")
+        capabilities = server.get_capabilities(NotificationOptions(), {})
+    finally:
+        user_context_var.reset(token)
+
+    assert MCP_UI_EXTENSION in capabilities.extensions
 
 
 # ---------------------------------------------------------------------------
@@ -1121,6 +1144,98 @@ async def test_list_tools_no_server_id(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_list_tools_projects_mcp_apps_meta(monkeypatch):
+    """Streamable cache-mode tools/list should project stored MCP Apps metadata."""
+    mock_db = MagicMock()
+    mock_tool = MagicMock()
+    mock_tool.name = "open_widget"
+    mock_tool.title = "Open Widget"
+    mock_tool.description = "Open widget"
+    mock_tool.input_schema = {"type": "object"}
+    mock_tool.output_schema = None
+    mock_tool.annotations = {}
+    mock_tool.extension_metadata = {MCP_UI_EXTENSION: {"resourceUri": "ui://widgets/example", "audience": ["model"]}}
+    app_only_tool = MagicMock()
+    app_only_tool.name = "widget_helper"
+    app_only_tool.extension_metadata = {MCP_UI_EXTENSION: {"audience": ["app"]}}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "list_tools", AsyncMock(return_value=([mock_tool, app_only_tool], None)))
+
+    token = server_id_var.set(None)
+    result = await list_tools()
+    server_id_var.reset(token)
+
+    payload = result[0].model_dump(by_alias=True, exclude_none=True)
+    assert [tool.name for tool in result] == ["open_widget"]
+    assert payload["_meta"]["ui"]["resourceUri"] == "ui://widgets/example"
+
+
+@pytest.mark.asyncio
+async def test_list_tools_apps_client_includes_app_helper_by_original_name(monkeypatch):
+    """Apps-capable clients need app-only helper tools under the names the iframe calls."""
+    # Standard
+    from unittest.mock import PropertyMock
+
+    mock_db = MagicMock()
+    model_tool = SimpleNamespace(
+        name="mcp-apps-open-contact-form",
+        original_name="open_contact_form",
+        title="Open Contact Form",
+        description="Open contact form",
+        input_schema={"type": "object"},
+        output_schema=None,
+        annotations={},
+        extension_metadata={MCP_UI_EXTENSION: {"resourceUri": "ui://apps/contact-form", "visibility": ["model"]}},
+    )
+    app_tool = SimpleNamespace(
+        name="mcp-apps-submit-contact-form",
+        original_name="submit_contact_form",
+        title="Submit Contact Form",
+        description="Submit contact form",
+        input_schema={"type": "object"},
+        output_schema=None,
+        annotations={},
+        extension_metadata={MCP_UI_EXTENSION: {"resourceUri": "ui://apps/contact-form", "visibility": ["app"]}},
+    )
+
+    client_params = SimpleNamespace(
+        capabilities=SimpleNamespace(
+            extensions={
+                MCP_UI_EXTENSION: {
+                    "mimeTypes": ["text/html;profile=mcp-app"],
+                }
+            }
+        )
+    )
+    mock_ctx = SimpleNamespace(meta=None, session=SimpleNamespace(client_params=client_params))
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "list_tools", AsyncMock(return_value=([model_tool, app_tool], None)))
+
+    with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
+        token = server_id_var.set(None)
+        try:
+            result = await list_tools()
+        finally:
+            server_id_var.reset(token)
+
+    assert [tool.name for tool in result] == ["mcp-apps-open-contact-form", "submit_contact_form"]
+    payload = result[1].model_dump(by_alias=True, exclude_none=True)
+    assert payload["_meta"]["ui"]["visibility"] == ["app"]
+
+
+@pytest.mark.asyncio
 async def test_list_tools_normalizes_null_description(monkeypatch):
     """Test list_tools normalizes null tool descriptions for MCP clients."""
     # First-Party
@@ -1725,6 +1840,8 @@ async def test_read_resource_success(monkeypatch):
     mock_result = MagicMock()
     mock_result.text = "resource content here"
     mock_result.blob = None  # Explicitly set to None so text is returned
+    mock_result.mime_type = "text/html;profile=mcp-app"
+    mock_result.meta = {"ui": {"prefersBorder": True}}
 
     @asynccontextmanager
     async def fake_get_db():
@@ -1736,7 +1853,9 @@ async def test_read_resource_success(monkeypatch):
     test_uri = AnyUrl("file:///test.txt")
     result = await read_resource(test_uri)
 
-    assert result == "resource content here"
+    assert _read_content(result) == "resource content here"
+    assert result[0].mime_type == "text/html;profile=mcp-app"
+    assert result[0].meta == {"ui": {"prefersBorder": True}}
 
 
 @pytest.mark.asyncio
@@ -3820,6 +3939,57 @@ async def test_call_tool_with_request_context_no_meta(monkeypatch):
         type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
 
 
+@pytest.mark.asyncio
+async def test_call_tool_apps_client_still_requires_model_visibility(monkeypatch):
+    """Apps-capable clients must use AppBridge for app-visible helper tools."""
+    # Standard
+    from unittest.mock import PropertyMock
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, mcp_app, tool_service
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_content = MagicMock()
+    mock_content.type = "text"
+    mock_content.text = "submitted"
+    mock_content.annotations = None
+    mock_content.meta = None
+    mock_result.content = [mock_content]
+    mock_result.structured_content = None
+    mock_result.model_dump = lambda by_alias=True: {}
+    captured_kwargs = {}
+
+    async def mock_invoke(db, name, arguments, **kwargs):
+        captured_kwargs.update(kwargs)
+        return mock_result
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    client_params = SimpleNamespace(
+        capabilities=SimpleNamespace(
+            extensions={
+                MCP_UI_EXTENSION: {
+                    "mimeTypes": ["text/html;profile=mcp-app"],
+                }
+            }
+        )
+    )
+    mock_ctx = SimpleNamespace(meta=None, session=SimpleNamespace(client_params=client_params))
+
+    monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", mock_invoke)
+
+    with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
+        result = await call_tool("submit_contact_form", {"name": "Ada"})
+
+    assert isinstance(result, list)
+    assert captured_kwargs["require_model_visible"] is True
+
+
 # ---------------------------------------------------------------------------
 # call_tool: admin bypass and team scoping in call_tool (Lines 532, 534-544)
 # ---------------------------------------------------------------------------
@@ -4235,7 +4405,7 @@ async def test_read_resource_admin_bypass(monkeypatch):
     try:
         test_uri = AnyUrl("file:///admin.txt")
         result = await read_resource(test_uri)
-        assert result == "admin resource content"
+        assert _read_content(result) == "admin resource content"
         assert captured_kwargs["user"] == "admin@test.com"
         assert captured_kwargs["token_teams"] is None
     finally:
@@ -4265,7 +4435,7 @@ async def test_read_resource_returns_blob(monkeypatch):
 
     test_uri = AnyUrl("file:///binary.bin")
     result = await read_resource(test_uri)
-    assert result == b"binary content here"
+    assert _read_content(result) == b"binary content here"
 
 
 # ---------------------------------------------------------------------------
@@ -5475,7 +5645,7 @@ async def test_read_resource_non_admin_no_teams(monkeypatch):
     try:
         test_uri = AnyUrl("file:///public.txt")
         result = await read_resource(test_uri)
-        assert result == "public content"
+        assert _read_content(result) == "public content"
         assert captured_kwargs["token_teams"] == []  # public-only
     finally:
         user_context_var.reset(user_token)
@@ -5643,7 +5813,7 @@ async def test_read_resource_with_meta_from_request_context(monkeypatch):
     try:
         test_uri = AnyUrl("file:///test.txt")
         result = await read_resource(test_uri)
-        assert result == "resource content"
+        assert _read_content(result) == "resource content"
         assert captured_kwargs["meta_data"] == {"progressToken": "tok456"}
     finally:
         user_context_var.reset(user_token)
@@ -9782,6 +9952,52 @@ async def test_send_with_capture_claims_owner_for_new_session(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_send_with_capture_claims_owner_when_affinity_disabled(monkeypatch):
+    """Stateful session ownership must be captured even without multi-worker affinity."""
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            await send_func(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [(b"mcp-session-id", b"new-session-id")],
+                }
+            )
+            await send_func({"type": "http.response.body", "body": b"ok"})
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._claim_streamable_session_owner", AsyncMock(return_value="dev@example.com"))
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    send, _messages = _make_send_collector()
+    scope = _make_scope("/mcp", method="POST", headers=[])
+    token = tr.user_context_var.set(
+        {
+            "email": "dev@example.com",
+            "teams": ["team-1"],
+            "is_authenticated": True,
+            "is_admin": False,
+        }
+    )
+    try:
+        await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+    finally:
+        tr.user_context_var.reset(token)
+        await wrapper.shutdown()
+
+    tr._claim_streamable_session_owner.assert_awaited_once_with("new-session-id", "dev@example.com")
+
+
+@pytest.mark.asyncio
 async def test_send_with_capture_does_not_register_denied_client_supplied_session(monkeypatch):
     """Client-supplied session IDs must not become owned when access is denied."""
 
@@ -10426,6 +10642,40 @@ class TestProxyFunctions:
         assert len(result) == 1
         assert result[0].name == "test_tool"
         mock_session.list_tools.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_proxy_list_tools_filters_protocol_app_only_tools(self, monkeypatch):
+        """Direct-proxy tools/list should hide upstream app-only MCP Apps helpers."""
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        mock_gateway = MagicMock()
+        mock_gateway.id = "gw-123"
+        mock_gateway.url = "http://remote-gateway.example.com/mcp"
+        mock_gateway.passthrough_headers = None
+
+        model_tool = MagicMock()
+        model_tool.name = "open_widget"
+        model_tool.meta = {"ui": {"audience": ["model"]}}
+        app_tool = MagicMock()
+        app_tool.name = "widget_helper"
+        app_tool.meta = {"ui": {"audience": ["app"]}}
+        mock_result = MagicMock()
+        mock_result.tools = [model_tool, app_tool]
+
+        mock_session = AsyncMock()
+        mock_session.list_tools = AsyncMock(return_value=mock_result)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        @asynccontextmanager
+        async def mock_client(*args, **kwargs):
+            yield (None, None, lambda: "session-id")
+
+        with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
+            with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=mock_session):
+                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                    result = await tr._proxy_list_tools_to_gateway(mock_gateway, {}, {}, None)
+
+        assert [tool.name for tool in result] == ["open_widget"]
 
     @pytest.mark.asyncio
     async def test_proxy_list_tools_with_meta(self):
@@ -11297,7 +11547,7 @@ class TestDirectProxyMode:
                 with patch("mcpgateway.transports.streamablehttp_transport._proxy_read_resource_to_gateway", return_value=[mock_content]):
                     result = await tr.read_resource("file:///test.txt")
 
-        assert result == "Proxied content"
+        assert _read_content(result) == "Proxied content"
 
     @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_mode_success_blob(self):
@@ -11328,7 +11578,7 @@ class TestDirectProxyMode:
                 with patch("mcpgateway.transports.streamablehttp_transport._proxy_read_resource_to_gateway", return_value=[mock_content]):
                     result = await tr.read_resource("file:///binary.dat")
 
-        assert result == b"Binary data"
+        assert _read_content(result) == b"Binary data"
 
     @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_access_denied_returns_empty(self):
@@ -11532,7 +11782,7 @@ class TestDirectProxyMode:
                     with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_request_ctx):
                         result = await tr.read_resource("file:///meta.txt")
 
-        assert result == "Proxied content with meta"
+        assert _read_content(result) == "Proxied content with meta"
         mock_proxy.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -11558,7 +11808,7 @@ class TestDirectProxyMode:
                 mock_rs.read_resource = AsyncMock(return_value=MagicMock(blob=None, text="cached"))
                 result = await tr.read_resource("file:///test.txt")
 
-        assert result == "cached"
+        assert _read_content(result) == "cached"
 
     @pytest.mark.asyncio
     async def test_read_resource_gateway_not_found(self):
@@ -11579,7 +11829,7 @@ class TestDirectProxyMode:
                 mock_rs.read_resource = AsyncMock(return_value=MagicMock(blob=None, text="from-cache"))
                 result = await tr.read_resource("file:///test.txt")
 
-        assert result == "from-cache"
+        assert _read_content(result) == "from-cache"
 
 
 # ---------------------------------------------------------------------------
@@ -13591,7 +13841,7 @@ async def test_read_resource_oauth_enforcement_with_authenticated_context(monkey
         result = await read_resource("file:///test")
 
     mock_check.assert_called_once_with("test-server", {"email": "user@test.com", "teams": ["t1"], "is_authenticated": True, "is_admin": False})
-    assert result == "hello"
+    assert _read_content(result) == "hello"
 
     user_context_var.reset(ctx_token)
     server_id_var.reset(sid_token)

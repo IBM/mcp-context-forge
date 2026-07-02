@@ -178,6 +178,11 @@ For detailed guidance on embedding and section customization, see [Admin UI Cust
 | `MCPGATEWAY_BULK_IMPORT_MAX_TOOLS` | Maximum number of tools per bulk import request | `200` | int |
 | `MCPGATEWAY_BULK_IMPORT_RATE_LIMIT` | Rate limit for bulk import endpoint (requests per minute) | `10` | int |
 | `MCPGATEWAY_UI_TOOL_TEST_TIMEOUT` | Tool test timeout in milliseconds for the admin UI | `60000` | int |
+| `MCPGATEWAY_MCP_APPS_ENABLED` | Enable MCP Apps capability advertising and AppBridge routes | `false` | bool |
+| `MCPGATEWAY_MCP_APPS_SESSION_TTL` | AppBridge session lifetime in seconds | `900` | int, 1-86400 |
+| `MCPGATEWAY_MCP_APPS_SESSION_CLEANUP_ENABLED` | Enable automatic cleanup of expired AppBridge sessions | `true` | bool |
+| `MCPGATEWAY_MCP_APPS_SESSION_CLEANUP_INTERVAL_SECONDS` | Seconds between expired AppBridge session cleanup runs | `300` | int, 60-86400 |
+| `MCPGATEWAY_MCP_APPS_SESSION_CLEANUP_BATCH_SIZE` | Maximum expired AppBridge sessions to delete per cleanup batch | `1000` | int, 1-100000 |
 
 !!! note "Per-Request UI Hiding"
     For embedded contexts, you can also hide UI sections per-request by adding `?ui_hide=...` to the Admin UI URL.
@@ -194,6 +199,12 @@ For detailed guidance on embedding and section customization, see [Admin UI Cust
 
 !!! tip "Production Settings"
     Set both UI and Admin API to `false` to disable management UI and APIs in production.
+
+!!! note "MCP Apps"
+    MCP Apps support is disabled by default. When enabled, `ui://` resources must
+    be registered as `text/html` with explicit CSP and sandbox metadata. See
+    [MCP Apps](../architecture/mcp-apps.md) for the security model and
+    AppBridge flow.
 
 ### A2A (Agent-to-Agent) Features
 
