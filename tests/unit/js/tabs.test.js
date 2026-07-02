@@ -69,6 +69,9 @@ vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
   safeGetElement: vi.fn((id, silent) => document.getElementById(id)),
   showErrorMessage: vi.fn(),
 }));
+vi.mock("../../../mcpgateway/admin_ui/lazy-loader.js", () => ({
+  loadFeature: vi.fn(() => Promise.resolve()),
+}));
 
 // ---------------------------------------------------------------------------
 // ADMIN_ONLY_TABS
@@ -727,8 +730,7 @@ describe("showTab", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     showTab("metrics");
     vi.runAllTimers();
-
-    expect(loadAggregatedMetrics).toHaveBeenCalled();
+    await vi.waitFor(() => expect(loadAggregatedMetrics).toHaveBeenCalled());
     logSpy.mockRestore();
   });
 
@@ -749,8 +751,7 @@ describe("showTab", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     showTab("llm-chat");
     vi.runAllTimers();
-
-    expect(initializeLLMChat).toHaveBeenCalled();
+    await vi.waitFor(() => expect(initializeLLMChat).toHaveBeenCalled());
     logSpy.mockRestore();
   });
 
@@ -775,8 +776,7 @@ describe("showTab", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     showTab("logs");
     vi.runAllTimers();
-
-    expect(searchStructuredLogs).toHaveBeenCalled();
+    await vi.waitFor(() => expect(searchStructuredLogs).toHaveBeenCalled());
     logSpy.mockRestore();
   });
 

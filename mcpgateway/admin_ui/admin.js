@@ -12,6 +12,26 @@
 import htmx from 'htmx.org';
 window.htmx = htmx;
 
+// Import and expose vendor libraries globally
+import CodeMirror from 'codemirror';
+import 'codemirror/mode/javascript/javascript.js';
+import 'codemirror/lib/codemirror.css';
+import 'codemirror/theme/monokai.css';
+window.CodeMirror = CodeMirror;
+
+import { Chart, registerables } from 'chart.js';
+Chart.register(...registerables);
+window.Chart = Chart;
+
+import { marked } from 'marked';
+window.marked = marked;
+
+import DOMPurify from 'dompurify';
+window.DOMPurify = DOMPurify;
+
+// Import Font Awesome CSS
+import '@fortawesome/fontawesome-free/css/all.min.css';
+
 // Configure HTMX to use CSP nonce for inline event handlers
 // The nonce is set in the template via window.htmxConfig before this bundle loads
 if (window.htmxConfig && window.htmxConfig.inlineScriptNonce) {

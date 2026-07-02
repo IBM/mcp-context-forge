@@ -343,15 +343,6 @@ COPY --from=node-builder /build/mcpgateway/static/css/tailwind.min.css /app/mcpg
 COPY run.sh /app/
 
 # ----------------------------------------------------------------------------
-# Download CDN assets for airgapped deployment (writes into /app/mcpgateway/static/vendor/).
-# Placed here so app code changes below don't invalidate this network-bound step.
-# --chmod=0755 lets us skip a follow-up chmod layer.
-# ----------------------------------------------------------------------------
-COPY --chmod=0755 scripts/download-cdn-assets.sh /tmp/download-cdn-assets.sh
-RUN /tmp/download-cdn-assets.sh \
-    && rm /tmp/download-cdn-assets.sh
-
-# ----------------------------------------------------------------------------
 # Application files, ordered from least- to most-frequently-changing so that
 # the more volatile COPYs at the bottom don't invalidate the stable ones above.
 #   - Run/entrypoint scripts (rarely change)           [--chmod=0755 keeps +x]
