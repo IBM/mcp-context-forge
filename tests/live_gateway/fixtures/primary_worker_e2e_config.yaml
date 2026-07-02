@@ -1,0 +1,24 @@
+# tests/live_gateway/fixtures/primary_worker_e2e_config.yaml
+# Plugin config for the primary-worker e2e. Point the gateway at this file via
+# PLUGINS_CONFIG_FILE.
+
+plugin_settings:
+  parallel_execution_within_band: true
+  plugin_timeout: 120
+  fail_on_plugin_error: false
+  enable_plugin_api: true
+  plugin_health_check_interval: 120
+  include_user_info: false
+
+plugins:
+  - name: "PrimaryWorkerE2EMarker"
+    kind: "tests.live_gateway.fixtures.primary_marker.PrimaryWorkerE2EMarkerPlugin"
+    description: "E2E: non-hook plugin whose initialize() side effect is gated on is_primary_worker()"
+    version: "0.0.1"
+    author: "tests"
+    hooks: []            # non-hook plugin
+    tags: ["test", "e2e"]
+    mode: "permissive"
+    priority: 50
+    conditions: []
+    config: {}
