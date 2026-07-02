@@ -7337,6 +7337,127 @@ class TestReadResourceDirectProxy:
         assert content.blob == "base64encodeddata"
         assert content.uri == "http://example.com/dp-resource"
 
+    def _partial_patches_real_models(self, resource_service):
+        """Patches for direct_proxy tests that exercise the REAL production content
+        models (``TextResourceContents`` / ``BlobResourceContents``) instead of the
+        id-bearing test subclasses used by ``_common_patches``.
+
+        This deliberately does NOT patch the models, so the direct_proxy read path
+        runs against the true classes -- which have no ``id`` field. That is what
+        regression-guards issue #5451: content already fetched live via direct_proxy
+        must not be routed back through the post-fetch ``getattr(content, "id")``
+        resolution block.
+        """
+        # Standard
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _ctx():
+            with (
+                patch.object(resource_service, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+                patch.object(resource_service, "invoke_resource", new_callable=AsyncMock, return_value=None),
+            ):
+                yield
+
+        return _ctx()
+
+    @pytest.mark.asyncio
+    async def test_read_resource_direct_proxy_text_content_real_models(self, resource_service, mock_direct_proxy_resource):
+        """Regression (issue #5451): direct_proxy text read returns the fetched
+        content end-to-end against the real ``TextResourceContents`` model.
+
+        Before the fix the post-fetch block ran ``getattr(content, "id")`` on the
+        id-less production model, raising ``AttributeError`` and yielding empty
+        content to the client.
+        """
+        # Standard
+        from contextlib import asynccontextmanager
+
+        db = self._make_mock_db(mock_direct_proxy_resource)
+
+        first_content = MagicMock()
+        first_content.text = "hello from remote"
+        first_content.mimeType = "text/plain"
+        result_mock = MagicMock()
+        result_mock.contents = [first_content]
+
+        client_session_cm, session_mock = self._make_session_mock(result_mock)
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield ("read", "write", None)
+
+        with (
+            patch("mcpgateway.services.resource_service.settings") as mock_settings,
+            patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={"Authorization": "Bearer remote-token"}),
+            patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.resource_service.ClientSession", return_value=client_session_cm),
+            self._partial_patches_real_models(resource_service),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+            mock_settings.experimental_validate_io = False
+
+            content = await resource_service.read_resource(
+                db,
+                resource_uri="http://example.com/dp-resource",
+                user="user@example.com",
+                token_teams=["team-1"],
+            )
+            # Content fetched live via direct_proxy must NOT be re-resolved.
+            resource_service.invoke_resource.assert_not_awaited()
+
+        assert isinstance(content, _TextBase)
+        assert content.text == "hello from remote"
+        assert content.uri == "http://example.com/dp-resource"
+
+    @pytest.mark.asyncio
+    async def test_read_resource_direct_proxy_blob_content_real_models(self, resource_service, mock_direct_proxy_resource):
+        """Regression (issue #5451): direct_proxy binary read returns the fetched
+        blob against the real ``BlobResourceContents`` model (also id-less)."""
+        # Standard
+        from contextlib import asynccontextmanager
+
+        db = self._make_mock_db(mock_direct_proxy_resource)
+
+        first_content = MagicMock(spec=[])  # empty spec: only .blob is present
+        first_content.blob = "base64encodeddata"
+        first_content.mimeType = "image/png"
+        result_mock = MagicMock()
+        result_mock.contents = [first_content]
+
+        client_session_cm, session_mock = self._make_session_mock(result_mock)
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield ("read", "write", None)
+
+        with (
+            patch("mcpgateway.services.resource_service.settings") as mock_settings,
+            patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.resource_service.ClientSession", return_value=client_session_cm),
+            self._partial_patches_real_models(resource_service),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+            mock_settings.experimental_validate_io = False
+
+            content = await resource_service.read_resource(
+                db,
+                resource_uri="http://example.com/dp-resource",
+                user="user@example.com",
+                token_teams=["team-1"],
+            )
+            # Content fetched live via direct_proxy must NOT be re-resolved.
+            resource_service.invoke_resource.assert_not_awaited()
+
+        assert isinstance(content, _BlobBase)
+        assert content.blob == "base64encodeddata"
+        assert content.uri == "http://example.com/dp-resource"
+
     @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_unknown_content_type(self, resource_service, mock_direct_proxy_resource):
         """When content has neither text nor blob attribute, returns TextResourceContents with empty text."""
