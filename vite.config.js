@@ -17,6 +17,11 @@ function cleanOldBundles() {
             fs.unlinkSync(path.join(outDir, file));
             console.log(`Removed old bundle: ${file}`);
           }
+          // Remove old chunk files
+          if (file.startsWith('chunk-') && file.endsWith('.js')) {
+            fs.unlinkSync(path.join(outDir, file));
+            console.log(`Removed old chunk: ${file}`);
+          }
         }
       }
     },
@@ -39,14 +44,49 @@ export default defineConfig({
     },
     // Generate manifest for Python to read the hashed filename
     manifest: true,
-    // Use standard build mode instead of lib mode for direct script inclusion
     rollupOptions: {
       input: path.resolve(__dirname, 'mcpgateway/admin_ui/index.js'),
       output: {
         // Add content hash to filename for cache busting
         entryFileNames: 'bundle-[hash].js',
-        format: 'iife', // IIFE format for direct script inclusion
-        name: 'Admin', // Expose bundle as window.Admin
+        chunkFileNames: 'chunk-[name]-[hash].js',
+        format: 'es', // ES modules format for code splitting
+        // Manual chunks for code splitting (function-based for Vite 8/rolldown)
+        manualChunks(id) {
+          // Vendor chunks - heavy libraries
+          if (id.includes('node_modules/chart.js')) {
+            return 'vendor-charts';
+          }
+          if (id.includes('node_modules/codemirror') ||
+              id.includes('node_modules/@codemirror')) {
+            return 'vendor-editor';
+          }
+
+          // Feature chunks - lazy loaded on tab click
+          if (id.includes('mcpgateway/admin_ui/tools.js')) {
+            return 'tools';
+          }
+          if (id.includes('mcpgateway/admin_ui/servers.js')) {
+            return 'servers';
+          }
+          if (id.includes('mcpgateway/admin_ui/gateways.js')) {
+            return 'gateways';
+          }
+          if (id.includes('mcpgateway/admin_ui/teams.js')) {
+            return 'teams';
+          }
+          if (id.includes('mcpgateway/admin_ui/logging.js') ||
+              id.includes('mcpgateway/admin_ui/metrics.js')) {
+            return 'monitoring';
+          }
+          if (id.includes('mcpgateway/admin_ui/llmChat.js') ||
+              id.includes('mcpgateway/admin_ui/llmModels.js')) {
+            return 'llm';
+          }
+          if (id.includes('mcpgateway/admin_ui/plugins.js')) {
+            return 'plugins';
+          }
+        }
       },
     },
     outDir: 'mcpgateway/static',
