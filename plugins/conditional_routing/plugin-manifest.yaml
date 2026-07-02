@@ -1,0 +1,11 @@
+description: "Declarative content-based and attribute-based request routing to agents and tools."
+author: "ContextForge"
+version: "0.1.0"
+tags: ["routing", "dispatch", "agents", "gateway"]
+available_hooks:
+  - "tool_pre_invoke"
+  - "agent_pre_invoke"
+default_config:
+  default_action: "passthrough"
+  audit_routing_decisions: true
+  routing_rules: []
