@@ -1,0 +1,91 @@
+# ======================================================================
+# Notify Slack on Merge Queue Ejection
+# ======================================================================
+#
+# Fires when a PR is removed from the merge queue without being merged,
+# and sends a Slack notification to #contextforge-merge-notifications with:
+#   - PR number, title, and direct link
+#   - PR author
+#   - Ejection reason inferred from the event sender:
+#       • "manually removed by <user>"  (sender.type == User)
+#       • "auto-ejected (checks failed or base branch updated)"  (sender.type == Bot)
+#
+# Note: the merge_group event only supports the checks_requested activity
+# type as a workflow trigger; ejection is detected via pull_request: dequeued.
+#
+# Required secret (repo Settings → Secrets and variables → Actions):
+#   SLACK_MERGE_NOTIFICATION_WEBHOOK_URL — Incoming Webhook URL for #contextforge-merge-notifications
+#
+# workflow_dispatch lets you manually trigger this workflow from any branch
+# to verify the Slack integration (secret + action) works end-to-end.
+#
+# ======================================================================
+
+name: Notify Slack on Merge Queue Ejection
+
+on:
+  pull_request:
+    types: [dequeued]
+  workflow_dispatch:
+
+# Each ejection event is unique — never cancel a notification in flight.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    name: Send Slack merge queue ejection notification
+    # Safety filter: skip if the PR was somehow already merged.
+    # Always run on manual dispatch for testing.
+    if: github.event.pull_request.merged != true || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Build Slack payload
+        id: payload
+        env:
+          PR_NUMBER:    ${{ github.event.pull_request.number   || 'N/A' }}
+          PR_TITLE:     ${{ github.event.pull_request.title    || 'Manual test dispatch' }}
+          PR_URL:       ${{ github.event.pull_request.html_url || format('{0}/{1}/pulls', github.server_url, github.repository) }}
+          PR_AUTHOR:    ${{ github.event.pull_request.user.login || github.actor }}
+          BASE_REF:     ${{ github.event.pull_request.base.ref  || 'main' }}
+          SENDER_TYPE:  ${{ github.event.sender.type }}
+          SENDER_LOGIN: ${{ github.event.sender.login || github.actor }}
+        run: |
+          if [[ "$SENDER_TYPE" == "Bot" ]]; then
+            REASON_TEXT="auto-ejected (checks failed or base branch updated)"
+          elif [[ -n "$SENDER_TYPE" ]]; then
+            REASON_TEXT=$(printf 'manually removed by `%s`' "$SENDER_LOGIN")
+          else
+            REASON_TEXT="ejected (test dispatch)"
+          fi
+
+          SLACK_SUMMARY=$(printf ':warning: *PR #%s ejected from merge queue*' "$PR_NUMBER")
+          SLACK_BODY=$(printf ':warning: *PR ejected from merge queue*\n• *PR:* <%s|#%s: %s>\n• *Author:* `%s`\n• *Reason:* %s\n• *Base branch:* `%s`' \
+            "$PR_URL" "$PR_NUMBER" "$PR_TITLE" "$PR_AUTHOR" "$REASON_TEXT" "$BASE_REF")
+
+          PAYLOAD=$(jq -n \
+            --arg text "$SLACK_SUMMARY" \
+            --arg body "$SLACK_BODY" \
+            '{text: $text, blocks: [{type: "section", text: {type: "mrkdwn", text: $body}}]}')
+
+          {
+            echo "payload<<PAYLOAD_EOF"
+            echo "$PAYLOAD"
+            echo "PAYLOAD_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Send Slack notification
+        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
+        with:
+          webhook: ${{ secrets.SLACK_MERGE_NOTIFICATION_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: ${{ steps.payload.outputs.payload }}
