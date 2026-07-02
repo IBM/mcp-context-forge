@@ -19,6 +19,7 @@ on:
       - "mcpgateway/alembic/**"
       - "supply-chain/**"
       - ".github/workflows/rust.yml"
+  merge_group:
   workflow_dispatch:
 
 env:
@@ -61,14 +62,18 @@ jobs:
 
   rust-build:
     needs: ci-decision
-    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false')
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false') && (matrix.run_on_pr || github.event_name != 'pull_request')
     name: Rust build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON('["ubuntu-latest", "macos-latest"]') }}
+        include:
+          - os: ubuntu-24.04
+            run_on_pr: true
+          - os: macos-latest
+            run_on_pr: false
 
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -172,14 +177,18 @@ jobs:
 
   rust-test:
     needs: ci-decision
-    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false')
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false') && (matrix.run_on_pr || github.event_name != 'pull_request')
     name: Rust test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON('["ubuntu-latest", "macos-latest"]') }}
+        include:
+          - os: ubuntu-24.04
+            run_on_pr: true
+          - os: macos-latest
+            run_on_pr: false
 
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -244,14 +253,18 @@ jobs:
 
   build-wheels:
     needs: ci-decision
-    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false')
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false') && (matrix.run_on_pr || github.event_name != 'pull_request')
     name: Build wheels (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON('["ubuntu-latest", "macos-latest"]') }}
+        include:
+          - os: ubuntu-24.04
+            run_on_pr: true
+          - os: macos-latest
+            run_on_pr: false
 
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
