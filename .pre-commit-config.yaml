@@ -329,7 +329,12 @@ repos:
         description: Verifies test files in tests/ directories start with `test_`.
         language: python
         files: (^|/)tests/.+\.py$
-        exclude: ^tests/(.*/)?(pages|helpers|fuzzers|scripts|fixtures|migration|utils|manual|async|load|loadtest|client|populate|targets)/.*\.py$
+        exclude: |
+          (?x)^(
+            tests/(.*/)?(pages|helpers|fuzzers|scripts|fixtures|migration|utils|manual|async|load|loadtest|jmeter|client|populate|targets)/.*\.py|
+            tests/.*/_[^/]+\.py|
+            tests/.*/make_[^/]+\.py
+          )$
         args: [--pytest-test-first] # `test_.*\.py`
 
   # -----------------------------------------------------------------------------
@@ -365,8 +370,8 @@ repos:
       - id: remove-tabs
         name: 🚀 Remove Tabs
         description: Replaces tabs by whitespaces.
-        # exclude root-level Makefiles and any path ending in /Makefile or .mk or .jinja
-        exclude: '(^|/)Makefile$|(\.mk|\.jinja)$'
+        # exclude root-level Makefiles and any path ending in /Makefile, Makefile.*, .mk or .jinja
+        exclude: '(^|/)Makefile(\.[^/]*)?$|(\.mk|\.jinja)$'
 
 
   # -----------------------------------------------------------------------------

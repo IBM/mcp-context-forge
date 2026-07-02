@@ -1,0 +1,46 @@
+# ===============================================================
+# Plugin Integration Required — Skip Reporter
+# ===============================================================
+#
+# This workflow is the complement of plugin-integration.yml.
+# It runs on every PR and immediately reports success for the
+# "Plugin Integration Complete" required status check so that
+# PRs are not blocked waiting for a check that only runs when
+# plugin-related paths change or in the merge queue.
+#
+# Together with the plugin-integration-complete job in
+# plugin-integration.yml, the "Plugin Integration Complete"
+# check always reports a result:
+#   - PR (no plugin paths)  → this workflow reports success
+#   - PR (plugin paths)     → plugin-integration.yml runs the
+#                             full matrix AND this also passes
+#   - Merge queue           → plugin-integration.yml always runs
+#                             the full matrix (hard gate)
+#
+# ===============================================================
+
+name: Plugin Integration Skip Reporter
+
+on:
+    pull_request:
+        types: [opened, synchronize, ready_for_review]
+        branches: ["main"]
+        paths-ignore:
+            - "pyproject.toml"
+            - "uv.lock"
+            - "plugins/config.yaml"
+            - "plugins/sql_sanitizer/**"
+            - "tests/live_gateway/plugins/**"
+            - "mcp-servers/rust/fast-time-server/**"
+            - ".github/workflows/plugin-integration.yml"
+
+permissions:
+    contents: read
+
+jobs:
+    plugin-integration-complete:
+        name: Plugin Integration Complete
+        runs-on: ubuntu-latest
+        steps:
+            - name: Plugin integration skipped on PR — runs in merge queue
+              run: echo "Plugin integration skipped — the real check runs in the merge queue via plugin-integration.yml"

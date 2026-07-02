@@ -16,6 +16,9 @@ SHELL := /bin/bash
 # Read values from .env.make
 -include .env.make
 
+# Plugin integration test targets (self-contained: boots gateway + fast-time-server)
+-include tests/live_gateway/plugins/Makefile.plugin-integration
+
 # Rust build configuration (set to 1 to enable Rust builds, 0 to disable)
 # Default is disabled to avoid requiring Rust toolchain for standard builds
 ENABLE_RUST_BUILD ?= 0
@@ -761,6 +764,14 @@ clean:
 # help: test-mcp-session-isolation - MCP session/auth isolation tests for Rust public transport
 # help: test-e2e-sso         - E2E tests requiring a live SSO identity provider (Keycloak or Entra ID)
 # help: test-live-gateway    - Run ALL live-gateway tests (mcp + sso + protocol_compliance + e2e_rust)
+# help: test-plugin-integration - Self-contained plugin E2E tests (boots gateway; PLUGIN=<name> ENFORCEMENT=static|binding|both)
+# help: test-plugin-secrets-detection  - Plugin E2E: SecretsDetection
+# help: test-plugin-encoded-exfil      - Plugin E2E: EncodedExfil
+# help: test-plugin-url-reputation     - Plugin E2E: URLReputation (static only)
+# help: test-plugin-rate-limiter       - Plugin E2E: RateLimiter (needs Redis)
+# help: test-plugin-retry-with-backoff - Plugin E2E: RetryWithBackoff (needs Redis)
+# help: test-plugin-pii-filter         - Plugin E2E: PIIFilter
+# help: test-plugin-sql-sanitizer      - Plugin E2E: SQLSanitizer (native plugin)
 # help: test                 - Run unit tests with pytest
 # help: test-verbose         - Run tests sequentially with real-time test name output
 # help: test-profile         - Run tests and show slowest 20 tests (durations >= 1s)

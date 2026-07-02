@@ -9,8 +9,10 @@
 //! truth. The SSE shim reuses [`FastTimeServer::tool_definitions`] for
 //! `tools/list` and [`FastTimeServer::dispatch_tool`] for `tools/call`.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
 use rmcp::ErrorData as McpError;
@@ -39,6 +41,13 @@ use crate::time::{parse_time_in_timezone, parse_timezone};
 /// Total tool invocations served since startup, surfaced by `get_stats`.
 static REQUEST_COUNT: AtomicU64 = AtomicU64::new(0);
 
+/// Per-key attempt counter for the `flaky` test tool.  Keyed by the caller-
+/// supplied `key` argument so back-to-back test sequences stay isolated; the
+/// gateway re-sends identical arguments on each retry, so all attempts of one
+/// logical call share a key and increment the same counter.
+static FLAKY_STATE: LazyLock<Mutex<HashMap<String, u64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub(crate) struct EchoParams {
     #[schemars(description = "Message to echo back")]
@@ -66,6 +75,17 @@ pub(crate) struct ConvertTimeParams {
     source_timezone: String,
     #[schemars(description = "Target IANA timezone")]
     target_timezone: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub(crate) struct FlakyParams {
+    #[schemars(description = "Unique key to track attempt count across retries")]
+    key: String,
+    #[serde(default)]
+    #[schemars(
+        description = "Number of times to return isError=true before succeeding (default 0)"
+    )]
+    fail_times: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -170,6 +190,33 @@ impl FastTimeServer {
     }
 
     #[tool(
+        description = "Return isError=true for the first fail_times calls per key, then succeed (retry testing)."
+    )]
+    async fn flaky(
+        &self,
+        Parameters(params): Parameters<FlakyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let fail_times = params.fail_times.unwrap_or(0);
+        REQUEST_COUNT.fetch_add(1, Ordering::Relaxed);
+        let mut state = FLAKY_STATE.lock().unwrap();
+        let attempt = {
+            let counter = state.entry(params.key.clone()).or_insert(0);
+            *counter += 1;
+            *counter
+        };
+        if attempt <= fail_times {
+            Ok(CallToolResult::error(vec![Content::text(format!(
+                "flaky transient failure (attempt {attempt}/{fail_times})",
+            ))]))
+        } else {
+            state.remove(&params.key);
+            Ok(CallToolResult::success(vec![Content::text(format!(
+                "flaky recovered after {attempt} attempt(s)",
+            ))]))
+        }
+    }
+
+    #[tool(
         description = "Always returns isError=true.",
         output_schema = fixture_output_schema()
     )]
@@ -224,6 +271,7 @@ impl FastTimeServer {
                 self.convert_time(Parameters(parse_params(arguments)?))
                     .await
             }
+            "flaky" => self.flaky(Parameters(parse_params(arguments)?)).await,
             "schema_error" => self.schema_error().await,
             "schema_success" => self.schema_success().await,
             "get_stats" => self.get_stats().await,
@@ -415,6 +463,7 @@ mod tests {
             .collect();
         for expected in [
             "echo",
+            "flaky",
             "get_system_time",
             "convert_time",
             "schema_error",
@@ -423,6 +472,34 @@ mod tests {
         ] {
             assert!(names.contains(&expected.to_string()), "missing {expected}");
         }
+    }
+
+    #[tokio::test]
+    async fn test_flaky_fails_then_succeeds() {
+        let server = FastTimeServer::new();
+        let key = format!("test-flaky-{}", uuid::Uuid::new_v4());
+        // First two calls should be errors
+        for attempt in 1..=2u64 {
+            let result = server
+                .dispatch_tool("flaky", &json!({ "key": key, "fail_times": 2 }))
+                .await
+                .expect("flaky tool should not return a protocol error");
+            let body = result_json(result);
+            assert_eq!(body["isError"], true, "attempt {attempt} should be isError");
+        }
+        // Third call should succeed
+        let result = server
+            .dispatch_tool("flaky", &json!({ "key": key, "fail_times": 2 }))
+            .await
+            .expect("flaky tool should not return a protocol error");
+        let body = result_json(result);
+        assert_eq!(body["isError"], false, "third attempt should succeed");
+        assert!(
+            body["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("flaky recovered after 3 attempt(s)"),
+        );
     }
 
     #[tokio::test]
