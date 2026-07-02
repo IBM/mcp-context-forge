@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TeamsTable } from "@/components/teams/TeamsTable";
+import { TeamForm } from "@/components/teams/TeamForm";
 import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
 import { useQuery } from "@/hooks/useQuery";
 import { api } from "@/api/client";
@@ -11,7 +12,6 @@ import { deleteTeam } from "@/api/teams";
 import type { Team, TeamsResponse } from "@/types/team";
 import { sanitizeError } from "@/utils/errors";
 
-// Pagination constants
 const DEFAULT_PAGE_SIZE = 10;
 
 export function Teams() {
@@ -22,15 +22,14 @@ export function Teams() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [teamToDelete, setTeamToDelete] = useState<Team | null>(null);
+  const [createFormOpen, setCreateFormOpen] = useState(false);
 
-  // Keep the primary list in sync with the selected page size
   const queryPath = useMemo(() => {
     const params = new URLSearchParams();
     params.set("limit", limit.toString());
     return `/teams?${params.toString()}`;
   }, [limit]);
 
-  // Use useQuery hook for initial data fetching and limit changes
   const {
     data: response,
     error: queryError,
@@ -45,9 +44,6 @@ export function Teams() {
     }
   }, [response]);
 
-  const teams = allTeams;
-
-  // Convert query error to string for display
   const error = queryError ? queryError.message : null;
 
   const handleLoadMore = useCallback(async () => {
@@ -90,7 +86,6 @@ export function Teams() {
     const idToDelete = teamToDelete.id;
     const nameToDelete = teamToDelete.name;
 
-    // Optimistic update: snapshot current list, remove immediately, close dialog
     const previousTeams = allTeams;
     setAllTeams(allTeams.filter((t) => t.id !== idToDelete));
     setDeleteDialogOpen(false);
@@ -101,13 +96,11 @@ export function Teams() {
       toast.success(intl.formatMessage({ id: "teams.delete.success" }, { name: nameToDelete }));
 
       try {
-        // Refetch to resync the list with the server
         await refetch();
       } catch (refreshErr) {
         console.error("Failed to refresh teams after deletion:", sanitizeError(refreshErr));
       }
     } catch (err) {
-      // Rollback: restore the list as it was before the optimistic removal
       setAllTeams(previousTeams);
 
       const errorMessage = sanitizeError(err);
@@ -118,9 +111,24 @@ export function Teams() {
     }
   }, [allTeams, teamToDelete, intl, refetch]);
 
+  const handleCreateSuccess = useCallback(async () => {
+    toast.success(intl.formatMessage({ id: "teams.create.success" }));
+    try {
+      await refetch();
+    } catch (refreshErr) {
+      console.error("Failed to refresh teams after creation:", sanitizeError(refreshErr));
+    }
+  }, [intl, refetch]);
+
   return (
     <div className="p-6">
-      {isLoading ? (
+      {createFormOpen ? (
+        <TeamForm
+          isOpen={createFormOpen}
+          onToggle={() => setCreateFormOpen(false)}
+          onSuccess={handleCreateSuccess}
+        />
+      ) : isLoading ? (
         <div
           role="status"
           aria-live="polite"
@@ -134,19 +142,19 @@ export function Teams() {
         <>
           {error && (
             <div
-              className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 mb-6"
+              className="mb-6 rounded-lg border border-destructive/20 bg-destructive/10 p-4"
               role="alert"
               aria-live="assertive"
               aria-atomic="true"
             >
-              <h3 className="font-semibold mb-1">
+              <h3 className="mb-1 font-semibold">
                 {intl.formatMessage({ id: "teams.error.loading" })}
               </h3>
-              <p className="text-red-800 dark:text-red-200">{error}</p>
+              <p className="text-destructive">{error}</p>
             </div>
           )}
 
-          {teams.length > 0 ? (
+          {allTeams.length > 0 ? (
             <>
               <div className="flex justify-between items-center mb-6">
                 <h1 className="text-base font-semibold text-foreground">
@@ -155,21 +163,19 @@ export function Teams() {
                 <Button
                   variant="default"
                   className="h-7 rounded-sm px-4"
-                  onClick={() => {
-                    // TODO: Open create team form
-                  }}
+                  onClick={() => setCreateFormOpen(true)}
                 >
                   <Plus className="h-4 w-4" />
                   {intl.formatMessage({ id: "teams.createTeam" })}
                 </Button>
               </div>
 
-              <TeamsTable teams={teams} isLoading={isLoading} onDelete={handleDelete} />
+              <TeamsTable teams={allTeams} isLoading={false} onDelete={handleDelete} />
 
               <div className="flex items-center justify-between mt-6">
                 <div className="flex items-center gap-4">
                   <div className="text-sm text-gray-600 dark:text-gray-400">
-                    {intl.formatMessage({ id: "teams.showing" }, { count: teams.length })}
+                    {intl.formatMessage({ id: "teams.showing" }, { count: allTeams.length })}
                   </div>
                   <div className="flex items-center gap-2">
                     <label
@@ -218,9 +224,7 @@ export function Teams() {
               </div>
               <Button
                 className="bg-foreground text-background hover:bg-foreground/90 h-8 w-38 rounded-sm px-2 gap-1.5 text-sm font-medium"
-                onClick={() => {
-                  // TODO: Open create team form
-                }}
+                onClick={() => setCreateFormOpen(true)}
               >
                 <Plus className="size-3" />
                 {intl.formatMessage({ id: "teams.createTeam" })}
