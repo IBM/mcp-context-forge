@@ -10,6 +10,7 @@ import teams from "./teams.json";
 import tools from "./tools.json";
 import resources from "./resources.json";
 import mcpServer from "./mcpServer.json";
+import prompts from "./prompts.json";
 
 export default {
   ...common,
@@ -24,4 +25,5 @@ export default {
   ...tools,
   ...resources,
   ...mcpServer,
+  ...prompts,
 };
