@@ -290,11 +290,8 @@ async def test_handle_sso_callback_success_sets_cookie(monkeypatch: pytest.Monke
 
     # Create a valid JWT token with admin status
     import jwt
-    admin_token = jwt.encode(
-        {"user": {"email": "admin@example.com", "is_admin": True}, "email": "admin@example.com"},
-        "secret",
-        algorithm="HS256"
-    )
+
+    admin_token = jwt.encode({"user": {"email": "admin@example.com", "is_admin": True}, "email": "admin@example.com"}, "secret", algorithm="HS256")
 
     class DummyService:
         def __init__(self, _db):
@@ -321,7 +318,7 @@ async def test_handle_sso_callback_success_sets_cookie(monkeypatch: pytest.Monke
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 302
-    assert response.headers.get("location", "").endswith("/admin")
+    assert response.headers.get("location", "") == "/admin/"
     assert set_cookie.called
 
 
@@ -336,11 +333,8 @@ async def test_handle_sso_callback_keycloak_sets_id_token_hint_cookie(monkeypatc
 
     # Create a valid JWT token with admin status
     import jwt
-    admin_token = jwt.encode(
-        {"user": {"email": "admin@example.com", "is_admin": True}, "email": "admin@example.com"},
-        "secret",
-        algorithm="HS256"
-    )
+
+    admin_token = jwt.encode({"user": {"email": "admin@example.com", "is_admin": True}, "email": "admin@example.com"}, "secret", algorithm="HS256")
 
     class DummyService:
         def __init__(self, _db):
@@ -367,7 +361,7 @@ async def test_handle_sso_callback_keycloak_sets_id_token_hint_cookie(monkeypatc
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 302
-    assert response.headers.get("location", "").endswith("/admin")
+    assert response.headers.get("location", "") == "/admin/"
     assert "sso_id_token_hint=id-token-hint" in response.headers.get("set-cookie", "")
     assert set_cookie.called
 
@@ -383,11 +377,8 @@ async def test_handle_sso_callback_keycloak_oversized_id_token_skips_hint_cookie
 
     # Create a valid JWT token with admin status
     import jwt
-    admin_token = jwt.encode(
-        {"user": {"email": "admin@example.com", "is_admin": True}, "email": "admin@example.com"},
-        "secret",
-        algorithm="HS256"
-    )
+
+    admin_token = jwt.encode({"user": {"email": "admin@example.com", "is_admin": True}, "email": "admin@example.com"}, "secret", algorithm="HS256")
 
     class DummyService:
         def __init__(self, _db):
@@ -415,10 +406,11 @@ async def test_handle_sso_callback_keycloak_oversized_id_token_skips_hint_cookie
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 302
-    assert response.headers.get("location", "").endswith("/admin")
+    assert response.headers.get("location", "") == "/admin/"
     assert "sso_id_token_hint=" not in response.headers.get("set-cookie", "")
     assert "id_token too large for cookie storage" in caplog.text
     assert set_cookie.called
+
 
 @pytest.mark.asyncio
 async def test_handle_sso_callback_non_admin_with_team_redirects_to_team(monkeypatch: pytest.MonkeyPatch):
@@ -427,11 +419,8 @@ async def test_handle_sso_callback_non_admin_with_team_redirects_to_team(monkeyp
 
     # Create a valid JWT token for non-admin user
     import jwt
-    non_admin_token = jwt.encode(
-        {"user": {"email": "user@example.com", "is_admin": False}, "email": "user@example.com"},
-        "secret",
-        algorithm="HS256"
-    )
+
+    non_admin_token = jwt.encode({"user": {"email": "user@example.com", "is_admin": False}, "email": "user@example.com"}, "secret", algorithm="HS256")
 
     class DummyService:
         def __init__(self, _db):
@@ -471,7 +460,7 @@ async def test_handle_sso_callback_non_admin_with_team_redirects_to_team(monkeyp
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 302
-    assert response.headers.get("location", "") == "/admin?team_id=team-123"
+    assert response.headers.get("location", "") == "/admin/?team_id=team-123"
     assert set_cookie.called
 
 
@@ -486,11 +475,8 @@ async def test_handle_sso_callback_non_admin_no_teams_redirects_to_admin_gateway
 
     # Create a valid JWT token for non-admin user
     import jwt
-    non_admin_token = jwt.encode(
-        {"user": {"email": "user@example.com", "is_admin": False}, "email": "user@example.com"},
-        "secret",
-        algorithm="HS256"
-    )
+
+    non_admin_token = jwt.encode({"user": {"email": "user@example.com", "is_admin": False}, "email": "user@example.com"}, "secret", algorithm="HS256")
 
     class DummyService:
         def __init__(self, _db):
@@ -533,16 +519,13 @@ async def test_handle_sso_callback_non_admin_no_teams_redirects_to_admin_gateway
 
 @pytest.mark.asyncio
 async def test_handle_sso_callback_team_service_error_falls_back_to_admin(monkeypatch: pytest.MonkeyPatch):
-    """Test that team service errors fall back to /admin redirect."""
+    """Test that team service errors fall back to /admin/ redirect."""
     monkeypatch.setattr(sso_router.settings, "sso_enabled", True)
 
     # Create a valid JWT token for non-admin user
     import jwt
-    non_admin_token = jwt.encode(
-        {"user": {"email": "user@example.com", "is_admin": False}, "email": "user@example.com"},
-        "secret",
-        algorithm="HS256"
-    )
+
+    non_admin_token = jwt.encode({"user": {"email": "user@example.com", "is_admin": False}, "email": "user@example.com"}, "secret", algorithm="HS256")
 
     class DummyService:
         def __init__(self, _db):
@@ -579,8 +562,9 @@ async def test_handle_sso_callback_team_service_error_falls_back_to_admin(monkey
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 302
-    assert response.headers.get("location", "") == "/admin"
+    assert response.headers.get("location", "") == "/admin/"
     assert set_cookie.called
+
 
 @pytest.mark.asyncio
 async def test_handle_sso_callback_invalid_jwt_falls_back_to_user_info(monkeypatch: pytest.MonkeyPatch):
@@ -632,8 +616,6 @@ async def test_handle_sso_callback_invalid_jwt_falls_back_to_user_info(monkeypat
     # Should redirect to admin gateways view since user has no teams and is not admin
     assert response.headers.get("location", "") == "/admin/#gateways"
     assert set_cookie.called
-
-
 
 
 @pytest.mark.asyncio

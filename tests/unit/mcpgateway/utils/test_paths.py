@@ -15,6 +15,7 @@ that lacked the ``settings.app_root_path`` fallback.
 from __future__ import annotations
 
 # Standard
+from typing import cast
 from unittest.mock import MagicMock
 
 # Third-Party
@@ -107,6 +108,13 @@ def test_empty_scope_and_none_settings_returns_empty_string(monkeypatch: pytest.
     assert resolve_root_path(req) == ""
 
 
+def test_empty_scope_and_non_string_settings_returns_empty_string(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When settings.app_root_path is not a string, an empty string is returned."""
+    monkeypatch.setattr("mcpgateway.utils.paths.settings", MagicMock(app_root_path=MagicMock()))
+    req = _make_request("")
+    assert resolve_root_path(req) == ""
+
+
 # ---------------------------------------------------------------------------
 # Explicit fallback parameter overrides settings
 # ---------------------------------------------------------------------------
@@ -122,6 +130,12 @@ def test_explicit_fallback_empty_string_returns_empty() -> None:
     """An explicit empty-string fallback returns empty string."""
     req = _make_request("")
     assert resolve_root_path(req, fallback="") == ""
+
+
+def test_non_string_explicit_fallback_returns_empty() -> None:
+    """A non-string explicit fallback is ignored."""
+    req = _make_request("")
+    assert resolve_root_path(req, fallback=cast(str, MagicMock())) == ""
 
 
 def test_explicit_fallback_not_used_when_scope_has_value() -> None:

@@ -22,6 +22,7 @@ from starlette.responses import Response
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.utils.paths import resolve_root_path
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -382,7 +383,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         # Determine the route-only path (strip root_path for path matching)
         path = request.url.path
-        root_path = request.scope.get("root_path", "")
+        settings_root_path = getattr(settings, "app_root_path", None)
+        root_path = resolve_root_path(request, fallback=settings_root_path if isinstance(settings_root_path, str) else None)
         if root_path and path.startswith(root_path):
             path = path[len(root_path) :]
 
@@ -482,7 +484,6 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Hardened Cache Control for Protected Endpoints
         # Implements defense-in-depth caching policies
         path = request.url.path
-        root_path = request.scope.get("root_path", "")
         if root_path and path.startswith(root_path):
             path = path[len(root_path) :]
 

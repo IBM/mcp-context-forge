@@ -63,7 +63,8 @@ def resolve_root_path(request: Request, *, fallback: str | None = None) -> str:
     Args:
         request: Incoming ASGI request whose scope is inspected. Should not be none.
         fallback: Optional explicit fallback string.  When *None* (default)
-            ``settings.app_root_path`` is used as the fallback.
+            ``settings.app_root_path`` is used as the fallback.  Non-string
+            fallback values are ignored.
 
     Returns:
         Normalised root path (leading ``/``, no trailing ``/``), or an empty
@@ -88,7 +89,14 @@ def resolve_root_path(request: Request, *, fallback: str | None = None) -> str:
         raw = ""
     root_path = (raw if isinstance(raw, str) else "").strip()
     if not root_path:
-        root_path = (fallback if fallback is not None else (settings.app_root_path or "")).strip()
+        fallback_value = fallback if fallback is not None else settings.app_root_path
+        if fallback_value is None:
+            root_path = ""
+        elif isinstance(fallback_value, str):
+            root_path = fallback_value.strip()
+        else:
+            logger.warning("Non-string root_path fallback (type=%s), ignoring", type(fallback_value).__name__)
+            root_path = ""
     if root_path:
         root_path = _validate_root_path(root_path)
     if root_path:

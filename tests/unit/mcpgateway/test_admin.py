@@ -1183,7 +1183,7 @@ class TestAdminServerRoutes:
         mock_set_state.assert_called_once_with(mock_db, "server-1", True, user_email="test-user")
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
-        assert result.headers["location"] == "/admin#catalog"
+        assert result.headers["location"] == "/admin/#catalog"
 
     @patch.object(ServerService, "set_server_state")
     async def test_admin_set_server_state_deactivate(self, mock_set_state, mock_request, mock_db):
@@ -1197,7 +1197,7 @@ class TestAdminServerRoutes:
         mock_set_state.assert_called_once_with(mock_db, "server-1", False, user_email="test-user")
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
-        assert result.headers["location"] == "/admin#catalog"
+        assert result.headers["location"] == "/admin/#catalog"
 
     @patch.object(ServerService, "set_server_state")
     async def test_admin_set_server_state_with_inactive_checked(self, mock_set_state, mock_request, mock_db):
@@ -1292,7 +1292,7 @@ class TestAdminServerRoutes:
         response = await admin_delete_server("server-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(response, RedirectResponse)
         assert response.status_code == 303
-        assert response.headers["location"] == "/admin#catalog"
+        assert response.headers["location"] == "/admin/#catalog"
         mock_delete_server.assert_called_once()
 
     @patch.object(ServerService, "delete_server")
@@ -1317,7 +1317,7 @@ class TestAdminServerRoutes:
         response = await admin_delete_server("server-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(response, RedirectResponse)
         assert "team_id" not in response.headers["location"]
-        assert response.headers["location"] == "/admin#catalog"
+        assert response.headers["location"] == "/admin/#catalog"
 
     @patch.object(ServerService, "delete_server")
     async def test_admin_delete_server_error_handlers(self, mock_delete_server, mock_request, mock_db):
@@ -3669,7 +3669,7 @@ class TestAdminRootRoutes:
         response = await admin_delete_root("/test/root", mock_request, user={"email": "test-user", "db": mock_db})
         assert isinstance(response, RedirectResponse)
         assert response.status_code == 303
-        assert response.headers["location"] == "/root/admin#roots"
+        assert response.headers["location"] == "/root/admin/#roots"
 
     @patch("mcpgateway.admin.root_service.remove_root", new_callable=AsyncMock)
     async def test_admin_delete_root_preserves_team_id(self, mock_remove_root, mock_request, mock_db):
@@ -5809,7 +5809,7 @@ class TestA2AAgentManagement:
         result = await admin_set_a2a_agent_state("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
-        assert result.headers["location"] == "/root/admin#a2a-agents"
+        assert result.headers["location"] == "/root/admin/#a2a-agents"
 
     @patch.object(A2AAgentService, "delete_agent")
     async def test_admin_delete_a2a_agent_success(self, mock_delete_agent, mock_request, mock_db):
@@ -5885,7 +5885,7 @@ class TestA2AAgentManagement:
         result = await admin_delete_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
-        assert result.headers["location"] == "/admin#a2a-agents"
+        assert result.headers["location"] == "/admin/#a2a-agents"
 
     @patch.object(A2AAgentService, "get_agent")
     @patch.object(A2AAgentService, "invoke_agent")
@@ -15477,7 +15477,7 @@ async def test_change_password_required_handler_success(monkeypatch, mock_db):
 
     response = await change_password_required_handler(request, db=mock_db)
     assert isinstance(response, RedirectResponse)
-    assert response.headers["location"].endswith("/root/admin")
+    assert response.headers["location"].endswith("/root/admin/")
 
 
 @pytest.mark.asyncio
@@ -15487,7 +15487,7 @@ async def test_change_password_required_handler_email_auth_disabled(monkeypatch,
     request.scope = {"root_path": "/root"}
     response = await change_password_required_handler(request, db=mock_db)
     assert isinstance(response, RedirectResponse)
-    assert response.headers["location"].endswith("/root/admin")
+    assert response.headers["location"].endswith("/root/admin/")
 
 
 @pytest.mark.asyncio
@@ -16511,7 +16511,7 @@ async def test_admin_delete_tool_success(mock_delete, mock_db):
 
     response = await admin_delete_tool("550e8400e29b41d4a7164466554400b1", request, mock_db, user={"email": "user@example.com"})  # pragma: allowlist secret
     assert response.status_code == 303
-    assert response.headers["location"] == "/root/admin#tools"
+    assert response.headers["location"] == "/root/admin/#tools"
     mock_delete.assert_called_once_with(mock_db, "550e8400e29b41d4a7164466554400b1", user_email="user@example.com", purge_metrics=True)  # pragma: allowlist secret
 
 
@@ -16567,7 +16567,7 @@ async def test_admin_delete_gateway_success(mock_delete, mock_db):
 
     response = await admin_delete_gateway("gateway-1", request, mock_db, user={"email": "user@example.com"})
     assert response.status_code == 303
-    assert response.headers["location"] == "/root/admin#gateways"
+    assert response.headers["location"] == "/root/admin/#gateways"
     mock_delete.assert_called_once_with(mock_db, "gateway-1", user_email="user@example.com")
 
 
@@ -16667,7 +16667,7 @@ async def test_admin_delete_resource_success_inactive_unchecked_redirect(mock_de
 
     response = await admin_delete_resource("550e8400e29b41d4a7164466554400c1", request, mock_db, user={"email": "user@example.com"})  # pragma: allowlist secret
     assert response.status_code == 303
-    assert response.headers["location"] == "/root/admin#resources"
+    assert response.headers["location"] == "/root/admin/#resources"
     mock_delete.assert_called_once_with(mock_db, "550e8400e29b41d4a7164466554400c1", user_email="user@example.com", purge_metrics=False)  # pragma: allowlist secret
 
 
@@ -16717,7 +16717,7 @@ async def test_admin_delete_prompt_success(mock_delete, mock_db):
 
     response = await admin_delete_prompt("550e8400e29b41d4a7164466554400d1", request, mock_db, user={"email": "user@example.com"})  # pragma: allowlist secret
     assert response.status_code == 303
-    assert response.headers["location"] == "/root/admin#prompts"
+    assert response.headers["location"] == "/root/admin/#prompts"
     mock_delete.assert_called_once_with(mock_db, "550e8400e29b41d4a7164466554400d1", user_email="user@example.com", purge_metrics=False)  # pragma: allowlist secret
 
 
@@ -18134,10 +18134,10 @@ class TestUtilityFunctions:
         assert exc_info.value.status_code == 400
 
     def test_build_admin_redirect_no_params(self):
-        assert _build_admin_redirect("", "catalog") == "/admin#catalog"
+        assert _build_admin_redirect("", "catalog") == "/admin/#catalog"
 
     def test_build_admin_redirect_with_root_path(self):
-        assert _build_admin_redirect("/root", "tools") == "/root/admin#tools"
+        assert _build_admin_redirect("/root", "tools") == "/root/admin/#tools"
 
     def test_build_admin_redirect_error_only(self):
         result = _build_admin_redirect("", "catalog", error="Error msg")
@@ -18185,11 +18185,11 @@ class TestUtilityFunctions:
 
     def test_build_admin_redirect_with_invalid_team_id(self):
         result = _build_admin_redirect("", "tools", team_id="invalid-uuid")
-        assert result == "/admin#tools"
+        assert result == "/admin/#tools"
 
     def test_build_admin_redirect_with_empty_team_id(self):
         result = _build_admin_redirect("", "tools", team_id="")
-        assert result == "/admin#tools"
+        assert result == "/admin/#tools"
 
     def test_build_admin_redirect_with_valid_team_id(self):
         uid = "12345678-1234-5678-1234-567812345678"
@@ -18395,7 +18395,7 @@ class TestAuthLogin:
         # Should redirect to admin dashboard, not show login page
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
-        assert result.headers["location"] == "/app/admin"
+        assert result.headers["location"] == "/app/admin/"
 
     @pytest.mark.asyncio
     async def test_admin_login_page_shows_form_for_invalid_token(self, monkeypatch):
@@ -18502,7 +18502,7 @@ class TestAuthLogin:
         # Should redirect to admin dashboard
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
-        assert result.headers["location"] == "/app/admin"
+        assert result.headers["location"] == "/app/admin/"
 
     @pytest.mark.asyncio
     async def test_admin_login_page_access_token_cookie_invalid_shows_form(self, monkeypatch):
@@ -18559,7 +18559,7 @@ class TestAuthLogin:
 
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
-        assert result.headers["location"] == "/app/admin"
+        assert result.headers["location"] == "/app/admin/"
 
     @pytest.mark.asyncio
     async def test_admin_login_page_non_admin_without_rbac_admin_shows_form(self, monkeypatch):
@@ -18863,7 +18863,7 @@ class TestAuthLogin:
         result = await admin_login_handler(request, mock_db)
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
-        assert result.headers["location"].endswith("/admin")
+        assert result.headers["location"].endswith("/admin/")
 
     @pytest.mark.asyncio
     async def test_admin_login_handler_auth_failure(self, monkeypatch, mock_db):
