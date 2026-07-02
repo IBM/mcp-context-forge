@@ -213,4 +213,130 @@ test.describe("Resources page", () => {
     const cards = page.locator('[data-slot="card"]');
     await expect(cards).toHaveCount(3);
   });
+
+  test.describe("Delete resource", () => {
+    test("cancel in confirm dialog keeps resource visible", async ({ page }) => {
+      await page.route("**/resources?*", async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([MOCK_RESOURCE]),
+        });
+      });
+
+      await page.goto(APP.RESOURCES);
+      await page.waitForLoadState("networkidle");
+
+      await expect(page.getByText("Test Document")).toBeVisible();
+
+      // Open card dropdown
+      await page.getByLabel("More options for Test Document").click();
+      await page.getByText("Delete").click();
+
+      // Confirm dialog should appear
+      await expect(page.getByText("Delete resource")).toBeVisible();
+      await expect(page.getByText(/Are you sure you want to delete "Test Document"/)).toBeVisible();
+
+      // Cancel
+      await page.getByRole("button", { name: "Cancel" }).click();
+
+      // Resource should still be visible
+      await expect(page.getByText("Test Document")).toBeVisible();
+    });
+
+    test("confirming delete removes resource from grid", async ({ page }) => {
+      await page.route("**/resources?*", async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([MOCK_RESOURCE]),
+        });
+      });
+
+      await page.route("**/resources/res-123abc456def789", async (route) => {
+        await route.fulfill({ status: 204 });
+      });
+
+      await page.goto(APP.RESOURCES);
+      await page.waitForLoadState("networkidle");
+
+      await expect(page.getByText("Test Document")).toBeVisible();
+
+      await page.getByLabel("More options for Test Document").click();
+      await page.getByText("Delete").click();
+
+      await expect(page.getByText("Delete resource")).toBeVisible();
+      await page.getByRole("button", { name: /^delete$/i }).click();
+
+      // Resource should disappear from grid
+      await expect(page.getByText("Test Document")).not.toBeVisible();
+    });
+
+    test("resource disappears immediately before DELETE responds (optimistic)", async ({
+      page,
+    }) => {
+      let resolveDelete!: () => void;
+
+      await page.route("**/resources?*", async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([MOCK_RESOURCE]),
+        });
+      });
+
+      await page.route("**/resources/res-123abc456def789", async (route) => {
+        await new Promise<void>((res) => {
+          resolveDelete = res;
+        });
+        await route.fulfill({ status: 204 });
+      });
+
+      await page.goto(APP.RESOURCES);
+      await page.waitForLoadState("networkidle");
+
+      await expect(page.getByText("Test Document")).toBeVisible();
+
+      await page.getByLabel("More options for Test Document").click();
+      await page.getByText("Delete").click();
+      await expect(page.getByText("Delete resource")).toBeVisible();
+      await page.getByRole("button", { name: /^delete$/i }).click();
+
+      // Should disappear immediately (optimistic), before API resolves
+      await expect(page.getByText("Test Document")).not.toBeVisible();
+
+      resolveDelete();
+    });
+
+    test("resource reappears when DELETE API returns error (rollback)", async ({ page }) => {
+      await page.route("**/resources?*", async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([MOCK_RESOURCE]),
+        });
+      });
+
+      await page.route("**/resources/res-123abc456def789", async (route) => {
+        await route.fulfill({
+          status: 409,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "Cannot delete: resource in use" }),
+        });
+      });
+
+      await page.goto(APP.RESOURCES);
+      await page.waitForLoadState("networkidle");
+
+      await expect(page.getByText("Test Document")).toBeVisible();
+
+      await page.getByLabel("More options for Test Document").click();
+      await page.getByText("Delete").click();
+      await expect(page.getByText("Delete resource")).toBeVisible();
+      await page.getByRole("button", { name: /^delete$/i }).click();
+
+      // After rollback resource should reappear
+      await expect(page.getByText("Test Document")).toBeVisible();
+    });
+  });
 });
