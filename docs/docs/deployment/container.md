@@ -66,7 +66,7 @@ make podman
 ### Using Docker (manual alternative)
 
 ```bash
-docker build -t mcpgateway:latest -f Containerfile.lite .
+docker build -t mcpgateway:latest -f Containerfile .
 ```
 
 > The container images are based on Red Hat UBI 10 with Python 3.12 and run Gunicorn with Uvicorn workers.
@@ -115,10 +115,10 @@ For environments without internet access, you can build a container with all UI 
 
 ### Build Airgapped Container
 
-Use `Containerfile.lite` which automatically downloads CDN assets during build:
+Use `Containerfile` which automatically downloads CDN assets during build:
 
 ```bash
-docker build -f Containerfile.lite -t mcpgateway:airgapped .
+docker build -f Containerfile -t mcpgateway:airgapped .
 ```
 
 This downloads and bundles:

@@ -17,7 +17,7 @@ Fly.io is a global app platform for running containers close to your users, with
 | Fly.io account | [Sign up](https://fly.io) |
 | Fly CLI | Install via Homebrew: `brew install flyctl` or see Fly docs |
 | Docker **or** Podman | For local image builds (optional) |
-| Containerfile.lite | The included multi-stage image; `[postgres]` extra bundles `psycopg[c,binary]>=3.3.3` |
+| Containerfile | The included multi-stage image; `[postgres]` extra bundles `psycopg[c,binary]>=3.3.3` |
 
 ---
 
@@ -60,7 +60,7 @@ fly deploy
 
 ## 3 - Containerfile Requirements
 
-`Containerfile.lite` already installs PostgreSQL support via the `[postgres]`
+`Containerfile` already installs PostgreSQL support via the `[postgres]`
 extra in `pyproject.toml`, which pins `psycopg[c,binary]>=3.3.3`. No extra
 dockerfile edits are needed to run against Postgres.
 
@@ -84,7 +84,7 @@ app = "your-app-name"
 primary_region = "yyz"
 
 [build]
-dockerfile = "Containerfile.lite"
+dockerfile = "Containerfile"
 
 [env]
 HOST = "0.0.0.0"
@@ -151,7 +151,7 @@ sqlalchemy.exc.NoSuchModuleError: Can't load plugin: sqlalchemy.dialects:postgre
 
 **Solutions:**
 
-1. Ensure the install command in your dockerfile includes the `[postgres]` extra (the default `Containerfile.lite` does this already)
+1. Ensure the install command in your dockerfile includes the `[postgres]` extra (the default `Containerfile` does this already)
 2. Use `postgresql+psycopg://` (not `postgresql://` or `postgres://`) in DATABASE_URL
 3. Rebuild with `fly deploy --no-cache`
 
