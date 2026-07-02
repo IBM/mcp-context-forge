@@ -306,8 +306,8 @@ class TestOAuthProtectedResourceMetadata:
         assert response.status_code == 404
         assert "OAuth not enabled" in response.json()["detail"]
 
-    async def test_private_server_returns_404(self, client: AsyncClient):
-        """Scenario 4: Server with visibility="private" (non-public) returns 404."""
+    async def test_private_server_with_oauth_enabled_returns_metadata(self, client: AsyncClient):
+        """Scenario 4: OAuth-enabled private servers expose only RFC 9728 metadata."""
         server_id = await self._create_server(
             client,
             {
@@ -318,6 +318,8 @@ class TestOAuthProtectedResourceMetadata:
                     "oauth_enabled": True,
                     "oauth_config": {
                         "authorization_server": "https://idp.example.com",
+                        "token_endpoint": "https://idp.example.com/oauth/token",
+                        "client_secret": "must-not-be-exposed",
                     },
                 },
                 "team_id": None,
@@ -325,8 +327,32 @@ class TestOAuthProtectedResourceMetadata:
         )
 
         response = await client.get(f"/.well-known/oauth-protected-resource/servers/{server_id}/mcp")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["resource"] == f"http://test/servers/{server_id}/mcp"
+        assert data["authorization_servers"] == ["https://idp.example.com"]
+        assert data["bearer_methods_supported"] == ["header"]
+        # Only discovery metadata should be public; OAuth credentials/endpoints are not exposed.
+        assert "client_secret" not in data
+        assert "token_endpoint" not in data
+
+    async def test_private_server_without_oauth_still_returns_404(self, client: AsyncClient):
+        """Non-public servers without OAuth metadata remain hidden."""
+        server_id = await self._create_server(
+            client,
+            {
+                "server": {
+                    "name": "server_private_no_oauth",
+                    "description": "Private server without OAuth",
+                    "visibility": "private",
+                },
+                "team_id": None,
+            },
+        )
+
+        response = await client.get(f"/.well-known/oauth-protected-resource/servers/{server_id}/mcp")
         assert response.status_code == 404
-        # Should not leak that the server exists (just "not found")
         assert "not found" in response.json()["detail"].lower()
 
     async def test_disabled_server_returns_404(self, client: AsyncClient):
