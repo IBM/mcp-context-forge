@@ -74,6 +74,31 @@ describe("openModal", () => {
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("not found"));
     errorSpy.mockRestore();
   });
+
+  test("adds dialog semantics and moves focus into the modal", () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const opener = document.createElement("button");
+    opener.textContent = "Open";
+    document.body.appendChild(opener);
+    opener.focus();
+
+    const modal = document.createElement("div");
+    modal.id = "test-modal";
+    modal.classList.add("hidden");
+    modal.innerHTML = `
+      <h2 id="test-modal-title">Edit gateway</h2>
+      <input id="modal-name" />
+    `;
+    document.body.appendChild(modal);
+
+    openModal("test-modal");
+
+    expect(modal.getAttribute("role")).toBe("dialog");
+    expect(modal.getAttribute("aria-modal")).toBe("true");
+    expect(modal.getAttribute("aria-labelledby")).toBe("test-modal-title");
+    expect(document.activeElement).toBe(document.getElementById("modal-name"));
+    consoleSpy.mockRestore();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -114,6 +139,27 @@ describe("closeModal", () => {
     closeModal("nonexistent");
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("not found"));
     errorSpy.mockRestore();
+  });
+
+  test("restores focus to the opener when the modal closes", () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const opener = document.createElement("button");
+    opener.textContent = "Open";
+    document.body.appendChild(opener);
+    opener.focus();
+
+    const modal = document.createElement("div");
+    modal.id = "test-modal";
+    modal.classList.add("hidden");
+    modal.innerHTML = `<button id="close-button">Close</button>`;
+    document.body.appendChild(modal);
+
+    openModal("test-modal");
+    expect(document.activeElement).toBe(document.getElementById("close-button"));
+
+    closeModal("test-modal");
+    expect(document.activeElement).toBe(opener);
+    consoleSpy.mockRestore();
   });
 });
 
@@ -173,6 +219,16 @@ describe("showCopyableModal", () => {
     expect(overlay).not.toBeNull();
     expect(overlay.innerHTML).toContain("Test Title");
     expect(overlay.innerHTML).toContain("Test message content");
+  });
+
+  test("creates an accessible dialog and focuses its first control", () => {
+    showCopyableModal("Test Title", "Test message content", "info");
+    const dialog = document.querySelector("#copyable-modal-overlay [role='dialog']");
+
+    expect(dialog).not.toBeNull();
+    expect(dialog.getAttribute("aria-modal")).toBe("true");
+    expect(dialog.getAttribute("aria-labelledby")).toBe("copyable-modal-title");
+    expect(document.activeElement).toBe(document.getElementById("copyable-modal-copy"));
   });
 
   test("removes existing modal before creating new one", () => {
