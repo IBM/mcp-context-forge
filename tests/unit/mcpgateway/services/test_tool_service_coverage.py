@@ -199,6 +199,16 @@ def mock_tool(mock_gateway):
         "avg_response_time": None,
         "last_execution_time": None,
     }
+    # REST passthrough fields
+    tool.timeout_ms = None
+    tool.base_url = None
+    tool.path_template = None
+    tool.query_mapping = None
+    tool.header_mapping = None
+    tool.expose_passthrough = None
+    tool.allowlist = None
+    tool.plugin_chain_pre = None
+    tool.plugin_chain_post = None
     return tool
 
 
@@ -222,6 +232,16 @@ def _make_tool_update(**overrides) -> MagicMock:
         visibility=None,
         auth=None,
         tags=None,
+        team_id=None,
+        timeout_ms=None,
+        base_url=None,
+        path_template=None,
+        query_mapping=None,
+        header_mapping=None,
+        expose_passthrough=None,
+        allowlist=None,
+        plugin_chain_pre=None,
+        plugin_chain_post=None,
     )
     defaults.update(overrides)
     for attr, value in defaults.items():
@@ -1373,6 +1393,17 @@ class TestUpdateTool:
         tool_update.visibility = None
         tool_update.auth = None
         tool_update.tags = None
+        tool_update.timeout_ms = None
+        tool_update.title = None
+        tool_update.base_url = None
+        tool_update.path_template = None
+        tool_update.query_mapping = None
+        tool_update.header_mapping = None
+        tool_update.expose_passthrough = None
+        tool_update.allowlist = None
+        tool_update.plugin_chain_pre = None
+        tool_update.plugin_chain_post = None
+        tool_update.team_id = None
 
         with patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool):
             with pytest.raises(IntegrityError):
@@ -1402,6 +1433,17 @@ class TestUpdateTool:
         tool_update.visibility = None
         tool_update.auth = None
         tool_update.tags = None
+        tool_update.timeout_ms = None
+        tool_update.title = None
+        tool_update.base_url = None
+        tool_update.path_template = None
+        tool_update.query_mapping = None
+        tool_update.header_mapping = None
+        tool_update.expose_passthrough = None
+        tool_update.allowlist = None
+        tool_update.plugin_chain_pre = None
+        tool_update.plugin_chain_post = None
+        tool_update.team_id = None
 
         with patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool):
             with pytest.raises(ToolError, match="Failed to update tool"):
@@ -3830,6 +3872,19 @@ class TestToolNotificationMethods:
         tool.description = "A test tool"
         tool.enabled = True
         tool.reachable = True
+        tool.team_id = None
+        tool.visibility = "public"
+        tool.version = 1
+        # REST passthrough fields
+        tool.timeout_ms = None
+        tool.base_url = None
+        tool.path_template = None
+        tool.query_mapping = None
+        tool.header_mapping = None
+        tool.expose_passthrough = None
+        tool.allowlist = None
+        tool.plugin_chain_pre = None
+        tool.plugin_chain_post = None
         return tool
 
     @pytest.mark.asyncio
@@ -5523,6 +5578,16 @@ class TestUpdateToolBranches:
         tool_update.visibility = "team"
         tool_update.auth = None
         tool_update.tags = ["api", "v2"]
+        tool_update.team_id = None
+        tool_update.timeout_ms = None
+        tool_update.base_url = None
+        tool_update.path_template = None
+        tool_update.query_mapping = None
+        tool_update.header_mapping = None
+        tool_update.expose_passthrough = None
+        tool_update.allowlist = None
+        tool_update.plugin_chain_pre = None
+        tool_update.plugin_chain_post = None
 
         db = MagicMock()
 
@@ -5582,6 +5647,16 @@ class TestUpdateToolBranches:
         tool_update.visibility = None
         tool_update.auth = None
         tool_update.tags = None
+        tool_update.team_id = None
+        tool_update.timeout_ms = None
+        tool_update.base_url = None
+        tool_update.path_template = None
+        tool_update.query_mapping = None
+        tool_update.header_mapping = None
+        tool_update.expose_passthrough = None
+        tool_update.allowlist = None
+        tool_update.plugin_chain_pre = None
+        tool_update.plugin_chain_post = None
 
         db = MagicMock()
         with (
@@ -5601,7 +5676,9 @@ class TestUpdateToolBranches:
         tool.name = "old_name"
         tool.custom_name = "old_name"
         tool.team_id = "team-1"
+        tool.owner_email = "owner@example.com"
         tool.visibility = "team"
+        tool.version = 1
 
         tool_update = MagicMock(spec=ToolUpdate)
         tool_update.name = "conflict_name"
@@ -5617,15 +5694,28 @@ class TestUpdateToolBranches:
         tool_update.output_schema = None
         tool_update.annotations = None
         tool_update.jsonpath_filter = None
-        tool_update.visibility = "team"
+        # visibility must support .lower() method
+        tool_update.visibility = MagicMock()
+        tool_update.visibility.lower.return_value = "team"
+        tool_update.team_id = None
         tool_update.auth = None
         tool_update.tags = None
+        tool_update.timeout_ms = None
+        tool_update.base_url = None
+        tool_update.path_template = None
+        tool_update.query_mapping = None
+        tool_update.header_mapping = None
+        tool_update.expose_passthrough = None
+        tool_update.allowlist = None
+        tool_update.plugin_chain_pre = None
+        tool_update.plugin_chain_post = None
 
         existing = MagicMock()
         existing.custom_name = "conflict_name"
         existing.enabled = True
         existing.id = "t2"
         existing.visibility = "team"
+        existing.team_id = "team-1"
 
         db = MagicMock()
         with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing]):
@@ -5895,6 +5985,368 @@ class TestUpdateToolBranches:
                 await tool_service.update_tool(db, "t1", tool_update)
 
     @pytest.mark.asyncio
+    async def test_update_tool_timeout_ms(self, tool_service, mock_tool):
+        """Updating timeout_ms field should persist the value."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "test_tool"
+        tool.custom_name = "test_tool"
+        tool.team_id = None
+        tool.visibility = "public"
+        tool.version = 1
+        tool.timeout_ms = None
+
+        tool_update = _make_tool_update(timeout_ms=5000)
+
+        db = MagicMock()
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=tool),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "t1"}),
+        ):
+            result = await tool_service.update_tool(db, "t1", tool_update)
+
+        assert result is not None
+        assert tool.timeout_ms == 5000
+        assert tool.version == 2
+
+    @pytest.mark.asyncio
+    async def test_update_tool_title(self, tool_service, mock_tool):
+        """Updating title field should persist the value."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "test_tool"
+        tool.custom_name = "test_tool"
+        tool.team_id = None
+        tool.visibility = "public"
+        tool.version = 1
+        tool.title = None
+
+        tool_update = _make_tool_update(title="My Custom Tool Title")
+
+        db = MagicMock()
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=tool),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "t1"}),
+        ):
+            result = await tool_service.update_tool(db, "t1", tool_update)
+
+        assert result is not None
+        assert tool.title == "My Custom Tool Title"
+        assert tool.version == 2
+
+    @pytest.mark.asyncio
+    async def test_update_tool_jsonpath_filter(self, tool_service, mock_tool):
+        """Updating jsonpath_filter field should persist the value."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "test_tool"
+        tool.custom_name = "test_tool"
+        tool.team_id = None
+        tool.visibility = "public"
+        tool.version = 1
+        tool.jsonpath_filter = ""
+
+        tool_update = _make_tool_update(jsonpath_filter="$.data[*].result")
+
+        db = MagicMock()
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=tool),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "t1"}),
+        ):
+            result = await tool_service.update_tool(db, "t1", tool_update)
+
+        assert result is not None
+        assert tool.jsonpath_filter == "$.data[*].result"
+        assert tool.version == 2
+
+    @pytest.mark.asyncio
+    async def test_update_tool_team_id_reassignment(self, tool_service, mock_tool):
+        """Updating team_id field should reassign the tool to a different team."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "test_tool"
+        tool.custom_name = "test_tool"
+        tool.team_id = "team-1"
+        tool.visibility = "team"
+        tool.version = 1
+
+        tool_update = _make_tool_update(team_id="team-2")
+
+        db = MagicMock()
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, None]),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "t1"}),
+        ):
+            result = await tool_service.update_tool(db, "t1", tool_update)
+
+        assert result is not None
+        assert tool.team_id == "team-2"
+        assert tool.version == 2
+
+    @pytest.mark.asyncio
+    async def test_update_tool_rest_passthrough_base_url(self, tool_service, mock_tool):
+        """Updating base_url field for REST passthrough should persist the value."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "test_tool"
+        tool.custom_name = "test_tool"
+        tool.team_id = None
+        tool.visibility = "public"
+        tool.version = 1
+        tool.base_url = None
+
+        tool_update = _make_tool_update(base_url="https://api.example.com")
+
+        db = MagicMock()
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=tool),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "t1"}),
+        ):
+            result = await tool_service.update_tool(db, "t1", tool_update)
+
+        assert result is not None
+        assert tool.base_url == "https://api.example.com"
+        assert tool.version == 2
+
+    @pytest.mark.asyncio
+    async def test_update_tool_rest_passthrough_path_template(self, tool_service, mock_tool):
+        """Updating path_template field for REST passthrough should persist the value."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "test_tool"
+        tool.custom_name = "test_tool"
+        tool.team_id = None
+        tool.visibility = "public"
+        tool.version = 1
+        tool.path_template = None
+
+        tool_update = _make_tool_update(path_template="/api/v1/{resource}/{id}")
+
+        db = MagicMock()
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=tool),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "t1"}),
+        ):
+            result = await tool_service.update_tool(db, "t1", tool_update)
+
+        assert result is not None
+        assert tool.path_template == "/api/v1/{resource}/{id}"
+        assert tool.version == 2
+
+    @pytest.mark.asyncio
+    async def test_update_tool_rest_passthrough_query_mapping(self, tool_service, mock_tool):
+        """Updating query_mapping field for REST passthrough should persist the value."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "test_tool"
+        tool.custom_name = "test_tool"
+        tool.team_id = None
+        tool.visibility = "public"
+        tool.version = 1
+        tool.query_mapping = None
+
+        query_mapping_data = {"search": "q", "limit": "max_results"}
+        tool_update = _make_tool_update(query_mapping=query_mapping_data)
+
+        db = MagicMock()
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=tool),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "t1"}),
+        ):
+            result = await tool_service.update_tool(db, "t1", tool_update)
+
+        assert result is not None
+        assert tool.query_mapping == query_mapping_data
+        assert tool.version == 2
+
+    @pytest.mark.asyncio
+    async def test_update_tool_rest_passthrough_header_mapping(self, tool_service, mock_tool):
+        """Updating header_mapping field for REST passthrough should persist the value."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "test_tool"
+        tool.custom_name = "test_tool"
+        tool.team_id = None
+        tool.visibility = "public"
+        tool.version = 1
+        tool.header_mapping = None
+
+        header_mapping_data = {"Authorization": "api_key", "Content-Type": "content_type"}
+        tool_update = _make_tool_update(header_mapping=header_mapping_data)
+
+        db = MagicMock()
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=tool),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "t1"}),
+        ):
+            result = await tool_service.update_tool(db, "t1", tool_update)
+
+        assert result is not None
+        assert tool.header_mapping == header_mapping_data
+        assert tool.version == 2
+
+    @pytest.mark.asyncio
+    async def test_update_tool_rest_passthrough_expose_passthrough(self, tool_service, mock_tool):
+        """Updating expose_passthrough field for REST passthrough should persist the value."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "test_tool"
+        tool.custom_name = "test_tool"
+        tool.team_id = None
+        tool.visibility = "public"
+        tool.version = 1
+        tool.expose_passthrough = None
+
+        tool_update = _make_tool_update(expose_passthrough=True)
+
+        db = MagicMock()
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=tool),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "t1"}),
+        ):
+            result = await tool_service.update_tool(db, "t1", tool_update)
+
+        assert result is not None
+        assert tool.expose_passthrough is True
+        assert tool.version == 2
+
+    @pytest.mark.asyncio
+    async def test_update_tool_rest_passthrough_allowlist(self, tool_service, mock_tool):
+        """Updating allowlist field for REST passthrough should persist the value."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "test_tool"
+        tool.custom_name = "test_tool"
+        tool.team_id = None
+        tool.visibility = "public"
+        tool.version = 1
+        tool.allowlist = None
+
+        allowlist_data = ["domain1.com", "domain2.com"]
+        tool_update = _make_tool_update(allowlist=allowlist_data)
+
+        db = MagicMock()
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=tool),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "t1"}),
+        ):
+            result = await tool_service.update_tool(db, "t1", tool_update)
+
+        assert result is not None
+        assert tool.allowlist == allowlist_data
+        assert tool.version == 2
+
+    @pytest.mark.asyncio
+    async def test_update_tool_plugin_chain_pre(self, tool_service, mock_tool):
+        """Updating plugin_chain_pre field should persist the value."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "test_tool"
+        tool.custom_name = "test_tool"
+        tool.team_id = None
+        tool.visibility = "public"
+        tool.version = 1
+        tool.plugin_chain_pre = None
+
+        plugin_chain_data = ["auth_plugin", "validation_plugin"]
+        tool_update = _make_tool_update(plugin_chain_pre=plugin_chain_data)
+
+        db = MagicMock()
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=tool),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "t1"}),
+        ):
+            result = await tool_service.update_tool(db, "t1", tool_update)
+
+        assert result is not None
+        assert tool.plugin_chain_pre == plugin_chain_data
+        assert tool.version == 2
+
+    @pytest.mark.asyncio
+    async def test_update_tool_plugin_chain_post(self, tool_service, mock_tool):
+        """Updating plugin_chain_post field should persist the value."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "test_tool"
+        tool.custom_name = "test_tool"
+        tool.team_id = None
+        tool.visibility = "public"
+        tool.version = 1
+        tool.plugin_chain_post = None
+
+        plugin_chain_data = ["logging_plugin", "metrics_plugin"]
+        tool_update = _make_tool_update(plugin_chain_post=plugin_chain_data)
+
+        db = MagicMock()
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=tool),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "t1"}),
+        ):
+            result = await tool_service.update_tool(db, "t1", tool_update)
+
+        assert result is not None
+        assert tool.plugin_chain_post == plugin_chain_data
+        assert tool.version == 2
+
+    @pytest.mark.asyncio
+    async def test_update_tool_multiple_new_fields_combined(self, tool_service, mock_tool):
+        """Updating multiple new fields together should persist all values."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "test_tool"
+        tool.custom_name = "test_tool"
+        tool.team_id = None
+        tool.visibility = "public"
+        tool.version = 1
+        tool.timeout_ms = None
+        tool.title = None
+        tool.jsonpath_filter = ""
+        tool.base_url = None
+        tool.path_template = None
+        tool.plugin_chain_pre = None
+        tool.plugin_chain_post = None
+
+        tool_update = _make_tool_update(
+            timeout_ms=3000,
+            title="REST API Tool",
+            jsonpath_filter="$.results[*]",
+            base_url="https://api.service.com",
+            path_template="/v2/{endpoint}",
+            plugin_chain_pre=["pre_plugin1"],
+            plugin_chain_post=["post_plugin1", "post_plugin2"],
+        )
+
+        db = MagicMock()
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=tool),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "t1"}),
+        ):
+            result = await tool_service.update_tool(db, "t1", tool_update)
+
+        assert result is not None
+        assert tool.timeout_ms == 3000
+        assert tool.title == "REST API Tool"
+        assert tool.jsonpath_filter == "$.results[*]"
+        assert tool.base_url == "https://api.service.com"
+        assert tool.path_template == "/v2/{endpoint}"
+        assert tool.plugin_chain_pre == ["pre_plugin1"]
+        assert tool.plugin_chain_post == ["post_plugin1", "post_plugin2"]
+        assert tool.version == 2
+
+    @pytest.mark.asyncio
     async def test_update_tool_rename_with_divergent_custom_name(self, tool_service, mock_tool):
         """When custom_name differs from name, renaming should check conflict against the existing custom_name (which won't change)."""
         tool = mock_tool
@@ -5969,6 +6421,128 @@ class TestUpdateToolBranches:
         err = ToolNameConflictError("my_tool", enabled=True, tool_id="t1", visibility="private")
         assert "Private" in str(err)
         assert "Public" not in str(err)
+
+    @pytest.mark.asyncio
+    async def test_update_tool_simultaneous_name_and_team_change_no_conflict(self, tool_service, mock_tool):
+        """Renaming a tool while changing teams should check for conflicts in the NEW team with the NEW name."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "old_tool_name"
+        tool.custom_name = "old_tool_name"
+        tool.team_id = "team-1"
+        tool.visibility = "team"
+        tool.version = 1
+
+        # Change both name AND team
+        tool_update = _make_tool_update(name="new_tool_name", team_id="team-2")
+
+        db = MagicMock()
+        # First call returns the tool being updated, second call checks for conflicts in team-2 with new_tool_name (returns None = no conflict)
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, None]),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "t1", "name": "new_tool_name"}),
+        ):
+            result = await tool_service.update_tool(db, "t1", tool_update)
+
+        assert result is not None
+        assert tool.name == "new_tool_name"
+        assert tool.custom_name == "new_tool_name"  # Tracks the rename since name == custom_name
+        assert tool.team_id == "team-2"
+        assert tool.version == 2
+
+    @pytest.mark.asyncio
+    async def test_update_tool_simultaneous_name_and_team_change_with_conflict(self, tool_service, mock_tool):
+        """Renaming a tool while changing teams should detect conflicts in the NEW team with the NEW name."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "old_tool_name"
+        tool.custom_name = "old_tool_name"
+        tool.team_id = "team-1"
+        tool.visibility = "team"
+        tool.version = 1
+
+        # Change both name AND team
+        tool_update = _make_tool_update(name="new_tool_name", team_id="team-2")
+
+        # Existing tool in team-2 with the same new name
+        existing_tool = MagicMock()
+        existing_tool.id = "t2"
+        existing_tool.custom_name = "new_tool_name"
+        existing_tool.team_id = "team-2"
+        existing_tool.visibility = "team"
+        existing_tool.enabled = True
+
+        db = MagicMock()
+        # First call returns the tool being updated, second call returns the conflicting tool in team-2
+        with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing_tool]):
+            with pytest.raises(ToolNameConflictError) as exc_info:
+                await tool_service.update_tool(db, "t1", tool_update)
+
+        # Verify the error message mentions the conflict
+        assert "new_tool_name" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_update_tool_name_change_with_same_team_checks_same_team(self, tool_service, mock_tool):
+        """Renaming a tool without changing teams should still check conflicts in the SAME team."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "old_tool_name"
+        tool.custom_name = "old_tool_name"
+        tool.team_id = "team-1"
+        tool.visibility = "team"
+        tool.version = 1
+
+        # Only change name, keep same team
+        tool_update = _make_tool_update(name="new_tool_name")
+
+        # Existing tool in team-1 with the same new name
+        existing_tool = MagicMock()
+        existing_tool.id = "t2"
+        existing_tool.custom_name = "new_tool_name"
+        existing_tool.team_id = "team-1"
+        existing_tool.visibility = "team"
+        existing_tool.enabled = True
+
+        db = MagicMock()
+        # First call returns the tool being updated, second call returns the conflicting tool in team-1
+        with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing_tool]):
+            with pytest.raises(ToolNameConflictError) as exc_info:
+                await tool_service.update_tool(db, "t1", tool_update)
+
+        # Verify the error message mentions the conflict
+        assert "new_tool_name" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_update_tool_team_change_without_name_change_checks_new_team(self, tool_service, mock_tool):
+        """Changing only the team (not the name) should check for conflicts in the NEW team."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "my_tool"
+        tool.custom_name = "my_tool"
+        tool.team_id = "team-1"
+        tool.visibility = "team"
+        tool.version = 1
+
+        # Only change team, keep same name
+        tool_update = _make_tool_update(team_id="team-2")
+
+        # Existing tool in team-2 with the same name
+        existing_tool = MagicMock()
+        existing_tool.id = "t2"
+        existing_tool.custom_name = "my_tool"
+        existing_tool.team_id = "team-2"
+        existing_tool.visibility = "team"
+        existing_tool.enabled = True
+
+        db = MagicMock()
+        # First call returns the tool being updated, second call returns the conflicting tool in team-2
+        with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing_tool]):
+            with pytest.raises(ToolNameConflictError) as exc_info:
+                await tool_service.update_tool(db, "t1", tool_update)
+
+        # Verify the error message mentions the conflict
+        assert "my_tool" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_permission_check_on_update(self, tool_service):

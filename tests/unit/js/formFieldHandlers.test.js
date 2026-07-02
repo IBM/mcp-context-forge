@@ -16,6 +16,8 @@ import {
   updateRequestTypeOptions,
   updateEditToolRequestTypes,
   handleAddPassthrough,
+  handleEditToolIntegrationTypeChange,
+  handleEditToolPassthrough,
   searchTeamSelector,
   performTeamSelectorSearch,
   selectTeamFromSelector,
@@ -1061,5 +1063,278 @@ describe("selectTeamFromSelector", () => {
     document.body.appendChild(btn);
 
     expect(() => selectTeamFromSelector(btn)).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// handleEditToolIntegrationTypeChange
+// ---------------------------------------------------------------------------
+describe("handleEditToolIntegrationTypeChange", () => {
+  function setupEditToolIntegrationTypeDOM(integrationType = "REST") {
+    const typeSelect = document.createElement("select");
+    typeSelect.id = "edit-tool-type";
+    const opt = document.createElement("option");
+    opt.value = integrationType;
+    opt.selected = true;
+    typeSelect.appendChild(opt);
+    document.body.appendChild(typeSelect);
+
+    const buttonWrapper = document.createElement("div");
+    buttonWrapper.id = "edit-tool-rest-passthrough-button-wrapper";
+    buttonWrapper.style.display = "none";
+    document.body.appendChild(buttonWrapper);
+
+    const container = document.createElement("fieldset");
+    container.id = "edit-tool-passthrough-container";
+    container.style.display = "none";
+    document.body.appendChild(container);
+
+    return { typeSelect, buttonWrapper, container };
+  }
+
+  test("shows passthrough button wrapper for REST integration type", () => {
+    const { buttonWrapper } = setupEditToolIntegrationTypeDOM("REST");
+
+    handleEditToolIntegrationTypeChange();
+
+    expect(buttonWrapper.style.display).toBe("block");
+  });
+
+  test("hides passthrough button wrapper for MCP integration type", () => {
+    const { buttonWrapper } = setupEditToolIntegrationTypeDOM("MCP");
+
+    handleEditToolIntegrationTypeChange();
+
+    expect(buttonWrapper.style.display).toBe("none");
+  });
+
+  test("hides passthrough container when switching away from REST", () => {
+    const { container, typeSelect } = setupEditToolIntegrationTypeDOM("REST");
+
+    // First set container to visible
+    container.style.display = "block";
+
+    // Change type to MCP
+    typeSelect.value = "MCP";
+    handleEditToolIntegrationTypeChange();
+
+    expect(container.style.display).toBe("none");
+  });
+
+  test("does not throw when elements are missing", () => {
+    expect(() => handleEditToolIntegrationTypeChange()).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// handleEditToolPassthrough
+// ---------------------------------------------------------------------------
+describe("handleEditToolPassthrough", () => {
+  function setupPassthroughButtonDOM() {
+    const container = document.createElement("fieldset");
+    container.id = "edit-tool-passthrough-container";
+    container.style.display = "none";
+    document.body.appendChild(container);
+
+    return { container };
+  }
+
+  test("toggles passthrough container from hidden to visible", () => {
+    const { container } = setupPassthroughButtonDOM();
+
+    container.style.display = "none";
+    handleEditToolPassthrough();
+
+    expect(container.style.display).toBe("block");
+  });
+
+  test("toggles passthrough container from visible to hidden", () => {
+    const { container } = setupPassthroughButtonDOM();
+
+    container.style.display = "block";
+    handleEditToolPassthrough();
+
+    expect(container.style.display).toBe("none");
+  });
+
+  test("treats empty display as hidden and toggles to visible", () => {
+    const { container } = setupPassthroughButtonDOM();
+
+    container.style.display = "";
+    handleEditToolPassthrough();
+
+    expect(container.style.display).toBe("block");
+  });
+
+  test("logs error when container is missing", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    handleEditToolPassthrough();
+
+    expect(errorSpy).toHaveBeenCalledWith("Edit tool passthrough container not found");
+    errorSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #4061: Advanced Configuration Fields - Field Naming Convention
+// ---------------------------------------------------------------------------
+describe("Issue #4061: Advanced Configuration Field Naming", () => {
+  function setupAdvancedFieldsDOM() {
+    const titleField = document.createElement("input");
+    titleField.id = "edit-tool-title";
+    titleField.name = "title";
+    document.body.appendChild(titleField);
+
+    const timeoutField = document.createElement("input");
+    timeoutField.id = "edit-tool-timeout-ms";
+    timeoutField.name = "timeout_ms";
+    timeoutField.type = "number";
+    document.body.appendChild(timeoutField);
+
+    const jsonpathFilterField = document.createElement("input");
+    jsonpathFilterField.id = "edit-tool-jsonpath-filter";
+    jsonpathFilterField.name = "jsonpath_filter";
+    document.body.appendChild(jsonpathFilterField);
+
+    const baseUrlField = document.createElement("input");
+    baseUrlField.id = "edit-tool-base-url";
+    baseUrlField.name = "base_url";
+    document.body.appendChild(baseUrlField);
+
+    const pathTemplateField = document.createElement("input");
+    pathTemplateField.id = "edit-tool-path-template";
+    pathTemplateField.name = "path_template";
+    document.body.appendChild(pathTemplateField);
+
+    const queryMappingField = document.createElement("textarea");
+    queryMappingField.id = "edit-tool-query-mapping";
+    queryMappingField.name = "query_mapping";
+    document.body.appendChild(queryMappingField);
+
+    const headerMappingField = document.createElement("textarea");
+    headerMappingField.id = "edit-tool-header-mapping";
+    headerMappingField.name = "header_mapping";
+    document.body.appendChild(headerMappingField);
+
+    const exposePassthroughCheckbox = document.createElement("input");
+    exposePassthroughCheckbox.id = "edit-tool-expose-passthrough";
+    exposePassthroughCheckbox.name = "expose_passthrough";
+    exposePassthroughCheckbox.type = "checkbox";
+    document.body.appendChild(exposePassthroughCheckbox);
+
+    const allowlistField = document.createElement("input");
+    allowlistField.id = "edit-tool-allowlist";
+    allowlistField.name = "allowlist";
+    document.body.appendChild(allowlistField);
+
+    const pluginChainPreField = document.createElement("input");
+    pluginChainPreField.id = "edit-tool-plugin-chain-pre";
+    pluginChainPreField.name = "plugin_chain_pre";
+    document.body.appendChild(pluginChainPreField);
+
+    const pluginChainPostField = document.createElement("input");
+    pluginChainPostField.id = "edit-tool-plugin-chain-post";
+    pluginChainPostField.name = "plugin_chain_post";
+    document.body.appendChild(pluginChainPostField);
+
+    return {
+      titleField,
+      timeoutField,
+      jsonpathFilterField,
+      baseUrlField,
+      pathTemplateField,
+      queryMappingField,
+      headerMappingField,
+      exposePassthroughCheckbox,
+      allowlistField,
+      pluginChainPreField,
+      pluginChainPostField,
+    };
+  }
+
+  test("jsonpath_filter field uses snake_case not camelCase", () => {
+    const { jsonpathFilterField } = setupAdvancedFieldsDOM();
+    expect(jsonpathFilterField.name).toBe("jsonpath_filter");
+    expect(jsonpathFilterField.id).toBe("edit-tool-jsonpath-filter");
+  });
+
+  test("timeout_ms field uses snake_case", () => {
+    const { timeoutField } = setupAdvancedFieldsDOM();
+    expect(timeoutField.name).toBe("timeout_ms");
+    expect(timeoutField.id).toBe("edit-tool-timeout-ms");
+  });
+
+  test("REST passthrough fields use snake_case", () => {
+    const {
+      baseUrlField,
+      pathTemplateField,
+      queryMappingField,
+      headerMappingField,
+      exposePassthroughCheckbox,
+    } = setupAdvancedFieldsDOM();
+
+    expect(baseUrlField.name).toBe("base_url");
+    expect(pathTemplateField.name).toBe("path_template");
+    expect(queryMappingField.name).toBe("query_mapping");
+    expect(headerMappingField.name).toBe("header_mapping");
+    expect(exposePassthroughCheckbox.name).toBe("expose_passthrough");
+  });
+
+  test("plugin chain fields use snake_case", () => {
+    const { pluginChainPreField, pluginChainPostField } = setupAdvancedFieldsDOM();
+
+    expect(pluginChainPreField.name).toBe("plugin_chain_pre");
+    expect(pluginChainPostField.name).toBe("plugin_chain_post");
+  });
+
+  test("all field IDs follow edit-tool-* convention with hyphens", () => {
+    const fields = setupAdvancedFieldsDOM();
+
+    expect(fields.titleField.id).toBe("edit-tool-title");
+    expect(fields.timeoutField.id).toBe("edit-tool-timeout-ms");
+    expect(fields.jsonpathFilterField.id).toBe("edit-tool-jsonpath-filter");
+    expect(fields.baseUrlField.id).toBe("edit-tool-base-url");
+    expect(fields.pathTemplateField.id).toBe("edit-tool-path-template");
+    expect(fields.queryMappingField.id).toBe("edit-tool-query-mapping");
+    expect(fields.headerMappingField.id).toBe("edit-tool-header-mapping");
+    expect(fields.exposePassthroughCheckbox.id).toBe("edit-tool-expose-passthrough");
+    expect(fields.allowlistField.id).toBe("edit-tool-allowlist");
+    expect(fields.pluginChainPreField.id).toBe("edit-tool-plugin-chain-pre");
+    expect(fields.pluginChainPostField.id).toBe("edit-tool-plugin-chain-post");
+  });
+
+  test("common advanced fields exist and have correct types", () => {
+    const { titleField, timeoutField, jsonpathFilterField } = setupAdvancedFieldsDOM();
+
+    expect(titleField.tagName).toBe("INPUT");
+    expect(titleField.type).toBe("text");
+
+    expect(timeoutField.tagName).toBe("INPUT");
+    expect(timeoutField.type).toBe("number");
+
+    expect(jsonpathFilterField.tagName).toBe("INPUT");
+    expect(jsonpathFilterField.type).toBe("text");
+  });
+
+  test("REST passthrough JSON fields are textarea elements", () => {
+    const { queryMappingField, headerMappingField } = setupAdvancedFieldsDOM();
+
+    expect(queryMappingField.tagName).toBe("TEXTAREA");
+    expect(headerMappingField.tagName).toBe("TEXTAREA");
+  });
+
+  test("expose_passthrough is checkbox type", () => {
+    const { exposePassthroughCheckbox } = setupAdvancedFieldsDOM();
+
+    expect(exposePassthroughCheckbox.tagName).toBe("INPUT");
+    expect(exposePassthroughCheckbox.type).toBe("checkbox");
+  });
+
+  test("allowlist field exists with correct name", () => {
+    const { allowlistField } = setupAdvancedFieldsDOM();
+
+    expect(allowlistField.name).toBe("allowlist");
+    expect(allowlistField.id).toBe("edit-tool-allowlist");
   });
 });

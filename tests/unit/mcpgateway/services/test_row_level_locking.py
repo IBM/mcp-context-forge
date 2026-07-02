@@ -514,6 +514,7 @@ class TestConcurrencyScenarios:
         mock_tool.visibility = "public"
         mock_tool.team_id = None
         mock_tool.owner_email = "test@example.com"
+        mock_tool.version = 1
 
         # Mock a conflicting tool
         mock_conflict = MagicMock(spec=Tool)
@@ -530,15 +531,37 @@ class TestConcurrencyScenarios:
         tool_update.visibility.lower.return_value = "public"
         tool_update.description = None
         tool_update.input_schema = None
+        tool_update.team_id = None
+        tool_update.displayName = None
+        tool_update.url = None
+        tool_update.title = None
+        tool_update.integration_type = None
+        tool_update.request_type = None
+        tool_update.headers = None
+        tool_update.output_schema = None
+        tool_update.annotations = None
+        tool_update.jsonpath_filter = None
+        tool_update.auth = None
+        tool_update.tags = None
+        tool_update.timeout_ms = None
+        tool_update.base_url = None
+        tool_update.path_template = None
+        tool_update.query_mapping = None
+        tool_update.header_mapping = None
+        tool_update.expose_passthrough = None
+        tool_update.allowlist = None
+        tool_update.plugin_chain_pre = None
+        tool_update.plugin_chain_post = None
 
         get_for_update_calls = []
 
         def track_get_for_update(*args, **kwargs):
             get_for_update_calls.append((args, kwargs))
-            # First call: return the tool being updated
-            if len(get_for_update_calls) == 1:
+            # First call (with just tool_id): return the tool being updated
+            # Check if this is the initial fetch (no 'where' clause)
+            if "where" not in kwargs or kwargs.get("where") is None:
                 return mock_tool
-            # Second call: return the conflicting tool
+            # Second call (with where clause for conflict check): return the conflicting tool
             return mock_conflict
 
         with patch("mcpgateway.services.tool_service.get_for_update", side_effect=track_get_for_update):
