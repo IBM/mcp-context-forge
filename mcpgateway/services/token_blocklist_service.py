@@ -25,6 +25,7 @@ Security Compliance:
 """
 
 # Standard
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 
@@ -34,7 +35,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import fresh_db_session, TokenRevocation, utc_now
+from mcpgateway.db import EmailApiToken, fresh_db_session, TokenRevocation, utc_now
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging
@@ -105,8 +106,20 @@ class TokenBlocklistService:
                 # Check if already revoked
                 existing = db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti)).scalar_one_or_none()
 
+                # Update EmailApiToken.is_active if token exists (repair inconsistent state if needed)
+                # Note: Session tokens don't have EmailApiToken records, so this is optional
+                api_token = db.execute(select(EmailApiToken).where(EmailApiToken.jti == jti)).scalar_one_or_none()
+                if api_token and api_token.is_active:
+                    api_token.is_active = False
+                    logger.debug(f"Set EmailApiToken.is_active=False for jti={jti}")
+
                 if existing:
+                    # Commit the repair if we updated is_active
+                    if api_token and not api_token.is_active:
+                        db.commit()
                     logger.debug("Token %s already revoked", jti)
+                    # Invalidate auth cache to ensure revoked token is rejected immediately
+                    self._invalidate_auth_cache(jti)
                     return True
 
                 # Create revocation record
@@ -120,8 +133,20 @@ class TokenBlocklistService:
                     # Check if already revoked
                     existing = db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti)).scalar_one_or_none()
 
+                    # Update EmailApiToken.is_active if token exists (repair inconsistent state if needed)
+                    # Note: Session tokens don't have EmailApiToken records, so this is optional
+                    api_token = db.execute(select(EmailApiToken).where(EmailApiToken.jti == jti)).scalar_one_or_none()
+                    if api_token and api_token.is_active:
+                        api_token.is_active = False
+                        logger.debug(f"Set EmailApiToken.is_active=False for jti={jti}")
+
                     if existing:
+                        # Commit the repair if we updated is_active
+                        if api_token and not api_token.is_active:
+                            db.commit()
                         logger.debug("Token %s already revoked", jti)
+                        # Invalidate auth cache to ensure revoked token is rejected immediately
+                        self._invalidate_auth_cache(jti)
                         return True
 
                     # Create revocation record
@@ -144,6 +169,9 @@ class TokenBlocklistService:
                 except Exception as e:
                     logger.warning("Failed to cache revocation in Redis: %s", e)
 
+            # Invalidate auth cache to ensure revoked token is rejected immediately
+            self._invalidate_auth_cache(jti)
+
             logger.info(
                 "Token revoked: jti=%s, reason=%s, revoked_by=%s",
                 jti,
@@ -157,6 +185,33 @@ class TokenBlocklistService:
         except Exception as e:
             logger.error("Failed to revoke token %s: %s", jti, e)
             return False
+
+    def _invalidate_auth_cache(self, jti: str) -> None:
+        """Invalidate auth cache for a revoked token.
+
+        This is a synchronous wrapper that runs the async invalidation in the current
+        or new event loop, ensuring revoked tokens are rejected immediately.
+
+        Args:
+            jti: JWT ID to invalidate
+        """
+        try:
+            # First-Party
+            from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+            # Try to get the current event loop
+            try:
+                loop = asyncio.get_running_loop()
+                # We're in an async context, create a task (fire-and-forget is acceptable here
+                # since the Redis/local cache update is best-effort, and the DB write is authoritative)
+                task = loop.create_task(auth_cache.invalidate_revocation(jti))
+                # Suppress the unawaited coroutine warning by adding a dummy done callback
+                task.add_done_callback(lambda t: None)
+            except RuntimeError:
+                # No running loop, create a new one for this operation
+                asyncio.run(auth_cache.invalidate_revocation(jti))
+        except Exception as cache_error:
+            logger.debug("Failed to invalidate auth cache for revoked token %s: %s", jti, cache_error)
 
     def is_token_revoked(self, jti: str) -> bool:
         """Check if a token is revoked.

@@ -132,6 +132,428 @@ class TestTokenRevocation:
         assert revocation.last_activity is not None
         assert revocation.reason == "idle_timeout"
 
+    def test_revoke_token_sets_api_token_inactive(self, blocklist_service, test_db):
+        """Test that revoking a token sets EmailApiToken.is_active to False."""
+        # First-Party
+        from mcpgateway.db import EmailApiToken, EmailTeam
+
+        # Create a test team
+        team = EmailTeam(
+            id=str(uuid.uuid4()),
+            name="Test Team",
+            slug="test-team",
+            created_by="test@example.com",
+            is_active=True
+        )
+        test_db.add(team)
+        test_db.commit()
+
+        # Create an API token
+        jti = str(uuid.uuid4())
+        api_token = EmailApiToken(
+            id=str(uuid.uuid4()),
+            user_email="test@example.com",
+            team_id=team.id,
+            name="Test Token",
+            jti=jti,
+            token_hash="test_hash",
+            is_active=True
+        )
+        test_db.add(api_token)
+        test_db.commit()
+
+        # Verify token is initially active
+        assert api_token.is_active is True
+
+        # Revoke the token
+        result = blocklist_service.revoke_token(
+            jti=jti,
+            revoked_by="test@example.com",
+            reason="idle_timeout"
+        )
+
+        assert result is True
+
+        # Refresh the token from database
+        test_db.refresh(api_token)
+
+        # Verify token is now inactive
+        assert api_token.is_active is False
+
+        # Verify revocation record exists
+        revocation = test_db.execute(
+            select(TokenRevocation).where(TokenRevocation.jti == jti)
+        ).scalar_one_or_none()
+
+        assert revocation is not None
+        assert revocation.reason == "idle_timeout"
+
+    def test_revoke_token_without_api_token_record(self, blocklist_service, test_db):
+        """Test that revoking a session token (no EmailApiToken) works correctly."""
+        # Session tokens don't have EmailApiToken records
+        jti = str(uuid.uuid4())
+
+        # Revoke the token (should not fail even though no EmailApiToken exists)
+        result = blocklist_service.revoke_token(
+            jti=jti,
+            revoked_by="test@example.com",
+            reason="logout"
+        )
+
+        assert result is True
+
+        # Verify revocation record exists
+        revocation = test_db.execute(
+            select(TokenRevocation).where(TokenRevocation.jti == jti)
+        ).scalar_one_or_none()
+
+        assert revocation is not None
+        assert revocation.reason == "logout"
+
+    def test_revoke_token_sets_api_token_inactive_without_db_session(self, test_db):
+        """Test that revoking a token sets EmailApiToken.is_active to False when using fresh_db_session."""
+        # First-Party
+        from mcpgateway.db import EmailApiToken, EmailTeam
+
+        # Create a test team
+        team = EmailTeam(
+            id=str(uuid.uuid4()),
+            name="Test Team No Session",
+            slug="test-team-no-session",
+            created_by="test@example.com",
+            is_active=True
+        )
+        test_db.add(team)
+        test_db.commit()
+
+        # Create an API token
+        jti = str(uuid.uuid4())
+        api_token = EmailApiToken(
+            id=str(uuid.uuid4()),
+            user_email="test@example.com",
+            team_id=team.id,
+            name="Test Token No Session",
+            jti=jti,
+            token_hash="test_hash",
+            is_active=True
+        )
+        test_db.add(api_token)
+        test_db.commit()
+
+        # Verify token is initially active
+        assert api_token.is_active is True
+
+        # Create service without db to test fresh_db_session path
+        service = TokenBlocklistService(db=None)
+
+        # Mock fresh_db_session to use test_db
+        with patch("mcpgateway.services.token_blocklist_service.fresh_db_session") as mock_session:
+            mock_session.return_value.__enter__.return_value = test_db
+            mock_session.return_value.__exit__.return_value = None
+
+            # Revoke the token
+            result = service.revoke_token(
+                jti=jti,
+                revoked_by="test@example.com",
+                reason="security"
+            )
+
+            assert result is True
+
+        # Refresh the token from database
+        test_db.refresh(api_token)
+
+        # Verify token is now inactive
+        assert api_token.is_active is False
+
+        # Verify revocation record exists
+        revocation = test_db.execute(
+            select(TokenRevocation).where(TokenRevocation.jti == jti)
+        ).scalar_one_or_none()
+
+        assert revocation is not None
+        assert revocation.reason == "security"
+
+    def test_revoke_token_invalidates_auth_cache(self, blocklist_service, test_db):
+        """Test that revoking a token invalidates the auth cache."""
+        # First-Party
+        from mcpgateway.db import EmailApiToken, EmailTeam
+
+        # Create a test team
+        team = EmailTeam(
+            id=str(uuid.uuid4()),
+            name="Test Team Cache",
+            slug="test-team-cache",
+            created_by="test@example.com",
+            is_active=True
+        )
+        test_db.add(team)
+        test_db.commit()
+
+        # Create an API token
+        jti = str(uuid.uuid4())
+        api_token = EmailApiToken(
+            id=str(uuid.uuid4()),
+            user_email="test@example.com",
+            team_id=team.id,
+            name="Test Token Cache",
+            jti=jti,
+            token_hash="test_hash",
+            is_active=True
+        )
+        test_db.add(api_token)
+        test_db.commit()
+
+        # Mock asyncio.run to verify it's called without actually running the coroutine
+        with patch("mcpgateway.services.token_blocklist_service.asyncio.run") as mock_asyncio_run:
+            # Revoke the token
+            result = blocklist_service.revoke_token(
+                jti=jti,
+                revoked_by="test@example.com",
+                reason="logout"
+            )
+
+            assert result is True
+
+            # Verify cache invalidation was called (we're outside an async context, so asyncio.run should be called)
+            mock_asyncio_run.assert_called_once()
+
+            # Verify the call was for auth_cache.invalidate_revocation by checking the coroutine name
+            call_args = mock_asyncio_run.call_args
+            coro = call_args[0][0]  # First positional argument
+            assert coro.__name__ == "invalidate_revocation"
+
+    def test_revoke_token_repairs_inconsistent_state(self, blocklist_service, test_db):
+        """Test that revoking an already-revoked token repairs EmailApiToken.is_active if inconsistent."""
+        # First-Party
+        from mcpgateway.db import EmailApiToken, EmailTeam
+
+        # Create a test team
+        team = EmailTeam(
+            id=str(uuid.uuid4()),
+            name="Test Team Repair",
+            slug="test-team-repair",
+            created_by="test@example.com",
+            is_active=True
+        )
+        test_db.add(team)
+        test_db.commit()
+
+        # Create an API token
+        jti = str(uuid.uuid4())
+        api_token = EmailApiToken(
+            id=str(uuid.uuid4()),
+            user_email="test@example.com",
+            team_id=team.id,
+            name="Test Token Repair",
+            jti=jti,
+            token_hash="test_hash",
+            is_active=True
+        )
+        test_db.add(api_token)
+        test_db.commit()
+
+        # Create TokenRevocation entry directly (simulating inconsistent state)
+        revocation = TokenRevocation(
+            jti=jti,
+            revoked_by="system@example.com",
+            reason="idle_timeout"
+        )
+        test_db.add(revocation)
+        test_db.commit()
+
+        # Verify token is still active (inconsistent state)
+        test_db.refresh(api_token)
+        assert api_token.is_active is True
+
+        # Call revoke_token again (idempotent path should repair)
+        result = blocklist_service.revoke_token(
+            jti=jti,
+            revoked_by="test@example.com",
+            reason="logout"
+        )
+
+        assert result is True
+
+        # Refresh the token from database
+        test_db.refresh(api_token)
+
+        # Verify token is now inactive (repaired)
+        assert api_token.is_active is False
+
+        # Verify TokenRevocation still exists with original data
+        revocation_check = test_db.execute(
+            select(TokenRevocation).where(TokenRevocation.jti == jti)
+        ).scalar_one_or_none()
+
+        assert revocation_check is not None
+        assert revocation_check.reason == "idle_timeout"  # Original reason preserved
+
+    def test_revoke_token_repairs_inconsistent_state_without_db_session(self, test_db):
+        """Test that revoking an already-revoked token repairs EmailApiToken.is_active using fresh_db_session."""
+        # First-Party
+        from mcpgateway.db import EmailApiToken, EmailTeam
+
+        # Create a test team
+        team = EmailTeam(
+            id=str(uuid.uuid4()),
+            name="Test Team Repair Fresh",
+            slug="test-team-repair-fresh",
+            created_by="test@example.com",
+            is_active=True
+        )
+        test_db.add(team)
+        test_db.commit()
+
+        # Create an API token
+        jti = str(uuid.uuid4())
+        api_token = EmailApiToken(
+            id=str(uuid.uuid4()),
+            user_email="test@example.com",
+            team_id=team.id,
+            name="Test Token Repair Fresh",
+            jti=jti,
+            token_hash="test_hash",
+            is_active=True
+        )
+        test_db.add(api_token)
+        test_db.commit()
+
+        # Create TokenRevocation entry directly (simulating inconsistent state)
+        revocation = TokenRevocation(
+            jti=jti,
+            revoked_by="system@example.com",
+            reason="idle_timeout"
+        )
+        test_db.add(revocation)
+        test_db.commit()
+
+        # Verify token is still active (inconsistent state)
+        test_db.refresh(api_token)
+        assert api_token.is_active is True
+
+        # Create service without db to test fresh_db_session path
+        service = TokenBlocklistService(db=None)
+
+        # Mock fresh_db_session to use test_db
+        with patch("mcpgateway.services.token_blocklist_service.fresh_db_session") as mock_session:
+            mock_session.return_value.__enter__.return_value = test_db
+            mock_session.return_value.__exit__.return_value = None
+
+            # Call revoke_token (idempotent path should repair via fresh_db_session)
+            result = service.revoke_token(
+                jti=jti,
+                revoked_by="test@example.com",
+                reason="logout"
+            )
+
+            assert result is True
+
+        # Refresh the token from database
+        test_db.refresh(api_token)
+
+        # Verify token is now inactive (repaired via fresh_db_session path)
+        assert api_token.is_active is False
+
+    @patch("mcpgateway.services.token_blocklist_service.asyncio.get_running_loop")
+    def test_revoke_token_invalidates_auth_cache_in_async_context(self, mock_get_loop, blocklist_service, test_db):
+        """Test that cache invalidation uses create_task when in async context."""
+        # First-Party
+        from mcpgateway.db import EmailApiToken, EmailTeam
+
+        # Create a test team
+        team = EmailTeam(
+            id=str(uuid.uuid4()),
+            name="Test Team Async",
+            slug="test-team-async",
+            created_by="test@example.com",
+            is_active=True
+        )
+        test_db.add(team)
+        test_db.commit()
+
+        # Create an API token
+        jti = str(uuid.uuid4())
+        api_token = EmailApiToken(
+            id=str(uuid.uuid4()),
+            user_email="test@example.com",
+            team_id=team.id,
+            name="Test Token Async",
+            jti=jti,
+            token_hash="test_hash",
+            is_active=True
+        )
+        test_db.add(api_token)
+        test_db.commit()
+
+        # Mock event loop
+        mock_loop = MagicMock()
+        mock_task = MagicMock()
+        mock_loop.create_task.return_value = mock_task
+        mock_get_loop.return_value = mock_loop
+
+        # Revoke the token
+        result = blocklist_service.revoke_token(
+            jti=jti,
+            revoked_by="test@example.com",
+            reason="logout"
+        )
+
+        assert result is True
+
+        # Verify create_task was called (async context path)
+        mock_loop.create_task.assert_called_once()
+        # Verify done_callback was added to suppress warning
+        mock_task.add_done_callback.assert_called_once()
+
+    def test_revoke_token_cache_invalidation_exception_handling(self, blocklist_service, test_db):
+        """Test that cache invalidation exceptions are handled gracefully."""
+        # First-Party
+        from mcpgateway.db import EmailApiToken, EmailTeam
+
+        # Create a test team
+        team = EmailTeam(
+            id=str(uuid.uuid4()),
+            name="Test Team Exception",
+            slug="test-team-exception",
+            created_by="test@example.com",
+            is_active=True
+        )
+        test_db.add(team)
+        test_db.commit()
+
+        # Create an API token
+        jti = str(uuid.uuid4())
+        api_token = EmailApiToken(
+            id=str(uuid.uuid4()),
+            user_email="test@example.com",
+            team_id=team.id,
+            name="Test Token Exception",
+            jti=jti,
+            token_hash="test_hash",
+            is_active=True
+        )
+        test_db.add(api_token)
+        test_db.commit()
+
+        # Mock the auth_cache import to raise an exception
+        with patch("mcpgateway.services.token_blocklist_service.asyncio.run", side_effect=Exception("Cache error")):
+            # Should still succeed even if cache invalidation fails
+            result = blocklist_service.revoke_token(
+                jti=jti,
+                revoked_by="test@example.com",
+                reason="logout"
+            )
+
+            assert result is True
+
+            # Verify token was still revoked in DB
+            revocation = test_db.execute(
+                select(TokenRevocation).where(TokenRevocation.jti == jti)
+            ).scalar_one_or_none()
+
+            assert revocation is not None
+
 
 class TestRevocationCheck:
     """Tests for checking if tokens are revoked."""
