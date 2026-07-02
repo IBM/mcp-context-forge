@@ -8,7 +8,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATIC_DIR="${SCRIPT_DIR}/../app/mcpgateway/static/vendor"
 
 # Create vendor directory structure
-mkdir -p "${STATIC_DIR}/tailwindcss"
 mkdir -p "${STATIC_DIR}/codemirror/mode/javascript"
 mkdir -p "${STATIC_DIR}/codemirror/theme"
 mkdir -p "${STATIC_DIR}/chartjs"
@@ -16,11 +15,6 @@ mkdir -p "${STATIC_DIR}/fontawesome/css"
 mkdir -p "${STATIC_DIR}/fontawesome/webfonts"
 
 echo "📦 Downloading CDN assets for airgapped deployment..."
-
-# Download Tailwind Play CDN (version-pinned v3 for window.tailwind.config compatibility)
-echo "  ⬇️  Tailwind CSS..."
-curl -fsSL "https://cdn.tailwindcss.com/3.4.17" \
-  -o "${STATIC_DIR}/tailwindcss/tailwind.min.js"
 
 # Download CodeMirror
 echo "  ⬇️  CodeMirror 5.65.20..."
