@@ -20,7 +20,7 @@ import logging
 import re
 import secrets
 from typing import Any, Dict, List, Optional, Union
-from urllib.parse import parse_qsl, urlparse
+from urllib.parse import parse_qsl, quote, urlparse
 
 # Third-Party
 import httpx

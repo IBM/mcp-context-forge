@@ -100,7 +100,7 @@ class TestOAuthAudienceParameter:
         with patch.object(oauth_manager, "_post_token_request", new_callable=AsyncMock, return_value=mock_response):
             credentials = {
                 "client_id": "test-client",
-                "client_secret": "test-secret",
+                "client_secret": "test-secret", # pragma: allowlist secret
                 "token_url": "https://auth.atlassian.com/oauth/token",
                 "redirect_uri": "https://gateway.example.com/callback",
                 "audience": "api.atlassian.com",
@@ -129,7 +129,7 @@ class TestOAuthAudienceParameter:
             credentials = {
                 "grant_type": "client_credentials",
                 "client_id": "test-client",
-                "client_secret": "test-secret",
+                "client_secret": "test-secret", # pragma: allowlist secret
                 "token_url": "https://my-tenant.auth0.com/oauth/token",
                 "audience": "https://my-api.example.com",
                 "scopes": ["read:data", "write:data"],
@@ -157,7 +157,7 @@ class TestOAuthAudienceParameter:
         with patch.object(oauth_manager, "_post_token_request", new_callable=AsyncMock, return_value=mock_response):
             credentials = {
                 "client_id": "test-client",
-                "client_secret": "test-secret",
+                "client_secret": "test-secret", # pragma: allowlist secret
                 "token_url": "https://auth.example.com/token",
                 "audience": "https://my-api.example.com",
             }
@@ -210,7 +210,7 @@ class TestOAuthAudienceParameter:
             credentials = {
                 "grant_type": "authorization_code",
                 "client_id": "atlassian-client-id",
-                "client_secret": "atlassian-client-secret",
+                "client_secret": "atlassian-client-secret", # pragma: allowlist secret
                 "authorization_url": "https://auth.atlassian.com/authorize",
                 "token_url": "https://auth.atlassian.com/oauth/token",
                 "redirect_uri": "https://gateway.example.com/oauth/callback",
@@ -243,7 +243,7 @@ class TestOAuthAudienceParameter:
             credentials = {
                 "grant_type": "client_credentials",
                 "client_id": "auth0-client-id",
-                "client_secret": "auth0-client-secret",
+                "client_secret": "auth0-client-secret", # pragma: allowlist secret
                 "token_url": "https://my-tenant.auth0.com/oauth/token",
                 "audience": "https://my-api.example.com",
                 "scopes": ["read:users", "write:users"],
@@ -316,7 +316,7 @@ class TestOAuthAudienceParameter:
         with patch.object(oauth_manager, "_post_token_request", new_callable=AsyncMock, return_value=mock_response):
             credentials = {
                 "client_id": "test-client",
-                "client_secret": "test-secret",
+                "client_secret": "test-secret", # pragma: allowlist secret
                 "token_url": "https://auth.example.com/token",
                 "redirect_uri": "https://gateway.example.com/callback",
                 "audience": "https://my-api.example.com",

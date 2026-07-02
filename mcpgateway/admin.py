@@ -12455,7 +12455,8 @@ async def admin_add_gateway(
     _check_public_visibility_allowed(visibility, team_id=team_id)
 
     try:
-        # Handle OAuth client secret encryption if present
+        # OAuth config is already fully assembled and parsed by _parse_gateway_data_from_request
+        # Just handle client secret encryption if present
         oauth_config = data.get("oauth_config")
         if oauth_config and isinstance(oauth_config, dict) and "client_secret" in oauth_config:
             client_secret = oauth_config.get("client_secret")
@@ -12463,98 +12464,6 @@ async def admin_add_gateway(
                 encryption = get_encryption_service(settings.auth_encryption_secret)
                 oauth_config["client_secret"] = await encryption.encrypt_secret_async(client_secret)
                 data["oauth_config"] = oauth_config
-
-        # Option 1: Pre-assembled oauth_config JSON (from API calls)
-        if oauth_config_json and oauth_config_json != "None":
-            try:
-                oauth_config = orjson.loads(oauth_config_json)
-                # Encrypt the client secret if present
-                if oauth_config and "client_secret" in oauth_config:
-                    encryption = get_encryption_service(settings.auth_encryption_secret)
-                    oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_config["client_secret"])
-            except (orjson.JSONDecodeError, ValueError) as e:
-                LOGGER.error(f"Failed to parse OAuth config: {e}")
-                oauth_config = None
-
-        # Option 2: Assemble from individual UI form fields
-        if not oauth_config:
-            oauth_grant_type = str(form.get("oauth_grant_type", ""))
-            oauth_issuer = str(form.get("oauth_issuer", ""))
-            oauth_token_url = str(form.get("oauth_token_url", ""))
-            oauth_authorization_url = str(form.get("oauth_authorization_url", ""))
-            oauth_redirect_uri = str(form.get("oauth_redirect_uri", ""))
-            oauth_client_id = str(form.get("oauth_client_id", ""))
-            oauth_client_secret = str(form.get("oauth_client_secret", ""))
-            oauth_username = str(form.get("oauth_username", ""))
-            oauth_password = str(form.get("oauth_password", ""))
-            oauth_scopes_str = str(form.get("oauth_scopes", ""))
-            oauth_resource_str = str(form.get("oauth_resource", ""))
-
-            # If any OAuth field is provided, assemble oauth_config
-            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id, oauth_resource_str]):
-                oauth_config = {}
-
-                if oauth_grant_type:
-                    oauth_config["grant_type"] = oauth_grant_type
-                if oauth_issuer:
-                    oauth_config["issuer"] = oauth_issuer
-                if oauth_token_url:
-                    oauth_config["token_url"] = oauth_token_url  # OAuthManager expects 'token_url', not 'token_endpoint'
-                if oauth_authorization_url:
-                    oauth_config["authorization_url"] = oauth_authorization_url  # OAuthManager expects 'authorization_url', not 'authorization_endpoint'
-                if oauth_redirect_uri:
-                    oauth_config["redirect_uri"] = oauth_redirect_uri
-                if oauth_client_id:
-                    oauth_config["client_id"] = oauth_client_id
-                if oauth_client_secret:
-                    # Encrypt the client secret
-                    encryption = get_encryption_service(settings.auth_encryption_secret)
-                    oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
-
-                # Add username and password for password grant type
-                if oauth_username:
-                    oauth_config["username"] = oauth_username
-                if oauth_password:
-                    oauth_config["password"] = oauth_password
-
-                # Parse scopes (comma or space separated)
-                if oauth_scopes_str:
-                    scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
-                    if scopes:
-                        oauth_config["scopes"] = scopes
-
-                # Parse resource (RFC 8707 audience indicator); single value or
-                # comma-separated for multi-resource flows.  Stored as str when one
-                # value, list when multiple, to match the IdP's aud-claim shape.
-                if oauth_resource_str.strip():
-                    resources = [r.strip() for r in oauth_resource_str.split(",") if r.strip()]
-                    if len(resources) == 1:
-                        oauth_config["resource"] = resources[0]
-                    elif resources:
-                        oauth_config["resource"] = resources
-
-                LOGGER.info(f"✅ Assembled OAuth config from UI form fields: grant_type={oauth_grant_type}, issuer={oauth_issuer}")
-                LOGGER.info(f"DEBUG: Complete oauth_config = {oauth_config}")
-
-        # Handle passthrough_headers
-        passthrough_headers = str(form.get("passthrough_headers"))
-        if passthrough_headers and passthrough_headers.strip():
-            try:
-                passthrough_headers = orjson.loads(passthrough_headers)
-            except (orjson.JSONDecodeError, ValueError):
-                # Fallback to comma-separated parsing
-                passthrough_headers = [h.strip() for h in passthrough_headers.split(",") if h.strip()]
-        else:
-            passthrough_headers = None
-
-        # Auto-detect OAuth: if oauth_config is present and auth_type not explicitly set, use "oauth"
-        auth_type_from_form = str(form.get("auth_type", ""))
-        LOGGER.info(f"DEBUG: auth_type from form: '{auth_type_from_form}', oauth_config present: {oauth_config is not None}")
-        if oauth_config and not auth_type_from_form:
-            auth_type_from_form = "oauth"
-            LOGGER.info("✅ Auto-detected OAuth configuration, setting auth_type='oauth'")
-        elif oauth_config and auth_type_from_form:
-            LOGGER.info(f"✅ OAuth config present with explicit auth_type='{auth_type_from_form}'")
 
         # Handle CA certificate signing
         ca_certificate = data.get("ca_certificate")
@@ -12947,6 +12856,7 @@ async def admin_edit_gateway(
             oauth_username = str(form.get("oauth_username", ""))
             oauth_password = str(form.get("oauth_password", ""))
             oauth_scopes_str = str(form.get("oauth_scopes", ""))
+            oauth_audience = str(form.get("oauth_audience", ""))
             oauth_resource_str = str(form.get("oauth_resource", ""))
 
             # If any OAuth field is provided, assemble oauth_config
@@ -16163,6 +16073,7 @@ async def admin_add_a2a_agent(
             oauth_username = str(form.get("oauth_username", ""))
             oauth_password = str(form.get("oauth_password", ""))
             oauth_scopes_str = str(form.get("oauth_scopes", ""))
+            oauth_audience = str(form.get("oauth_audience", ""))
             oauth_resource_str = str(form.get("oauth_resource", ""))
 
             # If any OAuth field is provided, assemble oauth_config
@@ -16443,6 +16354,7 @@ async def admin_edit_a2a_agent(
             oauth_username = str(form.get("oauth_username", ""))
             oauth_password = str(form.get("oauth_password", ""))
             oauth_scopes_str = str(form.get("oauth_scopes", ""))
+            oauth_audience = str(form.get("oauth_audience", ""))
             oauth_resource_str = str(form.get("oauth_resource", ""))
 
             # If any OAuth field is provided, assemble oauth_config
