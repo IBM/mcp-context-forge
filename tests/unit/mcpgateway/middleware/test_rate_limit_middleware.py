@@ -1305,3 +1305,110 @@ class TestRateLimitMiddlewareTiers:
 
         assert result is False
         assert hasattr(middleware, "_violation_expiry")
+
+    def test_endpoint_tier_strips_root_path(self, mock_app):
+        """Test tier matching strips root_path prefix before pattern matching.
+
+        Issue #4994: When APP_ROOT_PATH is set (e.g., /mcp-gateway/service/gateway),
+        the middleware should strip this prefix before matching tier patterns.
+        Without stripping, all requests fall into the LOW default tier.
+        """
+        # Set up middleware with app_root_path in settings
+        with patch("mcpgateway.middleware.rate_limit_middleware.settings") as mock_settings:
+            mock_settings.rate_limiting_enabled = True
+            mock_settings.rate_limiting_redis_enabled = False
+            mock_settings.trust_proxy_auth = True
+            mock_settings.rate_limit_critical_rpm = 10
+            mock_settings.rate_limit_critical_burst = 0
+            mock_settings.rate_limit_high_rpm = 30
+            mock_settings.rate_limit_high_burst = 0
+            mock_settings.rate_limit_medium_rpm = 100
+            mock_settings.rate_limit_medium_burst = 20
+            mock_settings.rate_limit_low_rpm = 500
+            mock_settings.rate_limit_low_burst = 100
+            mock_settings.rate_limit_lockout_enabled = True
+            mock_settings.rate_limit_lockout_threshold = 5
+            mock_settings.rate_limit_lockout_duration_minutes = 15
+            mock_settings.app_root_path = "/mcp-gateway/service/gateway"
+
+            from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
+
+            middleware = RateLimitMiddleware(mock_app)
+
+            # Test cases with root_path
+            test_cases = [
+                # (full_path_with_root, root_path_in_scope, expected_limit, expected_tier_name)
+                ("/mcp-gateway/service/gateway/servers/123/mcp", "/mcp-gateway/service/gateway", 100, "MEDIUM"),
+                ("/mcp-gateway/service/gateway/tokens", "/mcp-gateway/service/gateway", 30, "HIGH"),
+                ("/mcp-gateway/service/gateway/mcp/list", "/mcp-gateway/service/gateway", 100, "MEDIUM"),
+                ("/mcp-gateway/service/gateway/auth/email/login", "/mcp-gateway/service/gateway", 10, "CRITICAL"),
+                ("/mcp-gateway/service/gateway/rbac/roles", "/mcp-gateway/service/gateway", 30, "HIGH"),
+                ("/mcp-gateway/service/gateway/health", "/mcp-gateway/service/gateway", 500, "LOW"),
+                # Test with different root_path
+                ("/api/v1/tools/execute", "/api/v1", 100, "MEDIUM"),
+                ("/api/v1/tokens/create", "/api/v1", 30, "HIGH"),
+                # Test without root_path should still work
+                ("/servers/123/mcp", "", 100, "MEDIUM"),
+                ("/tokens", "", 30, "HIGH"),
+            ]
+
+            for full_path, root_path, expected_limit, expected_tier_name in test_cases:
+                # Create mock request with root_path in scope
+                mock_request = MagicMock()
+                mock_request.url.path = full_path
+                mock_request.scope = {"root_path": root_path} if root_path else {}
+
+                # Test get_endpoint_tier - it should accept Request and normalize path
+                tier = middleware.get_endpoint_tier(mock_request)
+                assert tier["limit"] == expected_limit, f"Path {full_path} with root_path {root_path} should match tier with limit {expected_limit}, got {tier['limit']}"
+
+                # Test _get_tier_name - it should accept Request and normalize path
+                tier_name = middleware._get_tier_name(mock_request)
+                assert tier_name == expected_tier_name, f"Path {full_path} with root_path {root_path} should match tier {expected_tier_name}, got {tier_name}"
+
+    def test_endpoint_tier_root_path_edge_cases(self, mock_app):
+        """Test root_path edge cases: trailing slash, empty, single slash."""
+        with patch("mcpgateway.middleware.rate_limit_middleware.settings") as mock_settings:
+            mock_settings.rate_limiting_enabled = True
+            mock_settings.rate_limiting_redis_enabled = False
+            mock_settings.trust_proxy_auth = True
+            mock_settings.rate_limit_critical_rpm = 10
+            mock_settings.rate_limit_critical_burst = 0
+            mock_settings.rate_limit_high_rpm = 30
+            mock_settings.rate_limit_high_burst = 0
+            mock_settings.rate_limit_medium_rpm = 100
+            mock_settings.rate_limit_medium_burst = 20
+            mock_settings.rate_limit_low_rpm = 500
+            mock_settings.rate_limit_low_burst = 100
+            mock_settings.rate_limit_lockout_enabled = True
+            mock_settings.rate_limit_lockout_threshold = 5
+            mock_settings.rate_limit_lockout_duration_minutes = 15
+            mock_settings.app_root_path = ""
+
+            from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
+
+            middleware = RateLimitMiddleware(mock_app)
+
+            test_cases = [
+                # root_path with trailing slash should be normalized
+                ("/app/servers/list", "/app/", 100, "MEDIUM"),
+                # root_path that is just "/" should not strip anything
+                ("/servers/list", "/", 100, "MEDIUM"),
+                # Empty root_path should behave normally
+                ("/servers/list", "", 100, "MEDIUM"),
+                # root_path must not partially match (e.g., /app should not strip from /application)
+                ("/application/data", "/app", 500, "LOW"),
+                # Test that stripping produces a valid path (not empty)
+                ("/app", "/app", 500, "LOW"),  # After stripping becomes "/" or "" which should default to LOW
+            ]
+
+            for full_path, root_path, expected_limit, expected_tier_name in test_cases:
+                mock_request = MagicMock()
+                mock_request.url.path = full_path
+                mock_request.scope = {"root_path": root_path} if root_path else {}
+
+                tier = middleware.get_endpoint_tier(mock_request)
+                assert tier["limit"] == expected_limit, f"Path {full_path} with root_path {root_path} should have limit {expected_limit}, got {tier['limit']}"
+
+                tier_name = middleware._get_tier_name(mock_request)
+                assert tier_name == expected_tier_name, f"Path {full_path} with root_path {root_path} should match tier {expected_tier_name}, got {tier_name}"

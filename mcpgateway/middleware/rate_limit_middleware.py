@@ -167,8 +167,33 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             compiled.append((pattern, config))
         return compiled
 
-    def get_endpoint_tier(self, path: str) -> Dict[str, Any]:
-        """Get tier config for endpoint."""
+    def get_endpoint_tier(self, request_or_path) -> Dict[str, Any]:
+        """Get tier config for endpoint.
+
+        Args:
+            request_or_path: Either a Request object (recommended) or a string path (legacy).
+                             When Request is passed, strips root_path before matching.
+
+        Returns:
+            Tier configuration dict with 'limit' and 'burst' keys.
+        """
+        # Handle both Request object and string path for backwards compatibility
+        if isinstance(request_or_path, str):
+            path = request_or_path
+        else:
+            # Extract and normalize path from Request
+            path = request_or_path.url.path
+            root_path = request_or_path.scope.get("root_path") or settings.app_root_path or ""
+
+            # Strip root_path prefix (same logic as security_headers.py and token_scoping.py)
+            if root_path and len(root_path) > 1:
+                root_path = root_path.rstrip("/")
+                if path.startswith(root_path):
+                    rest = path[len(root_path) :]
+                    # Ensure we only strip if followed by "/" or end of string (avoid partial matches)
+                    if rest == "" or rest.startswith("/"):
+                        path = rest or "/"
+
         for pattern, config in self.compiled_tiers:
             if pattern.match(path):
                 return config
@@ -200,10 +225,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if not self.enabled:
             return await call_next(request)
 
-        tier = self.get_endpoint_tier(request.url.path)
+        tier = self.get_endpoint_tier(request)
         dimensions = self._get_client_dimensions(request)
 
-        tier_name = self._get_tier_name(request.url.path)
+        tier_name = self._get_tier_name(request)
 
         # Check lockout first — a locked-out dimension blocks regardless of
         # whether the sliding window has cleared.
@@ -268,8 +293,32 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         return response
 
-    def _get_tier_name(self, path: str) -> str:
-        """Get tier name for logging."""
+    def _get_tier_name(self, request_or_path) -> str:
+        """Get tier name for logging.
+
+        Args:
+            request_or_path: Either a Request object (recommended) or a string path (legacy).
+                             When Request is passed, strips root_path before matching.
+
+        Returns:
+            Tier name string (CRITICAL/CRITICAL_SSO/HIGH/MEDIUM/LOW).
+        """
+        # Handle both Request object and string path for backwards compatibility
+        if isinstance(request_or_path, str):
+            path = request_or_path
+        else:
+            # Extract and normalize path from Request
+            path = request_or_path.url.path
+            root_path = request_or_path.scope.get("root_path") or settings.app_root_path or ""
+
+            # Strip root_path prefix (same logic as get_endpoint_tier)
+            if root_path and len(root_path) > 1:
+                root_path = root_path.rstrip("/")
+                if path.startswith(root_path):
+                    rest = path[len(root_path) :]
+                    if rest == "" or rest.startswith("/"):
+                        path = rest or "/"
+
         for tier_name, config in self.endpoint_tiers.items():
             if re.match(config["pattern"], path):
                 return tier_name
