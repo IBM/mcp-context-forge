@@ -158,30 +158,30 @@ export function ServersTable({
   }
 
   return (
-    <div className="overflow-hidden bg-white dark:bg-neutral-950/60">
+    <div className="overflow-hidden">
       <Table className="min-w-full border-separate border-spacing-y-1.5">
         <TableCaption className="sr-only">List of MCP servers with status and actions</TableCaption>
         <TableHeader className="bg-white dark:bg-transparent">
           <TableRow className="border-none hover:bg-transparent">
-            <TableHead className="h-12 px-4 text-xs font-medium text-neutral-600 dark:text-neutral-400">
+            <TableHead className="border-b border-border h-12 px-4 text-xs font-medium text-neutral-600 dark:text-neutral-400">
               Name
             </TableHead>
-            <TableHead className="h-12 px-4 text-xs font-medium text-neutral-600 dark:text-neutral-400">
+            <TableHead className="border-b border-border h-12 px-4 text-xs font-medium text-neutral-600 dark:text-neutral-400">
               Components
             </TableHead>
-            <TableHead className="h-12 px-4 text-xs font-medium text-neutral-600 dark:text-neutral-400">
+            <TableHead className="border-b border-border h-12 px-4 text-xs font-medium text-neutral-600 dark:text-neutral-400">
               Last response
             </TableHead>
-            <TableHead className="h-12 px-4 text-xs font-medium text-neutral-600 dark:text-neutral-400">
+            <TableHead className="border-b border-border h-12 px-4 text-xs font-medium text-neutral-600 dark:text-neutral-400">
               UUID
             </TableHead>
-            <TableHead className="h-12 px-4 text-xs font-medium text-neutral-600 dark:text-neutral-400">
+            <TableHead className="border-b border-border h-12 px-4 text-xs font-medium text-neutral-600 dark:text-neutral-400">
               Visibility
             </TableHead>
-            <TableHead className="h-12 px-4 text-xs font-medium text-neutral-600 dark:text-neutral-400">
+            <TableHead className="border-b border-border h-12 px-4 text-xs font-medium text-neutral-600 dark:text-neutral-400">
               Status
             </TableHead>
-            <TableHead className="h-12 px-4 text-xs font-medium text-neutral-600 dark:text-neutral-400 text-right">
+            <TableHead className="border-b border-border h-12 px-4 text-xs font-medium text-neutral-600 dark:text-neutral-400 text-right">
               Actions
             </TableHead>
           </TableRow>

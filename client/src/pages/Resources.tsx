@@ -1,6 +1,6 @@
 import { useState, useMemo, memo, useCallback } from "react";
 import { useIntl } from "react-intl";
-import { Plus, MoreHorizontal, FileText } from "lucide-react";
+import { Plus, EllipsisVertical, FileText } from "lucide-react";
 import { toast } from "sonner";
 import { useQuery } from "@/hooks/useQuery";
 import { resourcesApi } from "@/api/resources";
@@ -43,7 +43,7 @@ const ResourceCard = memo(function ResourceCard({
   const intl = useIntl();
 
   return (
-    <Card size="sm" className="rounded-xl pl-0 pr-4 pt-4 pb-4">
+    <Card size="sm" className="rounded-xl pl-0 pt-4 pb-4">
       <CardHeader>
         <div className="flex items-center gap-3">
           <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded bg-tool-icon-bg">
@@ -69,7 +69,7 @@ const ResourceCard = memo(function ResourceCard({
                 )}
                 className="h-7 w-7 p-0"
               >
-                <MoreHorizontal className="h-4 w-4" />
+                <EllipsisVertical className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
