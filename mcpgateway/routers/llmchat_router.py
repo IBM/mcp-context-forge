@@ -37,6 +37,7 @@ except ImportError:
     REDIS_AVAILABLE = False
 
 # First-Party
+from mcpgateway.admin import enforce_admin_csrf
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
@@ -52,8 +53,8 @@ from mcpgateway.services.mcp_client_chat_service import (
 from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 
-# Initialize router
-llmchat_router = APIRouter(prefix="/llmchat", tags=["llmchat"])
+# Initialize router with admin CSRF protection (consistent with /admin routes)
+llmchat_router = APIRouter(prefix="/llmchat", tags=["llmchat"], dependencies=[Depends(enforce_admin_csrf)])
 
 # Redis client (initialized via init_redis() during app startup)
 redis_client = None
