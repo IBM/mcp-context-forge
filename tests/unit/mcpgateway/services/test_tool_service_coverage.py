@@ -220,6 +220,8 @@ def _make_tool_update(**overrides) -> MagicMock:
         annotations=None,
         jsonpath_filter=None,
         visibility=None,
+        team_id=None,
+        owner_email=None,
         auth=None,
         tags=None,
     )
@@ -5521,6 +5523,8 @@ class TestUpdateToolBranches:
         tool_update.annotations = None
         tool_update.jsonpath_filter = None
         tool_update.visibility = "team"
+        tool_update.team_id = None
+        tool_update.owner_email = None
         tool_update.auth = None
         tool_update.tags = ["api", "v2"]
 
@@ -5580,6 +5584,8 @@ class TestUpdateToolBranches:
         tool_update.annotations = None
         tool_update.jsonpath_filter = None
         tool_update.visibility = None
+        tool_update.team_id = None
+        tool_update.owner_email = None
         tool_update.auth = None
         tool_update.tags = None
 

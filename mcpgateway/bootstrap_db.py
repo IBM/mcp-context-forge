@@ -492,6 +492,32 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                     ],
                     "is_system_role": True,
                 },
+                {
+                    "name": "platform_user",
+                    "description": "Global user role with read access plus the ability to use servers and execute tools",
+                    "scope": "global",
+                    "permissions": [
+                        "admin.dashboard",
+                        "gateways.read",
+                        "servers.read",
+                        "servers.use",
+                        "teams.read",
+                        "teams.join",
+                        "tools.read",
+                        "tools.execute",
+                        "resources.read",
+                        "prompts.read",
+                        "llm.read",
+                        "llm.invoke",
+                        "a2a.read",
+                        "a2a.invoke",
+                        "tokens.create",
+                        "tokens.read",
+                        "tokens.update",
+                        "tokens.revoke",
+                    ],
+                    "is_system_role": True,
+                },
             ]
 
             # Logic to add additional default roles from a json file

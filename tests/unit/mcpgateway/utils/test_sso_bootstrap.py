@@ -53,6 +53,7 @@ def test_get_predefined_sso_providers_multiple(monkeypatch):
         sso_entra_tenant_id="tenant-id",
         sso_entra_groups_claim="groups",
         sso_entra_role_mappings={"admin": "Admin"},
+        sso_entra_team_mapping={},
         sso_entra_graph_api_enabled=False,
         sso_entra_graph_api_timeout=42,
         sso_entra_graph_api_max_groups=777,
@@ -1146,7 +1147,7 @@ class TestBootstrapPreservesDBValues:
 
     @pytest.mark.asyncio
     async def test_bootstrap_env_team_mapping_overrides_when_nonempty(self):
-        """Env team_mapping should take precedence when it is non-empty."""
+        """Forterro smart merge: env provides base, DB values override (Admin API changes survive restarts)."""
         # First-Party
         from mcpgateway.utils.sso_bootstrap import bootstrap_sso_providers
 
@@ -1180,7 +1181,8 @@ class TestBootstrapPreservesDBValues:
                         await bootstrap_sso_providers()
 
         _provider_id, merged_config = mock_sso_service.update_provider.call_args[0]
-        assert merged_config["team_mapping"] == {"NewGroup": "new-uuid"}
+        # Env (NewGroup) provides base, DB (OldGroup) values override → union of both
+        assert merged_config["team_mapping"] == {"NewGroup": "new-uuid", "OldGroup": "old-uuid"}
 
     @pytest.mark.asyncio
     async def test_bootstrap_custom_env_scope_overrides_db(self):

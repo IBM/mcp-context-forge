@@ -11,6 +11,7 @@ import {
   isInactiveChecked,
   makeCopyIdButton,
   parseUriTemplate,
+  populateTeamSelect,
   safeGetElement,
   showErrorMessage,
 } from "./utils.js";
@@ -626,6 +627,9 @@ export const editResource = async function (resourceId) {
     const visibility = resource.visibility
       ? resource.visibility.toLowerCase()
       : null;
+
+    // Populate team dropdown with user's teams, pre-select the entity's current team
+    populateTeamSelect("edit-resource-team-id", resource.teamId || "");
 
     const publicRadio = safeGetElement("edit-resource-visibility-public");
     const teamRadio = safeGetElement("edit-resource-visibility-team");

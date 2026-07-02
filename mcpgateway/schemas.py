@@ -1173,6 +1173,10 @@ class ToolUpdate(BaseModelWithConfigDict):
     plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
     plugin_chain_post: Optional[List[str]] = Field(None, description="Post-plugin chain for passthrough")
 
+    # Team scoping fields
+    team_id: Optional[str] = Field(None, description="Team ID for resource organization")
+    owner_email: Optional[str] = Field(None, description="Email of the tool owner")
+
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
