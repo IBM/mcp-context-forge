@@ -106,9 +106,19 @@ function executeAction(action, args, event, eventFirst = false) {
       return fn(event, ...args);
     }
     return fn(...args, event);
-  } else {
-    console.error(`Action is not a function: ${action}`);
   }
+
+  // Fallback: check the global window scope for functions defined on window.*
+  // but only copied to window.Admin via inline shim (defensive against shim
+  // not executing, e.g. due to HTMX swaps that skip inline scripts).
+  if (typeof window[action] === 'function') {
+    if (eventFirst) {
+      return window[action](event, ...args);
+    }
+    return window[action](...args, event);
+  }
+
+  console.error(`Action is not a function: ${action}`);
 }
 
 /**
