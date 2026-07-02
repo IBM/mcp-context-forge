@@ -22,6 +22,7 @@ import msgpack
 from sqlalchemy import select
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import (
     EmailTeamMember,
     EmailUser,
@@ -42,9 +43,9 @@ from mcpgateway.utils.redis_client import get_redis_client
 logger = logging.getLogger(__name__)
 
 USER_CONFIG_KEY = "UserConfig"
-REDIS_PUBLISHER_TIME = 60  # Publish interval in seconds
+REDIS_PUBLISHER_TIME = settings.dataplane_publisher_interval_seconds  # Publish interval in seconds
 # Keys are not deleted explicitly; stale configs expire via Redis TTL.
-PUBLISHER_TTL = 70
+PUBLISHER_TTL = REDIS_PUBLISHER_TIME + 10
 
 # Worker ID for multi-worker coordination (same pattern as session_affinity.py)
 WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
