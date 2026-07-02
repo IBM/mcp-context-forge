@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import path from 'path';
 import fs from 'fs';
+import viteCompression from 'vite-plugin-compression';
 
 // Plugin to clean up old bundle files before building
 function cleanOldBundles() {
@@ -51,5 +52,13 @@ export default defineConfig({
     outDir: 'mcpgateway/static',
     emptyOutDir: false, // Don't clean the output directory
   },
-  plugins: [cleanOldBundles()],
+  plugins: [
+    cleanOldBundles(),
+    viteCompression({
+      algorithm: 'gzip',
+      ext: '.gz',
+      threshold: 10240, // Only compress files larger than 10KB
+      deleteOriginFile: false, // Keep original files
+    }),
+  ],
 });
