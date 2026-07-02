@@ -24,6 +24,7 @@ import orjson
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import get_settings
 from mcpgateway.db import RegisteredOAuthClient
 from mcpgateway.services.encryption_service import get_encryption_service
@@ -262,7 +263,12 @@ class DcrService:
         db.commit()
         db.refresh(registered_client)
 
-        logger.info("Successfully registered client %s with %s for gateway %s", registered_client.client_id, normalized_issuer, gateway_id)
+        logger.info(
+            "Successfully registered client %s with %s for gateway %s",
+            SecurityValidator.sanitize_log_message(registered_client.client_id),
+            SecurityValidator.sanitize_log_message(normalized_issuer),
+            SecurityValidator.sanitize_log_message(gateway_id),
+        )
 
         return registered_client
 
@@ -304,7 +310,9 @@ class DcrService:
             )
 
         # Auto-register (pass normalized issuer for consistent storage)
-        logger.info("No existing client found for gateway %s, registering new client with %s", gateway_id, normalized_issuer)
+        logger.info(
+            "No existing client found for gateway %s, registering new client with %s", SecurityValidator.sanitize_log_message(gateway_id), SecurityValidator.sanitize_log_message(normalized_issuer)
+        )
         return await self.register_client(gateway_id, gateway_name, normalized_issuer, redirect_uri, scopes, db)
 
     async def update_client_registration(self, client_record: RegisteredOAuthClient, db: Session) -> RegisteredOAuthClient:
