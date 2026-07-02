@@ -6,10 +6,9 @@ import restApi from "./restApi.json";
 import grpc from "./grpc.json";
 import gateways from "./gateways.json";
 import users from "./users.json";
-import teams from "./teams.json";
 import tools from "./tools.json";
 import resources from "./resources.json";
-import mcpServer from "./mcpServer.json";
+import prompts from "./prompts.json";
 
 export default {
   ...common,
@@ -20,8 +19,7 @@ export default {
   ...grpc,
   ...gateways,
   ...users,
-  ...teams,
   ...tools,
   ...resources,
-  ...mcpServer,
+  ...prompts,
 };

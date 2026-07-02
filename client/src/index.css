@@ -62,6 +62,7 @@
   --color-card: var(--card);
   /* Tool-specific semantic tokens */
   --color-tool-icon-bg: var(--tool-icon-bg);
+  --color-prompt-icon-bg: var(--prompt-icon-bg);
   --color-tool-status-active: var(--tool-status-active);
   --color-tool-status-inactive: var(--tool-status-inactive);
   --color-tool-badge-bg: var(--tool-badge-bg);
@@ -114,6 +115,7 @@
   --popover-foreground: oklch(0.145 0 0);
   --destructive: oklch(0.577 0.245 27.325);
   --tool-icon-bg: var(--color-fuchsia-400);
+  --prompt-icon-bg: #6fff9f;
   --tool-status-active: var(--color-emerald-500);
   --tool-status-inactive: var(--color-gray-500);
   --tool-badge-bg: var(--color-neutral-800);
