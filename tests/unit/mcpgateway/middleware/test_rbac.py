@@ -463,6 +463,105 @@ async def test_require_admin_permission_forwards_token_teams(monkeypatch):
 # the same has_hooks_for pattern and run reliably in parallel execution.
 
 
+class TestTokenScopeChecks:
+    """Tests for API token scope validation in rbac.py lines 691-693."""
+
+    @pytest.mark.asyncio
+    async def test_api_token_scope_check_passes_line_691(self):
+        """Test API token with required scope passes check (line 691)."""
+
+        async def dummy_func(user=None):
+            return "ok"
+
+        mock_db = MagicMock()
+        mock_user = {
+            "email": "user@example.com",
+            "db": mock_db,
+            "token_scopes": ["tools.read", "tools.execute"],  # API token with scopes
+        }
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+
+        with patch.object(rbac, "PermissionService", return_value=mock_perm_service):
+            decorated = rbac.require_permission("tools.read")(dummy_func)
+            result = await decorated(user=mock_user)
+
+        assert result == "ok"
+        # Permission is in token_scopes, so check passes
+
+    @pytest.mark.asyncio
+    async def test_api_token_scope_check_fails_line_691_692_693(self):
+        """Test API token missing required scope raises 403 (lines 691-693)."""
+
+        async def dummy_func(user=None):
+            return "ok"
+
+        mock_db = MagicMock()
+        mock_user = {
+            "email": "user@example.com",
+            "db": mock_db,
+            "token_scopes": ["tools.read"],  # API token WITHOUT tools.execute
+        }
+
+        with patch.object(rbac, "PermissionService", return_value=AsyncMock()):
+            decorated = rbac.require_permission("tools.execute")(dummy_func)
+
+            with pytest.raises(HTTPException) as exc_info:
+                await decorated(user=mock_user)
+
+            assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+            # Review comment #3: Should use generic error message to avoid permission disclosure
+            assert exc_info.value.detail == "Access denied"
+
+    @pytest.mark.asyncio
+    async def test_api_token_empty_scopes_denies_all_line_691_692_693(self):
+        """Test API token with empty scopes list denies all permissions (lines 691-693)."""
+
+        async def dummy_func(user=None):
+            return "ok"
+
+        mock_db = MagicMock()
+        mock_user = {
+            "email": "user@example.com",
+            "db": mock_db,
+            "token_scopes": [],  # API token with empty scopes (deny all)
+        }
+
+        with patch.object(rbac, "PermissionService", return_value=AsyncMock()):
+            decorated = rbac.require_permission("tools.read")(dummy_func)
+
+            with pytest.raises(HTTPException) as exc_info:
+                await decorated(user=mock_user)
+
+            assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+            # Review comment #3: Should use generic error message to avoid permission disclosure
+            assert exc_info.value.detail == "Access denied"
+
+    @pytest.mark.asyncio
+    async def test_session_token_skips_scope_check_line_690(self):
+        """Test session token (token_scopes=None) skips scope check entirely (line 690)."""
+
+        async def dummy_func(user=None):
+            return "ok"
+
+        mock_db = MagicMock()
+        mock_user = {
+            "email": "user@example.com",
+            "db": mock_db,
+            "token_scopes": None,  # Session token (no scope enforcement)
+        }
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+
+        with patch.object(rbac, "PermissionService", return_value=mock_perm_service):
+            decorated = rbac.require_permission("tools.execute")(dummy_func)
+            result = await decorated(user=mock_user)
+
+        assert result == "ok"
+        # token_scopes is None, so scope check is skipped (goes to RBAC only)
+        mock_perm_service.check_permission.assert_called_once()
+
+
 @pytest.mark.skip(reason="Flaky in parallel execution due to plugin manager singleton; run individually")
 @pytest.mark.asyncio
 async def test_require_permission_skips_hooks_when_has_hooks_for_false(monkeypatch):

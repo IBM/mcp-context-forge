@@ -431,6 +431,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         request_id = getattr(request.state, "request_id", None)
         team_id = getattr(request.state, "team_id", None)
         token_teams = getattr(request.state, "token_teams", None)
+        token_scopes = getattr(request.state, "token_scopes", None)
 
         # Read plugin context data from request.state for cross-hook context sharing
         # (set by HttpAuthMiddleware for passing contexts between different hook types)
@@ -453,6 +454,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
             "team_id": team_id,  # Include team_id from token
             "token_teams": token_teams,  # Include token teams for query-level scoping
             "token_use": token_use,  # Include token_use for RBAC team derivation
+            "token_scopes": token_scopes,  # Include token scopes for API token permission checking
             "plugin_context_table": plugin_context_table,  # Plugin contexts for cross-hook sharing
             "plugin_global_context": plugin_global_context,  # Global context for consistency
         }
@@ -692,6 +694,21 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
             user_context = kwargs.get("user") or kwargs.get("_user") or kwargs.get("current_user") or kwargs.get("current_user_ctx")
             if not user_context or not isinstance(user_context, dict) or "email" not in user_context:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User authentication required")
+
+            # SECURITY: Check API token scopes BEFORE RBAC (Layer 1)
+            # API tokens with resource_scopes must have the required permission scope
+            # This is independent of RBAC role checks (Layer 2)
+            #
+            # TOKEN TYPE DETECTION: Uses `is not None` check to distinguish:
+            # - token_scopes=None: Session token (skip scope check, use RBAC only)
+            # - token_scopes=[...]: API token with scopes (enforce scope check)
+            # - token_scopes=[]: API token with empty scopes (enforce scope check, deny all)
+            token_scopes = user_context.get("token_scopes")
+            if token_scopes is not None:  # Only check if this is an API token with scopes
+                if permission not in token_scopes:
+                    # Log detailed info server-side but return generic error message to avoid permission disclosure
+                    logger.warning(f"API token scope check failed: user={user_context['email']}, permission={permission}, token_scopes={token_scopes}")
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
             team_id, check_any_team = await _resolve_team_and_check_mode(user_context, kwargs)
 
@@ -988,6 +1005,22 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
             user_context = kwargs.get("user") or kwargs.get("_user") or kwargs.get("current_user") or kwargs.get("current_user_ctx")
             if not user_context or not isinstance(user_context, dict) or "email" not in user_context:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User authentication required")
+
+            # SECURITY: Check API token scopes BEFORE RBAC (Layer 1)
+            # API tokens must have at least ONE of the required permission scopes
+            # This is independent of RBAC role checks (Layer 2)
+            #
+            # TOKEN TYPE DETECTION: Uses `is not None` check to distinguish:
+            # - token_scopes=None: Session token (skip scope check, use RBAC only)
+            # - token_scopes=[...]: API token with scopes (enforce scope check)
+            # - token_scopes=[]: API token with empty scopes (enforce scope check, deny all)
+            token_scopes = user_context.get("token_scopes")
+            if token_scopes is not None:  # Only check if this is an API token with scopes
+                # At least ONE of the required permissions must be in token_scopes
+                if not any(perm in token_scopes for perm in permissions):
+                    # Log detailed info server-side but return generic error message to avoid permission disclosure
+                    logger.warning(f"API token scope check failed: user={user_context['email']}, required_any_of={permissions}, token_scopes={token_scopes}")
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
             team_id, check_any_team = await _resolve_team_and_check_mode(user_context, kwargs)
 

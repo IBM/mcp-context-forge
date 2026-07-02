@@ -1616,6 +1616,7 @@ class TestUpdateApiTokenLastUsed:
             "jti": "jti-api-456",
             "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
             "user": {"auth_provider": "api_token"},
+            "scopes": {"permissions": ["*"]},  # API tokens require scopes field
         }
 
         mock_user = EmailUser(
@@ -1664,6 +1665,7 @@ class TestUpdateApiTokenLastUsed:
             "jti": "jti-api-fail-123",
             "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
             "user": {"auth_provider": "api_token"},
+            "scopes": {"permissions": ["*"]},  # API tokens require scopes field
         }
 
         mock_user = EmailUser(
@@ -1752,6 +1754,7 @@ class TestUpdateApiTokenLastUsed:
             "sub": "legacy@example.com",
             "jti": "jti-legacy-999",
             "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+            "scopes": {"permissions": ["*"]},  # API tokens require scopes field
         }
 
         mock_user = EmailUser(
@@ -1799,6 +1802,7 @@ class TestUpdateApiTokenLastUsed:
             "sub": "legacy@example.com",
             "jti": "jti-legacy-fail-888",
             "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+            "scopes": {"permissions": ["*"]},  # API tokens require scopes field
         }
 
         mock_user = EmailUser(
@@ -2166,6 +2170,7 @@ class TestSetAuthMethodFromPayload:
             "sub": "user@example.com",
             "user": {"auth_provider": "api_token"},
             "jti": "jti-123",
+            "scopes": {"permissions": ["*"]},  # API tokens require scopes field
         }
         mock_user = EmailUser(
             email="user@example.com",
@@ -2200,6 +2205,7 @@ class TestSetAuthMethodFromPayload:
             "sub": "user@example.com",
             "user": {},  # no auth_provider
             "jti": "legacy-jti",
+            "scopes": {"permissions": ["*"]},  # API tokens require scopes field
         }
         mock_user = EmailUser(
             email="user@example.com",
@@ -2286,6 +2292,45 @@ class TestSetAuthMethodFromPayload:
             user = await get_current_user(credentials=credentials, request=request)
 
         assert request.state.auth_method == "jwt"
+
+    @pytest.mark.asyncio
+    async def test_api_token_missing_scopes_field_rejected(self):
+        """API token without scopes field raises 401 (lines 1945-1946).
+
+        REGRESSION TEST for PR #4737: API tokens MUST have scopes field (even if empty)
+        to enforce Layer 1 scope checks. Missing scopes is a security bypass.
+        """
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt")  # pragma: allowlist secret
+        payload = {
+            "sub": "user@example.com",
+            "user": {"auth_provider": "api_token"},  # API token
+            "jti": "jti-no-scopes",
+            # CRITICAL: Missing "scopes" field - should trigger 401
+        }
+        mock_user = EmailUser(
+            email="user@example.com",
+            password_hash="h",
+            full_name="U",
+            is_admin=False,
+            is_active=True,
+            auth_provider="api_token",
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await get_current_user(credentials=credentials, request=request)
+
+            # Verify 401 error with correct message
+            assert exc_info.value.status_code == 401
+            assert "missing required scopes field" in exc_info.value.detail
 
 
 class TestPluginAuthHook:
