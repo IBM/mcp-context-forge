@@ -147,6 +147,20 @@ describe("sanitizeError", () => {
       );
     });
 
+    it("prefers the friendly status message over a terse detail for auth statuses", () => {
+      // 401/403/404/5xx details are typically unhelpful (e.g. "Forbidden"), so the
+      // status-based message wins to keep the UX consistent.
+      expect(sanitizeError({ status: 403, body: { detail: "Forbidden" } })).toBe(
+        "You don't have permission to perform this action.",
+      );
+      expect(sanitizeError({ status: 401, body: { detail: "Unauthorized" } })).toBe(
+        "Authentication required. Please log in again.",
+      );
+      expect(sanitizeError({ status: 500, body: { detail: "Internal Server Error" } })).toBe(
+        "Server error. Please try again later.",
+      );
+    });
+
     it("extracts the first msg from a FastAPI validation error body", () => {
       expect(
         sanitizeError({
