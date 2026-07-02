@@ -57,12 +57,15 @@ jobs:
           PR_URL:       ${{ github.event.pull_request.html_url || format('{0}/{1}/pulls', github.server_url, github.repository) }}
           PR_AUTHOR:    ${{ github.event.pull_request.user.login || github.actor }}
           BASE_REF:     ${{ github.event.pull_request.base.ref  || 'main' }}
-          SENDER_TYPE:  ${{ github.event.sender.type }}
           SENDER_LOGIN: ${{ github.event.sender.login || github.actor }}
         run: |
-          if [[ "$SENDER_TYPE" == "Bot" ]]; then
+          # Strip refs/heads/ prefix if present (dequeued events can include it)
+          BASE_REF="${BASE_REF#refs/heads/}"
+
+          # Bot accounts always end with [bot] — more reliable than sender.type
+          if [[ "$SENDER_LOGIN" == *"[bot]"* ]]; then
             REASON_TEXT="auto-ejected (checks failed or base branch updated)"
-          elif [[ -n "$SENDER_TYPE" ]]; then
+          elif [[ -n "$SENDER_LOGIN" ]]; then
             REASON_TEXT=$(printf 'manually removed by `%s`' "$SENDER_LOGIN")
           else
             REASON_TEXT="ejected (test dispatch)"

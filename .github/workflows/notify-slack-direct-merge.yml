@@ -38,11 +38,12 @@ permissions:
 jobs:
   notify:
     name: Send Slack direct-merge notification
-    # Fire only when a human merges directly (not github-merge-queue[bot]).
+    # Fire only when merged directly by a human (auto_merged == false).
+    # Merge queue and auto-merge both set auto_merged = true, so they are excluded.
     # Always run on manual dispatch for testing.
     if: >
       (github.event.pull_request.merged == true &&
-       github.event.pull_request.merged_by.type != 'Bot') ||
+       github.event.pull_request.auto_merged != true) ||
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 5
