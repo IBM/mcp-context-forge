@@ -6149,7 +6149,7 @@ async def create_resource(
 
 
 @resource_router.get("/test/{resource_uri:path}")
-@require_permission("resources.read")
+@require_permission("resources.read", allow_admin_bypass=False)
 async def test_resource_by_uri(
     resource_uri: str,
     request: Request,
@@ -6174,6 +6174,8 @@ async def test_resource_by_uri(
     auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
     try:
         resource_content = await resource_service.read_resource(db, resource_uri=resource_uri, user=auth_user_email, token_teams=auth_token_teams)
+        db.commit()
+        db.close()
         return {"content": resource_content}
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
