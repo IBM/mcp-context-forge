@@ -528,7 +528,7 @@ async def admin_test_api(
     test_type = body.get("test_type", "models")
     model_id = body.get("model_id")
     message = body.get("message", "Hello! Please respond with a short greeting.")
-    max_tokens = body.get("max_tokens", 100)
+    max_tokens = body.get("max_tokens")
 
     start_time = time.time()
 

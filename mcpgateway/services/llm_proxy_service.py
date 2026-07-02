@@ -48,6 +48,30 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 
+_REASONING_MODEL_NAMES = {"gpt-chat-latest"}
+_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+
+
+def _is_reasoning_model_name(*model_names: Optional[str]) -> bool:
+    """Return whether any model/deployment name looks like an OpenAI reasoning model.
+
+    Args:
+        model_names: Candidate request, model, or deployment names.
+
+    Returns:
+        ``True`` when a candidate matches known reasoning-class naming patterns.
+    """
+    for model_name in model_names:
+        if not model_name:
+            continue
+        normalized = str(model_name).strip().lower()
+        candidates = {normalized, normalized.rsplit("/", 1)[-1]}
+        for candidate in candidates:
+            if candidate in _REASONING_MODEL_NAMES or candidate.startswith(_REASONING_MODEL_PREFIXES):
+                return True
+    return False
+
+
 def _provider_trace_system(provider: LLMProvider) -> str:
     """Map provider type to a stable ``gen_ai.system`` label.
 
@@ -300,20 +324,23 @@ class LLMProxyService:
             "api-key": api_key or "",
         }
 
+        is_reasoning_model = _is_reasoning_model_name(request.model, model.model_id, deployment_name)
+
         # Build request body (similar to OpenAI)
         body: Dict[str, Any] = {
             "messages": [msg.model_dump(exclude_none=True) for msg in request.messages],
         }
 
-        if request.temperature is not None:
-            body["temperature"] = request.temperature
-        elif provider.default_temperature:
-            body["temperature"] = provider.default_temperature
+        temperature = request.temperature if request.temperature is not None else provider.default_temperature
+        if temperature is not None and (not is_reasoning_model or temperature == 1):
+            body["temperature"] = temperature
 
-        if request.max_tokens is not None:
-            body["max_tokens"] = request.max_tokens
-        elif provider.default_max_tokens:
-            body["max_tokens"] = provider.default_max_tokens
+        max_tokens = request.max_tokens if request.max_tokens is not None else provider.default_max_tokens
+        if max_tokens is not None:
+            if is_reasoning_model:
+                body["max_completion_tokens"] = max_tokens
+            else:
+                body["max_tokens"] = max_tokens
 
         if request.stream:
             body["stream"] = True
