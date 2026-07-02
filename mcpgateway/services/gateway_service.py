@@ -64,7 +64,7 @@ from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, or_, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import joinedload, selectinload, Session
 
 try:
@@ -93,7 +93,7 @@ from mcpgateway.db import ResourceMetric, ResourceSubscription, server_prompt_as
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
-from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, PromptCreate, ResourceCreate, ToolCreate
+from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayTestRequest, GatewayTestResponse, GatewayUpdate, PromptCreate, ResourceCreate, ToolCreate
 
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
@@ -6601,6 +6601,253 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 return capabilities, tools, resources, prompts, validation_errors
         sanitized_url = sanitize_url_for_logging(server_url, auth_query_params)
         raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: Connection could not be established")
+
+
+async def test_gateway_connectivity(
+    request: GatewayTestRequest,
+    team_id: Optional[str],
+    user: Any,
+    db: Session,
+) -> GatewayTestResponse:
+    """Test a gateway by sending a request to its URL.
+
+    Shared implementation used by both the legacy admin route and the v1 REST
+    endpoint.  All URL validation, SSRF protection, DNS-pinning, OAuth token
+    acquisition, and structured logging are handled here.
+
+    Args:
+        request (GatewayTestRequest): The request object containing the gateway URL and request details.
+        team_id (Optional[str]): Optional team ID for team-specific gateways.
+        user (Any): Authenticated user context dict.
+        db (Session): Database session.
+
+    Returns:
+        GatewayTestResponse: The response from the gateway, including status code, latency, and body.
+
+    Examples:
+        >>> import asyncio
+        >>> callable(test_gateway_connectivity)
+        True
+    """
+    # First-Party
+    from mcpgateway.auth_context import get_user_email  # pylint: disable=import-outside-toplevel
+
+    start_time: float = time.monotonic()
+
+    # Build allowlist for gateway test endpoint
+    allowed_hosts_set: set[str] = set()
+
+    if settings.gateway_test_allow_registered_only:
+        # Mode 1: Only allow testing registered gateway URLs
+        # Query all enabled gateways to build allowlist from their base URLs
+        try:
+            query = select(DbGateway.url).where(DbGateway.enabled)
+            if team_id:
+                query = query.where(DbGateway.team_id == team_id)
+            registered_urls = db.execute(query).scalars().all()
+
+            # Extract hostnames from registered gateway URLs
+            for url in registered_urls:
+                try:
+                    parsed = urlparse(url)
+                    if parsed.hostname:
+                        # Normalize: lowercase and strip trailing dots
+                        hostname = parsed.hostname.lower().rstrip(".")
+                        allowed_hosts_set.add(hostname)
+                except (ValueError, AttributeError) as e:
+                    # Log parse failures to help debug "URL not in allowlist" mysteries
+                    logger.debug("Failed to parse registered gateway URL '%s': %s", url, e)
+                    continue
+        except SQLAlchemyError as e:
+            logger.warning("Failed to build allowlist from registered gateways: %s", e)
+    else:
+        # Mode 2: Use configured host patterns from settings
+        allowed_hosts_set = set(settings.gateway_test_allowed_hosts)
+
+    allowed_hosts = list(allowed_hosts_set)
+
+    # Validate URL with allowlist enforcement and pin a safe resolved IP to close
+    # the DNS rebinding gap between validation-time and connection-time resolution.
+    try:
+        validated_gateway_target = await SecurityValidator.validate_gateway_test_url(str(request.base_url), allowed_hosts, "Gateway test URL")
+    except ValueError as e:
+        # Log the actual error for security monitoring, but return generic message
+        safe_url = sanitize_url_for_logging(str(request.base_url))
+        logger.warning(
+            "Gateway test URL validation failed for %s by user %s: %s",
+            safe_url,
+            get_user_email(user),
+            str(e),
+        )
+        latency_ms = int((time.monotonic() - start_time) * 1000)
+        # Generic error message - don't expose allowlist or validation details
+        return GatewayTestResponse(status_code=400, latency_ms=latency_ms, body={"error": "Invalid gateway URL"})
+
+    validated_base_url = validated_gateway_target["validated_url"]
+    validated_hostname = validated_gateway_target["hostname"]
+    pinned_resolved_ip = validated_gateway_target["resolved_ip"]
+
+    parsed_validated_base_url = urlparse(validated_base_url)
+    pinned_ip_is_ipv6 = ":" in pinned_resolved_ip
+    if parsed_validated_base_url.port is not None:
+        pinned_netloc = f"[{pinned_resolved_ip}]:{parsed_validated_base_url.port}" if pinned_ip_is_ipv6 else f"{pinned_resolved_ip}:{parsed_validated_base_url.port}"
+        original_authority = f"{validated_hostname}:{parsed_validated_base_url.port}"
+    else:
+        pinned_netloc = f"[{pinned_resolved_ip}]" if pinned_ip_is_ipv6 else pinned_resolved_ip
+        original_authority = validated_hostname
+
+    pinned_base_url = urlunparse(parsed_validated_base_url._replace(netloc=pinned_netloc))
+    full_url = pinned_base_url.rstrip("/") + "/" + request.path.lstrip("/")
+    full_url = full_url.rstrip("/")
+    safe_validated_url = sanitize_url_for_logging(validated_base_url)
+    logger.info(
+        "Gateway test pinned outbound address for user %s: url=%s hostname=%s pinned_ip=%s",
+        get_user_email(user),
+        safe_validated_url,
+        validated_hostname,
+        pinned_resolved_ip,
+    )
+
+    headers = dict(request.headers or {})
+    headers["Host"] = original_authority
+
+    # Attempt to find a registered gateway matching this URL and team.
+    # Query the raw DB object directly so we get the unmasked auth_value
+    # (get_first_gateway_by_url returns a masked GatewayRead where
+    # auth_value="*****", which cannot be decoded).
+    try:
+        query = select(DbGateway).where(DbGateway.url == validated_base_url, DbGateway.enabled)
+        if team_id:
+            query = query.where(DbGateway.team_id == team_id)
+        gateway = db.execute(query).scalars().first()
+    except Exception:
+        gateway = None
+
+    try:
+        user_email = get_user_email(user)
+        if gateway and gateway.auth_type == "oauth" and gateway.oauth_config:
+            grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
+
+            if grant_type == "authorization_code":
+                # For Authorization Code flow, try to get stored tokens
+                try:
+                    # First-Party
+                    from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+
+                    token_storage = TokenStorageService(db)
+
+                    # Get user-specific OAuth token
+                    if not user_email:
+                        latency_ms = int((time.monotonic() - start_time) * 1000)
+                        return GatewayTestResponse(
+                            status_code=401, latency_ms=latency_ms, body={"error": f"User authentication required for OAuth-protected gateway '{gateway.name}'. Please ensure you are authenticated."}
+                        )
+
+                    access_token: str = await token_storage.get_user_token(gateway.id, user_email)
+
+                    if access_token:
+                        headers["Authorization"] = f"Bearer {access_token}"
+                    else:
+                        latency_ms = int((time.monotonic() - start_time) * 1000)
+                        return GatewayTestResponse(
+                            status_code=401, latency_ms=latency_ms, body={"error": f"Please authorize {gateway.name} first. Visit /oauth/authorize/{gateway.id} to complete OAuth flow."}
+                        )
+                except Exception as e:
+                    logger.error(f"Failed to obtain stored OAuth token for gateway {gateway.name}: {e}")
+                    latency_ms = int((time.monotonic() - start_time) * 1000)
+                    return GatewayTestResponse(status_code=500, latency_ms=latency_ms, body={"error": f"OAuth token retrieval failed for gateway: {str(e)}"})
+            else:
+                # For Client Credentials flow, get token directly
+                try:
+                    oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
+                    access_token: str = await oauth_manager.get_access_token(
+                        gateway.oauth_config, ca_certificate=gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key
+                    )
+                    headers["Authorization"] = f"Bearer {access_token}"
+                except Exception as e:
+                    logger.error(f"Failed to obtain OAuth access token for gateway {gateway.name}: {e}")
+                    response_body = {"error": f"OAuth token retrieval failed for gateway: {str(e)}"}
+        elif gateway and gateway.auth_type in ("basic", "bearer", "authheaders") and gateway.auth_value:
+            if isinstance(gateway.auth_value, dict):
+                headers.update(gateway.auth_value)
+            elif isinstance(gateway.auth_value, str):
+                headers.update(decode_auth(gateway.auth_value))
+
+        # Prepare request based on content type
+        content_type = getattr(request, "content_type", "application/json")
+        request_kwargs = {
+            "method": request.method.upper(),
+            "url": full_url,
+            "headers": headers,
+            "extensions": {"sni_hostname": validated_hostname},
+        }
+
+        if request.body is not None:
+            if content_type == "application/x-www-form-urlencoded":
+                # Set proper content type header and use data parameter for form encoding
+                headers["Content-Type"] = "application/x-www-form-urlencoded"
+                request_kwargs["data"] = request.body
+            else:
+                # Default to JSON
+                headers["Content-Type"] = "application/json"
+                request_kwargs["json"] = request.body
+
+        async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}) as client:
+            response: httpx.Response = await client.request(**request_kwargs)
+        latency_ms = int((time.monotonic() - start_time) * 1000)
+        try:
+            response_body: Union[Dict[str, Any], str] = response.json()
+        except ValueError:
+            response_body = {"details": response.text}
+
+        # Structured logging: Log successful gateway test
+        structured_logger.log(
+            level="INFO",
+            message=f"Gateway test completed: {safe_validated_url}",
+            event_type="gateway_tested",
+            component="gateway_service",
+            user_email=get_user_email(user),
+            team_id=team_id,
+            resource_type="gateway",
+            resource_id=gateway.id if gateway else None,
+            custom_fields={
+                "gateway_name": gateway.name if gateway else None,
+                "gateway_url": safe_validated_url,
+                "test_method": request.method,
+                "test_path": request.path,
+                "status_code": response.status_code,
+                "latency_ms": latency_ms,
+            },
+        )
+
+        return GatewayTestResponse(status_code=response.status_code, latency_ms=latency_ms, body=response_body)
+
+    except httpx.RequestError as e:
+        safe_url = sanitize_url_for_logging(str(request.base_url))
+        logger.warning("Gateway test failed for %s: %s", safe_url, e)
+        latency_ms = int((time.monotonic() - start_time) * 1000)
+
+        # Structured logging: Log failed gateway test
+        structured_logger.log(
+            level="ERROR",
+            message=f"Gateway test failed: {safe_url}",
+            event_type="gateway_test_failed",
+            component="gateway_service",
+            user_email=get_user_email(user),
+            team_id=team_id,
+            resource_type="gateway",
+            resource_id=gateway.id if gateway else None,
+            error=e,
+            custom_fields={
+                "gateway_name": gateway.name if gateway else None,
+                "gateway_url": safe_url,
+                "test_method": request.method,
+                "test_path": request.path,
+                "latency_ms": latency_ms,
+            },
+        )
+
+        return GatewayTestResponse(status_code=502, latency_ms=latency_ms, body={"error": "Request failed", "details": str(e)})
 
 
 # Lazy singleton - created on first access, not at module import time.
