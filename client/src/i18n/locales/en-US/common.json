@@ -28,5 +28,6 @@
   "common.theme.light": "Light mode",
   "common.theme.dark": "Dark mode",
   "common.theme.system": "System theme",
-  "common.theme.toggle": "Toggle theme"
+  "common.theme.toggle": "Toggle theme",
+  "common.button.remove": "Remove"
 }

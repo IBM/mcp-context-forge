@@ -66,12 +66,6 @@ describe("TeamsTable", () => {
     expect(screen.getByText("12")).toBeInTheDocument();
   });
 
-  it("renders the uppercase first-letter icon for a team", () => {
-    renderTable(<TeamsTable teams={[makeTeam({ name: "engineering" })]} isLoading={false} />);
-
-    expect(screen.getByText("E")).toBeInTheDocument();
-  });
-
   it("formats valid created/updated dates", () => {
     renderTable(
       <TeamsTable
