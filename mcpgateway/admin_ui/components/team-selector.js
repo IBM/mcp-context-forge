@@ -28,7 +28,7 @@ export function teamSelector() {
           fetch(rootPath + '/admin/teams/ids', { credentials: 'same-origin' })
             .then((resp) => (resp.ok ? resp.json() : null))
             .then((data) => {
-              const ids = (data && data.team_ids) || [];
+              const ids = Array.isArray(data?.team_ids) ? data.team_ids : [];
               if (!ids.includes(requestedTeamId)) {
                 const cleanUrl = new URL(window.location.href);
                 cleanUrl.searchParams.delete('team_id');
