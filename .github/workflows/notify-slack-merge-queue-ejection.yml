@@ -82,12 +82,9 @@ jobs:
             *)           REASON_TEXT="ejected (reason: ${REASON:-test dispatch})" ;;
           esac
 
-          SLACK_SUMMARY=":warning: *PR #${PR_NUM} ejected from merge queue*"
-          SLACK_BODY=":warning: *PR ejected from merge queue*
-• *PR:* <${PR_URL}|#${PR_NUM}: ${PR_TITLE}>
-• *Author:* \`${PR_AUTHOR}\`
-• *Reason:* ${REASON_TEXT}
-• *Base branch:* \`${BASE_REF}\`"
+          SLACK_SUMMARY=$(printf ':warning: *PR #%s ejected from merge queue*' "$PR_NUM")
+          SLACK_BODY=$(printf ':warning: *PR ejected from merge queue*\n• *PR:* <%s|#%s: %s>\n• *Author:* `%s`\n• *Reason:* %s\n• *Base branch:* `%s`' \
+            "$PR_URL" "$PR_NUM" "$PR_TITLE" "$PR_AUTHOR" "$REASON_TEXT" "$BASE_REF")
 
           PAYLOAD=$(jq -n \
             --arg text "$SLACK_SUMMARY" \

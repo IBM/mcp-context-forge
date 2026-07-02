@@ -61,11 +61,10 @@ jobs:
           MERGED_BY:  ${{ github.event.pull_request.merged_by.login || github.actor }}
           BASE_REF:   ${{ github.event.pull_request.base.ref || 'main' }}
         run: |
-          SLACK_SUMMARY=":rotating_light: *PR #${PR_NUMBER} merged directly to \`${BASE_REF}\` (bypassed merge queue)*"
-          SLACK_BODY=":rotating_light: *PR merged directly to \`${BASE_REF}\` (bypassed merge queue)*
-• *PR:* <${PR_URL}|#${PR_NUMBER}: ${PR_TITLE}>
-• *Author:* \`${PR_AUTHOR}\`
-• *Merged by:* \`${MERGED_BY}\`"
+          SLACK_SUMMARY=$(printf ':rotating_light: *PR #%s merged directly to `%s` (bypassed merge queue)*' \
+            "$PR_NUMBER" "$BASE_REF")
+          SLACK_BODY=$(printf ':rotating_light: *PR merged directly to `%s` (bypassed merge queue)*\n• *PR:* <%s|#%s: %s>\n• *Author:* `%s`\n• *Merged by:* `%s`' \
+            "$BASE_REF" "$PR_URL" "$PR_NUMBER" "$PR_TITLE" "$PR_AUTHOR" "$MERGED_BY")
 
           PAYLOAD=$(jq -n \
             --arg text "$SLACK_SUMMARY" \
