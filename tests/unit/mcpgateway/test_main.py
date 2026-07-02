@@ -1659,6 +1659,30 @@ class TestResourceEndpoints:
         )
         assert result == {"content": [{"uri": "a"}, {"uri": "b"}]}
 
+    def test_test_resource_by_uri_unauthenticated_returns_401(self, app_with_temp_db):
+        """GET /resources/test/{uri} without credentials must return 401."""
+        from fastapi import HTTPException, status as http_status
+        from mcpgateway.middleware.rbac import get_current_user_with_permissions
+
+        def no_auth():
+            raise HTTPException(status_code=http_status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+        app_with_temp_db.dependency_overrides[get_current_user_with_permissions] = no_auth
+        try:
+            client = TestClient(app_with_temp_db, raise_server_exceptions=False)
+            response = client.get("/resources/test/resource://example/demo")
+            assert response.status_code == 401
+        finally:
+            app_with_temp_db.dependency_overrides.pop(get_current_user_with_permissions, None)
+
+    def test_test_resource_by_uri_missing_permission_returns_403(self, test_client, auth_headers):
+        """GET /resources/test/{uri} with authenticated user lacking resources.read must return 403."""
+        with patch("mcpgateway.middleware.rbac.PermissionService") as MockPS:
+            mock_instance = MockPS.return_value
+            mock_instance.check_permission = AsyncMock(return_value=False)
+            response = test_client.get("/resources/test/resource://example/demo", headers=auth_headers)
+        assert response.status_code == 403
+
 
 # ----------------------------------------------------- #
 # Prompt Management Tests                               #
