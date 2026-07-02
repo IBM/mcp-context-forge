@@ -46,20 +46,7 @@ export default defineConfig({
         entryFileNames: 'bundle-[hash].js',
         format: 'iife', // IIFE format for direct script inclusion
         name: 'Admin', // Expose bundle as window.Admin
-        // Externalize dependencies that are loaded separately
-        globals: {
-          marked: 'marked',
-          DOMPurify: 'DOMPurify',
-          Chart: 'Chart',
-          CodeMirror: 'CodeMirror',
-        },
       },
-      external: [
-        'marked',
-        'DOMPurify',
-        'Chart',
-        'CodeMirror',
-      ],
     },
     outDir: 'mcpgateway/static',
     emptyOutDir: false, // Don't clean the output directory
