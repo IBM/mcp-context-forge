@@ -8354,6 +8354,7 @@ upgrade-validate:                         ## Validate fresh + upgrade + roundtri
 # help: rust-format                           - Format Rust code (cargo fmt)
 # help: rust-fmt-check                        - Check formatting (cargo fmt --check)
 # help: rust-lint                             - Lint Rust code (cargo clippy)
+# help: rust-unused-deps                      - Detect unused Rust dependencies with cargo-shear
 # help: rust-check                            - Run all Rust checks (build, fmt, clippy, test)
 # help: rust-doc                              - Build Rust documentation
 # help: rust-vet                              - Run cargo vet (strict supply-chain auditing)
@@ -8379,9 +8380,13 @@ upgrade-validate:                         ## Validate fresh + upgrade + roundtri
 # help: rust-mcp-runtime-run                  - Run the experimental Rust MCP runtime against local gateway /rpc
 # help: -----------------------------------------------------------------------------
 
-.PHONY: rust-build rust-build-check rust-dev rust-test rust-format rust-fmt-check rust-lint rust-check rust-doc rust-clean rust-verify rust-verify-stubs rust-stub-gen rust-licenses rust-vet rust-deny rust-coverage rust-diff-cover rust-bench-check
+.PHONY: rust-build rust-build-check rust-dev rust-test rust-format rust-fmt-check rust-lint rust-unused-deps rust-check rust-doc rust-clean rust-verify rust-verify-stubs rust-stub-gen rust-licenses rust-vet rust-deny rust-coverage rust-diff-cover rust-bench-check
 .PHONY: rust-ensure-deps rust-install-deps rust-install-targets rust-install rust-build-wheels rust-uninstall-plugins rust-clean-stubs rust-verify-python-crates
 .PHONY: rust-mcp-runtime-build rust-mcp-runtime-test rust-mcp-runtime-run
+
+CARGO_SHEAR_VERSION ?= 1.13.1
+override CARGO_SHEAR_SHA256 := 6f87c8d4905560b357e0e57b59f6578f38edfbb272e35a145fae2dde0fa1ab1d
+override CARGO_SHEAR_CRATE_URL := https://crates.io/api/v1/crates/cargo-shear/$(CARGO_SHEAR_VERSION)/download
 
 # Intentional broad scan under crates/: workspace-owned crates live here and CI
 # should pick up new maturin crates automatically rather than curating a short list.
@@ -8470,7 +8475,23 @@ rust-lint: rust-ensure-deps             ## Lint Rust code (cargo clippy)
 	@cargo clippy --workspace --all-targets -- -D warnings -A clippy::multiple_crate_versions
 	@echo "✅ Rust lint passed"
 
-rust-check: rust-build-check rust-fmt-check rust-lint rust-test  ## Run all Rust checks (build, fmt, clippy, test)
+rust-unused-deps: rust-ensure-deps      ## Detect unused Rust dependencies with cargo-shear
+	@echo "🦀 Checking Rust dependency usage..."
+	@command -v cargo-shear >/dev/null 2>&1 || { \
+		echo "Installing cargo-shear..."; \
+		tmp_dir=$$(mktemp -d); \
+		trap 'rm -rf "$$tmp_dir"' EXIT; \
+		crate_file="$$tmp_dir/cargo-shear-$(CARGO_SHEAR_VERSION).crate"; \
+		curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error -H 'User-Agent: mcp-context-forge-make' --output "$$crate_file" "$(CARGO_SHEAR_CRATE_URL)"; \
+		python3 -c 'import hashlib, pathlib, sys; expected, path = sys.argv[1], pathlib.Path(sys.argv[2]); actual = hashlib.sha256(path.read_bytes()).hexdigest(); sys.exit(0 if actual == expected else f"sha256 mismatch for {path}: expected {expected}, got {actual}")' "$(CARGO_SHEAR_SHA256)" "$$crate_file" && \
+		mkdir "$$tmp_dir/src" && \
+		tar -xzf "$$crate_file" -C "$$tmp_dir/src" --strip-components=1 && \
+		CARGO_NET_RETRY=$${CARGO_NET_RETRY:-10} CARGO_HTTP_MULTIPLEXING=$${CARGO_HTTP_MULTIPLEXING:-false} cargo install --locked --path "$$tmp_dir/src"; \
+	}
+	@CARGO_NET_RETRY=$${CARGO_NET_RETRY:-10} CARGO_HTTP_MULTIPLEXING=$${CARGO_HTTP_MULTIPLEXING:-false} cargo shear --locked --deny-warnings
+	@echo "✅ Rust dependency usage check passed"
+
+rust-check: rust-build-check rust-fmt-check rust-lint rust-unused-deps rust-test  ## Run all Rust checks (build, fmt, clippy, unused deps, test)
 	@echo "✅ Rust check passed"
 
 rust-doc: rust-ensure-deps              ## Build Rust documentation

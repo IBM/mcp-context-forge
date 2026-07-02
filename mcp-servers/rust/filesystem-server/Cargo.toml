@@ -22,7 +22,6 @@ rmcp = { workspace = true, features = [
     "transport-streamable-http-server",
 ] }
 serde.workspace = true
-serde_json.workspace = true
 similar = "2.7.0"
 tempfile = "3"
 tokio.workspace = true

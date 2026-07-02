@@ -9,7 +9,6 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
-dotenvy = "0.15.7"
 flume = "0.12.0"
 serde.workspace = true
 tokio.workspace = true
@@ -18,20 +17,14 @@ tracing-subscriber.workspace = true
 clap.workspace = true
 reqwest.workspace = true
 futures.workspace = true
-http = "1.4.0"
 serde_json.workspace = true
 jsonrpc-core = "18.0.0"
 actson = "2.1.0"
 tracing-appender = "0.2.4"
-toml = "0.9.11"
-libc = "0.2"
 bytes.workspace = true
-nom = "7"
 tempfile = "3.24.0"
-base64.workspace = true
 arc-swap = "1.8.1"
 mimalloc = "0.1.48"
-time = "0.3.47"
 rmcp = { workspace = true, features = ["client", "transport-child-process"], optional = true }
 
 [features]
@@ -43,7 +36,10 @@ path = "src/bin/wrapper_integration.rs"
 required-features = ["integration-test"]
 
 [dev-dependencies]
+base64.workspace = true
+http = "1.4.0"
 mockito = "1.7.1"
+nom = "7"
 tokio-test = "0.4.5"
 tracing-test = "0.2.5"
 
