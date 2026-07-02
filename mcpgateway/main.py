@@ -1461,6 +1461,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Validate UAID security configuration
         validate_uaid_security_config()
 
+        # Validate AUTH_ENCRYPTION_SECRET can decrypt existing auth data.
+        # Must run before gateway_service.initialize() schedules worker tasks
+        # that call decode_auth — otherwise InvalidTag surfaces as a noisy
+        # per-gateway error log rather than a single actionable fatal.
+        validate_auth_encryption_key()
+
         # Initialize the plugin manager factory whenever the YAML config is
         # available. We used to gate this on ``settings.plugins.enabled`` but
         # that broke runtime enable-from-disabled: a node that boots with the
@@ -1930,6 +1936,88 @@ app = FastAPI(
 
 # Setup metrics instrumentation
 setup_metrics(app)
+
+
+def validate_auth_encryption_key() -> None:
+    """Verify AUTH_ENCRYPTION_SECRET can decrypt existing AES-GCM auth blobs.
+
+    Samples one encrypted auth blob from each AES-GCM-backed column
+    (gateways.auth_value, tools.auth_value) and attempts decryption with
+    the current secret.  Aborts startup with a targeted diagnostic on failure
+    rather than letting individual gateway workers surface the error as
+    per-gateway ``InvalidTag`` log noise.
+
+    Column coverage:
+        - ``gateways.auth_value`` — bearer/basic/authheader credentials for
+          each registered upstream MCP gateway (decoded by
+          ``utils/services_auth.decode_auth`` at connection time).
+        - ``tools.auth_value`` — per-tool auth overrides stored in the same
+          AES-GCM format.
+
+    Skips rows whose stored value is not a genuine encrypted blob:
+        - SQL NULL
+        - JSON null (→ Python None after psycopg3 JSON parsing)
+        - Empty JSON object (→ Python ``{}``) used for "no OAuth configured"
+        - Empty string
+
+    Only ``cryptography.exceptions.InvalidTag`` triggers the abort — that is
+    the specific exception raised by AES-GCM when the decryption key is wrong.
+    Other errors (DB connection issues, import errors) are not suppressed.
+
+    Raises:
+        SystemExit: If any sampled auth blob cannot be decrypted with the
+            current AUTH_ENCRYPTION_SECRET.
+    """
+    # pylint: disable=import-outside-toplevel
+    from cryptography.exceptions import InvalidTag  # type: ignore[import-untyped]
+
+    from mcpgateway.utils.services_auth import decode_auth
+
+    secret = settings.auth_encryption_secret.get_secret_value()
+
+    # Columns using services_auth AES-GCM encoding.  One sample per column is
+    # sufficient — all rows share the same key derivation.
+    PROBE_QUERIES = [
+        ("gateways", "auth_value"),
+        ("tools", "auth_value"),
+    ]
+
+    db = SessionLocal()
+    try:
+        for table, column in PROBE_QUERIES:
+            result = db.execute(
+                # text() is intentional — table/column names are literals, not user input
+                text(f"SELECT {column} FROM {table} WHERE {column} IS NOT NULL LIMIT 50")  # noqa: S608
+            )
+            for (raw_val,) in result:
+                # Skip structural non-values that are never encrypted.
+                if raw_val is None:
+                    continue
+                if isinstance(raw_val, dict):
+                    continue  # JSON null → {} or empty oauth_config
+                if not isinstance(raw_val, str) or not raw_val:
+                    continue
+                if len(raw_val) < 20:
+                    continue  # too short to be a valid AES-GCM blob
+                if raw_val.startswith("v2:") or raw_val.startswith('"'):
+                    continue  # Fernet-wrapped or JSON-quoted — wrong layer
+
+                try:
+                    decode_auth(raw_val, secret=secret)
+                    break  # one successful decode is enough for this column
+                except InvalidTag:
+                    logger.critical(
+                        "FATAL: AUTH_ENCRYPTION_SECRET cannot decrypt %s.%s auth data. "
+                        "If you rotated AUTH_ENCRYPTION_SECRET, run the rekey migration before restarting. "
+                        "Validator: python3 scripts/validate_rekey.py OLD_SECRET NEW_SECRET DATABASE_URL",
+                        table,
+                        column,
+                    )
+                    sys.exit(1)
+    finally:
+        db.close()
+
+    logger.info("Auth encryption key verified against live gateway/tool auth data")
 
 
 def validate_security_configuration():
