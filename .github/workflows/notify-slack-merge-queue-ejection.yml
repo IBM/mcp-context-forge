@@ -2,14 +2,16 @@
 # Notify Slack on Merge Queue Ejection
 # ======================================================================
 #
-# Fires whenever the merge queue destroys a merge group for any reason
-# other than a successful merge, and sends a Slack notification to
-# #contextforge-merge-queue-alerts with:
+# Fires when a PR is removed from the merge queue without being merged,
+# and sends a Slack notification to #contextforge-merge-notifications with:
 #   - PR number, title, and direct link
 #   - PR author
-#   - Ejection reason:
-#       • "manually removed by <user>"  (reason: dequeued)
-#       • "auto-ejected (checks failed or base branch updated)"  (reason: invalidated)
+#   - Ejection reason inferred from the event sender:
+#       • "manually removed by <user>"  (sender.type == User)
+#       • "auto-ejected (checks failed or base branch updated)"  (sender.type == Bot)
+#
+# Note: the merge_group event only supports the checks_requested activity
+# type as a workflow trigger; ejection is detected via pull_request: dequeued.
 #
 # Required secret (repo Settings → Secrets and variables → Actions):
 #   SLACK_MERGE_NOTIFICATION_WEBHOOK_URL — Incoming Webhook URL for #contextforge-merge-notifications
@@ -22,69 +24,53 @@
 name: Notify Slack on Merge Queue Ejection
 
 on:
-  merge_group:
-    types: [destroyed]
+  pull_request:
+    types: [dequeued]
   workflow_dispatch:
 
 # Each ejection event is unique — never cancel a notification in flight.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.merge_group.head_sha || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: false
 
 permissions:
   contents: read
-  pull-requests: read
 
 jobs:
   notify:
     name: Send Slack merge queue ejection notification
-    # Skip successful merges; always run on manual dispatch for testing.
-    if: github.event.reason != 'merged' || github.event_name == 'workflow_dispatch'
+    # Safety filter: skip if the PR was somehow already merged.
+    # Always run on manual dispatch for testing.
+    if: github.event.pull_request.merged != true || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
     permissions:
       contents: read
-      pull-requests: read
 
     steps:
-      - name: Gather PR info and build Slack payload
-        id: info
+      - name: Build Slack payload
+        id: payload
         env:
-          GH_TOKEN: ${{ github.token }}
-          HEAD_REF: ${{ github.event.merge_group.head_ref }}
-          REASON: ${{ github.event.reason }}
-          SENDER: ${{ github.event.sender.login }}
-          BASE_REF: ${{ github.event.merge_group.base_ref || 'main' }}
-          REPO: ${{ github.repository }}
-          SERVER_URL: ${{ github.server_url }}
-          ACTOR: ${{ github.actor }}
+          PR_NUMBER:    ${{ github.event.pull_request.number   || 'N/A' }}
+          PR_TITLE:     ${{ github.event.pull_request.title    || 'Manual test dispatch' }}
+          PR_URL:       ${{ github.event.pull_request.html_url || format('{0}/{1}/pulls', github.server_url, github.repository) }}
+          PR_AUTHOR:    ${{ github.event.pull_request.user.login || github.actor }}
+          BASE_REF:     ${{ github.event.pull_request.base.ref  || 'main' }}
+          SENDER_TYPE:  ${{ github.event.sender.type }}
+          SENDER_LOGIN: ${{ github.event.sender.login || github.actor }}
         run: |
-          # Extract PR number from head_ref (e.g. gh-readonly-queue/main/pr-123-abcdef)
-          PR_NUM=$(echo "$HEAD_REF" | grep -oP 'pr-\K\d+' || true)
-
-          if [[ -n "$PR_NUM" ]]; then
-            PR_DATA=$(gh api "repos/${REPO}/pulls/${PR_NUM}")
-            PR_TITLE=$(echo "$PR_DATA"  | jq -r '.title')
-            PR_URL=$(echo "$PR_DATA"    | jq -r '.html_url')
-            PR_AUTHOR=$(echo "$PR_DATA" | jq -r '.user.login')
+          if [[ "$SENDER_TYPE" == "Bot" ]]; then
+            REASON_TEXT="auto-ejected (checks failed or base branch updated)"
+          elif [[ -n "$SENDER_TYPE" ]]; then
+            REASON_TEXT=$(printf 'manually removed by `%s`' "$SENDER_LOGIN")
           else
-            # workflow_dispatch fallback — no real merge group context
-            PR_NUM="N/A"
-            PR_TITLE="Manual test dispatch"
-            PR_URL="${SERVER_URL}/${REPO}/pulls"
-            PR_AUTHOR="${ACTOR}"
+            REASON_TEXT="ejected (test dispatch)"
           fi
 
-          case "$REASON" in
-            dequeued)    REASON_TEXT="manually removed by \`${SENDER}\`" ;;
-            invalidated) REASON_TEXT="auto-ejected (checks failed or base branch updated)" ;;
-            *)           REASON_TEXT="ejected (reason: ${REASON:-test dispatch})" ;;
-          esac
-
-          SLACK_SUMMARY=$(printf ':warning: *PR #%s ejected from merge queue*' "$PR_NUM")
+          SLACK_SUMMARY=$(printf ':warning: *PR #%s ejected from merge queue*' "$PR_NUMBER")
           SLACK_BODY=$(printf ':warning: *PR ejected from merge queue*\n• *PR:* <%s|#%s: %s>\n• *Author:* `%s`\n• *Reason:* %s\n• *Base branch:* `%s`' \
-            "$PR_URL" "$PR_NUM" "$PR_TITLE" "$PR_AUTHOR" "$REASON_TEXT" "$BASE_REF")
+            "$PR_URL" "$PR_NUMBER" "$PR_TITLE" "$PR_AUTHOR" "$REASON_TEXT" "$BASE_REF")
 
           PAYLOAD=$(jq -n \
             --arg text "$SLACK_SUMMARY" \
@@ -102,4 +88,4 @@ jobs:
         with:
           webhook: ${{ secrets.SLACK_MERGE_NOTIFICATION_WEBHOOK_URL }}
           webhook-type: incoming-webhook
-          payload: ${{ steps.info.outputs.payload }}
+          payload: ${{ steps.payload.outputs.payload }}
