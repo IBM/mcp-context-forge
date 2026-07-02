@@ -5280,8 +5280,10 @@ class OAuthToken(Base):
     gateway: Mapped["Gateway"] = relationship("Gateway", back_populates="oauth_tokens")
     app_user: Mapped["EmailUser"] = relationship("EmailUser", foreign_keys=[app_user_email])
 
-    # Unique constraint: one token per user per gateway
-    __table_args__ = (UniqueConstraint("gateway_id", "app_user_email", name="uq_oauth_gateway_user"),)
+    # Unique constraint: one token per OAuth identity per ContextForge user per gateway
+    # This allows a single ContextForge user to have multiple OAuth provider identities
+    # (e.g., admin can authorize with multiple IBMids)
+    __table_args__ = (UniqueConstraint("gateway_id", "app_user_email", "user_id", name="uq_oauth_gateway_user_identity"),)
 
 
 class OAuthState(Base):

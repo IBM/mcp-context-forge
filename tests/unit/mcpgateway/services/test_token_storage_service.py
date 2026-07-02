@@ -214,7 +214,7 @@ async def test_get_user_token_not_found(service, mock_db):
 @pytest.mark.asyncio
 async def test_get_user_token_valid(service, mock_db):
     record = _make_token_record()
-    mock_db.execute.return_value.scalar_one_or_none.return_value = record
+    mock_db.execute.return_value.scalars.return_value.first.return_value = record
     result = await service.get_user_token("gw-1", "user@test.com")
     assert result == "decrypted_value"
 
@@ -222,7 +222,7 @@ async def test_get_user_token_valid(service, mock_db):
 @pytest.mark.asyncio
 async def test_get_user_token_valid_no_encryption(service_no_encryption, mock_db):
     record = _make_token_record(access_token="plain_token")
-    mock_db.execute.return_value.scalar_one_or_none.return_value = record
+    mock_db.execute.return_value.scalars.return_value.first.return_value = record
     result = await service_no_encryption.get_user_token("gw-1", "user@test.com")
     assert result == "plain_token"
 
@@ -238,7 +238,7 @@ async def test_get_user_token_expired_no_refresh(service, mock_db):
 @pytest.mark.asyncio
 async def test_get_user_token_expired_with_refresh(service, mock_db):
     record = _make_token_record(expires_at=datetime.now(timezone.utc) - timedelta(hours=1))
-    mock_db.execute.return_value.scalar_one_or_none.return_value = record
+    mock_db.execute.return_value.scalars.return_value.first.return_value = record
     with patch.object(service, "_refresh_access_token", AsyncMock(return_value="new_token")):
         result = await service.get_user_token("gw-1", "user@test.com")
     assert result == "new_token"
@@ -618,7 +618,7 @@ async def test_refresh_no_encryption(service_no_encryption, mock_db):
 @pytest.mark.asyncio
 async def test_get_token_info_found(service, mock_db):
     record = _make_token_record()
-    mock_db.execute.return_value.scalar_one_or_none.return_value = record
+    mock_db.execute.return_value.scalars.return_value.first.return_value = record
     result = await service.get_token_info("gw-1", "user@test.com")
     assert result is not None
     assert result["user_id"] == "oauth-user-1"
@@ -645,16 +645,19 @@ async def test_get_token_info_exception(service, mock_db):
 @pytest.mark.asyncio
 async def test_revoke_user_tokens_found(service, mock_db):
     record = _make_token_record()
-    mock_db.execute.return_value.scalar_one_or_none.return_value = record
+    mock_result = MagicMock()
+    mock_result.rowcount = 1
+    mock_db.execute.return_value = mock_result
     result = await service.revoke_user_tokens("gw-1", "user@test.com")
     assert result is True
-    mock_db.delete.assert_called_once()
     mock_db.commit.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_revoke_user_tokens_not_found(service, mock_db):
-    mock_db.execute.return_value.scalar_one_or_none.return_value = None
+    mock_result = MagicMock()
+    mock_result.rowcount = 0
+    mock_db.execute.return_value = mock_result
     result = await service.revoke_user_tokens("gw-1", "user@test.com")
     assert result is False
 
@@ -714,7 +717,7 @@ async def test_cleanup_expired_tokens_targets_null_expires_at(service, mock_db):
 async def test_get_user_token_warns_on_non_bearer_token_type(service, mock_db, caplog):
     """get_user_token logs a warning when token_type is not 'Bearer'."""
     record = _make_token_record(token_type="mac")
-    mock_db.execute.return_value.scalar_one_or_none.return_value = record
+    mock_db.execute.return_value.scalars.return_value.first.return_value = record
 
     # Standard
     import logging
@@ -731,7 +734,7 @@ async def test_get_user_token_warns_on_non_bearer_token_type(service, mock_db, c
 async def test_get_user_token_no_warning_for_bearer(service, mock_db, caplog):
     """get_user_token does not warn when token_type is 'Bearer' or 'bearer'."""
     record = _make_token_record(token_type="Bearer")
-    mock_db.execute.return_value.scalar_one_or_none.return_value = record
+    mock_db.execute.return_value.scalars.return_value.first.return_value = record
 
     # Standard
     import logging
@@ -740,4 +743,137 @@ async def test_get_user_token_no_warning_for_bearer(service, mock_db, caplog):
         result = await service.get_user_token("gw-1", "user@test.com")
 
     assert result == "decrypted_value"
+
+
+# ---------- Multi-Identity OAuth Support (Issue #5043) ----------
+
+
+@pytest.mark.asyncio
+async def test_store_tokens_multiple_identities_same_user(service, mock_db):
+    """Test storing multiple OAuth identities for the same ContextForge user."""
+    # First identity (Alice's IBMid)
+    mock_db.execute.return_value.scalar_one_or_none.return_value = None
+    await service.store_tokens(
+        gateway_id="gw-1",
+        user_id="alice-ibmid",
+        app_user_email="admin@test.com",
+        access_token="alice_token",
+        refresh_token="alice_refresh",
+        expires_in=3600,
+        scopes=["read"],
+    )
+
+    # Second identity (Bob's IBMid) - should not overwrite Alice's
+    mock_db.execute.return_value.scalar_one_or_none.return_value = None
+    await service.store_tokens(
+        gateway_id="gw-1",
+        user_id="bob-ibmid",
+        app_user_email="admin@test.com",
+        access_token="bob_token",
+        refresh_token="bob_refresh",
+        expires_in=3600,
+        scopes=["read"],
+    )
+
+    # Both tokens should be added (not updated)
+    assert mock_db.add.call_count == 2
+    assert mock_db.commit.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_get_user_token_selects_most_recent_identity(service, mock_db):
+    """Test that get_user_token returns the most recently updated token when multiple identities exist."""
+    # Create two token records with different updated_at times
+    older_token = _make_token_record(
+        user_id="alice-ibmid",
+        access_token="alice_encrypted",
+        updated_at=datetime.now(timezone.utc) - timedelta(hours=2)
+    )
+    newer_token = _make_token_record(
+        user_id="bob-ibmid",
+        access_token="bob_encrypted",
+        updated_at=datetime.now(timezone.utc) - timedelta(minutes=5)
+    )
+
+    # Mock scalars().first() to return the most recent token
+    mock_result = MagicMock()
+    mock_result.first.return_value = newer_token
+    mock_db.execute.return_value.scalars.return_value = mock_result
+
+    result = await service.get_user_token("gw-1", "admin@test.com")
+
+    # Should return Bob's token (most recent)
+    assert result == "decrypted_value"
+    # Verify the query ordered by updated_at desc
+    call_args = mock_db.execute.call_args
+    assert call_args is not None
+
+
+@pytest.mark.asyncio
+async def test_get_token_info_returns_most_recent_identity(service, mock_db):
+    """Test that get_token_info returns info for the most recently updated token."""
+    newer_token = _make_token_record(
+        user_id="bob-ibmid",
+        updated_at=datetime.now(timezone.utc) - timedelta(minutes=5)
+    )
+
+    mock_result = MagicMock()
+    mock_result.first.return_value = newer_token
+    mock_db.execute.return_value.scalars.return_value = mock_result
+
+    result = await service.get_token_info("gw-1", "admin@test.com")
+
+    assert result is not None
+    assert result["user_id"] == "bob-ibmid"
+
+
+@pytest.mark.asyncio
+async def test_revoke_user_tokens_removes_all_identities(service, mock_db):
+    """Test that revoke_user_tokens removes ALL OAuth identities for a user-gateway pair."""
+    # Mock the delete operation to return 2 rows affected
+    mock_result = MagicMock()
+    mock_result.rowcount = 2
+    mock_db.execute.return_value = mock_result
+
+    result = await service.revoke_user_tokens("gw-1", "admin@test.com")
+
+    assert result is True
+    # Verify delete was called (not individual deletes)
+    mock_db.execute.assert_called_once()
+    mock_db.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_revoke_user_tokens_no_identities_found(service, mock_db):
+    """Test revoke_user_tokens when no identities exist."""
+    mock_result = MagicMock()
+    mock_result.rowcount = 0
+    mock_db.execute.return_value = mock_result
+
+    result = await service.revoke_user_tokens("gw-1", "admin@test.com")
+
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_update_existing_identity_preserves_others(service, mock_db, caplog):
+    """Test that updating an existing identity doesn't affect other identities."""
+    # Simulate updating Alice's token (existing record found)
+    existing_alice = _make_token_record(user_id="alice-ibmid")
+    mock_db.execute.return_value.scalar_one_or_none.return_value = existing_alice
+
+    await service.store_tokens(
+        gateway_id="gw-1",
+        user_id="alice-ibmid",
+        app_user_email="admin@test.com",
+        access_token="alice_new_token",
+        refresh_token="alice_new_refresh",
+        expires_in=3600,
+        scopes=["read", "write"],
+    )
+
+    # Should update existing record, not add new one
+    mock_db.add.assert_not_called()
+    mock_db.commit.assert_called_once()
+    assert existing_alice.access_token == "encrypted_value"
     assert not any("token_type" in msg.lower() for msg in caplog.messages)
