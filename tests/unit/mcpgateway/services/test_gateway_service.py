@@ -8405,10 +8405,21 @@ async def test_update_gateway_direct_proxy_rejected_when_disabled(gateway_servic
     existing_gateway.url = "https://existing.example.com"
     existing_gateway.enabled = True
     existing_gateway.gateway_mode = "cache"
+    existing_gateway.transport = "SSE"
+    existing_gateway.auth_type = None
+    existing_gateway.auth_value = None
+    existing_gateway.auth_query_params = None
+    existing_gateway.oauth_config = None
+    existing_gateway.ca_certificate = None
+    existing_gateway.ca_certificate_sig = None
+    existing_gateway.signing_algorithm = None
+    existing_gateway.client_cert = None
+    existing_gateway.client_key = None
     existing_gateway.tools = []
     existing_gateway.resources = []
     existing_gateway.prompts = []
     existing_gateway.email_team = None
+    existing_gateway.version = 1
 
     # get_for_update returns the existing gateway (first call) and None (slug-check)
     monkeypatch.setattr(
@@ -8436,6 +8447,7 @@ async def test_update_gateway_direct_proxy_rejected_when_disabled(gateway_servic
 
     db = MagicMock()
     db.rollback = MagicMock()
+    gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], []))
 
     with patch("mcpgateway.services.gateway_service.settings", mock_settings):
         with pytest.raises(GatewayError, match="disabled"):
