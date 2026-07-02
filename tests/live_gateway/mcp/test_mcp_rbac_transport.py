@@ -68,6 +68,13 @@ SSE_GATEWAY_NAME = f"{RBAC_PREFIX}-sse-gw"
 # Must match docker-compose gateway JWT_SECRET_KEY
 _JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")
 _CLIENT_TIMEOUT = float(os.getenv("MCP_E2E_CLIENT_TIMEOUT", "5.0"))
+# Allow-path per-server checks race the dataplane publisher: freshly created
+# users/servers only become visible to the dataplane on the next publisher
+# snapshot (DATAPLANE_PUBLISHER_INTERVAL_SECONDS, default 60s). The default
+# deadline covers one full publish interval plus slack; stacks running a
+# short publisher interval can lower it via MCP_E2E_PUBLISHER_SYNC_DEADLINE.
+_PER_SERVER_ACCESS_SYNC_DEADLINE_SECONDS = float(os.getenv("MCP_E2E_PUBLISHER_SYNC_DEADLINE", "75.0"))
+_PER_SERVER_ACCESS_RETRY_DELAY_SECONDS = 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -465,6 +472,17 @@ def _mcp_tools_list(access_token: str, server_url: str = BASE_URL) -> list:
     return _run_async(_async_mcp_tools_list(access_token, server_url))
 
 
+def _mcp_tools_list_after_publisher_sync(access_token: str, server_url: str = BASE_URL) -> list:
+    deadline = time.monotonic() + _PER_SERVER_ACCESS_SYNC_DEADLINE_SECONDS
+    while True:
+        try:
+            return _mcp_tools_list(access_token, server_url=server_url)
+        except Exception:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(_PER_SERVER_ACCESS_RETRY_DELAY_SECONDS)
+
+
 def _mcp_resources_list(access_token: str, server_url: str = BASE_URL) -> list:
     return _run_async(_async_mcp_resources_list(access_token, server_url))
 
@@ -783,7 +801,7 @@ class TestMcpPerServerEndpoint:
         """Outsider can access the public server's per-server MCP endpoint."""
         server_id = visibility_servers["public"]["id"]
         server_url = f"{BASE_URL}/servers/{server_id}"
-        tools = _mcp_tools_list(outsider_user["access_token"], server_url=server_url)
+        tools = _mcp_tools_list_after_publisher_sync(outsider_user["access_token"], server_url=server_url)
         # May see only that server's tools
         print(f"    -> Outsider via /servers/{server_id}/mcp: {len(tools)} tools")
 
@@ -791,7 +809,7 @@ class TestMcpPerServerEndpoint:
         """Developer can access the team server's per-server endpoint."""
         server_id = visibility_servers["team"]["id"]
         server_url = f"{BASE_URL}/servers/{server_id}"
-        tools = _mcp_tools_list(test_users["developer"]["access_token"], server_url=server_url)
+        tools = _mcp_tools_list_after_publisher_sync(test_users["developer"]["access_token"], server_url=server_url)
         print(f"    -> Developer via /servers/{server_id}/mcp: {len(tools)} tools")
 
     def test_outsider_denied_team_server(self, outsider_user: dict, visibility_servers: dict) -> None:
