@@ -359,7 +359,7 @@ mcpgateway = [
 ]
 
 # --------------------------------------------------------------------
-#  🛠  Tool configurations (black, mypy, etc.)
+#  🛠  Tool configurations (ruff, mypy, etc.)
 # --------------------------------------------------------------------
 [tool.pytype]
 # Directory-specific options:
@@ -517,10 +517,10 @@ extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
 ###############################################################################
 # Core behaviour
 ###############################################################################
-# profile                    = "black"      # inherit Black's own import-sorting profile
-# line-length                = 200          # match Black's custom line length
+# profile                    = "black"      # isort built-in profile matching ruff format style
+# line-length                = 200          # match ruff format line length
 # multi-line-output          = 3            # vertical-hanging-indent style
-# include-trailing-comma     = true         # keep trailing commas for Black
+# include-trailing-comma     = true         # keep trailing commas for ruff format
 from-first                 = true         # place all "from ... import ..." before plain "import ..."
 
 ###############################################################################
@@ -553,16 +553,16 @@ no-lines-before            = ["local-folder"]  # suppress blank line *before* th
 # ensure-newline-before-comments = true     # newline before any inline # comment after an import
 
 [tool.ruff.format]
-# Like Black, use double quotes for strings.
+# Use double quotes for strings.
 quote-style = "double"
 
-# Like Black, indent with spaces, rather than tabs.
+# Indent with spaces, rather than tabs.
 indent-style = "space"
 
-# Like Black, respect magic trailing commas.
+# Respect magic trailing commas.
 skip-magic-trailing-comma = false
 
-# Like Black, automatically detect the appropriate line ending.
+# Automatically detect the appropriate line ending.
 line-ending = "auto"
 
 [[tool.mypy.overrides]]
@@ -573,10 +573,10 @@ disallow_untyped_defs = false
 ###############################################################################
 # Core behaviour
 ###############################################################################
-profile                    = "black"      # inherit Black's own import-sorting profile
-line_length                = 200          # match Black's custom line length
+profile                    = "black"      # isort built-in profile matching ruff format style
+line_length                = 200          # match ruff format line length
 multi_line_output          = 3            # vertical-hanging-indent style
-include_trailing_comma     = true         # keep trailing commas for Black
+include_trailing_comma     = true         # keep trailing commas for ruff format
 from_first                 = true         # place all "from ... import ..." before plain "import ..."
 
 ###############################################################################

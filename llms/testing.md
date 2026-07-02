@@ -38,7 +38,7 @@ Testing: Quick Guide for LLMs
 - HTML report only: `make htmlcov` (auto-runs coverage if `.coverage` missing).
 
 **Code Quality & Security**
-- Formatting & hooks: `make autoflake isort black pre-commit`
+- Formatting & hooks: `make autoflake isort ruff-format pre-commit`
 - Static analysis: `make pylint ruff`
 - Full lint suite (includes web linters after one-time setup): `make lint` and `make lint-web` (install web linters once if needed)
 - Additional checks (varies by repo config): `make bandit interrogate verify check-manifest`
