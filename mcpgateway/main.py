@@ -5177,6 +5177,229 @@ async def invoke_a2a_agent(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@a2a_router.post("/{agent_name}/stream")
+@require_permission("a2a.invoke")
+async def stream_a2a_agent(
+    agent_name: str,
+    request: Request,
+    parameters: Dict[str, Any] = Body(default_factory=dict),
+    interaction_type: str = Body(default="query"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """
+    Streams A2A agent responses via Server-Sent Events (SSE).
+
+    This endpoint provides real-time streaming of agent responses, enabling:
+    - Real-time progress updates for long-running operations
+    - Lower perceived latency (feedback starts immediately)
+    - Native A2A protocol streaming support
+
+    The endpoint follows the same security, RBAC, and governance patterns as
+    the non-streaming /invoke endpoint but streams response chunks as they
+    arrive from the downstream agent.
+
+    Args:
+        agent_name (str): The name of the agent to invoke.
+        request (Request): The FastAPI request object for team_id retrieval.
+        parameters (Dict[str, Any]): Parameters for the agent interaction (default: {}).
+        interaction_type (str): Type of interaction (default: "query").
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        StreamingResponse: SSE stream of response chunks with Content-Type: text/event-stream.
+            Response headers include:
+            - Content-Type: text/event-stream
+            - Cache-Control: no-cache
+            - Connection: keep-alive
+            - X-Accel-Buffering: no
+
+    Raises:
+        HTTPException: If the agent is not found, user lacks access, or there is an error during invocation.
+            - 401: Unauthorized (missing or invalid authentication)
+            - 403: Forbidden (insufficient permissions - requires a2a.invoke)
+            - 404: Not Found (agent doesn't exist or user lacks visibility)
+            - 400: Bad Request (agent error, e.g., disabled)
+            - 503: Service Unavailable (A2A service not initialized)
+
+    Examples:
+        Using curl to test streaming endpoint:
+
+        >>> # Stream from a public agent
+        >>> # $ curl -X POST http://localhost:8000/a2a/calculator-agent/stream \\
+        >>> #   -H "Authorization: Bearer <token>" \\
+        >>> #   -H "Content-Type: application/json" \\
+        >>> #   -d '{"parameters": {"query": "5 + 10"}}' \\
+        >>> #   --no-buffer
+        >>> # Output (real-time):
+        >>> # data: {"chunk": 0, "result": "Processing"}
+        >>> #
+        >>> # data: {"chunk": 1, "result": "15"}
+        >>> #
+        >>> # (connection closes)
+
+        Using Python requests with streaming:
+
+        >>> import requests
+        >>> import json
+        >>>
+        >>> def stream_a2a_agent_example():  # doctest: +SKIP
+        ...     url = "http://localhost:8000/a2a/test-agent/stream"
+        ...     headers = {
+        ...         "Authorization": "Bearer <your-token>",
+        ...         "Content-Type": "application/json"
+        ...     }
+        ...     payload = {
+        ...         "parameters": {"message": "Hello"},
+        ...         "interaction_type": "query"
+        ...     }
+        ...
+        ...     # Stream response
+        ...     with requests.post(url, json=payload, headers=headers, stream=True) as response:
+        ...         response.raise_for_status()
+        ...
+        ...         # Process SSE events
+        ...         for line in response.iter_lines():
+        ...             if line:
+        ...                 decoded = line.decode('utf-8')
+        ...                 if decoded.startswith('data: '):
+        ...                     data = decoded[6:]  # Remove "data: " prefix
+        ...                     print(f"Received: {data}")
+
+        Using httpx for async streaming:
+
+        >>> import httpx
+        >>> import asyncio
+        >>>
+        >>> async def async_stream_example():  # doctest: +SKIP
+        ...     url = "http://localhost:8000/a2a/test-agent/stream"
+        ...     headers = {"Authorization": "Bearer <token>"}
+        ...     payload = {"parameters": {"task": "analyze"}}
+        ...
+        ...     async with httpx.AsyncClient() as client:
+        ...         async with client.stream("POST", url, json=payload, headers=headers) as response:
+        ...             async for line in response.aiter_lines():
+        ...                 if line.startswith("data: "):
+        ...                     chunk = line[6:]  # Remove "data: " prefix
+        ...                     print(f"Chunk: {chunk}")
+
+        Testing SSE format validation:
+
+        >>> def is_valid_sse_event(line: str) -> bool:
+        ...     '''Check if a line is a valid SSE event.
+        ...
+        ...     >>> is_valid_sse_event("data: test content")
+        ...     True
+        ...     >>> is_valid_sse_event("data: ")
+        ...     True
+        ...     >>> is_valid_sse_event("invalid")
+        ...     False
+        ...     >>> is_valid_sse_event("")
+        ...     False
+        ...     '''
+        ...     return line.startswith("data: ") if line else False
+
+        Error handling example:
+
+        >>> def handle_streaming_errors():  # doctest: +SKIP
+        ...     '''Handle errors in streaming responses.'''
+        ...     import requests
+        ...
+        ...     url = "http://localhost:8000/a2a/nonexistent/stream"
+        ...     headers = {"Authorization": "Bearer <token>"}
+        ...
+        ...     try:
+        ...         response = requests.post(url, json={}, headers=headers, stream=True)
+        ...         response.raise_for_status()
+        ...
+        ...         for line in response.iter_lines():
+        ...             if line:
+        ...                 decoded = line.decode('utf-8')
+        ...                 if decoded.startswith('data: '):
+        ...                     data = json.loads(decoded[6:])
+        ...                     if 'error' in data:
+        ...                         print(f"Agent error: {data['error']}")
+        ...                         break
+        ...     except requests.HTTPError as e:
+        ...         print(f"HTTP Error: {e.response.status_code}")
+
+    Note:
+        - This endpoint requires the `a2a.invoke` permission (enforced via @require_permission decorator).
+        - Token scoping applies: public agents are accessible to all authenticated users,
+          team/private agents require appropriate team membership.
+        - The endpoint is backward compatible with the non-streaming `/invoke` endpoint
+          (same authentication, RBAC, and governance).
+        - For non-streaming behavior, use POST /a2a/{agent_name}/invoke instead.
+        - Streaming is not supported when Rust runtime delegation is enabled.
+
+    Note:
+        - stream_agent_response yields error SSE events instead of raising exceptions.
+        - Errors are communicated to clients via SSE data events (e.g., "data: {\"error\": \"...\"}\\n\\n")
+          rather than HTTP status codes, which is the correct pattern for streaming responses.
+    """
+    logger.debug(f"User {safe_log_user(user)} is streaming A2A agent '{agent_name}' with type '{interaction_type}'")
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+
+    # Get filtering context from token (respects token scope)
+    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
+
+    # Admin bypass - only when token has NO team restrictions
+    if is_admin and token_teams is None:
+        pass  # Admin unrestricted (token_teams already None)
+    elif token_teams is None:
+        token_teams = []  # Non-admin without teams = public-only
+
+    user_id = None
+    if isinstance(user, dict):
+        user_id = str(user.get("id") or user.get("sub") or user_email)
+    else:
+        user_id = str(user)
+
+    # Read the federation hop counter (same as invoke endpoint)
+    hop_count = uaid_utils.read_hop_count(request.headers)
+
+    # Extract bearer token for cross-gateway forwarding
+    bearer_token = getattr(request.state, "bearer_token", None)
+    if not bearer_token:
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            bearer_token = auth_header[7:]
+
+    # Only forward JWT-shaped tokens
+    if bearer_token and not _is_jwt_token(bearer_token):
+        logger.info("Non-JWT token detected, not forwarding for cross-gateway auth")
+        bearer_token = None
+
+    # Extract inbound request metadata for plugin context
+    content_type = request.headers.get("content-type")
+    request_headers = _filter_sensitive_headers({k.lower(): v for k, v in request.headers.items()})
+
+    # Return StreamingResponse with SSE media type
+    return StreamingResponse(
+        a2a_service.stream_agent_response(
+            db,
+            agent_name,
+            parameters,
+            interaction_type,
+            user_id=user_id,
+            user_email=user_email,
+            token_teams=token_teams,
+            hop_count=hop_count,
+            bearer_token=bearer_token,
+            content_type=content_type,
+            request_headers=request_headers,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        },
+    )
+
+
 @a2a_router.post("/invoke", response_model=Dict[str, Any])
 @require_permission("a2a.invoke")
 async def invoke_a2a_agent_by_id(
@@ -11073,7 +11296,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 )
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
-            except (PluginError, PluginViolationError):
+            except (PluginError, PluginViolationError):  # pylint: disable=try-except-raise
+                # Plugin errors should propagate unchanged to be handled by FastAPI
                 raise
             except ToolNotFoundError:
                 # Method name not registered as a tool → spec-mandated -32601
@@ -11086,7 +11310,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
 
         return {"jsonrpc": "2.0", "result": result, "id": req_id}
 
-    except (PluginError, PluginViolationError):
+    except (PluginError, PluginViolationError):  # pylint: disable=try-except-raise
+        # Let plugin errors propagate to FastAPI exception handlers
         raise
     except JSONRPCError as e:
         error = e.to_dict()
