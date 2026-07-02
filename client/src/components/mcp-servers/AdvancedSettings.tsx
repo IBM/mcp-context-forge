@@ -212,7 +212,7 @@ export function AdvancedSettings({
         <Select value={visibility} onValueChange={onVisibilityChange}>
           <SelectTrigger
             id="visibility"
-            className="h-10 w-full border-neutral-300 bg-white dark:border-neutral-700 dark:bg-neutral-950"
+            className="h-10 w-full border-neutral-300 dark:border-neutral-700"
           >
             <SelectValue placeholder="Select visibility" />
           </SelectTrigger>

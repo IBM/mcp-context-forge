@@ -1,6 +1,6 @@
 import { useMemo, useState, useCallback, useEffect } from "react";
 import { useIntl } from "react-intl";
-import { Plus, MoreHorizontal, Wrench } from "lucide-react";
+import { Plus, EllipsisVertical, Wrench } from "lucide-react";
 import { toast } from "sonner";
 import { useQuery } from "@/hooks/useQuery";
 import { toolsApi } from "@/api/tools";
@@ -81,7 +81,7 @@ function ToolGroupCard({
                 )}
                 className="h-7 w-7 p-0"
               >
-                <MoreHorizontal className="h-4 w-4" />
+                <EllipsisVertical className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
