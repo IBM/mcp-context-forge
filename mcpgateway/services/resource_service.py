@@ -2430,7 +2430,24 @@ class ResourceService(BaseService):
 
                     elif resource_db:
                         # Normal cache mode - resource found in DB
-                        content = resource_db.content
+                        try:
+                            content = resource_db.content
+                        except ValueError:
+                            # Federated resource with no cached content (e.g. NULL text/binary
+                            # from the migration / re-discovery path). Build a metadata-only
+                            # ResourceContent so the RESOLVE CONTENT block below fetches it live
+                            # from the gateway, instead of the ValueError bubbling up and the
+                            # client receiving empty content (issue #5450). Local (non-federated)
+                            # resources have nothing to fetch, so the original error is preserved.
+                            if resource_db.gateway is None:
+                                raise
+                            content = ResourceContent(
+                                type="resource",
+                                id=str(resource_db.id),
+                                uri=resource_db.uri,
+                                mime_type=getattr(resource_db, "mime_type", None),
+                                text="",
+                            )
                     else:
                         # Check the inactivity first using the same server scope that
                         # governed the active lookup. Without this, duplicate URIs

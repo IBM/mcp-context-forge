@@ -864,6 +864,100 @@ class TestResourceReading:
         finally:
             current_trace_id.reset(token)
 
+    @pytest.mark.asyncio
+    async def test_read_resource_cache_mode_null_content_federated_fetches_live(self):
+        """Regression (issue #5450): a federated resource whose cached content is NULL
+        must be fetched live from the gateway, not returned as empty content.
+
+        Before the fix ``resource_db.content`` raised ``ValueError('Resource has no
+        content')`` before the RESOLVE CONTENT block, the transport swallowed it, and the
+        client received empty content instead of the upstream payload.
+        """
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceService
+
+        class _NullContentResource:
+            id = "res-null-1"
+            uri = "wiki://schema"
+            name = "wiki"
+            enabled = True
+            visibility = "public"
+            team_id = None
+            owner_email = None
+            tags = []
+            team = None
+            mime_type = "text/markdown"
+
+            def __init__(self, gateway):
+                self.gateway = gateway
+
+            @property
+            def content(self):
+                raise ValueError("Resource has no content")
+
+        gateway = MagicMock()
+        gateway.gateway_mode = "cache"  # normal cache mode (NOT direct_proxy)
+        resource_db = _NullContentResource(gateway)
+
+        db = MagicMock()
+        scalar = MagicMock()
+        scalar.scalar_one_or_none.return_value = resource_db
+        db.execute.return_value = scalar
+        db.get.return_value = None
+
+        svc = ResourceService()
+        with (
+            patch.object(svc, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+            patch.object(svc, "invoke_resource", new_callable=AsyncMock, return_value="live wiki body"),
+        ):
+            result = await svc.read_resource(db, resource_uri="wiki://schema", user="u@example.com", token_teams=["team-1"])
+            # The empty local content must trigger a live fetch through the gateway.
+            svc.invoke_resource.assert_awaited()
+
+        assert result is not None
+        assert getattr(result, "text", None) == "live wiki body"
+
+    @pytest.mark.asyncio
+    async def test_read_resource_cache_mode_null_content_no_gateway_preserved(self):
+        """A NULL-content resource with NO gateway is not federated and cannot be fetched
+        live, so the existing 'no content' error is preserved and no live fetch is attempted
+        (the #5450 fix is scoped to federated resources)."""
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceService
+
+        class _NullContentResource:
+            id = "res-null-2"
+            uri = "local://empty"
+            name = "empty"
+            enabled = True
+            visibility = "public"
+            team_id = None
+            owner_email = None
+            tags = []
+            team = None
+            mime_type = "text/plain"
+            gateway = None
+
+            @property
+            def content(self):
+                raise ValueError("Resource has no content")
+
+        resource_db = _NullContentResource()
+        db = MagicMock()
+        scalar = MagicMock()
+        scalar.scalar_one_or_none.return_value = resource_db
+        db.execute.return_value = scalar
+        db.get.return_value = None
+
+        svc = ResourceService()
+        with (
+            patch.object(svc, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+            patch.object(svc, "invoke_resource", new_callable=AsyncMock, return_value="should-not-be-used"),
+        ):
+            with pytest.raises(ValueError, match="no content"):
+                await svc.read_resource(db, resource_uri="local://empty", user="u@example.com", token_teams=["team-1"])
+            svc.invoke_resource.assert_not_awaited()
+
 
 # --------------------------------------------------------------------------- #
 # Resource management tests                                                   #
