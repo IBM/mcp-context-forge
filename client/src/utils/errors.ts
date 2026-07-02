@@ -60,6 +60,20 @@ export function sanitizeError(err: unknown): string {
     console.error("[DEV] Full error:", err);
   }
 
+  // ApiError carries the parsed response body — extract the detail field first
+  // so user-facing backend messages (e.g. "User is already a member") are shown as-is.
+  if (err && typeof err === "object" && "body" in err && "status" in err) {
+    const apiErr = err as { status: number; body: unknown };
+    const detail = extractApiErrorDetail(apiErr.body);
+    if (detail) return detail;
+
+    if (apiErr.status === 401) return "Authentication required. Please log in again.";
+    if (apiErr.status === 403) return "You don't have permission to perform this action.";
+    if (apiErr.status === 404) return "The requested resource was not found.";
+    if (apiErr.status >= 500) return "Server error. Please try again later.";
+    return "An error occurred. Please try again.";
+  }
+
   if (err instanceof Error) {
     const message = err.message.toLowerCase();
 
