@@ -48,9 +48,21 @@ def test_build_mcp_apps_capabilities_respects_flag_and_authorization(monkeypatch
 
 
 def test_validate_extension_metadata_rejects_unsafe_csp() -> None:
-    """MCP Apps metadata rejects unsafe script CSP sources."""
-    with pytest.raises(MCPAppsValidationError):
+    """MCP Apps metadata rejects unsafe CSP sources."""
+    with pytest.raises(MCPAppsValidationError, match="'unsafe-inline' is not allowed"):
         validate_extension_metadata({MCP_UI_EXTENSION: {"csp": {"script-src": ["'unsafe-inline'"]}}})
+
+    with pytest.raises(MCPAppsValidationError, match="'unsafe-inline' is not allowed"):
+        validate_extension_metadata({MCP_UI_EXTENSION: {"csp": {"style-src": ["'unsafe-inline'"]}}})
+
+    with pytest.raises(MCPAppsValidationError, match="Wildcard CSP sources"):
+        validate_extension_metadata({MCP_UI_EXTENSION: {"csp": {"default-src": ["*"]}}})
+
+    with pytest.raises(MCPAppsValidationError, match="Wildcard CSP sources"):
+        validate_extension_metadata({MCP_UI_EXTENSION: {"csp": {"connect-src": ["https://*.evil.example"]}}})
+
+    with pytest.raises(MCPAppsValidationError, match="Blocked MCP Apps CSP source"):
+        validate_extension_metadata({MCP_UI_EXTENSION: {"csp": {"img-src": ["data:image/png;base64,abc"]}}})
 
 
 def test_validate_ui_resource_requires_text_html_when_enabled(monkeypatch) -> None:

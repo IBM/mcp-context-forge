@@ -1940,7 +1940,6 @@ async def call_tool(
     try:
         async with get_db() as db:
             # Use tool service for all tool invocations (handles direct_proxy internally)
-            apps_client = _request_context_client_supports_mcp_apps()
             result = await tool_service.invoke_tool(
                 db=db,
                 name=name,
@@ -1951,7 +1950,7 @@ async def call_tool(
                 token_teams=token_teams,
                 server_id=server_id,
                 meta_data=meta_data,
-                require_model_visible=not apps_client,
+                require_model_visible=True,
             )
             if not result or not result.content:
                 logger.warning("No content returned by tool: %s", name)

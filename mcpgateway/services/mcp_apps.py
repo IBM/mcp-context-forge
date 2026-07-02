@@ -20,7 +20,8 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import fresh_db_session, MCPAppSession as DbMCPAppSession
+from mcpgateway.db import fresh_db_session
+from mcpgateway.db import MCPAppSession as DbMCPAppSession
 
 logger = logging.getLogger(__name__)
 
@@ -188,10 +189,10 @@ def _validate_csp(csp: Any) -> None:
             raise MCPAppsValidationError(f"Unsupported MCP Apps CSP directive: {directive}")
         for source in _as_string_list(values, field_name=f"csp.{directive}"):
             source_lower = source.lower()
-            if source_lower == "*":
+            if "*" in source_lower:
                 raise MCPAppsValidationError("Wildcard CSP sources are not allowed for MCP Apps")
-            if directive == "script-src" and source_lower in {"'unsafe-inline'", "'unsafe-eval'"}:
-                raise MCPAppsValidationError(f"{source_lower} is not allowed for MCP Apps script-src")
+            if source_lower in {"'unsafe-inline'", "'unsafe-eval'"}:
+                raise MCPAppsValidationError(f"{source_lower} is not allowed for MCP Apps CSP")
             if source_lower.startswith(_BLOCKED_SOURCE_PREFIXES):
                 raise MCPAppsValidationError(f"Blocked MCP Apps CSP source: {source}")
 

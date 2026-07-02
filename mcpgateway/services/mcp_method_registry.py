@@ -57,6 +57,8 @@ class MCPMethodRegistry:
 
     def is_mcp_apps_method(self, method: str, capability_id: str) -> bool:
         """Return whether a method is supported by the MCP Apps capability."""
+        if not mcp_apps_enabled():
+            return False
         if capability_id not in self._mcp_apps_methods:
             return False
         return method in self._mcp_apps_methods[capability_id]

@@ -102,7 +102,7 @@ from mcpgateway.services.encryption_service import get_encryption_service, prote
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout, get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.mcp_apps import merge_mcp_protocol_meta, optional_extension_metadata
+from mcpgateway.services.mcp_apps import merge_mcp_protocol_meta, optional_extension_metadata, validate_extension_metadata, validate_ui_resource
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.session_affinity import register_gateway_capabilities_for_notifications
 from mcpgateway.services.structured_logger import get_structured_logger
@@ -220,6 +220,20 @@ def _get_tool_lookup_cache():
 
         _TOOL_LOOKUP_CACHE = tool_lookup_cache
     return _TOOL_LOOKUP_CACHE
+
+
+def _validated_tool_extension_metadata(value: Any) -> Optional[Dict[str, Any]]:
+    """Normalize and validate federated MCP Apps tool metadata."""
+    extension_metadata = optional_extension_metadata(value)
+    validate_extension_metadata(extension_metadata)
+    return extension_metadata
+
+
+def _validated_resource_extension_metadata(resource_uri: str, mime_type: Optional[str], value: Any) -> Optional[Dict[str, Any]]:
+    """Normalize and validate federated MCP Apps resource metadata."""
+    extension_metadata = optional_extension_metadata(value)
+    validate_ui_resource(resource_uri, mime_type, extension_metadata)
+    return extension_metadata
 
 
 # Initialize logging service first
@@ -1719,7 +1733,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     input_schema=tool.input_schema,
                     output_schema=tool.output_schema,
                     annotations=tool.annotations,
-                    extension_metadata=optional_extension_metadata(getattr(tool, "extension_metadata", None)),
+                    extension_metadata=_validated_tool_extension_metadata(getattr(tool, "extension_metadata", None)),
                     jsonpath_filter=tool.jsonpath_filter,
                     auth_type=auth_type,
                     auth_value=tool_auth_value,
@@ -1774,7 +1788,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 r_team_id = getattr(r, "team_id", None) or team_id
                 r_owner_email = getattr(r, "owner_email", None) or effective_owner
                 r_visibility = getattr(r, "visibility", None) or visibility
-                r_extension_metadata = optional_extension_metadata(getattr(r, "extension_metadata", None))
+                r_extension_metadata = _validated_resource_extension_metadata(r.uri, mime_type, getattr(r, "extension_metadata", None))
 
                 # Check if there's an orphaned resource with matching unique key
                 lookup_key = (r_team_id, r_owner_email, r.uri)
@@ -5487,7 +5501,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             headers=tool.headers,
             input_schema=tool.input_schema,
             annotations=tool.annotations,
-            extension_metadata=optional_extension_metadata(getattr(tool, "extension_metadata", None)),
+            extension_metadata=_validated_tool_extension_metadata(getattr(tool, "extension_metadata", None)),
             jsonpath_filter=tool.jsonpath_filter,
             auth_type=gateway.auth_type,
             auth_value=encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value,
@@ -5540,6 +5554,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 continue
 
             try:
+                tool_extension_metadata = _validated_tool_extension_metadata(getattr(tool, "extension_metadata", None))
                 # Check if tool already exists for this gateway from the tools_map
                 existing_tool = existing_tools_map.get(tool.name)
                 if existing_tool:
@@ -5562,7 +5577,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         or existing_tool.input_schema != tool.input_schema
                         or existing_tool.output_schema != tool.output_schema
                         or existing_tool.jsonpath_filter != tool.jsonpath_filter
-                        or optional_extension_metadata(getattr(existing_tool, "extension_metadata", None)) != optional_extension_metadata(getattr(tool, "extension_metadata", None))
+                        or optional_extension_metadata(getattr(existing_tool, "extension_metadata", None)) != tool_extension_metadata
                     )
 
                     # Check authentication and visibility changes.
@@ -5609,7 +5624,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_tool.input_schema = tool.input_schema
                         existing_tool.output_schema = tool.output_schema
                         existing_tool.jsonpath_filter = tool.jsonpath_filter
-                        existing_tool.extension_metadata = optional_extension_metadata(getattr(tool, "extension_metadata", None))
+                        existing_tool.extension_metadata = tool_extension_metadata
                         existing_tool.title = _resolve_tool_title(tool)
                         existing_tool.auth_type = gateway.auth_type
                         existing_tool.auth_value = encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value
@@ -5667,6 +5682,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 continue
 
             try:
+                resource_extension_metadata = _validated_resource_extension_metadata(resource.uri, resource.mime_type, getattr(resource, "extension_metadata", None))
                 # Check if resource already exists for this gateway from the resources_map
                 existing_resource = existing_resources_map.get(resource.uri)
 
@@ -5680,7 +5696,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         or existing_resource.description != resource.description
                         or existing_resource.mime_type != resource.mime_type
                         or existing_resource.uri_template != resource.uri_template
-                        or optional_extension_metadata(getattr(existing_resource, "extension_metadata", None)) != optional_extension_metadata(getattr(resource, "extension_metadata", None))
+                        or optional_extension_metadata(getattr(existing_resource, "extension_metadata", None)) != resource_extension_metadata
                         or (update_visibility and upstream_visibility is not None and existing_resource.visibility != upstream_visibility)
                         or existing_resource.title != getattr(resource, "title", None)
                     ):
@@ -5691,7 +5707,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_resource.description = resource.description
                         existing_resource.mime_type = resource.mime_type
                         existing_resource.uri_template = resource.uri_template
-                        existing_resource.extension_metadata = optional_extension_metadata(getattr(resource, "extension_metadata", None))
+                        existing_resource.extension_metadata = resource_extension_metadata
                         existing_resource.title = getattr(resource, "title", None)
                         if update_visibility and upstream_visibility is not None:
                             existing_resource.visibility = upstream_visibility
@@ -5705,7 +5721,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         description=resource.description,
                         mime_type=resource.mime_type,
                         uri_template=resource.uri_template,
-                        extension_metadata=optional_extension_metadata(getattr(resource, "extension_metadata", None)),
+                        extension_metadata=resource_extension_metadata,
                         gateway_id=gateway.id,
                         created_by="system",
                         created_via=created_via,
