@@ -4941,6 +4941,7 @@ class TestGatewayEndpointsCoverage:
             "duration_ms": 1.0,
             "refreshed_at": datetime.now(timezone.utc),
             "tools_added": 1,
+            "validation_errors": [],
         }
         monkeypatch.setattr(main_mod.gateway_service, "get_gateway", AsyncMock(return_value=SimpleNamespace(id="gw-1")))
         monkeypatch.setattr(main_mod, "_enforce_scoped_resource_access", lambda *_args, **_kwargs: None)
@@ -4955,6 +4956,25 @@ class TestGatewayEndpointsCoverage:
         )
         assert response.gateway_id == "gw-1"
         assert response.tools_added == 1
+        assert response.validation_errors == []
+
+        # Test with non-empty validation errors
+        result_payload_with_errors = {
+            "duration_ms": 1.0,
+            "refreshed_at": datetime.now(timezone.utc),
+            "tools_added": 0,
+            "validation_errors": ["bad_tool: Tool name exceeds MCP spec limit of 128 characters (got 129)"],
+        }
+        monkeypatch.setattr(main_mod.gateway_service, "refresh_gateway_manually", AsyncMock(return_value=result_payload_with_errors))
+        response_with_errors = await main_mod.refresh_gateway_tools(
+            "gw-1",
+            request,
+            include_resources=True,
+            include_prompts=False,
+            db=db,
+            user={"email": "user@example.com"},
+        )
+        assert response_with_errors.validation_errors == result_payload_with_errors["validation_errors"]
 
         monkeypatch.setattr(main_mod.gateway_service, "refresh_gateway_manually", AsyncMock(side_effect=GatewayNotFoundError("missing")))
         with pytest.raises(HTTPException) as excinfo:

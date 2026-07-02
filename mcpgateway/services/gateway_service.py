@@ -5805,7 +5805,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     _refresh_key = _enc.decrypt_secret_or_plaintext(_refresh_key)
                 except Exception:
                     logger.debug("client_key decryption skipped during gateway refresh")
-            _capabilities, tools, resources, prompts, _ = await self._initialize_gateway(
+            _capabilities, tools, resources, prompts, validation_errors = await self._initialize_gateway(
                 url=gateway_url,
                 authentication=gateway_auth_value,
                 transport=gateway_transport,
@@ -5824,6 +5824,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             result["success"] = False
             result["error"] = str(e)
             return result
+
+        result["validation_errors"] = validation_errors
 
         # For authorization_code OAuth gateways, empty responses may indicate incomplete auth flow
         # Skip only if it's an auth_code gateway with no data (user may not have completed authorization)

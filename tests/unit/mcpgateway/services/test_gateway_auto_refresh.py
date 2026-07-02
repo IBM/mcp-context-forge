@@ -213,6 +213,29 @@ class TestAutoRefreshGatewayToolsResourcesPrompts:
         assert result["tools_removed"] == 0
 
     @pytest.mark.asyncio
+    async def test_refresh_propagates_validation_errors(self, gateway_service):
+        """Validation errors from _initialize_gateway should propagate through auto-refresh."""
+        mock_gateway = _make_mock_gateway()
+        mock_session = MagicMock()
+        mock_session.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        validation_errors = [
+            "bad_tool: Tool name exceeds MCP spec limit of 128 characters (got 129)",
+        ]
+
+        with (
+            patch("mcpgateway.services.gateway_service.fresh_db_session") as mock_fresh,
+            patch.object(gateway_service, "_initialize_gateway", new_callable=AsyncMock) as mock_init,
+        ):
+            mock_fresh.return_value.__enter__.return_value = mock_session
+            mock_init.return_value = ({}, [], [], [], validation_errors)
+
+            result = await gateway_service._refresh_gateway_tools_resources_prompts("gw-123")
+
+        assert result["validation_errors"] == validation_errors
+        assert result["success"] is True
+
+    @pytest.mark.asyncio
     async def test_refresh_processes_empty_non_auth_code_gateway(self, gateway_service):
         """Test that refresh processes empty responses from non-auth_code gateways."""
         # Gateway with client_credentials OAuth - empty response should trigger cleanup
