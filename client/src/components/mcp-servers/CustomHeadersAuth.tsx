@@ -1,4 +1,4 @@
-import { Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
@@ -62,7 +62,7 @@ export function CustomHeadersAuth({
                 placeholder={
                   index === 0 && headers.length === 1 ? "e.g. X-API-Key..." : "Add header key..."
                 }
-                className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+                className="rounded-md border-neutral-300 px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:text-neutral-100 dark:placeholder:text-neutral-500"
               />
             </div>
 
@@ -80,7 +80,7 @@ export function CustomHeadersAuth({
                 value={header.value}
                 onChange={(e) => updateHeader(index, "value", e.target.value)}
                 placeholder={"Add header value..."}
-                className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+                className="rounded-md border-neutral-300 px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:text-neutral-100 dark:placeholder:text-neutral-500"
               />
             </div>
 
@@ -100,13 +100,13 @@ export function CustomHeadersAuth({
 
       <Button
         type="button"
-        variant="default"
+        variant="outline"
         size="sm"
         onClick={addHeader}
         disabled={atLimit}
-        className="h-7 gap-2 border border-neutral-700 bg-neutral-800 text-white hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:bg-neutral-950 dark:hover:bg-neutral-800"
+        className="gap-1.5 border-neutral-200 dark:border-neutral-600"
       >
-        <span className="text-lg leading-none">+</span>
+        <Plus className="h-3.5 w-3.5" />
         Add header
       </Button>
     </div>

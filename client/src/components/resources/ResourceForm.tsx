@@ -87,7 +87,7 @@ export function ResourceForm({
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder={intl.formatMessage({ id: "resources.form.name.placeholder" })}
-              className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+              className="rounded-md border-neutral-300 px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:text-neutral-100 dark:placeholder:text-neutral-500"
               aria-invalid={!!errors.name}
               aria-describedby={errors.name ? "name-error" : undefined}
             />
@@ -113,7 +113,7 @@ export function ResourceForm({
               value={uri}
               onChange={(e) => setUri(e.target.value)}
               placeholder="resource://example/path"
-              className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+              className="rounded-md border-neutral-300 px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:text-neutral-100 dark:placeholder:text-neutral-500"
               aria-invalid={!!errors.uri}
               aria-describedby={errors.uri ? "uri-error" : undefined}
             />
@@ -132,7 +132,7 @@ export function ResourceForm({
               onChange={(e) => setDescription(e.target.value)}
               placeholder={intl.formatMessage({ id: "resources.form.description.placeholder" })}
               rows={3}
-              className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+              className="rounded-md border-neutral-300 px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:text-neutral-100 dark:placeholder:text-neutral-500"
               aria-invalid={!!errors.description}
               aria-describedby={errors.description ? "description-error" : undefined}
             />
@@ -154,7 +154,7 @@ export function ResourceForm({
             <Select value={mimeType} onValueChange={(v) => setMimeType(v as MimeType | "")}>
               <SelectTrigger
                 id="resource-mime-type"
-                className="w-full rounded-md border-neutral-300 bg-white text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
+                className="w-full rounded-md border-neutral-300 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 dark:border-neutral-700 dark:text-neutral-100"
               >
                 <SelectValue
                   placeholder={intl.formatMessage({ id: "resources.form.mimeType.placeholder" })}
@@ -213,7 +213,7 @@ export function ResourceForm({
             <Select value={visibility} onValueChange={(v) => setVisibility(v as Visibility)}>
               <SelectTrigger
                 id="resource-visibility"
-                className="w-full rounded-md border-neutral-300 bg-white text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
+                className="w-full rounded-md border-neutral-300 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 dark:border-neutral-700 dark:text-neutral-100"
               >
                 <SelectValue />
               </SelectTrigger>
@@ -245,7 +245,7 @@ export function ResourceForm({
               value={tags}
               onChange={(e) => setTags(e.target.value)}
               placeholder="tag1, tag2, tag3"
-              className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+              className="rounded-md border-neutral-300 px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:text-neutral-100 dark:placeholder:text-neutral-500"
             />
           </div>
 

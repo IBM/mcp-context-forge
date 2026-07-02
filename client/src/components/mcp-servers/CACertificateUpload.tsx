@@ -121,8 +121,8 @@ export function CACertificateUpload({ onFilesSelected }: CACertificateUploadProp
         onDrop={handleDrop}
         className={`flex h-24 w-full cursor-pointer flex-col items-center justify-center gap-1 rounded-md border-2 border-dashed transition ${
           isDragging
-            ? "border-neutral-400 bg-neutral-100 dark:border-neutral-500 dark:bg-neutral-900"
-            : "border-neutral-300 bg-white hover:border-neutral-400 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-950 dark:hover:border-neutral-600 dark:hover:bg-neutral-900"
+            ? "border-neutral-400 bg-neutral-100 dark:border-neutral-500 dark:bg-neutral-800/60"
+            : "border-neutral-300 bg-transparent hover:border-neutral-400 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:border-neutral-600 dark:hover:bg-neutral-800/40"
         }`}
       >
         <Button
