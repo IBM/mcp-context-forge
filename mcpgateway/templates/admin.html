@@ -7923,7 +7923,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 <tr>
                   <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
                     <div class="relative"
-                         x-data="window.Admin?.overflowMenu?.('roots-table-wrapper')"
+                         x-data="overflowMenu('roots-table-wrapper')"
                          @click.away="menuOpen = false"
                          @keydown.escape="menuOpen = false; $refs.trigger.focus()">
                       <button

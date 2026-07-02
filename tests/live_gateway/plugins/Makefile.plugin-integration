@@ -1,0 +1,83 @@
+# ===========================================================================
+#  Makefile.plugin-integration
+#  Plugin E2E integration test targets (self-contained: builds fast-time-server,
+#  derives per-plugin enforce config, boots gateway, runs pytest, tears down).
+#
+#  Included from the project root Makefile via:
+#      -include tests/live_gateway/plugins/Makefile.plugin-integration
+#
+#  Usage:
+#    make test-plugin-integration                            # all plugins, both paths
+#    make test-plugin-integration PLUGIN=SQLSanitizer        # one plugin, both paths
+#    make test-plugin-integration ENFORCEMENT=static         # all plugins, static only
+#    make test-plugin-integration PLUGIN=RateLimiter ENFORCEMENT=binding
+#
+#  Variables (all optional):
+#    PLUGIN          Plugin name (e.g. SQLSanitizer).  Default: all plugins.
+#    ENFORCEMENT     static | binding | both.           Default: both
+#    GATEWAY_PORT    Port for the test gateway.         Default: 4444
+#    GATEWAY_HOST    Host for the test gateway.         Default: 127.0.0.1
+#    JWT_SECRET_KEY  Must be >32 bytes.                 Default: dev test key
+#    REDIS_HOST      Redis host (redis-requiring plugins). Default: 127.0.0.1
+#    REDIS_PORT      Redis port.                        Default: 6379
+#    VENV_DIR        Path to project virtualenv.        Default: .venv
+# ===========================================================================
+
+# Inherit VENV_DIR from parent Makefile if already set; otherwise default to .venv
+VENV_DIR ?= .venv
+
+# User-facing overrides (all passable on the command line)
+PLUGIN      ?=
+ENFORCEMENT ?= both
+GATEWAY_PORT ?= 4444
+GATEWAY_HOST ?= 127.0.0.1
+REDIS_HOST   ?= 127.0.0.1
+REDIS_PORT   ?= 6379
+JWT_SECRET_KEY ?= my-test-key-but-now-longer-than-32-bytes
+
+_PLUGIN_RUNNER := tests/live_gateway/plugins/run_plugin_tests.sh
+
+# ---------------------------------------------------------------------------
+# Primary target
+# ---------------------------------------------------------------------------
+.PHONY: test-plugin-integration
+test-plugin-integration:  ## Run plugin E2E integration tests (PLUGIN=<name> ENFORCEMENT=static|binding|both)
+	@echo "🔌 Plugin integration tests — plugin: $(or $(PLUGIN),<all>)  enforcement: $(ENFORCEMENT)"
+	@GATEWAY_PORT=$(GATEWAY_PORT) \
+	 GATEWAY_HOST=$(GATEWAY_HOST) \
+	 JWT_SECRET_KEY=$(JWT_SECRET_KEY) \
+	 REDIS_HOST=$(REDIS_HOST) \
+	 REDIS_PORT=$(REDIS_PORT) \
+	 VENV_DIR=$(VENV_DIR) \
+	 bash $(_PLUGIN_RUNNER) "$(PLUGIN)" "$(ENFORCEMENT)"
+
+# ---------------------------------------------------------------------------
+# Convenience per-plugin aliases
+# ---------------------------------------------------------------------------
+.PHONY: test-plugin-secrets-detection
+test-plugin-secrets-detection:  ## Plugin E2E: SecretsDetection (both paths)
+	@$(MAKE) test-plugin-integration PLUGIN=SecretsDetection ENFORCEMENT=$(ENFORCEMENT)
+
+.PHONY: test-plugin-encoded-exfil
+test-plugin-encoded-exfil:  ## Plugin E2E: EncodedExfilDetector (both paths)
+	@$(MAKE) test-plugin-integration PLUGIN=EncodedExfilDetector ENFORCEMENT=$(ENFORCEMENT)
+
+.PHONY: test-plugin-url-reputation
+test-plugin-url-reputation:  ## Plugin E2E: URLReputationPlugin (static only)
+	@$(MAKE) test-plugin-integration PLUGIN=URLReputationPlugin ENFORCEMENT=static
+
+.PHONY: test-plugin-rate-limiter
+test-plugin-rate-limiter:  ## Plugin E2E: RateLimiterPlugin (both paths, needs Redis)
+	@$(MAKE) test-plugin-integration PLUGIN=RateLimiterPlugin ENFORCEMENT=$(ENFORCEMENT)
+
+.PHONY: test-plugin-retry-with-backoff
+test-plugin-retry-with-backoff:  ## Plugin E2E: RetryWithBackoffPlugin (both paths, needs Redis)
+	@$(MAKE) test-plugin-integration PLUGIN=RetryWithBackoffPlugin ENFORCEMENT=$(ENFORCEMENT)
+
+.PHONY: test-plugin-pii-filter
+test-plugin-pii-filter:  ## Plugin E2E: PIIFilterPlugin (both paths)
+	@$(MAKE) test-plugin-integration PLUGIN=PIIFilterPlugin ENFORCEMENT=$(ENFORCEMENT)
+
+.PHONY: test-plugin-sql-sanitizer
+test-plugin-sql-sanitizer:  ## Plugin E2E: SQLSanitizer (both paths, native plugin)
+	@$(MAKE) test-plugin-integration PLUGIN=SQLSanitizer ENFORCEMENT=$(ENFORCEMENT)

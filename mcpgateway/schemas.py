@@ -2802,20 +2802,46 @@ class GlobalConfigRead(BaseModel):
 
 # --- Transport Type ---
 class TransportType(str, Enum):
-    """
-    Enumeration of supported transport mechanisms for communication between components.
+    """Transport mechanisms for MCP communication.
 
     Attributes:
-        SSE (str): Server-Sent Events transport.
-        HTTP (str): Standard HTTP-based transport.
-        STDIO (str): Standard input/output transport.
-        STREAMABLEHTTP (str): HTTP transport with streaming.
+        SSE: Server-Sent Events (production-ready for gateways)
+        HTTP: Standard HTTP (reserved for future use)
+        STDIO: Standard I/O (used by MCP chat service, not supported for gateways)
+        STREAMABLEHTTP: HTTP with streaming (production-ready for gateways)
+
+    Note: Gateway validators accept any case but normalize to uppercase.
     """
 
     SSE = "SSE"
     HTTP = "HTTP"
     STDIO = "STDIO"
     STREAMABLEHTTP = "STREAMABLEHTTP"
+
+
+# Transports that the gateway API actually supports at runtime.
+# HTTP and STDIO are valid TransportType enum values but are rejected
+# by the service layer; this constant keeps the schema validator in
+# sync so callers get a 422 at the API boundary instead of a 500.
+GATEWAY_SUPPORTED_TRANSPORTS: frozenset[str] = frozenset({"SSE", "STREAMABLEHTTP"})
+
+
+def _validate_transport_string(v: str) -> str:
+    """Validate and normalize a transport string (case-insensitive).
+
+    Args:
+        v: The transport value to validate.
+
+    Returns:
+        Uppercase normalized transport value.
+
+    Raises:
+        ValueError: If the value is not a supported gateway transport.
+    """
+    v_upper = v.strip().upper()
+    if v_upper not in GATEWAY_SUPPORTED_TRANSPORTS:
+        raise ValueError(f"Invalid transport type: '{v}'. Must be one of: {', '.join(sorted(GATEWAY_SUPPORTED_TRANSPORTS))} (case-insensitive)")
+    return v_upper
 
 
 class GatewayCreate(BaseModelWithConfigDict):
@@ -3056,31 +3082,26 @@ class GatewayCreate(BaseModelWithConfigDict):
         auth_value = cls._process_auth_fields(info)
         return auth_value
 
-    @field_validator("transport")
+    @field_validator("transport", mode="before")
     @classmethod
     def validate_transport(cls, v: str) -> str:
-        """
-        Validates that the given transport value is one of the supported TransportType values.
+        """Validate and normalize transport type (case-insensitive).
+
+        Accepts supported gateway transports (SSE, STREAMABLEHTTP) in any
+        case and normalizes to uppercase.
 
         Args:
-            v (str): The transport value to validate.
+            v: The transport value to validate.
 
         Returns:
-            str: The validated transport value if it is valid.
+            Uppercase normalized transport value.
 
         Raises:
-            ValueError: If the provided value is not a valid transport type.
-
-        Valid transport types are defined in the TransportType enum:
-            - SSE
-            - HTTP
-            - STDIO
-            - STREAMABLEHTTP
+            ValueError: If the value is not a supported transport type.
         """
-        allowed = [t.value for t in TransportType.__members__.values()]
-        if v not in allowed:
-            raise ValueError(f"Invalid transport type: {v}. Must be one of: {', '.join(allowed)}")
-        return v
+        if not isinstance(v, str):
+            raise ValueError("Transport must be a string")
+        return _validate_transport_string(v)
 
     @staticmethod
     def _process_auth_fields(info: ValidationInfo) -> Optional[str]:
@@ -3272,6 +3293,29 @@ class GatewayUpdate(BaseModelWithConfigDict):
         if isinstance(v, str) and v.lower() == "none":
             return ""
         return v
+
+    @field_validator("transport", mode="before")
+    @classmethod
+    def validate_transport(cls, v: Optional[str]) -> Optional[str]:
+        """Validate and normalize transport type (case-insensitive).
+
+        Accepts supported gateway transports (SSE, STREAMABLEHTTP) in any
+        case and normalizes to uppercase.
+
+        Args:
+            v: The transport value to validate (may be None for optional field).
+
+        Returns:
+            Uppercase normalized transport value, or None.
+
+        Raises:
+            ValueError: If the value is not a supported transport type.
+        """
+        if v is None:
+            return v
+        if not isinstance(v, str):
+            raise ValueError("Transport must be a string")
+        return _validate_transport_string(v)
 
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(

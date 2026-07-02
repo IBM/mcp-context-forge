@@ -3,13 +3,18 @@
 # ===============================================================
 #
 # This workflow builds container images for multiple architectures:
-#   - linux/amd64 (native on ubuntu-24.04) - PR (build only), merge queue (build only), push
-#   - linux/arm64 (native on ubuntu-24.04-arm) - merge queue (build only), push
-#   - linux/s390x (native on ubuntu-24.04-s390x) - merge queue (build only), push
-#   - linux/ppc64le (native on ubuntu-24.04-ppc64le) - merge queue (build only), push
+#   - linux/amd64  (native on ubuntu-24.04)        - PR (build only), merge queue (build only), push
+#   - linux/arm64  (native on ubuntu-24.04-arm)     - merge queue (build only), push
+#   - linux/s390x  (native on ubuntu-24.04-s390x)   - push and workflow_dispatch only (NOT merge queue)
+#   - linux/ppc64le (native on ubuntu-24.04-ppc64le) - push and workflow_dispatch only (NOT merge queue)
+#
+# s390x and ppc64le are excluded from the merge queue to avoid stalling it while
+# waiting for scarce native runner pools. A per-entry gate step skips their build
+# steps when the event is merge_group. They still build and push on every push to
+# main and on workflow_dispatch, so the multiplatform manifest is always complete.
 #
 # Pipeline:
-#   1. Build platform images in parallel (amd64 on PR; all arches on merge queue + push)
+#   1. Build platform images in parallel (amd64+arm64 on merge queue; all arches on push)
 #   2. Create multiplatform manifest (push and tags only)
 #   3. Sign and attest with Cosign (keyless OIDC, push and tags only)
 #
@@ -129,12 +134,14 @@ jobs:
   # closure — Containerfile.lite always resolves via PyPI for those arches.
   # s390x/ppc64le wheels are content-addressed by sha256(uv.lock) and the
   # build is idempotent (skipped when the lock-hash tag already exists).
-  # Rides the same non-PR events as the platform builds below
-  # (push/merge_group/workflow_dispatch).
+  # Rides the same non-PR, non-merge-group events as the platform builds below
+  # (push/workflow_dispatch). Excluded from merge_group to avoid acquiring
+  # s390x/ppc64le runners in the merge queue critical path.
   # ---------------------------------------------------------------
   wheels:
     if: >-
       github.event_name != 'pull_request' &&
+      github.event_name != 'merge_group' &&
       needs.docker-inputs.outputs.changed == 'true'
     needs: docker-inputs
     name: Build wheels (${{ matrix.suffix }})
@@ -235,45 +242,70 @@ jobs:
             suffix: amd64
             cache_mode: max
             qemu: false
-            build_on_pr: true    # amd64 builds on PR, merge queue, and push
+            build_on_pr: true
+            build_on_merge_group: true
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
             suffix: arm64
             cache_mode: max
             qemu: false
-            build_on_pr: false   # merge queue and push only
+            build_on_pr: false
+            build_on_merge_group: true
           - platform: linux/s390x
             runner: ubuntu-24.04-s390x
             suffix: s390x
             cache_mode: max
             qemu: false
-            build_on_pr: false   # merge queue and push only
+            build_on_pr: false
+            build_on_merge_group: false   # push and workflow_dispatch only — not merge queue
           - platform: linux/ppc64le
             runner: ubuntu-24.04-ppc64le
             suffix: ppc64le
             cache_mode: max
             qemu: false
-            build_on_pr: false   # merge queue and push only
+            build_on_pr: false
+            build_on_merge_group: false   # push and workflow_dispatch only — not merge queue
 
-    runs-on: ${{ matrix.runner }}
+    # Use a cheap ubuntu-24.04 runner when this matrix entry's gate would skip all
+    # work steps anyway (merge_group or PR with build_on_merge_group/build_on_pr=false).
+    # This avoids acquiring scarce s390x/ppc64le native runner slots for no-op jobs.
+    runs-on: ${{ (github.event_name == 'merge_group' && matrix.build_on_merge_group != true || github.event_name == 'pull_request' && matrix.build_on_pr != true) && 'ubuntu-24.04' || matrix.runner }}
     timeout-minutes: 60
     permissions:
       contents: read
       packages: write
 
-    # amd64: cache-only validation on PR and merge queue; full build+push on push
-    # arm64/s390x/ppc64le: cache-only validation on merge queue; full build+push on push
-    # Condition for build steps: always except PRs skip non-amd64 (build_on_pr)
-    # Condition for push-only steps (login, digest): push/workflow_dispatch only
+    # amd64: cache-only on PR and merge queue; full build+push on push
+    # arm64: cache-only on merge queue; full build+push on push
+    # s390x/ppc64le: all steps skipped on PR and merge queue; full build+push on push
+    #
+    # The `gate` step evaluates build_on_pr and build_on_merge_group for this
+    # matrix entry and sets outputs.build = 'true'/'false'. All subsequent steps
+    # use `if: steps.gate.outputs.build == 'true'` instead of repeating the logic.
     steps:
+      - name: Evaluate build gate
+        id: gate
+        run: |
+          set -euo pipefail
+          build="true"
+          if [[ "${{ github.event_name }}" == "pull_request" && "${{ matrix.build_on_pr }}" != "true" ]]; then
+            echo "Skipping ${{ matrix.suffix }}: build_on_pr=false"
+            build="false"
+          fi
+          if [[ "${{ github.event_name }}" == "merge_group" && "${{ matrix.build_on_merge_group }}" != "true" ]]; then
+            echo "Skipping ${{ matrix.suffix }}: build_on_merge_group=false"
+            build="false"
+          fi
+          echo "build=${build}" >> "${GITHUB_OUTPUT}"
+
       - name: Checkout code
-        if: github.event_name != 'pull_request' || matrix.build_on_pr
+        if: steps.gate.outputs.build == 'true'
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           persist-credentials: false
 
       - name: Set image name lowercase
-        if: github.event_name != 'pull_request' || matrix.build_on_pr
+        if: steps.gate.outputs.build == 'true'
         run: |
           IMAGE_NAME_LC=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
           echo "IMAGE_NAME_LC=${IMAGE_NAME_LC}" >> "${GITHUB_ENV}"
@@ -281,13 +313,13 @@ jobs:
       # QEMU is not currently triggered (native runners are used for all platforms)
       # but is retained so it can be re-enabled via matrix.qemu if needed.
       - name: Set up QEMU
-        if: matrix.qemu && (github.event_name != 'pull_request' || matrix.build_on_pr)
+        if: matrix.qemu && steps.gate.outputs.build == 'true'
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
         with:
           platforms: ${{ matrix.platform }}
 
       - name: Set up Docker Buildx
-        if: github.event_name != 'pull_request' || matrix.build_on_pr
+        if: steps.gate.outputs.build == 'true'
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         with:
           version: latest
@@ -295,7 +327,7 @@ jobs:
       # Login is needed both for pushing the final image (push/workflow_dispatch)
       # and for probing the wheel-image registry below.
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request' || matrix.build_on_pr
+        if: steps.gate.outputs.build == 'true'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -310,7 +342,7 @@ jobs:
       #   published yet; fall back to UBI_MINIMAL if neither exists (first-ever
       #   run before any wheel image has been published for this arch).
       - name: Compute wheel image ref
-        if: github.event_name != 'pull_request' || matrix.build_on_pr
+        if: steps.gate.outputs.build == 'true'
         run: |
           UBI_MINIMAL_DEFAULT=$(grep -m1 '^ARG UBI_MINIMAL=' Containerfile.lite | cut -d= -f2-)
           if [[ "${{ matrix.suffix }}" == "s390x" || "${{ matrix.suffix }}" == "ppc64le" ]]; then
@@ -334,7 +366,7 @@ jobs:
           fi
 
       - name: Extract metadata
-        if: github.event_name != 'pull_request' || matrix.build_on_pr
+        if: steps.gate.outputs.build == 'true'
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
@@ -343,7 +375,7 @@ jobs:
             type=raw,value=${{ matrix.suffix }}-${{ github.sha }}
 
       - name: Build and push
-        if: github.event_name != 'pull_request' || matrix.build_on_pr
+        if: steps.gate.outputs.build == 'true'
         id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
@@ -466,7 +498,7 @@ jobs:
     timeout-minutes: 60
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     permissions:
-      contents: read
+      contents: write # need write to push SBOM
       packages: write
       id-token: write
 
