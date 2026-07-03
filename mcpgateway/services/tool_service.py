@@ -3816,7 +3816,12 @@ class ToolService(BaseService):
             ToolInvocationError: If no usable subject token exists or the exchange fails.
         """
         audience = oauth_config.get("target_audience")
-        user_key = app_user_email or ""
+        # Fail closed: cache key is (gateway_id, user, audience). Without a user
+        # identity there is no "behalf" to act on, and an empty key component
+        # would let unrelated principals share one delegated token.
+        if not app_user_email:
+            raise ToolInvocationError("Token exchange requires an authenticated user identity. Contact your administrator.")
+        user_key = app_user_email
         # L3: forensic correlation. Pull request/correlation ids from inbound headers when present.
         rh = request_headers or {}
         correlation_id = rh.get("x-correlation-id") or rh.get("X-Correlation-ID")
@@ -3996,7 +4001,11 @@ class ToolService(BaseService):
             return
         if not oauth_config or oauth_config.get("grant_type") != "token-exchange":
             return
-        await self._token_exchange_cache.invalidate(gateway_id, app_user_email or "", oauth_config.get("target_audience"))
+        if not app_user_email:
+            # No identity to invalidate under -- _resolve_token_exchange_header never
+            # caches anonymous callers, so there is nothing to evict here either.
+            return
+        await self._token_exchange_cache.invalidate(gateway_id, app_user_email, oauth_config.get("target_audience"))
 
     async def _send_with_token_exchange_retry(
         self,

@@ -477,6 +477,43 @@ class TestToolPathTokenExchange:
                 request_headers={},  # no bearer
             )
 
+    @pytest.mark.parametrize("empty_email", [None, ""])
+    async def test_empty_app_user_email_denies_before_cache_lookup(self, empty_email):
+        # Regression: an empty/None app_user_email must never collapse into a shared
+        # cache key ("") -- that would let unrelated callers share one delegated
+        # token (cross-user leakage of an RFC 8693 exchanged token). The guard must
+        # fire before any cache interaction, not just before the AS call.
+        # First-Party
+        from mcpgateway.services.tool_service import ToolInvocationError, ToolService
+
+        svc = ToolService()
+        svc.oauth_manager = MagicMock()
+        svc.oauth_manager.token_exchange = AsyncMock()
+        svc._token_exchange_cache = _mock_te_cache(get_return=None)
+        with pytest.raises(ToolInvocationError, match="authenticated user identity"):
+            await svc._resolve_token_exchange_header(
+                oauth_config=dict(_TE_CFG),
+                gateway_id="gw1",
+                gateway_name="gw",
+                app_user_email=empty_email,
+                request_headers={"authorization": f"Bearer {_FAKE_JWT}"},
+            )
+        svc._token_exchange_cache.get.assert_not_awaited()
+        svc._token_exchange_cache.is_failed.assert_not_awaited()
+        svc.oauth_manager.token_exchange.assert_not_awaited()
+
+    async def test_invalidate_on_unauthorized_noop_without_user_email(self):
+        # Companion fix: with nothing ever cached under an empty user key,
+        # invalidation for an anonymous caller must be a no-op, not a call
+        # into the cache with a "" key.
+        # First-Party
+        from mcpgateway.services.tool_service import ToolService
+
+        svc = ToolService()
+        svc._token_exchange_cache = _mock_te_cache()
+        await svc._invalidate_token_exchange_on_unauthorized(401, dict(_TE_CFG), "gw1", None)
+        svc._token_exchange_cache.invalidate.assert_not_awaited()
+
     async def test_non_jwt_subject_token_denies(self):
         # H2: an opaque/non-JWT inbound bearer must not be shipped to the AS.
         # First-Party
@@ -547,7 +584,6 @@ class TestToolPathTokenExchange:
         assert mock_warning.called
         _, kwargs = mock_warning.call_args
         assert not kwargs.get("exc_info")
-
 
 
 # First-Party
@@ -960,7 +996,7 @@ class TestRestIntegrationB2Wiring:
         mock_metrics_buffer = Mock()
         mock_metrics_buffer.record_tool_metric = Mock()
         with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
-            result = await svc.invoke_tool(test_db, "test_tool", {}, request_headers={"authorization": "Bearer inbound"})
+            result = await svc.invoke_tool(test_db, "test_tool", {}, request_headers={"authorization": "Bearer inbound"}, app_user_email="u@e")
 
         assert result.content[0].text == '{\n  "result": "ok"\n}'
         assert len(responses) == 2  # exactly one retry
