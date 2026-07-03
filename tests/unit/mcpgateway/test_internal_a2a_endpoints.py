@@ -1162,7 +1162,7 @@ class TestInternalA2ADenyPaths:
             "x-contextforge-mcp-runtime": "rust",
             "x-contextforge-mcp-runtime-auth": "stub",  # pragma: allowlist secret
         }
-        with patch("mcpgateway.main.has_valid_internal_mcp_runtime_auth_header", return_value=True):
+        with patch("mcpgateway.auth_context.has_valid_internal_mcp_runtime_auth_header", return_value=True):
             resp = client.post(url, json={}, headers=headers)
         assert resp.status_code == 403
 
@@ -1173,7 +1173,7 @@ class TestInternalA2ADenyPaths:
             "x-contextforge-mcp-runtime": "rust",
             "x-contextforge-mcp-runtime-auth": "stub",  # pragma: allowlist secret
         }
-        with patch("mcpgateway.main.has_valid_internal_mcp_runtime_auth_header", return_value=True):
+        with patch("mcpgateway.auth_context.has_valid_internal_mcp_runtime_auth_header", return_value=True):
             resp = client.post(url, json={}, headers=headers)
         assert resp.status_code == 403
 
@@ -1210,11 +1210,11 @@ class TestInternalA2ADenyPaths:
         # First-Party
         from mcpgateway.main import _is_trusted_internal_mcp_runtime_request
 
-        with patch("mcpgateway.main.has_valid_internal_mcp_runtime_auth_header", return_value=True):
+        with patch("mcpgateway.auth_context.has_valid_internal_mcp_runtime_auth_header", return_value=True):
             assert _is_trusted_internal_mcp_runtime_request(request) is True
 
         # And the equivalent /_internal/a2a/ path with the same headers
         # MUST still be rejected (the feature flag narrows correctly).
         a2a_scope = {**scope, "path": "/_internal/a2a/authenticate", "raw_path": b"/_internal/a2a/authenticate"}
-        with patch("mcpgateway.main.has_valid_internal_mcp_runtime_auth_header", return_value=True):
+        with patch("mcpgateway.auth_context.has_valid_internal_mcp_runtime_auth_header", return_value=True):
             assert _is_trusted_internal_mcp_runtime_request(Request(a2a_scope)) is False

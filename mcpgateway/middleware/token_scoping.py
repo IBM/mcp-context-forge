@@ -13,8 +13,6 @@ and time-based restrictions.
 # Standard
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
-import hashlib
-import hmac
 import ipaddress
 import re
 from typing import List, Optional, Pattern, Tuple
@@ -64,11 +62,6 @@ _RESOURCE_PATTERNS: List[Tuple[Pattern[str], str]] = [
     (re.compile(r"/gateways/?([a-f0-9\-]+)"), "gateway"),
 ]
 _AUTH_COOKIE_NAMES = ("jwt_token", "access_token")
-_INTERNAL_MCP_PATH_PREFIX = "/_internal/mcp"
-_INTERNAL_MCP_RUNTIME_HEADER = "x-contextforge-mcp-runtime"
-_INTERNAL_MCP_AUTH_CONTEXT_HEADER = "x-contextforge-auth-context"
-_INTERNAL_MCP_RUNTIME_AUTH_HEADER = "x-contextforge-mcp-runtime-auth"
-_INTERNAL_MCP_RUNTIME_AUTH_CONTEXT = "contextforge-internal-mcp-runtime-v1"
 
 # Permission map with precompiled patterns
 # Maps (HTTP method, path pattern) to required permission
@@ -1399,70 +1392,24 @@ class TokenScopingMiddleware:
             )
 
     def _is_trusted_internal_mcp_runtime_request(self, request: Request, normalized_path: str) -> bool:
-        """Return whether the request is a trusted loopback Rust MCP sidecar hop.
+        """Return whether the request is a trusted internal MCP/A2A runtime hop.
+
+        Delegates to the shared gate in ``auth_context`` so the trust decision is
+        defined in one place. Unlike the previous local check, this trusts both
+        the ``rust`` and ``affinity`` runtime markers — closing the gap where the
+        in-process session-affinity dispatch was still token-scoped.
 
         Args:
             request: Incoming HTTP request.
             normalized_path: Canonicalized request path used for route matching.
 
         Returns:
-            ``True`` when the request originated from the local Rust MCP runtime and
-            includes the expected trusted headers.
+            ``True`` when the request is a trusted internal MCP/A2A hop.
         """
-        if normalized_path != _INTERNAL_MCP_PATH_PREFIX and not normalized_path.startswith(f"{_INTERNAL_MCP_PATH_PREFIX}/"):
-            return False
+        # First-Party
+        from mcpgateway.auth_context import is_trusted_internal_mcp_request  # pylint: disable=import-outside-toplevel
 
-        if request.headers.get(_INTERNAL_MCP_RUNTIME_HEADER) != "rust":
-            return False
-
-        provided_auth = request.headers.get(_INTERNAL_MCP_RUNTIME_AUTH_HEADER)
-        if not provided_auth:
-            return False
-
-        expected_auth = self._expected_internal_mcp_runtime_auth_header()
-        if not hmac.compare_digest(provided_auth, expected_auth):
-            return False
-
-        if not request.headers.get(_INTERNAL_MCP_AUTH_CONTEXT_HEADER):
-            return False
-
-        client_host = getattr(getattr(request, "client", None), "host", None)
-        return client_host in ("127.0.0.1", "::1")
-
-    @staticmethod
-    def _auth_encryption_secret_value() -> str:
-        """Return the configured auth-encryption secret as a plain string.
-
-        Returns:
-            The auth-encryption secret, normalized to a regular string.
-        """
-        secret = settings.auth_encryption_secret
-        if hasattr(secret, "get_secret_value"):
-            return secret.get_secret_value()
-        return str(secret)
-
-    @staticmethod
-    @lru_cache(maxsize=8)
-    def _expected_internal_mcp_runtime_auth_header_for_secret(secret: str) -> str:
-        """Return the expected shared internal-auth header for a specific secret.
-
-        Args:
-            secret: Auth-encryption secret to derive the trust header from.
-
-        Returns:
-            Hex-encoded SHA-256 digest derived from the provided auth secret.
-        """
-        material = f"{secret}:{_INTERNAL_MCP_RUNTIME_AUTH_CONTEXT}".encode("utf-8")
-        return hashlib.sha256(material).hexdigest()
-
-    @staticmethod
-    def _expected_internal_mcp_runtime_auth_header() -> str:
-        """Return the expected shared internal-auth header for Rust MCP hops.
-
-        Returns:
-            Shared secret-derived digest expected on trusted internal Rust MCP calls.
-        """
-        return TokenScopingMiddleware._expected_internal_mcp_runtime_auth_header_for_secret(TokenScopingMiddleware._auth_encryption_secret_value())
+        return is_trusted_internal_mcp_request(request, path=normalized_path)
 
 
 # Create middleware instance

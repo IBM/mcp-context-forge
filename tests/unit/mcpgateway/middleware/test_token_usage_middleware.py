@@ -27,6 +27,60 @@ async def _make_asgi_call(middleware, scope, receive=None, send=None):
     return send
 
 
+def _trusted_internal_scope(path, *, marker="rust", hmac_value=None, ctx="ctx", client="127.0.0.1"):
+    """Build a loopback internal ASGI scope for trust-gate exemption tests."""
+    # First-Party
+    from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header
+
+    headers = [
+        (b"x-contextforge-mcp-runtime", marker.encode()),
+        (b"x-contextforge-mcp-runtime-auth", (hmac_value or _expected_internal_mcp_runtime_auth_header()).encode()),
+    ]
+    if ctx is not None:
+        headers.append((b"x-contextforge-auth-context", ctx.encode()))
+    return {
+        "type": "http",
+        "method": "POST",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "headers": headers,
+        "client": (client, 12345),
+    }
+
+
+@pytest.mark.asyncio
+async def test_trusted_internal_dispatch_skips_usage_logging():
+    """A trusted-internal hop is not recorded; the edge request already was.
+
+    The skip path forwards the original ``send`` unwrapped (no status capture, no
+    logging), which distinguishes it from the normal metered path.
+    """
+    app = AsyncMock()
+    middleware = TokenUsageMiddleware(app=app)
+    scope = _trusted_internal_scope("/_internal/mcp/rpc")
+    receive, send = AsyncMock(), AsyncMock()
+
+    await middleware(scope, receive, send)
+
+    app.assert_awaited_once_with(scope, receive, send)
+
+
+@pytest.mark.asyncio
+async def test_forged_internal_request_is_not_skipped_for_usage():
+    """A forged HMAC fails the trust gate, so the usage path runs (wrapped send)."""
+    app = AsyncMock()
+    middleware = TokenUsageMiddleware(app=app)
+    scope = _trusted_internal_scope("/_internal/mcp/rpc", hmac_value="forged")
+    receive, send = AsyncMock(), AsyncMock()
+
+    await middleware(scope, receive, send)
+
+    assert app.await_count == 1
+    forwarded_send = app.await_args.args[2]
+    assert forwarded_send is not send
+
+
 @pytest.mark.asyncio
 async def test_skips_health_check_paths():
     """Middleware should skip health check and static paths."""
