@@ -516,7 +516,7 @@ class TestLoopbackSkipTrustedInternalHeaders:
         spoofed = {
             "x-contextforge-auth-context": "SPOOFED",
             "x-contextforge-mcp-runtime": "affinity",
-            "x-contextforge-mcp-runtime-auth": "SPOOFED-HMAC",
+            "x-contextforge-mcp-runtime-auth": "SPOOFED-HMAC",  # pragma: allowlist secret
             "x-contextforge-session-validated": "rust",
             "x-business-header": "kept",
         }

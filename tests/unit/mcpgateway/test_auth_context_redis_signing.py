@@ -27,7 +27,7 @@ from mcpgateway.auth_context import (
 )
 
 _CTX = encode_internal_mcp_auth_context({"email": "u@example.com", "is_authenticated": True, "is_admin": False})
-_SID = "abc123def456"
+_SID = "abc123def456"  # pragma: allowlist secret
 
 
 def _rpc_envelope():
