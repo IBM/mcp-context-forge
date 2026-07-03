@@ -1053,7 +1053,7 @@ class SessionAffinity:
             return {"result": response_data.get("result", {})}
 
         except httpx.TimeoutException:
-            logger.warning("Timeout executing forwarded request: %s", request.get('method'))
+            logger.warning("Timeout executing forwarded request: %s", request.get("method"))
             return {"error": {"code": -32603, "message": "Internal request timeout"}}
         except Exception as e:
             logger.warning("Error executing forwarded request: %s", e)
@@ -1348,7 +1348,7 @@ class SessionAffinity:
                             msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
                             if msg and msg["type"] == "message":
                                 response_data = orjson.loads(msg["data"])
-                                logger.debug("[HTTP_AFFINITY] Received HTTP response via Redis: status=%s", response_data.get('status'))
+                                logger.debug("[HTTP_AFFINITY] Received HTTP response via Redis: status=%s", response_data.get("status"))
 
                                 # Decode hex body back to bytes
                                 body_hex = response_data.get("body", "")
