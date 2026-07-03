@@ -409,17 +409,17 @@ make sri-verify
 make sri-generate
 ```
 
-**Updating CDN Libraries**:
+**Updating Frontend Assets**:
 
-When updating a CDN library version:
+When updating Admin UI frontend dependencies:
 
-1. Update the URL in `scripts/cdn_resources.py`
-2. Run `make sri-generate` to calculate new hash
-3. Update the URL in templates (admin.html, login.html, etc.)
-4. Run `make sri-verify` to confirm hash matches
-5. Commit both `mcpgateway/sri_hashes.json` and template changes
+1. Update the relevant npm dependencies in `package.json`
+2. Refresh the lockfile with `npm update` or `npm install`
+3. Rebuild the UI bundle with `make build-ui`
+4. Verify the generated assets load correctly in the Admin UI
+5. Commit the updated frontend source and lockfile changes
 
-The CI pipeline automatically verifies SRI hashes on every build to detect unexpected changes.
+The CI pipeline verifies the frontend build as part of normal validation.
 
 **Security Checklist**:
 

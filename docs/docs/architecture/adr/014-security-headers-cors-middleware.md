@@ -166,14 +166,14 @@ nodejsscan:
 ### ❌ Trade-offs
 
 - **CSP Flexibility**: Using 'unsafe-inline' and 'unsafe-eval' for Admin UI compatibility
-- **CDN Dependencies**: CSP allows specific external CDN domains
+- **External Asset Allowlisting**: CSP may need to allow specific external origins when the UI adds third-party assets
 - **Configuration Complexity**: More environment variables to configure
 - **Development Overhead**: Additional middleware processing on every request
 
 ### 🔄 Maintenance
 
 - **CSP Updates**: May need updates if Admin UI adds new external dependencies
-- **CDN Changes**: CSP must be updated if CDN URLs change
+- **Asset Source Changes**: CSP must be updated if allowed external asset origins change
 - **Security Reviews**: Periodic review of CSP directives for security improvements
 - **Browser Updates**: Monitor browser CSP implementation changes
 
@@ -276,15 +276,15 @@ make sri-generate
 make sri-verify
 ```
 
-### Updating CDN Libraries
+### Updating Frontend Assets
 
-When updating a CDN library version:
+When updating Admin UI frontend dependencies:
 
-1. Update the URL in `scripts/cdn_resources.py`
-2. Run `make sri-generate` to calculate new hash
-3. Update the URL in templates (admin.html, login.html, etc.)
-4. Run `make sri-verify` to confirm hash matches
-5. Commit both `sri_hashes.json` and template changes
+1. Update the relevant npm dependencies in `package.json`
+2. Refresh the lockfile with `npm update` or `npm install`
+3. Rebuild the UI bundle with `make build-ui`
+4. Verify the generated assets load correctly in the Admin UI
+5. Commit the updated frontend source and lockfile changes
 
 ## Future Enhancements
 

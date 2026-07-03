@@ -36,7 +36,7 @@ The Admin UI is built with **HTMX**, **Alpine.js**, and **Tailwind CSS**, offeri
 | **Security**      | DOMPurify          | XSS sanitization                                                        |
 | **Icons**         | Font Awesome       | Icon library                                                            |
 
-**HTMX** and **Alpine.js** are bundled via npm/Vite into the main JavaScript bundle. Other vendor libraries (Tailwind CSS, CodeMirror, Chart.js, Font Awesome, Marked.js, DOMPurify) load from CDNs by default, with optional local bundling for **air-gapped deployments**. See [Air-Gapped Mode](#air-gapped-mode) below.
+All Admin UI JavaScript vendor libraries are installed via npm and bundled/chunked with Vite. See [Air-Gapped Mode](#air-gapped-mode) below for offline deployment details.
 
 It provides tabbed access to:
 
@@ -82,7 +82,7 @@ If running in development mode (`DEV_MODE=true` or `make run`), changes to templ
 
 ## 🔒 Air-Gapped Mode
 
-For environments without internet access, the Admin UI can load all CSS/JavaScript from local files instead of CDNs.
+For environments without internet access, the Admin UI serves its bundled CSS/JavaScript locally without requiring external asset fetches.
 
 ### Enable Air-Gapped Mode
 
@@ -94,17 +94,17 @@ MCPGATEWAY_UI_AIRGAPPED=true
 
 ### How It Works
 
-**HTMX** and **Alpine.js** are always bundled into the main JavaScript bundle via npm/Vite (no CDN dependency). Other vendor libraries (Tailwind CSS, CodeMirror, Chart.js, Font Awesome, Marked.js, DOMPurify) load from CDNs by default for faster initial setup.
+Admin UI vendor assets are installed via npm and bundled/chunked with Vite, so the UI does not depend on CDN-hosted JavaScript.
 
 When `MCPGATEWAY_UI_AIRGAPPED=true`:
 
-- All remaining vendor libraries load from `mcpgateway/static/vendor/` instead of CDNs
-- No external network requests for UI assets
-- Identical functionality, fully offline
+- The UI runs without external asset fetches
+- No external network requests are required for Admin UI assets
+- Functionality remains available offline
 
 ### Container Builds (Recommended)
 
-`Containerfile` automatically downloads and bundles vendor assets during build:
+All production container builds (`Containerfile`, `Containerfile.lite`, `Containerfile.scratch`) include the Vite-built Admin UI assets via the `frontend-builder` stage:
 
 ```bash
 docker build -f Containerfile -t mcpgateway:airgapped .
@@ -115,27 +115,12 @@ See [Container Deployment](../deployment/container.md#airgapped-deployments) for
 
 ### Local Development
 
-The main JavaScript bundle (HTMX + Alpine.js) is built automatically via `make install-dev` or `make build-ui`. To test air-gapped mode for remaining vendor libraries:
+The Admin UI bundle is built automatically via `make install-dev` or `make build-ui`. To test air-gapped mode locally:
 
 ```bash
-# Download vendor assets (one-time)
-./scripts/download-cdn-assets.sh
-
-# Run with air-gapped mode enabled
 MCPGATEWAY_UI_AIRGAPPED=true make dev
 ```
 
-The script downloads to `mcpgateway/static/vendor/`:
-
-| Library      | Version | Bundling Method                              |
-| ------------ | ------- | -------------------------------------------- |
-| HTMX         | 2.0.3   | Bundled in main JS via npm/Vite (always local) |
-| Alpine.js    | 3.x CSP | Bundled in main JS via npm/Vite (always local) |
-| Tailwind CSS | CDN     | ~404KB (CDN by default, local with airgapped mode) |
-| CodeMirror   | 5.65.18 | ~216KB (CDN by default, local with airgapped mode) |
-| Chart.js     | 4.4.1   | ~208KB (CDN by default, local with airgapped mode) |
-| Font Awesome | 6.4.0   | ~1.2MB (CDN by default, local with airgapped mode) |
-| Marked.js    | Latest  | CDN by default, local with airgapped mode |
-| DOMPurify    | Latest  | CDN by default, local with airgapped mode |
+All vendor JavaScript is installed via npm and bundled/chunked with Vite for local serving.
 
 ---

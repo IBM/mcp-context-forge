@@ -259,53 +259,42 @@ make test-js-coverage
 
 ### 3.4 Frontend CDN dependencies
 
-The Admin UI loads frontend libraries (Tailwind, Chart.js, CodeMirror, Font Awesome, Marked, DOMPurify) from CDNs at runtime, with pinned versions in three places that must be kept in sync. **Note:** HTMX and Alpine.js are bundled via npm/Vite and no longer loaded from CDN.
+The Admin UI installs vendor JavaScript through npm and bundles/chunks it with Vite. Release validation should therefore focus on npm dependency updates and verifying the generated bundle, not CDN-pinned assets.
 
 | File | What it controls |
 |------|------------------|
-| `scripts/cdn_resources.py` | Single source of truth for CDN URLs and versions (used by SRI scripts) |
-| `scripts/download-cdn-assets.sh` | Downloads pinned CDN assets into the container for airgapped deployment |
-| `mcpgateway/templates/*.html` | `<script>` and `<link>` tags with hardcoded CDN URLs |
+| `package.json` | Frontend dependency versions and scripts |
+| `package-lock.json` | Locked npm dependency graph |
+| `mcpgateway/admin_ui/` | Admin UI source bundled by Vite |
 
 **Update procedure:**
 
-1. **Check for new versions** of each library at its upstream (npm, cdnjs, jsdelivr). The current pinned versions are listed in `scripts/cdn_resources.py`.
+1. **Check for new versions** of frontend dependencies in `package.json` and the lockfile.
 
-2. **Update the version numbers** in all three files. Search-and-replace the old version with the new one:
-
-    ```bash
-    # Example: update Chart.js from 4.4.1 to 4.5.0
-    grep -rn "4.4.1" scripts/cdn_resources.py scripts/download-cdn-assets.sh mcpgateway/templates/
-    # Replace in all matching files
-    # Note: Alpine.js and HTMX are bundled via npm/Vite — update via package.json instead
-    ```
-
-3. **Regenerate SRI hashes** for the new CDN URLs:
+2. **Update npm dependencies** and refresh the lockfile:
 
     ```bash
-    make sri-generate
+    npm update
+    npm audit
+    npm audit fix
     ```
 
-    This fetches each resource from its CDN URL and writes SHA-384 hashes to `mcpgateway/sri_hashes.json`.
-
-4. **Verify SRI hashes** match the live CDN content:
+3. **Rebuild the Admin UI bundle**:
 
     ```bash
-    make sri-verify
+    make build-ui
     ```
 
-5. **Rebuild the container** to test the airgapped download path:
+4. **Rebuild the container** to verify the frontend build path:
 
     ```bash
     make docker-prod DOCKER_BUILD_ARGS="--no-cache"
     ```
 
-    The `Containerfile` runs `scripts/download-cdn-assets.sh` during build to vendor all CDN assets into `mcpgateway/static/vendor/`. A build failure here means a URL is broken or a version was updated inconsistently.
+5. **Smoke test the Admin UI** to verify bundled assets load correctly in normal and air-gapped deployments.
 
-6. **Smoke test the Admin UI** to verify all frontend libraries load correctly (both CDN and vendored modes).
-
-!!! warning "Three files must stay in sync"
-    A version bump in `cdn_resources.py` without matching changes in `download-cdn-assets.sh` and the HTML templates will cause SRI verification failures or broken airgapped builds. Always update all three together.
+!!! note "Bundled frontend assets"
+    Admin UI vendor JavaScript is installed from npm and bundled/chunked with Vite. Keep `package.json`, `package-lock.json`, and the Admin UI source in sync when updating frontend dependencies.
 
 ### 3.5 Rebuild containers
 
@@ -1399,8 +1388,8 @@ make pip-audit
 cargo update --workspace
 make rust-vet
 npm update && npm audit && npm audit fix
-make test-js-coverage
-# CDN deps: update versions in cdn_resources.py, download-cdn-assets.sh, templates/*.html
+make lint-web test-js-coverage
+# Frontend deps: update package.json/package-lock.json and rebuild the Vite bundle
 make sri-generate sri-verify
 
 # 3. Rebuild after dep updates
