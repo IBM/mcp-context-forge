@@ -9,7 +9,6 @@ include plugins/README.md
 include pyproject.toml
 include gunicorn.config.py
 include Containerfile
-include Containerfile.scratch
 include __init__
 include alembic.ini
 include tox.ini
