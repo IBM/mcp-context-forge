@@ -3254,6 +3254,68 @@ class TestGatewayRefresh:
                 args, kwargs = gateway_service._refresh_gateway_tools_resources_prompts.call_args
                 assert kwargs["pre_auth_headers"] == {"x-custom": "value"}
 
+    @pytest.mark.asyncio
+    async def test_manual_refresh_token_exchange_gateway_uses_exchanged_token(self, gateway_service, mock_gateway_with_relations, mock_db_session):
+        """A token-exchange gateway must resolve a real exchanged token, never generic passthrough."""
+        mock_gateway_with_relations.oauth_config = {"grant_type": "token-exchange", "target_audience": "aud", "token_url": "https://as/token"}
+        mock_gateway_with_relations.ca_certificate = None
+        mock_gateway_with_relations.client_cert = None
+        mock_gateway_with_relations.client_key = None
+        session = mock_db_session.__enter__()
+        session.execute.return_value = _make_execute_result(scalar=mock_gateway_with_relations)
+
+        with patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=mock_db_session):
+            with patch("mcpgateway.services.gateway_service.get_passthrough_headers") as mock_get_headers:
+                gateway_service._resolve_token_exchange_header = AsyncMock(return_value={"Authorization": "Bearer exch-tok"})
+                gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock(
+                    return_value={
+                        "success": True,
+                        "tools_added": 3,
+                        "tools_removed": 0,
+                        "tools_updated": 0,
+                        "resources_added": 0,
+                        "resources_removed": 0,
+                        "resources_updated": 0,
+                        "prompts_added": 0,
+                        "prompts_removed": 0,
+                        "prompts_updated": 0,
+                        "duration_ms": 0,
+                    }
+                )
+
+                result = await gateway_service.refresh_gateway_manually("gw-123", request_headers={"authorization": "Bearer user-jwt"})
+
+                # Never falls back to raw passthrough of the inbound JWT for a token-exchange gateway.
+                mock_get_headers.assert_not_called()
+                gateway_service._resolve_token_exchange_header.assert_awaited_once()
+                # Tools are actually populated using the exchanged token.
+                assert result["success"] is True
+                assert result["tools_added"] == 3
+                _, kwargs = gateway_service._refresh_gateway_tools_resources_prompts.call_args
+                assert kwargs["pre_auth_headers"] == {"Authorization": "Bearer exch-tok"}
+
+    @pytest.mark.asyncio
+    async def test_manual_refresh_token_exchange_failure_short_circuits(self, gateway_service, mock_gateway_with_relations, mock_db_session):
+        """A failed exchange must fail closed with success=False, not empty-tools-as-success or raw forwarding."""
+        mock_gateway_with_relations.oauth_config = {"grant_type": "token-exchange", "target_audience": "aud", "token_url": "https://as/token"}
+        mock_gateway_with_relations.ca_certificate = None
+        mock_gateway_with_relations.client_cert = None
+        mock_gateway_with_relations.client_key = None
+        session = mock_db_session.__enter__()
+        session.execute.return_value = _make_execute_result(scalar=mock_gateway_with_relations)
+
+        with patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=mock_db_session):
+            with patch("mcpgateway.services.gateway_service.get_passthrough_headers") as mock_get_headers:
+                gateway_service._resolve_token_exchange_header = AsyncMock(side_effect=GatewayConnectionError("User authentication required for token-exchange gateway 'test_gateway'."))
+                gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock()
+
+                result = await gateway_service.refresh_gateway_manually("gw-123", request_headers={})
+
+                assert result["success"] is False
+                assert "authentication required" in result["error"]
+                mock_get_headers.assert_not_called()
+                gateway_service._refresh_gateway_tools_resources_prompts.assert_not_called()
+
     def test_validate_tools_partial_failure(self, gateway_service):
         """Test tool validation logs errors but returns valid tools and validation errors."""
         tools = [

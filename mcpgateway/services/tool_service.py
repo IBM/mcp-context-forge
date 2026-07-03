@@ -3782,7 +3782,17 @@ class ToolService(BaseService):
     # Mirrors GatewayService's token-exchange helpers below for API parity (both fully tested).
     _TOKEN_EXCHANGE_FALLBACK_TTL = 60
 
-    async def _resolve_token_exchange_header(self, oauth_config: dict, gateway_id: str, gateway_name: str, app_user_email: str, request_headers: dict) -> dict:
+    async def _resolve_token_exchange_header(
+        self,
+        oauth_config: dict,
+        gateway_id: str,
+        gateway_name: str,
+        app_user_email: str,
+        request_headers: dict,
+        ca_certificate: Optional[str] = None,
+        client_cert: Optional[str] = None,
+        client_key: Optional[str] = None,
+    ) -> dict:
         """Return an Authorization header carrying the exchanged token (cached or fresh).
 
         Calls ``OAuthManager.token_exchange`` directly (not ``get_access_token``)
@@ -3795,6 +3805,9 @@ class ToolService(BaseService):
             app_user_email: Authenticated end-user email, used as a cache key component.
             request_headers: Incoming request headers, used to resolve the subject token
                 and for forensic correlation (X-Correlation-ID / X-Request-ID).
+            ca_certificate: Optional custom CA certificate for the token endpoint (PEM format).
+            client_cert: Optional client certificate for mTLS to the token endpoint.
+            client_key: Optional client private key for mTLS to the token endpoint.
 
         Returns:
             A dict with a single ``Authorization`` header carrying the exchanged token.
@@ -3867,6 +3880,9 @@ class ToolService(BaseService):
                     scope=" ".join(scopes) if scopes else None,
                     requested_token_type=oauth_config.get("requested_token_type", "urn:ietf:params:oauth:token-type:access_token"),
                     subject_token_type=oauth_config.get("subject_token_type", "urn:ietf:params:oauth:token-type:jwt"),
+                    ca_certificate=ca_certificate,
+                    client_cert=client_cert,
+                    client_key=client_key,
                 )
             except Exception as e:
                 latency_ms = int((time.monotonic() - started) * 1000)
@@ -4025,7 +4041,7 @@ class ToolService(BaseService):
             return resp
         await self._invalidate_token_exchange_on_unauthorized(401, oauth_config, gateway_id, app_user_email)
         fresh = await self._resolve_token_exchange_header(oauth_config, gateway_id, gateway_name, app_user_email, request_headers)
-        return await send(fresh)  # single retry; no loop
+        return await send({**headers, **fresh})  # single retry; no loop -- preserve original headers, only Authorization changes
 
     # pylint: enable=duplicate-code
 
@@ -4332,7 +4348,9 @@ class ToolService(BaseService):
                     logger.error("Failed to obtain stored OAuth token for gateway %s: %s", gateway_name, e)
                     raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
             elif grant_type == "token-exchange":
-                headers = await self._resolve_token_exchange_header(gateway_oauth_config, gateway_id_str, gateway_name, app_user_email, request_headers)
+                headers = await self._resolve_token_exchange_header(
+                    gateway_oauth_config, gateway_id_str, gateway_name, app_user_email, request_headers, ca_certificate=gateway_ca_cert, client_cert=gateway_client_cert, client_key=gateway_client_key
+                )
             else:
                 try:
                     access_token = await self.oauth_manager.get_access_token(gateway_oauth_config, ca_certificate=gateway_ca_cert, client_cert=gateway_client_cert, client_key=gateway_client_key)
@@ -5552,7 +5570,9 @@ class ToolService(BaseService):
                                 logger.error("Failed to obtain stored OAuth token for gateway %s: %s", gateway_name, e)
                                 raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
                         elif grant_type == "token-exchange":
-                            headers = await self._resolve_token_exchange_header(gateway_oauth_config, gateway_id_str, gateway_name, app_user_email, request_headers)
+                            headers = await self._resolve_token_exchange_header(
+                                gateway_oauth_config, gateway_id_str, gateway_name, app_user_email, request_headers, ca_certificate=gateway_ca_cert, client_cert=gateway_client_cert, client_key=gateway_client_key
+                            )
                         else:
                             # For Client Credentials flow, get token directly (no DB needed)
                             try:

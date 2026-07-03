@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 # First-Party
-from mcpgateway.services.gateway_service import GatewayService
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayService
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 
 
@@ -371,6 +371,34 @@ class TestToolPathTokenExchange:
         # B1: cached with the REAL expires_in from the response, not a hardcoded default.
         assert svc._token_exchange_cache.set.await_args.kwargs.get("expires_in", svc._token_exchange_cache.set.await_args.args[-1]) == 1800
 
+    async def test_resolve_header_forwards_ca_and_mtls_to_token_exchange(self):
+        # Regression: the token-exchange call to the AS must carry the gateway's
+        # configured CA certificate / mTLS client cert+key, same as the
+        # client_credentials grant does -- otherwise an AS behind a private CA or
+        # requiring mTLS is unreachable for token-exchange gateways.
+        # First-Party
+        from mcpgateway.services.tool_service import ToolService
+
+        svc = ToolService()
+        svc.oauth_manager = MagicMock()
+        svc.oauth_manager.token_exchange = AsyncMock(return_value={"access_token": "exch-tok", "expires_in": 1800})
+        svc._token_exchange_cache = _mock_te_cache(get_return=None)
+
+        await svc._resolve_token_exchange_header(
+            oauth_config=dict(_TE_CFG),
+            gateway_id="gw1",
+            gateway_name="gw",
+            app_user_email="u@e",
+            request_headers={"authorization": f"Bearer {_FAKE_JWT}"},
+            ca_certificate="ca-pem",
+            client_cert="cert-pem",
+            client_key="key-pem",
+        )
+        kwargs = svc.oauth_manager.token_exchange.await_args.kwargs
+        assert kwargs["ca_certificate"] == "ca-pem"
+        assert kwargs["client_cert"] == "cert-pem"
+        assert kwargs["client_key"] == "key-pem"
+
     async def test_cache_hit_skips_exchange(self):
         # First-Party
         from mcpgateway.services.tool_service import ToolService
@@ -629,6 +657,46 @@ class TestUnauthorizedRetryOnce:
         assert sends[1] == {"Authorization": "Bearer fresh-tok"}
         svc._token_exchange_cache.invalidate.assert_awaited_once()
 
+    async def test_401_retry_preserves_original_headers_besides_authorization(self):
+        # Regression: the retry must merge the fresh Authorization into the original
+        # headers, not replace them wholesale -- otherwise Content-Type, header_mapping
+        # output, identity-propagation headers, and session-affinity headers are lost
+        # on the retried call.
+        # Standard
+        from unittest.mock import AsyncMock, MagicMock
+
+        # First-Party
+        from mcpgateway.services.tool_service import ToolService
+
+        svc = ToolService()
+        svc._token_exchange_cache = MagicMock()
+        svc._token_exchange_cache.invalidate = AsyncMock()
+        svc._resolve_token_exchange_header = AsyncMock(return_value={"Authorization": "Bearer fresh-tok"})
+
+        sends = []
+
+        async def _send(headers):
+            sends.append(headers)
+            resp = MagicMock()
+            resp.status_code = 401 if len(sends) == 1 else 200
+            return resp
+
+        cfg = {"grant_type": "token-exchange", "target_audience": "aud"}
+        original_headers = {"Authorization": "Bearer stale-tok", "Content-Type": "application/json", "X-Mcp-Session-Id": "sess-1"}
+        resp = await svc._send_with_token_exchange_retry(
+            _send,
+            original_headers,
+            cfg,
+            "gw1",
+            "gw",
+            "u@e",
+            {"authorization": f"Bearer {_FAKE_JWT}"},
+        )
+        assert resp.status_code == 200
+        assert sends[1]["Authorization"] == "Bearer fresh-tok"
+        assert sends[1]["Content-Type"] == "application/json"
+        assert sends[1]["X-Mcp-Session-Id"] == "sess-1"
+
     async def test_persistent_401_retries_only_once(self):
         # Standard
         from unittest.mock import AsyncMock, MagicMock
@@ -678,6 +746,100 @@ class TestGatewayServiceSanitizeMirror:
         from mcpgateway.services.gateway_service import GatewayService
 
         assert GatewayService._sanitize_passthrough_for_token_exchange([], grant_type="token-exchange") == []
+
+
+@pytest.mark.asyncio
+class TestGatewayServiceTokenExchangeResolver:
+    """GatewayService._resolve_token_exchange_header, used by manual gateway refresh.
+
+    Mirrors ToolService's resolver tests: an explicitly authenticated manual refresh
+    must perform a real RFC 8693 exchange of the caller's inbound JWT, never forward
+    it raw, and never populate tools without a valid exchanged token.
+    """
+
+    async def test_resolve_header_exchanges_and_forwards_exchanged_token(self):
+        svc = GatewayService()
+        svc.oauth_manager = MagicMock()
+        svc.oauth_manager.token_exchange = AsyncMock(return_value={"access_token": "exch-tok", "expires_in": 1800})
+        svc._token_exchange_cache = _mock_te_cache(get_return=None)
+
+        header = await svc._resolve_token_exchange_header(
+            oauth_config=dict(_TE_CFG),
+            gateway_id="gw1",
+            gateway_name="gw",
+            app_user_email="u@e",
+            request_headers={"authorization": f"Bearer {_FAKE_JWT}"},
+        )
+        assert header == {"Authorization": "Bearer exch-tok"}
+        assert _FAKE_JWT not in header["Authorization"]
+        assert svc.oauth_manager.token_exchange.await_args.kwargs["subject_token"] == _FAKE_JWT
+
+    async def test_resolve_header_forwards_ca_and_mtls(self):
+        svc = GatewayService()
+        svc.oauth_manager = MagicMock()
+        svc.oauth_manager.token_exchange = AsyncMock(return_value={"access_token": "exch-tok", "expires_in": 1800})
+        svc._token_exchange_cache = _mock_te_cache(get_return=None)
+
+        await svc._resolve_token_exchange_header(
+            oauth_config=dict(_TE_CFG),
+            gateway_id="gw1",
+            gateway_name="gw",
+            app_user_email="u@e",
+            request_headers={"authorization": f"Bearer {_FAKE_JWT}"},
+            ca_certificate="ca-pem",
+            client_cert="cert-pem",
+            client_key="key-pem",
+        )
+        kwargs = svc.oauth_manager.token_exchange.await_args.kwargs
+        assert kwargs["ca_certificate"] == "ca-pem"
+        assert kwargs["client_cert"] == "cert-pem"
+        assert kwargs["client_key"] == "key-pem"
+
+    async def test_cache_hit_skips_exchange(self):
+        svc = GatewayService()
+        svc.oauth_manager = MagicMock()
+        svc.oauth_manager.token_exchange = AsyncMock()
+        svc._token_exchange_cache = _mock_te_cache(get_return="cached-tok")
+
+        header = await svc._resolve_token_exchange_header(
+            oauth_config=dict(_TE_CFG),
+            gateway_id="gw1",
+            gateway_name="gw",
+            app_user_email="u@e",
+            request_headers={"authorization": f"Bearer {_FAKE_JWT}"},
+        )
+        assert header == {"Authorization": "Bearer cached-tok"}
+        svc.oauth_manager.token_exchange.assert_not_awaited()
+
+    async def test_missing_subject_token_denies(self):
+        svc = GatewayService()
+        svc._token_exchange_cache = _mock_te_cache(get_return=None)
+        with pytest.raises(GatewayConnectionError, match="authentication required"):
+            await svc._resolve_token_exchange_header(
+                oauth_config=dict(_TE_CFG),
+                gateway_id="gw1",
+                gateway_name="gw",
+                app_user_email="u@e",
+                request_headers={},
+            )
+
+    async def test_exchange_failure_message_is_generic_and_not_cached(self):
+        svc = GatewayService()
+        svc.oauth_manager = MagicMock()
+        svc.oauth_manager.token_exchange = AsyncMock(side_effect=Exception("AS said: subject_token=eyJ... is invalid"))
+        svc._token_exchange_cache = _mock_te_cache(get_return=None)
+
+        with pytest.raises(GatewayConnectionError) as ei:
+            await svc._resolve_token_exchange_header(
+                oauth_config=dict(_TE_CFG),
+                gateway_id="gw1",
+                gateway_name="gw",
+                app_user_email="u@e",
+                request_headers={"authorization": f"Bearer {_FAKE_JWT}"},
+            )
+        assert "eyJ" not in str(ei.value)
+        svc._token_exchange_cache.set.assert_not_awaited()
+        svc._token_exchange_cache.set_failure.assert_awaited_once()
 
 
 @pytest.mark.asyncio

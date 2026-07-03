@@ -117,6 +117,8 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
+from mcpgateway.utils.subject_token import extract_inbound_bearer, looks_like_jwt
+from mcpgateway.utils.token_exchange_audit import audit_token_exchange
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
 from mcpgateway.utils.validate_signature import validate_signature
 from mcpgateway.validation.tags import validate_tags_field
@@ -840,6 +842,150 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if grant_type != "token-exchange" or not passthrough_allowed:
             return passthrough_allowed
         return [h for h in passthrough_allowed if h.lower() != "authorization"]
+
+    # Conservative TTL when the AS omits expires_in (RFC 8693 makes it optional).
+    # Mirrors ToolService's token-exchange resolver for API parity (both fully tested).
+    _TOKEN_EXCHANGE_FALLBACK_TTL = 60
+
+    async def _resolve_token_exchange_header(
+        self,
+        oauth_config: dict,
+        gateway_id: str,
+        gateway_name: str,
+        app_user_email: Optional[str],
+        request_headers: Optional[dict],
+        ca_certificate: Optional[str] = None,
+        client_cert: Optional[str] = None,
+        client_key: Optional[str] = None,
+    ) -> Dict[str, str]:
+        """Return an Authorization header carrying the exchanged token (cached or fresh).
+
+        Used for an explicitly authenticated manual gateway refresh, where the HTTP
+        caller's inbound JWT is available to use as the RFC 8693 subject token. Never
+        falls back to forwarding the caller's raw JWT -- callers without a usable
+        subject token get a failure, not a passthrough of unexchanged credentials.
+
+        Args:
+            oauth_config: Gateway OAuth configuration (grant_type == "token-exchange").
+            gateway_id: Gateway identifier used as a cache key component.
+            gateway_name: Gateway display name, used in error messages and logs.
+            app_user_email: Authenticated end-user email, used as a cache key component.
+            request_headers: Incoming request headers, used to resolve the subject token.
+            ca_certificate: Optional custom CA certificate for the token endpoint.
+            client_cert: Optional client certificate for mTLS to the token endpoint.
+            client_key: Optional client private key for mTLS to the token endpoint.
+
+        Returns:
+            A dict with a single Authorization header carrying the exchanged token.
+
+        Raises:
+            GatewayConnectionError: If no usable subject token exists or the exchange fails.
+        """
+        audience = oauth_config.get("target_audience")
+        user_key = app_user_email or ""
+        sec_logger = get_structured_logger("gateway_service")
+
+        def _coerce_ttl(raw):
+            """Coerce the AS-provided expires_in into a positive int TTL, or the fallback.
+
+            Args:
+                raw: The raw ``expires_in`` value returned by the authorization server.
+
+            Returns:
+                int: ``raw`` as an integer, or the fallback TTL if missing/non-numeric.
+            """
+            try:
+                return int(raw) if raw else self._TOKEN_EXCHANGE_FALLBACK_TTL
+            except (TypeError, ValueError):
+                return self._TOKEN_EXCHANGE_FALLBACK_TTL
+
+        cached = await self._token_exchange_cache.get(gateway_id, user_key, audience)
+        if cached:
+            return {"Authorization": f"Bearer {cached}"}
+
+        if await self._token_exchange_cache.is_failed(gateway_id, user_key, audience):
+            logger.debug("token-exchange short-circuited by negative cache for gateway %s", gateway_name, extra={"gateway_id": gateway_id})
+            raise GatewayConnectionError(f"Token exchange unavailable for gateway '{gateway_name}'. Contact your administrator.")
+
+        subject_token = extract_inbound_bearer(request_headers or {})
+        if subject_token and not looks_like_jwt(subject_token):
+            subject_token = None
+        if not subject_token:
+            raise GatewayConnectionError(f"User authentication required for token-exchange gateway '{gateway_name}'.")
+
+        async with self._token_exchange_cache.lock(gateway_id, user_key, audience):
+            cached = await self._token_exchange_cache.get(gateway_id, user_key, audience)
+            if cached:
+                return {"Authorization": f"Bearer {cached}"}
+
+            scopes = oauth_config.get("scopes") or []
+            started = time.monotonic()
+            try:
+                response = await self.oauth_manager.token_exchange(
+                    token_url=oauth_config["token_url"],
+                    subject_token=subject_token,
+                    client_id=oauth_config.get("client_id", ""),
+                    client_secret=oauth_config.get("client_secret", ""),
+                    audience=audience,
+                    scope=" ".join(scopes) if scopes else None,
+                    requested_token_type=oauth_config.get("requested_token_type", "urn:ietf:params:oauth:token-type:access_token"),
+                    subject_token_type=oauth_config.get("subject_token_type", "urn:ietf:params:oauth:token-type:jwt"),
+                    ca_certificate=ca_certificate,
+                    client_cert=client_cert,
+                    client_key=client_key,
+                )
+            except Exception as e:
+                latency_ms = int((time.monotonic() - started) * 1000)
+                safe_reason = SecurityValidator.sanitize_log_message(str(e))
+                await self._token_exchange_cache.set_failure(gateway_id, user_key, audience)
+                audit_token_exchange(
+                    user_email=app_user_email,
+                    gateway_id=gateway_id,
+                    target_audience=audience,
+                    success=False,
+                    expires_in=None,
+                    upstream=gateway_name,
+                    error=safe_reason,
+                    latency_ms=latency_ms,
+                    correlation_id=None,
+                    request_id=None,
+                )
+                sec_logger.log(
+                    level="WARNING",
+                    message=f"Token exchange failed for gateway {gateway_name}",
+                    event_type="token_exchange_failed",
+                    user_email=app_user_email,
+                    custom_fields={"gateway_id": gateway_id, "target_audience": audience, "latency_ms": latency_ms, "error": safe_reason},
+                    is_security_event=True,
+                )
+                logger.warning("Token exchange failed for gateway %s: %s", gateway_name, safe_reason, extra={"gateway_id": gateway_id})
+                raise GatewayConnectionError(f"Token exchange failed for gateway '{gateway_name}'. Contact your administrator.") from None
+
+            exchanged = response["access_token"]
+            expires_in = _coerce_ttl(response.get("expires_in"))
+            latency_ms = int((time.monotonic() - started) * 1000)
+            await self._token_exchange_cache.set(gateway_id, user_key, audience, exchanged, expires_in=expires_in)
+            audit_token_exchange(
+                user_email=app_user_email,
+                gateway_id=gateway_id,
+                target_audience=audience,
+                success=True,
+                expires_in=expires_in,
+                upstream=gateway_name,
+                error=None,
+                latency_ms=latency_ms,
+                correlation_id=None,
+                request_id=None,
+            )
+            sec_logger.log(
+                level="INFO",
+                message=f"Token exchange succeeded for gateway {gateway_name}",
+                event_type="token_exchange_succeeded",
+                user_email=app_user_email,
+                custom_fields={"gateway_id": gateway_id, "target_audience": audience, "expires_in": expires_in, "latency_ms": latency_ms},
+                is_security_event=True,
+            )
+            return {"Authorization": f"Bearer {exchanged}"}
 
     @staticmethod
     def normalize_url(url: str) -> str:
@@ -6184,6 +6330,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         start_time = time.monotonic()
 
         pre_auth_headers = {}
+        token_exchange_error: Optional[str] = None
 
         # Check if gateway exists before acquiring lock
         with fresh_db_session() as db:
@@ -6191,10 +6338,47 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway with ID '{gateway_id}' not found")
             gateway_name = gateway.name
+            gateway_oauth_config = gateway.oauth_config
+            gateway_grant_type = gateway_oauth_config.get("grant_type") if isinstance(gateway_oauth_config, dict) else None
 
-            # Get passthrough headers if request headers provided
-            if request_headers:
+            if gateway_grant_type == "token-exchange":
+                # A token-exchange gateway's Authorization must always come from a fresh
+                # RFC 8693 exchange of the caller's inbound JWT -- never from generic header
+                # passthrough, which would forward the caller's raw JWT upstream unexchanged.
+                try:
+                    pre_auth_headers = await self._resolve_token_exchange_header(
+                        gateway_oauth_config,
+                        gateway_id,
+                        gateway_name,
+                        user_email,
+                        request_headers or {},
+                        ca_certificate=gateway.ca_certificate,
+                        client_cert=getattr(gateway, "client_cert", None),
+                        client_key=getattr(gateway, "client_key", None),
+                    )
+                except Exception as e:
+                    token_exchange_error = str(e)
+            elif request_headers:
+                # Get passthrough headers if request headers provided
                 pre_auth_headers = get_passthrough_headers(request_headers, {}, db, gateway)
+
+        if token_exchange_error is not None:
+            return {
+                "tools_added": 0,
+                "tools_removed": 0,
+                "resources_added": 0,
+                "resources_removed": 0,
+                "prompts_added": 0,
+                "prompts_removed": 0,
+                "tools_updated": 0,
+                "resources_updated": 0,
+                "prompts_updated": 0,
+                "success": False,
+                "error": token_exchange_error,
+                "validation_errors": [],
+                "duration_ms": (time.monotonic() - start_time) * 1000,
+                "refreshed_at": datetime.now(timezone.utc),
+            }
 
         lock = self._get_refresh_lock(gateway_id)
 
