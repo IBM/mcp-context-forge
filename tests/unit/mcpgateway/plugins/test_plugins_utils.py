@@ -389,3 +389,131 @@ class TestRecordPluginMetricsL4Swallow:
             record_plugin_metrics("trace-1", {"pii_filter": {"total_detections": 1, "total_masked": 2}})  # should not raise
 
         assert mock_service.record_metric.call_count == 2
+
+
+class TestRecordPluginMetricsG2OTelExport:
+    """G2: optional OTel-SDK export sink for plugin metrics (gateway is the export authority)."""
+
+    def test_otel_span_created_when_enabled(self):
+        """When OTel is enabled, one dedicated span per plugin is opened with sanitized attributes
+        as span attributes, using the gateway's configured exporter.
+        """
+        mock_service = _make_observability_service_mock()
+        mock_session = MagicMock()
+        mock_create_span = MagicMock()
+        mock_context_manager = MagicMock()
+        mock_create_span.return_value = mock_context_manager
+
+        metadata = {
+            "pii_filter": {
+                "total_detections": 2,
+                "stage": "tool_post_invoke",
+            },
+            "secrets_detection": {
+                "found_secrets": 1,
+            },
+        }
+
+        with (
+            patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
+            patch("mcpgateway.db.SessionLocal", return_value=mock_session),
+            patch("mcpgateway.observability.otel_tracing_enabled", return_value=True),
+            patch("mcpgateway.observability.create_span", mock_create_span),
+        ):
+            record_plugin_metrics("trace-1", metadata)
+
+        # Verify create_span was called twice (once per plugin)
+        assert mock_create_span.call_count == 2
+
+        # Verify the span names and attributes
+        calls = mock_create_span.call_args_list
+        span_names = {call[0][0] for call in calls}
+        assert span_names == {"plugin.metrics.pii_filter", "plugin.metrics.secrets_detection"}
+
+        # Verify attributes were passed correctly for pii_filter
+        pii_call = [c for c in calls if c[0][0] == "plugin.metrics.pii_filter"][0]
+        assert pii_call[0][1] == {"total_detections": 2, "stage": "tool_post_invoke"}
+
+        # Verify attributes for secrets_detection
+        secrets_call = [c for c in calls if c[0][0] == "plugin.metrics.secrets_detection"][0]
+        assert secrets_call[0][1] == {"found_secrets": 1}
+
+        # Verify the context manager was used (entered and exited)
+        assert mock_context_manager.__enter__.call_count == 2
+        assert mock_context_manager.__exit__.call_count == 2
+
+    def test_otel_export_noop_when_disabled(self):
+        """When OTel tracing is disabled, create_span is not called and no span is exported."""
+        mock_service = _make_observability_service_mock()
+        mock_session = MagicMock()
+        mock_create_span = MagicMock()
+
+        metadata = {"pii_filter": {"total_detections": 2}}
+
+        with (
+            patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
+            patch("mcpgateway.db.SessionLocal", return_value=mock_session),
+            patch("mcpgateway.observability.otel_tracing_enabled", return_value=False),
+            patch("mcpgateway.observability.create_span", mock_create_span),
+        ):
+            record_plugin_metrics("trace-1", metadata)
+
+        # When OTel is disabled, create_span should not be called
+        mock_create_span.assert_not_called()
+
+        # But the DB sink should still work
+        mock_service.start_span.assert_called_once()
+        mock_service.end_span.assert_called_once()
+        mock_session.commit.assert_called_once()
+
+    def test_otel_export_failure_does_not_break_db_sink(self):
+        """When create_span raises, the exception is swallowed and the DB sink still completes."""
+        mock_service = _make_observability_service_mock()
+        mock_session = MagicMock()
+        mock_create_span = MagicMock(side_effect=RuntimeError("OTel export failed"))
+
+        metadata = {"pii_filter": {"total_detections": 2}}
+
+        with (
+            patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
+            patch("mcpgateway.db.SessionLocal", return_value=mock_session),
+            patch("mcpgateway.observability.otel_tracing_enabled", return_value=True),
+            patch("mcpgateway.observability.create_span", mock_create_span),
+        ):
+            record_plugin_metrics("trace-1", metadata)  # should not raise
+
+        # OTel export was attempted but failed
+        mock_create_span.assert_called_once()
+
+        # DB sink should still complete successfully
+        mock_service.start_span.assert_called_once()
+        mock_service.end_span.assert_called_once()
+        mock_session.commit.assert_called_once()
+        mock_session.close.assert_called_once()
+
+    def test_otel_export_failure_for_one_plugin_does_not_affect_others(self):
+        """When create_span fails for one plugin, the export for other plugins still runs."""
+        mock_service = _make_observability_service_mock()
+        mock_session = MagicMock()
+        mock_create_span = MagicMock(side_effect=[RuntimeError("boom"), None])
+
+        metadata = {
+            "plugin_a": {"count": 1},
+            "plugin_b": {"count": 2},
+        }
+
+        with (
+            patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
+            patch("mcpgateway.db.SessionLocal", return_value=mock_session),
+            patch("mcpgateway.observability.otel_tracing_enabled", return_value=True),
+            patch("mcpgateway.observability.create_span", mock_create_span),
+        ):
+            record_plugin_metrics("trace-1", metadata)  # should not raise
+
+        # create_span was called twice despite the first failure
+        assert mock_create_span.call_count == 2
+
+        # DB sink still works regardless of OTel export issues
+        assert mock_service.start_span.call_count == 2
+        assert mock_service.end_span.call_count == 2
+        mock_session.commit.assert_called_once()

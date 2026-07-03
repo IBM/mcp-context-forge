@@ -213,6 +213,21 @@ def record_plugin_metrics(trace_id: Optional[str], result_metadata: Optional[Dic
                     )
                 except Exception:  # noqa: BLE001 - one metric's failure must not affect the others
                     logger.debug("Failed to record numeric metric %r for plugin %r", field_name, plugin_name, exc_info=True)
+
+        # G2: optional OTel-SDK export sink. Gateway is the export authority; this
+        # re-emits the ALREADY-sanitized metrics through the gateway's existing OTel
+        # exporter. No-op when OTel tracing is unconfigured (create_span -> nullcontext).
+        try:
+            from mcpgateway.observability import create_span, otel_tracing_enabled  # pylint: disable=import-outside-toplevel
+            if otel_tracing_enabled():
+                for plugin_name, sanitized in sanitized_by_plugin.items():
+                    try:
+                        with create_span(f"plugin.metrics.{plugin_name}", dict(sanitized)):
+                            pass  # attributes set on enter; span exported on exit
+                    except Exception:  # noqa: BLE001 - one plugin's export must not affect others
+                        logger.debug("Failed to export OTel span for plugin %r", plugin_name, exc_info=True)
+        except Exception:  # noqa: BLE001 - L4: export is best-effort, never raises into the request path
+            logger.debug("OTel plugin-metrics export sink failed", exc_info=True)
     except Exception:  # noqa: BLE001 - L4: best-effort, must never raise into the request path
         logger.debug("record_plugin_metrics failed", exc_info=True)
 
