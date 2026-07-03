@@ -209,6 +209,15 @@ A2A_TESTING_ENABLED = _env_bool(_get_config("LOADTEST_A2A_TESTING_ENABLED", "fal
 ADMIN_UI_ENABLED = _env_bool(_get_config("MCPGATEWAY_UI_ENABLED", "true"), default=True)
 ADMIN_API_ENABLED = _env_bool(_get_config("MCPGATEWAY_ADMIN_API_ENABLED", "true"), default=True)
 
+
+def _get_admin_weight(requires_ui: bool = False, requires_api: bool = True, base: int = 1) -> int:
+    """Return base weight when required features are enabled, else 0."""
+    if requires_ui and not ADMIN_UI_ENABLED:
+        return 0
+    if requires_api and not ADMIN_API_ENABLED:
+        return 0
+    return base
+
 # Endpoint availability discovered from OpenAPI at test start.
 # Used to make feature-flagged endpoint checks conditional.
 AVAILABLE_PATHS: set[str] = set()
@@ -1114,7 +1123,7 @@ class AdminUIUser(BaseUser):
     Weight: Medium (admin traffic); 0 when MCPGATEWAY_UI_ENABLED or MCPGATEWAY_ADMIN_API_ENABLED is false.
     """
 
-    weight = 3 if (ADMIN_UI_ENABLED and ADMIN_API_ENABLED) else 0
+    weight = _get_admin_weight(requires_ui=True, base=3)
     wait_time = between(1.0, 3.0)
 
     @task(10)
@@ -2825,7 +2834,7 @@ class ObservabilityUser(BaseUser):
     Weight: Low (admin analytics)
     """
 
-    weight = 1 if ADMIN_API_ENABLED else 0
+    weight = _get_admin_weight()
     wait_time = between(1.0, 3.0)
 
     @task(3)
@@ -4212,7 +4221,7 @@ class AdminObservabilityExtendedUser(BaseUser):
     Weight: Low (admin analytics)
     """
 
-    weight = 1 if ADMIN_API_ENABLED else 0
+    weight = _get_admin_weight()
     wait_time = between(1.0, 3.0)
 
     @task(3)
@@ -4509,7 +4518,7 @@ class AdminPerformanceExtendedUser(BaseUser):
     Weight: Low (admin diagnostics)
     """
 
-    weight = 1 if ADMIN_API_ENABLED else 0
+    weight = _get_admin_weight()
     wait_time = between(2.0, 5.0)
 
     @task(3)
@@ -4588,7 +4597,7 @@ class AdminPluginsUser(BaseUser):
     Weight: Low (admin operations)
     """
 
-    weight = 1 if ADMIN_API_ENABLED else 0
+    weight = _get_admin_weight()
     wait_time = between(2.0, 5.0)
 
     @task(5)
@@ -4664,7 +4673,7 @@ class AdminSystemExtendedUser(BaseUser):
     Weight: Low (admin diagnostics)
     """
 
-    weight = 1 if ADMIN_API_ENABLED else 0
+    weight = _get_admin_weight()
     wait_time = between(2.0, 5.0)
 
     @task(3)
@@ -4807,7 +4816,7 @@ class AdminSectionsUser(BaseUser):
     Weight: Low (admin UI partials)
     """
 
-    weight = 1 if ADMIN_API_ENABLED else 0
+    weight = _get_admin_weight()
     wait_time = between(2.0, 5.0)
 
     @task(3)
@@ -4886,7 +4895,7 @@ class AdminSearchUser(BaseUser):
     Weight: Low (admin search operations)
     """
 
-    weight = 1 if ADMIN_API_ENABLED else 0
+    weight = _get_admin_weight()
     wait_time = between(1.0, 3.0)
 
     @task(3)
@@ -5087,7 +5096,7 @@ class AdminCacheConfigUser(BaseUser):
     Weight: Low (admin cache operations)
     """
 
-    weight = 1 if ADMIN_API_ENABLED else 0
+    weight = _get_admin_weight()
     wait_time = between(3.0, 8.0)
 
     @task(3)
@@ -5163,7 +5172,7 @@ class AdminHTMXPartialsUser(BaseUser):
     Weight: Low (admin UI)
     """
 
-    weight = 1 if ADMIN_UI_ENABLED else 0
+    weight = _get_admin_weight(requires_ui=True, requires_api=False)
     wait_time = between(2.0, 5.0)
 
     @task(3)
@@ -5380,7 +5389,7 @@ class AdminGrpcUser(BaseUser):
     Weight: Very low (gRPC management)
     """
 
-    weight = 1 if ADMIN_API_ENABLED else 0
+    weight = _get_admin_weight()
     wait_time = between(3.0, 8.0)
 
     @task(5)
@@ -5496,7 +5505,7 @@ class AdminLoginLogoutUser(BaseUser):
     Weight: Very low (session management)
     """
 
-    weight = 1 if ADMIN_UI_ENABLED else 0
+    weight = _get_admin_weight(requires_ui=True, requires_api=False)
     wait_time = between(5.0, 15.0)
 
     @task(3)
@@ -5536,7 +5545,7 @@ class AdminLogsExtendedUser(BaseUser):
     Weight: Very low (admin operations)
     """
 
-    weight = 1 if ADMIN_API_ENABLED else 0
+    weight = _get_admin_weight()
     wait_time = between(5.0, 15.0)
 
     @task(3)
@@ -5588,7 +5597,7 @@ class AdminSupportBundleUser(BaseUser):
     Weight: Very low (diagnostic operation)
     """
 
-    weight = 1 if ADMIN_API_ENABLED else 0
+    weight = _get_admin_weight()
     wait_time = between(10.0, 30.0)
 
     @task(1)
@@ -5649,7 +5658,7 @@ class AdminEntityDetailUser(BaseUser):
     Weight: Low (admin UI)
     """
 
-    weight = 1 if (ADMIN_UI_ENABLED and ADMIN_API_ENABLED) else 0
+    weight = _get_admin_weight(requires_ui=True)
     wait_time = between(2.0, 5.0)
 
     @task(3)
@@ -5756,7 +5765,7 @@ class AdminMetricsResetUser(BaseUser):
     Weight: Very low (destructive operation)
     """
 
-    weight = 1 if ADMIN_API_ENABLED else 0
+    weight = _get_admin_weight()
     wait_time = between(10.0, 30.0)
 
     @task(1)
@@ -5855,7 +5864,7 @@ class AdminTeamsMembershipUser(BaseUser):
     Weight: Low (admin team management)
     """
 
-    weight = 1 if (ADMIN_UI_ENABLED and ADMIN_API_ENABLED) else 0
+    weight = _get_admin_weight(requires_ui=True)
     wait_time = between(2.0, 5.0)
 
     def on_start(self):
@@ -6151,7 +6160,7 @@ class AdminResourcesTestUser(BaseUser):
     Weight: Very low (admin diagnostic)
     """
 
-    weight = 1 if ADMIN_API_ENABLED else 0
+    weight = _get_admin_weight()
     wait_time = between(5.0, 15.0)
 
     @task(1)
@@ -6981,7 +6990,7 @@ class AdminDetailReadExtendedUser(BaseUser):
     Weight: Very low (admin reads)
     """
 
-    weight = 1 if ADMIN_API_ENABLED else 0
+    weight = _get_admin_weight()
     wait_time = between(3.0, 8.0)
 
     @task(2)
@@ -7118,7 +7127,7 @@ class AdminGrpcCRUDUser(BaseUser):
     Weight: Very low (admin gRPC)
     """
 
-    weight = 1 if ADMIN_API_ENABLED else 0
+    weight = _get_admin_weight()
     wait_time = between(5.0, 15.0)
 
     @task(2)
@@ -7211,7 +7220,7 @@ class AdminHTMXEntityOpsUser(BaseUser):
     Weight: Very low (admin operations)
     """
 
-    weight = 1 if (ADMIN_UI_ENABLED and ADMIN_API_ENABLED) else 0
+    weight = _get_admin_weight(requires_ui=True)
     wait_time = between(3.0, 8.0)
 
     @task(1)
@@ -7342,7 +7351,7 @@ class AdminMCPRegistryOpsUser(BaseUser):
     Weight: Very low (admin operations)
     """
 
-    weight = 1 if ADMIN_API_ENABLED else 0
+    weight = _get_admin_weight()
     wait_time = between(5.0, 15.0)
 
     @task(1)
@@ -7389,7 +7398,7 @@ class AdminObservabilityQueriesUser(BaseUser):
     Weight: Very low (admin observability)
     """
 
-    weight = 1 if ADMIN_API_ENABLED else 0
+    weight = _get_admin_weight()
     wait_time = between(5.0, 15.0)
 
     @task(2)
@@ -7682,7 +7691,7 @@ class AdminHTMXEntityCRUDUser(BaseUser):
     Weight: Very low (admin HTMX)
     """
 
-    weight = 1 if (ADMIN_UI_ENABLED and ADMIN_API_ENABLED) else 0
+    weight = _get_admin_weight(requires_ui=True)
     wait_time = between(5.0, 15.0)
 
     @task(2)
@@ -8020,7 +8029,7 @@ class AdminUsersOpsUser(BaseUser):
     Weight: Very low (admin user ops)
     """
 
-    weight = 1 if ADMIN_API_ENABLED else 0
+    weight = _get_admin_weight()
     wait_time = between(5.0, 15.0)
 
     @task(2)
@@ -8089,7 +8098,7 @@ class AdminTeamsHTMXOpsUser(BaseUser):
     Weight: Very low (admin teams)
     """
 
-    weight = 1 if (ADMIN_UI_ENABLED and ADMIN_API_ENABLED) else 0
+    weight = _get_admin_weight(requires_ui=True)
     wait_time = between(5.0, 15.0)
     network_timeout = 120.0
 
