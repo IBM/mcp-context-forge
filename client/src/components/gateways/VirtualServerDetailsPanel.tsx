@@ -68,9 +68,7 @@ interface Prompt {
 }
 
 type ComponentWithType =
-  | (Tool & { type: "tools" })
-  | (Resource & { type: "resources" })
-  | (Prompt & { type: "prompts" });
+  (Tool & { type: "tools" }) | (Resource & { type: "resources" }) | (Prompt & { type: "prompts" });
 
 interface MCPServersResponse {
   gateways?: MCPServer[];
