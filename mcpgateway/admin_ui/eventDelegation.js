@@ -116,6 +116,7 @@ function executeAction(action, args, event, eventFirst = false) {
  * @param {Event} event - The click event
  */
 function handleDelegatedClick(event) {
+  if (!(event.target instanceof Element)) return;
   // Handle team selector item clicks (data-action="select-team" on buttons injected
   // via innerHTML, where onclick attributes are stripped by the innerHTML guard).
   const selectTeamTarget = event.target.closest('[data-action="select-team"]');
@@ -154,6 +155,7 @@ function handleDelegatedClick(event) {
  * @param {Event} event - The input event
  */
 function handleDelegatedInput(event) {
+  if (!(event.target instanceof Element)) return;
   const target = event.target.closest('[data-action-input]');
   if (!target) return;
 
@@ -173,6 +175,7 @@ function handleDelegatedInput(event) {
  * @param {Event} event - The change event
  */
 function handleDelegatedChange(event) {
+  if (!(event.target instanceof Element)) return;
   const target = event.target.closest('[data-action-change]');
   if (!target) return;
 
@@ -196,6 +199,7 @@ function handleDelegatedChange(event) {
  * @param {Event} event - The submit event
  */
 function handleDelegatedSubmit(event) {
+  if (!(event.target instanceof Element)) return;
   const target = event.target.closest('[data-action-submit]');
   if (!target) return;
 
@@ -220,6 +224,7 @@ function handleDelegatedSubmit(event) {
  * @param {Event} event - The keydown event
  */
 function handleDelegatedKeydown(event) {
+  if (!(event.target instanceof Element)) return;
   const target = event.target.closest('[data-action-keydown]');
   if (!target) return;
 
@@ -234,6 +239,7 @@ function handleDelegatedKeydown(event) {
  * @param {Event} event - The focus event
  */
 function handleDelegatedFocus(event) {
+  if (!(event.target instanceof Element)) return;
   const target = event.target.closest('[data-action-focus]');
   if (!target) return;
 
@@ -248,6 +254,7 @@ function handleDelegatedFocus(event) {
  * @param {Event} event - The blur event
  */
 function handleDelegatedBlur(event) {
+  if (!(event.target instanceof Element)) return;
   const target = event.target.closest('[data-action-blur]');
   if (!target) return;
 
@@ -262,6 +269,7 @@ function handleDelegatedBlur(event) {
  * @param {Event} event - The reset event
  */
 function handleDelegatedReset(event) {
+  if (!(event.target instanceof Element)) return;
   const target = event.target.closest('[data-action-reset]');
   if (!target) return;
 
