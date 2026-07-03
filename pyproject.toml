@@ -373,6 +373,7 @@ ignore = [
     ".github/**",
     "Makefile",
     "mcpgateway/admin_ui/**",
+    "mcpgateway/static/bundle-*.js",
 ]
 
 [tool.black]
