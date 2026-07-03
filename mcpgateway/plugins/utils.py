@@ -219,6 +219,7 @@ def record_plugin_metrics(trace_id: Optional[str], result_metadata: Optional[Dic
         # exporter. No-op when OTel tracing is unconfigured (create_span -> nullcontext).
         try:
             from mcpgateway.observability import create_span, otel_tracing_enabled  # pylint: disable=import-outside-toplevel
+
             if otel_tracing_enabled():
                 for plugin_name, sanitized in sanitized_by_plugin.items():
                     try:

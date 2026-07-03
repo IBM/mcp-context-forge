@@ -399,14 +399,22 @@ def otel_memory_exporter(monkeypatch):
     OTel dependency and must keep running) when the optional ``observability`` extra
     (``opentelemetry-sdk``) is not installed: ``pip install '.[observability]'`` /
     ``uv pip install '.[observability]'``.
-    """
-    pytest.importorskip("opentelemetry.sdk.trace", reason="opentelemetry-sdk (the 'observability' extra) is not installed")
 
+    Note: ``pytest.importorskip("opentelemetry.sdk.trace")`` alone is not a reliable guard
+    here -- in some environments ``opentelemetry-api`` (a hard dependency, always present)
+    leaves behind an empty PEP 420 namespace package at ``opentelemetry.sdk.trace`` even
+    when the real ``opentelemetry-sdk`` distribution (the 'observability' extra) is absent,
+    so the module path resolves but has no actual symbols. Guard on the concrete import
+    instead and convert failure into a skip.
+    """
     # Third-Party -- deferred so the module itself always imports even without the extra;
     # only tests that request this fixture pay the (skippable) cost.
-    from opentelemetry.sdk.trace import TracerProvider  # pylint: disable=import-outside-toplevel
-    from opentelemetry.sdk.trace.export import SimpleSpanProcessor  # pylint: disable=import-outside-toplevel
-    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter  # pylint: disable=import-outside-toplevel
+    try:
+        from opentelemetry.sdk.trace import TracerProvider  # pylint: disable=import-outside-toplevel
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor  # pylint: disable=import-outside-toplevel
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter  # pylint: disable=import-outside-toplevel
+    except ImportError as exc:
+        pytest.skip(f"opentelemetry-sdk (the 'observability' extra) is not installed: {exc}")
 
     # First-Party
     import mcpgateway.observability as obs  # pylint: disable=import-outside-toplevel
