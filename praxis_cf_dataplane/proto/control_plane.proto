@@ -1,0 +1,224 @@
+syntax = "proto3";
+
+package contextforge.controlplane.v1;
+
+// Control Plane RPC service for MCP dataplane operations
+service ControlPlaneService {
+  // ============================================================================
+  // Authentication & Session Management
+  // ============================================================================
+  
+  // Authenticate a JWT token and return session context
+  rpc Authenticate(AuthenticateRequest) returns (AuthenticateResponse);
+  
+  // Get session metadata (for cache refresh)
+  rpc GetSessionMetadata(GetSessionMetadataRequest) returns (GetSessionMetadataResponse);
+  
+  // ============================================================================
+  // Virtual Server Configuration
+  // ============================================================================
+  
+  // Get virtual server configuration including exposed tools and access policies
+  rpc GetVirtualServerConfig(GetVirtualServerConfigRequest) returns (GetVirtualServerConfigResponse);
+  
+  // ============================================================================
+  // Tool Routing & Resolution
+  // ============================================================================
+  
+  // Resolve tool call to gateway or upstream server
+  rpc ResolveToolCall(ResolveToolCallRequest) returns (ResolveToolCallResponse);
+  
+  // ============================================================================
+  // Tool Execution (Gateway)
+  // ============================================================================
+  
+  // Execute tool on gateway's MCP server
+  rpc ExecuteTool(ExecuteToolRequest) returns (ExecuteToolResponse);
+  
+  // List tools from gateway(s)
+  rpc ListGatewayTools(ListGatewayToolsRequest) returns (ListGatewayToolsResponse);
+  
+  // ============================================================================
+  // Upstream Server Operations
+  // ============================================================================
+  
+  // List tools from upstream server(s)
+  rpc ListUpstreamTools(ListUpstreamToolsRequest) returns (ListUpstreamToolsResponse);
+  
+  // ============================================================================
+  // Observability
+  // ============================================================================
+  
+  // Record tool execution metrics
+  rpc RecordToolMetric(RecordToolMetricRequest) returns (RecordToolMetricResponse);
+}
+
+// ============================================================================
+// Authentication Messages
+// ============================================================================
+
+message AuthenticateRequest {
+  string bearer_token = 1;  // JWT token from Authorization header
+}
+
+message AuthenticateResponse {
+  bool authenticated = 1;
+  optional string error_message = 2;
+  optional SessionContext session_context = 3;
+}
+
+message SessionContext {
+  string session_id = 1;
+  string user_email = 2;
+  repeated string teams = 3;
+  bool is_admin = 4;
+  int64 expires_at = 5;  // Unix timestamp
+  map<string, string> metadata = 6;  // Additional session metadata
+}
+
+message GetSessionMetadataRequest {
+  string session_id = 1;
+}
+
+message GetSessionMetadataResponse {
+  bool found = 1;
+  optional SessionContext session_context = 2;
+  optional string error_message = 3;
+}
+
+// ============================================================================
+// Virtual Server Configuration Messages
+// ============================================================================
+
+message GetVirtualServerConfigRequest {
+  string virtual_server_id = 1;
+}
+
+message GetVirtualServerConfigResponse {
+  bool found = 1;
+  optional VirtualServerConfig config = 2;
+  optional string error_message = 3;
+}
+
+message VirtualServerConfig {
+  string virtual_server_id = 1;
+  repeated VirtualServerTool tools = 2;
+  AccessPolicy access_policy = 3;
+  map<string, string> metadata = 4;
+}
+
+message VirtualServerTool {
+  string name = 1;  // Virtual server tool name (exposed to clients)
+  ToolSource source = 2;  // Where the tool is implemented
+  optional string gateway_id = 3;  // If source=GATEWAY
+  optional string gateway_tool_name = 4;  // Actual tool name on gateway
+  optional string upstream_url = 5;  // If source=UPSTREAM
+  optional string upstream_tool_name = 6;  // Actual tool name on upstream
+}
+
+enum ToolSource {
+  TOOL_SOURCE_UNSPECIFIED = 0;
+  TOOL_SOURCE_GATEWAY = 1;
+  TOOL_SOURCE_UPSTREAM = 2;
+}
+
+message AccessPolicy {
+  repeated string allowed_teams = 1;
+  repeated string allowed_users = 2;  // Optional: specific user emails
+  bool require_admin = 3;  // Optional: require admin access
+}
+
+// ============================================================================
+// Tool Routing Messages
+// ============================================================================
+
+message ResolveToolCallRequest {
+  string virtual_server_id = 1;
+  string tool_name = 2;  // Virtual server tool name
+}
+
+message ResolveToolCallResponse {
+  bool found = 1;
+  optional ToolRoute route = 2;
+  optional string error_message = 3;
+}
+
+message ToolRoute {
+  ToolSource source = 1;
+  optional string gateway_id = 2;  // If source=GATEWAY
+  optional string gateway_tool_name = 3;
+  optional string upstream_url = 4;  // If source=UPSTREAM
+  optional string upstream_tool_name = 5;
+}
+
+// ============================================================================
+// Gateway Tool Execution Messages
+// ============================================================================
+
+message ExecuteToolRequest {
+  string gateway_id = 1;
+  string tool_name = 2;  // Gateway tool name
+  string arguments_json = 3;  // JSON-encoded arguments
+  string session_id = 4;  // For audit/observability
+}
+
+message ExecuteToolResponse {
+  bool success = 1;
+  optional string result_json = 2;  // JSON-encoded result
+  optional string error_message = 3;
+  optional string error_code = 4;
+}
+
+message ListGatewayToolsRequest {
+  repeated string gateway_ids = 1;
+}
+
+message ListGatewayToolsResponse {
+  repeated Tool tools = 1;
+  optional string error_message = 2;
+}
+
+// ============================================================================
+// Upstream Server Messages
+// ============================================================================
+
+message ListUpstreamToolsRequest {
+  repeated string upstream_urls = 1;
+}
+
+message ListUpstreamToolsResponse {
+  repeated Tool tools = 1;
+  optional string error_message = 2;
+}
+
+// ============================================================================
+// Common Messages
+// ============================================================================
+
+message Tool {
+  string name = 1;
+  string description = 2;
+  string input_schema_json = 3;  // JSON Schema
+  map<string, string> metadata = 4;  // Additional tool metadata
+}
+
+// ============================================================================
+// Observability Messages
+// ============================================================================
+
+message RecordToolMetricRequest {
+  string session_id = 1;
+  string virtual_server_id = 2;
+  string tool_name = 3;
+  ToolSource source = 4;
+  optional string gateway_id = 5;
+  optional string upstream_url = 6;
+  int64 duration_ms = 7;
+  bool success = 8;
+  optional string error_message = 9;
+  optional string error_code = 10;
+}
+
+message RecordToolMetricResponse {
+  bool recorded = 1;
+}

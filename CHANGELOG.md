@@ -167,7 +167,7 @@ Release 1.0.4 consolidates **35+ PRs** focused on **Rust server migration**, **s
 
 - **🔐 Security & Auth** - Keycloak SSO role merging from `access_token`, `client_secret_basic` support for SSO token exchange, CSRF exempt-path fixes, login redirect loop fix, and OAuth `auth_type` propagation fix for tool creation.
 - **🦀 Rust Servers** - Slow-time MCP test server migrated to Rust (breaking binary path change), Rust benchmark server added replacing Go, Rust A2A echo agent added for integration testing.
-- **🛡️ FedRAMP / Build** - s390x `rustup` fix, hermetic wheel closure for s390x/ppc64le multiplatform builds, `Containerfile.lite` venv fix, PyPI UI bundle fix, PyO3 and Rust CI dependency updates.
+- **🛡️ FedRAMP / Build** - s390x `rustup` fix, hermetic wheel closure for s390x/ppc64le multiplatform builds, `Containerfile` venv fix, PyPI UI bundle fix, PyO3 and Rust CI dependency updates.
 - **🗄️ Database & Performance** - DB connection pool multiplication resolved, lazy log formatting migration across services, tag length made configurable via env vars.
 - **🌐 API** - RFC 6585 HTTP status code compliance (429, etc.), HTTP 202 Accepted response support for async operations.
 - **🔧 CI / DevOps** - Hadolint via Docker image, docker-scan scoped to merge queue, linting-full moved to merge queue, npm audit fixes, release dependency lock refresh, `cpex-rate-limiter` bump to 0.1.4.
@@ -233,7 +233,7 @@ Release 1.0.4 consolidates **35+ PRs** focused on **Rust server migration**, **s
 - **🔧 Rust CI Dependencies** ([#5227](https://github.com/IBM/mcp-context-forge/pull/5227)) – Updated Rust CI dependencies. Fixes CI failures from stale dependency pins.
 - **🔧 s390x Containerfile rustup** ([#5207](https://github.com/IBM/mcp-context-forge/pull/5207)) – Updated s390x Containerfile to use `rustup` for the latest Rust compiler. Fixes s390x builds broken by toolchain version mismatch.
 - **📦 A2A Image Workspace Members** ([#5268](https://github.com/IBM/mcp-context-forge/pull/5268)) – Include workspace members in the A2A image build. Fixes missing crates in multi-workspace Docker builds.
-- **🐳 Containerfile.lite Empty Venv** ([#5278](https://github.com/IBM/mcp-context-forge/pull/5278)) – Fixed `Containerfile.lite` shipping an empty venv masked by a stray `|| true`. Restores correct Python environment in the lite image.
+- **🐳 Containerfile Empty Venv** ([#5278](https://github.com/IBM/mcp-context-forge/pull/5278)) – Fixed `Containerfile` shipping an empty venv masked by a stray `|| true`. Restores correct Python environment in the lite image.
 - **🐳 Hermetic Wheel Closure s390x/ppc64le** ([#5287](https://github.com/IBM/mcp-context-forge/pull/5287)) – Hermetic wheel closure for s390x/ppc64le multiplatform builds. Prevents platform-specific wheel contamination in multi-arch images.
 - **📦 PyPI Bundle UI Files** ([#5202](https://github.com/IBM/mcp-context-forge/pull/5202)) – Bundle UI files on PyPI build. Fixes missing Admin UI assets in PyPI-installed package.
 
@@ -737,7 +737,7 @@ Release 1.0.0 marks the **General Availability** of ContextForge, consolidating 
 - **🔌 MCP Protocol** - 2025-11-25 protocol compliance harness, session isolation per downstream connection, GET /mcp server-to-client stream restoration (ADR-052), FastMCP client migration for E2E tests.
 - **🌐 API & Transport** - Health API expansion with database/Redis status, multipart/form-data and form-urlencoded support for REST tools, non-JSON response handling, root_path support for reverse proxy deployments, request body size limiting.
 - **📊 Observability** - Observability documentation restructure, metrics flush transaction isolation to prevent FK violations.
-- **🏗️ Infrastructure** - Containerfile.lite consolidation, OCP deployment with managed PGO, multi-arch support, CI optimizations with path filters and ubuntu-slim runners, Docker Compose image selection flexibility.
+- **🏗️ Infrastructure** - Containerfile consolidation, OCP deployment with managed PGO, multi-arch support, CI optimizations with path filters and ubuntu-slim runners, Docker Compose image selection flexibility.
 
 ### Added
 
@@ -887,7 +887,7 @@ The service layer additionally implements an own-private carve-out for the DB-re
 ### Changed
 
 - Consolidated Rust workspace under `crates/` ([#4087](https://github.com/IBM/mcp-context-forge/pull/4087))
-- Containerfile.lite consolidation; deprecated other Containerfiles ([#4297](https://github.com/IBM/mcp-context-forge/pull/4297))
+- Containerfile consolidation; deprecated other Containerfiles ([#4297](https://github.com/IBM/mcp-context-forge/pull/4297))
 - Removed Alpine container references ([#4170](https://github.com/IBM/mcp-context-forge/pull/4170))
 - Parallelized pylint with --jobs 0 ([#4256](https://github.com/IBM/mcp-context-forge/pull/4256))
 - Moved scan-style tests to pre-commit hooks and optimized slow tests ([#4257](https://github.com/IBM/mcp-context-forge/pull/4257))
@@ -1105,7 +1105,7 @@ Teams with an explicit non-null `max_members` value will continue to use that va
 
 #### **🌐 Multi-arch & Infra**
 * s390x wheel-builder Containerfile and workflow ([#3797](https://github.com/IBM/mcp-context-forge/pull/3797))
-* Node.js support on s390x and ppc64le in `Containerfile.lite` ([#4075](https://github.com/IBM/mcp-context-forge/pull/4075))
+* Node.js support on s390x and ppc64le in `Containerfile` ([#4075](https://github.com/IBM/mcp-context-forge/pull/4075))
 * Native GitHub runners for s390x and ppc64le Docker builds ([#3775](https://github.com/IBM/mcp-context-forge/pull/3775))
 * Configurable platform support for multi-arch container builds ([#3507](https://github.com/IBM/mcp-context-forge/pull/3507), [#3506](https://github.com/IBM/mcp-context-forge/issues/3506))
 * Helm chart lint and OCI publish workflow ([#3454](https://github.com/IBM/mcp-context-forge/pull/3454))

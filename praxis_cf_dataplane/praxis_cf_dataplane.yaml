@@ -1,0 +1,286 @@
+# Praxis MCP Dataplane Configuration
+#
+# This configuration defines the filter pipeline for MCP request processing.
+# All traffic flows through /server/{server_id}/mcp endpoint.
+#
+# Filter Pipeline (7 filters):
+# 1. McpFilter (Praxis built-in) - MCP protocol validation
+# 2. cf_control_plane_data - Fetch session + VS config from control plane
+# 3. CPEX Policy #1 - Pre-routing authorization (virtual server access)
+# 4. cf_tools_router - Routing decision (gateway vs upstream)
+# 5. CPEX Policy #2 - Post-routing authorization (gateway/upstream access)
+# 6. cf_mcp_broker - Gateway execution (conditional)
+# 7. cf_upstream_proxy - Upstream forwarding (conditional)
+
+# Server configuration
+server:
+  host: ${HOST:-0.0.0.0}
+  port: ${PORT:-8080}
+  workers: ${WORKERS:-4}
+  max_connections: ${MAX_CONNECTIONS:-10000}
+  
+  # TLS configuration (optional)
+  tls:
+    enabled: ${TLS_ENABLED:-false}
+    cert_path: ${TLS_CERT_PATH:-}
+    key_path: ${TLS_KEY_PATH:-}
+
+# Logging configuration
+logging:
+  level: ${LOG_LEVEL:-info}
+  format: ${LOG_FORMAT:-json}  # json or text
+  structured: true
+
+# Observability configuration
+observability:
+  enabled: ${OBSERVABILITY_ENABLED:-false}
+  
+  # OpenTelemetry configuration
+  otlp:
+    endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:4317}
+    protocol: ${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}  # grpc or http
+  
+  # Tracing configuration
+  tracing:
+    enabled: ${TRACING_ENABLED:-true}
+    sample_rate: ${TRACE_SAMPLE_RATE:-1.0}
+    service_name: ${OTEL_SERVICE_NAME:-praxis_cf_dataplane}
+  
+  # Metrics configuration
+  metrics:
+    enabled: ${METRICS_ENABLED:-true}
+    export_interval_seconds: ${METRICS_EXPORT_INTERVAL:-60}
+
+# Control plane configuration
+control_plane:
+  grpc_endpoint: ${CONTROL_PLANE_GRPC_ENDPOINT:-http://localhost:50051}
+  connect_timeout_seconds: ${CONTROL_PLANE_CONNECT_TIMEOUT:-5}
+  request_timeout_seconds: ${CONTROL_PLANE_REQUEST_TIMEOUT:-10}
+  
+  # Session cache configuration
+  session_cache:
+    enabled: ${SESSION_CACHE_ENABLED:-true}
+    ttl_seconds: ${SESSION_CACHE_TTL:-300}
+    max_size: ${SESSION_CACHE_MAX_SIZE:-10000}
+
+# Routes configuration
+routes:
+  # Main MCP endpoint
+  - path: /server/:server_id/mcp
+    methods: [POST]
+    
+    filters:
+      # ========================================================================
+      # Filter 1: MCP Protocol Validation (Praxis built-in)
+      # ========================================================================
+      - filter: mcp
+        config:
+          # Maximum request body size (1MB)
+          max_body_bytes: ${MCP_MAX_BODY_BYTES:-1048576}
+          
+          # Action on invalid protocol
+          on_invalid: reject
+          
+          # Metadata keys to extract
+          metadata:
+            method: mcp.method
+            name: mcp.name
+            jsonrpc_id: mcp.jsonrpc_id
+            jsonrpc_version: mcp.jsonrpc_version
+      
+      # ========================================================================
+      # Filter 2: Control Plane Data Fetching (Custom)
+      # ========================================================================
+      - filter: cf_control_plane_data
+        config:
+          grpc_endpoint: ${CONTROL_PLANE_GRPC_ENDPOINT:-http://localhost:50051}
+          
+          # Session cache configuration
+          session_cache_ttl: ${SESSION_CACHE_TTL:-300}
+          session_cache_size: ${SESSION_CACHE_MAX_SIZE:-10000}
+          
+          # Timeouts
+          connect_timeout: ${CONTROL_PLANE_CONNECT_TIMEOUT:-5}
+          request_timeout: ${CONTROL_PLANE_REQUEST_TIMEOUT:-10}
+          
+          # Metadata keys to write
+          metadata:
+            session_id: mcp.session_id
+            user_email: mcp.user_email
+            teams: mcp.teams
+            is_admin: mcp.is_admin
+            virtual_server_id: mcp.virtual_server_id
+            virtual_server_tools: mcp.virtual_server_tools
+            virtual_server_access_policy: mcp.virtual_server_access_policy
+      
+      # ========================================================================
+      # Filter 3: Pre-Routing Authorization (CPEX Policy)
+      # ========================================================================
+      - filter: cpex_policy
+        name: pre_routing_authz
+        config:
+          # Policy file path (relative to config file)
+          policy_file: policies/pre_routing.rego
+          
+          # Policy package to evaluate
+          policy_package: contextforge.pre_routing
+          
+          # Decision rule to check
+          decision_rule: allow
+          
+          # Input metadata mapping
+          input_metadata:
+            method: mcp.method
+            name: mcp.name
+            user_email: mcp.user_email
+            teams: mcp.teams
+            is_admin: mcp.is_admin
+            virtual_server_tools: mcp.virtual_server_tools
+            virtual_server_access_policy: mcp.virtual_server_access_policy
+          
+          # Action on policy denial
+          on_deny:
+            status: 403
+            body: |
+              {
+                "jsonrpc": "2.0",
+                "id": null,
+                "error": {
+                  "code": -32000,
+                  "message": "Access denied: {{reason}}"
+                }
+              }
+      
+      # ========================================================================
+      # Filter 4: Tools Router (Custom)
+      # ========================================================================
+      - filter: cf_tools_router
+        config:
+          grpc_endpoint: ${CONTROL_PLANE_GRPC_ENDPOINT:-http://localhost:50051}
+          
+          # Metadata keys to read
+          input_metadata:
+            method: mcp.method
+            name: mcp.name
+            virtual_server_id: mcp.virtual_server_id
+          
+          # Metadata keys to write
+          output_metadata:
+            route: mcp.route
+            gateway_id: mcp.gateway_id
+            gateway_tool: mcp.gateway_tool
+            upstream_url: mcp.upstream_url
+            upstream_tool: mcp.upstream_tool
+            tool_sources: mcp.tool_sources
+      
+      # ========================================================================
+      # Filter 5: Post-Routing Authorization (CPEX Policy)
+      # ========================================================================
+      - filter: cpex_policy
+        name: post_routing_authz
+        config:
+          # Policy file path (relative to config file)
+          policy_file: policies/post_routing.rego
+          
+          # Policy package to evaluate
+          policy_package: contextforge.post_routing
+          
+          # Decision rule to check
+          decision_rule: allow
+          
+          # Input metadata mapping
+          input_metadata:
+            route: mcp.route
+            gateway_id: mcp.gateway_id
+            upstream_url: mcp.upstream_url
+            user_email: mcp.user_email
+            teams: mcp.teams
+            is_admin: mcp.is_admin
+            user_allowed_gateways: mcp.user_allowed_gateways
+            user_allowed_upstreams: mcp.user_allowed_upstreams
+          
+          # Action on policy denial
+          on_deny:
+            status: 403
+            body: |
+              {
+                "jsonrpc": "2.0",
+                "id": null,
+                "error": {
+                  "code": -32000,
+                  "message": "Access denied: {{reason}}"
+                }
+              }
+      
+      # ========================================================================
+      # Filter 6: MCP Broker (Custom - Conditional)
+      # ========================================================================
+      - filter: cf_mcp_broker
+        config:
+          grpc_endpoint: ${CONTROL_PLANE_GRPC_ENDPOINT:-http://localhost:50051}
+          
+          # Conditional execution
+          condition:
+            metadata_equals:
+              mcp.route: gateway
+          
+          # Metadata keys to read
+          input_metadata:
+            route: mcp.route
+            method: mcp.method
+            jsonrpc_id: mcp.jsonrpc_id
+            gateway_id: mcp.gateway_id
+            gateway_tool: mcp.gateway_tool
+            tool_sources: mcp.tool_sources
+            session_id: mcp.session_id
+      
+      # ========================================================================
+      # Filter 7: Upstream Proxy (Custom - Conditional)
+      # ========================================================================
+      - filter: cf_upstream_proxy
+        config:
+          # Conditional execution
+          condition:
+            metadata_equals:
+              mcp.route: upstream
+          
+          # Timeout configuration
+          timeout_seconds: ${UPSTREAM_TIMEOUT:-30}
+          max_retries: ${UPSTREAM_MAX_RETRIES:-3}
+          
+          # Metadata keys to read
+          input_metadata:
+            route: mcp.route
+            method: mcp.method
+            upstream_url: mcp.upstream_url
+            upstream_tool: mcp.upstream_tool
+
+  # Health check endpoint
+  - path: /health
+    methods: [GET]
+    filters:
+      - filter: static_response
+        config:
+          status: 200
+          body: '{"status": "healthy"}'
+          headers:
+            content-type: application/json
+
+  # Readiness check endpoint
+  - path: /ready
+    methods: [GET]
+    filters:
+      - filter: static_response
+        config:
+          status: 200
+          body: '{"status": "ready"}'
+          headers:
+            content-type: application/json
+
+  # Metrics endpoint (if observability enabled)
+  - path: /metrics
+    methods: [GET]
+    filters:
+      - filter: prometheus_metrics
+        config:
+          enabled: ${METRICS_ENABLED:-true}

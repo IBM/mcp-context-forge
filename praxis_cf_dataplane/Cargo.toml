@@ -1,0 +1,46 @@
+[package]
+name = "praxis_cf_dataplane"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "ContextForge MCP dataplane built on Praxis proxy framework"
+
+# Praxis filter auto-discovery marker
+[package.metadata.praxis-filters]
+
+[dependencies]
+# Praxis filter framework - path dependency to local Praxis workspace
+# This allows building against the local Praxis checkout
+praxis-filter = { path = "../../praxis/filter", package = "praxis-proxy-filter" }
+
+# gRPC for control plane integration
+tonic = "0.12"
+prost = "0.13"
+
+# Async runtime
+tokio = { workspace = true, features = ["full"] }
+async-trait = "0.1"
+
+# HTTP
+http = "1.0"
+
+# Serialization
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+serde_yaml = { package = "yaml_serde", version = "0.10" }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+[build-dependencies]
+tonic-build = "0.12"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true
