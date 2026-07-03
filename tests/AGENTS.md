@@ -36,6 +36,16 @@ Use centralized helpers in `tests/helpers/`:
 - `auth.py` - JWT token creation (`make_test_jwt`, `make_auth_headers`)
 - `api_helpers.py` - API test utilities (`ApiTestHelper` class)
 
+### JWT expiry defaults
+
+The token helpers in `auth.py` (`make_test_jwt`, `make_legacy_test_jwt`,
+`make_auth_header_for_email`) default to `expires_in_minutes=180` (3 hours).
+This covers long Playwright runs — session-scoped fixtures (e.g.
+`api_request_context`) mint one token at suite startup, and a shorter
+expiry can lead to spurious 401s later in a suite that runs past its
+lifetime. Individual tests that specifically want to assert expiration
+behavior should pass an explicit shorter `expires_in_minutes`.
+
 ## Quick Commands
 
 ```bash
