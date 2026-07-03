@@ -60,9 +60,7 @@ interface Prompt {
 }
 
 type ComponentWithType =
-  | (Tool & { type: "tools" })
-  | (Resource & { type: "resources" })
-  | (Prompt & { type: "prompts" });
+  (Tool & { type: "tools" }) | (Resource & { type: "resources" }) | (Prompt & { type: "prompts" });
 
 function DetailRow({
   label,
