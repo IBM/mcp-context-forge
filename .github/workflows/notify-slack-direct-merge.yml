@@ -2,9 +2,26 @@
 # Notify Slack on Direct Merge to Main (Merge Queue Bypass)
 # ======================================================================
 #
-# Fires when a PR is merged directly to main by a human without going
-# through the merge queue. Normal queue-based merges are performed by
-# github-merge-queue[bot] (type: Bot) and are intentionally excluded.
+# Fires when a PR is merged to main WITHOUT going through the merge queue.
+#
+# Detection: replay the PR timeline in chronological order, tracking whether
+# the PR is currently in the merge queue (added_to_merge_queue → in queue,
+# removed_from_merge_queue → out of queue). Capture that state at the moment
+# the "merged" event fires:
+#   - in queue at merge time  → the queue performed the merge (skip)
+#   - not in queue at merge   → a direct bypass (notify)
+#
+# For a queue merge, GitHub emits "merged" before "removed_from_merge_queue"
+# in the timeline, so the replay sees the PR still in the queue at merge time.
+# This ordering-based check is robust even if a bypass merge happened to share
+# a timestamp with a queue removal event (timestamp comparison would not be).
+#
+# Simply checking for the presence of "added_to_merge_queue" is insufficient —
+# a PR can be queued, ejected, then merged directly (a real bypass).
+#
+# Note: auto_merged is null for queue merges (it only reflects the "Enable
+# auto-merge" toggle), and merged_by is the human who queued the PR (not the
+# bot), so neither field is reliable for queue detection.
 #
 # Notification includes:
 #   - PR number, title, and direct link
@@ -34,34 +51,55 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   notify:
     name: Send Slack direct-merge notification
-    # Fire only when merged directly by a human (auto_merged == false).
-    # Merge queue and auto-merge both set auto_merged = true, so they are excluded.
-    # Always run on manual dispatch for testing.
-    if: >
-      (github.event.pull_request.merged == true &&
-       github.event.pull_request.auto_merged != true) ||
-      github.event_name == 'workflow_dispatch'
+    if: github.event.pull_request.merged == true || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
     permissions:
       contents: read
+      pull-requests: read
 
     steps:
-      - name: Build Slack payload
+      - name: Check merge queue history and build Slack payload
         id: payload
         env:
-          PR_NUMBER: ${{ github.event.pull_request.number || 'N/A' }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
           PR_TITLE:  ${{ github.event.pull_request.title  || 'Manual test dispatch' }}
           PR_URL:    ${{ github.event.pull_request.html_url || format('{0}/{1}/pulls', github.server_url, github.repository) }}
           PR_AUTHOR:  ${{ github.event.pull_request.user.login      || github.actor }}
           MERGED_BY:  ${{ github.event.pull_request.merged_by.login || github.actor }}
           BASE_REF:   ${{ github.event.pull_request.base.ref || 'main' }}
+          REPO:       ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
+          # Replay the timeline to determine whether the PR was in the merge
+          # queue at the moment it was merged. If so, the queue merged it — skip.
+          # Only applies to real pull_request events, not workflow_dispatch tests.
+          if [[ "$EVENT_NAME" != "workflow_dispatch" && -n "$PR_NUMBER" ]]; then
+            MERGED_BY_QUEUE=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/timeline?per_page=100" \
+              --jq '
+                reduce .[] as $e ({in_queue: false, merged_in_queue: false};
+                  if $e.event == "added_to_merge_queue" then .in_queue = true
+                  elif $e.event == "removed_from_merge_queue" then .in_queue = false
+                  elif $e.event == "merged" then .merged_in_queue = .in_queue
+                  else . end)
+                | .merged_in_queue')
+            if [[ "$MERGED_BY_QUEUE" == "true" ]]; then
+              echo "PR #${PR_NUMBER} was merged by the merge queue — skipping notification"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          BASE_REF="${BASE_REF#refs/heads/}"
+
           SLACK_SUMMARY=$(printf ':rotating_light: *PR #%s merged directly to `%s` (bypassed merge queue)*' \
             "$PR_NUMBER" "$BASE_REF")
           SLACK_BODY=$(printf ':rotating_light: *PR merged directly to `%s` (bypassed merge queue)*\n• *PR:* <%s|#%s: %s>\n• *Author:* `%s`\n• *Merged by:* `%s`' \
@@ -79,6 +117,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Send Slack notification
+        if: steps.payload.outputs.skip != 'true'
         uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
         with:
           webhook: ${{ secrets.SLACK_MERGE_NOTIFICATION_WEBHOOK_URL }}
