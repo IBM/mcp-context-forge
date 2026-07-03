@@ -24,10 +24,8 @@ from enum import Enum
 from typing import Optional
 
 # Third-Party
-from pydantic import Field
-
-# First-Party
 from cpex.framework import PluginPayload, PluginResult
+from pydantic import Field
 
 
 class GatewayHookType(str, Enum):
