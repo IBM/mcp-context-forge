@@ -123,7 +123,7 @@ services:
     #image: ghcr.io/ibm/mcp-context-forge:0.7.0 # Testing migration from 0.7.0
     build:
       context: .
-      dockerfile: Containerfile.lite     # Same one the Makefile builds
+      dockerfile: Containerfile     # Same one the Makefile builds
       args:
         ENABLE_RUST: ${ENABLE_RUST_BUILD:-${RUST_MCP_BUILD:-false}}
         ENABLE_RUST_MCP_RMCP: ${ENABLE_RUST_MCP_RMCP_BUILD:-${RUST_MCP_BUILD:-false}}
@@ -1107,7 +1107,7 @@ services:
     image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest} # Run `make docker-prod` to build local image
     build:
       context: .
-      dockerfile: Containerfile.lite
+      dockerfile: Containerfile
     environment:
       - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your-secret-jwt-key-here}

@@ -94,10 +94,10 @@ docker pull ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
 
 | Target             | Image                   | Dockerfile             | Notes                                       |
 | ------------------ | ----------------------- | ---------------------- | ------------------------------------------- |
-| `make podman`      | `mcpgateway:latest`     | **Containerfile.lite** | Rootless Podman, multi-stage UBI build      |
-| `make podman-prod` | `mcpgateway:latest`     | **Containerfile.lite** | Same build, used for production             |
-| `make docker`      | `mcpgateway:latest`     | **Containerfile.lite** | Docker Desktop / CI runners                 |
-| `make docker-prod` | `mcpgateway:latest`     | **Containerfile.lite** | Same, with Docker Content Trust when pushed |
+| `make podman`      | `mcpgateway:latest`     | **Containerfile** | Rootless Podman, multi-stage UBI build      |
+| `make podman-prod` | `mcpgateway:latest`     | **Containerfile** | Same build, used for production             |
+| `make docker`      | `mcpgateway:latest`     | **Containerfile** | Docker Desktop / CI runners                 |
+| `make docker-prod` | `mcpgateway:latest`     | **Containerfile** | Same, with Docker Content Trust when pushed |
 
 Remember to tag the image or configure the correct image in `docker-compose.yml`
 
@@ -105,18 +105,18 @@ Remember to tag the image or configure the correct image in `docker-compose.yml`
 
 ```bash
 # Podman
-podman build -t mcpgateway:latest -f Containerfile.lite .
+podman build -t mcpgateway:latest -f Containerfile .
 
 # Podman (AMD64, squash layers)
 podman build --platform=linux/amd64 --squash \
-  -t mcpgateway:latest -f Containerfile.lite .
+  -t mcpgateway:latest -f Containerfile .
 
 # Docker
-docker build -t mcpgateway:latest -f Containerfile.lite .
+docker build -t mcpgateway:latest -f Containerfile .
 ```
 
 > **Apple Silicon note**
-> `Containerfile.lite` runtime base is `ubi10-minimal` which supports
+> `Containerfile` runtime base is `ubi10-minimal` which supports
 > `linux/amd64`, `linux/arm64`, `linux/s390x`, and `linux/ppc64le`. On M-series
 > Macs, build native arm64 with `--platform=linux/arm64` — QEMU emulation is
 > unnecessary.

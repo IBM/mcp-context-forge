@@ -488,7 +488,7 @@ docker compose ps
 
 **What these commands do:**
 
-- `make docker-prod` - Builds the gateway container image using `Containerfile.lite`
+- `make docker-prod` - Builds the gateway container image using `Containerfile`
 - `make compose-up` - Validates `docker-compose.yml` and starts all services in detached mode
 
 These commands automatically handle image tagging and validation.
@@ -705,7 +705,7 @@ docker compose restart gateway
    ```
 
    **Why group 10001 and 640?**
-   - Container runs as UID 10001, GID 10001 (see Containerfile.lite)
+   - Container runs as UID 10001, GID 10001 (see Containerfile)
    - Host files are owned by your UID (e.g., 1000), not container UID (10001)
    - By setting group to 10001 and permissions to 640:
 

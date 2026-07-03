@@ -102,10 +102,10 @@ By default, the UI loads vendor libraries from CDNs (Tailwind, Chart.js, etc.). 
 
 ### Container Builds (Recommended)
 
-`Containerfile.lite` automatically downloads and bundles vendor assets during build:
+`Containerfile` automatically downloads and bundles vendor assets during build:
 
 ```bash
-docker build -f Containerfile.lite -t mcpgateway:airgapped .
+docker build -f Containerfile -t mcpgateway:airgapped .
 docker run -e MCPGATEWAY_UI_AIRGAPPED=true -p 4444:4444 mcpgateway:airgapped
 ```
 

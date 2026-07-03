@@ -9,8 +9,6 @@ include plugins/README.md
 include pyproject.toml
 include gunicorn.config.py
 include Containerfile
-include Containerfile.lite
-include Containerfile.scratch
 include __init__
 include alembic.ini
 include tox.ini
@@ -192,7 +190,6 @@ exclude .coverage
 exclude .coverage.*
 
 # Additional development config files not needed in package
-exclude .travis.yml
 exclude .eslintrc.json
 exclude eslint.config.js
 exclude vitest.config.js

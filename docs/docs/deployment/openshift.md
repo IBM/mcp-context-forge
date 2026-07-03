@@ -19,10 +19,10 @@ OpenShift (both **OKD** and **Red Hat OpenShift Container Platform**) adds opini
 
 | Target             | Builds                  | Dockerfile             | Notes                                  |
 | ------------------ | ----------------------- | ---------------------- | -------------------------------------- |
-| `make podman`      | `mcpgateway:latest`     | **Containerfile.lite** | Rootless Podman, multi-stage UBI build |
-| `make podman-prod` | `mcpgateway:latest`     | **Containerfile.lite** | Same, for production                   |
-| `make docker`      | `mcpgateway:latest`     | **Containerfile.lite** | Docker Desktop / CI                    |
-| `make docker-prod` | `mcpgateway:latest`     | **Containerfile.lite** | Same, with Docker Content Trust        |
+| `make podman`      | `mcpgateway:latest`     | **Containerfile** | Rootless Podman, multi-stage UBI build |
+| `make podman-prod` | `mcpgateway:latest`     | **Containerfile** | Same, for production                   |
+| `make docker`      | `mcpgateway:latest`     | **Containerfile** | Docker Desktop / CI                    |
+| `make docker-prod` | `mcpgateway:latest`     | **Containerfile** | Same, with Docker Content Trust        |
 
 Push afterwards, for example:
 
@@ -31,7 +31,7 @@ podman tag mcpgateway:latest quay.io/YOUR_NS/mcpgateway:latest
 podman push quay.io/YOUR_NS/mcpgateway:latest
 ```
 
-> **Apple-silicon note** - `Containerfile.lite` targets `ubi10-minimal`, which
+> **Apple-silicon note** - `Containerfile` targets `ubi10-minimal`, which
 > has native builds for amd64, arm64, s390x, and ppc64le. On M-series Macs,
 > build a native arm64 image with `--platform=linux/arm64`.
 
@@ -40,11 +40,11 @@ podman push quay.io/YOUR_NS/mcpgateway:latest
 ```bash
 # AMD64, squashed layers
 docker build --platform=linux/amd64 --squash \
-  -t mcpgateway:latest -f Containerfile.lite .
+  -t mcpgateway:latest -f Containerfile .
 
 # Native arm64
 docker build --platform=linux/arm64 \
-  -t mcpgateway:latest -f Containerfile.lite .
+  -t mcpgateway:latest -f Containerfile .
 ```
 
 ---
@@ -206,8 +206,8 @@ The Postgres template already generates a PVC; you can create extra PVCs manuall
 
 | Action                  | Command                                                   |
 | ----------------------- | --------------------------------------------------------- |
-| Build image (local)     | `podman build -t mcpgateway -f Containerfile.lite .`      |
-| Build image (Docker)    | `docker build -t mcpgateway -f Containerfile.lite .`      |
+| Build image (local)     | `podman build -t mcpgateway -f Containerfile .`      |
+| Build image (Docker)    | `docker build -t mcpgateway -f Containerfile .`      |
 | Push to Quay            | `podman push mcpgateway quay.io/NS/mcpgateway`            |
 | Create project          | `oc new-project mcp-demo`                                 |
 | Load .env               | `oc create configmap mcpgateway-env --from-env-file=.env` |
