@@ -64,7 +64,7 @@ from mcpgateway import __version__
 from mcpgateway import version as version_module
 
 # Authentication and password-related imports
-from mcpgateway.auth import get_current_user, get_user_team_roles
+from mcpgateway.auth import get_current_user, get_user_team_roles, normalize_token_teams
 
 # Re-export canonical get_user_email from auth_context for backward compatibility.
 from mcpgateway.auth_context import get_scoped_resource_access_context, get_token_teams_from_request, get_user_email
@@ -4170,22 +4170,28 @@ async def admin_ui(
                 auth_provider = provider_from_user.strip()
 
         # get_current_user_with_permissions may not include auth_provider in its dict.
-        # Fall back to the current jwt_token cookie payload before refreshing it.
-        if auth_provider == "local":
-            jwt_cookie = request.cookies.get("jwt_token")
-            if isinstance(jwt_cookie, str) and jwt_cookie:
-                try:
-                    existing_payload = await verify_jwt_token_cached(jwt_cookie, request)
+        # Fall back to the current jwt_token cookie payload before refreshing it,
+        # and preserve any explicit team narrowing from the verified token.
+        existing_token_teams: list[str] | None = None
+        jwt_cookie = request.cookies.get("jwt_token")
+        if isinstance(jwt_cookie, str) and jwt_cookie:
+            try:
+                existing_payload = await verify_jwt_token_cached(jwt_cookie, request)
+                normalized_existing_teams = normalize_token_teams(existing_payload)
+                if isinstance(normalized_existing_teams, list) and normalized_existing_teams:
+                    existing_token_teams = normalized_existing_teams
+
+                if auth_provider == "local":
                     existing_user = existing_payload.get("user")
                     provider_from_token = existing_user.get("auth_provider") if isinstance(existing_user, dict) else None
                     if not provider_from_token:
                         provider_from_token = existing_payload.get("auth_provider")
                     if isinstance(provider_from_token, str) and provider_from_token.strip():
                         auth_provider = provider_from_token.strip()
-                except Exception as provider_error:  # nosec B110 - best-effort provider preservation
-                    LOGGER.warning("Could not resolve auth_provider from existing JWT cookie; SSO logout may not function correctly: %s", provider_error)
-                    if settings.sso_keycloak_enabled:
-                        auth_provider = "keycloak"
+            except Exception as provider_error:  # nosec B110 - best-effort provider preservation
+                LOGGER.warning("Could not resolve auth_provider or team scope from existing JWT cookie; SSO logout or scoped session refresh may not function correctly: %s", provider_error)
+                if auth_provider == "local" and settings.sso_keycloak_enabled:
+                    auth_provider = "keycloak"
 
         # Generate a lightweight session JWT token for browser admin calls in every auth mode.
         email_user = db.query(EmailUser).filter(EmailUser.email == admin_email).first()
@@ -4202,6 +4208,8 @@ async def admin_ui(
             "token_use": "session",  # nosec B105 - token type marker, not a password
             "scopes": {"server_id": None, "permissions": ["*"] if is_admin_flag else [], "ip_restrictions": [], "time_restrictions": {}},
         }
+        if existing_token_teams:
+            payload["teams"] = existing_token_teams
 
         # Generate token using centralized token creation
         token = await create_jwt_token(payload)
