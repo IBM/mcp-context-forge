@@ -10,7 +10,7 @@ import type {
   ResourceRead,
   GatewayRead,
   CursorPaginatedGatewaysResponse,
-  BodyCreateResourceResourcesPost,
+  BodyCreateResourceV1ResourcesPost,
 } from "@/generated/types";
 import { ResourceReadVisibility } from "@/generated/types";
 import { Button } from "@/components/ui/button";
@@ -173,7 +173,7 @@ export function Resources() {
   }, [gatewaysData]);
 
   const handleOptimisticAdd = useCallback(
-    (formData: BodyCreateResourceResourcesPost) => {
+    (formData: BodyCreateResourceV1ResourcesPost) => {
       const { resource } = formData;
       const optimistic: NonNullable<ResourceRead> = {
         id: "__optimistic__",

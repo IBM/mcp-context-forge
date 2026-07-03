@@ -1,9 +1,20 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import tseslint from "typescript-eslint";
 import reactPlugin from "eslint-plugin-react";
 import reactHooks from "eslint-plugin-react-hooks";
 import prettierPlugin from "eslint-plugin-prettier";
 import prettierConfig from "eslint-config-prettier";
 import globals from "globals";
+
+// Load .prettierrc explicitly instead of letting eslint-plugin-prettier
+// resolve it on its own — this repo has a second, differently-configured
+// prettier.config.js one directory up (repo root), and relying on the
+// plugin's own cosmiconfig search risks it picking that one up instead,
+// producing formatting eslint --fix disagrees with the prettier CLI on.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const prettierOptions = JSON.parse(fs.readFileSync(path.join(__dirname, ".prettierrc"), "utf8"));
 
 export default tseslint.config(
   {
@@ -33,7 +44,7 @@ export default tseslint.config(
       ...prettierConfig.rules,
 
       // Prettier integration
-      "prettier/prettier": "error",
+      "prettier/prettier": ["error", prettierOptions],
 
       // Security: ban dangerouslySetInnerHTML — XSS vector
       "react/no-danger": "error",
@@ -61,7 +72,7 @@ export default tseslint.config(
     },
     rules: {
       ...prettierConfig.rules,
-      "prettier/prettier": "error",
+      "prettier/prettier": ["error", prettierOptions],
       "no-eval": "error",
       "no-implied-eval": "error",
       "no-new-func": "error",
