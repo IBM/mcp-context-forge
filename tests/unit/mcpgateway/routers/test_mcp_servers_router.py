@@ -219,15 +219,9 @@ def test_validated_team_id_invalid_uuid_raises_400():
     assert "Invalid team ID" in exc_info.value.detail
 
 
-def test_validated_team_id_empty_string_raises_400():
-    """Empty string is not a valid UUID → HTTP 400."""
-    from fastapi import HTTPException
-
-    with pytest.raises(HTTPException) as exc_info:
-        _validated_team_id("")
-
-    assert exc_info.value.status_code == 400
-    assert "Invalid team ID" in exc_info.value.detail
+def test_validated_team_id_empty_string_returns_none():
+    """Empty string means "no filter" — matches admin _normalize_team_id."""
+    assert _validated_team_id("") is None
 
 
 # ---------------------------------------------------------------------------

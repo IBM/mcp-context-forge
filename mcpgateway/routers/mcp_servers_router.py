@@ -46,13 +46,16 @@ def _validated_team_id(team_id: Optional[str] = Query(None, description="Filter 
     Examples:
         >>> _validated_team_id(None) is None
         True
+        >>> _validated_team_id("") is None
+        True
         >>> try:
         ...     _validated_team_id("not-a-uuid")
         ... except Exception as e:
         ...     e.status_code
         400
     """
-    if team_id is None:
+    # Match admin _normalize_team_id: empty string means "no filter"
+    if not team_id:
         return None
     try:
         return uuid.UUID(str(team_id)).hex
