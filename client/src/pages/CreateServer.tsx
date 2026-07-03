@@ -402,23 +402,26 @@ const MCPServerAccordionItem = memo(function MCPServerAccordionItem({
   const StatusIcon = status.Icon;
   const tools = useMemo(
     () =>
-      getResponseItems(toolsData, "tools").map(
-        (tool): SelectableComponent => ({ ...tool, kind: "tools" }),
-      ),
+      getResponseItems(toolsData, "tools").map((tool): SelectableComponent => ({
+        ...tool,
+        kind: "tools",
+      })),
     [toolsData],
   );
   const resources = useMemo(
     () =>
-      getResponseItems(resourcesData, "resources").map(
-        (resource): SelectableComponent => ({ ...resource, kind: "resources" }),
-      ),
+      getResponseItems(resourcesData, "resources").map((resource): SelectableComponent => ({
+        ...resource,
+        kind: "resources",
+      })),
     [resourcesData],
   );
   const prompts = useMemo(
     () =>
-      getResponseItems(promptsData, "prompts").map(
-        (prompt): SelectableComponent => ({ ...prompt, kind: "prompts" }),
-      ),
+      getResponseItems(promptsData, "prompts").map((prompt): SelectableComponent => ({
+        ...prompt,
+        kind: "prompts",
+      })),
     [promptsData],
   );
   const isLoadingComponents = toolsLoading || resourcesLoading || promptsLoading;

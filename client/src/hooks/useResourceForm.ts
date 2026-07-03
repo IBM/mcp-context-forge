@@ -4,7 +4,7 @@ import { z } from "zod";
 import { useQuery } from "@/hooks/useQuery";
 import { sanitizeString } from "@/lib/sanitize";
 import { parseApiError } from "@/lib/errorUtils";
-import type { BodyCreateResourceResourcesPost } from "@/generated/types";
+import type { BodyCreateResourceV1ResourcesPost } from "@/generated/types";
 import type { Visibility } from "@/types/server";
 
 const createResourceFormSchema = (intl: ReturnType<typeof useIntl>) =>
@@ -33,7 +33,7 @@ export interface ResourceFormErrors {
 }
 
 export interface ResourceFormOptions {
-  onBeforeSubmit?: (data: BodyCreateResourceResourcesPost) => void;
+  onBeforeSubmit?: (data: BodyCreateResourceV1ResourcesPost) => void;
   onError?: () => void;
 }
 
@@ -56,7 +56,7 @@ export interface UseResourceFormReturn {
   setVisibility: (value: Visibility) => void;
   validateForm: () => boolean;
   handleSubmit: (event: FormEvent<HTMLFormElement>, onSuccess?: () => void) => Promise<void>;
-  getFormData: () => BodyCreateResourceResourcesPost;
+  getFormData: () => BodyCreateResourceV1ResourcesPost;
 }
 
 export const MIME_TYPES = [
@@ -87,10 +87,10 @@ export function useResourceForm(options: ResourceFormOptions = {}): UseResourceF
 
   const { execute: createResource, isLoading: isSubmitting } = useQuery<
     unknown,
-    BodyCreateResourceResourcesPost
+    BodyCreateResourceV1ResourcesPost
   >("/resources", { method: "POST", enabled: false });
 
-  const getFormData = useCallback((): BodyCreateResourceResourcesPost => {
+  const getFormData = useCallback((): BodyCreateResourceV1ResourcesPost => {
     return {
       resource: {
         uri: sanitizeString(uri, 2000),
