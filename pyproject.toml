@@ -374,7 +374,6 @@ ignore = [
     "Makefile",
     "mcpgateway/admin_ui/**",
     "mcpgateway/static/bundle-*.js",
-    "mcpgateway/static/css/tailwind.min.css",
 ]
 
 [tool.black]
