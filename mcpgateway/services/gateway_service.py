@@ -6807,7 +6807,8 @@ async def test_gateway_connectivity(
                     headers["Authorization"] = f"Bearer {access_token}"
                 except Exception as e:
                     logger.error(f"Failed to obtain OAuth access token for gateway {gateway.name}: {e}")
-                    response_body = {"error": f"OAuth token retrieval failed for gateway: {str(e)}"}
+                    latency_ms = int((time.monotonic() - start_time) * 1000)
+                    return GatewayTestResponse(status_code=502, latency_ms=latency_ms, body={"error": "OAuth token retrieval failed for gateway"})
         elif gateway and gateway.auth_type in ("basic", "bearer", "authheaders") and gateway.auth_value:
             if isinstance(gateway.auth_value, dict):
                 headers.update(gateway.auth_value)

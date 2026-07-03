@@ -456,3 +456,131 @@ async def test_test_endpoint_timeout_returns_502(gateway_test_request, user_ctx,
 
     assert result.status_code == 502
     assert "error" in result.body
+
+
+# ---------------------------------------------------------------------------
+# Tests: Deny-path — 401 unauthenticated
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_request_returns_401(gateway_test_request, db_session):
+    """Request without authenticated user context raises 401."""
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc_info:
+        await check_mcp_server_connectivity(
+            request=gateway_test_request,
+            team_id=None,
+            user=None,
+            db=db_session,
+        )
+
+    assert exc_info.value.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Tests: Deny-path — 403 insufficient permission
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_insufficient_permission_returns_403(gateway_test_request, user_ctx, db_session):
+    """User without gateways.read permission is denied with 403."""
+    from fastapi import HTTPException
+
+    with patch("mcpgateway.middleware.rbac.PermissionService") as mock_ps_class:
+        mock_ps = MagicMock()
+        mock_ps.check_permission = AsyncMock(return_value=False)
+        mock_ps_class.return_value = mock_ps
+
+        with pytest.raises(HTTPException) as exc_info:
+            await check_mcp_server_connectivity(
+                request=gateway_test_request,
+                team_id=None,
+                user=user_ctx,
+                db=db_session,
+            )
+
+    assert exc_info.value.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Tests: Deny-path — 403 cross-team team_id
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cross_team_team_id_returns_403(gateway_test_request, db_session):
+    """Non-admin user supplying a team_id outside their authorized teams raises 403."""
+    import uuid
+    from fastapi import HTTPException
+
+    authorized_team = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa").hex
+    foreign_team = uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb").hex
+
+    non_admin_user = {
+        "email": "user@example.com",
+        "full_name": "Regular User",
+        "is_admin": False,
+        "token_teams": [authorized_team],
+        "db": db_session,
+    }
+
+    with pytest.raises(HTTPException) as exc_info:
+        await check_mcp_server_connectivity(
+            request=gateway_test_request,
+            team_id=foreign_team,
+            user=non_admin_user,
+            db=db_session,
+        )
+
+    assert exc_info.value.status_code == 403
+    assert "team" in exc_info.value.detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_admin_bypass_cross_team_team_id_allowed(gateway_test_request, db_session, monkeypatch):
+    """Admin user (token_teams=None) can supply any team_id without 403."""
+    import uuid
+    from mcpgateway import config
+
+    monkeypatch.setattr(config.settings, "gateway_test_allow_registered_only", False)
+    monkeypatch.setattr(config.settings, "gateway_test_allowed_hosts", ["example.com", "*.example.com"])
+
+    def mock_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", port or 80))]
+
+    monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+    foreign_team = uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb").hex
+
+    admin_user = {
+        "email": "admin@example.com",
+        "full_name": "Admin User",
+        "is_admin": True,
+        "token_teams": None,  # None = admin bypass
+        "db": db_session,
+    }
+
+    db_session.execute.return_value.scalars.return_value.first.return_value = None
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"ok": True}
+
+    mock_client = AsyncMock()
+    mock_client.request = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_client):
+        with patch("mcpgateway.services.gateway_service.get_structured_logger", return_value=MagicMock(log=MagicMock())):
+            result = await check_mcp_server_connectivity(
+                request=gateway_test_request,
+                team_id=foreign_team,
+                user=admin_user,
+                db=db_session,
+            )
+
+    assert result.status_code == 200

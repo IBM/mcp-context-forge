@@ -89,4 +89,12 @@ async def check_mcp_server_connectivity(
         >>> check_mcp_server_connectivity.__name__
         'check_mcp_server_connectivity'
     """
+    # Reject cross-team access: token_teams=None means admin bypass; a list means the
+    # caller is scoped to those teams only. A caller-supplied team_id outside that list
+    # would allow enumerating other teams' registered gateway hostnames (SSRF allowlist).
+    if team_id is not None:
+        token_teams = user.get("token_teams") if isinstance(user, dict) else None
+        if token_teams is not None and team_id not in token_teams:
+            raise HTTPException(status_code=403, detail="Access to requested team is not permitted")
+
     return await test_gateway_connectivity(request, team_id, user, db)
