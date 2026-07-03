@@ -1144,7 +1144,7 @@ class TestResourceManagement:
         """Updating a resource into ui:// must enforce the same policy metadata as creation."""
         monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
         mock_resource.uri = "https://example.com/widget"
-        mock_resource.mime_type = "text/html"
+        mock_resource.mime_type = "text/html;profile=mcp-app"
         mock_resource.extension_metadata = None
         update_data = ResourceUpdate(uri="ui://widgets/example")
 
