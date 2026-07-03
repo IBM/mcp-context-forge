@@ -303,7 +303,7 @@ async function toolPreInvoke({ payload, context }: any) {
 
 **Testing Plugins**
 - Code quality & pre-commit (see AGENTS.md for details):
-  - `make autoflake isort black pre-commit` formats, orders imports, applies autoflake, and runs pre-commit hooks.
+  - `make autoflake isort ruff-format pre-commit` formats, orders imports, applies autoflake, and runs pre-commit hooks.
   - `make pylint ruff` runs static analysis; fix findings before committing.
   - `make doctest test` executes doctests then pytest; mirrors CI expectations locally.
 

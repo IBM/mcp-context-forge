@@ -4853,7 +4853,7 @@ renderConfig();
   var qualityTools = [
     { name:"Black", desc:"Code formatter", threshold:"line-length: 200" },
     { name:"Ruff", desc:"Linter (replaces flake8)", threshold:"E3,E4,E7,E9,F,D1,PL" },
-    { name:"isort", desc:"Import sorter", threshold:"profile: black" },
+    { name:"isort", desc:"Import sorter", threshold:"profile: black (isort built-in, matches ruff format)" },
     { name:"mypy", desc:"Static type checker", threshold:"strict = true" },
     { name:"Pylint", desc:"Code analysis", threshold:"errors-only in CI" },
     { name:"Bandit", desc:"Security linter", threshold:"no global skips" },
