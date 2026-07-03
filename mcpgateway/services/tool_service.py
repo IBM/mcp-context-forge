@@ -5571,7 +5571,14 @@ class ToolService(BaseService):
                                 raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
                         elif grant_type == "token-exchange":
                             headers = await self._resolve_token_exchange_header(
-                                gateway_oauth_config, gateway_id_str, gateway_name, app_user_email, request_headers, ca_certificate=gateway_ca_cert, client_cert=gateway_client_cert, client_key=gateway_client_key
+                                gateway_oauth_config,
+                                gateway_id_str,
+                                gateway_name,
+                                app_user_email,
+                                request_headers,
+                                ca_certificate=gateway_ca_cert,
+                                client_cert=gateway_client_cert,
+                                client_key=gateway_client_key,
                             )
                         else:
                             # For Client Credentials flow, get token directly (no DB needed)
