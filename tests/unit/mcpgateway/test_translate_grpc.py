@@ -166,8 +166,8 @@ class TestGrpcEndpoint:
         mock_grpc.ssl_channel_credentials.return_value = MagicMock()
 
         with (
-            patch("mcpgateway.services.grpc_service._validate_grpc_target") as mock_validate_target,
-            patch("mcpgateway.services.grpc_service._validate_tls_path") as mock_validate_tls,
+            patch("mcpgateway.translate_grpc._validate_grpc_target") as mock_validate_target,
+            patch("mcpgateway.translate_grpc._validate_tls_path") as mock_validate_tls,
             patch("mcpgateway.translate_grpc.asyncio.to_thread", new_callable=AsyncMock, return_value=b"cert_data"),
             patch.object(endpoint_with_tls, "_discover_services", new_callable=AsyncMock),
         ):

@@ -39,6 +39,7 @@ except ImportError:
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.grpc_validation import _validate_grpc_target, _validate_tls_path
 
 # Initialize logging
 logging_service = LoggingService()
@@ -105,16 +106,11 @@ class GrpcEndpoint:
     def _validate_target_and_tls(self) -> None:
         """Validate the target address and any TLS paths against SSRF / traversal rules.
 
-        Reuses the shared validators from the gRPC service layer. They are
-        imported lazily to avoid a circular import with
-        ``mcpgateway.services.grpc_service`` (which imports ``GrpcEndpoint``).
+        Reuses the shared validators from ``mcpgateway.utils.grpc_validation``.
 
         Raises:
             GrpcServiceError: If the target or a TLS path is rejected.
         """
-        # First-Party
-        from mcpgateway.services.grpc_service import _validate_grpc_target, _validate_tls_path  # pylint: disable=import-outside-toplevel,cyclic-import
-
         _validate_grpc_target(self._target)
         if self._tls_cert_path:
             _validate_tls_path(self._tls_cert_path, "TLS cert path")
