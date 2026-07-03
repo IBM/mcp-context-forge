@@ -301,6 +301,69 @@ async def test_sqlite_async_gateway_lifecycle_happy_path(lifecycle_client):
 
 
 @pytest.mark.asyncio
+async def test_sqlite_async_gateway_update_bad_url_defers_failure_to_worker(lifecycle_client, monkeypatch):
+    client, live_gateway_service = lifecycle_client
+
+    create_response = await client.post(
+        "/gateways",
+        json={"name": "bad-update-gateway", "url": "http://example.com/original", "transport": "SSE"},
+        headers=TEST_AUTH_HEADER,
+    )
+    assert create_response.status_code == 202
+    gateway_id = create_response.json()["id"]
+
+    live_gateway_service._initialize_gateway = AsyncMock(
+        return_value=(
+            {"tools": {"listChanged": True}},
+            [_make_tool("initial_tool", "Initial tool")],
+            [],
+            [],
+            [],
+        )
+    )
+    await live_gateway_service._run_gateway_lifecycle_pass()
+
+    active_response = await client.get(f"/gateways/{gateway_id}", headers=TEST_AUTH_HEADER)
+    assert active_response.status_code == 200
+    assert active_response.json()["status"] == "active"
+
+    bad_url = "http://example.com/bad-update"
+    update_response = await client.put(
+        f"/gateways/{gateway_id}",
+        json={"url": bad_url},
+        headers=TEST_AUTH_HEADER,
+    )
+    assert update_response.status_code == 202
+    updated_pending = update_response.json()
+    assert updated_pending["status"] == "pending"
+    assert updated_pending["reachable"] is False
+    assert updated_pending["url"] == bad_url
+    assert _response_value(updated_pending, "registration_attempts") == 0
+    assert _response_value(updated_pending, "next_retry_at") is None
+    assert _response_value(updated_pending, "last_error") is None
+
+    persisted_pending_response = await client.get("/admin/gateways/bad-update-gateway", headers=TEST_ADMIN_AUTH_HEADER)
+    assert persisted_pending_response.status_code == 200
+    persisted_pending = persisted_pending_response.json()
+    assert persisted_pending["status"] == "pending"
+    assert persisted_pending["url"] == bad_url
+
+    failure_message = "Connection refused: http://example.com/bad-update"
+    monkeypatch.setattr(live_gateway_service, "_initialize_gateway_with_timeout", AsyncMock(side_effect=RuntimeError(failure_message)))
+    await live_gateway_service._run_gateway_lifecycle_pass()
+
+    retry_response = await client.get("/admin/gateways/bad-update-gateway", headers=TEST_ADMIN_AUTH_HEADER)
+    assert retry_response.status_code == 200
+    retry_gateway = retry_response.json()
+    assert retry_gateway["status"] == "pending"
+    assert retry_gateway["reachable"] is False
+    assert _response_value(retry_gateway, "registration_attempts") == 1
+    assert _response_value(retry_gateway, "next_retry_at") is not None
+    assert _response_value(retry_gateway, "last_error") == failure_message
+    assert _response_value(retry_gateway, "status_message") == failure_message
+
+
+@pytest.mark.asyncio
 async def test_sqlite_async_gateway_lifecycle_retry_and_delete_stop_flow(lifecycle_client):
     client, live_gateway_service = lifecycle_client
 

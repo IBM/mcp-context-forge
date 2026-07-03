@@ -330,7 +330,7 @@ async def test_update_gateway_with_url_change_calls_registry_evict_gateway():
     test_db.commit = Mock()
     test_db.refresh = Mock()
 
-    service._initialize_gateway = AsyncMock(return_value=({"prompts": {}, "resources": {}, "tools": {}}, [], [], []))
+    service._initialize_gateway = AsyncMock(return_value=({"prompts": {}, "resources": {}, "tools": {}}, [], [], [], []))
     service._notify_gateway_updated = AsyncMock()
     service._active_gateways = set()
     service._classification_service = None
