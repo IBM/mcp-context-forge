@@ -1124,3 +1124,192 @@ class TestToolsAnnotationBadges:
 
         badge = tools_page.tools_panel.locator('span:has-text("Destructive")')
         expect(badge).to_be_visible()
+
+
+# ---------------------------------------------------------------------------
+# Issue #4061: Advanced Configuration Fields
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.ui
+@pytest.mark.tools
+@pytest.mark.issue_4061
+class TestToolsAdvancedConfigurationFields:
+    """Tests for issue #4061 - Advanced configuration fields in edit tool modal."""
+
+    def test_edit_modal_has_title_field(self, tools_page: ToolsPage):
+        """Test that edit modal contains the title field for MCP BaseMetadata."""
+        tools_page.navigate_to_tools_tab()
+        tools_page.wait_for_tools_table_loaded()
+        _skip_if_no_tools(tools_page)
+
+        tools_page.open_tool_edit_modal(0)
+
+        title_input = tools_page.tool_edit_modal.locator("#edit-tool-title")
+        expect(title_input).to_be_visible()
+        expect(title_input).to_have_attribute("name", "title")
+        expect(title_input).to_have_attribute("type", "text")
+
+        tools_page.cancel_tool_edit()
+
+    def test_edit_modal_has_timeout_ms_field(self, tools_page: ToolsPage):
+        """Test that edit modal contains the timeout_ms field."""
+        tools_page.navigate_to_tools_tab()
+        tools_page.wait_for_tools_table_loaded()
+        _skip_if_no_tools(tools_page)
+
+        tools_page.open_tool_edit_modal(0)
+
+        timeout_input = tools_page.tool_edit_modal.locator("#edit-tool-timeout-ms")
+        expect(timeout_input).to_be_visible()
+        expect(timeout_input).to_have_attribute("name", "timeout_ms")
+        expect(timeout_input).to_have_attribute("type", "number")
+
+        tools_page.cancel_tool_edit()
+
+    def test_edit_modal_has_jsonpath_filter_field(self, tools_page: ToolsPage):
+        """Test that edit modal contains the jsonpath_filter field."""
+        tools_page.navigate_to_tools_tab()
+        tools_page.wait_for_tools_table_loaded()
+        _skip_if_no_tools(tools_page)
+
+        tools_page.open_tool_edit_modal(0)
+
+        jsonpath_input = tools_page.tool_edit_modal.locator("#edit-tool-jsonpath-filter")
+        expect(jsonpath_input).to_be_visible()
+        expect(jsonpath_input).to_have_attribute("name", "jsonpath_filter")
+        expect(jsonpath_input).to_have_attribute("type", "text")
+
+        tools_page.cancel_tool_edit()
+
+    def test_edit_modal_has_team_id_field(self, tools_page: ToolsPage):
+        """Test that edit modal contains the team_id select dropdown."""
+        tools_page.navigate_to_tools_tab()
+        tools_page.wait_for_tools_table_loaded()
+        _skip_if_no_tools(tools_page)
+
+        tools_page.open_tool_edit_modal(0)
+
+        team_select = tools_page.tool_edit_modal.locator("#edit-tool-team-id")
+        expect(team_select).to_be_visible()
+        expect(team_select).to_have_attribute("name", "team_id")
+
+        # Should have "No Team" option
+        no_team_option = team_select.locator('option[value=""]')
+        expect(no_team_option).to_be_attached()
+
+        tools_page.cancel_tool_edit()
+
+    def test_edit_modal_does_not_have_gateway_id_field(self, tools_page: ToolsPage):
+        """Test that edit modal does NOT contain gateway_id field (removed in #4061)."""
+        tools_page.navigate_to_tools_tab()
+        tools_page.wait_for_tools_table_loaded()
+        _skip_if_no_tools(tools_page)
+
+        tools_page.open_tool_edit_modal(0)
+
+        # Gateway field should not exist by ID
+        gateway_by_id = tools_page.tool_edit_modal.locator("#edit-tool-gateway-id")
+        expect(gateway_by_id).not_to_be_attached()
+
+        # Gateway field should not exist by name
+        gateway_by_name = tools_page.tool_edit_modal.locator('[name="gateway_id"]')
+        expect(gateway_by_name).not_to_be_attached()
+
+        tools_page.cancel_tool_edit()
+
+    def test_edit_modal_has_rest_passthrough_button(self, tools_page: ToolsPage):
+        """Test that edit modal contains REST passthrough button."""
+        tools_page.navigate_to_tools_tab()
+        tools_page.wait_for_tools_table_loaded()
+        _skip_if_no_tools(tools_page)
+
+        tools_page.open_tool_edit_modal(0)
+
+        passthrough_btn = tools_page.tool_edit_modal.locator("#edit-tool-passthrough-btn")
+        # Button exists but may be hidden if integration type is not REST
+        expect(passthrough_btn).to_be_attached()
+
+        tools_page.cancel_tool_edit()
+
+    def test_edit_modal_rest_passthrough_fields_exist(self, tools_page: ToolsPage):
+        """Test that edit modal contains all REST passthrough fields."""
+        tools_page.navigate_to_tools_tab()
+        tools_page.wait_for_tools_table_loaded()
+        _skip_if_no_tools(tools_page)
+
+        tools_page.open_tool_edit_modal(0)
+
+        # All passthrough fields should exist (may be hidden by default)
+        base_url = tools_page.tool_edit_modal.locator("#edit-tool-base-url")
+        expect(base_url).to_be_attached()
+        expect(base_url).to_have_attribute("name", "base_url")
+
+        path_template = tools_page.tool_edit_modal.locator("#edit-tool-path-template")
+        expect(path_template).to_be_attached()
+        expect(path_template).to_have_attribute("name", "path_template")
+
+        query_mapping = tools_page.tool_edit_modal.locator("#edit-tool-query-mapping")
+        expect(query_mapping).to_be_attached()
+        expect(query_mapping).to_have_attribute("name", "query_mapping")
+
+        header_mapping = tools_page.tool_edit_modal.locator("#edit-tool-header-mapping")
+        expect(header_mapping).to_be_attached()
+        expect(header_mapping).to_have_attribute("name", "header_mapping")
+
+        expose_passthrough = tools_page.tool_edit_modal.locator("#edit-tool-expose-passthrough")
+        expect(expose_passthrough).to_be_attached()
+        expect(expose_passthrough).to_have_attribute("name", "expose_passthrough")
+
+        allowlist = tools_page.tool_edit_modal.locator("#edit-tool-allowlist")
+        expect(allowlist).to_be_attached()
+        expect(allowlist).to_have_attribute("name", "allowlist")
+
+        tools_page.cancel_tool_edit()
+
+    def test_edit_modal_plugin_chain_fields_exist(self, tools_page: ToolsPage):
+        """Test that edit modal contains plugin chain fields."""
+        tools_page.navigate_to_tools_tab()
+        tools_page.wait_for_tools_table_loaded()
+        _skip_if_no_tools(tools_page)
+
+        tools_page.open_tool_edit_modal(0)
+
+        # Plugin chain fields should exist (may be hidden if plugins disabled)
+        plugin_chain_pre = tools_page.tool_edit_modal.locator("#edit-tool-plugin-chain-pre")
+        expect(plugin_chain_pre).to_be_attached()
+        expect(plugin_chain_pre).to_have_attribute("name", "plugin_chain_pre")
+
+        plugin_chain_post = tools_page.tool_edit_modal.locator("#edit-tool-plugin-chain-post")
+        expect(plugin_chain_post).to_be_attached()
+        expect(plugin_chain_post).to_have_attribute("name", "plugin_chain_post")
+
+        tools_page.cancel_tool_edit()
+
+    def test_edit_modal_advanced_fields_use_snake_case_names(self, tools_page: ToolsPage):
+        """Test that all advanced field names use snake_case not camelCase."""
+        tools_page.navigate_to_tools_tab()
+        tools_page.wait_for_tools_table_loaded()
+        _skip_if_no_tools(tools_page)
+
+        tools_page.open_tool_edit_modal(0)
+
+        # Verify snake_case field names
+        snake_case_fields = [
+            "timeout_ms",
+            "jsonpath_filter",
+            "team_id",
+            "base_url",
+            "path_template",
+            "query_mapping",
+            "header_mapping",
+            "expose_passthrough",
+            "plugin_chain_pre",
+            "plugin_chain_post",
+        ]
+
+        for field_name in snake_case_fields:
+            field = tools_page.tool_edit_modal.locator(f'[name="{field_name}"]')
+            expect(field).to_be_attached()
+
+        tools_page.cancel_tool_edit()

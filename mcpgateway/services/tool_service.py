@@ -6360,7 +6360,12 @@ class ToolService(BaseService):
                     custom_name_ref = tool_update.name  # custom_name will track the rename
                 else:
                     custom_name_ref = tool.custom_name  # custom_name stays unchanged
-                self._check_tool_name_conflict(db, custom_name_ref, tool_visibility_ref, tool.id, team_id=tool.team_id, owner_email=tool.owner_email)
+
+                # Determine which team_id to check against
+                # If team is also changing, check against the NEW team; otherwise use current team
+                team_id_for_check = tool_update.team_id if (tool_update.team_id is not None and tool_update.team_id != tool.team_id) else tool.team_id
+
+                self._check_tool_name_conflict(db, custom_name_ref, tool_visibility_ref, tool.id, team_id=team_id_for_check, owner_email=tool.owner_email)
                 if tool_update.custom_name is None and tool.name == tool.custom_name:
                     tool.custom_name = tool_update.name
                 tool.name = tool_update.name
@@ -6369,6 +6374,12 @@ class ToolService(BaseService):
             if tool_update.visibility is not None and tool_update.visibility.lower() != tool.visibility and not name_is_changing:
                 new_visibility = tool_update.visibility.lower()
                 self._check_tool_name_conflict(db, tool.custom_name, new_visibility, tool.id, team_id=tool.team_id, owner_email=tool.owner_email)
+
+            # Check for conflicts when team assignment changes without a name change
+            # This prevents duplicate tool names within the target team
+            if tool_update.team_id is not None and tool_update.team_id != tool.team_id and not name_is_changing:
+                tool_visibility_ref = tool.visibility if tool_update.visibility is None else tool_update.visibility.lower()
+                self._check_tool_name_conflict(db, tool.custom_name, tool_visibility_ref, tool.id, team_id=tool_update.team_id, owner_email=tool.owner_email)
 
             if tool_update.custom_name is not None:
                 tool.custom_name = tool_update.custom_name
@@ -6396,6 +6407,10 @@ class ToolService(BaseService):
                 tool.jsonpath_filter = tool_update.jsonpath_filter
             if tool_update.visibility is not None:
                 tool.visibility = tool_update.visibility
+            if tool_update.team_id is not None:
+                tool.team_id = tool_update.team_id
+            # Note: owner_email is intentionally NOT updated here to prevent ownership changes
+            # during regular edits. Ownership transfer would require a separate endpoint.
 
             if tool_update.auth is not None:
                 if tool_update.auth.auth_type is not None:
@@ -6406,6 +6421,26 @@ class ToolService(BaseService):
             # Update tags if provided
             if tool_update.tags is not None:
                 tool.tags = tool_update.tags
+
+            # Update REST passthrough fields
+            if tool_update.timeout_ms is not None:
+                tool.timeout_ms = tool_update.timeout_ms
+            if tool_update.base_url is not None:
+                tool.base_url = tool_update.base_url
+            if tool_update.path_template is not None:
+                tool.path_template = tool_update.path_template
+            if tool_update.query_mapping is not None:
+                tool.query_mapping = tool_update.query_mapping
+            if tool_update.header_mapping is not None:
+                tool.header_mapping = tool_update.header_mapping
+            if tool_update.expose_passthrough is not None:
+                tool.expose_passthrough = tool_update.expose_passthrough
+            if tool_update.allowlist is not None:
+                tool.allowlist = tool_update.allowlist
+            if tool_update.plugin_chain_pre is not None:
+                tool.plugin_chain_pre = tool_update.plugin_chain_pre
+            if tool_update.plugin_chain_post is not None:
+                tool.plugin_chain_post = tool_update.plugin_chain_post
 
             # Update modification metadata
             if modified_by is not None:

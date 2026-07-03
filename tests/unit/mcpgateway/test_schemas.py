@@ -1287,28 +1287,44 @@ class TestSchemaValidators:
 
     def test_tool_update_validation_errors(self):
         """ToolUpdate validators should reject invalid passthrough configs."""
-        with pytest.raises(ValidationError, match="path_template must start"):
-            ToolUpdate(path_template="no-leading-slash")
+        # Standard
+        from unittest.mock import MagicMock, patch
 
-        with pytest.raises(ValidationError, match="timeout_ms must be a positive integer"):
-            ToolUpdate(timeout_ms=0)
+        # Mock settings with plugins enabled so validation runs
+        mock_settings = MagicMock()
+        mock_settings.plugins.enabled = True
 
-        with pytest.raises(ValidationError, match="Invalid host/scheme"):
-            ToolUpdate(allowlist=["not a host"])
+        with patch("mcpgateway.schemas.settings", mock_settings):
+            with pytest.raises(ValidationError, match="path_template must start"):
+                ToolUpdate(path_template="no-leading-slash")
 
-        with pytest.raises(ValidationError, match="Unknown plugin"):
-            ToolUpdate(plugin_chain_pre=["unknown_plugin"])
+            with pytest.raises(ValidationError, match="timeout_ms must be a positive integer"):
+                ToolUpdate(timeout_ms=0)
+
+            with pytest.raises(ValidationError, match="Invalid host/scheme"):
+                ToolUpdate(allowlist=["not a host"])
+
+            with pytest.raises(ValidationError, match="Unknown plugin"):
+                ToolUpdate(plugin_chain_pre=["unknown_plugin"])
 
     def test_tool_update_validator_helpers(self):
         """Directly exercise allowlist/plugin validators for edge cases."""
+        # Standard
+        from unittest.mock import MagicMock, patch
+
+        # Mock settings with plugins enabled so validation runs
+        mock_settings = MagicMock()
+        mock_settings.plugins.enabled = True
+
         assert ToolUpdate.validate_allowlist(None) is None
         with pytest.raises(ValueError, match="allowlist must be a list"):
             ToolUpdate.validate_allowlist("not-a-list")
         with pytest.raises(ValueError, match="Invalid type in allowlist"):
             ToolUpdate.validate_allowlist([123])
 
-        with pytest.raises(ValueError, match="Unknown plugin"):
-            ToolUpdate.validate_plugin_chain(["unknown_plugin"])
+        with patch("mcpgateway.schemas.settings", mock_settings):
+            with pytest.raises(ValueError, match="Unknown plugin"):
+                ToolUpdate.validate_plugin_chain(["unknown_plugin"])
 
     def test_resource_description_truncation(self):
         """ResourceCreate should truncate overly long descriptions."""

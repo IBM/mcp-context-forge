@@ -8779,6 +8779,255 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         generally provided by the MCP server.
                       </p>
                     </div>
+
+                    <!-- Advanced Configuration Fields -->
+                    <details class="border border-gray-300 dark:border-gray-600 rounded-lg p-4 mt-4">
+                      <summary class="cursor-pointer text-md font-semibold text-gray-900 dark:text-gray-100 hover:text-indigo-600 dark:hover:text-indigo-400 select-none">
+                        Advanced: Add Passthrough
+                      </summary>
+                      <div class="mt-4 space-y-6">
+                    <div>
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                        >Title</label
+                      >
+                      <input
+                        type="text"
+                        name="title"
+                        id="edit-tool-title"
+                        placeholder="Human-readable title (MCP BaseMetadata)"
+                        maxlength="255"
+                        class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      />
+                      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        Optional MCP BaseMetadata title field, distinct from display name.
+                      </p>
+                    </div>
+
+                    <div>
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                        >Timeout (ms)</label
+                      >
+                      <input
+                        type="number"
+                        name="timeout_ms"
+                        id="edit-tool-timeout-ms"
+                        placeholder="Tool timeout in milliseconds (e.g., 30000)"
+                        min="1"
+                        class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      />
+                      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        Per-tool timeout override. Leave empty to use global default.
+                      </p>
+                    </div>
+
+                    <div>
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                        >JSONPath Filter</label
+                      >
+                      <input
+                        type="text"
+                        name="jsonpath_filter"
+                        id="edit-tool-jsonpath-filter"
+                        placeholder="$.data.result"
+                        class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      />
+                      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        JSONPath expression to filter tool responses.
+                      </p>
+                    </div>
+
+                    <div>
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                        >Team</label
+                      >
+                      <select
+                        name="team_id"
+                        id="edit-tool-team-id"
+                        class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      >
+                        <option value="">-- No Team --</option>
+                        <!-- Options will be populated dynamically -->
+                      </select>
+                      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        Reassign this tool to a different team.
+                      </p>
+                    </div>
+
+                    <!-- REST Passthrough Fields -->
+                    <!-- Button to show passthrough configuration -->
+                    <div id="edit-tool-rest-passthrough-button-wrapper" style="display: none;">
+                      <button
+                        type="button"
+                        id="edit-tool-passthrough-btn"
+                        class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
+                        onclick="document.getElementById('edit-tool-passthrough-container').style.display='block'; this.parentElement.style.display='none';"
+                      >
+                        Add Passthrough Configuration
+                      </button>
+                    </div>
+
+                    <!-- Passthrough configuration container -->
+                    <fieldset id="edit-tool-passthrough-container" style="display: none;" class="border border-gray-300 dark:border-gray-600 rounded-lg p-4">
+                      <legend class="text-md font-semibold text-gray-900 dark:text-gray-100 px-2">
+                        REST Passthrough Configuration
+                      </legend>
+
+                      <div class="space-y-6 mt-4">
+                        <div>
+                          <label
+                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                            >Base URL</label
+                          >
+                          <input
+                            type="url"
+                            name="base_url"
+                            id="edit-tool-base-url"
+                            placeholder="https://api.example.com"
+                            class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                          />
+                          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                            Base URL for REST passthrough (must include scheme and host).
+                          </p>
+                        </div>
+
+                        <div>
+                          <label
+                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                            >Path Template</label
+                          >
+                          <input
+                            type="text"
+                            name="path_template"
+                            id="edit-tool-path-template"
+                            placeholder="/api/v1/resource/{id}"
+                            class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                          />
+                          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                            Path template for REST passthrough (must start with '/').
+                          </p>
+                        </div>
+
+                        <div>
+                          <label
+                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                            >Query Mapping (JSON)</label
+                          >
+                          <textarea
+                            name="query_mapping"
+                            id="edit-tool-query-mapping"
+                            placeholder="{&quot;param&quot;: &quot;inputField&quot;}"
+                            rows="3"
+                            class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                          ></textarea>
+                          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                            Map input fields to query parameters (JSON object).
+                          </p>
+                        </div>
+
+                        <div>
+                          <label
+                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                            >Header Mapping (JSON)</label
+                          >
+                          <textarea
+                            name="header_mapping"
+                            id="edit-tool-header-mapping"
+                            placeholder="{&quot;X-Custom-Header&quot;: &quot;inputField&quot;}"
+                            rows="3"
+                            class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                          ></textarea>
+                          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                            Map input fields to HTTP headers (JSON object).
+                          </p>
+                        </div>
+
+                        <div class="flex items-center">
+                          <input
+                            type="checkbox"
+                            name="expose_passthrough"
+                            id="edit-tool-expose-passthrough"
+                            value="true"
+                            class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                          />
+                          <label
+                            for="edit-tool-expose-passthrough"
+                            class="ml-2 block text-sm text-gray-700 dark:text-gray-300"
+                          >
+                            Expose Passthrough Endpoint
+                          </label>
+                        </div>
+                        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                          Make this tool available as a passthrough endpoint.
+                        </p>
+
+                        <div>
+                          <label
+                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                            >Allowlist (Comma-separated)</label
+                          >
+                          <input
+                            type="text"
+                            name="allowlist"
+                            id="edit-tool-allowlist"
+                            placeholder="https://api.example.com, https://api2.example.org"
+                            class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                          />
+                          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                            Allowed upstream hosts/schemes for passthrough (comma-separated URLs).
+                          </p>
+                        </div>
+                      </div>
+                    </fieldset>
+
+                    <!-- Plugin Chain Fields (shown when plugins enabled) -->
+                    <div id="edit-tool-plugin-section" style="display: none;">
+                      <h4 class="text-md font-semibold text-gray-900 dark:text-gray-100 mb-4 border-b border-gray-200 dark:border-gray-700 pb-2">
+                        Plugin Chains
+                      </h4>
+
+                      <div class="space-y-6">
+                        <div>
+                          <label
+                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                            >Pre-processing Plugins (Comma-separated)</label
+                          >
+                          <input
+                            type="text"
+                            name="plugin_chain_pre"
+                            id="edit-tool-plugin-chain-pre"
+                            placeholder="plugin1, plugin2, plugin3"
+                            class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                          />
+                          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                            Plugins to run before tool invocation.
+                          </p>
+                        </div>
+
+                        <div>
+                          <label
+                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                            >Post-processing Plugins (Comma-separated)</label
+                          >
+                          <input
+                            type="text"
+                            name="plugin_chain_post"
+                            id="edit-tool-plugin-chain-post"
+                            placeholder="plugin1, plugin2, plugin3"
+                            class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                          />
+                          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                            Plugins to run after tool invocation.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                      </div>
+                    </details>
+
                     <!-- Authentication Section -->
                     <div>
                       <label
@@ -12109,6 +12358,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       window.UI_HIDDEN_SECTIONS = {{ ui_hidden_sections | default([]) | tojson }};
       window.UI_HIDDEN_HEADER_ITEMS = {{ ui_hidden_header_items | default([]) | tojson }};
       window.UI_HIDDEN_TABS = {{ ui_hidden_tabs | default([]) | tojson }};
+      window.PLUGINS_ENABLED = {{ plugins_enabled | default(false) | tojson }};
 
       // Display flash messages from URL parameters
       (function() {
