@@ -1,4 +1,4 @@
-import { useState, useMemo, memo, useCallback } from "react";
+import { useState, useMemo, memo, useCallback, useRef } from "react";
 import { useIntl } from "react-intl";
 import { Plus, EllipsisVertical, FileText } from "lucide-react";
 import { toast } from "sonner";
@@ -24,6 +24,8 @@ import {
 import { ResourceForm } from "@/components/resources/ResourceForm";
 import { ResourceDetailsPanel } from "@/components/resources/ResourceDetailsPanel";
 import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
+
+const OPTIMISTIC_RESOURCE_ID = "__optimistic__";
 
 function getUriLabel(uri: string): string {
   try {
@@ -80,6 +82,7 @@ const ResourceCard = memo(function ResourceCard({
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => onDeleteResource(resource.id)}
+                disabled={resource.id === OPTIMISTIC_RESOURCE_ID}
                 className="text-destructive focus:text-destructive"
               >
                 {intl.formatMessage({ id: "common.button.delete" })}
@@ -148,6 +151,7 @@ function AddResourcesCard({ onAddResource }: { onAddResource: () => void }) {
 
 export function Resources() {
   const intl = useIntl();
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const [showForm, setShowForm] = useState(false);
   const [selectedResource, setSelectedResource] = useState<NonNullable<ResourceRead> | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -221,6 +225,7 @@ export function Resources() {
 
   const handleDeleteResource = useCallback(
     (id: string) => {
+      if (id === OPTIMISTIC_RESOURCE_ID) return;
       const resource = data?.find((r) => r?.id === id);
       setDeleteResourceId(id);
       setDeleteResourceName(resource?.name || id);
@@ -282,7 +287,11 @@ export function Resources() {
         />
       ) : (
         <>
-          <h1 className="mb-6 text-base font-semibold text-neutral-900 dark:text-white">
+          <h1
+            ref={headingRef}
+            tabIndex={-1}
+            className="mb-6 text-base font-semibold text-neutral-900 dark:text-white"
+          >
             {intl.formatMessage({ id: "resources.title" })}
           </h1>
 
@@ -352,6 +361,13 @@ export function Resources() {
             )}
             confirmLabel={intl.formatMessage({ id: "resources.delete.confirm.button" })}
             variant="destructive"
+            closeOnConfirm={false}
+            onCloseAutoFocus={(event) => {
+              // The card/panel that held focus is gone (removed optimistically),
+              // so Radix's default restore-to-trigger would drop focus on <body>.
+              event.preventDefault();
+              headingRef.current?.focus();
+            }}
           />
         </>
       )}
