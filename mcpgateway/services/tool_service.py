@@ -199,6 +199,7 @@ def _sync_meta_traceparent(
         for key, value in request_headers.items():
             if key.lower() == "traceparent" and value:
                 traceparent = value
+                break
     if not traceparent:
         return meta_data
 
@@ -3713,7 +3714,7 @@ class ToolService(BaseService):
                 },
             ):
                 traced_headers = inject_trace_context_headers(headers)
-                meta_data = _sync_meta_traceparent(meta_data, traced_headers)
+                request_meta_data = _sync_meta_traceparent(meta_data, traced_headers)
                 async with streamablehttp_client(url=gateway_url, headers=traced_headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
                     async with ClientSession(read_stream, write_stream) as session:
                         with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
@@ -3728,9 +3729,9 @@ class ToolService(BaseService):
                             },
                         ):
                             # Call tool with meta if provided
-                            if meta_data:
-                                logger.debug("Forwarding _meta to remote gateway: %s", meta_data)
-                                tool_result = await session.call_tool(name=remote_name, arguments=arguments, meta=meta_data)
+                            if request_meta_data:
+                                logger.debug("Forwarding _meta to remote gateway: %s", request_meta_data)
+                                tool_result = await session.call_tool(name=remote_name, arguments=arguments, meta=request_meta_data)
                             else:
                                 tool_result = await session.call_tool(name=remote_name, arguments=arguments)
                         with create_span(

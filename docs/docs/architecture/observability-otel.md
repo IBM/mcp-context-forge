@@ -147,6 +147,10 @@ and parent span ID consistent for upstream MCP servers that inspect either the
 HTTP headers or the MCP protocol payload. Existing `_meta` fields, such as
 identity or tenant context, are preserved when the trace context is added.
 
+Pooled or registry-backed MCP sessions deliberately skip per-request
+`_meta.traceparent` synchronization because those transports reuse pinned
+headers and do not propagate per-request trace context upstream.
+
 ## W3C Baggage Support
 
 ### Purpose
