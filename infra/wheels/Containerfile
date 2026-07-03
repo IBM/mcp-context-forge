@@ -2,7 +2,7 @@
 # Multiplatform wheel builder (s390x + ppc64le)
 #
 # Builds the FULL pinned dependency closure (derived from uv.lock) for
-# architectures lacking PyPI manylinux wheels, so the main Containerfile.lite
+# architectures lacking PyPI manylinux wheels, so the main Containerfile
 # build can stay hermetic (--no-index --find-links) without missing
 # pure-Python packages like alembic/tiktoken.
 #
@@ -63,7 +63,7 @@ COPY uv.lock pyproject.toml /build/
 # excludes the dev group — bandit/black/mypy/pylint/pytest/ruff, ~364 pkgs
 # that would otherwise be source-compiled here for no reason), build every
 # wheel, then add psycopg[c] (pinned to the uv.lock version, since
-# Containerfile.lite's extras don't include `postgres`) and the
+# Containerfile's extras don't include `postgres`) and the
 # setuptools/wheel pair the main build needs for PEP 517 isolation.
 RUN uv export --frozen --no-emit-project --no-default-groups \
         --extra redis --extra observability --extra granian \

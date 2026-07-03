@@ -394,7 +394,7 @@ Automate builds and deployments using GitHub Actions. Refer to the workflow file
 This workflow:
 
 * Restores and updates a local BuildKit layer cache.
-* Builds the Docker image from `Containerfile.lite`.
+* Builds the Docker image from `Containerfile`.
 * Pushes the image to Google Artifact Registry.
 * Deploys to Google Cloud Run with `--max-instances=1`.
 

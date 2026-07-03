@@ -9,20 +9,20 @@ This guide covers how to package ContextForge for deployment in various environm
 Build an OCI-compliant container image using:
 
 ```bash
-make podman        # builds using Containerfile.lite with Podman
+make podman        # builds using Containerfile with Podman
 # or manually
-podman build -t mcpgateway:latest -f Containerfile.lite .
+podman build -t mcpgateway:latest -f Containerfile .
 ```
 
 Or with Docker (if Podman is not available):
 
 ```bash
-make docker        # builds using Containerfile.lite with Docker
+make docker        # builds using Containerfile with Docker
 # or manually
-docker build -t mcpgateway:latest -f Containerfile.lite .
+docker build -t mcpgateway:latest -f Containerfile .
 ```
 
-`Containerfile.lite` is the canonical multi-stage build (UBI builder → ubi-minimal
+`Containerfile` is the canonical multi-stage build (UBI builder → ubi-minimal
 runtime) supporting amd64, arm64, s390x, and ppc64le, with optional Rust runtime
 support (`--build-arg ENABLE_RUST=true`) and profiling tools
 (`--build-arg ENABLE_PROFILING=true`).

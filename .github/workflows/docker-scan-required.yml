@@ -21,7 +21,7 @@ on:
     types: [opened, synchronize, ready_for_review]
     branches: ["main"]
     paths-ignore:
-      - 'Containerfile.lite'
+      - 'Containerfile'
       - 'Containerfile'
       - 'Containerfile.scratch'
       - 'infra/nginx/**'

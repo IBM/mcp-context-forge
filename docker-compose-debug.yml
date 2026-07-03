@@ -88,7 +88,7 @@ services:
     #image: ghcr.io/ibm/mcp-context-forge:0.7.0 # Testing migration from 0.7.0
     build:
       context: .
-      dockerfile: Containerfile.lite     # Same one the Makefile builds
+      dockerfile: Containerfile     # Same one the Makefile builds
     restart: unless-stopped
     # NOTE: When using replicas > 1, access via nginx:8080 instead of direct port 4444
     # ports:
@@ -650,7 +650,7 @@ services:
   #   image: mcpgateway/mcpgateway:latest # Use the local latest image. Run `make docker-prod` to build it.
   #   build:
   #     context: .
-  #     dockerfile: Containerfile.lite
+#     dockerfile: Containerfile
   #   environment:
   #     - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
   #   command: alembic -c mcpgateway/alembic.ini upgrade head

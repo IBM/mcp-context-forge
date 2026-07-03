@@ -66,7 +66,7 @@ networks:
 GATEWAY_SERVICE_TEMPLATE = """  gateway{instance_suffix}:
     build:
       context: .
-      dockerfile: Containerfile.lite
+      dockerfile: Containerfile
     container_name: gateway{instance_suffix}
     extra_hosts:
       - "host.docker.internal:host-gateway"

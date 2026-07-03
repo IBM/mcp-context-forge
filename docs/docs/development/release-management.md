@@ -92,12 +92,12 @@ gh api repos/IBM/mcp-context-forge/code-scanning/alerts --jq '[.[] | select(.sta
 
 ### 1.6 Update container base images
 
-Update the `FROM` lines in `Containerfile.lite` to the latest available tags. Pinned image tags prevent silent drift but must be bumped manually before each release.
+Update the `FROM` lines in `Containerfile` to the latest available tags. Pinned image tags prevent silent drift but must be bumped manually before each release.
 
 Check current base images:
 
 ```bash
-grep '^FROM' Containerfile.lite
+grep '^FROM' Containerfile
 ```
 
 | Stage | Current image | What to check |
@@ -107,7 +107,7 @@ grep '^FROM' Containerfile.lite
 | Builder | `registry.access.redhat.com/ubi10/ubi:<tag>` | [Red Hat Container Catalog](https://catalog.redhat.com/software/containers/ubi10/ubi) |
 | Runtime | `registry.access.redhat.com/ubi10/ubi-minimal:<tag>` | [Red Hat Container Catalog](https://catalog.redhat.com/software/containers/ubi10/ubi-minimal) |
 
-Update `Containerfile.lite` with the latest tags, then verify the image builds:
+Update `Containerfile` with the latest tags, then verify the image builds:
 
 ```bash
 make docker-prod DOCKER_BUILD_ARGS="--no-cache"
@@ -327,7 +327,7 @@ The Admin UI loads frontend libraries (Tailwind, Chart.js, CodeMirror, Font Awes
     make docker-prod DOCKER_BUILD_ARGS="--no-cache"
     ```
 
-    The `Containerfile.lite` runs `scripts/download-cdn-assets.sh` during build to vendor all CDN assets into `mcpgateway/static/vendor/`. A build failure here means a URL is broken or a version was updated inconsistently.
+    The `Containerfile` runs `scripts/download-cdn-assets.sh` during build to vendor all CDN assets into `mcpgateway/static/vendor/`. A build failure here means a URL is broken or a version was updated inconsistently.
 
 6. **Smoke test the Admin UI** to verify all frontend libraries load correctly (both CDN and vendored modes).
 
@@ -1482,8 +1482,8 @@ Copy-paste checklist for running all gates in sequence:
 # 0. Security advisories & base images
 gh api repos/IBM/mcp-context-forge/dependabot/alerts --jq '[.[] | select(.state=="open")] | length'
 # ... resolve all open Dependabot, code scanning, secret scanning alerts ...
-# ... update FROM tags in Containerfile.lite ...
-grep '^FROM' Containerfile.lite
+# ... update FROM tags in Containerfile ...
+grep '^FROM' Containerfile
 
 # 1. Python dependency updates
 python .github/tools/update_dependencies.py --file pyproject.toml

@@ -30,7 +30,7 @@ on:
     tags: ["v*"]
     paths:
       - '.dockerignore'
-      - 'Containerfile.lite'
+      - 'Containerfile'
       - 'mcpgateway/**'
       - 'plugins/**'
       - 'pyproject.toml'
@@ -42,7 +42,7 @@ on:
     branches: ["main"]
     paths:
       - '.dockerignore'
-      - 'Containerfile.lite'
+      - 'Containerfile'
       - 'mcpgateway/**'
       - 'plugins/**'
       - 'pyproject.toml'
@@ -98,7 +98,7 @@ jobs:
             local path="$1"
 
             case "${path}" in
-              .dockerignore|Containerfile.lite|pyproject.toml|uv.lock|.github/workflows/docker-multiplatform.yml)
+              .dockerignore|Containerfile|pyproject.toml|uv.lock|.github/workflows/docker-multiplatform.yml)
                 return 0
                 ;;
               infra/wheels/*|mcpgateway/*|plugins/*)
@@ -131,7 +131,7 @@ jobs:
   # ---------------------------------------------------------------
   # Build the full dependency-closure wheel image for s390x and ppc64le only.
   # amd64/arm64 have full PyPI manylinux coverage and do not need a wheel
-  # closure — Containerfile.lite always resolves via PyPI for those arches.
+  # closure — Containerfile always resolves via PyPI for those arches.
   # s390x/ppc64le wheels are content-addressed by sha256(uv.lock) and the
   # build is idempotent (skipped when the lock-hash tag already exists).
   # Rides the same non-PR, non-merge-group events as the platform builds below
@@ -344,7 +344,7 @@ jobs:
       - name: Compute wheel image ref
         if: steps.gate.outputs.build == 'true'
         run: |
-          UBI_MINIMAL_DEFAULT=$(grep -m1 '^ARG UBI_MINIMAL=' Containerfile.lite | cut -d= -f2-)
+          UBI_MINIMAL_DEFAULT=$(grep -m1 '^ARG UBI_MINIMAL=' Containerfile | cut -d= -f2-)
           if [[ "${{ matrix.suffix }}" == "s390x" || "${{ matrix.suffix }}" == "ppc64le" ]]; then
             WHEELS_IMAGE_LC=$(echo "${{ env.IMAGE_NAME }}-wheels" | tr '[:upper:]' '[:lower:]')
             LOCK_HASH=$(sha256sum uv.lock | cut -c1-16)
@@ -380,13 +380,13 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          file: Containerfile.lite
+          file: Containerfile
           platforms: ${{ matrix.platform }}
           # WHEELS_REF is always set by "Compute wheel image ref" above when
           # this step runs (lock tag, latest tag, or UBI_MINIMAL fallback).
           # The `|| ''` guards the case the step itself didn't run (same
           # `if` gate skips both), so the build-arg is simply omitted and
-          # Containerfile.lite's own default applies.
+          # Containerfile's own default applies.
           build-args: |
             ${{ env.WHEELS_REF && format('WHEELS_REF={0}', env.WHEELS_REF) || '' }}
 

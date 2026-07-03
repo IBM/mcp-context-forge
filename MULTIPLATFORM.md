@@ -25,11 +25,11 @@ make container-inspect-manifest REGISTRY=ghcr.io/ibm/mcp-context-forge:latest
 
 ## Containerfile
 
-`Containerfile.lite` is the canonical multi-stage build for the gateway:
+`Containerfile` is the canonical multi-stage build for the gateway:
 
 | File | Base Image | Platforms | Size | Use Case |
 |------|------------|-----------|------|----------|
-| `Containerfile.lite` | ubi10-minimal | amd64, arm64, s390x, ppc64le | ~150MB | All builds (local, CI/CD, multiplatform) |
+| `Containerfile` | ubi10-minimal | amd64, arm64, s390x, ppc64le | ~150MB | All builds (local, CI/CD, multiplatform) |
 
 Optional build args: `ENABLE_RUST=true` (Rust MCP + A2A runtimes), `ENABLE_RUST_MCP_RMCP=true` (rmcp-upstream-client feature), `ENABLE_PROFILING=true` (memray + gdb).
 
@@ -100,7 +100,7 @@ The `.github/workflows/docker-multiplatform.yml` workflow:
 
 ### s390x and ppc64le Specific
 
-The s390x and ppc64le architectures require OpenSSL instead of BoringSSL for grpcio. This is handled automatically in `Containerfile.lite`:
+The s390x and ppc64le architectures require OpenSSL instead of BoringSSL for grpcio. This is handled automatically in `Containerfile`:
 
 ```dockerfile
 RUN if [ "$(uname -m)" = "s390x" ] || [ "$(uname -m)" = "ppc64le" ]; then \
@@ -110,7 +110,7 @@ RUN if [ "$(uname -m)" = "s390x" ] || [ "$(uname -m)" = "ppc64le" ]; then \
 
 ### Why ubi10-minimal?
 
-`Containerfile.lite` uses `ubi10-minimal` as the runtime base because it:
+`Containerfile` uses `ubi10-minimal` as the runtime base because it:
 
 - Stays small (~150MB) while retaining a usable package manager (`microdnf`) for runtime deps
 - Works under QEMU emulation, enabling cross-platform CI builds for s390x and ppc64le
@@ -179,7 +179,7 @@ If you see errors like:
 ERROR: process "/dev/.buildkit_qemu_emulator /bin/bash ..." did not complete successfully
 ```
 
-This usually means a command doesn't work under QEMU emulation. The `Containerfile.lite` is designed to avoid these issues by using `ubi10-minimal` + `microdnf`.
+This usually means a command doesn't work under QEMU emulation. The `Containerfile` is designed to avoid these issues by using `ubi10-minimal` + `microdnf`.
 
 ### Buildx builder not found
 
