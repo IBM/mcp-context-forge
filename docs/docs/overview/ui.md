@@ -36,7 +36,7 @@ The Admin UI is built with **HTMX**, **Alpine.js**, and **Tailwind CSS**, offeri
 | **Security**      | DOMPurify          | XSS sanitization                                                        |
 | **Icons**         | Font Awesome       | Icon library                                                            |
 
-All vendor libraries are bundled locally for **air-gapped deployments** with CDN fallbacks. See [Air-Gapped Mode](#air-gapped-mode) below.
+**HTMX** and **Alpine.js** are bundled via npm/Vite into the main JavaScript bundle. Other vendor libraries (Tailwind CSS, CodeMirror, Chart.js, Font Awesome, Marked.js, DOMPurify) load from CDNs by default, with optional local bundling for **air-gapped deployments**. See [Air-Gapped Mode](#air-gapped-mode) below.
 
 It provides tabbed access to:
 
@@ -94,9 +94,11 @@ MCPGATEWAY_UI_AIRGAPPED=true
 
 ### How It Works
 
-By default, the UI loads vendor libraries from CDNs (Tailwind, Chart.js, etc.). HTMX and Alpine.js are bundled via npm/Vite. When `MCPGATEWAY_UI_AIRGAPPED=true`:
+**HTMX** and **Alpine.js** are always bundled into the main JavaScript bundle via npm/Vite (no CDN dependency). Other vendor libraries (Tailwind CSS, CodeMirror, Chart.js, Font Awesome, Marked.js, DOMPurify) load from CDNs by default for faster initial setup.
 
-- All libraries load from `mcpgateway/static/vendor/`
+When `MCPGATEWAY_UI_AIRGAPPED=true`:
+
+- All remaining vendor libraries load from `mcpgateway/static/vendor/` instead of CDNs
 - No external network requests for UI assets
 - Identical functionality, fully offline
 
@@ -113,7 +115,7 @@ See [Container Deployment](../deployment/container.md#airgapped-deployments) for
 
 ### Local Development
 
-To test air-gapped mode locally without containers:
+The main JavaScript bundle (HTMX + Alpine.js) is built automatically via `make install-dev` or `make build-ui`. To test air-gapped mode for remaining vendor libraries:
 
 ```bash
 # Download vendor assets (one-time)
@@ -125,13 +127,15 @@ MCPGATEWAY_UI_AIRGAPPED=true make dev
 
 The script downloads to `mcpgateway/static/vendor/`:
 
-| Library      | Version | Size                                         |
+| Library      | Version | Bundling Method                              |
 | ------------ | ------- | -------------------------------------------- |
-| Tailwind CSS | CDN     | ~404KB                                       |
-| HTMX         | 2.0.3   | Bundled in main JS (included in bundle size) |
-| Alpine.js    | 3.x CSP | Bundled in main JS (included in bundle size) |
-| CodeMirror   | 5.65.18 | ~216KB                                       |
-| Chart.js     | 4.4.1   | ~208KB                                       |
-| Font Awesome | 6.4.0   | ~1.2MB                                       |
+| HTMX         | 2.0.3   | Bundled in main JS via npm/Vite (always local) |
+| Alpine.js    | 3.x CSP | Bundled in main JS via npm/Vite (always local) |
+| Tailwind CSS | CDN     | ~404KB (CDN by default, local with airgapped mode) |
+| CodeMirror   | 5.65.18 | ~216KB (CDN by default, local with airgapped mode) |
+| Chart.js     | 4.4.1   | ~208KB (CDN by default, local with airgapped mode) |
+| Font Awesome | 6.4.0   | ~1.2MB (CDN by default, local with airgapped mode) |
+| Marked.js    | Latest  | CDN by default, local with airgapped mode |
+| DOMPurify    | Latest  | CDN by default, local with airgapped mode |
 
 ---

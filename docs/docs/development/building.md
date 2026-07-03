@@ -166,7 +166,7 @@ Note: JavaScript unit tests are not yet implemented. Testing efforts focus on th
 
 ### Air-Gapped Mode (Local Development)
 
-To test the Admin UI without CDN dependencies:
+The main JavaScript bundle (HTMX + Alpine.js) is always built locally via npm/Vite. To test the Admin UI with remaining vendor libraries loaded locally instead of from CDNs:
 
 ```bash
 # Download vendor libraries to mcpgateway/static/vendor/
@@ -176,4 +176,4 @@ To test the Admin UI without CDN dependencies:
 MCPGATEWAY_UI_AIRGAPPED=true make dev
 ```
 
-This downloads Tailwind, CodeMirror, Chart.js, and Font Awesome for fully offline UI operation. HTMX and Alpine.js are bundled via npm/Vite and included in the main JS bundle. See [Admin UI - Air-Gapped Mode](../overview/ui.md#air-gapped-mode) for details.
+This downloads Tailwind CSS, CodeMirror, Chart.js, Font Awesome, Marked.js, and DOMPurify for fully offline UI operation. HTMX and Alpine.js are always bundled in the main JS bundle. See [Admin UI - Air-Gapped Mode](../overview/ui.md#air-gapped-mode) for details.

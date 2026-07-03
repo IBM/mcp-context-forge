@@ -109,13 +109,13 @@ make watch-css
 
 ---
 
-## 🔒 Airgapped Deployments
+## 🔒 Air-Gapped Deployments (Optional)
 
-For environments without internet access, you can build a container with all UI assets bundled locally.
+**HTMX** and **Alpine.js** are always bundled into the main JavaScript bundle via npm/Vite in all container builds — no CDN dependency. For environments without internet access that also need remaining vendor libraries (Tailwind CSS, CodeMirror, Chart.js, Font Awesome, etc.) bundled locally, use `Containerfile.lite`.
 
-### Build Airgapped Container
+### Build Air-Gapped Container
 
-Use `Containerfile` which automatically downloads CDN assets during build:
+Use `Containerfile.lite` which automatically downloads remaining vendor assets during build:
 
 ```bash
 docker build -f Containerfile -t mcpgateway:airgapped .
@@ -124,14 +124,16 @@ docker build -f Containerfile -t mcpgateway:airgapped .
 This downloads and bundles:
 
 - Tailwind CSS (~404KB)
-- HTMX (bundled in main JS via npm/Vite)
-- Alpine.js CSP build (bundled in main JS via npm/Vite)
 - CodeMirror (~216KB)
 - Chart.js (~208KB)
+- Font Awesome (~1.2MB)
+- Marked.js, DOMPurify
 
-**Total: ~884KB of UI assets**
+**Note:** HTMX and Alpine.js are already bundled in the main JS bundle in all container builds.
 
-### Run in Airgapped Mode
+**Total additional assets: ~2MB**
+
+### Run in Air-Gapped Mode
 
 ```bash
 docker run -d --name mcpgateway \
@@ -149,7 +151,7 @@ docker run -d --name mcpgateway \
 ```
 
 !!! success "Fully Offline UI"
-    With `MCPGATEWAY_UI_AIRGAPPED=true`, the Admin UI works completely offline with zero external dependencies. All CSS and JavaScript are served from local files bundled in the container.
+    With `MCPGATEWAY_UI_AIRGAPPED=true`, the Admin UI works completely offline with zero external dependencies. The main JavaScript bundle (HTMX + Alpine.js) is always local, and remaining vendor libraries (Tailwind CSS, CodeMirror, Chart.js, Font Awesome, etc.) are served from local files bundled in the container.
 
 ---
 
