@@ -163,7 +163,7 @@ from mcpgateway.services.import_service import ImportService, ImportValidationEr
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.openapi_service import fetch_and_extract_schemas
-from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService
+from mcpgateway.services.password_policy_service import PasswordPolicyService
 from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.plugin_service import get_plugin_service
@@ -1538,6 +1538,8 @@ def validate_password_strength(password: str, email: str = "", is_admin: bool = 
     # If password policy is disabled, skip all validation
     if not getattr(settings, "password_policy_enabled", True):
         return True, ""
+
+    from mcpgateway.services.password_policy_service import PasswordPolicyError
 
     with SessionLocal() as db:
         policy = PasswordPolicyService(db)
