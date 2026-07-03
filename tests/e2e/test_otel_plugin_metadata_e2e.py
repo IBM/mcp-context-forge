@@ -15,6 +15,16 @@ request causes the ``pii_filter`` CPEX plugin's metrics to reach
 ``GET /observability/traces/{trace_id}`` -- and that the raw PII value the
 plugin detected never appears anywhere in that response (S1).
 
+This module covers BOTH of ``record_plugin_metrics()``'s independently-flagged export sinks
+(``mcpgateway/plugins/utils.py``) with the identical traced call:
+
+  * ``test_traced_tool_call_surfaces_pii_filter_metrics_without_leaking_pii`` -- the G1 DB
+    sink, asserted via ``GET /observability/traces/{trace_id}``.
+  * ``test_traced_tool_call_exports_pii_filter_metrics_to_otel_sdk`` -- the G2 OTel-SDK export
+    sink, asserted via an in-memory ``TracerProvider``/``InMemorySpanExporter`` patched onto
+    ``mcpgateway.observability._TRACER`` (see the ``otel_memory_exporter`` fixture). Skips
+    cleanly when the optional ``observability`` extra (``opentelemetry-sdk``) is not installed.
+
 These real routers are hosted on a dedicated, per-test ``FastAPI()`` instance
 (see the ``traced_app`` fixture) rather than on the process-wide
 ``mcpgateway.main.app`` singleton that other ``tests/e2e/`` modules send real
@@ -372,6 +382,45 @@ async def _register_probe_tool(client: AsyncClient) -> str:
     return response.json()["name"]
 
 
+@pytest.fixture
+def otel_memory_exporter(monkeypatch):
+    """Install an in-memory OTel-SDK tracer as the process tracer (G2 test seam).
+
+    ``create_span()`` and ``otel_tracing_enabled()`` in ``mcpgateway.observability`` both read
+    the same module-level ``_TRACER`` global (``observability.py:712,719,1281``): the former
+    no-ops (returns ``nullcontext()``) when it is ``None``, and the latter reports tracing as
+    "enabled" whenever it is not ``None``. Patching that one global to a real tracer -- backed
+    by a ``TracerProvider`` with an ``InMemorySpanExporter`` span processor -- is therefore a
+    legitimate, minimal seam for exercising the G2 OTel-SDK export sink in
+    ``mcpgateway/plugins/utils.py::record_plugin_metrics()`` end-to-end, with no config/env
+    vars required.
+
+    Skips the dependent test cleanly (not the whole module -- the DB-sink test above has no
+    OTel dependency and must keep running) when the optional ``observability`` extra
+    (``opentelemetry-sdk``) is not installed: ``pip install '.[observability]'`` /
+    ``uv pip install '.[observability]'``.
+    """
+    pytest.importorskip("opentelemetry.sdk.trace", reason="opentelemetry-sdk (the 'observability' extra) is not installed")
+
+    # Third-Party -- deferred so the module itself always imports even without the extra;
+    # only tests that request this fixture pay the (skippable) cost.
+    from opentelemetry.sdk.trace import TracerProvider  # pylint: disable=import-outside-toplevel
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor  # pylint: disable=import-outside-toplevel
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter  # pylint: disable=import-outside-toplevel
+
+    # First-Party
+    import mcpgateway.observability as obs  # pylint: disable=import-outside-toplevel
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = provider.get_tracer("test-otel-plugin-metadata-e2e")
+
+    monkeypatch.setattr(obs, "_TRACER", tracer)
+    monkeypatch.setattr(obs, "OTEL_AVAILABLE", True)
+    return exporter
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -437,3 +486,54 @@ class TestOtelPluginMetadataE2E:
         for span in spans:
             for key, value in (span.get("attributes") or {}).items():
                 assert RAW_PII_EMAIL not in str(value), f"SECURITY: raw PII found in span '{span.get('name')}' attribute '{key}'"
+
+    @pytest.mark.asyncio
+    async def test_traced_tool_call_exports_pii_filter_metrics_to_otel_sdk(self, traced_app: AsyncClient, otel_memory_exporter):
+        """Same chain as the DB-sink test above, but asserts on the G2 OTel-SDK export sink.
+
+        Fires the identical traced ``tools/call`` (same PII payload, same tool, same
+        traceparent-driven trace) through the same real gateway pipeline; the only thing
+        that differs from
+        ``test_traced_tool_call_surfaces_pii_filter_metrics_without_leaking_pii`` is where the
+        assertion looks for the ``pii_filter`` metrics -- an in-memory OTel span captured by
+        ``otel_memory_exporter`` instead of a DB row served via
+        ``GET /observability/traces/{trace_id}``. Proves the two sinks (G1 DB, G2 OTel) are
+        genuinely independent: this test never calls the ``/observability`` endpoint at all.
+        """
+        client = traced_app
+        registered_tool_name = await _register_probe_tool(client)
+
+        trace_id, traceparent = _new_traceparent()
+        headers = {**_auth_headers(), "traceparent": traceparent}
+
+        rpc_request = {
+            "jsonrpc": "2.0",
+            "id": "e2e-c1-2",
+            "method": "tools/call",
+            "params": {"name": registered_tool_name, "arguments": {"note": "please check the account on file"}},
+        }
+        rpc_response = await client.post("/rpc", json=rpc_request, headers=headers)
+        assert rpc_response.status_code == 200, f"tools/call failed: {rpc_response.status_code} {rpc_response.text}"
+        rpc_body = rpc_response.json()
+        assert "error" not in rpc_body, f"tools/call returned a JSON-RPC error: {rpc_body}"
+
+        # S1 (part 1): raw PII must not leak back to the RPC caller either.
+        assert RAW_PII_EMAIL not in rpc_response.text, "Raw PII leaked into the tools/call RPC response body"
+
+        # Now inspect the in-memory OTel spans exported through the patched process tracer
+        # instead of querying /observability -- this is the G2 sink, not the G1 DB sink.
+        spans = otel_memory_exporter.get_finished_spans()
+        metric_spans = [s for s in spans if s.name == "plugin.metrics.pii_filter"]
+        assert metric_spans, f"gateway did not export a 'plugin.metrics.pii_filter' OTel span; span names present: {[s.name for s in spans]}"
+
+        attrs = dict(metric_spans[0].attributes)
+        assert attrs.get("total_detections", 0) >= 1, f"Expected at least 1 PII detection, got attributes: {attrs}"
+        assert attrs.get("total_masked", 0) >= 1, f"Expected at least 1 masked value, got attributes: {attrs}"
+        assert "email" in str(attrs.get("detection_types", "")), f"Expected 'email' in detection_types, got: {attrs.get('detection_types')}"
+
+        # S1 (part 2, the security-critical assertion) end-to-end on the OTel sink: the raw
+        # matched PII value must never appear on any exported span, only counts/type-names.
+        assert RAW_PII_EMAIL not in str(attrs), "SECURITY: raw PII leaked into the OTel 'plugin.metrics.pii_filter' span attributes"
+        for span in spans:
+            for key, value in dict(span.attributes or {}).items():
+                assert RAW_PII_EMAIL not in str(value), f"SECURITY: raw PII found in OTel span '{span.name}' attribute '{key}'"
