@@ -4674,8 +4674,64 @@ class TestAdminUIRoute:
         assert isinstance(response, HTMLResponse)
         assert response.status_code == 200
 
-        # Verify template was called (cookies are now set during login, not on admin page access)
+        # Verify template was called and cookie handling did not prevent rendering.
         mock_request.app.state.templates.TemplateResponse.assert_called_once()
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_ui_non_email_auth_sets_bound_csrf_cookie(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Platform-admin page load must bind CSRF to the JWT session it issues."""
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = []
+        mock_prompts.return_value = []
+        mock_gateways.return_value = []
+        mock_roots.return_value = []
+        mock_request.cookies = {}
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        captured_payload = {}
+
+        async def fake_create_jwt_token(payload):
+            captured_payload.update(payload)
+            return "session-jwt"
+
+        mock_csrf_service = MagicMock()
+        mock_csrf_service.generate_csrf_token.return_value = "bound-csrf-token"
+
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.create_jwt_token", fake_create_jwt_token)
+        monkeypatch.setattr("mcpgateway.admin.set_auth_cookie", MagicMock())
+        monkeypatch.setattr("mcpgateway.admin.get_csrf_service", lambda: mock_csrf_service)
+
+        response = await admin_ui(
+            request=mock_request,
+            team_id=None,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "admin@example.com", "is_admin": True},
+        )
+
+        assert isinstance(response, HTMLResponse)
+        assert captured_payload["sub"] == "admin@example.com"
+        assert captured_payload["jti"]
+        mock_csrf_service.generate_csrf_token.assert_called_once_with(user_id="admin@example.com", session_id=captured_payload["jti"])
+        assert "mcpgateway_csrf_token=bound-csrf-token" in (response.headers.get("set-cookie") or "")
 
     @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
     @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
