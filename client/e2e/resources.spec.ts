@@ -227,7 +227,7 @@ test.describe("Resources page", () => {
       await page.goto(APP.RESOURCES);
       await page.waitForLoadState("networkidle");
 
-      await expect(page.getByText("Test Document")).toBeVisible();
+      await expect(page.getByText("Test Document", { exact: true })).toBeVisible();
 
       // Open card dropdown
       await page.getByLabel("More options for Test Document").click();
@@ -241,7 +241,7 @@ test.describe("Resources page", () => {
       await page.getByRole("button", { name: "Cancel" }).click();
 
       // Resource should still be visible
-      await expect(page.getByText("Test Document")).toBeVisible();
+      await expect(page.getByText("Test Document", { exact: true })).toBeVisible();
     });
 
     test("confirming delete removes resource from grid", async ({ page }) => {
@@ -260,7 +260,7 @@ test.describe("Resources page", () => {
       await page.goto(APP.RESOURCES);
       await page.waitForLoadState("networkidle");
 
-      await expect(page.getByText("Test Document")).toBeVisible();
+      await expect(page.getByText("Test Document", { exact: true })).toBeVisible();
 
       await page.getByLabel("More options for Test Document").click();
       await page.getByText("Delete").click();
@@ -269,7 +269,7 @@ test.describe("Resources page", () => {
       await page.getByRole("button", { name: /^delete$/i }).click();
 
       // Resource should disappear from grid
-      await expect(page.getByText("Test Document")).not.toBeVisible();
+      await expect(page.getByText("Test Document", { exact: true })).not.toBeVisible();
     });
 
     test("resource disappears immediately before DELETE responds (optimistic)", async ({
@@ -295,7 +295,7 @@ test.describe("Resources page", () => {
       await page.goto(APP.RESOURCES);
       await page.waitForLoadState("networkidle");
 
-      await expect(page.getByText("Test Document")).toBeVisible();
+      await expect(page.getByText("Test Document", { exact: true })).toBeVisible();
 
       await page.getByLabel("More options for Test Document").click();
       await page.getByText("Delete").click();
@@ -303,7 +303,7 @@ test.describe("Resources page", () => {
       await page.getByRole("button", { name: /^delete$/i }).click();
 
       // Should disappear immediately (optimistic), before API resolves
-      await expect(page.getByText("Test Document")).not.toBeVisible();
+      await expect(page.getByText("Test Document", { exact: true })).not.toBeVisible();
 
       resolveDelete();
     });
@@ -328,7 +328,7 @@ test.describe("Resources page", () => {
       await page.goto(APP.RESOURCES);
       await page.waitForLoadState("networkidle");
 
-      await expect(page.getByText("Test Document")).toBeVisible();
+      await expect(page.getByText("Test Document", { exact: true })).toBeVisible();
 
       await page.getByLabel("More options for Test Document").click();
       await page.getByText("Delete").click();
@@ -336,7 +336,7 @@ test.describe("Resources page", () => {
       await page.getByRole("button", { name: /^delete$/i }).click();
 
       // After rollback resource should reappear
-      await expect(page.getByText("Test Document")).toBeVisible();
+      await expect(page.getByText("Test Document", { exact: true })).toBeVisible();
     });
   });
 });
