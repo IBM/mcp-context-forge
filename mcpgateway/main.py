@@ -5342,43 +5342,8 @@ async def invoke_a2a_agent_by_id(
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
 
-        # Get filtering context from token (respects token scope)
-        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-
-        # Admin bypass - only when token has NO team restrictions
-        if is_admin and token_teams is None:
-            token_teams = None  # Admin unrestricted
-        elif token_teams is None:
-            token_teams = []  # Non-admin without teams = public-only
-
-        user_id = None
-        if isinstance(user, dict):
-            user_id = str(user.get("id") or user.get("sub") or user_email)
-        else:
-            user_id = str(user)
-
-        # Read the federation hop counter from the request header
-        hop_count = uaid_utils.read_hop_count(request.headers)
-
-        # Extract bearer token for cross-gateway forwarding
-        bearer_token = getattr(request.state, "bearer_token", None)
-
-        # Fallback: extract from Authorization header if middleware didn't set it
-        if not bearer_token:
-            auth_header = request.headers.get("authorization", "")
-            if auth_header.lower().startswith("bearer "):
-                bearer_token = auth_header[7:]  # Remove "Bearer " prefix
-
-        # Only forward JWT-shaped tokens; local opaque tokens cannot be validated by remote gateways
-        if bearer_token and not _is_jwt_token(bearer_token):
-            logger.info("Non-JWT token detected, not forwarding for cross-gateway auth")
-            bearer_token = None
-
-        # Extract inbound request metadata for plugin context
-        # When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=false: strip sensitive headers at router level
-        # When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true: pass all headers; service layer filters after whitelist check
-        content_type = request.headers.get("content-type")
-        request_headers = _prepare_request_headers(request.headers)
+        # Extract authentication and request context (shared with /invoke and /jsonrpc endpoints)
+        context = _extract_a2a_request_context(request, user)
 
         return await a2a_service.invoke_agent(
             db,
@@ -5386,13 +5351,7 @@ async def invoke_a2a_agent_by_id(
             parameters=parameters,
             interaction_type=interaction_type,
             agent_id=agent_id,  # Pass agent_id for UUID/UAID lookup
-            user_id=user_id,
-            user_email=user_email,
-            token_teams=token_teams,
-            hop_count=hop_count,
-            bearer_token=bearer_token,
-            content_type=content_type,
-            request_headers=request_headers,
+            **context,  # Unpack: user_id, user_email, token_teams, hop_count, bearer_token, content_type, request_headers
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -5527,8 +5486,10 @@ async def invoke_a2a_agent_jsonrpc(
             error_response = {
                 "jsonrpc": "2.0",
                 "error": {"code": -32600, "message": f"Invalid or missing jsonrpc field. Expected '2.0', got '{jsonrpc_version}'"},
-                "id": request_id,
             }
+            # JSON-RPC 2.0 spec: omit 'id' field for notifications (when id is None), don't include "id": null
+            if request_id is not None:
+                error_response["id"] = request_id
             return ORJSONResponse(status_code=400, content=error_response)
 
         method = body.get("method")
@@ -5536,8 +5497,10 @@ async def invoke_a2a_agent_jsonrpc(
             error_response = {
                 "jsonrpc": "2.0",
                 "error": {"code": -32600, "message": "Missing or invalid 'method' field in JSON-RPC request"},
-                "id": request_id,
             }
+            # JSON-RPC 2.0 spec: omit 'id' field for notifications (when id is None), don't include "id": null
+            if request_id is not None:
+                error_response["id"] = request_id
             return ORJSONResponse(status_code=400, content=error_response)
 
         # Extract params (can be null/missing for methods that don't require parameters)
@@ -5546,8 +5509,10 @@ async def invoke_a2a_agent_jsonrpc(
             error_response = {
                 "jsonrpc": "2.0",
                 "error": {"code": -32600, "message": "JSON-RPC 'params' field must be an object or null"},
-                "id": request_id,
             }
+            # JSON-RPC 2.0 spec: omit 'id' field for notifications (when id is None), don't include "id": null
+            if request_id is not None:
+                error_response["id"] = request_id
             return ORJSONResponse(status_code=400, content=error_response)
 
         logger.debug(f"User {safe_log_user(user)} invoking A2A agent '{agent_name}' via JSON-RPC passthrough with method '{method}'")
@@ -5578,7 +5543,11 @@ async def invoke_a2a_agent_jsonrpc(
             return result
 
         # Otherwise, wrap the result in JSON-RPC response format
-        return {"jsonrpc": "2.0", "result": result, "id": request_id}
+        response = {"jsonrpc": "2.0", "result": result}
+        # JSON-RPC 2.0 spec: omit 'id' field for notifications (when id is None), don't include "id": null
+        if request_id is not None:
+            response["id"] = request_id
+        return response
 
     except HTTPException:
         # Re-raise HTTP exceptions as-is
@@ -5588,12 +5557,18 @@ async def invoke_a2a_agent_jsonrpc(
         # JSON-RPC 2.0: -32001 is in server error range (-32000 to -32099) for application-defined errors
         # Note: -32601 would mean "JSON-RPC method not found", not "agent resource not found"
         logger.warning(f"A2A agent not found: {e}")
-        error_response = {"jsonrpc": "2.0", "error": {"code": -32001, "message": str(e)}, "id": request_id}
+        error_response = {"jsonrpc": "2.0", "error": {"code": -32001, "message": str(e)}}
+        # JSON-RPC 2.0 spec: omit 'id' field for notifications (when id is None), don't include "id": null
+        if request_id is not None:
+            error_response["id"] = request_id
         return ORJSONResponse(status_code=404, content=error_response)
     except A2AAgentError as e:
         # Return JSON-RPC error format for A2A errors
         logger.warning(f"A2A agent error: {e}")
-        error_response = {"jsonrpc": "2.0", "error": {"code": -32603, "message": str(e)}, "id": request_id}
+        error_response = {"jsonrpc": "2.0", "error": {"code": -32603, "message": str(e)}}
+        # JSON-RPC 2.0 spec: omit 'id' field for notifications (when id is None), don't include "id": null
+        if request_id is not None:
+            error_response["id"] = request_id
         return ORJSONResponse(status_code=400, content=error_response)
     except Exception as e:
         # Return JSON-RPC error format for unexpected errors
@@ -5601,7 +5576,10 @@ async def invoke_a2a_agent_jsonrpc(
         # exception capture (no exception.type/message/stacktrace in spans), but logger.error
         # below ensures the error is still logged with full context for debugging.
         logger.error(f"Unexpected error in JSON-RPC passthrough: {e}", exc_info=True)
-        error_response = {"jsonrpc": "2.0", "error": {"code": -32603, "message": "Internal server error"}, "id": request_id}
+        error_response = {"jsonrpc": "2.0", "error": {"code": -32603, "message": "Internal server error"}}
+        # JSON-RPC 2.0 spec: omit 'id' field for notifications (when id is None), don't include "id": null
+        if request_id is not None:
+            error_response["id"] = request_id
         return ORJSONResponse(status_code=500, content=error_response)
 
 

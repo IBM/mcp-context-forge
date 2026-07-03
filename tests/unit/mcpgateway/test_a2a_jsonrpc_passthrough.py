@@ -315,18 +315,17 @@ class TestJSONRPCPassthroughSecurity:
             status.HTTP_403_FORBIDDEN,
         ]
 
-    def test_requires_a2a_invoke_permission(self, mock_a2a_service, mock_auth, auth_headers):
-        """Test that endpoint requires a2a.invoke permission.
+    def test_requires_authentication(self, mock_a2a_service, mock_auth, auth_headers):
+        """Test that endpoint requires authentication (baseline security check).
 
-        This test verifies that the @require_permission('a2a.invoke') decorator
-        is applied to the route by ensuring authenticated requests succeed while
-        unauthenticated requests are rejected with 401/403.
+        This test verifies basic authentication requirement. For permission enforcement
+        testing, see TestJSONRPCSecurityDenyPaths.test_authenticated_user_without_permission_denied.
         """
         mock_a2a_service.invoke_agent = AsyncMock(return_value={"jsonrpc": "2.0", "result": {}, "id": 1})
 
         client = TestClient(app)
 
-        # Authenticated request should succeed (RBAC allows it)
+        # Authenticated request with proper permissions should succeed
         response = client.post(
             "/a2a/test-agent/jsonrpc",
             json={
@@ -678,6 +677,71 @@ class TestJSONRPCPassthroughGovernance:
         assert call_args is not None
         assert "bearer_token" in call_args.kwargs
 
+    def test_opaque_bearer_token_suppressed(self, mock_a2a_service, mock_auth):
+        """Test that opaque (non-JWT) bearer tokens are NOT forwarded for cross-gateway auth.
+
+        Regression test for lines 5106-5109: Only JWT-shaped tokens should be forwarded;
+        local opaque tokens cannot be validated by remote gateways.
+        """
+        mock_a2a_service.invoke_agent = AsyncMock(return_value={"jsonrpc": "2.0", "result": {}, "id": 1})
+
+        # Use an opaque token (not JWT format)
+        opaque_token = "local-opaque-token-12345"  # pragma: allowlist secret
+
+        client = TestClient(app)
+        response = client.post(
+            "/a2a/test-agent/jsonrpc",
+            json={
+                "jsonrpc": "2.0",
+                "method": "SendMessage",
+                "params": {},
+                "id": 1,
+            },
+            headers={"Authorization": f"Bearer {opaque_token}"},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        # Verify bearer_token was NOT passed (should be None for opaque tokens)
+        call_args = mock_a2a_service.invoke_agent.call_args
+        assert call_args is not None
+        assert "bearer_token" in call_args.kwargs
+        # Critical assertion: opaque token should be suppressed (None)
+        assert call_args.kwargs["bearer_token"] is None
+
+    def test_request_context_extraction_passes_content_type_and_headers(self, mock_a2a_service, mock_auth):
+        """Test that shared request context extraction passes content_type and filtered request_headers.
+
+        Verifies lines 5114-5115 and 5135-5145: content_type and request_headers from
+        _extract_a2a_request_context() are correctly passed to invoke_agent.
+        """
+        mock_a2a_service.invoke_agent = AsyncMock(return_value={"jsonrpc": "2.0", "result": {}, "id": 1})
+
+        client = TestClient(app)
+        response = client.post(
+            "/a2a/test-agent/jsonrpc",
+            json={
+                "jsonrpc": "2.0",
+                "method": "SendMessage",
+                "params": {},
+                "id": 1,
+            },
+            headers={
+                "Authorization": "Bearer test-token",
+                "Content-Type": "application/json",
+                "X-Custom-Header": "custom-value",
+            },
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        # Verify content_type and request_headers were passed to invoke_agent
+        call_args = mock_a2a_service.invoke_agent.call_args
+        assert call_args is not None
+        assert "content_type" in call_args.kwargs
+        assert call_args.kwargs["content_type"] == "application/json"
+        assert "request_headers" in call_args.kwargs
+        # Verify request_headers is a dict (filtered sensitive headers)
+        assert isinstance(call_args.kwargs["request_headers"], dict)
+
 
 class TestJSONRPCPassthroughExamples:
     """Test real-world A2A SDK examples."""
@@ -763,3 +827,279 @@ class TestJSONRPCPassthroughExamples:
         assert data["jsonrpc"] == "2.0"
         assert data["result"]["status"]["state"] == "TASK_STATE_COMPLETED"
         assert len(data["result"]["history"]) == 1
+
+
+class TestJSONRPCSecurityDenyPaths:
+    """Test security deny paths for RBAC and token scoping.
+
+    These tests verify that security controls properly reject unauthorized requests
+    without invoking the underlying service.
+    """
+
+    def test_authenticated_user_without_permission_denied(self, mock_a2a_service, mock_auth, mock_permission_service):
+        """Test that authenticated user without a2a.invoke permission is rejected with 403."""
+        # Configure permission service to deny a2a.invoke permission
+        from fastapi import HTTPException
+
+        mock_permission_service.check_permission = AsyncMock(
+            side_effect=HTTPException(status_code=403, detail="Access denied: insufficient permissions")
+        )
+
+        # Mock to verify service is NOT called
+        mock_a2a_service.invoke_agent = AsyncMock(return_value={"jsonrpc": "2.0", "result": {}, "id": 1})
+
+        client = TestClient(app)
+        response = client.post(
+            "/a2a/test-agent/jsonrpc",
+            json={
+                "jsonrpc": "2.0",
+                "method": "SendMessage",
+                "params": {},
+                "id": 1,
+            },
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+        # Should be rejected with 403 Forbidden (insufficient permissions)
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        # Service should NOT be invoked
+        mock_a2a_service.invoke_agent.assert_not_called()
+
+    def test_wrong_team_token_cannot_invoke_other_team_agent(self, mock_a2a_service, sample_a2a_agent):
+        """Test that token scoped to wrong team cannot invoke agent from different team."""
+        from mcpgateway.main import get_current_user_with_permissions
+
+        # Mock user with team1 scope (not team2)
+        def override_get_current_user_team1():
+            return {
+                "sub": "user@example.com",
+                "email": "user@example.com",
+                "is_admin": False,
+                "teams": ["team1"],  # Token scoped to team1
+                "permissions": ["a2a.invoke"],
+            }
+
+        app.dependency_overrides[get_current_user_with_permissions] = override_get_current_user_team1
+
+        # Agent belongs to team2, user has team1 scope
+        from mcpgateway.services.a2a_service import A2AAgentNotFoundError
+
+        mock_a2a_service.invoke_agent = AsyncMock(
+            side_effect=A2AAgentNotFoundError("Agent 'team2-agent' not found or access denied")
+        )
+
+        client = TestClient(app)
+        response = client.post(
+            "/a2a/team2-agent/jsonrpc",
+            json={
+                "jsonrpc": "2.0",
+                "method": "SendMessage",
+                "params": {},
+                "id": 1,
+            },
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+        # Should return 404 (agent not found due to token scoping)
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        data = response.json()
+        assert data["jsonrpc"] == "2.0"
+        assert data["error"]["code"] == -32001
+
+        # Clean up
+        app.dependency_overrides.clear()
+
+    def test_public_only_token_cannot_invoke_team_agent(self, mock_a2a_service):
+        """Test that public-only token (no team access) cannot invoke team-scoped agent."""
+        from mcpgateway.main import get_current_user_with_permissions
+
+        # Mock user with no team access (public-only)
+        def override_get_current_user_public_only():
+            return {
+                "sub": "user@example.com",
+                "email": "user@example.com",
+                "is_admin": False,
+                "teams": [],  # Public-only access
+                "permissions": ["a2a.invoke"],
+            }
+
+        app.dependency_overrides[get_current_user_with_permissions] = override_get_current_user_public_only
+
+        from mcpgateway.services.a2a_service import A2AAgentNotFoundError
+
+        mock_a2a_service.invoke_agent = AsyncMock(
+            side_effect=A2AAgentNotFoundError("Agent 'private-agent' not found or access denied")
+        )
+
+        client = TestClient(app)
+        response = client.post(
+            "/a2a/private-agent/jsonrpc",
+            json={
+                "jsonrpc": "2.0",
+                "method": "SendMessage",
+                "params": {},
+                "id": 1,
+            },
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+        # Should return 404 (agent not found due to visibility restrictions)
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        data = response.json()
+        assert data["jsonrpc"] == "2.0"
+        assert data["error"]["code"] == -32001
+
+        # Clean up
+        app.dependency_overrides.clear()
+
+
+class TestJSONRPCNotifications:
+    """Test JSON-RPC notification handling (requests without id field).
+
+    JSON-RPC 2.0 spec: When 'id' is absent (notifications), error responses
+    must omit the 'id' field entirely, not include "id": null.
+    """
+
+    def test_notification_success_omits_id_field(self, mock_a2a_service, mock_auth, auth_headers):
+        """Test that successful notification response omits id field when request has no id."""
+        mock_a2a_service.invoke_agent = AsyncMock(return_value={"taskId": "task-123", "status": "submitted"})
+
+        client = TestClient(app)
+        response = client.post(
+            "/a2a/test-agent/jsonrpc",
+            json={
+                "jsonrpc": "2.0",
+                "method": "SendMessage",
+                "params": {"query": "Hello"},
+                # No 'id' field - this is a notification
+            },
+            headers=auth_headers,
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["jsonrpc"] == "2.0"
+        assert "result" in data
+        # JSON-RPC 2.0 spec: notifications must omit 'id' field, not return "id": null
+        assert "id" not in data
+
+    def test_notification_validation_error_omits_id_field(self, mock_a2a_service, mock_auth, auth_headers):
+        """Test that validation error for notification omits id field."""
+        client = TestClient(app)
+        response = client.post(
+            "/a2a/test-agent/jsonrpc",
+            json={
+                "jsonrpc": "2.0",
+                # Missing 'method' field - validation error
+                "params": {},
+                # No 'id' field - this is a notification
+            },
+            headers=auth_headers,
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        data = response.json()
+        assert data["jsonrpc"] == "2.0"
+        assert "error" in data
+        assert data["error"]["code"] == -32600
+        # JSON-RPC 2.0 spec: error response for notification must omit 'id' field
+        assert "id" not in data
+
+    def test_notification_agent_not_found_omits_id_field(self, mock_a2a_service, mock_auth, auth_headers):
+        """Test that agent not found error for notification omits id field."""
+        from mcpgateway.services.a2a_service import A2AAgentNotFoundError
+
+        mock_a2a_service.invoke_agent = AsyncMock(side_effect=A2AAgentNotFoundError("Agent not found"))
+
+        client = TestClient(app)
+        response = client.post(
+            "/a2a/nonexistent-agent/jsonrpc",
+            json={
+                "jsonrpc": "2.0",
+                "method": "SendMessage",
+                "params": {},
+                # No 'id' field - this is a notification
+            },
+            headers=auth_headers,
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        data = response.json()
+        assert data["jsonrpc"] == "2.0"
+        assert "error" in data
+        assert data["error"]["code"] == -32001
+        # JSON-RPC 2.0 spec: error response for notification must omit 'id' field
+        assert "id" not in data
+
+    def test_notification_agent_error_omits_id_field(self, mock_a2a_service, mock_auth, auth_headers):
+        """Test that agent error for notification omits id field."""
+        from mcpgateway.services.a2a_service import A2AAgentError
+
+        mock_a2a_service.invoke_agent = AsyncMock(side_effect=A2AAgentError("Agent invocation failed"))
+
+        client = TestClient(app)
+        response = client.post(
+            "/a2a/test-agent/jsonrpc",
+            json={
+                "jsonrpc": "2.0",
+                "method": "SendMessage",
+                "params": {},
+                # No 'id' field - this is a notification
+            },
+            headers=auth_headers,
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        data = response.json()
+        assert data["jsonrpc"] == "2.0"
+        assert "error" in data
+        assert data["error"]["code"] == -32603
+        # JSON-RPC 2.0 spec: error response for notification must omit 'id' field
+        assert "id" not in data
+
+    def test_notification_unexpected_error_omits_id_field(self, mock_a2a_service, mock_auth, auth_headers):
+        """Test that unexpected error for notification omits id field."""
+        mock_a2a_service.invoke_agent = AsyncMock(side_effect=Exception("Unexpected error"))
+
+        client = TestClient(app)
+        response = client.post(
+            "/a2a/test-agent/jsonrpc",
+            json={
+                "jsonrpc": "2.0",
+                "method": "SendMessage",
+                "params": {},
+                # No 'id' field - this is a notification
+            },
+            headers=auth_headers,
+        )
+
+        assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+        data = response.json()
+        assert data["jsonrpc"] == "2.0"
+        assert "error" in data
+        assert data["error"]["code"] == -32603
+        # JSON-RPC 2.0 spec: error response for notification must omit 'id' field
+        assert "id" not in data
+
+    def test_request_with_id_includes_id_in_response(self, mock_a2a_service, mock_auth, auth_headers):
+        """Test that regular request with id field includes id in response."""
+        mock_a2a_service.invoke_agent = AsyncMock(return_value={"taskId": "task-123"})
+
+        client = TestClient(app)
+        response = client.post(
+            "/a2a/test-agent/jsonrpc",
+            json={
+                "jsonrpc": "2.0",
+                "method": "SendMessage",
+                "params": {},
+                "id": 42,  # Has 'id' field - not a notification
+            },
+            headers=auth_headers,
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["jsonrpc"] == "2.0"
+        # Regular requests must include 'id' in response
+        assert "id" in data
+        assert data["id"] == 42
