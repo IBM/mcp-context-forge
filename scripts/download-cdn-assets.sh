@@ -24,6 +24,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATIC_DIR="${SCRIPT_DIR}/../app/mcpgateway/static/vendor"
 
 # Create vendor directory structure
+mkdir -p "${STATIC_DIR}/tailwindcss"
 mkdir -p "${STATIC_DIR}/codemirror/mode/javascript"
 mkdir -p "${STATIC_DIR}/codemirror/theme"
 mkdir -p "${STATIC_DIR}/chartjs"
