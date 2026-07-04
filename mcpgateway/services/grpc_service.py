@@ -894,7 +894,7 @@ class GrpcService:
         try:
             # Both the asyncio wrapper AND the underlying gRPC call get the deadline so a slow
             # upstream cannot keep an executor thread alive after the coroutine is cancelled.
-            await asyncio.wait_for(endpoint.start(timeout=effective_timeout), timeout=effective_timeout)
+            await asyncio.wait_for(endpoint.start(timeout=effective_timeout, trusted_local=True), timeout=effective_timeout)
 
             if has_stored_descriptors:
                 raw_descriptors = [base64.b64decode(b, validate=True) for b in stored_descriptors]

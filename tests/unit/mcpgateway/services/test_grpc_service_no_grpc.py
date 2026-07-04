@@ -535,7 +535,7 @@ async def test_invoke_method_success(service, db):
         def __init__(self, **_kwargs):
             self._services = None
 
-        async def start(self, timeout=None):
+        async def start(self, timeout=None, trusted_local=False):
             return None
 
         async def invoke(self, service_name, method, request_data, timeout=None):
@@ -580,7 +580,7 @@ async def test_invoke_method_error_path(service, db):
         def __init__(self, **_kwargs):
             self._services = None
 
-        async def start(self, timeout=None):
+        async def start(self, timeout=None, trusted_local=False):
             return None
 
         async def invoke(self, _service_name, _method, _request_data, timeout=None):
@@ -629,7 +629,7 @@ async def test_invoke_method_validates_tls_paths_when_configured(service, db):
         def __init__(self, **_kwargs):
             self._services = None
 
-        async def start(self, timeout=None):
+        async def start(self, timeout=None, trusted_local=False):
             return None
 
         async def invoke(self, _service_name, _method, _request_data, timeout=None):
