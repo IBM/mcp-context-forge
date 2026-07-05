@@ -909,7 +909,15 @@ def _build_server_resource_url(scope: Scope, server_id: str) -> str:
         return ""
     if not raw:
         return ""
-    return f"{raw}/servers/{server_id}/mcp"
+    # Include app_root_path so the enforced audience matches the advertised
+    # Protected Resource Metadata URL on path-prefixed deployments (e.g. when
+    # the gateway is mounted under /gw behind a reverse proxy). Without this,
+    # the enforced aud is {app_domain}/servers/{id}/mcp while the advertised
+    # resource is {scheme}://{host}{root_path}/servers/{id}/mcp — see #5172.
+    root_path = str(getattr(settings, "app_root_path", "") or "").strip().rstrip("/")
+    if root_path and not root_path.startswith("/"):
+        root_path = "/" + root_path
+    return f"{raw}{root_path}/servers/{server_id}/mcp"
 
 
 def _build_resource_metadata_url(scope: Scope, server_id: str) -> str:

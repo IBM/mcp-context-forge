@@ -17321,3 +17321,35 @@ async def test_list_tools_sso_admin_gets_admin_bypass_at_service_layer(monkeypat
     await list_tools()
 
     assert called["args"] == (None, None)
+
+
+def test_build_server_resource_url_includes_app_root_path(monkeypatch):
+    """#5172: enforced audience includes app_root_path on path-prefixed deployments."""
+    from mcpgateway.transports.streamablehttp_transport import _build_server_resource_url
+
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport.settings.app_domain",
+        "https://gateway.example.com",
+    )
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport.settings.app_root_path",
+        "/gw",
+    )
+    url = _build_server_resource_url(scope={}, server_id="srv-1")
+    assert url == "https://gateway.example.com/gw/servers/srv-1/mcp"
+
+
+def test_build_server_resource_url_no_root_path_unchanged(monkeypatch):
+    """Without app_root_path the resource URL is unchanged (backward compatible)."""
+    from mcpgateway.transports.streamablehttp_transport import _build_server_resource_url
+
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport.settings.app_domain",
+        "https://gateway.example.com",
+    )
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport.settings.app_root_path",
+        "",
+    )
+    url = _build_server_resource_url(scope={}, server_id="srv-1")
+    assert url == "https://gateway.example.com/servers/srv-1/mcp"
