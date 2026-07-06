@@ -320,6 +320,7 @@ class TestJSONRPCPassthroughSecurity:
         assert response.status_code == status.HTTP_200_OK
 
         # Unauthenticated request should be rejected
+        app.dependency_overrides.clear()
         unauth_response = client.post(
             "/a2a/test-agent/jsonrpc",
             json={
@@ -330,6 +331,9 @@ class TestJSONRPCPassthroughSecurity:
             },
             # No headers - unauthenticated
         )
+        from mcpgateway.main import get_current_user_with_permissions
+
+        app.dependency_overrides[get_current_user_with_permissions] = mock_auth
         assert unauth_response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
 
 
