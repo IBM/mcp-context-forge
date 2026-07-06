@@ -128,6 +128,29 @@ This ensures:
 - Distributed traces span multiple services
 - End-to-end visibility across the call chain
 
+### MCP `_meta.traceparent`
+
+For non-pooled remote MCP tool calls, ContextForge also propagates the active
+trace context in the MCP tool-call `_meta` payload:
+
+```json
+{
+  "_meta": {
+    "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+  }
+}
+```
+
+The `_meta.traceparent` value is synchronized with the final outbound
+`traceparent` HTTP header after trace-context injection. This keeps the trace ID
+and parent span ID consistent for upstream MCP servers that inspect either the
+HTTP headers or the MCP protocol payload. Existing `_meta` fields, such as
+identity or tenant context, are preserved when the trace context is added.
+
+Pooled or registry-backed MCP sessions deliberately skip per-request
+`_meta.traceparent` synchronization because those transports reuse pinned
+headers and do not propagate per-request trace context upstream.
+
 ## W3C Baggage Support
 
 ### Purpose
