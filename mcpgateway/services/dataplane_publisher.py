@@ -43,7 +43,7 @@ from mcpgateway.utils.redis_client import get_redis_client
 logger = logging.getLogger(__name__)
 
 USER_CONFIG_KEY = "UserConfig"
-REDIS_PUBLISHER_TIME = settings.dataplane_publisher_interval_seconds  # Publish interval in seconds
+REDIS_PUBLISHER_TIME = settings.dataplane_publisher_interval_seconds
 # Keys are not deleted explicitly; stale configs expire via Redis TTL. The
 # TTL must outlive a full missed publish cycle: under load the loop's timer
 # can fire late, and with only a few seconds of margin every UserConfig key
