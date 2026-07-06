@@ -5514,8 +5514,10 @@ async def stream_a2a_agent(
           (same authentication, RBAC, and governance).
         - For non-streaming behavior, use POST /a2a/{agent_name}/invoke instead.
         - Streaming is not supported when Rust runtime delegation is enabled.
+        - Uses _extract_a2a_request_context helper (shared with /invoke and /jsonrpc) for consistent
+          authentication, token scoping, and passthrough headers behavior (see helper docs for details).
 
-    Note:
+    Error Handling:
         - stream_agent_response yields error SSE events instead of raising exceptions.
         - Errors are communicated to clients via SSE data events (e.g., "data: {\"error\": \"...\"}\\n\\n")
           rather than HTTP status codes, which is the correct pattern for streaming responses.
@@ -5524,39 +5526,8 @@ async def stream_a2a_agent(
     if a2a_service is None:
         raise HTTPException(status_code=503, detail="A2A service not available")
 
-    # Get filtering context from token (respects token scope)
-    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-
-    # Admin bypass - only when token has NO team restrictions
-    if is_admin and token_teams is None:
-        pass  # Admin unrestricted (token_teams already None)
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only
-
-    user_id = None
-    if isinstance(user, dict):
-        user_id = str(user.get("id") or user.get("sub") or user_email)
-    else:
-        user_id = str(user)
-
-    # Read the federation hop counter (same as invoke endpoint)
-    hop_count = uaid_utils.read_hop_count(request.headers)
-
-    # Extract bearer token for cross-gateway forwarding
-    bearer_token = getattr(request.state, "bearer_token", None)
-    if not bearer_token:
-        auth_header = request.headers.get("authorization", "")
-        if auth_header.lower().startswith("bearer "):
-            bearer_token = auth_header[7:]
-
-    # Only forward JWT-shaped tokens
-    if bearer_token and not _is_jwt_token(bearer_token):
-        logger.info("Non-JWT token detected, not forwarding for cross-gateway auth")
-        bearer_token = None
-
-    # Extract inbound request metadata for plugin context
-    content_type = request.headers.get("content-type")
-    request_headers = _filter_sensitive_headers({k.lower(): v for k, v in request.headers.items()})
+    # Extract authentication and request context (same logic as /invoke and /jsonrpc endpoints)
+    context = _extract_a2a_request_context(request, user)
 
     # Return StreamingResponse with SSE media type
     return StreamingResponse(
@@ -5565,13 +5536,7 @@ async def stream_a2a_agent(
             agent_name,
             parameters,
             interaction_type,
-            user_id=user_id,
-            user_email=user_email,
-            token_teams=token_teams,
-            hop_count=hop_count,
-            bearer_token=bearer_token,
-            content_type=content_type,
-            request_headers=request_headers,
+            **context,  # Unpack: user_id, user_email, token_teams, hop_count, bearer_token, content_type, request_headers
         ),
         media_type="text/event-stream",
         headers={

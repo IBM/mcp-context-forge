@@ -2810,13 +2810,13 @@ class A2AAgentService(BaseService):
         agent_oauth_config = getattr(agent, "oauth_config", None)
         agent_passthrough_headers = getattr(agent, "passthrough_headers", None)
 
-        # Filter request_headers to only whitelisted passthrough headers
-        # before they reach plugin hooks (prevents credential leak to plugins).
-        if request_headers and agent_passthrough_headers:
-            whitelist_lower = {h.lower() for h in agent_passthrough_headers}
-            request_headers = {k: v for k, v in request_headers.items() if k in whitelist_lower}
-        elif request_headers:
-            request_headers = {}  # No whitelist = no headers reach plugins
+        # ═══════════════════════════════════════════════════════════════════════════
+        # SECURITY: Prepare header flows (plugin hooks vs downstream agent)
+        # Uses _prepare_header_flows helper (same logic as invoke_agent)
+        # Plugin hooks ALWAYS receive sanitized headers; downstream respects feature flag
+        # Related: Issue #3621 Phase 1, PR #5183
+        # ═══════════════════════════════════════════════════════════════════════════
+        plugin_headers, downstream_headers = self._prepare_header_flows(request_headers, agent_passthrough_headers)
 
         # ═══════════════════════════════════════════════════════════════════════════
         # SECURITY: Validate UAID endpoint domain before invocation
@@ -2850,19 +2850,16 @@ class A2AAgentService(BaseService):
         success = False
         error_message = None
 
-        # Check if we need to accumulate response (for POST_INVOKE hooks or observability)
-        # This is determined before streaming to avoid unnecessary memory usage
+        # Get plugin manager for hook checks (needed before preparing invocation)
         agent_context_id = make_context_id(str(agent_team_id), agent_name) if agent_team_id else agent_id
         plugin_manager = await self._get_plugin_manager(agent_context_id)
 
-        # Accumulate response only if needed by POST_INVOKE hooks or observability sampling
-        should_accumulate = (plugin_manager and plugin_manager.has_hooks_for(AgentHookType.AGENT_POST_INVOKE)) or is_output_capture_enabled("a2a.invoke")
-
-        # Limit accumulated size to prevent OOM (10MB default, configurable)
-        max_accumulated_bytes = getattr(settings, "a2a_max_accumulated_response_bytes", 10 * 1024 * 1024)
-        accumulated_response = [] if should_accumulate else None
+        # Note: should_accumulate flag determined after pre-invoke hook succeeds
+        # to avoid computing flag for requests that will be blocked by plugins
+        accumulated_response = None
         accumulated_bytes = 0
         chunks_streamed = 0
+        max_accumulated_bytes = getattr(settings, "a2a_max_accumulated_response_bytes", 10 * 1024 * 1024)
 
         # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 2: Prepare invocation and fire pre-invoke hook
@@ -2880,6 +2877,7 @@ class A2AAgentService(BaseService):
                 auth_query_params=agent_auth_query_params,
                 correlation_id=correlation_id,
                 streaming=True,  # This is the streaming endpoint
+                base_headers=downstream_headers,
             )
         except Exception as e:
             if agent_auth_type in ("basic", "bearer", "authheaders") and agent_auth_value:
@@ -2932,7 +2930,7 @@ class A2AAgentService(BaseService):
                     payload=AgentPreInvokePayload(
                         agent_id=agent_id,
                         messages=[{"role": "user", "content": parameters}] if parameters else [],
-                        headers=HttpHeaderPayload(root=request_headers or {}),
+                        headers=HttpHeaderPayload(root=plugin_headers or {}),
                         parameters=parameters if isinstance(parameters, dict) else {},
                     ),
                     global_context=global_context,
@@ -2943,7 +2941,20 @@ class A2AAgentService(BaseService):
                     if pre_result.modified_payload.parameters is not None:
                         parameters = pre_result.modified_payload.parameters
                     if pre_result.modified_payload.headers is not None:
-                        prepared.headers.update(pre_result.modified_payload.headers.model_dump())
+                        # SECURITY: Re-filter plugin-returned headers against whitelist and sensitive patterns
+                        # Prevents malicious plugins from injecting headers that bypass security controls
+                        # Related: Issue #3621 Phase 1, PR #5183 security review
+                        plugin_returned_headers = dict(pre_result.modified_payload.headers.model_dump())
+                        refiltered = self._refilter_plugin_headers(plugin_returned_headers, agent, settings.enable_sensitive_header_passthrough)
+                        if refiltered != plugin_returned_headers:
+                            blocked = set(plugin_returned_headers.keys()) - set(refiltered.keys())
+                            logger.warning(
+                                "Plugin-returned headers blocked by security policy for agent %s: %s (user: %s)",
+                                agent_id,
+                                list(blocked),
+                                user_email or "anonymous",
+                            )
+                        prepared.headers.update(refiltered)
             except PluginViolationError as e:
                 logger.error("Plugin RBAC violation for A2A agent %s: %s", agent_id, e)
                 error_data = json.dumps({"error": f"Plugin RBAC violation: {e}"})
@@ -2954,6 +2965,24 @@ class A2AAgentService(BaseService):
                 error_data = json.dumps({"error": f"Pre-invoke plugin error: {e}"})
                 yield f"data: {error_data}\n\n"
                 return
+
+        # Determine if response accumulation is needed (deferred until after pre-invoke hook)
+        should_accumulate = (plugin_manager and plugin_manager.has_hooks_for(AgentHookType.AGENT_POST_INVOKE)) or is_output_capture_enabled("a2a.invoke")
+        if should_accumulate:
+            accumulated_response = []
+
+        # Record downstream headers metric after pre-invoke hook succeeds
+        # (deferred from earlier to avoid counting requests blocked by plugins)
+        if downstream_headers and settings.observability_enabled:
+            try:
+                self._observability_service.record_metric(
+                    timestamp=datetime.now(timezone.utc),
+                    name="a2a.downstream_headers.forwarded",
+                    value=len(downstream_headers),
+                    metadata={"agent_id": agent_id, "agent_name": agent_name},
+                )
+            except Exception as e:  # pragma: no cover
+                logger.warning("Failed to record downstream headers metric: %s", e)  # pragma: no cover
 
         span_attributes = {
             "a2a.agent.name": agent_name,
