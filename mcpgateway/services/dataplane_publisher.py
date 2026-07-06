@@ -290,7 +290,7 @@ class DataplanePublisherService:
                         DbResource.uri_template.is_(None),
                     )
                 ).all()
-                tool_rows = db.execute(select(DbTool.id, DbTool.name, DbTool.owner_email, DbTool.team_id, DbTool.visibility).where(DbTool.enabled.is_(True))).all()
+                tool_rows = db.execute(select(DbTool.id, DbTool.name, DbTool.original_name, DbTool.owner_email, DbTool.team_id, DbTool.visibility).where(DbTool.enabled.is_(True))).all()
                 backend_items_by_server = self._get_backend_items_by_server(db)
 
                 return {
