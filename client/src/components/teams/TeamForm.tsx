@@ -38,7 +38,7 @@ export function TeamForm({ isOpen, onToggle, onSuccess }: CreateTeamFormProps) {
     setMaxMembers,
     handleAddMember,
     handleRemoveMember,
-    handleMemberNameChange,
+    handleMemberEmailChange,
     handleMemberRoleChange,
     resetForm,
     handleSubmit,
@@ -190,8 +190,8 @@ export function TeamForm({ isOpen, onToggle, onSuccess }: CreateTeamFormProps) {
                   <Fragment key={index}>
                     <Combobox
                       options={memberOptions}
-                      value={member.name}
-                      onValueChange={(v) => handleMemberNameChange(index, v)}
+                      value={member.email}
+                      onValueChange={(v) => handleMemberEmailChange(index, v)}
                       placeholder={intl.formatMessage({ id: "teams.create.memberPlaceholder" })}
                       searchPlaceholder={intl.formatMessage({
                         id: "teams.create.memberPlaceholder",

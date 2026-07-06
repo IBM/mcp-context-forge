@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, type FormEvent } from "react";
 import { useIntl } from "react-intl";
+import { toast } from "sonner";
 import { z } from "zod";
 import { api } from "@/api/client";
 import { createTeam, addTeamMember } from "@/api/teams";
@@ -11,7 +12,7 @@ export type TeamRole = "member" | "owner";
 export type TeamVisibility = "private" | "public";
 
 export interface TeamMember {
-  name: string;
+  email: string;
   role: TeamRole;
 }
 
@@ -22,6 +23,16 @@ const createTeamFormSchema = (intl: ReturnType<typeof useIntl>) =>
       .trim()
       .min(1, intl.formatMessage({ id: "teams.create.error.nameRequired" }))
       .regex(/^[a-zA-Z0-9_.\- ]+$/, intl.formatMessage({ id: "teams.create.nameHint" })),
+    // Only filled member rows are validated; empty rows are dropped before parsing.
+    members: z.array(
+      z.object({
+        email: z
+          .string()
+          .trim()
+          .email(intl.formatMessage({ id: "teams.create.error.invalidEmail" })),
+        role: z.enum(["member", "owner"]),
+      }),
+    ),
   });
 
 export interface UseTeamFormReturn {
@@ -44,7 +55,7 @@ export interface UseTeamFormReturn {
   // Member row actions
   handleAddMember: () => void;
   handleRemoveMember: (index: number) => void;
-  handleMemberNameChange: (index: number, value: string) => void;
+  handleMemberEmailChange: (index: number, value: string) => void;
   handleMemberRoleChange: (index: number, value: TeamRole) => void;
 
   // Form actions
@@ -53,7 +64,7 @@ export interface UseTeamFormReturn {
   handleSubmit: (event: FormEvent<HTMLFormElement>, onSuccess?: () => void) => Promise<void>;
 }
 
-const INITIAL_MEMBERS: TeamMember[] = [{ name: "", role: "owner" }];
+const INITIAL_MEMBERS: TeamMember[] = [{ email: "", role: "owner" }];
 const DEFAULT_MAX_MEMBERS = "100";
 
 export function useTeamForm(): UseTeamFormReturn {
@@ -96,20 +107,20 @@ export function useTeamForm(): UseTeamFormReturn {
     setDescription("");
     setVisibility("private");
     setMaxMembers(DEFAULT_MAX_MEMBERS);
-    setMembers([{ name: "", role: "owner" }]);
+    setMembers([{ email: "", role: "owner" }]);
     setError(null);
   }, []);
 
   const handleAddMember = useCallback(() => {
-    setMembers((prev) => [...prev, { name: "", role: "owner" }]);
+    setMembers((prev) => [...prev, { email: "", role: "owner" }]);
   }, []);
 
   const handleRemoveMember = useCallback((index: number) => {
     setMembers((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
-  const handleMemberNameChange = useCallback((index: number, value: string) => {
-    setMembers((prev) => prev.map((m, i) => (i === index ? { ...m, name: value } : m)));
+  const handleMemberEmailChange = useCallback((index: number, value: string) => {
+    setMembers((prev) => prev.map((m, i) => (i === index ? { ...m, email: value } : m)));
   }, []);
 
   const handleMemberRoleChange = useCallback((index: number, value: TeamRole) => {
@@ -117,14 +128,15 @@ export function useTeamForm(): UseTeamFormReturn {
   }, []);
 
   const validateForm = useCallback((): boolean => {
-    const result = schema.safeParse({ name });
+    const filledMembers = members.filter((m) => m.email.trim());
+    const result = schema.safeParse({ name, members: filledMembers });
     if (result.success) {
       setError(null);
       return true;
     }
     setError(result.error.issues[0]?.message ?? null);
     return false;
-  }, [name, schema]);
+  }, [name, members, schema]);
 
   const handleSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>, onSuccess?: () => void) => {
@@ -142,28 +154,28 @@ export function useTeamForm(): UseTeamFormReturn {
           max_members: parseInt(maxMembers, 10),
         });
 
-        const filledMembers = members.filter((m) => m.name.trim());
+        const filledMembers = members.filter((m) => m.email.trim());
         if (filledMembers.length > 0) {
           const results = await Promise.allSettled(
             filledMembers.map((m) =>
-              addTeamMember(team.id, { email: m.name.trim(), role: m.role }),
+              addTeamMember(team.id, { email: m.email.trim(), role: m.role }),
             ),
           );
           const failed = results
             .map((r, i) =>
               r.status === "rejected"
-                ? `${filledMembers[i].name}: ${sanitizeError(r.reason)}`
+                ? `${filledMembers[i].email}: ${sanitizeError(r.reason)}`
                 : null,
             )
-            .filter(Boolean);
+            .filter((v): v is string => v !== null);
+          // The team was already created, so close the form and surface the
+          // partial failure via a toast rather than blocking on an inline error
+          // (which would tempt the user to resubmit and create a duplicate team).
           if (failed.length > 0) {
-            setError(
-              intl.formatMessage(
-                { id: "teams.create.error.membersFailed" },
-                { errors: failed.join("\n") },
-              ),
+            toast.warning(
+              intl.formatMessage({ id: "teams.create.warning.membersFailed" }, { name: team.name }),
+              { description: failed.join("\n") },
             );
-            return;
           }
         }
 
@@ -193,7 +205,7 @@ export function useTeamForm(): UseTeamFormReturn {
     setMaxMembers,
     handleAddMember,
     handleRemoveMember,
-    handleMemberNameChange,
+    handleMemberEmailChange,
     handleMemberRoleChange,
     resetForm,
     validateForm,
