@@ -166,7 +166,7 @@ async def test_full_payload_generation_with_mock_db():
     gateway1.id = "g1"
     gateway1.name = "Gateway 1"
     gateway1.url = "http://localhost:9000"
-    gateway1.transport = "sse"
+    gateway1.transport = "STREAMABLEHTTP"
     gateway1.passthrough_headers = ["Authorization"]
     gateway1.owner_email = "user1@example.com"
     gateway1.team_id = "team1"
@@ -264,7 +264,7 @@ async def test_full_payload_generation_with_mock_db():
         backend = server1["backends"]["g1"]
         assert backend["name"] == "Gateway 1"
         assert backend["url"] == "http://localhost:9000"
-        assert backend["transport"] == "sse"
+        assert backend["transport"] == "STREAMABLEHTTP"
         assert backend["passthrough_headers"] == ["Authorization"]
         assert backend["allowed_tool_names"] == ["public_tool", "private_tool"]
         assert backend["allowed_resource_names"] == ["Resource 1"]
@@ -273,7 +273,9 @@ async def test_full_payload_generation_with_mock_db():
         # Verify user2 sees public server but not private server from user1
         user2_config = payload["user2@example.com"]
         assert "s1" in user2_config["virtual_hosts"]  # public
-        assert "s2" in user2_config["virtual_hosts"]  # own private
+        # Own private server exists but has no backend associations, so it
+        # is omitted from the payload (no publishable backends).
+        assert "s2" not in user2_config["virtual_hosts"]
         user2_backend = user2_config["virtual_hosts"]["s1"]["backends"]["g1"]
         assert user2_backend["allowed_tool_names"] == ["public_tool", "team2_tool"]
 
@@ -364,7 +366,7 @@ def test_create_payload_filters_empty_backends():
                     },
                 }
             ],
-            "gateways": [{"id": "gateway1", "name": "Gateway 1", "url": "http://localhost:9000", "transport": "sse", "passthrough_headers": None}],
+            "gateways": [{"id": "gateway1", "name": "Gateway 1", "url": "http://localhost:9000", "transport": "STREAMABLEHTTP", "passthrough_headers": None}],
             "prompts": [],
             "resources": [],
         }
@@ -372,9 +374,36 @@ def test_create_payload_filters_empty_backends():
 
     result = service.create_payload(data)
 
-    # Server exists but has no backends (all empty)
-    assert "server1" in result["user@example.com"]["virtual_hosts"]
-    assert result["user@example.com"]["virtual_hosts"]["server1"]["backends"] == {}
+    # A server with no publishable backends is omitted entirely so the
+    # dataplane 404s it instead of serving an empty tool list.
+    assert "server1" not in result["user@example.com"]["virtual_hosts"]
+
+
+def test_create_payload_excludes_non_streamable_gateways():
+    """create_payload() drops backends whose transport the dataplane cannot serve."""
+    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
+
+    service = DataplanePublisherService()
+    data = {
+        "user@example.com": {
+            "servers": [
+                {
+                    "id": "server1",
+                    "backend_items": {
+                        "gateway_sse": {"tools": ["tool1"], "resources": [], "prompts": []},
+                    },
+                }
+            ],
+            "gateways": [{"id": "gateway_sse", "name": "SSE Gateway", "url": "http://localhost:9000/sse", "transport": "SSE", "passthrough_headers": None}],
+            "prompts": [],
+            "resources": [],
+        }
+    }
+
+    result = service.create_payload(data)
+
+    # The SSE backend is excluded and the now-backendless server is omitted.
+    assert result["user@example.com"]["virtual_hosts"] == {}
 
 
 def test_create_payload_normalizes_null_passthrough_headers():
@@ -392,7 +421,7 @@ def test_create_payload_normalizes_null_passthrough_headers():
                     },
                 }
             ],
-            "gateways": [{"id": "gateway1", "name": "Gateway 1", "url": "http://localhost:9000", "transport": "sse", "passthrough_headers": None}],
+            "gateways": [{"id": "gateway1", "name": "Gateway 1", "url": "http://localhost:9000", "transport": "STREAMABLEHTTP", "passthrough_headers": None}],
             "prompts": [],
             "resources": [],
         }
@@ -428,8 +457,9 @@ def test_create_payload_handles_missing_references():
     result = service.create_payload(data)
 
     # Server exists but has no backends (gateway missing)
-    assert "server1" in result["user@example.com"]["virtual_hosts"]
-    assert result["user@example.com"]["virtual_hosts"]["server1"]["backends"] == {}
+    # With its only gateway missing, the server has no publishable backends
+    # and is omitted from the payload.
+    assert "server1" not in result["user@example.com"]["virtual_hosts"]
 
 
 @pytest.mark.asyncio

@@ -219,6 +219,10 @@ class DataplanePublisherService:
 
             prompt_map = {prompt["id"]: prompt["name"] for prompt in prompts}
 
+            # The dataplane proxies streamable-HTTP upstreams only; other
+            # transports (e.g. SSE, deprecated and removed in the 2026-07-28
+            # MCP protocol update) are excluded so the published config never
+            # advertises a backend the dataplane cannot serve.
             gateway_base = {
                 gateway["id"]: {
                     "name": gateway["name"],
@@ -227,6 +231,7 @@ class DataplanePublisherService:
                     "passthrough_headers": gateway["passthrough_headers"] or [],
                 }
                 for gateway in gateways
+                if (gateway["transport"] or "").upper() == "STREAMABLEHTTP"
             }
 
             virtual_hosts: dict[str, VirtualHostConfig] = {}
@@ -250,6 +255,13 @@ class DataplanePublisherService:
                         "allowed_resource_names": allowed_resource_names,
                         "allowed_prompt_names": allowed_prompt_names,
                     }
+
+                if not backends:
+                    # No publishable backends: leave the virtual host out so
+                    # the dataplane returns 404 for it and deployments can
+                    # route the request back to the control plane, instead of
+                    # serving an empty tool list that looks like success.
+                    continue
 
                 virtual_hosts[server["id"]] = {"backends": backends}
 
