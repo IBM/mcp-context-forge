@@ -2036,7 +2036,7 @@ class A2AAgentService(BaseService):
         agent_data: Dict[str, Any],
         parameters: Dict[str, Any],
         interaction_type: str,
-        user_id: Optional[str],
+        user_id: Optional[str],  # pylint: disable=unused-argument
         user_email: Optional[str],
         content_type: Optional[str],
         correlation_id: str,
@@ -2538,18 +2538,8 @@ class A2AAgentService(BaseService):
         agent_endpoint_url = agent_data["agent_endpoint_url"]
         agent_type = agent_data["agent_type"]
         agent_protocol_version = agent_data["agent_protocol_version"]
-        agent_auth_type = agent_data["agent_auth_type"]
-        agent_auth_value = agent_data["agent_auth_value"]
-        agent_auth_query_params = agent_data["agent_auth_query_params"]
         agent_uaid = agent_data["agent_uaid"]
         agent_uaid_native_id = agent_data["agent_uaid_native_id"]
-        agent_team_id = agent_data["agent_team_id"]
-        agent_visibility = agent_data["agent_visibility"]
-        agent_enabled = agent_data["agent_enabled"]
-        agent_tags = agent_data["agent_tags"]
-        agent_oauth_config = agent_data["agent_oauth_config"]
-        agent_passthrough_headers = agent_data["agent_passthrough_headers"]
-        plugin_headers = agent_data["plugin_headers"]
         downstream_headers = agent_data["downstream_headers"]
 
         # SECURITY AUDIT: Record metrics for downstream header forwarding (Issue #3621 Phase 1)
