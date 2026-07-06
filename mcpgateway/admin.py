@@ -64,7 +64,7 @@ from mcpgateway import __version__
 from mcpgateway import version as version_module
 
 # Authentication and password-related imports
-from mcpgateway.auth import get_current_user, get_user_team_roles, normalize_token_teams
+from mcpgateway.auth import get_current_user, get_user_team_roles
 
 # Re-export canonical get_user_email from auth_context for backward compatibility.
 from mcpgateway.auth_context import get_scoped_resource_access_context, get_token_teams_from_request, get_user_email
@@ -4173,13 +4173,21 @@ async def admin_ui(
         # Fall back to the current jwt_token cookie payload before refreshing it,
         # and preserve any explicit team narrowing from the verified token.
         existing_token_teams: list[str] | None = None
+        existing_payload: dict[str, Any] | None = None
         jwt_cookie = request.cookies.get("jwt_token")
         if isinstance(jwt_cookie, str) and jwt_cookie:
             try:
                 existing_payload = await verify_jwt_token_cached(jwt_cookie, request)
-                normalized_existing_teams = normalize_token_teams(existing_payload)
-                if isinstance(normalized_existing_teams, list) and normalized_existing_teams:
-                    existing_token_teams = normalized_existing_teams
+                raw_existing_teams = existing_payload.get("teams")
+                if isinstance(raw_existing_teams, list) and raw_existing_teams:
+                    copied_teams: list[str] = []
+                    for raw_team in raw_existing_teams:
+                        if isinstance(raw_team, str) and raw_team:
+                            copied_teams.append(raw_team)
+                        elif isinstance(raw_team, dict) and raw_team.get("id"):
+                            copied_teams.append(str(raw_team["id"]))
+                    if copied_teams:
+                        existing_token_teams = copied_teams
 
                 if auth_provider == "local":
                     existing_user = existing_payload.get("user")
@@ -4194,11 +4202,13 @@ async def admin_ui(
                     auth_provider = "keycloak"
 
         # Generate a lightweight session JWT token for browser admin calls in every auth mode.
-        email_user = db.query(EmailUser).filter(EmailUser.email == admin_email).first()
-        sub_claim = str(email_user.id) if email_user else admin_email
+        sub_claim = existing_payload.get("sub") if isinstance(existing_payload, dict) else None
+        if not sub_claim:
+            user_id = user.get("id") if isinstance(user, dict) else getattr(user, "id", None)
+            sub_claim = str(user_id) if user_id else admin_email
         now = datetime.now(timezone.utc)
         payload = {
-            "sub": sub_claim,
+            "sub": str(sub_claim),
             "iss": settings.jwt_issuer,
             "aud": settings.jwt_audience,
             "iat": int(now.timestamp()),
@@ -4220,7 +4230,8 @@ async def admin_ui(
         csrf_session_id = str(payload["jti"])
         LOGGER.debug(f"Set session JWT token cookie for user: {admin_email}")
     except Exception as e:
-        LOGGER.warning(f"Failed to set JWT token cookie for user {user}: {e}")
+        LOGGER.exception("Failed to initialize admin browser session for user %s", get_user_email(user))
+        raise HTTPException(status_code=500, detail="Unable to initialize admin session") from e
 
     cookie_action = ui_visibility_config.get("cookie_action")
     if cookie_action:
