@@ -7,6 +7,7 @@ vi.mock("sonner", () => ({
   },
 }));
 
+import { toast } from "sonner";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { render } from "@testing-library/react";
@@ -479,6 +480,72 @@ describe("Resources", () => {
     });
   });
 
+  describe("Add resource form", () => {
+    async function openAndFillForm(user: ReturnType<typeof userEvent.setup>) {
+      await waitFor(() => expect(screen.getByText("Add resources")).toBeInTheDocument());
+      await user.click(screen.getByText("Add resources").closest('[data-slot="card"]')!);
+      await waitFor(() =>
+        expect(screen.getByRole("heading", { name: "Add resources" })).toBeInTheDocument(),
+      );
+      await user.type(screen.getByLabelText(/URI/i), "resource://example/new");
+      await user.type(screen.getByLabelText(/Name/i), "New Resource");
+      await user.type(screen.getByLabelText(/Content/i), "some content");
+    }
+
+    it("closes form and shows new resource card on success", async () => {
+      const user = userEvent.setup();
+      let refetchCount = 0;
+
+      server.use(
+        http.get("/resources", () => {
+          refetchCount += 1;
+          if (refetchCount === 1) return HttpResponse.json([]);
+          return HttpResponse.json([createMockResource(99, "test-gw")]);
+        }),
+        http.get("/gateways", () =>
+          HttpResponse.json({ gateways: [], next_cursor: null, total: 0 }),
+        ),
+        http.post("/resources", () => HttpResponse.json({ id: "res-99" }, { status: 201 })),
+      );
+
+      renderWithRouter(<Resources />);
+      await openAndFillForm(user);
+
+      await user.click(screen.getByRole("button", { name: /Add resources/i }));
+
+      // Form should close and resource card should appear
+      await waitFor(() =>
+        expect(screen.queryByRole("heading", { name: "Add resources" })).not.toBeInTheDocument(),
+      );
+      await waitFor(() => expect(screen.getByText("Resource 99")).toBeInTheDocument());
+    });
+
+    it("shows submit error and keeps form open on API failure", async () => {
+      const user = userEvent.setup();
+
+      server.use(
+        http.get("/resources", () => HttpResponse.json([])),
+        http.get("/gateways", () =>
+          HttpResponse.json({ gateways: [], next_cursor: null, total: 0 }),
+        ),
+        http.post("/resources", () =>
+          HttpResponse.json({ detail: "URI already in use" }, { status: 409 }),
+        ),
+      );
+
+      renderWithRouter(<Resources />);
+      await openAndFillForm(user);
+
+      await user.click(screen.getByRole("button", { name: /Add resources/i }));
+
+      // Form should stay open and show error
+      await waitFor(() =>
+        expect(screen.getByRole("heading", { name: "Add resources" })).toBeInTheDocument(),
+      );
+      await waitFor(() => expect(screen.getByText("URI already in use")).toBeInTheDocument());
+    });
+  });
+
   describe("ResourceForm Toggle", () => {
     it("closes form when Cancel clicked", async () => {
       const user = userEvent.setup();
@@ -502,6 +569,167 @@ describe("Resources", () => {
         expect(screen.getByText("Add resources")).toBeInTheDocument();
       });
       expect(screen.queryByRole("heading", { name: "Add resources" })).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Delete Resource", () => {
+    beforeEach(() => {
+      vi.mocked(toast.success).mockClear();
+      vi.mocked(toast.error).mockClear();
+    });
+
+    async function openDetailsPanel(
+      resourceName: string,
+      user: ReturnType<typeof userEvent.setup>,
+    ) {
+      await user.click(screen.getByLabelText(`More options for ${resourceName}`));
+      await user.click(await screen.findByText("View Details"));
+      await waitFor(() =>
+        expect(screen.getByLabelText(`Delete ${resourceName}`)).toBeInTheDocument(),
+      );
+    }
+
+    it("opens confirm dialog from card dropdown Delete item", async () => {
+      const user = userEvent.setup();
+      server.use(
+        http.get("/resources", () => HttpResponse.json([createMockResource(1, "test-gateway")])),
+      );
+      renderWithRouter(<Resources />);
+      await waitFor(() => expect(screen.getByText("Resource 1")).toBeInTheDocument());
+
+      await user.click(screen.getByLabelText("More options for Resource 1"));
+      await user.click(await screen.findByText("Delete"));
+
+      await waitFor(() => expect(screen.getByText("Delete resource")).toBeInTheDocument());
+      expect(screen.getByText(/Are you sure you want to delete "Resource 1"/)).toBeInTheDocument();
+    });
+
+    it("shows confirm dialog when delete button clicked", async () => {
+      const user = userEvent.setup();
+      server.use(
+        http.get("/resources", () => HttpResponse.json([createMockResource(1, "test-gateway")])),
+      );
+      renderWithRouter(<Resources />);
+      await waitFor(() => expect(screen.getByText("Resource 1")).toBeInTheDocument());
+
+      await openDetailsPanel("Resource 1", user);
+      await user.click(screen.getByLabelText("Delete Resource 1"));
+
+      await waitFor(() => expect(screen.getByText("Delete resource")).toBeInTheDocument());
+      expect(screen.getByText(/Are you sure you want to delete "Resource 1"/)).toBeInTheDocument();
+    });
+
+    it("closes dialog on cancel without calling DELETE", async () => {
+      const user = userEvent.setup();
+      const deleteSpy = vi.fn(() => HttpResponse.json({}, { status: 200 }));
+      server.use(
+        http.get("/resources", () => HttpResponse.json([createMockResource(1, "test-gateway")])),
+        http.delete("/resources/:id", deleteSpy),
+      );
+      renderWithRouter(<Resources />);
+      await waitFor(() => expect(screen.getByText("Resource 1")).toBeInTheDocument());
+
+      await openDetailsPanel("Resource 1", user);
+      await user.click(screen.getByLabelText("Delete Resource 1"));
+      await waitFor(() => expect(screen.getByText("Delete resource")).toBeInTheDocument());
+
+      await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+      await waitFor(() => expect(screen.queryByText("Delete resource")).not.toBeInTheDocument());
+      expect(deleteSpy).not.toHaveBeenCalled();
+    });
+
+    it("deletes resource on confirm and shows success toast", async () => {
+      const user = userEvent.setup();
+      server.use(
+        http.get("/resources", () => HttpResponse.json([createMockResource(1, "test-gateway")])),
+        http.delete("/resources/:id", () => HttpResponse.json({}, { status: 200 })),
+      );
+      renderWithRouter(<Resources />);
+      await waitFor(() => expect(screen.getByText("Resource 1")).toBeInTheDocument());
+
+      await openDetailsPanel("Resource 1", user);
+      await user.click(screen.getByLabelText("Delete Resource 1"));
+      await waitFor(() => expect(screen.getByText("Delete resource")).toBeInTheDocument());
+
+      await user.click(screen.getByRole("button", { name: /^delete$/i }));
+
+      await waitFor(() =>
+        expect(toast.success).toHaveBeenCalledWith(expect.stringContaining("Resource 1")),
+      );
+      expect(screen.queryByLabelText("Delete Resource 1")).not.toBeInTheDocument();
+    });
+
+    it("removes resource from grid immediately before API responds (optimistic)", async () => {
+      const user = userEvent.setup();
+      let resolveDelete!: () => void;
+      server.use(
+        http.get("/resources", () => HttpResponse.json([createMockResource(1, "test-gateway")])),
+        http.delete(
+          "/resources/:id",
+          () =>
+            new Promise<Response>((resolve) => {
+              resolveDelete = () => resolve(new Response(null, { status: 204 }));
+            }),
+        ),
+      );
+      renderWithRouter(<Resources />);
+      await waitFor(() => expect(screen.getByText("Resource 1")).toBeInTheDocument());
+
+      await openDetailsPanel("Resource 1", user);
+      await user.click(screen.getByLabelText("Delete Resource 1"));
+      await waitFor(() => expect(screen.getByText("Delete resource")).toBeInTheDocument());
+      await user.click(screen.getByRole("button", { name: /^delete$/i }));
+
+      await waitFor(() => expect(screen.queryByText("Resource 1")).not.toBeInTheDocument());
+
+      resolveDelete();
+      await waitFor(() =>
+        expect(toast.success).toHaveBeenCalledWith(expect.stringContaining("Resource 1")),
+      );
+    });
+
+    it("rolls back and shows error toast when DELETE API fails", async () => {
+      const user = userEvent.setup();
+      server.use(
+        http.get("/resources", () => HttpResponse.json([createMockResource(1, "test-gateway")])),
+        http.delete("/resources/:id", () =>
+          HttpResponse.json({ detail: "Cannot delete: resource in use" }, { status: 409 }),
+        ),
+      );
+      renderWithRouter(<Resources />);
+      await waitFor(() => expect(screen.getByText("Resource 1")).toBeInTheDocument());
+
+      await openDetailsPanel("Resource 1", user);
+      await user.click(screen.getByLabelText("Delete Resource 1"));
+      await waitFor(() => expect(screen.getByText("Delete resource")).toBeInTheDocument());
+      await user.click(screen.getByRole("button", { name: /^delete$/i }));
+
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith("Cannot delete: resource in use"),
+      );
+      await waitFor(() => expect(screen.getByText("Resource 1")).toBeInTheDocument());
+    });
+
+    it("shows generic error toast when DELETE API returns no detail", async () => {
+      const user = userEvent.setup();
+      server.use(
+        http.get("/resources", () => HttpResponse.json([createMockResource(1, "test-gateway")])),
+        http.delete("/resources/:id", () => HttpResponse.json({}, { status: 500 })),
+      );
+      renderWithRouter(<Resources />);
+      await waitFor(() => expect(screen.getByText("Resource 1")).toBeInTheDocument());
+
+      await openDetailsPanel("Resource 1", user);
+      await user.click(screen.getByLabelText("Delete Resource 1"));
+      await waitFor(() => expect(screen.getByText("Delete resource")).toBeInTheDocument());
+      await user.click(screen.getByRole("button", { name: /^delete$/i }));
+
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith(
+          expect.stringContaining("Failed to delete resource"),
+        ),
+      );
     });
   });
 
