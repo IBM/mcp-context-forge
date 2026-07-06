@@ -4703,6 +4703,7 @@ class TestAdminUIRoute:
         mock_gateways.return_value = []
         mock_roots.return_value = []
         mock_request.cookies = {}
+        mock_db.query.return_value.filter.return_value.first.return_value = None
 
         captured_payload = {}
 
@@ -4729,132 +4730,8 @@ class TestAdminUIRoute:
         assert isinstance(response, HTMLResponse)
         assert captured_payload["sub"] == "admin@example.com"
         assert captured_payload["jti"]
-        from mcpgateway.db import EmailUser as DbEmailUser
-
-        queried_models = [call.args[0] for call in mock_db.query.call_args_list if call.args]
-        assert DbEmailUser not in queried_models
         mock_csrf_service.generate_csrf_token.assert_called_once_with(user_id="admin@example.com", session_id=captured_payload["jti"])
         assert "mcpgateway_csrf_token=bound-csrf-token" in (response.headers.get("set-cookie") or "")
-
-    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
-    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
-    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
-    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
-    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
-    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
-    async def test_admin_ui_refresh_preserves_session_team_narrowing(
-        self,
-        mock_roots,
-        mock_gateways,
-        mock_prompts,
-        mock_resources,
-        mock_tools,
-        mock_servers,
-        mock_request,
-        mock_db,
-        monkeypatch,
-    ):
-        """Refreshing admin browser JWT must preserve verified non-empty teams claim."""
-        mock_servers.return_value = []
-        mock_tools.return_value = ([], None)
-        mock_resources.return_value = []
-        mock_prompts.return_value = []
-        mock_gateways.return_value = []
-        mock_roots.return_value = []
-        mock_request.cookies = {"jwt_token": "existing-session-jwt"}
-
-        captured_payload = {}
-
-        async def fake_create_jwt_token(payload):
-            captured_payload.update(payload)
-            return "refreshed-session-jwt"
-
-        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", False, raising=False)
-        monkeypatch.setattr("mcpgateway.admin.create_jwt_token", fake_create_jwt_token)
-        monkeypatch.setattr("mcpgateway.admin.set_auth_cookie", MagicMock())
-        mock_csrf_service = MagicMock()
-        mock_csrf_service.generate_csrf_token.return_value = "bound-csrf-token"
-        monkeypatch.setattr("mcpgateway.admin.get_csrf_service", lambda: mock_csrf_service)
-        monkeypatch.setattr(
-            "mcpgateway.admin.verify_jwt_token_cached",
-            AsyncMock(return_value={"sub": "admin@example.com", "jti": "old-jti", "token_use": "session", "teams": ["team-1"], "auth_provider": "local"}),
-        )
-
-        response = await admin_ui(
-            request=mock_request,
-            team_id=None,
-            include_inactive=False,
-            db=mock_db,
-            user={"email": "admin@example.com", "is_admin": True},
-        )
-
-        assert isinstance(response, HTMLResponse)
-        assert captured_payload["teams"] == ["team-1"]
-        assert captured_payload["token_use"] == "session"
-        assert captured_payload["jti"] != "old-jti"
-        from mcpgateway.db import EmailUser as DbEmailUser
-
-        queried_models = [call.args[0] for call in mock_db.query.call_args_list if call.args]
-        assert DbEmailUser not in queried_models
-
-    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
-    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
-    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
-    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
-    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
-    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
-    async def test_admin_ui_refresh_does_not_copy_empty_session_teams(
-        self,
-        mock_roots,
-        mock_gateways,
-        mock_prompts,
-        mock_resources,
-        mock_tools,
-        mock_servers,
-        mock_request,
-        mock_db,
-        monkeypatch,
-    ):
-        """Empty session teams claim means no explicit narrowing and must not be copied."""
-        mock_servers.return_value = []
-        mock_tools.return_value = ([], None)
-        mock_resources.return_value = []
-        mock_prompts.return_value = []
-        mock_gateways.return_value = []
-        mock_roots.return_value = []
-        mock_request.cookies = {"jwt_token": "existing-session-jwt"}
-
-        captured_payload = {}
-
-        async def fake_create_jwt_token(payload):
-            captured_payload.update(payload)
-            return "refreshed-session-jwt"
-
-        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", False, raising=False)
-        monkeypatch.setattr("mcpgateway.admin.create_jwt_token", fake_create_jwt_token)
-        monkeypatch.setattr("mcpgateway.admin.set_auth_cookie", MagicMock())
-        mock_csrf_service = MagicMock()
-        mock_csrf_service.generate_csrf_token.return_value = "bound-csrf-token"
-        monkeypatch.setattr("mcpgateway.admin.get_csrf_service", lambda: mock_csrf_service)
-        monkeypatch.setattr(
-            "mcpgateway.admin.verify_jwt_token_cached",
-            AsyncMock(return_value={"sub": "admin@example.com", "jti": "old-jti", "token_use": "session", "teams": [], "auth_provider": "local"}),
-        )
-
-        response = await admin_ui(
-            request=mock_request,
-            team_id=None,
-            include_inactive=False,
-            db=mock_db,
-            user={"email": "admin@example.com", "is_admin": True},
-        )
-
-        assert isinstance(response, HTMLResponse)
-        assert "teams" not in captured_payload
-        from mcpgateway.db import EmailUser as DbEmailUser
-
-        queried_models = [call.args[0] for call in mock_db.query.call_args_list if call.args]
-        assert DbEmailUser not in queried_models
 
     @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
     @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
@@ -4903,6 +4780,177 @@ class TestAdminUIRoute:
         assert exc_info.value.detail == "Unable to initialize admin session"
         mock_set_auth_cookie.assert_not_called()
         mock_token_urlsafe.assert_not_called()
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_ui_refresh_preserves_matching_session_team_narrowing(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Refreshing admin browser JWT preserves teams only from matching cookie identity."""
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = []
+        mock_prompts.return_value = []
+        mock_gateways.return_value = []
+        mock_roots.return_value = []
+        mock_request.cookies = {"jwt_token": "existing-session-jwt"}
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        captured_payload = {}
+
+        async def fake_create_jwt_token(payload):
+            captured_payload.update(payload)
+            return "refreshed-session-jwt"
+
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.create_jwt_token", fake_create_jwt_token)
+        monkeypatch.setattr("mcpgateway.admin.set_auth_cookie", MagicMock())
+        mock_csrf_service = MagicMock()
+        mock_csrf_service.generate_csrf_token.return_value = "bound-csrf-token"
+        monkeypatch.setattr("mcpgateway.admin.get_csrf_service", lambda: mock_csrf_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.verify_jwt_token_cached",
+            AsyncMock(return_value={"sub": "admin@example.com", "jti": "old-jti", "token_use": "session", "teams": ["team-1"], "auth_provider": "local"}),
+        )
+
+        response = await admin_ui(
+            request=mock_request,
+            team_id=None,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "admin@example.com", "is_admin": True},
+        )
+
+        assert isinstance(response, HTMLResponse)
+        assert captured_payload["teams"] == ["team-1"]
+        assert captured_payload["token_use"] == "session"
+        assert captured_payload["jti"] != "old-jti"
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_ui_refresh_ignores_stale_cookie_identity(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Bearer-authenticated user must not inherit sub or teams from stale cookie."""
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = []
+        mock_prompts.return_value = []
+        mock_gateways.return_value = []
+        mock_roots.return_value = []
+        mock_request.cookies = {"jwt_token": "stale-session-jwt"}
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        captured_payload = {}
+
+        async def fake_create_jwt_token(payload):
+            captured_payload.update(payload)
+            return "refreshed-session-jwt"
+
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.create_jwt_token", fake_create_jwt_token)
+        monkeypatch.setattr("mcpgateway.admin.set_auth_cookie", MagicMock())
+        mock_csrf_service = MagicMock()
+        mock_csrf_service.generate_csrf_token.return_value = "bound-csrf-token"
+        monkeypatch.setattr("mcpgateway.admin.get_csrf_service", lambda: mock_csrf_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.verify_jwt_token_cached",
+            AsyncMock(return_value={"sub": "old@example.com", "jti": "old-jti", "token_use": "session", "teams": ["old-team"], "auth_provider": "local"}),
+        )
+
+        response = await admin_ui(
+            request=mock_request,
+            team_id=None,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "new@example.com", "is_admin": True},
+        )
+
+        assert isinstance(response, HTMLResponse)
+        assert captured_payload["sub"] == "new@example.com"
+        assert "teams" not in captured_payload
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_ui_refresh_does_not_copy_empty_session_teams(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Empty session teams claim means no explicit narrowing and must not be copied."""
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = []
+        mock_prompts.return_value = []
+        mock_gateways.return_value = []
+        mock_roots.return_value = []
+        mock_request.cookies = {"jwt_token": "existing-session-jwt"}
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        captured_payload = {}
+
+        async def fake_create_jwt_token(payload):
+            captured_payload.update(payload)
+            return "refreshed-session-jwt"
+
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.create_jwt_token", fake_create_jwt_token)
+        monkeypatch.setattr("mcpgateway.admin.set_auth_cookie", MagicMock())
+        mock_csrf_service = MagicMock()
+        mock_csrf_service.generate_csrf_token.return_value = "bound-csrf-token"
+        monkeypatch.setattr("mcpgateway.admin.get_csrf_service", lambda: mock_csrf_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.verify_jwt_token_cached",
+            AsyncMock(return_value={"sub": "admin@example.com", "jti": "old-jti", "token_use": "session", "teams": [], "auth_provider": "local"}),
+        )
+
+        response = await admin_ui(
+            request=mock_request,
+            team_id=None,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "admin@example.com", "is_admin": True},
+        )
+
+        assert isinstance(response, HTMLResponse)
+        assert "teams" not in captured_payload
 
     @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
     @patch.object(ToolService, "list_tools", new_callable=AsyncMock)

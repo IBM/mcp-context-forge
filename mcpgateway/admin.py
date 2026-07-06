@@ -4171,13 +4171,36 @@ async def admin_ui(
 
         # get_current_user_with_permissions may not include auth_provider in its dict.
         # Fall back to the current jwt_token cookie payload before refreshing it,
-        # and preserve any explicit team narrowing from the verified token.
-        existing_token_teams: list[str] | None = None
+        # but only reuse cookie metadata after confirming it matches this user.
         existing_payload: dict[str, Any] | None = None
         jwt_cookie = request.cookies.get("jwt_token")
         if isinstance(jwt_cookie, str) and jwt_cookie:
             try:
                 existing_payload = await verify_jwt_token_cached(jwt_cookie, request)
+            except Exception as provider_error:  # nosec B110 - best-effort provider preservation
+                LOGGER.warning("Could not verify existing JWT cookie for admin session refresh: %s", provider_error)
+                if settings.sso_keycloak_enabled:
+                    auth_provider = "keycloak"
+
+        # Generate a lightweight session JWT token for browser admin calls in every auth mode.
+        email_user = db.query(EmailUser).filter(EmailUser.email == admin_email).first()
+        sub_claim = str(email_user.id) if email_user else admin_email
+        existing_token_teams: list[str] | None = None
+        if isinstance(existing_payload, dict):
+            existing_user = existing_payload.get("user")
+            provider_from_token = existing_user.get("auth_provider") if isinstance(existing_user, dict) else None
+            if not provider_from_token:
+                provider_from_token = existing_payload.get("auth_provider")
+            if auth_provider == "local" and isinstance(provider_from_token, str) and provider_from_token.strip():
+                auth_provider = provider_from_token.strip()
+
+            existing_email = existing_payload.get("email")
+            if not existing_email and isinstance(existing_user, dict):
+                existing_email = existing_user.get("email")
+            existing_sub = existing_payload.get("sub")
+            cookie_matches_user = existing_email == admin_email or (isinstance(existing_sub, str) and existing_sub in {admin_email, sub_claim})
+
+            if cookie_matches_user:
                 raw_existing_teams = existing_payload.get("teams")
                 if isinstance(raw_existing_teams, list) and raw_existing_teams:
                     copied_teams: list[str] = []
@@ -4189,26 +4212,9 @@ async def admin_ui(
                     if copied_teams:
                         existing_token_teams = copied_teams
 
-                if auth_provider == "local":
-                    existing_user = existing_payload.get("user")
-                    provider_from_token = existing_user.get("auth_provider") if isinstance(existing_user, dict) else None
-                    if not provider_from_token:
-                        provider_from_token = existing_payload.get("auth_provider")
-                    if isinstance(provider_from_token, str) and provider_from_token.strip():
-                        auth_provider = provider_from_token.strip()
-            except Exception as provider_error:  # nosec B110 - best-effort provider preservation
-                LOGGER.warning("Could not resolve auth_provider or team scope from existing JWT cookie; SSO logout or scoped session refresh may not function correctly: %s", provider_error)
-                if auth_provider == "local" and settings.sso_keycloak_enabled:
-                    auth_provider = "keycloak"
-
-        # Generate a lightweight session JWT token for browser admin calls in every auth mode.
-        sub_claim = existing_payload.get("sub") if isinstance(existing_payload, dict) else None
-        if not sub_claim:
-            user_id = user.get("id") if isinstance(user, dict) else getattr(user, "id", None)
-            sub_claim = str(user_id) if user_id else admin_email
         now = datetime.now(timezone.utc)
         payload = {
-            "sub": str(sub_claim),
+            "sub": sub_claim,
             "iss": settings.jwt_issuer,
             "aud": settings.jwt_audience,
             "iat": int(now.timestamp()),
