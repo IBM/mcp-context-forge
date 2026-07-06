@@ -16,6 +16,9 @@ SHELL := /bin/bash
 # Read values from .env.make
 -include .env.make
 
+# Prevent included sub-makefiles from overriding the default target
+.DEFAULT_GOAL := help
+
 # Plugin integration test targets (self-contained: boots gateway + fast-time-server)
 -include tests/live_gateway/plugins/Makefile.plugin-integration
 
