@@ -313,6 +313,7 @@ class AgentData(TypedDict):
     This TypedDict ensures all three methods agree on the expected keys and types,
     catching missing-key errors at type-check time rather than runtime.
     """
+
     agent_id: str
     agent_name: str
     agent_endpoint_url: str
@@ -2076,22 +2077,22 @@ class A2AAgentService(BaseService):
             A2AAgentError: If invocation preparation fails
             PluginViolationError: If plugin RBAC check fails
         """
-        agent_id = agent_data['agent_id']
-        agent_name = agent_data['agent_name']
-        agent_endpoint_url = agent_data['agent_endpoint_url']
-        agent_type = agent_data['agent_type']
-        agent_protocol_version = agent_data['agent_protocol_version']
-        agent_auth_type = agent_data['agent_auth_type']
-        agent_auth_value = agent_data['agent_auth_value']
-        agent_auth_query_params = agent_data['agent_auth_query_params']
-        agent_team_id = agent_data['agent_team_id']
-        agent_visibility = agent_data['agent_visibility']
-        agent_enabled = agent_data['agent_enabled']
-        agent_tags = agent_data['agent_tags']
-        agent_oauth_config = agent_data['agent_oauth_config']
-        agent_passthrough_headers = agent_data['agent_passthrough_headers']
-        downstream_headers = agent_data['downstream_headers']
-        plugin_headers = agent_data['plugin_headers']
+        agent_id = agent_data["agent_id"]
+        agent_name = agent_data["agent_name"]
+        agent_endpoint_url = agent_data["agent_endpoint_url"]
+        agent_type = agent_data["agent_type"]
+        agent_protocol_version = agent_data["agent_protocol_version"]
+        agent_auth_type = agent_data["agent_auth_type"]
+        agent_auth_value = agent_data["agent_auth_value"]
+        agent_auth_query_params = agent_data["agent_auth_query_params"]
+        agent_team_id = agent_data["agent_team_id"]
+        agent_visibility = agent_data["agent_visibility"]
+        agent_enabled = agent_data["agent_enabled"]
+        agent_tags = agent_data["agent_tags"]
+        agent_oauth_config = agent_data["agent_oauth_config"]
+        agent_passthrough_headers = agent_data["agent_passthrough_headers"]
+        downstream_headers = agent_data["downstream_headers"]
+        plugin_headers = agent_data["plugin_headers"]
 
         # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 2a: Prepare A2A invocation (authentication, headers, request body)
@@ -2199,11 +2200,11 @@ class A2AAgentService(BaseService):
                 raise A2AAgentError(f"Pre-invoke plugin error: {e}") from e
 
         return {
-            'prepared': prepared,
-            'parameters': parameters,
-            'plugin_manager': plugin_manager,
-            'global_context': global_context,
-            'context_table': context_table,
+            "prepared": prepared,
+            "parameters": parameters,
+            "plugin_manager": plugin_manager,
+            "global_context": global_context,
+            "context_table": context_table,
         }
 
     async def _finalize_invocation(
@@ -2394,24 +2395,24 @@ class A2AAgentService(BaseService):
 
         # Extract all needed data to local variables before releasing DB connection
         agent_data: AgentData = {
-            'agent_id': agent.id,
-            'agent_name': agent.name,
-            'agent_endpoint_url': agent.endpoint_url,
-            'agent_type': agent.agent_type,
-            'agent_protocol_version': agent.protocol_version,
-            'agent_auth_type': agent.auth_type,
-            'agent_auth_value': agent.auth_value,
-            'agent_auth_query_params': agent.auth_query_params,
-            'agent_uaid': getattr(agent, "uaid", None),
-            'agent_uaid_native_id': getattr(agent, "uaid_native_id", None),
-            'agent_team_id': agent.team_id,
-            'agent_visibility': agent.visibility,
-            'agent_enabled': agent.enabled,
-            'agent_tags': getattr(agent, "tags", []),
-            'agent_oauth_config': getattr(agent, "oauth_config", None),
-            'agent_passthrough_headers': getattr(agent, "passthrough_headers", None),
-            'plugin_headers': {},  # Populated after header flow split
-            'downstream_headers': {},  # Populated after header flow split
+            "agent_id": agent.id,
+            "agent_name": agent.name,
+            "agent_endpoint_url": agent.endpoint_url,
+            "agent_type": agent.agent_type,
+            "agent_protocol_version": agent.protocol_version,
+            "agent_auth_type": agent.auth_type,
+            "agent_auth_value": agent.auth_value,
+            "agent_auth_query_params": agent.auth_query_params,
+            "agent_uaid": getattr(agent, "uaid", None),
+            "agent_uaid_native_id": getattr(agent, "uaid_native_id", None),
+            "agent_team_id": agent.team_id,
+            "agent_visibility": agent.visibility,
+            "agent_enabled": agent.enabled,
+            "agent_tags": getattr(agent, "tags", []),
+            "agent_oauth_config": getattr(agent, "oauth_config", None),
+            "agent_passthrough_headers": getattr(agent, "passthrough_headers", None),
+            "plugin_headers": {},  # Populated after header flow split
+            "downstream_headers": {},  # Populated after header flow split
         }
 
         # CRITICAL: Release DB connection BEFORE validation/HTTP calls
@@ -2422,9 +2423,7 @@ class A2AAgentService(BaseService):
         # Plugin hooks ALWAYS receive sanitized headers (prevents credential leaks)
         # Downstream headers respect the ENABLE_SENSITIVE_HEADER_PASSTHROUGH flag
         # Populate header flows (modifies agent_data in-place)
-        agent_data['plugin_headers'], agent_data['downstream_headers'] = self._prepare_header_flows(
-            request_headers, agent_data['agent_passthrough_headers']
-        )
+        agent_data["plugin_headers"], agent_data["downstream_headers"] = self._prepare_header_flows(request_headers, agent_data["agent_passthrough_headers"])
 
         return agent_data
 
@@ -2531,29 +2530,27 @@ class A2AAgentService(BaseService):
         # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 1: Acquire agent, validate access, extract data, release DB
         # ═══════════════════════════════════════════════════════════════════════════
-        agent_data = await self._acquire_and_validate_agent(
-            db, identifier, is_name_lookup, user_email, token_teams, request_headers
-        )
+        agent_data = await self._acquire_and_validate_agent(db, identifier, is_name_lookup, user_email, token_teams, request_headers)
 
         # Unpack agent data for use in this method
-        agent_id = agent_data['agent_id']
-        agent_name = agent_data['agent_name']
-        agent_endpoint_url = agent_data['agent_endpoint_url']
-        agent_type = agent_data['agent_type']
-        agent_protocol_version = agent_data['agent_protocol_version']
-        agent_auth_type = agent_data['agent_auth_type']
-        agent_auth_value = agent_data['agent_auth_value']
-        agent_auth_query_params = agent_data['agent_auth_query_params']
-        agent_uaid = agent_data['agent_uaid']
-        agent_uaid_native_id = agent_data['agent_uaid_native_id']
-        agent_team_id = agent_data['agent_team_id']
-        agent_visibility = agent_data['agent_visibility']
-        agent_enabled = agent_data['agent_enabled']
-        agent_tags = agent_data['agent_tags']
-        agent_oauth_config = agent_data['agent_oauth_config']
-        agent_passthrough_headers = agent_data['agent_passthrough_headers']
-        plugin_headers = agent_data['plugin_headers']
-        downstream_headers = agent_data['downstream_headers']
+        agent_id = agent_data["agent_id"]
+        agent_name = agent_data["agent_name"]
+        agent_endpoint_url = agent_data["agent_endpoint_url"]
+        agent_type = agent_data["agent_type"]
+        agent_protocol_version = agent_data["agent_protocol_version"]
+        agent_auth_type = agent_data["agent_auth_type"]
+        agent_auth_value = agent_data["agent_auth_value"]
+        agent_auth_query_params = agent_data["agent_auth_query_params"]
+        agent_uaid = agent_data["agent_uaid"]
+        agent_uaid_native_id = agent_data["agent_uaid_native_id"]
+        agent_team_id = agent_data["agent_team_id"]
+        agent_visibility = agent_data["agent_visibility"]
+        agent_enabled = agent_data["agent_enabled"]
+        agent_tags = agent_data["agent_tags"]
+        agent_oauth_config = agent_data["agent_oauth_config"]
+        agent_passthrough_headers = agent_data["agent_passthrough_headers"]
+        plugin_headers = agent_data["plugin_headers"]
+        downstream_headers = agent_data["downstream_headers"]
 
         # SECURITY AUDIT: Record metrics for downstream header forwarding (Issue #3621 Phase 1)
         # Counter metric enables alerting/aggregation without log volume explosion.
@@ -2633,11 +2630,11 @@ class A2AAgentService(BaseService):
         )
 
         # Unpack invocation context
-        prepared = invocation_ctx['prepared']
-        parameters = invocation_ctx['parameters']  # May have been modified by plugin
-        plugin_manager = invocation_ctx['plugin_manager']
-        global_context = invocation_ctx['global_context']
-        context_table = invocation_ctx['context_table']
+        prepared = invocation_ctx["prepared"]
+        parameters = invocation_ctx["parameters"]  # May have been modified by plugin
+        plugin_manager = invocation_ctx["plugin_manager"]
+        global_context = invocation_ctx["global_context"]
+        context_table = invocation_ctx["context_table"]
 
         span_attributes = {
             "a2a.agent.name": agent_name,
@@ -3045,32 +3042,20 @@ class A2AAgentService(BaseService):
         # Convert exceptions to SSE error events for streaming response
         # ═══════════════════════════════════════════════════════════════════════════
         try:
-            agent_data = await self._acquire_and_validate_agent(
-                db, identifier, is_name_lookup, user_email, token_teams, request_headers
-            )
+            agent_data = await self._acquire_and_validate_agent(db, identifier, is_name_lookup, user_email, token_teams, request_headers)
         except (A2AAgentNotFoundError, A2AAgentError) as e:
             yield self._format_sse_error(str(e))
             return
 
         # Unpack agent data for use in this method
-        agent_id = agent_data['agent_id']
-        agent_name = agent_data['agent_name']
-        agent_endpoint_url = agent_data['agent_endpoint_url']
-        agent_type = agent_data['agent_type']
-        agent_protocol_version = agent_data['agent_protocol_version']
-        agent_auth_type = agent_data['agent_auth_type']
-        agent_auth_value = agent_data['agent_auth_value']
-        agent_auth_query_params = agent_data['agent_auth_query_params']
-        agent_uaid = agent_data['agent_uaid']
-        agent_uaid_native_id = agent_data['agent_uaid_native_id']
-        agent_team_id = agent_data['agent_team_id']
-        agent_visibility = agent_data['agent_visibility']
-        agent_enabled = agent_data['agent_enabled']
-        agent_tags = agent_data['agent_tags']
-        agent_oauth_config = agent_data['agent_oauth_config']
-        agent_passthrough_headers = agent_data['agent_passthrough_headers']
-        plugin_headers = agent_data['plugin_headers']
-        downstream_headers = agent_data['downstream_headers']
+        agent_id = agent_data["agent_id"]
+        agent_name = agent_data["agent_name"]
+        agent_endpoint_url = agent_data["agent_endpoint_url"]
+        agent_type = agent_data["agent_type"]
+        agent_protocol_version = agent_data["agent_protocol_version"]
+        agent_uaid = agent_data["agent_uaid"]
+        agent_uaid_native_id = agent_data["agent_uaid_native_id"]
+        downstream_headers = agent_data["downstream_headers"]
 
         # ═══════════════════════════════════════════════════════════════════════════
         # SECURITY: Validate UAID endpoint domain before invocation
@@ -3134,11 +3119,11 @@ class A2AAgentService(BaseService):
             return
 
         # Unpack invocation context
-        prepared = invocation_ctx['prepared']
-        parameters = invocation_ctx['parameters']  # May have been modified by plugin
-        plugin_manager = invocation_ctx['plugin_manager']
-        global_context = invocation_ctx['global_context']
-        context_table = invocation_ctx['context_table']
+        prepared = invocation_ctx["prepared"]
+        parameters = invocation_ctx["parameters"]  # May have been modified by plugin
+        plugin_manager = invocation_ctx["plugin_manager"]
+        global_context = invocation_ctx["global_context"]
+        context_table = invocation_ctx["context_table"]
 
         # Determine if response accumulation is needed (after pre-invoke hook succeeds)
         should_accumulate = (plugin_manager and plugin_manager.has_hooks_for(AgentHookType.AGENT_POST_INVOKE)) or is_output_capture_enabled("a2a.invoke")
