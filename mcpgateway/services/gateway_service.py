@@ -2444,6 +2444,32 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 original_client_cert = getattr(gateway, "client_cert", None)
                 original_client_key = getattr(gateway, "client_key", None)
 
+                def _connection_field_pairs(include_signing: bool = True) -> tuple:
+                    """(new, old) pairs for connect-affecting fields, read at call time.
+
+                    Fields are re-read from `gateway` on every call (not cached) because
+                    callers invoke this at different points in the update flow, after
+                    `gateway` attributes may have been mutated in between (e.g. one_time_auth
+                    clearing auth_type/auth_value, query_param auth switching).
+                    """
+                    pairs = (
+                        (gateway.url, original_url),
+                        (gateway.transport, original_transport),
+                        (gateway.auth_type, original_auth_type),
+                        (gateway.auth_value, original_auth_value),
+                        (gateway.auth_query_params, original_auth_query_params),
+                        (gateway.oauth_config, original_oauth_config),
+                        (gateway.ca_certificate, original_ca_certificate),
+                        (getattr(gateway, "client_cert", None), original_client_cert),
+                        (getattr(gateway, "client_key", None), original_client_key),
+                    )
+                    if include_signing:
+                        pairs += (
+                            (gateway.ca_certificate_sig, original_ca_certificate_sig),
+                            (gateway.signing_algorithm, original_signing_algorithm),
+                        )
+                    return pairs
+
                 # Update fields if provided
                 if gateway_update.name is not None:
                     gateway.name = gateway_update.name
@@ -2653,20 +2679,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     db.commit()
                     db.refresh(gateway)
 
-                    _connect_field_changes = (
-                        (gateway.url, original_url),
-                        (gateway.transport, original_transport),
-                        (gateway.auth_type, original_auth_type),
-                        (gateway.auth_value, original_auth_value),
-                        (gateway.auth_query_params, original_auth_query_params),
-                        (gateway.oauth_config, original_oauth_config),
-                        (gateway.ca_certificate, original_ca_certificate),
-                        (gateway.ca_certificate_sig, original_ca_certificate_sig),
-                        (gateway.signing_algorithm, original_signing_algorithm),
-                        (getattr(gateway, "client_cert", None), original_client_cert),
-                        (getattr(gateway, "client_key", None), original_client_key),
-                    )
-                    if any(new_value != old_value for new_value, old_value in _connect_field_changes):
+                    if any(new_value != old_value for new_value, old_value in _connection_field_pairs()):
                         await _evict_upstream_sessions_for_gateway(str(gateway.id))
 
                     cache = _get_registry_cache()
@@ -2734,6 +2747,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # Initialize empty lists in case initialization fails
                 reinit_succeeded = False
 
+                # Connection-affecting fields already written to `gateway` above; compare
+                # against the pre-update snapshot to decide whether a failed re-init must
+                # block the commit (vs. a cosmetic update tolerating an unreachable upstream).
+                # ca_certificate_sig/signing_algorithm excluded: not passed to _initialize_gateway,
+                # so they can't affect connection re-init success/failure.
+                init_affecting_changed = any(new != old for new, old in _connection_field_pairs(include_signing=False))
+
                 try:
                     ca_certificate = getattr(gateway, "ca_certificate", None)
                     connection_material = await self._prepare_gateway_connection_material(
@@ -2743,17 +2763,28 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         decrypt_client_key=True,
                         log_context="gateway re-init",
                     )
-                    capabilities, tools, resources, prompts, _ = await self._initialize_gateway(
-                        connection_material.url,
-                        gateway.auth_value,
-                        gateway.transport,
-                        gateway.auth_type,
-                        gateway.oauth_config,
-                        ca_certificate,
-                        auth_query_params=auth_query_params_decrypted,
-                        client_cert=connection_material.client_cert,
-                        client_key=connection_material.client_key,
-                    )
+                    try:
+                        capabilities, tools, resources, prompts, _ = await self._initialize_gateway(
+                            connection_material.url,
+                            gateway.auth_value,
+                            gateway.transport,
+                            gateway.auth_type,
+                            gateway.oauth_config,
+                            ca_certificate,
+                            auth_query_params=auth_query_params_decrypted,
+                            client_cert=connection_material.client_cert,
+                            client_key=connection_material.client_key,
+                        )
+                    except Exception as init_err:
+                        # New URL/auth/TLS config is unreachable or invalid. Wrap non-connection
+                        # errors so the outer handler can recognize this as a connection failure
+                        # and decide (via init_affecting_changed) whether to propagate as a 502
+                        # or swallow as a best-effort cosmetic update (see visibility note ~2256).
+                        if init_affecting_changed and not isinstance(init_err, GatewayConnectionError):
+                            safe_url = sanitize_url_for_logging(gateway.url, auth_query_params_decrypted)
+                            safe_msg = sanitize_exception_message(str(init_err), auth_query_params_decrypted)
+                            raise GatewayConnectionError(f"Failed to initialize gateway at {safe_url}: {safe_msg}") from init_err
+                        raise
                     if gateway_update.one_time_auth:
                         # For one-time auth, clear auth_type and auth_value after initialization
                         gateway.auth_type = "one_time_auth"
@@ -2788,8 +2819,16 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     self._active_gateways.discard(gateway.url)
                     self._active_gateways.add(gateway.url)
                     reinit_succeeded = True
+                except GatewayConnectionError as gce:
+                    if init_affecting_changed:
+                        # Do NOT persist the broken update — propagate so the outer handler
+                        # rolls back (nothing committed) and the API returns 502, matching
+                        # POST /gateways behavior.
+                        raise
+                    logger.warning("Failed to initialize updated gateway: %s", gce)
+                    reinit_succeeded = False
                 except Exception as e:
-                    logger.warning("Failed to initialize updated gateway: %s", e)
+                    logger.warning("Failed to initialize updated gateway: %s", sanitize_exception_message(str(e), auth_query_params_decrypted))
                     reinit_succeeded = False
 
                 # Update tags if provided
@@ -2826,20 +2865,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # (name, description, tags, passthrough_headers, visibility, etc.)
                 # leave sessions alone to preserve the 1:1 downstream-session
                 # connection-reuse benefit.
-                _connect_field_changes = (
-                    (gateway.url, original_url),
-                    (gateway.transport, original_transport),
-                    (gateway.auth_type, original_auth_type),
-                    (gateway.auth_value, original_auth_value),
-                    (gateway.auth_query_params, original_auth_query_params),
-                    (gateway.oauth_config, original_oauth_config),
-                    (gateway.ca_certificate, original_ca_certificate),
-                    (gateway.ca_certificate_sig, original_ca_certificate_sig),
-                    (gateway.signing_algorithm, original_signing_algorithm),
-                    (getattr(gateway, "client_cert", None), original_client_cert),
-                    (getattr(gateway, "client_key", None), original_client_key),
-                )
-                if any(new_value != old_value for new_value, old_value in _connect_field_changes):
+                if any(new_value != old_value for new_value, old_value in _connection_field_pairs()):
                     await _evict_upstream_sessions_for_gateway(str(gateway.id))
 
                 # Invalidate cache after successful update
@@ -2943,6 +2969,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 error=gnfe,
             )
             raise gnfe
+        except GatewayConnectionError as gce:
+            logger.error("GatewayConnectionError during gateway update: %s", gce)
+            db.rollback()
+            raise
         except IntegrityError as ie:
             logger.error("IntegrityErrors in group: %s", ie)
             db.rollback()

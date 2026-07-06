@@ -126,7 +126,7 @@ describe("init — team_id present in URL", () => {
     expect(component.selectedTeam).toBe("t4");
   });
 
-  test("calls Admin.safeReplaceState removing team_id when id not found in non-empty teams", () => {
+  test("calls Admin.safeReplaceState removing team_id when id not found in non-empty teams", async () => {
     window.location = {
       href: "http://localhost/admin?team_id=unknown",
       search: "?team_id=unknown",
@@ -135,10 +135,22 @@ describe("init — team_id present in URL", () => {
     const safeReplaceState = vi.fn();
     window.Admin = { safeReplaceState };
 
+    // init() now fetches accessible team_ids before stripping. Mock the
+    // response so "unknown" is absent from the list so strip fires.
+    window.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ team_ids: ["t1"] }),
+    });
+
     const component = teamSelector();
     component.init();
 
-    expect(safeReplaceState).toHaveBeenCalledOnce();
+    // Wait for the fetch promise chain to settle before asserting on the
+    // side effect. Otherwise we assert before the .then() has run.
+    await vi.waitFor(() => {
+      expect(safeReplaceState).toHaveBeenCalledOnce();
+    });
+
     const cleanUrl = safeReplaceState.mock.calls[0][2];
     expect(cleanUrl.searchParams.has("team_id")).toBe(false);
   });

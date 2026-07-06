@@ -6,9 +6,9 @@
 # and sends a Slack notification to #contextforge-merge-notifications with:
 #   - PR number, title, and direct link
 #   - PR author
-#   - Ejection reason inferred from the event sender:
-#       • "manually removed by <user>"  (sender.type == User)
-#       • "auto-ejected (checks failed or base branch updated)"  (sender.type == Bot)
+#   - Who the removal is attributed to (the merge queue bot, a failing-check
+#     bot, or the person who removed it) — reported verbatim, without guessing
+#     whether the ejection was manual or automatic.
 #
 # Note: the merge_group event only supports the checks_requested activity
 # type as a workflow trigger; ejection is detected via pull_request: dequeued.
@@ -62,13 +62,13 @@ jobs:
           # Strip refs/heads/ prefix if present (dequeued events can include it)
           BASE_REF="${BASE_REF#refs/heads/}"
 
-          # Bot accounts always end with [bot] — more reliable than sender.type
-          if [[ "$SENDER_LOGIN" == *"[bot]"* ]]; then
-            REASON_TEXT="auto-ejected (checks failed or base branch updated)"
-          elif [[ -n "$SENDER_LOGIN" ]]; then
-            REASON_TEXT=$(printf 'manually removed by `%s`' "$SENDER_LOGIN")
+          # Report whoever GitHub attributes the removal to, without guessing
+          # manual vs automatic. The value is either a bot (e.g. the merge queue
+          # or a check) or the person who removed the PR — both are accurate.
+          if [[ -n "$SENDER_LOGIN" ]]; then
+            REASON_TEXT=$(printf 'removed by `%s`' "$SENDER_LOGIN")
           else
-            REASON_TEXT="ejected (test dispatch)"
+            REASON_TEXT="removed from merge queue (test dispatch)"
           fi
 
           SLACK_SUMMARY=$(printf ':warning: *PR #%s ejected from merge queue*' "$PR_NUMBER")

@@ -78,14 +78,15 @@ from mcpgateway import version as version_module
 from mcpgateway.auth import get_current_user, get_user_team_roles, TokenValidationError, validate_token_user
 from mcpgateway.auth_context import (
     decode_internal_mcp_auth_context,
+    encode_internal_mcp_auth_context,
     get_internal_mcp_auth_context,
     get_request_identity,
     get_rpc_filter_context,
     get_scoped_resource_access_context,
     get_token_teams_from_request,
     get_user_email,
-    has_valid_internal_mcp_runtime_auth_header,
     INTERNAL_MCP_SESSION_VALIDATED_HEADER,
+    is_trusted_internal_mcp_request,
 )
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult
@@ -285,26 +286,26 @@ _INTERNAL_MCP_AUTH_CONTEXT_HEADER = "x-contextforge-auth-context"
 
 
 def _is_trusted_internal_mcp_runtime_request(request: Request) -> bool:
-    """Return whether the request came from the local Rust runtime sidecar.
+    """Return whether the request came from a trusted local internal source.
+
+    Two callers are trusted today:
+
+    - ``"rust"`` — the local Rust runtime sidecar (over loopback).
+    - ``"affinity"`` — the in-process dispatch used by session-affinity
+      forwarding to reach the owner worker, carrying the identity the edge
+      already validated.
+
+    Both share the same gates: a shared-secret HMAC header AND a loopback client
+    address. Only the ``x-contextforge-mcp-runtime`` marker value differs.
 
     Args:
         request: Incoming request to inspect.
 
     Returns:
-        ``True`` when the request carries the trusted Rust runtime marker from
-        loopback, otherwise ``False``.
+        ``True`` when the request carries a trusted internal-runtime marker
+        from loopback, otherwise ``False``.
     """
-    runtime_marker = request.headers.get("x-contextforge-mcp-runtime")
-    client_host = getattr(getattr(request, "client", None), "host", None)
-    if runtime_marker != "rust" or not has_valid_internal_mcp_runtime_auth_header(request) or client_host not in ("127.0.0.1", "::1"):
-        return False
-    # Defense-in-depth: /_internal/a2a/* endpoints must refuse requests when
-    # A2A support is disabled, even from an otherwise-trusted local sidecar.
-    # A legitimate sidecar should not be running when the feature is off.
-    path = getattr(getattr(request, "url", None), "path", "") or ""
-    if path.startswith("/_internal/a2a/") and not settings.mcpgateway_a2a_enabled:
-        return False
-    return True
+    return is_trusted_internal_mcp_request(request)
 
 
 def _is_jwt_token(token: str) -> bool:
@@ -330,6 +331,48 @@ def _is_jwt_token(token: str) -> bool:
         except Exception:  # pylint: disable=broad-exception-caught
             return False
     return True
+
+
+def _validate_internal_mcp_auth_context(auth_context: Dict[str, Any]) -> None:
+    """Validate a decoded trusted-internal auth context, failing closed on malformed input.
+
+    The public-only RBAC skip in ``_ensure_rpc_permission`` trusts this context, so a
+    public-only context (``is_authenticated is False``) must not carry authenticated-only
+    or elevated attributes. Field types are checked first to avoid downstream confusion
+    (for example a string ``scoped_permissions`` would be iterated per-character).
+
+    Args:
+        auth_context: Decoded auth-context dict from ``decode_internal_mcp_auth_context``.
+
+    Raises:
+        HTTPException: 400 when the context is malformed or a public-only context claims
+            teams, admin, or an identity.
+    """
+    teams = auth_context.get("teams")
+    if teams is not None and not isinstance(teams, list):
+        raise HTTPException(status_code=400, detail="Invalid trusted MCP auth context: teams must be a list")
+
+    scoped_permissions = auth_context.get("scoped_permissions")
+    if scoped_permissions is not None and not isinstance(scoped_permissions, list):
+        raise HTTPException(status_code=400, detail="Invalid trusted MCP auth context: scoped_permissions must be a list")
+
+    # is_authenticated must be a real bool so the ``is False`` identity checks below (and the
+    # public-only RBAC skip in _ensure_rpc_permission) are reliable. A truthy non-bool like
+    # the string "false" or 0 would slip past ``is False`` and defeat the public-only flooring.
+    is_authenticated = auth_context.get("is_authenticated")
+    if is_authenticated is not None and not isinstance(is_authenticated, bool):
+        raise HTTPException(status_code=400, detail="Invalid trusted MCP auth context: is_authenticated must be a bool")
+
+    # A public-only (unauthenticated) context must map to exactly public privileges.
+    # The RBAC skip relies on this invariant, so reject any contradictory attributes
+    # rather than letting them ride an unauthenticated dispatch.
+    if is_authenticated is False:
+        if teams:
+            raise HTTPException(status_code=400, detail="Invalid public-only auth context: teams must be empty")
+        if auth_context.get("is_admin") is True or auth_context.get("permission_is_admin") is True:
+            raise HTTPException(status_code=400, detail="Invalid public-only auth context: admin not permitted")
+        if auth_context.get("email"):
+            raise HTTPException(status_code=400, detail="Invalid public-only auth context: email not permitted")
 
 
 def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
@@ -358,6 +401,10 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
         logger.debug("Invalid trusted MCP auth context: %s", exc)
         raise HTTPException(status_code=400, detail="Invalid trusted MCP auth context") from exc
 
+    # Fail closed on a malformed or self-contradictory context before it is stored
+    # and trusted by the public-only RBAC skip downstream.
+    _validate_internal_mcp_auth_context(auth_context)
+
     setattr(request.state, "_mcp_internal_auth_context", auth_context)
 
     if "teams" in auth_context and (auth_context["teams"] is None or isinstance(auth_context["teams"], list)):
@@ -383,6 +430,58 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
         "auth_method": forwarded_auth_method,
         "token_use": auth_context.get("token_use"),
     }
+
+
+def _build_internal_mcp_auth_context_for_rpc(request: Request, user: Any) -> Dict[str, Any]:
+    """Build the trusted-internal auth context for an affinity-forwarded ``/rpc`` request.
+
+    Affinity forwarding of a JSON-RPC ``/rpc`` request must carry the caller's
+    already-validated identity to the owner worker's ``/_internal/mcp/rpc`` dispatch, so the
+    owner does not re-authenticate at the public route boundary (which would 401 OAuth and
+    ``MCP_REQUIRE_AUTH=false`` public-only callers).
+
+    The identity is derived from the verified request state via ``get_rpc_filter_context``
+    (the canonical Layer-1 policy source) and the cached verified JWT payload, never from
+    inbound headers, so token-team and admin semantics are preserved. The result has the
+    same shape ``get_streamable_http_auth_context()`` emits, so the owner-side
+    ``_build_internal_mcp_forwarded_user`` reconstructs both forward paths identically, and
+    it satisfies ``_validate_internal_mcp_auth_context``.
+
+    Args:
+        request: The incoming ``/rpc`` request (already authenticated by the route).
+        user: The user object produced by the auth dependency.
+
+    Returns:
+        Encodable auth-context dict for ``encode_internal_mcp_auth_context``.
+    """
+    email, token_teams, is_admin = get_rpc_filter_context(request, user)
+    # Genuine anonymous / MCP_REQUIRE_AUTH=false public-only callers have no email.
+    is_authenticated = email is not None
+
+    scoped = _extract_scoped_permissions(request)
+    scoped_permissions = sorted(scoped) if scoped else None
+
+    cached = getattr(request.state, "_jwt_verified_payload", None)
+    payload = cached[1] if (isinstance(cached, tuple) and len(cached) == 2 and isinstance(cached[1], dict)) else {}
+    scopes = payload.get("scopes") if isinstance(payload.get("scopes"), dict) else {}
+    scoped_server_id = scopes.get("server_id")
+
+    context: Dict[str, Any] = {
+        "email": email,
+        # Authenticated callers keep their token teams (None == admin bypass); public-only
+        # callers are floored to no teams so _validate_internal_mcp_auth_context accepts them.
+        "teams": token_teams if is_authenticated else [],
+        "is_authenticated": is_authenticated,
+        "is_admin": bool(is_admin) if is_authenticated else False,
+        "permission_is_admin": bool(is_admin) if is_authenticated else False,
+        "auth_method": payload.get("auth_method") or ("jwt" if is_authenticated else "anonymous"),
+        "token_use": payload.get("token_use"),
+    }
+    if scoped_permissions is not None:
+        context["scoped_permissions"] = scoped_permissions
+    if scoped_server_id:
+        context["scoped_server_id"] = scoped_server_id
+    return context
 
 
 def _enforce_internal_mcp_server_scope(request: Request, server_id: str) -> None:
@@ -714,6 +813,16 @@ async def _ensure_rpc_permission(user, db: Session, permission: str, method: str
     Raises:
         JSONRPCError: If the requester lacks the required permission.
     """
+    # Trusted-internal public-only dispatch: the originating edge already applied public-only
+    # visibility (and per-server OAuth), so an unauthenticated internal hop must not be re-denied
+    # by RBAC. Mirrors _authorize_internal_mcp_request(). This only fires for HMAC-trusted internal
+    # requests (the auth context is set on request.state only after the trust gate passes); the
+    # public /rpc path and authenticated internal callers (is_authenticated True) fall through.
+    if request is not None:
+        _internal_ctx = get_internal_mcp_auth_context(request)
+        if isinstance(_internal_ctx, dict) and _internal_ctx.get("is_authenticated", True) is False:
+            return
+
     # Layer 1: Token scope cap
     if request is not None:
         scoped = _extract_scoped_permissions(request)
@@ -1989,9 +2098,9 @@ def validate_security_configuration():
             else:
                 logger.warning(
                     "⚠️  UAID_ALLOWED_DOMAINS is empty - cross-gateway routing allows ALL domains. "
-                    "Any UAID-based agent can route to any remote gateway endpoint. "
-                    "RECOMMENDED: Configure UAID_ALLOWED_DOMAINS to restrict routing to trusted gateways only. "
-                    'Example: UAID_ALLOWED_DOMAINS=["trusted-gateway.example.com", "partner.org"]'
+                    + "Any UAID-based agent can route to any remote gateway endpoint. "
+                    + "RECOMMENDED: Configure UAID_ALLOWED_DOMAINS to restrict routing to trusted gateways only. "
+                    + 'Example: UAID_ALLOWED_DOMAINS=["trusted-gateway.example.com", "partner.org"]'
                 )
 
         # Audit logging for explicit security overrides in production
@@ -9829,6 +9938,7 @@ async def _maybe_forward_affinitized_rpc_request(
     params: Dict[str, Any],
     req_id: Any,
     lowered_request_headers: Dict[str, str],
+    user: Any,
 ) -> Optional[Dict[str, Any]]:
     """Forward an MCP request to the owning worker when session affinity requires it.
 
@@ -9838,6 +9948,8 @@ async def _maybe_forward_affinitized_rpc_request(
         params: Parsed JSON-RPC params payload.
         req_id: JSON-RPC request identifier.
         lowered_request_headers: Lower-cased request headers used for forwarding.
+        user: Authenticated user from the route dependency, used to build the verified
+            edge auth context carried to the owner's trusted-internal dispatch.
 
     Returns:
         Forwarded JSON-RPC response payload when affinity forwarding handled the
@@ -9864,9 +9976,14 @@ async def _maybe_forward_affinitized_rpc_request(
             from mcpgateway.services.session_affinity import get_session_affinity  # pylint: disable=import-outside-toplevel
 
             pool = get_session_affinity()
+            # Carry the verified edge identity (built from request state, not headers) so the
+            # owner dispatches to the trusted internal endpoint without re-authenticating, so
+            # OAuth and MCP_REQUIRE_AUTH=false public-only callers survive the rpc forward.
+            encoded_auth_context = encode_internal_mcp_auth_context(_build_internal_mcp_auth_context_for_rpc(request, user))
             forwarded_response = await pool.forward_request_to_owner(
                 mcp_session_id,
                 {"method": method, "params": params, "headers": lowered_request_headers, "req_id": req_id},
+                encoded_auth_context,
             )
             if forwarded_response is not None:
                 logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Forwarded response received", WORKER_ID, session_short, method)
@@ -10124,6 +10241,7 @@ async def handle_internal_mcp_tools_call(request: Request):
             params=params,
             req_id=req_id,
             lowered_request_headers=lowered_request_headers,
+            user=user,
         )
         if forwarded_response is not None:
             return forwarded_response
@@ -10428,6 +10546,79 @@ async def handle_internal_mcp_tools_call_metric(request: Request):
     return ORJSONResponse(content={"status": "ok"})
 
 
+async def _handle_tools_list_rpc(
+    request: Request,
+    db: Session,
+    user,
+    tool_svc,
+    server_id: Optional[str],
+    cursor: Optional[str],
+    serializer_func,
+) -> Dict[str, Any]:
+    """Handle tools/list and list_tools RPC methods with shared logic.
+
+    Args:
+        request: The FastAPI request object
+        db: Database session
+        user: Authenticated user with permissions
+        tool_svc: Tool service instance
+        server_id: Optional server ID for server-scoped tool listing
+        cursor: Optional pagination cursor
+        serializer_func: Function to serialize tool definitions (either _serialize_mcp_tool_definitions or _serialize_legacy_tool_payloads)
+
+    Returns:
+        Dictionary containing tools list and optional nextCursor
+
+    Raises:
+        HTTPException: If permission check fails
+    """
+    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
+    _req_email, _req_is_admin = user_email, is_admin
+    _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
+
+    # Admin bypass - only when token has NO team restrictions
+    if is_admin and token_teams is None:
+        # user_email stays as-is (not None) for owner matching (PR #4341 / issue #4694)
+        token_teams = None  # Admin unrestricted
+    elif token_teams is None:
+        token_teams = []  # Non-admin without teams = public-only (secure default)
+
+    if server_id:
+        tools = await tool_svc.list_server_tools(
+            db,
+            server_id,
+            cursor=cursor,
+            user_email=user_email,
+            token_teams=token_teams,
+            requesting_user_email=_req_email,
+            requesting_user_is_admin=_req_is_admin,
+            requesting_user_team_roles=_req_team_roles,
+        )
+        # Release DB connection early to prevent idle-in-transaction under load
+        db.commit()
+        db.close()
+        result = {"tools": serializer_func(tools)}
+    else:
+        tools, next_cursor = await tool_svc.list_tools(
+            db,
+            cursor=cursor,
+            limit=0,
+            user_email=user_email,
+            token_teams=token_teams,
+            requesting_user_email=_req_email,
+            requesting_user_is_admin=_req_is_admin,
+            requesting_user_team_roles=_req_team_roles,
+        )
+        # Release DB connection early to prevent idle-in-transaction under load
+        db.commit()
+        db.close()
+        result = {"tools": serializer_func(tools)}
+        if next_cursor:
+            result["nextCursor"] = next_cursor
+
+    return result
+
+
 async def _handle_rpc_authenticated(request: Request, db: Session, user):
     """Handle RPC requests.
 
@@ -10547,6 +10738,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             params=params,
             req_id=req_id,
             lowered_request_headers=_lowered_request_headers(),
+            user=user,
         )
         if forwarded_response is not None:
             return forwarded_response
@@ -10569,91 +10761,26 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             )
         elif method == "tools/list":
             await _ensure_rpc_permission(user, db, "tools.read", method, request=request)
-            user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-            _req_email, _req_is_admin = user_email, is_admin
-            _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
-            # Admin bypass - only when token has NO team restrictions
-            # Keep user_email for owner matching (PR #4341 / issue #4694)
-            if is_admin and token_teams is None:
-                # user_email stays as-is (not None) for owner matching
-                token_teams = None  # Admin unrestricted
-            elif token_teams is None:
-                token_teams = []  # Non-admin without teams = public-only (secure default)
-            if server_id:
-                tools = await tool_service.list_server_tools(
-                    db,
-                    server_id,
-                    cursor=cursor,
-                    user_email=user_email,
-                    token_teams=token_teams,
-                    requesting_user_email=_req_email,
-                    requesting_user_is_admin=_req_is_admin,
-                    requesting_user_team_roles=_req_team_roles,
-                )
-                # Release DB connection early to prevent idle-in-transaction under load
-                db.commit()
-                db.close()
-                result = {"tools": _serialize_mcp_tool_definitions(tools)}
-            else:
-                tools, next_cursor = await tool_service.list_tools(
-                    db,
-                    cursor=cursor,
-                    limit=0,
-                    user_email=user_email,
-                    token_teams=token_teams,
-                    requesting_user_email=_req_email,
-                    requesting_user_is_admin=_req_is_admin,
-                    requesting_user_team_roles=_req_team_roles,
-                )
-                # Release DB connection early to prevent idle-in-transaction under load
-                db.commit()
-                db.close()
-                result = {"tools": _serialize_mcp_tool_definitions(tools)}
-                if next_cursor:
-                    result["nextCursor"] = next_cursor
+            result = await _handle_tools_list_rpc(
+                request=request,
+                db=db,
+                user=user,
+                tool_svc=tool_service,
+                server_id=server_id,
+                cursor=cursor,
+                serializer_func=_serialize_mcp_tool_definitions,
+            )
         elif method == "list_tools":  # Legacy endpoint
             await _ensure_rpc_permission(user, db, "tools.read", method, request=request)
-            user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-            _req_email, _req_is_admin = user_email, is_admin
-            _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
-            # Admin bypass - only when token has NO team restrictions (token_teams is None)
-            # Keep user_email for owner matching (PR #4341 / issue #4694)
-            # If token has explicit team scope (even empty [] for public-only), respect it
-            if is_admin and token_teams is None:
-                # user_email stays as-is (not None) for owner matching
-                token_teams = None  # Admin unrestricted
-            elif token_teams is None:
-                token_teams = []  # Non-admin without teams = public-only (secure default)
-            if server_id:
-                tools = await tool_service.list_server_tools(
-                    db,
-                    server_id,
-                    cursor=cursor,
-                    user_email=user_email,
-                    token_teams=token_teams,
-                    requesting_user_email=_req_email,
-                    requesting_user_is_admin=_req_is_admin,
-                    requesting_user_team_roles=_req_team_roles,
-                )
-                db.commit()
-                db.close()
-                result = {"tools": _serialize_legacy_tool_payloads(tools)}
-            else:
-                tools, next_cursor = await tool_service.list_tools(
-                    db,
-                    cursor=cursor,
-                    limit=0,
-                    user_email=user_email,
-                    token_teams=token_teams,
-                    requesting_user_email=_req_email,
-                    requesting_user_is_admin=_req_is_admin,
-                    requesting_user_team_roles=_req_team_roles,
-                )
-                db.commit()
-                db.close()
-                result = {"tools": _serialize_legacy_tool_payloads(tools)}
-                if next_cursor:
-                    result["nextCursor"] = next_cursor
+            result = await _handle_tools_list_rpc(
+                request=request,
+                db=db,
+                user=user,
+                tool_svc=tool_service,
+                server_id=server_id,
+                cursor=cursor,
+                serializer_func=_serialize_legacy_tool_payloads,
+            )
         elif method == "list_gateways":
             await _ensure_rpc_permission(user, db, "gateways.read", method, request=request)
             user_email, token_teams, is_admin = get_rpc_filter_context(request, user)

@@ -382,7 +382,7 @@ Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** and log
     **Airgapped deployment** (no internet):
 
     ```bash
-    docker build -f Containerfile.lite -t mcpgateway:airgapped .
+    docker build -f Containerfile -t mcpgateway:airgapped .
     docker run -d --name mcpgateway -p 4444:4444 \
       -e MCPGATEWAY_UI_AIRGAPPED=true -e MCPGATEWAY_UI_ENABLED=true \
       -e HOST=0.0.0.0 -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \

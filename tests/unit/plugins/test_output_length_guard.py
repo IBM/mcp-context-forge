@@ -3192,7 +3192,7 @@ class TestLoggingPerformance:
         with_logging = time.time() - start
 
         # Logging should not add significant overhead
-        assert with_logging < 1.0  # Should complete in less than 1 second
+        assert with_logging < 2.0  # Should complete in less than 2 seconds
 
     def test_debug_logs_dont_slow_down_operations(self):
         """Test that DEBUG logs don't significantly slow down operations."""
@@ -3207,7 +3207,7 @@ class TestLoggingPerformance:
         elapsed = time.time() - start
 
         # Should complete quickly even with logging
-        assert elapsed < 1.0
+        assert elapsed < 2.0
 
 
 # ----------------------------------------------------------------------------

@@ -4889,9 +4889,9 @@ endef
         print-image container-validate-env container-check-ports container-wait-healthy
 
 
-# Containerfile to use (can be overridden). Defaults to Containerfile.lite (the
+# Containerfile to use (can be overridden). Defaults to Containerfile (the
 # multi-stage production build); falls back to Dockerfile if absent.
-CONTAINER_FILE ?= $(shell [ -f "Containerfile.lite" ] && echo "Containerfile.lite" || echo "Dockerfile")
+CONTAINER_FILE ?= $(shell [ -f "Containerfile" ] && echo "Containerfile" || echo "Dockerfile")
 
 
 # Define COMMA for the conditional Z flag
@@ -7804,7 +7804,7 @@ snyk-iac-test:                      ## 🏗️ Test IaC files for security issue
 			--org=$${SNYK_ORG:-} \
 			--json-file-output=snyk-iac-compose-results.json || true; \
 	fi
-	@if [ -f "Dockerfile" ] || [ -f "Containerfile" ] || [ -f "Containerfile.lite" ]; then \
+	@if [ -f "Dockerfile" ] || [ -f "Containerfile" ]; then \
 		echo "📦 Testing Dockerfile/Containerfile..."; \
 		snyk iac test $(CONTAINER_FILE) \
 			--severity-threshold=medium \
