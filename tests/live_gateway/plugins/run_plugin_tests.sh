@@ -111,6 +111,7 @@ wait_for_health() {
 }
 
 # ---------------------------------------------------------------------------
+<<<<<<< HEAD
 # Step 1: Start fast-time-server container (once for the whole run)
 # ---------------------------------------------------------------------------
 start_fast_time_server() {
@@ -125,6 +126,36 @@ start_fast_time_server() {
         --publish "127.0.0.1:${FAST_TIME_PORT}:9080" \
         "${FAST_TIME_IMAGE}"
     wait_for_health "http://localhost:${FAST_TIME_PORT}/health" "fast-time-server" 30
+=======
+# Step 1: Build fast-time-server if binary is missing
+# ---------------------------------------------------------------------------
+build_fast_time_server() {
+    if [[ -x "${FAST_TIME_BIN}" ]]; then
+        info "fast-time-server binary already exists — skipping build"
+        return 0
+    fi
+    info "Building fast-time-server (cargo build -p fast-time-server)…"
+    (cd "${PROJECT_ROOT}" && cargo build -p fast-time-server) || {
+        error "cargo build failed for fast-time-server"
+        return 1
+    }
+    info "fast-time-server built successfully"
+}
+
+# ---------------------------------------------------------------------------
+# Step 2: Start fast-time-server (once for the whole run)
+# ---------------------------------------------------------------------------
+start_fast_time_server() {
+    # Kill any stale instance first
+    pkill -9 -f "target/debug/fast-time-server" 2>/dev/null || true
+    sleep 1
+    # Pass --port explicitly so the bound port matches FAST_TIME_SERVER_URL
+    # (the URL the gateway federates to); otherwise the binary's own default
+    # wins and the two silently diverge.
+    nohup "${FAST_TIME_BIN}" --port "${FAST_TIME_PORT}" > /tmp/fast-time-plugin-tests.log 2>&1 &
+    FAST_TIME_PID=$!
+    wait_for_health "http://localhost:${FAST_TIME_PORT}/health" "fast-time-server" 20
+>>>>>>> 39897e2e5 (fix(tests): correct fast-time-server binary path and wire port end-to-end)
 }
 
 # ---------------------------------------------------------------------------
