@@ -262,10 +262,7 @@ class ErrorFormatter:
                     "success": False,
                 }
             # PostgreSQL reports constraint names; SQLite reports column paths.
-            if (
-                "uq_team_owner_gateway_name_resource" in error_str
-                or "uq_team_owner_name_resource_local" in error_str
-            ):
+            if "uq_team_owner_gateway_name_resource" in error_str or "uq_team_owner_name_resource_local" in error_str:
                 return {"message": "A resource with this name already exists", "success": False}
             if "UNIQUE constraint failed" in error_str:
                 if "gateways.url" in error_str:

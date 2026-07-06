@@ -13273,23 +13273,23 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
         if isinstance(ex, ValidationError):
             LOGGER.error("ValidationError in admin_add_resource: %s", sanitize_validation_error_for_log(ex))
             return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
-        elif isinstance(ex, IntegrityError):
+        if isinstance(ex, IntegrityError):
             error_message = ErrorFormatter.format_database_error(ex)
             LOGGER.error(f"IntegrityError in admin_add_resource: {error_message}")
             return ORJSONResponse(status_code=409, content=error_message)
-        elif isinstance(ex, ResourceValidationError):
+        if isinstance(ex, ResourceValidationError):
             LOGGER.error(f"ResourceValidationError in admin_add_resource: {ex}")
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
-        elif isinstance(ex, ResourceNameConflictError):
+        if isinstance(ex, ResourceNameConflictError):
             LOGGER.error(f"ResourceNameConflictError in admin_add_resource: {ex}")
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
-        elif isinstance(ex, ResourceURIConflictError):
+        if isinstance(ex, ResourceURIConflictError):
             LOGGER.error(f"ResourceURIConflictError in admin_add_resource: {ex}")
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
-        elif isinstance(ex, ContentSizeError):
+        if isinstance(ex, ContentSizeError):
             LOGGER.error(f"ContentSizeError in admin_add_resource: {ex}")
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=413)
-        elif isinstance(ex, ContentTypeError):
+        if isinstance(ex, ContentTypeError):
             LOGGER.error(f"ContentTypeError in admin_add_resource: {ex}")
             return ORJSONResponse(
                 content={
@@ -13408,23 +13408,23 @@ async def admin_edit_resource(
         if isinstance(ex, ValidationError):
             LOGGER.error("ValidationError in admin_edit_resource: %s", sanitize_validation_error_for_log(ex))
             return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
-        elif isinstance(ex, IntegrityError):
+        if isinstance(ex, IntegrityError):
             error_message = ErrorFormatter.format_database_error(ex)
             LOGGER.error(f"IntegrityError in admin_edit_resource: {error_message}")
             return ORJSONResponse(status_code=409, content=error_message)
-        elif isinstance(ex, ResourceValidationError):
+        if isinstance(ex, ResourceValidationError):
             LOGGER.error(f"ResourceValidationError in admin_edit_resource: {ex}")
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
-        elif isinstance(ex, ResourceNameConflictError):
+        if isinstance(ex, ResourceNameConflictError):
             LOGGER.error(f"ResourceNameConflictError in admin_edit_resource: {ex}")
             return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
-        elif isinstance(ex, ResourceURIConflictError):
+        if isinstance(ex, ResourceURIConflictError):
             LOGGER.error(f"ResourceURIConflictError in admin_edit_resource: {ex}")
             return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
-        elif isinstance(ex, ContentSizeError):
+        if isinstance(ex, ContentSizeError):
             LOGGER.error(f"ContentSizeError in admin_edit_resource: {ex}")
             return ORJSONResponse(status_code=413, content={"message": str(ex), "success": False})
-        elif isinstance(ex, ContentTypeError):
+        if isinstance(ex, ContentTypeError):
             LOGGER.error(f"ContentTypeError in admin_edit_resource: {ex}")
             return ORJSONResponse(
                 status_code=415,
