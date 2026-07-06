@@ -626,6 +626,111 @@ describe("Resources", () => {
     });
   });
 
+  describe("Edit resource", () => {
+    async function openEditForm(user: ReturnType<typeof userEvent.setup>) {
+      await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
+
+      await user.click(screen.getByLabelText("More options for test-gateway"));
+      await user.click(await screen.findByText("View Details"));
+
+      await waitFor(() => {
+        expect(
+          screen.getByRole("region", { name: /Resources for test-gateway/i }),
+        ).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByLabelText("More options"));
+      await user.click(await screen.findByText("Edit"));
+
+      await waitFor(() => {
+        expect(screen.getByRole("heading", { name: "Edit resource" })).toBeInTheDocument();
+      });
+    }
+
+    it("opens the edit form pre-filled with the resource's metadata and content", async () => {
+      const user = userEvent.setup();
+      const mockResources: Resource[] = [createMockResource(1, "test-gateway")];
+
+      server.use(
+        http.get("/resources", () => HttpResponse.json(mockResources)),
+        http.get("/resources/resource-1", () => HttpResponse.json({ text: "resource body" })),
+      );
+
+      renderWithRouter(<Resources />);
+      await openEditForm(user);
+
+      expect(screen.getByLabelText(/^Name/)).toHaveValue("Resource 1");
+      expect(screen.getByLabelText(/^URI/)).toHaveValue("resource://example/1");
+      await waitFor(() => {
+        expect(screen.getByLabelText(/Content/)).toHaveValue("resource body");
+      });
+    });
+
+    it("closes the form and refetches the list after a successful update", async () => {
+      const user = userEvent.setup();
+      const mockResources: Resource[] = [createMockResource(1, "test-gateway")];
+      let getResourcesCallCount = 0;
+
+      server.use(
+        http.get("/resources", () => {
+          getResourcesCallCount += 1;
+          return HttpResponse.json(mockResources);
+        }),
+        http.get("/resources/resource-1", () => HttpResponse.json({ text: "resource body" })),
+        http.put("/resources/resource-1", () =>
+          HttpResponse.json({ id: "resource-1" }, { status: 200 }),
+        ),
+      );
+
+      renderWithRouter(<Resources />);
+      await openEditForm(user);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/Content/)).toHaveValue("resource body");
+      });
+
+      const initialCallCount = getResourcesCallCount;
+      await user.click(screen.getByRole("button", { name: "Update resource" }));
+
+      await waitFor(() => {
+        expect(screen.queryByRole("heading", { name: "Edit resource" })).not.toBeInTheDocument();
+      });
+      await waitFor(() => {
+        expect(getResourcesCallCount).toBeGreaterThan(initialCallCount);
+      });
+      expect(toast.success).toHaveBeenCalledWith(
+        expect.stringContaining('Resource "Resource 1" updated successfully'),
+      );
+    });
+
+    it("shows submit error and keeps the form open on API failure", async () => {
+      const user = userEvent.setup();
+      const mockResources: Resource[] = [createMockResource(1, "test-gateway")];
+
+      server.use(
+        http.get("/resources", () => HttpResponse.json(mockResources)),
+        http.get("/resources/resource-1", () => HttpResponse.json({ text: "resource body" })),
+        http.put("/resources/resource-1", () =>
+          HttpResponse.json({ detail: "Update failed" }, { status: 500 }),
+        ),
+      );
+
+      renderWithRouter(<Resources />);
+      await openEditForm(user);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/Content/)).toHaveValue("resource body");
+      });
+
+      await user.click(screen.getByRole("button", { name: "Update resource" }));
+
+      await waitFor(() => {
+        expect(screen.getByRole("alert")).toBeInTheDocument();
+      });
+      expect(screen.getByRole("heading", { name: "Edit resource" })).toBeInTheDocument();
+    });
+  });
+
   describe("Add resource form", () => {
     async function openAndFillForm(user: ReturnType<typeof userEvent.setup>) {
       await waitFor(() => expect(screen.getByText("Add resources")).toBeInTheDocument());
