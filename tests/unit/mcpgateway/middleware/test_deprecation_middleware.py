@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""tests/unit/mcpgateway/middleware/test_deprecation_middleware.py
+"""Location: ./tests/unit/mcpgateway/middleware/test_deprecation_middleware.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 

@@ -1,11 +1,12 @@
-"""Integration tests for multi-tenant unique constraints (Bug #5146).
+# -*- coding: utf-8 -*-
+"""Location: ./tests/integration/test_multitenancy_unique_constraints.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
 
+Integration tests for multi-tenant unique constraints (Bug #5146).
 This module tests that different teams can register entities with the same names
 when using team visibility, verifying the fix for issue #5146 where global unique
 constraints were preventing proper multi-tenant isolation.
-
-Copyright 2026
-SPDX-License-Identifier: Apache-2.0
 """
 
 # Third-Party

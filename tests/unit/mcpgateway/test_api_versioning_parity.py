@@ -1,4 +1,9 @@
-"""Test parity between _LEGACY_PREFIXES and _assemble_routers.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/test_api_versioning_parity.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+
+Test parity between _LEGACY_PREFIXES and _assemble_routers.
 
 This test ensures that the _LEGACY_PREFIXES set in deprecation middleware
 stays synchronized with the actual routers mounted by _assemble_routers.

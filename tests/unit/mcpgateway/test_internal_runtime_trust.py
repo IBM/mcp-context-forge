@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for the consolidated internal-runtime trust gate.
+"""Location: ./tests/unit/mcpgateway/test_internal_runtime_trust.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+
+Unit tests for the consolidated internal-runtime trust gate.
 
 Covers the shared helper in ``auth_context`` (``is_trusted_internal_runtime_request`` /
 ``is_trusted_internal_mcp_request``), the path-aware auth-context rule, the A2A
