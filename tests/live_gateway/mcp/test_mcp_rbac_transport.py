@@ -786,6 +786,7 @@ class TestMcpPerServerEndpoint:
         tools = _mcp_tools_list(outsider_user["access_token"], server_url=server_url)
         # May see only that server's tools
         print(f"    -> Outsider via /servers/{server_id}/mcp: {len(tools)} tools")
+        assert tools, "public server should advertise its associated tools, not an empty list"
 
     def test_team_member_accesses_team_server(self, test_users: dict, visibility_servers: dict) -> None:
         """Developer can access the team server's per-server endpoint."""
@@ -793,6 +794,7 @@ class TestMcpPerServerEndpoint:
         server_url = f"{BASE_URL}/servers/{server_id}"
         tools = _mcp_tools_list(test_users["developer"]["access_token"], server_url=server_url)
         print(f"    -> Developer via /servers/{server_id}/mcp: {len(tools)} tools")
+        assert tools, "team server should advertise its associated tools, not an empty list"
 
     def test_outsider_denied_team_server(self, outsider_user: dict, visibility_servers: dict) -> None:
         """Outsider cannot access team server's per-server endpoint."""
