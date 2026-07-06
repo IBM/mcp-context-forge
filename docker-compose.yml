@@ -1954,7 +1954,7 @@ services:
                     'name': 'Fast Time SSE Server',
                     'description': 'Virtual server exposing Fast Time MCP tools via SSE transport',
                     'associated_tools': tool_ids,
-                    'associated_resources': resource_ids,
+                    'associated_resources': [],
                     'associated_prompts': prompt_ids
                 }
             }

@@ -386,13 +386,22 @@ The Locust UI provides a class picker to select different user behavior profiles
 |------------|--------|-------------|
 | `HealthCheckUser` | 5 | Health endpoint only |
 | `ReadOnlyAPIUser` | 30 | GET endpoints (tools, servers, etc.) |
-| `AdminUIUser` | 10 | Admin dashboard pages |
+| `AdminUIUser` | 3 | Admin dashboard pages |
 | `MCPJsonRpcUser` | 15 | MCP JSON-RPC protocol |
 | `WriteAPIUser` | 5 | POST/PUT/DELETE operations |
 | `StressTestUser` | 1 | High-frequency requests |
 | `FastTimeUser` | 20 | Fast Time MCP server |
 | `RealisticUser` | 10 | Mixed realistic workload |
 | `HighThroughputUser` | - | Maximum RPS (separate file) |
+
+!!! note "Feature-flag-aware weights"
+    Several admin-facing user classes are feature-flag aware and run with **weight 0** when the corresponding feature is disabled:
+
+    - Classes requiring Admin API (`MCPGATEWAY_ADMIN_API_ENABLED=false`): `ObservabilityUser`, `AdminObservabilityExtendedUser`, `AdminPerformanceExtendedUser`, `AdminPluginsUser`, `AdminSystemExtendedUser`, `AdminSectionsUser`, `AdminSearchUser`, `AdminCacheConfigUser`, `AdminLoginLogoutUser`, `AdminLogsExtendedUser`, `AdminSupportBundleUser`, `AdminEntityDetailUser`, `AdminMetricsResetUser`, `AdminTeamsMembershipUser`, `AdminResourcesTestUser`, `AdminDetailReadExtendedUser`, `AdminGrpcCRUDUser`, `AdminMCPRegistryOpsUser`, `AdminUsersOpsUser`
+    - Classes requiring Admin UI (`MCPGATEWAY_UI_ENABLED=false`): `AdminGrpcUser`, `AdminHTMXPartialsUser`
+    - Classes requiring both: `AdminUIUser`, `AdminHTMXEntityOpsUser`, `AdminHTMXEntityCRUDUser`, `AdminTeamsHTMXOpsUser`
+
+    This prevents false failures when load-testing a deployment with the Admin UI or Admin API disabled.
 
 ### High-Concurrency Testing (4000+ Users)
 
