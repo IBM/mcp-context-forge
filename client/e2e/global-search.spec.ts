@@ -18,6 +18,50 @@ test.describe("Global search", () => {
         body: JSON.stringify({ gateways: [], nextCursor: null }),
       });
     });
+    await page.route("**/tools?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          {
+            id: "tool-other",
+            name: "Other Tool",
+            originalName: "Other Tool",
+            description: "Another tool in the same group",
+            gatewayId: "gateway-weather",
+            gatewaySlug: "weather-server",
+            customName: "Other Tool",
+            customNameSlug: "other-tool",
+            enabled: true,
+            reachable: true,
+            executionCount: 0,
+            tags: [],
+            integrationType: "MCP",
+            requestType: "SSE",
+            createdAt: "2026-07-06T10:00:00Z",
+            updatedAt: "2026-07-06T10:00:00Z",
+          },
+          {
+            id: "tool-weather",
+            name: "Weather Tool",
+            originalName: "Weather Tool",
+            description: "Forecast lookup",
+            gatewayId: "gateway-weather",
+            gatewaySlug: "weather-server",
+            customName: "Weather Tool",
+            customNameSlug: "weather-tool",
+            enabled: true,
+            reachable: true,
+            executionCount: 0,
+            tags: [],
+            integrationType: "MCP",
+            requestType: "SSE",
+            createdAt: "2026-07-06T10:00:00Z",
+            updatedAt: "2026-07-06T10:00:00Z",
+          },
+        ]),
+      });
+    });
     await page.route("**/admin/search?*", async (route) => {
       searchRequestUrl = route.request().url();
       await route.fulfill({
@@ -64,5 +108,7 @@ test.describe("Global search", () => {
     await page.getByText("Weather Tool").click();
 
     await expect(page).toHaveURL(/\/app\/tools\?selected=tool-weather&search=weather$/);
+    await expect(page.getByRole("region", { name: /Tools for weather-server/i })).toBeVisible();
+    await expect(page.locator('tr[data-state="selected"]')).toContainText("Weather Tool");
   });
 });
