@@ -29,6 +29,7 @@ import uuid
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent, EmailUser, Gateway, Prompt, Resource, Server, Tool
 from mcpgateway.schemas import AuthenticationValues, GatewayCreate, GatewayUpdate, PromptCreate, PromptUpdate, ResourceCreate, ResourceUpdate, ServerCreate, ServerUpdate, ToolCreate, ToolUpdate
 from mcpgateway.services.gateway_service import GatewayNameConflictError
@@ -749,11 +750,33 @@ class ImportService:
             return
 
         try:
+            defer_gateway_initialization = getattr(settings, "gateway_async_lifecycle_enabled", False) is True
+
+            if conflict_strategy == ConflictStrategy.UPDATE:
+                try:
+                    gateways, _ = await self.gateway_service.list_gateways(db, include_inactive=True)
+                    existing_gateway = next((g for g in gateways if g.name == gateway_name), None)
+                    if existing_gateway:
+                        update_data = self._convert_to_gateway_update(gateway_data)
+                        await self.gateway_service.update_gateway(
+                            db,
+                            existing_gateway.id,
+                            update_data,
+                            modified_by=imported_by,
+                            modified_via="import",
+                            defer_initialization=defer_gateway_initialization,
+                        )
+                        status.updated_entities += 1
+                        logger.debug("Updated gateway: %s", gateway_name)
+                        return
+                except Exception as update_error:
+                    logger.warning("Failed to pre-check gateway %s for update import: %s", gateway_name, str(update_error))
+
             # Convert to GatewayCreate schema
             create_data = self._convert_to_gateway_create(gateway_data)
 
             try:
-                await self.gateway_service.register_gateway(db, create_data, created_by=imported_by, created_via="import")
+                await self.gateway_service.register_gateway(db, create_data, created_by=imported_by, created_via="import", defer_initialization=defer_gateway_initialization)
                 status.created_entities += 1
                 logger.debug("Created gateway: %s", gateway_name)
 
@@ -768,7 +791,14 @@ class ImportService:
                         existing_gateway = next((g for g in gateways if g.name == gateway_name), None)
                         if existing_gateway:
                             update_data = self._convert_to_gateway_update(gateway_data)
-                            await self.gateway_service.update_gateway(db, existing_gateway.id, update_data)
+                            await self.gateway_service.update_gateway(
+                                db,
+                                existing_gateway.id,
+                                update_data,
+                                modified_by=imported_by,
+                                modified_via="import",
+                                defer_initialization=defer_gateway_initialization,
+                            )
                             status.updated_entities += 1
                             logger.debug("Updated gateway: %s", gateway_name)
                         else:
@@ -781,7 +811,7 @@ class ImportService:
                 elif conflict_strategy == ConflictStrategy.RENAME:
                     new_name = f"{gateway_name}_imported_{int(datetime.now().timestamp())}"
                     create_data.name = new_name
-                    await self.gateway_service.register_gateway(db, create_data, created_by=imported_by, created_via="import")
+                    await self.gateway_service.register_gateway(db, create_data, created_by=imported_by, created_via="import", defer_initialization=defer_gateway_initialization)
                     status.created_entities += 1
                     status.warnings.append(f"Renamed gateway {gateway_name} to {new_name}")
                 elif conflict_strategy == ConflictStrategy.FAIL:
@@ -826,7 +856,7 @@ class ImportService:
                 elif conflict_strategy == ConflictStrategy.UPDATE:
                     try:
                         # Find existing server by name
-                        servers = await self.server_service.list_servers(db, include_inactive=True)
+                        servers = self._extract_list_items(await self.server_service.list_servers(db, include_inactive=True))
                         existing_server = next((s for s in servers if s.name == server_name), None)
                         if existing_server:
                             update_data = await self._convert_to_server_update(db, server_data)
@@ -1207,7 +1237,7 @@ class ImportService:
             annotations=tool_data.get("annotations"),
             jsonpath_filter=tool_data.get("jsonpath_filter"),
             auth=auth_info,
-            tags=tool_data.get("tags", []),
+            tags=self._normalize_import_tags(tool_data.get("tags", [])),
         )
 
     def _convert_to_tool_update(self, tool_data: Dict[str, Any]) -> ToolUpdate:
@@ -1236,8 +1266,110 @@ class ImportService:
             annotations=tool_data.get("annotations"),
             jsonpath_filter=tool_data.get("jsonpath_filter"),
             auth=auth_info,
-            tags=tool_data.get("tags"),
+            tags=self._normalize_import_tags(tool_data.get("tags")) if "tags" in tool_data else None,
         )
+
+    def _normalize_import_tags(self, tags: Any) -> List[str]:
+        """Convert exported/read tag shapes into create/update tag strings."""
+        if not tags:
+            return []
+
+        if isinstance(tags, str):
+            return [tags]
+
+        normalized_tags: List[str] = []
+        if not isinstance(tags, list):
+            tags = [tags]
+
+        for tag in tags:
+            if isinstance(tag, str):
+                normalized_tags.append(tag)
+                continue
+
+            if isinstance(tag, dict):
+                tag_value = tag.get("label") or tag.get("id") or tag.get("name") or tag.get("value")
+                if tag_value:
+                    normalized_tags.append(str(tag_value))
+                continue
+
+            if tag is not None:
+                normalized_tags.append(str(tag))
+
+        return normalized_tags
+
+    def _extract_list_items(self, list_result: Any) -> List[Any]:
+        """Extract entity lists from service list responses."""
+        if isinstance(list_result, tuple):
+            return list_result[0]
+        if isinstance(list_result, dict):
+            return list_result.get("data", [])
+        return list_result or []
+
+    def _build_gateway_auth_kwargs(self, gateway_data: Dict[str, Any], *, update: bool = False) -> Dict[str, Any]:
+        """Build GatewayCreate/GatewayUpdate auth kwargs only when credentials are usable."""
+        auth_type = gateway_data.get("auth_type")
+        if not auth_type:
+            return {}
+
+        auth_kwargs: Dict[str, Any] = {"auth_type": auth_type}
+        log_suffix = " update" if update else ""
+
+        if auth_type == "query_param" and gateway_data.get("auth_query_params"):
+            try:
+                auth_query_params = gateway_data["auth_query_params"]
+                if auth_query_params:
+                    param_key = next(iter(auth_query_params.keys()))
+                    encrypted_value = auth_query_params[param_key]
+                    if not encrypted_value or encrypted_value == settings.masked_auth_value:
+                        logger.warning("Skipping query param auth for gateway%s because import has no usable secret", log_suffix)
+                        return {}
+
+                    decrypted_dict = decode_auth(encrypted_value)
+                    decrypted_value = decrypted_dict.get(param_key, "") if isinstance(decrypted_dict, dict) else str(decrypted_dict)
+                    auth_kwargs["auth_query_param_key"] = param_key
+                    auth_kwargs["auth_query_param_value"] = decrypted_value
+                    logger.debug("Importing gateway%s with query_param auth, key: %s", log_suffix, param_key)
+                    return auth_kwargs
+            except Exception as e:
+                logger.warning("Failed to decode query param auth for gateway%s: %s", log_suffix, str(e))
+                return {}
+
+        auth_value = gateway_data.get("auth_value")
+        if not auth_value or auth_value == settings.masked_auth_value:
+            logger.warning("Skipping %s auth for gateway%s because import has no usable auth_value", auth_type, log_suffix)
+            return {}
+
+        try:
+            decoded_auth = decode_auth(auth_value)
+            if not isinstance(decoded_auth, dict):
+                logger.warning("Skipping %s auth for gateway%s because decoded auth is not a mapping", auth_type, log_suffix)
+                return {}
+
+            if auth_type == "basic":
+                auth_header = decoded_auth.get("Authorization", "")
+                if auth_header.startswith("Basic "):
+                    creds = base64.b64decode(auth_header[6:]).decode("utf-8")
+                    username, password = creds.split(":", 1)
+                    auth_kwargs.update({"auth_username": username, "auth_password": password})
+                    return auth_kwargs
+            elif auth_type == "bearer":
+                auth_header = decoded_auth.get("Authorization", "")
+                if auth_header.startswith("Bearer "):
+                    auth_kwargs["auth_token"] = auth_header[7:]
+                    return auth_kwargs
+            elif auth_type == "authheaders":
+                if len(decoded_auth) == 1:
+                    key, value = next(iter(decoded_auth.items()))
+                    auth_kwargs.update({"auth_header_key": key, "auth_header_value": value})
+                else:
+                    auth_kwargs["auth_headers"] = [{"key": k, "value": v} for k, v in decoded_auth.items()]
+                return auth_kwargs
+        except Exception as e:
+            logger.warning("Failed to decode auth data for gateway%s: %s", log_suffix, str(e))
+            return {}
+
+        logger.warning("Skipping %s auth for gateway%s because required auth fields were not found", auth_type, log_suffix)
+        return {}
 
     def _convert_to_gateway_create(self, gateway_data: Dict[str, Any]) -> GatewayCreate:
         """Convert import data to GatewayCreate schema.
@@ -1248,55 +1380,7 @@ class ImportService:
         Returns:
             GatewayCreate schema object
         """
-        # Handle auth data
-        auth_kwargs = {}
-        if gateway_data.get("auth_type"):
-            auth_kwargs["auth_type"] = gateway_data["auth_type"]
-
-            # Handle query_param auth type (new in this version)
-            if gateway_data["auth_type"] == "query_param" and gateway_data.get("auth_query_params"):
-                try:
-                    auth_query_params = gateway_data["auth_query_params"]
-                    if auth_query_params:
-                        # Get the first key-value pair (schema supports single param)
-                        param_key = next(iter(auth_query_params.keys()))
-                        encrypted_value = auth_query_params[param_key]
-                        # Decode the encrypted value - returns dict like {param_key: value}
-                        decrypted_dict = decode_auth(encrypted_value)
-                        # Extract the actual value from the dict
-                        decrypted_value = decrypted_dict.get(param_key, "") if isinstance(decrypted_dict, dict) else str(decrypted_dict)
-                        auth_kwargs["auth_query_param_key"] = param_key
-                        auth_kwargs["auth_query_param_value"] = decrypted_value
-                        logger.debug("Importing gateway with query_param auth, key: %s", param_key)
-                except Exception as e:
-                    logger.warning("Failed to decode query param auth for gateway: %s", str(e))
-            # Decode auth_value to get original credentials
-            elif gateway_data.get("auth_value"):
-                try:
-                    decoded_auth = decode_auth(gateway_data["auth_value"])
-                    if gateway_data["auth_type"] == "basic":
-                        # Extract username and password from Basic auth
-                        auth_header = decoded_auth.get("Authorization", "")
-                        if auth_header.startswith("Basic "):
-                            creds = base64.b64decode(auth_header[6:]).decode("utf-8")
-                            username, password = creds.split(":", 1)
-                            auth_kwargs.update({"auth_username": username, "auth_password": password})
-                    elif gateway_data["auth_type"] == "bearer":
-                        # Extract token from Bearer auth
-                        auth_header = decoded_auth.get("Authorization", "")
-                        if auth_header.startswith("Bearer "):
-                            auth_kwargs["auth_token"] = auth_header[7:]
-                    elif gateway_data["auth_type"] == "authheaders":
-                        # Handle custom headers
-                        if len(decoded_auth) == 1:
-                            key, value = next(iter(decoded_auth.items()))
-                            auth_kwargs.update({"auth_header_key": key, "auth_header_value": value})
-                        else:
-                            # Multiple headers - use the new format
-                            headers_list = [{"key": k, "value": v} for k, v in decoded_auth.items()]
-                            auth_kwargs["auth_headers"] = headers_list
-                except Exception as e:
-                    logger.warning("Failed to decode auth data for gateway: %s", str(e))
+        auth_kwargs = self._build_gateway_auth_kwargs(gateway_data)
 
         return GatewayCreate(
             name=gateway_data["name"],
@@ -1304,7 +1388,7 @@ class ImportService:
             description=gateway_data.get("description"),
             transport=gateway_data.get("transport", "SSE"),
             passthrough_headers=gateway_data.get("passthrough_headers"),
-            tags=gateway_data.get("tags", []),
+            tags=self._normalize_import_tags(gateway_data.get("tags", [])),
             **auth_kwargs,
         )
 
@@ -1317,50 +1401,7 @@ class ImportService:
         Returns:
             GatewayUpdate schema object
         """
-        # Similar to create but all fields optional
-        auth_kwargs = {}
-        if gateway_data.get("auth_type"):
-            auth_kwargs["auth_type"] = gateway_data["auth_type"]
-
-            # Handle query_param auth type (new in this version)
-            if gateway_data["auth_type"] == "query_param" and gateway_data.get("auth_query_params"):
-                try:
-                    auth_query_params = gateway_data["auth_query_params"]
-                    if auth_query_params:
-                        # Get the first key-value pair (schema supports single param)
-                        param_key = next(iter(auth_query_params.keys()))
-                        encrypted_value = auth_query_params[param_key]
-                        # Decode the encrypted value - returns dict like {param_key: value}
-                        decrypted_dict = decode_auth(encrypted_value)
-                        # Extract the actual value from the dict
-                        decrypted_value = decrypted_dict.get(param_key, "") if isinstance(decrypted_dict, dict) else str(decrypted_dict)
-                        auth_kwargs["auth_query_param_key"] = param_key
-                        auth_kwargs["auth_query_param_value"] = decrypted_value
-                        logger.debug("Importing gateway update with query_param auth, key: %s", param_key)
-                except Exception as e:
-                    logger.warning("Failed to decode query param auth for gateway update: %s", str(e))
-            elif gateway_data.get("auth_value"):
-                try:
-                    decoded_auth = decode_auth(gateway_data["auth_value"])
-                    if gateway_data["auth_type"] == "basic":
-                        auth_header = decoded_auth.get("Authorization", "")
-                        if auth_header.startswith("Basic "):
-                            creds = base64.b64decode(auth_header[6:]).decode("utf-8")
-                            username, password = creds.split(":", 1)
-                            auth_kwargs.update({"auth_username": username, "auth_password": password})
-                    elif gateway_data["auth_type"] == "bearer":
-                        auth_header = decoded_auth.get("Authorization", "")
-                        if auth_header.startswith("Bearer "):
-                            auth_kwargs["auth_token"] = auth_header[7:]
-                    elif gateway_data["auth_type"] == "authheaders":
-                        if len(decoded_auth) == 1:
-                            key, value = next(iter(decoded_auth.items()))
-                            auth_kwargs.update({"auth_header_key": key, "auth_header_value": value})
-                        else:
-                            headers_list = [{"key": k, "value": v} for k, v in decoded_auth.items()]
-                            auth_kwargs["auth_headers"] = headers_list
-                except Exception as e:
-                    logger.warning("Failed to decode auth data for gateway update: %s", str(e))
+        auth_kwargs = self._build_gateway_auth_kwargs(gateway_data, update=True)
 
         return GatewayUpdate(
             name=gateway_data.get("name"),
@@ -1368,7 +1409,7 @@ class ImportService:
             description=gateway_data.get("description"),
             transport=gateway_data.get("transport"),
             passthrough_headers=gateway_data.get("passthrough_headers"),
-            tags=gateway_data.get("tags"),
+            tags=self._normalize_import_tags(gateway_data.get("tags")) if "tags" in gateway_data else None,
             **auth_kwargs,
         )
 
@@ -1411,7 +1452,7 @@ class ImportService:
                     logger.warning("Could not resolve tool reference: %s", tool_ref)
                     # Don't include unresolvable references
 
-        return ServerCreate(name=server_data["name"], description=server_data.get("description"), associated_tools=resolved_tool_ids, tags=server_data.get("tags", []))
+        return ServerCreate(name=server_data["name"], description=server_data.get("description"), associated_tools=resolved_tool_ids, tags=self._normalize_import_tags(server_data.get("tags", [])))
 
     async def _convert_to_server_update(self, db: Session, server_data: Dict[str, Any]) -> ServerUpdate:
         """Convert import data to ServerUpdate schema, resolving tool references.
@@ -1442,7 +1483,12 @@ class ImportService:
                 else:
                     logger.warning("Could not resolve tool reference for update: %s", tool_ref)
 
-        return ServerUpdate(name=server_data.get("name"), description=server_data.get("description"), associated_tools=resolved_tool_ids if resolved_tool_ids else None, tags=server_data.get("tags"))
+        return ServerUpdate(
+            name=server_data.get("name"),
+            description=server_data.get("description"),
+            associated_tools=resolved_tool_ids if resolved_tool_ids else None,
+            tags=self._normalize_import_tags(server_data.get("tags")) if "tags" in server_data else None,
+        )
 
     def _convert_to_prompt_create(self, prompt_data: Dict[str, Any]) -> PromptCreate:
         """Convert import data to PromptCreate schema.
@@ -1471,7 +1517,7 @@ class ImportService:
             template=prompt_data["template"],
             description=prompt_data.get("description"),
             arguments=arguments,
-            tags=prompt_data.get("tags", []),
+            tags=self._normalize_import_tags(prompt_data.get("tags", [])),
         )
 
     def _convert_to_prompt_update(self, prompt_data: Dict[str, Any]) -> PromptUpdate:
@@ -1500,7 +1546,7 @@ class ImportService:
             template=prompt_data.get("template"),
             description=prompt_data.get("description"),
             arguments=arguments if arguments else None,
-            tags=prompt_data.get("tags"),
+            tags=self._normalize_import_tags(prompt_data.get("tags")) if "tags" in prompt_data else None,
         )
 
     def _convert_to_resource_create(self, resource_data: Dict[str, Any]) -> ResourceCreate:
@@ -1518,7 +1564,7 @@ class ImportService:
             description=resource_data.get("description"),
             mime_type=resource_data.get("mime_type"),
             content=resource_data.get("content", ""),  # Default empty content
-            tags=resource_data.get("tags", []),
+            tags=self._normalize_import_tags(resource_data.get("tags", [])),
         )
 
     def _convert_to_resource_update(self, resource_data: Dict[str, Any]) -> ResourceUpdate:
@@ -1531,7 +1577,11 @@ class ImportService:
             ResourceUpdate schema object
         """
         return ResourceUpdate(
-            name=resource_data.get("name"), description=resource_data.get("description"), mime_type=resource_data.get("mime_type"), content=resource_data.get("content"), tags=resource_data.get("tags")
+            name=resource_data.get("name"),
+            description=resource_data.get("description"),
+            mime_type=resource_data.get("mime_type"),
+            content=resource_data.get("content"),
+            tags=self._normalize_import_tags(resource_data.get("tags")) if "tags" in resource_data else None,
         )
 
     def get_import_status(self, import_id: str) -> Optional[ImportStatus]:
@@ -1654,7 +1704,7 @@ class ImportService:
                 existing, _ = await self.gateway_service.list_gateways(db)
                 item_info["conflicts_with"] = any(g.name == item_name for g in existing)
             elif entity_type == "servers":
-                existing = await self.server_service.list_servers(db)
+                existing = self._extract_list_items(await self.server_service.list_servers(db))
                 item_info["conflicts_with"] = any(s.name == item_name for s in existing)
             elif entity_type == "prompts":
                 existing, _ = await self.prompt_service.list_prompts(db)

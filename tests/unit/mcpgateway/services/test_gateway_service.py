@@ -951,6 +951,52 @@ class TestGatewayService:
         assert result.status == "pending"
 
     @pytest.mark.asyncio
+    async def test_update_gateway_defer_initialization_still_checks_duplicates(self, gateway_service, mock_gateway, test_db, monkeypatch):
+        """Deferred updates should still enforce local duplicate gateway policy."""
+        mock_gateway.id = "gw-1"
+        mock_gateway.status = "active"
+        mock_gateway.url = "http://example.com/original"
+        mock_gateway.transport = "SSE"
+        mock_gateway.auth_type = None
+        mock_gateway.auth_value = None
+        mock_gateway.auth_query_params = None
+        mock_gateway.oauth_config = None
+        mock_gateway.ca_certificate = None
+        mock_gateway.ca_certificate_sig = None
+        mock_gateway.signing_algorithm = None
+        mock_gateway.client_cert = None
+        mock_gateway.client_key = None
+        mock_gateway.version = 1
+        mock_gateway.team_id = None
+        mock_gateway.tools = []
+        mock_gateway.resources = []
+        mock_gateway.prompts = []
+
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+
+        duplicate_check = Mock(return_value=None)
+        monkeypatch.setattr(gateway_service, "_check_gateway_uniqueness", duplicate_check)
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: SimpleNamespace(invalidate_gateways=AsyncMock()))
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: SimpleNamespace(invalidate_gateway=AsyncMock()))
+        monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
+        gateway_service._notify_gateway_updated = AsyncMock()
+        gateway_service._initialize_gateway = AsyncMock()
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+        mock_gateway_read.status = "pending"
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            result = await gateway_service.update_gateway(test_db, "gw-1", GatewayUpdate(name=mock_gateway.name, url=mock_gateway.url), modified_via="import", defer_initialization=True)
+
+        duplicate_check.assert_called_once()
+        gateway_service._initialize_gateway.assert_not_called()
+        assert mock_gateway.status == "pending"
+        assert result.status == "pending"
+
+    @pytest.mark.asyncio
     async def test_update_gateway_async_retry_returns_existing_pending_gateway(self, gateway_service, mock_gateway, test_db, monkeypatch):
         """Async update retry should return existing pending gateway without applying new changes."""
         mock_gateway.id = "gw-1"

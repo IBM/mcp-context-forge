@@ -1256,7 +1256,8 @@ export const setupBulkImportModal = function () {
 
 export const initializeExportImport = function () {
   // Prevent double initialization
-  if (window.exportImportInitialized) {
+  window.Admin = window.Admin || {};
+  if (window.Admin.exportImportInitialized || window.exportImportInitialized) {
     console.log("🔄 Export/import already initialized, skipping");
     return;
   }
@@ -1283,7 +1284,12 @@ export const initializeExportImport = function () {
 
   if (importDropZone && importFileInput) {
     // File input handler
-    importDropZone.addEventListener("click", () => importFileInput.click());
+    importDropZone.addEventListener("click", (event) => {
+      if (event.target === importFileInput) {
+        return;
+      }
+      importFileInput.click();
+    });
     importFileInput.addEventListener("change", handleFileSelect);
 
     // Drag and drop handlers
@@ -1305,6 +1311,7 @@ export const initializeExportImport = function () {
 
   // Mark as initialized
   window.Admin.exportImportInitialized = true;
+  window.exportImportInitialized = true;
 };
 
 // ===================================================================

@@ -16,6 +16,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 import pytest
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.schemas import ToolCreate
 from mcpgateway.services.gateway_service import GatewayNameConflictError
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError, ImportError, ImportService, ImportStatus, ImportValidationError
@@ -120,8 +121,10 @@ async def test_validate_entity_fields_missing_required(import_service):
 
 
 @pytest.mark.asyncio
-async def test_import_configuration_success(import_service, mock_db, valid_import_data):
+async def test_import_configuration_success(import_service, mock_db, valid_import_data, monkeypatch):
     """Test successful configuration import."""
+    monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", False)
+
     # Setup mocks for successful bulk creation
     import_service.tool_service.register_tools_bulk.return_value = {"created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
     import_service.gateway_service.register_gateway.return_value = MagicMock()
@@ -141,6 +144,22 @@ async def test_import_configuration_success(import_service, mock_db, valid_impor
     gateway_call = import_service.gateway_service.register_gateway.await_args.kwargs
     assert gateway_call["created_by"] == "test_user"
     assert gateway_call["created_via"] == "import"
+    assert gateway_call["defer_initialization"] is False
+
+
+@pytest.mark.asyncio
+async def test_import_configuration_defers_gateway_when_async_lifecycle_enabled(import_service, mock_db, valid_import_data, monkeypatch):
+    """Gateway import should only defer initialization when the async lifecycle worker is enabled."""
+    monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", True)
+
+    import_service.tool_service.register_tools_bulk.return_value = {"created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
+    import_service.gateway_service.register_gateway.return_value = MagicMock()
+
+    status = await import_service.import_configuration(db=mock_db, import_data=valid_import_data, imported_by="test_user")
+
+    assert status.status == "completed"
+    gateway_call = import_service.gateway_service.register_gateway.await_args.kwargs
+    assert gateway_call["defer_initialization"] is True
 
 
 @pytest.mark.asyncio
@@ -570,6 +589,26 @@ async def test_convert_schema_methods(import_service):
 
 
 @pytest.mark.asyncio
+async def test_import_converters_accept_exported_tag_objects(import_service, mock_db):
+    """Import converters should accept read/export tag objects and pass strings to create/update schemas."""
+    tag_objects = [{"id": "omnichat", "label": "omnichat"}, {"id": "schema", "label": "schema"}]
+    tool_data = {"name": "lookup", "url": "https://api.example.com", "integration_type": "REST", "request_type": "GET", "tags": tag_objects}
+
+    tool_create = import_service._convert_to_tool_create(tool_data)
+    assert tool_create.tags == tag_objects
+
+    tool_update = import_service._convert_to_tool_update(tool_data)
+    assert tool_update.tags == tag_objects
+
+    import_service.tool_service.list_tools.return_value = ([], None)
+    server_create = await import_service._convert_to_server_create(mock_db, {"name": "srv", "tags": tag_objects})
+    assert server_create.tags == tag_objects
+
+    server_update = await import_service._convert_to_server_update(mock_db, {"name": "srv", "tags": tag_objects})
+    assert server_update.tags == tag_objects
+
+
+@pytest.mark.asyncio
 async def test_get_entity_identifier(import_service):
     """Test entity identifier extraction."""
     # Test tools (uses name)
@@ -873,6 +912,29 @@ async def test_gateway_conflict_update_not_found(import_service, mock_db):
 
 
 @pytest.mark.asyncio
+async def test_gateway_update_strategy_updates_existing_without_create_probe(import_service, mock_db, monkeypatch):
+    """Gateway UPDATE imports should avoid create-time uniqueness probes when a matching gateway exists."""
+    monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", False)
+
+    gateway_data = {"name": "existing_gateway", "url": "https://gateway.example.com", "description": "Existing gateway", "transport": "SSE"}
+    import_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"gateways": [gateway_data]}, "metadata": {"entity_counts": {"gateways": 1}}}
+    mock_gateway = MagicMock()
+    mock_gateway.name = "existing_gateway"
+    mock_gateway.id = "gateway_id"
+    import_service.gateway_service.list_gateways.return_value = ([mock_gateway], None)
+    import_service.gateway_service.update_gateway.return_value = MagicMock()
+
+    status = await import_service.import_configuration(db=mock_db, import_data=import_data, conflict_strategy=ConflictStrategy.UPDATE, imported_by="test_user")
+
+    assert status.updated_entities == 1
+    import_service.gateway_service.register_gateway.assert_not_called()
+    update_call = import_service.gateway_service.update_gateway.await_args
+    assert update_call.args[1] == "gateway_id"
+    assert update_call.kwargs["modified_via"] == "import"
+    assert update_call.kwargs["defer_initialization"] is False
+
+
+@pytest.mark.asyncio
 async def test_gateway_conflict_update_exception(import_service, mock_db):
     """Test gateway UPDATE conflict strategy when update operation fails."""
     gateway_data = {"name": "error_gateway", "url": "https://gateway.example.com", "description": "Error gateway", "transport": "SSE"}
@@ -969,6 +1031,26 @@ async def test_server_conflict_update_success(import_service, mock_db):
     # Should update the server
     assert status.updated_entities == 1
     import_service.server_service.update_server.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_server_conflict_update_accepts_tuple_list_response(import_service, mock_db):
+    """Server UPDATE conflict handling should accept list_servers tuple responses."""
+    server_data = {"name": "update_server", "description": "Updated server", "tool_ids": ["tool1", "tool2"]}
+    import_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"servers": [server_data]}, "metadata": {"entity_counts": {"servers": 1}}}
+
+    import_service.server_service.register_server.side_effect = ServerNameConflictError("update_server")
+    import_service.tool_service.list_tools.return_value = ([], None)
+    mock_server = MagicMock()
+    mock_server.name = "update_server"
+    mock_server.id = "server_id"
+    import_service.server_service.list_servers.return_value = ([mock_server], None)
+    import_service.server_service.update_server.return_value = MagicMock()
+
+    status = await import_service.import_configuration(db=mock_db, import_data=import_data, conflict_strategy=ConflictStrategy.UPDATE, imported_by="test_user")
+
+    assert status.updated_entities == 1
+    assert not any("'list' object has no attribute 'name'" in warning for warning in status.warnings)
 
 
 @pytest.mark.asyncio
@@ -1405,9 +1487,9 @@ async def test_gateway_auth_conversion_decode_error(import_service):
     """Test gateway conversion with invalid auth data."""
     gateway_data = {"name": "error_gateway", "url": "https://example.com", "auth_type": "basic", "auth_value": "invalid_encrypted_data"}
 
-    # Should raise ValidationError because auth fields are missing after decode failure
-    with pytest.raises(Exception):  # ValidationError or similar
-        import_service._convert_to_gateway_create(gateway_data)
+    gateway_create = import_service._convert_to_gateway_create(gateway_data)
+    assert gateway_create.name == "error_gateway"
+    assert gateway_create.auth_type in (None, "")
 
 
 @pytest.mark.asyncio
@@ -1445,9 +1527,9 @@ async def test_gateway_update_auth_decode_error(import_service):
         "auth_value": "invalid_encrypted_data_update",
     }
 
-    # Should raise ValidationError because auth token is missing after decode failure
-    with pytest.raises(Exception):  # ValidationError or similar
-        import_service._convert_to_gateway_update(gateway_data)
+    gateway_update = import_service._convert_to_gateway_update(gateway_data)
+    assert gateway_update.name == "update_error_gateway"
+    assert gateway_update.auth_type in (None, "")
 
 
 @pytest.mark.asyncio
@@ -2027,7 +2109,7 @@ async def test_preview_import_builds_bundles_and_conflicts(import_service, mock_
 
     import_service.tool_service.list_tools.return_value = ([SimpleNamespace(original_name="tool1")], None)
     import_service.gateway_service.list_gateways.return_value = ([SimpleNamespace(name="gw1")], None)
-    import_service.server_service.list_servers.return_value = [SimpleNamespace(name="srv1")]
+    import_service.server_service.list_servers.return_value = ([SimpleNamespace(name="srv1")], None)
     import_service.prompt_service.list_prompts.return_value = ([SimpleNamespace(name="prompt1")], None)
     import_service.resource_service.list_resources.return_value = ([SimpleNamespace(uri="file:///res1")], None)
 
@@ -2409,9 +2491,8 @@ async def test_gateway_create_with_authheaders_multiple(import_service):
 async def test_gateway_create_auth_decode_failure(import_service):
     """Test gateway conversion with auth decode failure.
 
-    When auth_value decoding fails, the conversion logs a warning but continues.
-    However, if auth_type is 'bearer', GatewayCreate schema requires auth_token,
-    which causes a ValidationError since auth decoding failed to populate auth_token.
+    When auth_value decoding fails, the conversion logs a warning and imports
+    the gateway without auth so the secret can be re-entered later.
     """
     gateway_data = {
         "name": "bad_auth_gw",
@@ -2420,13 +2501,25 @@ async def test_gateway_create_auth_decode_failure(import_service):
         "auth_value": "invalid-encrypted-data",
     }
 
-    # When auth decoding fails for bearer type, GatewayCreate validation fails
-    # because bearer auth requires auth_token which wasn't populated
-    with pytest.raises(Exception) as exc_info:
-        import_service._convert_to_gateway_create(gateway_data)
+    result = import_service._convert_to_gateway_create(gateway_data)
 
-    # Should be a pydantic ValidationError for missing auth_token
-    assert "auth_token" in str(exc_info.value) or "bearer" in str(exc_info.value).lower()
+    assert result.name == "bad_auth_gw"
+    assert result.auth_type in (None, "")
+
+
+@pytest.mark.asyncio
+async def test_gateway_create_missing_auth_value_skips_auth(import_service):
+    """Gateway imports with auth_type but no secret should not fail validation."""
+    gateway_data = {
+        "name": "missing_auth_gw",
+        "url": "https://gw.example.com",
+        "auth_type": "bearer",
+    }
+
+    result = import_service._convert_to_gateway_create(gateway_data)
+
+    assert result.name == "missing_auth_gw"
+    assert result.auth_type in (None, "")
 
 
 # ============================================================================
@@ -2523,11 +2616,12 @@ async def test_gateway_auth_conversion_query_param_decode_error(import_service):
     settings.insecure_queryparam_auth_allowed_hosts = []
     try:
         with patch("mcpgateway.services.import_service.decode_auth", side_effect=Exception("boom")):
-            with pytest.raises(Exception):
-                import_service._convert_to_gateway_create(gateway_data)
+            gw = import_service._convert_to_gateway_create(gateway_data)
     finally:
         settings.insecure_allow_queryparam_auth = original_allow
         settings.insecure_queryparam_auth_allowed_hosts = original_hosts
+
+    assert gw.auth_type in (None, "")
 
 
 @pytest.mark.asyncio
@@ -2550,8 +2644,9 @@ async def test_gateway_update_auth_conversion_query_param_decode_error(import_se
     gateway_data = {"name": "qp_gateway", "url": "https://example.com", "auth_type": "query_param", "auth_query_params": {"api_key": "enc"}}  # pragma: allowlist secret
 
     with patch("mcpgateway.services.import_service.decode_auth", side_effect=Exception("boom")):
-        with pytest.raises(Exception):
-            import_service._convert_to_gateway_update(gateway_data)
+        gw = import_service._convert_to_gateway_update(gateway_data)
+
+    assert gw.auth_type in (None, "")
 
 
 @pytest.mark.asyncio

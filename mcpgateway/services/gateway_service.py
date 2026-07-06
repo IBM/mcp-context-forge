@@ -1329,6 +1329,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         owner_email: Optional[str] = None,
         visibility: Optional[str] = None,
         initialize_timeout: Optional[float] = None,
+        defer_initialization: bool = False,
     ) -> GatewayRead:
         """Register a new gateway.
 
@@ -1343,6 +1344,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             owner_email (Optional[str]): Email of the user who owns this gateway.
             visibility (Optional[str]): Gateway visibility level (private, team, public).
             initialize_timeout (Optional[float]): Timeout in seconds for gateway initialization.
+            defer_initialization: Persist as pending without contacting the remote gateway.
 
         Returns:
             Created gateway information
@@ -1376,8 +1378,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             >>> asyncio.run(service._http_client.aclose())
         """
         visibility = "public" if visibility not in ("private", "team", "public") else visibility
+        use_async_lifecycle = defer_initialization or getattr(settings, "gateway_async_lifecycle_enabled", False) is True
         try:
-            if getattr(settings, "gateway_async_lifecycle_enabled", False) is True:
+            if use_async_lifecycle:
                 existing_gateway = self._get_existing_gateway_for_slug_conflict(
                     db,
                     slug_name=slugify(gateway.name),
@@ -1402,7 +1405,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 visibility=visibility,
             )
 
-            if getattr(settings, "gateway_async_lifecycle_enabled", False) is True:
+            if use_async_lifecycle:
                 return await self._register_gateway_pending(
                     db,
                     gateway,
@@ -2282,6 +2285,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         modified_user_agent: Optional[str] = None,
         include_inactive: bool = True,
         user_email: Optional[str] = None,
+        defer_initialization: bool = False,
     ) -> Optional[GatewayRead]:
         """Update a gateway.
 
@@ -2295,6 +2299,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             modified_user_agent: User agent string from the modification request
             include_inactive: Whether to include inactive gateways
             user_email: Email of user performing update (for ownership check)
+            defer_initialization: Persist the update as pending without contacting the remote gateway.
 
         Returns:
             Updated gateway information
@@ -2308,6 +2313,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             ValidationError: If validation fails
         """
         try:  # pylint: disable=too-many-nested-blocks
+            use_async_lifecycle = defer_initialization or getattr(settings, "gateway_async_lifecycle_enabled", False) is True
             # Acquire row lock and eager-load relationships while locked so
             # concurrent updates are serialized on Postgres.
             gateway = get_for_update(
@@ -2334,7 +2340,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     raise PermissionError("Only the owner can update this gateway")
 
             if gateway.enabled or include_inactive:
-                if getattr(settings, "gateway_async_lifecycle_enabled", False) is True and getattr(gateway, "status", None) == "pending":
+                if use_async_lifecycle and getattr(gateway, "status", None) == "pending":
                     return self.convert_gateway_to_read(gateway)
 
                 # Check for name conflicts if name is being changed
@@ -2652,7 +2658,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     auth_query_params_decrypted = connection_material.auth_query_params_decrypted
                     init_url = connection_material.url
 
-                if getattr(settings, "gateway_async_lifecycle_enabled", False) is True:
+                if use_async_lifecycle:
                     gateway.status = "pending"
                     gateway.status_message = "Gateway update accepted and pending initialization"
                     gateway.registration_attempts = 0
