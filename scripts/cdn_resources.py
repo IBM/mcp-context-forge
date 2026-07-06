@@ -31,5 +31,5 @@ CDN_RESOURCES = {
     "codemirror_css": "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/codemirror.min.css",
     "codemirror_theme_monokai": "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/theme/monokai.min.css",
     # Font Awesome
-    "fontawesome": "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.3.0/css/all.min.css",
+    "fontawesome": "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.1/css/all.min.css",
 }
