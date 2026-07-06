@@ -3,9 +3,20 @@ import { renderHook as rtlRenderHook, act, waitFor } from "@testing-library/reac
 import { createElement, type FormEvent, type ReactNode } from "react";
 import { IntlProvider } from "react-intl";
 import { http, HttpResponse } from "msw";
+import { toast } from "sonner";
 import { server } from "@/test/mocks/server";
 import enMessages from "@/i18n/locales/en-US";
 import { useTeamForm } from "./useTeamForm";
+
+vi.mock("sonner", () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+    warning: vi.fn(),
+  },
+}));
+
+const mockToastWarning = vi.mocked(toast.warning);
 
 const wrapper = ({ children }: { children: ReactNode }) =>
   createElement(
@@ -21,6 +32,7 @@ const fakeSubmit = (e?: Partial<FormEvent<HTMLFormElement>>) =>
   ({ preventDefault: vi.fn(), ...e }) as FormEvent<HTMLFormElement>;
 
 beforeEach(() => {
+  mockToastWarning.mockClear();
   // The hook loads the user directory on mount; keep it quiet by default.
   server.use(http.get("*/auth/email/admin/users", () => HttpResponse.json({ users: [] })));
 });
@@ -34,7 +46,7 @@ describe("useTeamForm", () => {
       expect(result.current.description).toBe("");
       expect(result.current.visibility).toBe("private");
       expect(result.current.maxMembers).toBe("100");
-      expect(result.current.members).toEqual([{ name: "", role: "owner" }]);
+      expect(result.current.members).toEqual([{ email: "", role: "owner" }]);
       expect(result.current.error).toBeNull();
       expect(result.current.isSubmitting).toBe(false);
     });
@@ -48,13 +60,13 @@ describe("useTeamForm", () => {
       expect(result.current.members).toHaveLength(2);
 
       act(() => {
-        result.current.handleMemberNameChange(1, "user@example.com");
+        result.current.handleMemberEmailChange(1, "user@example.com");
         result.current.handleMemberRoleChange(1, "member");
       });
-      expect(result.current.members[1]).toEqual({ name: "user@example.com", role: "member" });
+      expect(result.current.members[1]).toEqual({ email: "user@example.com", role: "member" });
 
       act(() => result.current.handleRemoveMember(0));
-      expect(result.current.members).toEqual([{ name: "user@example.com", role: "member" }]);
+      expect(result.current.members).toEqual([{ email: "user@example.com", role: "member" }]);
     });
   });
 
@@ -154,7 +166,7 @@ describe("useTeamForm", () => {
 
       act(() => {
         result.current.setName("Engineering");
-        result.current.handleMemberNameChange(0, "owner@example.com");
+        result.current.handleMemberEmailChange(0, "owner@example.com");
       });
 
       await act(async () => {
@@ -165,7 +177,7 @@ describe("useTeamForm", () => {
       expect(memberBodies[0]).toMatchObject({ email: "owner@example.com", role: "owner" });
     });
 
-    it("surfaces an error and skips onSuccess when a member add fails", async () => {
+    it("closes the form and warns via toast when a member add fails", async () => {
       server.use(
         http.post("*/teams", () =>
           HttpResponse.json({ id: "team-1", name: "Engineering" }, { status: 201 }),
@@ -180,15 +192,44 @@ describe("useTeamForm", () => {
 
       act(() => {
         result.current.setName("Engineering");
-        result.current.handleMemberNameChange(0, "owner@example.com");
+        result.current.handleMemberEmailChange(0, "owner@example.com");
       });
 
       await act(async () => {
         await result.current.handleSubmit(fakeSubmit(), onSuccess);
       });
 
-      await waitFor(() => expect(result.current.error).toBeTruthy());
+      // The team already exists, so we proceed to success (form closes) but warn
+      // about the members that could not be added.
+      await waitFor(() => expect(onSuccess).toHaveBeenCalledOnce());
+      expect(mockToastWarning).toHaveBeenCalledOnce();
+      expect(mockToastWarning.mock.calls[0][1]).toMatchObject({
+        description: expect.stringContaining("owner@example.com"),
+      });
+      expect(result.current.error).toBeNull();
+      // Form resets after proceeding to success.
+      expect(result.current.name).toBe("");
+    });
+
+    it("rejects an invalid member email before creating the team", async () => {
+      const postSpy = vi.fn(() => HttpResponse.json({}, { status: 201 }));
+      server.use(http.post("*/teams", postSpy));
+
+      const onSuccess = vi.fn();
+      const { result } = renderHook(() => useTeamForm());
+
+      act(() => {
+        result.current.setName("Engineering");
+        result.current.handleMemberEmailChange(0, "not-an-email");
+      });
+
+      await act(async () => {
+        await result.current.handleSubmit(fakeSubmit(), onSuccess);
+      });
+
+      expect(postSpy).not.toHaveBeenCalled();
       expect(onSuccess).not.toHaveBeenCalled();
+      expect(result.current.error).toBeTruthy();
     });
 
     it("sets an error when team creation fails", async () => {
