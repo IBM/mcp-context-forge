@@ -131,7 +131,7 @@ describe("TeamForm", () => {
       const user = userEvent.setup();
       renderForm();
 
-      // Pick a member via the combobox (fires the member-name change handler).
+      // Pick a member via the combobox (fires the member-email change handler).
       const memberInput = screen.getByPlaceholderText(/name or email/i);
       await user.click(memberInput);
       await user.keyboard("alice");
