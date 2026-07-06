@@ -324,7 +324,7 @@ class DataplanePublisherService:
         backend_items_by_server: BackendItemsByServer,
     ) -> dict[str, Any]:
         """Build already-filtered dataplane data for one user."""
-        tool_name_by_id = {tool.id: tool.name for tool in tool_rows if self._filter_for_user(tool, user_email, team_ids, is_admin=is_admin)}
+        tool_name_by_id = {tool.id: tool.original_name for tool in tool_rows if self._filter_for_user(tool, user_email, team_ids, is_admin=is_admin)}
 
         return {
             "servers": [
