@@ -157,6 +157,7 @@ export function Resources() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteResourceId, setDeleteResourceId] = useState<string | null>(null);
   const [deleteResourceName, setDeleteResourceName] = useState<string | null>(null);
+  const [shouldRedirectDeleteCloseFocus, setShouldRedirectDeleteCloseFocus] = useState(false);
 
   const {
     data,
@@ -229,6 +230,7 @@ export function Resources() {
       const resource = data?.find((r) => r?.id === id);
       setDeleteResourceId(id);
       setDeleteResourceName(resource?.name || id);
+      setShouldRedirectDeleteCloseFocus(false);
       setDeleteDialogOpen(true);
     },
     [data],
@@ -242,6 +244,7 @@ export function Resources() {
     const previousData = data;
 
     setResourcesData((prev) => prev?.filter((r) => r?.id !== resourceId) ?? []);
+    setShouldRedirectDeleteCloseFocus(true);
     setDeleteDialogOpen(false);
     setDeleteResourceId(null);
     setDeleteResourceName(null);
@@ -363,10 +366,13 @@ export function Resources() {
             variant="destructive"
             closeOnConfirm={false}
             onCloseAutoFocus={(event) => {
+              if (!shouldRedirectDeleteCloseFocus) return;
+
               // The card/panel that held focus is gone (removed optimistically),
               // so Radix's default restore-to-trigger would drop focus on <body>.
               event.preventDefault();
               headingRef.current?.focus();
+              setShouldRedirectDeleteCloseFocus(false);
             }}
           />
         </>
