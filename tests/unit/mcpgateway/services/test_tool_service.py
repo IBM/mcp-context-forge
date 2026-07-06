@@ -107,6 +107,51 @@ def test_sync_meta_traceparent_empty_value_returns_original_meta():
     assert result is meta
 
 
+def test_sync_meta_traceparent_malformed_header_returns_original_meta():
+    meta = {"existing": True}
+
+    result = _sync_meta_traceparent(meta, {"traceparent": "not-a-real-traceparent"})
+
+    assert result is meta
+    assert "traceparent" not in meta
+
+
+def test_sync_meta_traceparent_rejects_zero_trace_id():
+    meta = {"existing": True}
+
+    result = _sync_meta_traceparent(meta, {"traceparent": "00-00000000000000000000000000000000-1111111111111111-01"})
+
+    assert result is meta
+    assert "traceparent" not in meta
+
+
+def test_sync_meta_traceparent_rejects_zero_span_id():
+    meta = {"existing": True}
+
+    result = _sync_meta_traceparent(meta, {"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-0000000000000000-01"})
+
+    assert result is meta
+    assert "traceparent" not in meta
+
+
+def test_sync_meta_traceparent_rejects_unsupported_version():
+    meta = {"existing": True}
+
+    result = _sync_meta_traceparent(meta, {"traceparent": "01-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-1111111111111111-01"})
+
+    assert result is meta
+    assert "traceparent" not in meta
+
+
+def test_sync_meta_traceparent_rejects_uppercase_header_value():
+    meta = {"existing": True}
+
+    result = _sync_meta_traceparent(meta, {"traceparent": "00-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA-1111111111111111-01"})
+
+    assert result is meta
+    assert "traceparent" not in meta
+
+
 @pytest.fixture(autouse=True)
 def mock_logging_services():
     """Mock audit_trail and structured_logger to prevent database writes during tests."""

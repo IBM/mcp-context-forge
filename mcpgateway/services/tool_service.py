@@ -154,6 +154,8 @@ def _get_tool_lookup_cache():
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
+_W3C_TRACEPARENT_RE = re.compile(r"^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$")
+
 
 def _extract_tenant_id_from_payload(team_id: Any) -> Optional[str]:
     """Extract a valid tenant id from a raw tool payload team_id value.
@@ -189,6 +191,20 @@ def _apply_tool_payload_to_global_context(
         global_context.tenant_id = payload_tenant_id
 
 
+def _is_valid_w3c_traceparent(traceparent: str) -> bool:
+    """Return whether a traceparent value is safe to propagate into MCP _meta."""
+    match = _W3C_TRACEPARENT_RE.fullmatch(traceparent)
+    if not match:
+        return False
+
+    version, trace_id, span_id, _trace_flags = match.groups()
+    if version != "00":
+        return False
+    if trace_id == "0" * 32 or span_id == "0" * 16:
+        return False
+    return True
+
+
 def _sync_meta_traceparent(
     meta_data: Optional[Dict[str, Any]],
     request_headers: Mapping[str, str],
@@ -201,6 +217,8 @@ def _sync_meta_traceparent(
                 traceparent = value
                 break
     if not traceparent:
+        return meta_data
+    if not _is_valid_w3c_traceparent(traceparent):
         return meta_data
 
     updated_meta = dict(meta_data or {})
