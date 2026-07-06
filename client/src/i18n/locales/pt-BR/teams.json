@@ -47,7 +47,8 @@
   "teams.create.addMemberButton": "Adicionar membro à equipe",
   "teams.create.maxMembers": "Máximo de membros",
   "teams.create.error.nameRequired": "O nome da equipe é obrigatório",
-  "teams.create.error.membersFailed": "Equipe criada, mas não foi possível adicionar alguns membros:\n{errors}",
+  "teams.create.error.invalidEmail": "Insira um endereço de e-mail válido para cada membro",
+  "teams.create.warning.membersFailed": "Equipe {name} criada, mas não foi possível adicionar alguns membros",
   "teams.create.creating": "Criando...",
   "teams.create.submit": "Criar equipe",
   "teams.create.success": "Equipe criada com sucesso"
