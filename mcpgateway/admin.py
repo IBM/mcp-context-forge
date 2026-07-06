@@ -153,6 +153,7 @@ from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.catalog_service import catalog_service
 from mcpgateway.services.content_security import ContentSizeError, ContentTypeError, TemplateValidationError
+from mcpgateway.services.csrf_service import get_csrf_service
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, PasswordValidationError
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.export_service import ExportError, ExportService
@@ -1657,18 +1658,23 @@ def _request_origin_matches(request: Request) -> bool:
     return False
 
 
-def _set_admin_csrf_cookie(request: Request, response: Response) -> str:
+def _set_admin_csrf_cookie(request: Request, response: Response, *, user_id: str | None = None, session_id: str | None = None) -> str:
     """Set or refresh admin CSRF cookie and return token value.
 
     Args:
         request: Incoming request used for existing token and path scoping.
         response: Outgoing response where the cookie will be written.
+        user_id: Optional authenticated user binding for HMAC CSRF tokens.
+        session_id: Optional JWT session binding for HMAC CSRF tokens.
 
     Returns:
         CSRF token value stored in the response cookie.
     """
-    existing_token = request.cookies.get(ADMIN_CSRF_COOKIE_NAME)
-    csrf_token = existing_token if isinstance(existing_token, str) and len(existing_token) >= 32 else secrets.token_urlsafe(32)
+    if user_id and session_id:
+        csrf_token = get_csrf_service().generate_csrf_token(user_id=user_id, session_id=session_id)
+    else:
+        existing_token = request.cookies.get(ADMIN_CSRF_COOKIE_NAME)
+        csrf_token = existing_token if isinstance(existing_token, str) and len(existing_token) >= 32 else secrets.token_urlsafe(32)
 
     use_secure = (settings.environment == "production") or settings.secure_cookies
     max_age = max(300, int(getattr(settings, "token_expiry", 60)) * 60)
@@ -4139,74 +4145,99 @@ async def admin_ui(
         },
     )
 
-    # Set JWT token cookie for HTMX requests if email auth is enabled
-    if getattr(settings, "email_auth_enabled", False):
-        try:
-            # JWT library is imported at top level as jwt
+    csrf_user_id: str | None = None
+    csrf_session_id: str | None = None
+    try:
+        # Determine the admin user email
+        admin_email = get_user_email(user)
+        is_admin_flag = bool(user.get("is_admin") if isinstance(user, dict) else True)
+        full_name = getattr(settings, "platform_admin_full_name", "Platform User")
+        if isinstance(user, dict):
+            full_name = user.get("full_name") or full_name
+        else:
+            full_name = getattr(user, "full_name", full_name) or full_name
 
-            # Determine the admin user email
-            admin_email = get_user_email(user)
-            is_admin_flag = bool(user.get("is_admin") if isinstance(user, dict) else True)
-            full_name = getattr(settings, "platform_admin_full_name", "Platform User")
-            if isinstance(user, dict):
-                full_name = user.get("full_name") or full_name
-            else:
-                full_name = getattr(user, "full_name", full_name) or full_name
+        # Preserve auth provider across admin UI token refreshes so logout behavior
+        # can reliably detect SSO sessions (e.g., Keycloak) later.
+        auth_provider = "local"
+        if isinstance(user, dict):
+            provider_from_user = user.get("auth_provider")
+            if isinstance(provider_from_user, str) and provider_from_user.strip():
+                auth_provider = provider_from_user.strip()
+        else:
+            provider_from_user = getattr(user, "auth_provider", None)
+            if isinstance(provider_from_user, str) and provider_from_user.strip():
+                auth_provider = provider_from_user.strip()
 
-            # Preserve auth provider across admin UI token refreshes so logout behavior
-            # can reliably detect SSO sessions (e.g., Keycloak) later.
-            auth_provider = "local"
-            if isinstance(user, dict):
-                provider_from_user = user.get("auth_provider")
-                if isinstance(provider_from_user, str) and provider_from_user.strip():
-                    auth_provider = provider_from_user.strip()
-            else:
-                provider_from_user = getattr(user, "auth_provider", None)
-                if isinstance(provider_from_user, str) and provider_from_user.strip():
-                    auth_provider = provider_from_user.strip()
+        # get_current_user_with_permissions may not include auth_provider in its dict.
+        # Fall back to the current jwt_token cookie payload before refreshing it,
+        # but only reuse cookie metadata after confirming it matches this user.
+        existing_payload: dict[str, Any] | None = None
+        jwt_cookie = request.cookies.get("jwt_token")
+        if isinstance(jwt_cookie, str) and jwt_cookie:
+            try:
+                existing_payload = await verify_jwt_token_cached(jwt_cookie, request)
+            except Exception as provider_error:  # nosec B110 - best-effort provider preservation
+                LOGGER.warning("Could not verify existing JWT cookie for admin session refresh: %s", provider_error)
+                if settings.sso_keycloak_enabled:
+                    auth_provider = "keycloak"
 
-            # get_current_user_with_permissions may not include auth_provider in its dict.
-            # Fall back to the current jwt_token cookie payload before refreshing it.
-            if auth_provider == "local":
-                jwt_cookie = request.cookies.get("jwt_token")
-                if isinstance(jwt_cookie, str) and jwt_cookie:
-                    try:
-                        existing_payload = await verify_jwt_token_cached(jwt_cookie, request)
-                        existing_user = existing_payload.get("user")
-                        provider_from_token = existing_user.get("auth_provider") if isinstance(existing_user, dict) else None
-                        if not provider_from_token:
-                            provider_from_token = existing_payload.get("auth_provider")
-                        if isinstance(provider_from_token, str) and provider_from_token.strip():
-                            auth_provider = provider_from_token.strip()
-                    except Exception as provider_error:  # nosec B110 - best-effort provider preservation
-                        LOGGER.warning("Could not resolve auth_provider from existing JWT cookie; SSO logout may not function correctly: %s", provider_error)
-                        if settings.sso_keycloak_enabled:
-                            auth_provider = "keycloak"
+        # Generate a lightweight session JWT token for browser admin calls in every auth mode.
+        email_user = db.query(EmailUser).filter(EmailUser.email == admin_email).first()
+        sub_claim = str(email_user.id) if email_user else admin_email
+        existing_token_teams: list[str] | None = None
+        if isinstance(existing_payload, dict):
+            existing_user = existing_payload.get("user")
+            provider_from_token = existing_user.get("auth_provider") if isinstance(existing_user, dict) else None
+            if not provider_from_token:
+                provider_from_token = existing_payload.get("auth_provider")
+            if auth_provider == "local" and isinstance(provider_from_token, str) and provider_from_token.strip():
+                auth_provider = provider_from_token.strip()
 
-            # Generate a lightweight session JWT token
-            email_user = db.query(EmailUser).filter(EmailUser.email == admin_email).first()
-            sub_claim = str(email_user.id) if email_user else admin_email
-            now = datetime.now(timezone.utc)
-            payload = {
-                "sub": sub_claim,
-                "iss": settings.jwt_issuer,
-                "aud": settings.jwt_audience,
-                "iat": int(now.timestamp()),
-                "exp": int((now + timedelta(minutes=settings.token_expiry)).timestamp()),
-                "jti": str(uuid.uuid4()),
-                "auth_provider": auth_provider,
-                "token_use": "session",  # nosec B105 - token type marker, not a password
-                "scopes": {"server_id": None, "permissions": ["*"] if is_admin_flag else [], "ip_restrictions": [], "time_restrictions": {}},
-            }
+            existing_email = existing_payload.get("email")
+            if not existing_email and isinstance(existing_user, dict):
+                existing_email = existing_user.get("email")
+            existing_sub = existing_payload.get("sub")
+            cookie_matches_user = existing_email == admin_email or (isinstance(existing_sub, str) and existing_sub in {admin_email, sub_claim})
 
-            # Generate token using centralized token creation
-            token = await create_jwt_token(payload)
+            if cookie_matches_user:
+                raw_existing_teams = existing_payload.get("teams")
+                if isinstance(raw_existing_teams, list) and raw_existing_teams:
+                    copied_teams: list[str] = []
+                    for raw_team in raw_existing_teams:
+                        if isinstance(raw_team, str) and raw_team:
+                            copied_teams.append(raw_team)
+                        elif isinstance(raw_team, dict) and raw_team.get("id"):
+                            copied_teams.append(str(raw_team["id"]))
+                    if copied_teams:
+                        existing_token_teams = copied_teams
 
-            # Set HTTP-only cookie using centralized security cookie utility
-            set_auth_cookie(response, token, remember_me=False)
-            LOGGER.debug(f"Set session JWT token cookie for user: {admin_email}")
-        except Exception as e:
-            LOGGER.warning(f"Failed to set JWT token cookie for user {user}: {e}")
+        now = datetime.now(timezone.utc)
+        payload = {
+            "sub": sub_claim,
+            "iss": settings.jwt_issuer,
+            "aud": settings.jwt_audience,
+            "iat": int(now.timestamp()),
+            "exp": int((now + timedelta(minutes=settings.token_expiry)).timestamp()),
+            "jti": str(uuid.uuid4()),
+            "auth_provider": auth_provider,
+            "token_use": "session",  # nosec B105 - token type marker, not a password
+            "scopes": {"server_id": None, "permissions": ["*"] if is_admin_flag else [], "ip_restrictions": [], "time_restrictions": {}},
+        }
+        if existing_token_teams:
+            payload["teams"] = existing_token_teams
+
+        # Generate token using centralized token creation
+        token = await create_jwt_token(payload)
+
+        # Set HTTP-only cookie using centralized security cookie utility
+        set_auth_cookie(response, token, remember_me=False)
+        csrf_user_id = str(payload["sub"])
+        csrf_session_id = str(payload["jti"])
+        LOGGER.debug(f"Set session JWT token cookie for user: {admin_email}")
+    except Exception as e:
+        LOGGER.exception("Failed to initialize admin browser session for user %s", get_user_email(user))
+        raise HTTPException(status_code=500, detail="Unable to initialize admin session") from e
 
     cookie_action = ui_visibility_config.get("cookie_action")
     if cookie_action:
@@ -4233,7 +4264,7 @@ async def admin_ui(
                 samesite=samesite,
             )
 
-    _set_admin_csrf_cookie(request, response)
+    _set_admin_csrf_cookie(request, response, user_id=csrf_user_id, session_id=csrf_session_id)
     return response
 
 

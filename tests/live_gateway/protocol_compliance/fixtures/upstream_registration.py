@@ -64,6 +64,43 @@ def _wait_for_federation_sync(
     return [], "federation produced no tools for this gateway within timeout (endpoint healthy)"
 
 
+_PER_SERVER_ROUTE_SYNC_DEADLINE_SECONDS = 75.0
+_PER_SERVER_ROUTE_SYNC_RETRY_DELAY_SECONDS = 1.0
+
+
+def _wait_for_per_server_route(client: httpx.Client, server_id: str) -> None:
+    """Wait until the per-server MCP route accepts the new virtual server.
+
+    On split deployments the ``/servers/{id}/mcp`` route is served from
+    dataplane config that ContextForge publishes asynchronously
+    (``DATAPLANE_PUBLISHER_INTERVAL_SECONDS``, default 60s), so a freshly
+    created server can return 400/404 until the next snapshot lands.
+    Control-plane-only deployments answer immediately, so this returns on
+    the first probe there. The deadline covers one full default publish
+    interval plus slack; on timeout it warns and returns so the tests
+    surface the failure with their own diagnostics.
+    """
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "fixture-probe", "version": "0"}},
+    }
+    headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    deadline = time.monotonic() + _PER_SERVER_ROUTE_SYNC_DEADLINE_SECONDS
+    while True:
+        resp = client.post(f"/servers/{server_id}/mcp/", json=payload, headers=headers)
+        if resp.status_code not in (400, 404):
+            return
+        if time.monotonic() >= deadline:
+            warnings.warn(
+                f"per-server MCP route for {server_id} still returns {resp.status_code} after {_PER_SERVER_ROUTE_SYNC_DEADLINE_SECONDS}s; continuing so tests report the failure",
+                stacklevel=2,
+            )
+            return
+        time.sleep(_PER_SERVER_ROUTE_SYNC_RETRY_DELAY_SECONDS)
+
+
 def _delete_if_exists(client: httpx.Client, path: str, name: str) -> None:
     """Best-effort delete-by-name — tolerates prior crashed-run leftovers.
 
@@ -123,7 +160,7 @@ def virtual_server(
     """Create a virtual server composing the reference server's tools."""
     tools, diag = _wait_for_federation_sync(gateway_http_client, registered_reference_upstream["id"])
     if not tools:
-        pytest.skip(f"federation sync did not surface any tools for gateway " f"{registered_reference_upstream['id']}: {diag}")
+        pytest.skip(f"federation sync did not surface any tools for gateway {registered_reference_upstream['id']}: {diag}")
 
     _delete_if_exists(gateway_http_client, "/servers", "compliance_virtual")
     # POST /servers takes ServerCreate nested under a top-level "server" key
@@ -139,6 +176,7 @@ def virtual_server(
     if resp.status_code not in (200, 201):
         pytest.skip(f"virtual-server creation failed {resp.status_code}: {resp.text[:200]}")
     server = resp.json()
+    _wait_for_per_server_route(gateway_http_client, server["id"])
     try:
         yield server
     finally:
