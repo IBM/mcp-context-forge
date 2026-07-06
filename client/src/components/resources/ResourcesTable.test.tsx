@@ -283,6 +283,98 @@ describe("ResourcesTable", () => {
     });
   });
 
+  describe("edit dropdown (onEditResource provided)", () => {
+    it("renders a dropdown instead of a plain button when onEditResource is provided", async () => {
+      const user = userEvent.setup();
+      const mockOnEditResource = vi.fn();
+      const resources = [createMockResource(1)];
+      render(
+        <ResourcesTable
+          resources={resources}
+          onSelectResource={mockOnSelectResource}
+          onEditResource={mockOnEditResource}
+        />,
+      );
+
+      const moreButton = screen.getByLabelText("More options");
+      await user.click(moreButton);
+
+      expect(await screen.findByText("Edit")).toBeInTheDocument();
+    });
+
+    it("calls onEditResource with the resource when Edit is clicked", async () => {
+      const user = userEvent.setup();
+      const mockOnEditResource = vi.fn();
+      const resources = [createMockResource(1, { id: "resource-xyz" })];
+      render(
+        <ResourcesTable
+          resources={resources}
+          onSelectResource={mockOnSelectResource}
+          onEditResource={mockOnEditResource}
+        />,
+      );
+
+      await user.click(screen.getByLabelText("More options"));
+      await user.click(await screen.findByText("Edit"));
+
+      expect(mockOnEditResource).toHaveBeenCalledOnce();
+      expect(mockOnEditResource).toHaveBeenCalledWith(resources[0]);
+    });
+
+    it("does not call onSelectResource when Edit is clicked", async () => {
+      const user = userEvent.setup();
+      const mockOnEditResource = vi.fn();
+      const resources = [createMockResource(1)];
+      render(
+        <ResourcesTable
+          resources={resources}
+          onSelectResource={mockOnSelectResource}
+          onEditResource={mockOnEditResource}
+        />,
+      );
+
+      await user.click(screen.getByLabelText("More options"));
+      await user.click(await screen.findByText("Edit"));
+
+      expect(mockOnSelectResource).not.toHaveBeenCalled();
+    });
+
+    it("does not show Edit item when onEditResource is not provided", async () => {
+      const user = userEvent.setup();
+      const mockOnDeleteResource = vi.fn();
+      const resources = [createMockResource(1)];
+      render(
+        <ResourcesTable
+          resources={resources}
+          onSelectResource={mockOnSelectResource}
+          onDeleteResource={mockOnDeleteResource}
+        />,
+      );
+
+      await user.click(screen.getByLabelText("More options"));
+
+      expect(screen.queryByText("Edit")).not.toBeInTheDocument();
+    });
+
+    it("shows both Edit and Delete items when both handlers are provided", async () => {
+      const user = userEvent.setup();
+      const resources = [createMockResource(1)];
+      render(
+        <ResourcesTable
+          resources={resources}
+          onSelectResource={mockOnSelectResource}
+          onEditResource={vi.fn()}
+          onDeleteResource={vi.fn()}
+        />,
+      );
+
+      await user.click(screen.getByLabelText("More options"));
+
+      expect(await screen.findByText("Edit")).toBeInTheDocument();
+      expect(screen.getByText("Delete")).toBeInTheDocument();
+    });
+  });
+
   it("maintains selection state across re-renders", () => {
     const resources = [createMockResource(1), createMockResource(2)];
     const { rerender } = render(

@@ -51,12 +51,14 @@ export function ResourceDetailsPanel({
   gatewaySlug,
   open,
   onClose,
+  onEditResource,
   onDeleteResource,
 }: {
   resources: NonNullable<ResourceRead>[];
   gatewaySlug: string;
   open: boolean;
   onClose: () => void;
+  onEditResource?: (resource: NonNullable<ResourceRead>) => void;
   onDeleteResource?: (resourceId: string) => void;
 }) {
   const intl = useIntl();
@@ -202,6 +204,7 @@ export function ResourceDetailsPanel({
                 resources={resources}
                 selectedResourceId={selectedResource?.id}
                 onSelectResource={setSelectedResource}
+                onEditResource={onEditResource}
                 onDeleteResource={onDeleteResource}
               />
             </div>

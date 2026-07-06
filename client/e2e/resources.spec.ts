@@ -464,4 +464,112 @@ test.describe("Resources page", () => {
       await expect(page.getByText("github-server")).toBeVisible();
     });
   });
+
+  test.describe("Edit resource", () => {
+    test("opens edit form pre-filled and updates the resource", async ({ page }) => {
+      let putRequestCount = 0;
+      let putBody: Record<string, unknown> | undefined;
+      let currentResource: Resource = RESOURCE_A1;
+
+      await page.route("**/resources?*", async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([currentResource]),
+        });
+      });
+      await page.route(`**/resources/${RESOURCE_A1.id}`, async (route) => {
+        if (route.request().method() === "GET") {
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ text: "original content" }),
+          });
+        } else if (route.request().method() === "PUT") {
+          putRequestCount += 1;
+          putBody = route.request().postDataJSON();
+          currentResource = { ...currentResource, name: "renamed-document" };
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify(currentResource),
+          });
+        } else {
+          await route.fallback();
+        }
+      });
+
+      await page.goto(APP.RESOURCES);
+      await page.waitForLoadState("networkidle");
+
+      await page.getByRole("button", { name: "More options for github-server" }).click();
+      await page.getByRole("menuitem", { name: "View Details" }).click();
+
+      const panel = page.getByRole("region", { name: /Resources for github-server/i });
+      await expect(panel).toBeVisible();
+
+      await panel.getByRole("button", { name: "More options" }).first().click();
+      await page.getByRole("menuitem", { name: "Edit" }).click();
+
+      await expect(page.getByRole("heading", { name: "Edit resource" })).toBeVisible();
+      await expect(page.getByLabel(/^Name/)).toHaveValue(RESOURCE_A1.name);
+      await expect(page.getByLabel(/^URI/)).toHaveValue(RESOURCE_A1.uri);
+      await expect(page.getByLabel(/Content/)).toHaveValue("original content");
+
+      await page.getByLabel(/^Name/).fill("renamed-document");
+      await page.getByRole("button", { name: "Update resource" }).click();
+
+      await expect.poll(() => putRequestCount).toBe(1);
+      expect(putBody).toMatchObject({ name: "renamed-document" });
+
+      // Editing closes the details panel (like the Tools edit flow) and refetches
+      // the list, so the update surfaces as an updated badge in the card grid.
+      await expect(page.getByRole("heading", { name: "Edit resource" })).not.toBeVisible();
+      await expect(panel).not.toBeVisible();
+      await expect(page.getByText("renamed-document").first()).toBeVisible();
+    });
+
+    test("shows an inline error and keeps the form open when update fails", async ({ page }) => {
+      await page.route("**/resources?*", async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([RESOURCE_A1]),
+        });
+      });
+      await page.route(`**/resources/${RESOURCE_A1.id}`, async (route) => {
+        if (route.request().method() === "GET") {
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ text: "original content" }),
+          });
+        } else if (route.request().method() === "PUT") {
+          await route.fulfill({
+            status: 500,
+            contentType: "application/json",
+            body: JSON.stringify({ detail: "Update failed" }),
+          });
+        } else {
+          await route.fallback();
+        }
+      });
+
+      await page.goto(APP.RESOURCES);
+      await page.waitForLoadState("networkidle");
+
+      await page.getByRole("button", { name: "More options for github-server" }).click();
+      await page.getByRole("menuitem", { name: "View Details" }).click();
+
+      const panel = page.getByRole("region", { name: /Resources for github-server/i });
+      await panel.getByRole("button", { name: "More options" }).first().click();
+      await page.getByRole("menuitem", { name: "Edit" }).click();
+
+      await expect(page.getByLabel(/Content/)).toHaveValue("original content");
+      await page.getByRole("button", { name: "Update resource" }).click();
+
+      await expect(page.getByRole("alert").last()).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Edit resource" })).toBeVisible();
+    });
+  });
 });

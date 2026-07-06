@@ -199,6 +199,7 @@ export function Resources() {
   const intl = useIntl();
   const headingRef = useRef<HTMLHeadingElement>(null);
   const [showForm, setShowForm] = useState(false);
+  const [editingResource, setEditingResource] = useState<NonNullable<ResourceRead> | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<ResourceGroup | null>(null);
   const [isDetailsPanelOpen, setIsDetailsPanelOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -219,6 +220,21 @@ export function Resources() {
     {
       enabled: !isLoading,
     },
+  );
+  const { data: editedResourceContent } = useQuery<{
+    text?: string;
+    blob?: string;
+    mimeType?: string;
+  }>(`/resources/${editingResource?.id}`, {
+    enabled: Boolean(editingResource?.id),
+  });
+
+  const resourceForForm = useMemo(
+    () =>
+      editingResource
+        ? { ...editingResource, content: editedResourceContent?.text ?? "" }
+        : undefined,
+    [editingResource, editedResourceContent],
   );
 
   const gatewayNameById = useMemo(() => {
@@ -286,6 +302,7 @@ export function Resources() {
   const handleFormSuccess = async () => {
     setShouldRestoreFormCloseFocus(true);
     setShowForm(false);
+    setEditingResource(null);
     await refetch();
   };
 
@@ -300,6 +317,12 @@ export function Resources() {
     setSelectedGroup(group);
     setIsDetailsPanelOpen(true);
   };
+
+  const handleEditResource = useCallback((resource: NonNullable<ResourceRead>) => {
+    setEditingResource(resource);
+    setIsDetailsPanelOpen(false);
+    setShowForm(true);
+  }, []);
 
   const handleCloseDetails = () => {
     setIsDetailsPanelOpen(false);
@@ -391,14 +414,22 @@ export function Resources() {
     <div className="p-6">
       {showForm ? (
         <ResourceForm
+          // Remount once content arrives so the form re-seeds from it (initial state is set once, on mount).
+          key={
+            editingResource
+              ? `${editingResource.id}-${editedResourceContent ? "loaded" : "loading"}`
+              : "create"
+          }
           isOpen={showForm}
           onToggle={() => {
             setShouldRestoreFormCloseFocus(true);
             setShowForm(false);
+            setEditingResource(null);
           }}
           onSuccess={handleFormSuccess}
-          onBeforeSubmit={handleOptimisticAdd}
-          onError={handleOptimisticRollback}
+          onBeforeSubmit={editingResource ? undefined : handleOptimisticAdd}
+          onError={editingResource ? undefined : handleOptimisticRollback}
+          resource={resourceForForm}
         />
       ) : (
         <>
@@ -454,6 +485,7 @@ export function Resources() {
               gatewaySlug={activeGroup.gatewaySlug}
               open={isDetailsPanelOpen}
               onClose={handleCloseDetails}
+              onEditResource={handleEditResource}
               onDeleteResource={handleDeleteResource}
             />
           )}
