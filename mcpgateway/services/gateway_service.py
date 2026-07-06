@@ -1932,7 +1932,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             if not access_token:
                 raise GatewayConnectionError(
-                    f"No OAuth tokens found for user {app_user_email} on gateway {gateway.name}. Please complete the OAuth authorization flow first at /oauth/authorize/{gateway.id}"
+                    f"No OAuth tokens found for user {app_user_email} on gateway {gateway.name}. Please complete the OAuth authorization flow first at {settings.app_domain}oauth/authorize/{gateway.id}"
                 )
 
             # Debug: Check if token was decrypted
