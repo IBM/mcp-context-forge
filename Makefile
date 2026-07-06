@@ -900,8 +900,18 @@ test-live-gateway: uv  ## Run ALL live-gateway tests (mcp + sso + protocol_compl
 	@echo "   Requires: live ContextForge gateway (typically 'make testing-up') and any"
 	@echo "             extra services per subsuite — see tests/live_gateway/README.md."
 	@echo "   Tests probe BASE_URL ($${MCP_CLI_BASE_URL:-http://localhost:8080}) and self-skip when unreachable."
-	@$(UV_BIN) run --extra plugins pytest -p playwright tests/live_gateway/ -v --tb=short \
-		|| { echo "❌ Live-gateway test suite failed!"; exit 1; }
+	@echo "   Pass 1/2: suites without pytest-playwright (its runtest hook breaks pytest-asyncio tests)."
+	@$(UV_BIN) run --extra plugins pytest -p no:playwright tests/live_gateway/ \
+		--ignore=tests/live_gateway/sso \
+		--ignore=tests/live_gateway/mcp/test_mcp_rbac_transport.py \
+		-v --tb=short \
+		|| { echo "❌ Live-gateway test suite (non-playwright pass) failed!"; exit 1; }
+	@echo "   Pass 2/2: playwright-dependent suites (sso + RBAC transport)."
+	@$(UV_BIN) run --extra plugins pytest -p playwright \
+		tests/live_gateway/sso \
+		tests/live_gateway/mcp/test_mcp_rbac_transport.py \
+		-v --tb=short \
+		|| { echo "❌ Live-gateway test suite (playwright pass) failed!"; exit 1; }
 	@echo "✅ Live-gateway test suite finished."
 
 MCP_ISOLATION_LOCUSTFILE ?= tests/loadtest/locustfile_mcp_isolation.py
