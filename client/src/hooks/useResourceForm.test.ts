@@ -158,6 +158,37 @@ describe("useResourceForm", () => {
     });
   });
 
+  describe("visibility", () => {
+    it("defaults to public", () => {
+      const { result } = renderHook(() => useResourceForm());
+      expect(result.current.visibility).toBe("public");
+    });
+
+    it("setVisibility updates the field", () => {
+      const { result } = renderHook(() => useResourceForm());
+
+      act(() => {
+        result.current.setVisibility("private");
+      });
+
+      expect(result.current.visibility).toBe("private");
+    });
+
+    it("includes visibility in getFormData", () => {
+      const { result } = renderHook(() => useResourceForm());
+
+      act(() => {
+        result.current.setUri("resource://example/path");
+        result.current.setName("My Resource");
+        result.current.setContent("content");
+        result.current.setVisibility("team");
+      });
+
+      const data = result.current.getFormData();
+      expect(data.resource.visibility).toBe("team");
+    });
+  });
+
   describe("handleSubmit", () => {
     it("calls execute with correct ResourceCreate payload", async () => {
       let capturedBody: unknown;
@@ -248,6 +279,120 @@ describe("useResourceForm", () => {
       });
 
       expect(postSpy).not.toHaveBeenCalled();
+    });
+
+    it("calls onBeforeSubmit with form data before API call", async () => {
+      server.use(
+        http.post("*/resources", () => HttpResponse.json({ id: "new-id" }, { status: 201 })),
+      );
+
+      const onBeforeSubmit = vi.fn();
+      const { result } = renderHook(() => useResourceForm({ onBeforeSubmit }));
+
+      act(() => {
+        result.current.setUri("resource://example/path");
+        result.current.setName("My Resource");
+        result.current.setContent("content");
+      });
+
+      await act(async () => {
+        await result.current.handleSubmit(fakeSubmit());
+      });
+
+      await waitFor(() => expect(onBeforeSubmit).toHaveBeenCalledOnce());
+      expect(onBeforeSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          resource: expect.objectContaining({
+            uri: "resource://example/path",
+            name: "My Resource",
+            content: "content",
+          }),
+        }),
+      );
+    });
+
+    it("calls onError callback when API returns error", async () => {
+      server.use(
+        http.post("*/resources", () =>
+          HttpResponse.json({ detail: "Internal error" }, { status: 500 }),
+        ),
+      );
+
+      const onError = vi.fn();
+      const { result } = renderHook(() => useResourceForm({ onError }));
+
+      act(() => {
+        result.current.setUri("resource://example/path");
+        result.current.setName("My Resource");
+        result.current.setContent("content");
+      });
+
+      await act(async () => {
+        await result.current.handleSubmit(fakeSubmit());
+      });
+
+      await waitFor(() => expect(onError).toHaveBeenCalledOnce());
+    });
+
+    it("does not call onError on success", async () => {
+      server.use(
+        http.post("*/resources", () => HttpResponse.json({ id: "new-id" }, { status: 201 })),
+      );
+
+      const onError = vi.fn();
+      const { result } = renderHook(() => useResourceForm({ onError }));
+
+      act(() => {
+        result.current.setUri("resource://example/path");
+        result.current.setName("My Resource");
+        result.current.setContent("content");
+      });
+
+      await act(async () => {
+        await result.current.handleSubmit(fakeSubmit());
+      });
+
+      expect(onError).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("validateForm – description length", () => {
+    it("returns false when description exceeds 500 chars", () => {
+      const { result } = renderHook(() => useResourceForm());
+
+      act(() => {
+        result.current.setUri("resource://example/path");
+        result.current.setName("My Resource");
+        result.current.setContent("content");
+        result.current.setDescription("a".repeat(501));
+      });
+
+      let valid: boolean;
+      act(() => {
+        valid = result.current.validateForm();
+      });
+
+      expect(valid!).toBe(false);
+      expect(result.current.errors.description).toBeTruthy();
+    });
+
+    it("accepts description at exactly 500 chars", () => {
+      const { result } = renderHook(() => useResourceForm());
+
+      act(() => {
+        result.current.setUri("resource://example/path");
+        result.current.setName("My Resource");
+        result.current.setContent("content");
+        result.current.setDescription("a".repeat(500));
+      });
+
+      let valid: boolean;
+      act(() => {
+        valid = result.current.validateForm();
+      });
+
+      expect(valid!).toBe(true);
+      expect(result.current.errors.description).toBeUndefined();
     });
   });
 });

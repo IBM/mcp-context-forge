@@ -1,6 +1,6 @@
-import { useState, useMemo, memo, useCallback } from "react";
+import { useState, useMemo, memo, useCallback, useRef } from "react";
 import { useIntl } from "react-intl";
-import { Plus, MoreHorizontal, FileText } from "lucide-react";
+import { Plus, EllipsisVertical, FileText } from "lucide-react";
 import { toast } from "sonner";
 import { useQuery } from "@/hooks/useQuery";
 import { resourcesApi } from "@/api/resources";
@@ -10,7 +10,7 @@ import type {
   ResourceRead,
   GatewayRead,
   CursorPaginatedGatewaysResponse,
-  BodyCreateResourceResourcesPost,
+  BodyCreateResourceV1ResourcesPost,
 } from "@/generated/types";
 import { ResourceReadVisibility } from "@/generated/types";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,8 @@ import { ResourceForm } from "@/components/resources/ResourceForm";
 import { ResourceDetailsPanel } from "@/components/resources/ResourceDetailsPanel";
 import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
 
+const OPTIMISTIC_RESOURCE_ID = "__optimistic__";
+
 function getUriLabel(uri: string): string {
   try {
     return new URL(uri).hostname || uri;
@@ -36,14 +38,16 @@ function getUriLabel(uri: string): string {
 const ResourceCard = memo(function ResourceCard({
   resource,
   onViewResource,
+  onDeleteResource,
 }: {
   resource: NonNullable<ResourceRead>;
   onViewResource: (resource: NonNullable<ResourceRead>) => void;
+  onDeleteResource: (id: string) => void;
 }) {
   const intl = useIntl();
 
   return (
-    <Card size="sm" className="rounded-xl pl-0 pr-4 pt-4 pb-4">
+    <Card size="sm" className="rounded-xl pl-0 pt-4 pb-4">
       <CardHeader>
         <div className="flex items-center gap-3">
           <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded bg-tool-icon-bg">
@@ -69,12 +73,19 @@ const ResourceCard = memo(function ResourceCard({
                 )}
                 className="h-7 w-7 p-0"
               >
-                <MoreHorizontal className="h-4 w-4" />
+                <EllipsisVertical className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onClick={() => onViewResource(resource)}>
                 {intl.formatMessage({ id: "resources.card.viewDetails" })}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => onDeleteResource(resource.id)}
+                disabled={resource.id === OPTIMISTIC_RESOURCE_ID}
+                className="text-destructive focus:text-destructive"
+              >
+                {intl.formatMessage({ id: "common.button.delete" })}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -140,11 +151,13 @@ function AddResourcesCard({ onAddResource }: { onAddResource: () => void }) {
 
 export function Resources() {
   const intl = useIntl();
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const [showForm, setShowForm] = useState(false);
   const [selectedResource, setSelectedResource] = useState<NonNullable<ResourceRead> | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteResourceId, setDeleteResourceId] = useState<string | null>(null);
   const [deleteResourceName, setDeleteResourceName] = useState<string | null>(null);
+  const [shouldRedirectDeleteCloseFocus, setShouldRedirectDeleteCloseFocus] = useState(false);
 
   const {
     data,
@@ -173,7 +186,7 @@ export function Resources() {
   }, [gatewaysData]);
 
   const handleOptimisticAdd = useCallback(
-    (formData: BodyCreateResourceResourcesPost) => {
+    (formData: BodyCreateResourceV1ResourcesPost) => {
       const { resource } = formData;
       const optimistic: NonNullable<ResourceRead> = {
         id: "__optimistic__",
@@ -213,9 +226,11 @@ export function Resources() {
 
   const handleDeleteResource = useCallback(
     (id: string) => {
+      if (id === OPTIMISTIC_RESOURCE_ID) return;
       const resource = data?.find((r) => r?.id === id);
       setDeleteResourceId(id);
       setDeleteResourceName(resource?.name || id);
+      setShouldRedirectDeleteCloseFocus(false);
       setDeleteDialogOpen(true);
     },
     [data],
@@ -224,18 +239,24 @@ export function Resources() {
   const confirmDelete = useCallback(async () => {
     if (!deleteResourceId || !deleteResourceName) return;
 
+    const resourceId = deleteResourceId;
+    const resourceName = deleteResourceName;
+    const previousData = data;
+
+    setResourcesData((prev) => prev?.filter((r) => r?.id !== resourceId) ?? []);
+    setShouldRedirectDeleteCloseFocus(true);
     setDeleteDialogOpen(false);
+    setDeleteResourceId(null);
+    setDeleteResourceName(null);
+    setSelectedResource(null);
 
     try {
-      await resourcesApi.delete(deleteResourceId);
-      toast.success(
-        intl.formatMessage({ id: "resources.delete.success" }, { name: deleteResourceName }),
-      );
-      setDeleteResourceId(null);
-      setDeleteResourceName(null);
-      setSelectedResource(null);
+      await resourcesApi.delete(resourceId);
+      toast.success(intl.formatMessage({ id: "resources.delete.success" }, { name: resourceName }));
       await refetch();
     } catch (err) {
+      setResourcesData(previousData);
+
       let errorMessage = intl.formatMessage({ id: "resources.delete.error" });
 
       if (err instanceof ApiError) {
@@ -255,7 +276,7 @@ export function Resources() {
 
       toast.error(errorMessage);
     }
-  }, [deleteResourceId, deleteResourceName, refetch, intl]);
+  }, [deleteResourceId, deleteResourceName, data, setResourcesData, refetch, intl]);
 
   return (
     <div className="p-6">
@@ -269,7 +290,11 @@ export function Resources() {
         />
       ) : (
         <>
-          <h1 className="mb-6 text-base font-semibold text-neutral-900 dark:text-white">
+          <h1
+            ref={headingRef}
+            tabIndex={-1}
+            className="mb-6 text-base font-semibold text-neutral-900 dark:text-white"
+          >
             {intl.formatMessage({ id: "resources.title" })}
           </h1>
 
@@ -308,6 +333,7 @@ export function Resources() {
                     key={resource.id}
                     resource={resource}
                     onViewResource={handleResourceClick}
+                    onDeleteResource={handleDeleteResource}
                   />
                 ))}
             </div>
@@ -338,6 +364,16 @@ export function Resources() {
             )}
             confirmLabel={intl.formatMessage({ id: "resources.delete.confirm.button" })}
             variant="destructive"
+            closeOnConfirm={false}
+            onCloseAutoFocus={(event) => {
+              if (!shouldRedirectDeleteCloseFocus) return;
+
+              // The card/panel that held focus is gone (removed optimistically),
+              // so Radix's default restore-to-trigger would drop focus on <body>.
+              event.preventDefault();
+              headingRef.current?.focus();
+              setShouldRedirectDeleteCloseFocus(false);
+            }}
           />
         </>
       )}
