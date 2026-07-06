@@ -19,7 +19,7 @@ CDN_RESOURCES = {
     # Marked (Markdown parser)
     "marked": "https://cdn.jsdelivr.net/npm/marked@18.0.5/lib/marked.umd.js",
     # DOMPurify (XSS sanitizer)
-    "dompurify": "https://cdn.jsdelivr.net/npm/dompurify@3.4.8/dist/purify.min.js",
+    "dompurify": "https://cdn.jsdelivr.net/npm/dompurify@3.4.11/dist/purify.min.js",
     # CodeMirror (code editor)
     "codemirror_js": "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/codemirror.min.js",
     "codemirror_addon_simple": "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/addon/mode/simple.min.js",
@@ -31,5 +31,5 @@ CDN_RESOURCES = {
     "codemirror_css": "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/codemirror.min.css",
     "codemirror_theme_monokai": "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/theme/monokai.min.css",
     # Font Awesome
-    "fontawesome": "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.1/css/all.min.css",
+    "fontawesome": "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.3.0/css/all.min.css",
 }
