@@ -22,6 +22,8 @@ interface ConfirmDialogProps {
   isLoading?: boolean;
   loadingLabel?: string;
   closeOnConfirm?: boolean;
+  /** Redirect focus when the dialog closes, e.g. if the trigger element was removed. */
+  onCloseAutoFocus?: (event: Event) => void;
 }
 
 export function ConfirmDialog({
@@ -36,6 +38,7 @@ export function ConfirmDialog({
   isLoading = false,
   loadingLabel,
   closeOnConfirm = true,
+  onCloseAutoFocus,
 }: ConfirmDialogProps) {
   const handleOpenChange = useCallback(
     (nextOpen: boolean) => {
@@ -59,7 +62,7 @@ export function ConfirmDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent>
+      <DialogContent onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
