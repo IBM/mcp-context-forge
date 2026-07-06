@@ -6319,6 +6319,7 @@ class ToolService(BaseService):
                         auth_value=a2a_agent_auth_value,
                         auth_query_params=a2a_agent_auth_query_params,
                         base_headers=headers,
+                        streaming=False,  # Explicit non-streaming for tool invocations
                         correlation_id=get_correlation_id(),
                     )
 
@@ -7582,6 +7583,7 @@ class ToolService(BaseService):
             auth_value=agent.auth_value,
             auth_query_params=agent.auth_query_params,
             correlation_id=get_correlation_id(),
+            streaming=False,  # Explicit non-streaming for tool invocations
         )
         logger.info("invoke tool request_data prepared: %s", prepared.request_data)
 

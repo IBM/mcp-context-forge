@@ -419,10 +419,11 @@ def prepare_a2a_invocation(
     if uses_jsonrpc:
         headers[_A2A_VERSION_HEADER] = protocol_version_header
         # Set Accept header based on whether this is a streaming request
+        # Use direct assignment (not setdefault) to override any client-provided Accept header
         if streaming:
-            headers.setdefault("Accept", "text/event-stream")
+            headers["Accept"] = "text/event-stream"
         else:
-            headers.setdefault("Accept", "application/json")
+            headers["Accept"] = "application/json"
         request_data = build_a2a_jsonrpc_request(parameters or {}, protocol_version)
     else:
         request_data = {

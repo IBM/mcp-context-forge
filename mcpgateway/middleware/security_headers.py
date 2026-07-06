@@ -499,14 +499,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         # Hardened Cache Control for Protected Endpoints
         # Implements defense-in-depth caching policies
-        path = request.url.path
-        root_path = request.scope.get("root_path", "")
-        if root_path and path.startswith(root_path):
-            path = path[len(root_path) :]
-
+        # Note: path was already stripped of root_path at line 389-392
         if self._is_protected_path(path):
             # SSE streaming endpoints need no-cache instead of no-store to allow proper streaming
-            is_sse_stream = "text/event-stream" in response.headers.get("content-type", "")
+            # Check media type before parameters to avoid false positives
+            content_type = response.headers.get("content-type", "").split(";")[0].strip()
+            is_sse_stream = content_type == "text/event-stream"
 
             if is_sse_stream:
                 # Preserve no-cache for SSE streaming (already set by endpoint)
