@@ -260,7 +260,7 @@ export UV_BIN
 # targets (which use these pins via uvx) stay aligned.
 BLACK_VERSION           ?= 26.3.1
 ISORT_VERSION           ?= 6.1.0
-RUFF_VERSION            ?= 0.15.1
+RUFF_VERSION            ?= 0.15.20
 PYLINT_VERSION          ?= 3.3.9
 PYLINT_PYDANTIC_VERSION ?= 0.3.5
 VULTURE_VERSION         ?= 2.14
