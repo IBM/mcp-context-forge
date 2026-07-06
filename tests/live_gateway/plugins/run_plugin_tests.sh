@@ -16,8 +16,10 @@
 #    REDIS_HOST          Redis host for redis-requiring plugins  (default: 127.0.0.1)
 #    REDIS_PORT          Redis port                     (default: 6379)
 #    VENV_DIR            Path to project virtualenv     (default: .venv)
-#    FAST_TIME_BIN       Path to fast-time-server bin   (default: auto-detected)
+#    FAST_TIME_BIN       Path to fast-time-server bin   (default: workspace target)
 #    FAST_TIME_PORT      fast-time-server port          (default: 8080)
+#    FAST_TIME_SERVER_URL  MCP URL registered with the gateway
+#                                                       (default: derived from FAST_TIME_PORT)
 # ===========================================================================
 set -euo pipefail
 
@@ -38,7 +40,14 @@ REDIS_HOST="${REDIS_HOST:-127.0.0.1}"
 REDIS_PORT="${REDIS_PORT:-6379}"
 VENV_DIR="${VENV_DIR:-${PROJECT_ROOT}/.venv}"
 FAST_TIME_PORT="${FAST_TIME_PORT:-8080}"
-FAST_TIME_BIN="${FAST_TIME_BIN:-${PROJECT_ROOT}/mcp-servers/rust/fast-time-server/target/debug/fast-time-server}"
+# fast-time-server is a Cargo workspace member, so its binary is built into the
+# workspace-root target/ directory (not the crate's own target/).
+FAST_TIME_BIN="${FAST_TIME_BIN:-${PROJECT_ROOT}/target/debug/fast-time-server}"
+# URL the gateway federates to. Derived from FAST_TIME_PORT so a single override
+# moves both the bound port and the registered URL together (they must match, or
+# gateway registration fails with a 502).
+FAST_TIME_SERVER_URL="${FAST_TIME_SERVER_URL:-http://localhost:${FAST_TIME_PORT}/mcp}"
+export FAST_TIME_SERVER_URL
 
 # Args
 FILTER_PLUGIN="${1:-}"    # empty = all
@@ -90,7 +99,14 @@ trap cleanup EXIT
 wait_for_health() {
     local url="$1" label="$2" retries="${3:-40}"
     for i in $(seq 1 "${retries}"); do
-        curl -s "${url}" >/dev/null 2>&1 && { info "${label} is up"; return 0; }
+        # Require a 2xx status: a plain "got a response" check is fooled by an
+        # unrelated proxy (e.g. nginx/docker on the same port) returning 502.
+        local code
+        code="$(curl -s -o /dev/null -w '%{http_code}' "${url}" 2>/dev/null || true)"
+        if [[ "${code}" =~ ^2[0-9][0-9]$ ]]; then
+            info "${label} is up"
+            return 0
+        fi
         sleep 1
     done
     error "${label} did not become healthy at ${url}"
@@ -105,10 +121,8 @@ build_fast_time_server() {
         info "fast-time-server binary already exists — skipping build"
         return 0
     fi
-    info "Building fast-time-server (cargo build)…"
-    local src_dir
-    src_dir="$(dirname "$(dirname "$(dirname "${FAST_TIME_BIN}")")")"
-    (cd "${src_dir}" && cargo build) || {
+    info "Building fast-time-server (cargo build -p fast-time-server)…"
+    (cd "${PROJECT_ROOT}" && cargo build -p fast-time-server) || {
         error "cargo build failed for fast-time-server"
         return 1
     }
@@ -122,7 +136,10 @@ start_fast_time_server() {
     # Kill any stale instance first
     pkill -9 -f "target/debug/fast-time-server" 2>/dev/null || true
     sleep 1
-    nohup "${FAST_TIME_BIN}" > /tmp/fast-time-plugin-tests.log 2>&1 &
+    # Pass --port explicitly so the bound port matches FAST_TIME_SERVER_URL
+    # (the URL the gateway federates to); otherwise the binary's own default
+    # wins and the two silently diverge.
+    nohup "${FAST_TIME_BIN}" --port "${FAST_TIME_PORT}" > /tmp/fast-time-plugin-tests.log 2>&1 &
     FAST_TIME_PID=$!
     wait_for_health "http://localhost:${FAST_TIME_PORT}/health" "fast-time-server" 20
 }
