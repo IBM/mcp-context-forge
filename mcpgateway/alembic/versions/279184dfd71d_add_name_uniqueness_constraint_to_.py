@@ -1,7 +1,7 @@
 """add_name_uniqueness_constraint_to_resources
 
 Revision ID: 279184dfd71d
-Revises: e28566875fa4
+Revises: e198602c3c1e
 Create Date: 2026-06-03 12:39:27.221653
 
 """
@@ -14,7 +14,7 @@ from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
 revision: str = "279184dfd71d"  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = "0a089912b5f0"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "e198602c3c1e"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -168,7 +168,6 @@ class ResourceURIConflictError(ResourceError):
         self.enabled = enabled
         self.resource_id = resource_id
         message = f"{visibility.capitalize()} Resource already exists with URI: {uri}"
-        logger.info("ResourceURIConflictError: %s", message)
         if not enabled:
             message += f" (currently inactive, ID: {resource_id})"
         super().__init__(message)
@@ -201,7 +200,6 @@ class ResourceNameConflictError(ResourceError):
         message = f"A resource with this name already exists: {name}"
         if not enabled:
             message += f" (currently inactive, ID: {resource_id})"
-        logger.info(f"ResourceNameConflictError: {message}")
         super().__init__(message)
 
 
@@ -599,6 +597,8 @@ class ResourceService(BaseService):
                 if existing_resource:
                     raise ResourceURIConflictError(resource.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
             elif visibility.lower() == "team":
+                if not team_id:
+                    raise ResourceValidationError("Cannot create a team-scoped resource without a team_id")
                 # Check for existing team resource with the same uri and gateway_id
                 existing_resource = db.execute(
                     select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "team", DbResource.team_id == team_id, DbResource.gateway_id == gateway_id)
@@ -870,6 +870,11 @@ class ResourceService(BaseService):
         if not resources:
             return {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
 
+        # Mirror register_resource: a team-scoped create requires a team_id. Without this guard the
+        # team branch below silently falls through to the private-scope path (wrong visibility/scoping).
+        if visibility and visibility.lower() == "team" and not team_id:
+            raise ResourceValidationError("Cannot create a team-scoped resource without a team_id")
+
         stats = {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
 
         # Process in chunks to avoid memory issues and SQLite parameter limits
@@ -958,7 +963,11 @@ class ResourceService(BaseService):
                                 continue
                             if conflict_strategy == "fail":
                                 raise ResourceNameConflictError(resource.name, enabled=existing_by_name.enabled, resource_id=existing_by_name.id, visibility=existing_by_name.visibility)
-                            # rename / update strategies fall through to URI-based handling below
+                            # Known limitation: for "update"/"rename", a name conflict against a *different* URI is not
+                            # reconciled here. The URI-based lookup below misses (the incoming URI is new), so the row is
+                            # created with a name that already exists and the DB unique-name constraint raises IntegrityError.
+                            # That error is caught by the per-resource handler below and recorded in stats["errors"]/["failed"],
+                            # so the import stays safe (no partial/duplicate rows) but the outcome is not strategy-consistent.
 
                         # Look up existing resource by (uri, gateway_id) tuple
                         existing_resource = existing_resources_map.get((resource.uri, resource_gateway_id))

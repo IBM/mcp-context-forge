@@ -28,7 +28,7 @@ from sqlalchemy.exc import IntegrityError, MultipleResultsFound
 # First-Party
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.schemas import ResourceCreate, ResourceRead, ResourceSubscription, ResourceUpdate
-from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService, ResourceURIConflictError, ResourceNameConflictError
+from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService, ResourceURIConflictError, ResourceNameConflictError, ResourceValidationError
 
 # Local
 from tests.helpers.admin_mocks import install_admin_user
@@ -3641,6 +3641,18 @@ class TestResourceBulkRegistration:
 
         assert result["failed"] == 1
         assert any("already exists" in err for err in result["errors"])
+
+    @pytest.mark.asyncio
+    async def test_register_resources_bulk_team_scope_without_team_id_raises(self, resource_service, mock_db):
+        """Bulk register rejects a team-scoped create when no team_id is provided."""
+        resources = [ResourceCreate(name="Res", uri="file:///res.txt", content="body")]
+        with pytest.raises(ResourceValidationError, match="team_id"):
+            await resource_service.register_resources_bulk(
+                db=mock_db,
+                resources=resources,
+                created_by="tester",
+                visibility="team",
+            )
 
 
 class TestResourceMetricRecording:
