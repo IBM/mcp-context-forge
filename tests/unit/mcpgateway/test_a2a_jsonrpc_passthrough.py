@@ -837,6 +837,64 @@ class TestJSONRPCSecurityDenyPaths:
             "This endpoint must enforce a2a.invoke permission per AGENTS.md security requirements."
         )
 
+    def test_authenticated_user_without_permission_denied(self, mock_a2a_service, monkeypatch):
+        """Test that authenticated user without a2a.invoke permission is rejected with 403.
+
+        Security requirement per AGENTS.md: "Security-sensitive changes must include deny-path
+        regression tests (unauthenticated, wrong team, insufficient permissions, feature disabled)."
+
+        This test verifies Layer 2 (RBAC) enforcement: an authenticated user with valid token
+        but lacking the a2a.invoke permission receives 403 Forbidden before agent invocation.
+        """
+        from mcpgateway.main import get_current_user_with_permissions
+        from mcpgateway.middleware import rbac
+        from fastapi import HTTPException
+
+        # Mock user: authenticated with valid token but NO a2a.invoke permission
+        def override_get_current_user_no_permission():
+            return {
+                "sub": "user@example.com",
+                "email": "user@example.com",
+                "is_admin": False,
+                "teams": ["team1"],
+                "permissions": [],  # Missing a2a.invoke permission
+                "db": MagicMock(),
+            }
+
+        # Mock PermissionService to deny a2a.invoke permission
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.side_effect = HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: insufficient permissions"
+        )
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        app.dependency_overrides[get_current_user_with_permissions] = override_get_current_user_no_permission
+
+        # Mock to verify service is NOT called
+        mock_a2a_service.invoke_agent = AsyncMock(return_value={"jsonrpc": "2.0", "result": {}, "id": 1})
+
+        client = TestClient(app)
+        response = client.post(
+            "/a2a/test-agent/jsonrpc",
+            json={
+                "jsonrpc": "2.0",
+                "method": "SendMessage",
+                "params": {},
+                "id": 1,
+            },
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+        # Should be rejected with 403 Forbidden (insufficient permissions)
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
+        # Service should NOT be invoked
+        mock_a2a_service.invoke_agent.assert_not_called()
+
+        # Clean up
+        app.dependency_overrides.clear()
+
     def test_wrong_team_token_cannot_invoke_other_team_agent(self, mock_a2a_service, sample_a2a_agent):
         """Test that token scoped to wrong team cannot invoke agent from different team."""
         from mcpgateway.main import get_current_user_with_permissions
@@ -1111,37 +1169,44 @@ class TestJSONRPCPassthroughFeatureFlags:
             status.HTTP_503_SERVICE_UNAVAILABLE,
         )
 
-    def test_a2a_router_mounting_conditional_on_feature_flag(self):
-        """Test that A2A router mounting is conditional on MCPGATEWAY_A2A_ENABLED flag.
+    def test_a2a_endpoints_return_404_when_feature_disabled(self, mock_auth):
+        """Test that A2A endpoints return 404 when MCPGATEWAY_A2A_ENABLED is disabled.
 
-        Security requirement per AGENTS.md: High-risk transports must be feature-flagged
-        and disabled by default. When A2A is disabled, the A2A router should not be mounted,
-        resulting in 404 for all A2A endpoints including /jsonrpc.
+        Security requirement per AGENTS.md: "Security-sensitive changes must include deny-path
+        regression tests (unauthenticated, wrong team, insufficient permissions, feature disabled)."
 
-        This test verifies the conditional logic exists in main.py. Full integration testing
-        with app reload and config changes is tracked in Issue #5439.
-
-        Expected behavior when MCPGATEWAY_A2A_ENABLED=false:
-        - A2A router not included in app
-        - POST /a2a/{agent_name}/jsonrpc returns 404 Not Found
-        - POST /a2a/{agent_name}/invoke returns 404 Not Found
-        - No A2A endpoints accessible
+        This test verifies that when A2A is disabled, the router is not mounted and all
+        /a2a/* endpoints return 404 Not Found.
         """
-        # Verify the conditional routing logic exists in main.py
-        # The router is mounted at: mcpgateway/main.py lines 5359-5360
+        from unittest.mock import patch
         from mcpgateway.config import settings
 
-        # Current test environment has A2A enabled, so endpoint should exist
-        # (This is verified by test_jsonrpc_endpoint_exists_when_a2a_enabled)
-        assert settings.mcpgateway_a2a_enabled is True
+        # Temporarily disable A2A feature flag and reload app
+        with patch.object(settings, "mcpgateway_a2a_enabled", False):
+            # Import and rebuild the app with A2A disabled
+            # Note: This recreates the app instance with A2A router not mounted
+            import importlib
+            import mcpgateway.main
+            importlib.reload(mcpgateway.main)
+            from mcpgateway.main import app as reloaded_app
 
-        # Document the expected behavior when disabled:
-        # When settings.mcpgateway_a2a_enabled=False:
-        #   - include_router(a2a_router) is NOT called (conditional at line 5359)
-        #   - /a2a/* routes return 404
-        #
-        # Integration test needed: Start server with MCPGATEWAY_A2A_ENABLED=false,
-        # verify 404 response. See Issue #5439.
+            client = TestClient(reloaded_app)
+            response = client.post(
+                "/a2a/test-agent/jsonrpc",
+                json={
+                    "jsonrpc": "2.0",
+                    "method": "SendMessage",
+                    "params": {},
+                    "id": 1,
+                },
+                headers={"Authorization": "Bearer test-token"},
+            )
+
+            # Should return 404 (route not mounted)
+            assert response.status_code == status.HTTP_404_NOT_FOUND
+
+        # Reload app again to restore A2A-enabled state for other tests
+        importlib.reload(mcpgateway.main)
 
 
 class TestJSONRPCPassthroughEdgeCases:
