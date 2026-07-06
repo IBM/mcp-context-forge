@@ -7,7 +7,8 @@ Authors: Madhumohan Jaishankar
 Tool Plugin Bindings Router.
 Provides endpoints for configuring per-tool per-tenant plugin policies.
 
-Endpoints:
+Endpoints (canonical paths under the /v1 mount; also served unversioned via the
+deprecated legacy mount when LEGACY_API_ENABLED is true):
     POST   /v1/tools/plugin_bindings                              — Create or update bindings (upsert)
     GET    /v1/tools/plugin_bindings                              — List all bindings
     GET    /v1/tools/plugin_bindings/{team_id}                    — List bindings for a specific team
@@ -34,7 +35,7 @@ from mcpgateway.services.tool_plugin_binding_service import ToolPluginBindingFor
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
-router = APIRouter(prefix="/v1/tools/plugin_bindings", tags=["Tool Plugin Bindings"])
+router = APIRouter(prefix="/tools/plugin_bindings", tags=["Tool Plugin Bindings"])
 
 _service = ToolPluginBindingService()
 
