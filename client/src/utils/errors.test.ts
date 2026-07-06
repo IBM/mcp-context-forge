@@ -139,6 +139,68 @@ describe("sanitizeError", () => {
     expect(sanitizeError(undefined)).toBe("An unexpected error occurred.");
     expect(sanitizeError(42)).toBe("An unexpected error occurred.");
   });
+
+  describe("ApiError (objects with status and body)", () => {
+    it("prefers the backend detail message when present", () => {
+      expect(sanitizeError({ status: 409, body: { detail: "User is already a member" } })).toBe(
+        "User is already a member",
+      );
+    });
+
+    it("prefers the friendly status message over a terse detail for auth statuses", () => {
+      // 401/403/404/5xx details are typically unhelpful (e.g. "Forbidden"), so the
+      // status-based message wins to keep the UX consistent.
+      expect(sanitizeError({ status: 403, body: { detail: "Forbidden" } })).toBe(
+        "You don't have permission to perform this action.",
+      );
+      expect(sanitizeError({ status: 401, body: { detail: "Unauthorized" } })).toBe(
+        "Authentication required. Please log in again.",
+      );
+      expect(sanitizeError({ status: 500, body: { detail: "Internal Server Error" } })).toBe(
+        "Server error. Please try again later.",
+      );
+    });
+
+    it("extracts the first msg from a FastAPI validation error body", () => {
+      expect(
+        sanitizeError({
+          status: 422,
+          body: { detail: [{ msg: "field required" }, { msg: "invalid value" }] },
+        }),
+      ).toBe("field required");
+    });
+
+    it("returns auth message for status 401 without detail", () => {
+      expect(sanitizeError({ status: 401, body: {} })).toBe(
+        "Authentication required. Please log in again.",
+      );
+    });
+
+    it("returns permission message for status 403 without detail", () => {
+      expect(sanitizeError({ status: 403, body: {} })).toBe(
+        "You don't have permission to perform this action.",
+      );
+    });
+
+    it("returns not-found message for status 404 without detail", () => {
+      expect(sanitizeError({ status: 404, body: {} })).toBe(
+        "The requested resource was not found.",
+      );
+    });
+
+    it("returns server-error message for status >= 500 without detail", () => {
+      expect(sanitizeError({ status: 500, body: {} })).toBe(
+        "Server error. Please try again later.",
+      );
+      expect(sanitizeError({ status: 503, body: null })).toBe(
+        "Server error. Please try again later.",
+      );
+    });
+
+    it("returns the generic fallback for other statuses without detail", () => {
+      expect(sanitizeError({ status: 400, body: {} })).toBe("An error occurred. Please try again.");
+    });
+  });
 });
 
 describe("withErrorHandling", () => {
