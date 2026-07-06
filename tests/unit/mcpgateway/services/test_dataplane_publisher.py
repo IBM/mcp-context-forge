@@ -549,7 +549,7 @@ async def test_publish_writes_payload_releases_lock_and_exits_when_shutdown_wait
     """publish_to_redis() writes msgpack payloads and releases the worker lock."""
     import msgpack
 
-    from mcpgateway.services.dataplane_publisher import PUBLISHER_LOCK_KEY, PUBLISHER_TTL, USER_CONFIG_KEY, WORKER_ID, DataplanePublisherService
+    from mcpgateway.services.dataplane_publisher import PUBLISHER_LOCK_KEY, PUBLISHER_TTL, USER_CONFIG_KEY, DataplanePublisherService
 
     service = DataplanePublisherService()
     payload = {"user@example.com": {"virtual_hosts": {"server1": {"backends": {}}}}}
@@ -581,7 +581,7 @@ async def test_publish_writes_payload_releases_lock_and_exits_when_shutdown_wait
     assert pipe.set.call_args.kwargs == {"ex": PUBLISHER_TTL}
     pipe.execute.assert_awaited_once()
     mock_redis.eval.assert_awaited_once()
-    assert mock_redis.eval.await_args.args[1:] == (1, PUBLISHER_LOCK_KEY, WORKER_ID)
+    assert mock_redis.eval.await_args.args[1:] == (1, PUBLISHER_LOCK_KEY, service.worker_id)
     mock_wait_for.assert_awaited_once()
 
 
