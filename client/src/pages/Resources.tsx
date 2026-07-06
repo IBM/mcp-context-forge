@@ -1,11 +1,12 @@
-import { useState, useMemo, memo, useCallback, useRef } from "react";
+import { useState, useMemo, useCallback, useRef, memo } from "react";
+import { useEffect } from "react";
 import { useIntl } from "react-intl";
 import { Plus, EllipsisVertical, FileText } from "lucide-react";
 import { toast } from "sonner";
 import { useQuery } from "@/hooks/useQuery";
 import { resourcesApi } from "@/api/resources";
 import { ApiError } from "@/api/client";
-import { extractApiErrorDetail } from "@/utils/errors";
+import { extractApiErrorDetail, sanitizeError } from "@/utils/errors";
 import type {
   ResourceRead,
   GatewayRead,
@@ -13,6 +14,7 @@ import type {
   BodyCreateResourceV1ResourcesPost,
 } from "@/generated/types";
 import { ResourceReadVisibility } from "@/generated/types";
+import type { ResourceGroup } from "@/types/resource";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import {
@@ -26,25 +28,61 @@ import { ResourceDetailsPanel } from "@/components/resources/ResourceDetailsPane
 import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
 
 const OPTIMISTIC_RESOURCE_ID = "__optimistic__";
+/** Maximum number of resource badges to display before showing "+N more" overflow indicator */
+const MAX_VISIBLE_RESOURCE_BADGES = 8;
 
-function getUriLabel(uri: string): string {
-  try {
-    return new URL(uri).hostname || uri;
-  } catch {
-    return uri;
+/**
+ * Groups resources by their gateway slug for display in the Resources page.
+ * Resources without a gateway are grouped under the REST resources label.
+ * Each group tracks whether any of its resources are enabled (active status).
+ *
+ * @param resources - Array of resources to group
+ * @param gatewayNameById - Map of gateway IDs to display names (slug or name)
+ * @param restResourcesLabel - Localized label for resources without a gateway
+ * @returns Array of resource groups with computed active status
+ */
+function buildGroups(
+  resources: NonNullable<ResourceRead>[],
+  gatewayNameById: Map<string, string>,
+  restResourcesLabel: string,
+): ResourceGroup[] {
+  const map = new Map<string, ResourceGroup>();
+  for (const resource of resources) {
+    const slug = resource.gatewayId
+      ? (gatewayNameById.get(resource.gatewayId) ?? resource.gatewayId)
+      : restResourcesLabel;
+
+    let group = map.get(slug);
+    if (!group) {
+      group = {
+        gatewaySlug: slug,
+        gatewayId: resource.gatewayId ?? undefined,
+        resources: [],
+        isActive: false,
+      };
+      map.set(slug, group);
+    }
+
+    group.resources.push(resource);
+    group.isActive ||= resource.enabled; // Short-circuit OR
   }
+  return Array.from(map.values());
 }
 
-const ResourceCard = memo(function ResourceCard({
-  resource,
-  onViewResource,
-  onDeleteResource,
+const ResourceGroupCard = memo(function ResourceGroupCard({
+  group,
+  onViewGroup,
 }: {
-  resource: NonNullable<ResourceRead>;
-  onViewResource: (resource: NonNullable<ResourceRead>) => void;
-  onDeleteResource: (id: string) => void;
+  group: ResourceGroup;
+  onViewGroup: (group: ResourceGroup) => void;
 }) {
   const intl = useIntl();
+  const visibleResources = group.resources.slice(0, MAX_VISIBLE_RESOURCE_BADGES);
+  const remainingCount = group.resources.length - MAX_VISIBLE_RESOURCE_BADGES;
+
+  const handleView = () => {
+    onViewGroup(group);
+  };
 
   return (
     <Card size="sm" className="rounded-xl pl-0 pt-4 pb-4">
@@ -55,10 +93,18 @@ const ResourceCard = memo(function ResourceCard({
           </div>
 
           <div className="flex min-w-0 flex-1 items-center gap-2">
-            <span className="truncate text-sm font-semibold text-neutral-900 dark:text-white">
-              {resource.name}
+            <span className="truncate text-sm font-semibold text-neutral-500 dark:text-neutral-400">
+              {group.gatewaySlug}
             </span>
-            <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-tool-status-active" />
+            <span className="whitespace-nowrap text-sm font-semibold text-neutral-900 dark:text-white">
+              {intl.formatMessage(
+                { id: "resources.card.resourceCount" },
+                { count: group.resources.length },
+              )}
+            </span>
+            <span
+              className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${group.isActive ? "bg-tool-status-active" : "bg-tool-status-inactive"}`}
+            />
           </div>
 
           <DropdownMenu>
@@ -68,8 +114,8 @@ const ResourceCard = memo(function ResourceCard({
                 variant="ghost"
                 size="sm"
                 aria-label={intl.formatMessage(
-                  { id: "resources.card.moreOptions" },
-                  { gatewaySlug: resource.name },
+                  { id: "resources.card.moreOptionsFor" },
+                  { name: group.gatewaySlug },
                 )}
                 className="h-7 w-7 p-0"
               >
@@ -77,15 +123,8 @@ const ResourceCard = memo(function ResourceCard({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => onViewResource(resource)}>
+              <DropdownMenuItem onClick={handleView}>
                 {intl.formatMessage({ id: "resources.card.viewDetails" })}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => onDeleteResource(resource.id)}
-                disabled={resource.id === OPTIMISTIC_RESOURCE_ID}
-                className="text-destructive focus:text-destructive"
-              >
-                {intl.formatMessage({ id: "common.button.delete" })}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -94,17 +133,24 @@ const ResourceCard = memo(function ResourceCard({
 
       <CardContent>
         <div className="flex flex-wrap gap-1">
-          {resource.mimeType && (
-            <span className="inline-flex items-center rounded bg-neutral-100 px-1.5 py-1 text-[10px] font-medium leading-none text-neutral-700 dark:bg-neutral-800 dark:text-white">
-              {resource.mimeType}
-            </span>
-          )}
-          {resource.uri && (
+          {visibleResources.map((resource) => (
             <span
-              className="inline-flex items-center rounded bg-neutral-100 px-1.5 py-1 text-[10px] font-medium leading-none text-neutral-700 dark:bg-neutral-800 dark:text-white"
-              title={resource.uri}
+              key={resource.id}
+              className="inline-flex items-center rounded bg-tool-badge-bg px-1.5 py-1 text-[10px] font-medium leading-none text-white"
+              title={resource.description ?? undefined}
             >
-              {getUriLabel(resource.uri)}
+              {resource.name}
+            </span>
+          ))}
+          {remainingCount > 0 && (
+            <span
+              className="inline-flex items-center rounded bg-tool-badge-bg px-1.5 py-1 text-[10px] font-medium leading-none text-white"
+              title={intl.formatMessage(
+                { id: "resources.card.moreResources" },
+                { count: remainingCount },
+              )}
+            >
+              +{remainingCount}
             </span>
           )}
         </div>
@@ -153,11 +199,13 @@ export function Resources() {
   const intl = useIntl();
   const headingRef = useRef<HTMLHeadingElement>(null);
   const [showForm, setShowForm] = useState(false);
-  const [selectedResource, setSelectedResource] = useState<NonNullable<ResourceRead> | null>(null);
+  const [selectedGroup, setSelectedGroup] = useState<ResourceGroup | null>(null);
+  const [isDetailsPanelOpen, setIsDetailsPanelOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteResourceId, setDeleteResourceId] = useState<string | null>(null);
   const [deleteResourceName, setDeleteResourceName] = useState<string | null>(null);
   const [shouldRedirectDeleteCloseFocus, setShouldRedirectDeleteCloseFocus] = useState(false);
+  const [shouldRestoreFormCloseFocus, setShouldRestoreFormCloseFocus] = useState(false);
 
   const {
     data,
@@ -177,19 +225,43 @@ export function Resources() {
     const gateways: NonNullable<GatewayRead>[] = (gatewaysData?.gateways ?? []).filter(
       (g): g is NonNullable<GatewayRead> => g !== null,
     );
-    return new Map(
-      gateways.map((gateway) => [
-        gateway.id,
-        gateway.slug?.trim() || gateway.name?.trim() || gateway.id,
-      ]),
-    );
+    const entries: [string, string][] = [];
+    for (const gateway of gateways) {
+      if (!gateway.id) continue;
+      entries.push([gateway.id, gateway.slug?.trim() || gateway.name?.trim() || gateway.id]);
+    }
+    return new Map(entries);
   }, [gatewaysData]);
+
+  const validResources = useMemo(
+    () => (data ?? []).filter((r): r is NonNullable<ResourceRead> => r !== null),
+    [data],
+  );
+
+  const restResourcesLabel = useMemo(
+    () => intl.formatMessage({ id: "resources.restResourcesGroup" }),
+    [intl],
+  );
+  const groups = useMemo(
+    () => buildGroups(validResources, gatewayNameById, restResourcesLabel),
+    [validResources, gatewayNameById, restResourcesLabel],
+  );
+
+  // Keep the open details panel pointed at the latest group data so status
+  // changes (e.g. a delete elsewhere) are reflected once the list is updated.
+  const activeGroup = useMemo(
+    () =>
+      selectedGroup
+        ? (groups.find((g) => g.gatewaySlug === selectedGroup.gatewaySlug) ?? selectedGroup)
+        : null,
+    [groups, selectedGroup],
+  );
 
   const handleOptimisticAdd = useCallback(
     (formData: BodyCreateResourceV1ResourcesPost) => {
       const { resource } = formData;
       const optimistic: NonNullable<ResourceRead> = {
-        id: "__optimistic__",
+        id: OPTIMISTIC_RESOURCE_ID,
         uri: resource.uri,
         name: resource.name,
         description: resource.description ?? null,
@@ -208,54 +280,91 @@ export function Resources() {
   );
 
   const handleOptimisticRollback = useCallback(() => {
-    setResourcesData((prev) => prev?.filter((r) => r?.id !== "__optimistic__") ?? []);
+    setResourcesData((prev) => prev?.filter((r) => r?.id !== OPTIMISTIC_RESOURCE_ID) ?? []);
   }, [setResourcesData]);
 
   const handleFormSuccess = async () => {
+    setShouldRestoreFormCloseFocus(true);
     setShowForm(false);
     await refetch();
   };
 
-  const handleResourceClick = (resource: NonNullable<ResourceRead>) => {
-    setSelectedResource(resource);
+  useEffect(() => {
+    if (!showForm && shouldRestoreFormCloseFocus) {
+      headingRef.current?.focus();
+      setShouldRestoreFormCloseFocus(false);
+    }
+  }, [showForm, shouldRestoreFormCloseFocus]);
+
+  const handleViewGroup = (group: ResourceGroup) => {
+    setSelectedGroup(group);
+    setIsDetailsPanelOpen(true);
   };
 
-  const handleClosePanel = () => {
-    setSelectedResource(null);
+  const handleCloseDetails = () => {
+    setIsDetailsPanelOpen(false);
   };
 
   const handleDeleteResource = useCallback(
     (id: string) => {
       if (id === OPTIMISTIC_RESOURCE_ID) return;
-      const resource = data?.find((r) => r?.id === id);
+      const resource = validResources.find((r) => r.id === id);
       setDeleteResourceId(id);
       setDeleteResourceName(resource?.name || id);
       setShouldRedirectDeleteCloseFocus(false);
       setDeleteDialogOpen(true);
     },
-    [data],
+    [validResources],
   );
 
   const confirmDelete = useCallback(async () => {
     if (!deleteResourceId || !deleteResourceName) return;
 
-    const resourceId = deleteResourceId;
-    const resourceName = deleteResourceName;
-    const previousData = data;
+    const idToDelete = deleteResourceId;
+    const nameToDelete = deleteResourceName;
 
-    setResourcesData((prev) => prev?.filter((r) => r?.id !== resourceId) ?? []);
-    setShouldRedirectDeleteCloseFocus(true);
+    const previousData = data;
+    const previousGroup = selectedGroup
+      ? { ...selectedGroup, resources: selectedGroup.resources.map((r) => ({ ...r })) }
+      : null;
+
+    setResourcesData((prev) => prev?.filter((r) => r?.id !== idToDelete) ?? []);
+
+    const remainingGroupResources =
+      selectedGroup?.resources.filter((r) => r.id !== idToDelete) ?? [];
+    const nextGroup =
+      selectedGroup && remainingGroupResources.length > 0
+        ? { ...selectedGroup, resources: remainingGroupResources }
+        : null;
+    setSelectedGroup(nextGroup);
+    setShouldRedirectDeleteCloseFocus(!nextGroup);
+    if (!nextGroup) setIsDetailsPanelOpen(false);
+
     setDeleteDialogOpen(false);
     setDeleteResourceId(null);
     setDeleteResourceName(null);
-    setSelectedResource(null);
 
     try {
-      await resourcesApi.delete(resourceId);
-      toast.success(intl.formatMessage({ id: "resources.delete.success" }, { name: resourceName }));
-      await refetch();
+      await resourcesApi.delete(idToDelete);
+      toast.success(intl.formatMessage({ id: "resources.delete.success" }, { name: nameToDelete }));
+
+      try {
+        await refetch();
+      } catch (refreshErr) {
+        console.error("Failed to refresh resources after deletion:", sanitizeError(refreshErr));
+        toast.warning(intl.formatMessage({ id: "resources.delete.refreshFailed" }), {
+          description: intl.formatMessage({
+            id: "resources.delete.refreshFailedDescription",
+          }),
+        });
+      }
     } catch (err) {
       setResourcesData(previousData);
+      setSelectedGroup(previousGroup);
+      setIsDetailsPanelOpen(!!previousGroup);
+      setShouldRedirectDeleteCloseFocus(false);
+
+      console.error("Delete rollback:", sanitizeError(err));
 
       let errorMessage = intl.formatMessage({ id: "resources.delete.error" });
 
@@ -276,14 +385,17 @@ export function Resources() {
 
       toast.error(errorMessage);
     }
-  }, [deleteResourceId, deleteResourceName, data, setResourcesData, refetch, intl]);
+  }, [deleteResourceId, deleteResourceName, data, selectedGroup, setResourcesData, refetch, intl]);
 
   return (
     <div className="p-6">
       {showForm ? (
         <ResourceForm
           isOpen={showForm}
-          onToggle={() => setShowForm(false)}
+          onToggle={() => {
+            setShouldRestoreFormCloseFocus(true);
+            setShowForm(false);
+          }}
           onSuccess={handleFormSuccess}
           onBeforeSubmit={handleOptimisticAdd}
           onError={handleOptimisticRollback}
@@ -326,29 +438,22 @@ export function Resources() {
           {!isLoading && (
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 2xl:grid-cols-3">
               <AddResourcesCard onAddResource={() => setShowForm(true)} />
-              {data
-                ?.filter((r): r is NonNullable<ResourceRead> => r !== null)
-                .map((resource) => (
-                  <ResourceCard
-                    key={resource.id}
-                    resource={resource}
-                    onViewResource={handleResourceClick}
-                    onDeleteResource={handleDeleteResource}
-                  />
-                ))}
+              {groups.map((group) => (
+                <ResourceGroupCard
+                  key={group.gatewaySlug}
+                  group={group}
+                  onViewGroup={handleViewGroup}
+                />
+              ))}
             </div>
           )}
 
-          {selectedResource && (
+          {activeGroup && (
             <ResourceDetailsPanel
-              resources={[selectedResource]}
-              gatewaySlug={
-                selectedResource.gatewayId
-                  ? gatewayNameById.get(selectedResource.gatewayId) || selectedResource.gatewayId
-                  : "unknown"
-              }
-              open={!!selectedResource}
-              onClose={handleClosePanel}
+              resources={activeGroup.resources}
+              gatewaySlug={activeGroup.gatewaySlug}
+              open={isDetailsPanelOpen}
+              onClose={handleCloseDetails}
               onDeleteResource={handleDeleteResource}
             />
           )}
