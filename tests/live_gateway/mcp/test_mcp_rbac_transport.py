@@ -70,10 +70,10 @@ _JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-by
 _CLIENT_TIMEOUT = float(os.getenv("MCP_E2E_CLIENT_TIMEOUT", "5.0"))
 # Allow-path per-server checks race the dataplane publisher: freshly created
 # users/servers only become visible to the dataplane on the next publisher
-# snapshot (DATAPLANE_PUBLISHER_INTERVAL_SECONDS, default 60s). The default
-# deadline covers one full publish interval plus slack; stacks running a
-# short publisher interval can lower it via MCP_E2E_PUBLISHER_SYNC_DEADLINE.
-_PER_SERVER_ACCESS_SYNC_DEADLINE_SECONDS = float(os.getenv("MCP_E2E_PUBLISHER_SYNC_DEADLINE", "75.0"))
+# snapshot (DATAPLANE_PUBLISHER_INTERVAL_SECONDS, default 60s). The deadline
+# covers one full default publish interval plus slack; it only bounds how
+# long a genuine failure takes — passing runs return on first convergence.
+_PER_SERVER_ACCESS_SYNC_DEADLINE_SECONDS = 75.0
 _PER_SERVER_ACCESS_RETRY_DELAY_SECONDS = 1.0
 
 
