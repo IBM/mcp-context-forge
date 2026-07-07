@@ -140,20 +140,8 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         user_id = None
         session_id = None
 
-        raw_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
-        if not raw_token:
-            auth_header = get_auth_header_value(request.headers) or ""
-            raw_token = _extract_bearer_token(auth_header)
-
-        if raw_token:
-            try:
-                payload = await verify_jwt_token_cached(raw_token, request)
-                user_id = payload.get("sub") or payload.get("email") or payload.get("user", {}).get("email")
-                session_id = payload.get("jti")
-            except Exception as exc:
-                logger.warning("CSRF fallback JWT verification failed for %s %s: %s", request.method, request.url.path, exc)
-
-        if not user_id and hasattr(request.state, "user") and request.state.user:
+        # Try to get user from request.state (set by AuthContextMiddleware)
+        if hasattr(request.state, "user") and request.state.user:
             user = request.state.user
             # EmailUser uses 'email' as primary key
             user_id = user.email if hasattr(user, "email") else str(user.id) if hasattr(user, "id") else None
