@@ -1,4 +1,9 @@
-"""Test token scoping path normalization behavior.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/middleware/test_token_scoping_normalization.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+
+Test token scoping path normalization behavior.
 
 This test suite validates that token scope patterns work consistently
 across both versioned (/v1/*) and legacy (unversioned) routes.

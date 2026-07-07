@@ -1,4 +1,9 @@
-"""Integration tests for OpenAPI specification content.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/integration/test_openapi_spec.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+
+Integration tests for OpenAPI specification content.
 
 Verifies that the OpenAPI spec correctly includes/excludes routes based on
 API versioning strategy.

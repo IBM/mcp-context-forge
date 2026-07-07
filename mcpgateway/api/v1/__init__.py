@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""mcpgateway.api.v1 — versioned API v1 router factory.
-
-Copyright 2025
+"""Location: ./mcpgateway/api/v1/__init__.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 
+mcpgateway.api.v1 — versioned API v1 router factory.
 Usage (Phase 1 — inline routers still live in main.py):
 
     from mcpgateway.api.v1 import build_v1_router

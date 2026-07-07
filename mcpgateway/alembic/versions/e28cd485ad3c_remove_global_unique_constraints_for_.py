@@ -1,4 +1,9 @@
-"""remove_global_unique_constraints_for_multitenancy
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/alembic/versions/e28cd485ad3c_remove_global_unique_constraints_for_.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+
+remove_global_unique_constraints_for_multitenancy
 
 Revision ID: e28cd485ad3c
 Revises: 0a089912b5f0

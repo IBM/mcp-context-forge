@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for external OIDC bearer token API auth (issue #3567)."""
+"""Location: ./tests/unit/mcpgateway/utils/test_external_idp_auth.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+
+Tests for external OIDC bearer token API auth (issue #3567).
+"""
 
 # Standard
 from unittest.mock import MagicMock

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Regression tests for gateway audit_trail.log_action db handling."""
+"""Location: ./tests/unit/mcpgateway/services/test_gateway_audit_no_db.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+
+Regression tests for gateway audit_trail.log_action db handling.
+"""
 
 from __future__ import annotations
 

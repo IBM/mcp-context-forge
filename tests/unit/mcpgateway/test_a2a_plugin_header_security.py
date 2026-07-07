@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Tests for plugin header modification security (PR #5183 review fix).
+"""Location: ./tests/unit/mcpgateway/test_a2a_plugin_header_security.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+
+Tests for plugin header modification security (PR #5183 review fix).
 
 Validates that plugin-returned headers in modified_payload.headers are
 subject to the same filtering and whitelist enforcement as inbound headers.

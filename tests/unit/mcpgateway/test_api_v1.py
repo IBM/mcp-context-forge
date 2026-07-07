@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""tests/unit/mcpgateway/test_api_v1.py
-Copyright 2025
+"""Location: ./tests/unit/mcpgateway/test_api_v1.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 
 Unit tests for mcpgateway.api.v1.build_v1_router.

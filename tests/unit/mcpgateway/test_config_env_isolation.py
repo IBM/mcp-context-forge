@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Cross-environment token isolation config tests (GHSA-vgf8-3685-66j9)."""
+"""Location: ./tests/unit/mcpgateway/test_config_env_isolation.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+
+Cross-environment token isolation config tests (GHSA-vgf8-3685-66j9).
+"""
 
 # First-Party
 from mcpgateway.config import Settings

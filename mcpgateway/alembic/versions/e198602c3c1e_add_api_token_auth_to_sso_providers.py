@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
-"""add api token auth columns to sso_providers (issue #3567)
+"""Location: ./mcpgateway/alembic/versions/e198602c3c1e_add_api_token_auth_to_sso_providers.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+
+add api token auth columns to sso_providers (issue #3567)
 
 Revision ID: e198602c3c1e
 Revises: 6c0e5f8a9b1d
 Create Date: 2026-06-11
-
 """
 
 # Standard

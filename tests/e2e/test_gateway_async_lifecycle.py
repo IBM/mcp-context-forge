@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""SQLite e2e coverage for async gateway lifecycle."""
+"""Location: ./tests/e2e/test_gateway_async_lifecycle.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+
+SQLite e2e coverage for async gateway lifecycle.
+"""
 
 # Standard
 from datetime import datetime, timezone

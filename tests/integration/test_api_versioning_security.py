@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""tests/integration/test_api_versioning_security.py
+"""Location: ./tests/integration/test_api_versioning_security.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 
