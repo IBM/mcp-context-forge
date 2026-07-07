@@ -4016,6 +4016,9 @@ class ToolService(BaseService):
         gateway_name: str,
         app_user_email: Optional[str],
         request_headers: dict,
+        ca_certificate: Optional[str] = None,
+        client_cert: Optional[str] = None,
+        client_key: Optional[str] = None,
     ) -> Any:
         """Send the upstream request, retrying exactly once on a 401 from a token-exchange gateway (B2).
 
@@ -4038,6 +4041,11 @@ class ToolService(BaseService):
             app_user_email: Authenticated end-user email, used for cache keys.
             request_headers: Incoming request headers, forwarded to
                 ``_resolve_token_exchange_header`` to resolve a fresh subject token.
+            ca_certificate: Optional custom CA certificate for the token endpoint,
+                forwarded to the re-exchange so a retry doesn't silently fall back
+                to the system CA store.
+            client_cert: Optional client certificate for mTLS to the token endpoint.
+            client_key: Optional client private key for mTLS to the token endpoint.
 
         Returns:
             The response object from ``send``, either from the first attempt or
@@ -4049,7 +4057,9 @@ class ToolService(BaseService):
         if not oauth_config or oauth_config.get("grant_type") != "token-exchange":
             return resp
         await self._invalidate_token_exchange_on_unauthorized(401, oauth_config, gateway_id, app_user_email)
-        fresh = await self._resolve_token_exchange_header(oauth_config, gateway_id, gateway_name, app_user_email, request_headers)
+        fresh = await self._resolve_token_exchange_header(
+            oauth_config, gateway_id, gateway_name, app_user_email, request_headers, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key
+        )
         return await send({**headers, **fresh})  # single retry; no loop -- preserve original headers, only Authorization changes
 
     # pylint: enable=duplicate-code
@@ -5439,6 +5449,9 @@ class ToolService(BaseService):
                                 gateway_name,
                                 app_user_email,
                                 request_headers or {},
+                                ca_certificate=gateway_ca_cert,
+                                client_cert=gateway_client_cert,
+                                client_key=gateway_client_key,
                             )
                         except (asyncio.TimeoutError, httpx.TimeoutException):
                             rest_elapsed_ms = (time.time() - rest_start_time) * 1000

@@ -882,7 +882,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             GatewayConnectionError: If no usable subject token exists or the exchange fails.
         """
         audience = oauth_config.get("target_audience")
-        user_key = app_user_email or ""
+        # Fail closed: cache key is (gateway_id, user, audience). Without a user
+        # identity there is no "behalf" to act on, and an empty key component
+        # would let unrelated principals share one delegated token.
+        if not app_user_email:
+            raise GatewayConnectionError(f"Token exchange requires an authenticated user identity for gateway '{gateway_name}'. Contact your administrator.")
+        user_key = app_user_email
         sec_logger = get_structured_logger("gateway_service")
 
         def _coerce_ttl(raw):

@@ -365,7 +365,7 @@ class OAuthManager:
         return await client.post(url, data=data, headers=headers, timeout=self.request_timeout)
 
     # Keys whose values must never be echoed in error messages or logs.
-    _SENSITIVE_TOKEN_KEYS = frozenset({"access_token", "refresh_token", "id_token", "client_secret", "password"})
+    _SENSITIVE_TOKEN_KEYS = frozenset({"access_token", "refresh_token", "id_token", "client_secret", "password", "subject_token"})
 
     # Cap on raw_response excerpts and any other string values surfaced via
     # OAuthError / logs (defense-in-depth against unbounded provider bodies).
@@ -855,9 +855,9 @@ class OAuthManager:
                 # (e.g. requested_token_type=jwt for a non-OAuth downstream). CF only
                 # ever forwards the exchanged token as "Authorization: Bearer <token>",
                 # so fail closed rather than mislabel a non-bearer token.
-                token_type = token_response.get("token_type", "Bearer")
+                token_type = token_response.get("token_type")
                 if not isinstance(token_type, str) or token_type.lower() != "bearer":
-                    raise OAuthError(f"Unsupported token_type '{token_type}' in token exchange response; only 'Bearer' is supported")
+                    raise OAuthError(f"Unsupported or missing token_type '{token_type}' in token exchange response; RFC 8693 §2.2.1 requires 'Bearer'")
 
                 logger.info("Successfully performed RFC 8693 token exchange")
                 return token_response
