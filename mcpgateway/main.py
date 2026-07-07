@@ -12535,6 +12535,16 @@ try:
 except ImportError as e:
     logger.error(f"A2A agent plugin bindings router not available: {e}")
 
+# MCP servers REST API router (provides POST /v1/mcp-servers/test for React UI)
+try:
+    # First-Party
+    from mcpgateway.routers.mcp_servers_router import router as mcp_servers_router  # pylint: disable=import-outside-toplevel
+
+    app.include_router(mcp_servers_router)
+    logger.info("MCP servers router included")
+except ImportError as e:
+    logger.error(f"MCP servers router not available: {e}")
+
 # Include log search router if structured logging is enabled
 if getattr(settings, "structured_logging_enabled", True):
     try:
