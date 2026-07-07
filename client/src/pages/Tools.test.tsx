@@ -322,8 +322,11 @@ describe("Tools", () => {
       expect(screen.getByText("Tool 1")).toBeInTheDocument();
     });
 
-    const toolBadge = screen.getByText("Tool 1");
-    expect(toolBadge).toHaveAttribute("title", "Description for tool 1");
+    const trigger = screen.getByText("Tool 1").closest("button");
+    expect(trigger).not.toBeNull();
+    // Radix opens the tooltip on focus, giving keyboard users the description.
+    trigger?.focus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Description for tool 1");
   });
 
   it("renders more options button for each tool group", async () => {
@@ -505,9 +508,11 @@ describe("Tools", () => {
     expect(screen.queryByText("Tool 11")).not.toBeInTheDocument();
     expect(screen.queryByText("Tool 12")).not.toBeInTheDocument();
 
-    // Should show +4 tag
-    expect(screen.getByText("+4")).toBeInTheDocument();
-    expect(screen.getByTitle("4 more tools")).toBeInTheDocument();
+    // Should show +4 tag, with the remaining count exposed as an accessible tooltip
+    const overflow = screen.getByText("+4");
+    expect(overflow).toBeInTheDocument();
+    overflow.closest("button")?.focus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("4 more tools");
   });
 
   it("displays all tools when count is 8 or less without +N tag", async () => {
@@ -544,9 +549,11 @@ describe("Tools", () => {
       expect(screen.getByText("gateway-with-nine-tools")).toBeInTheDocument();
     });
 
-    // Should show +1 tag
-    expect(screen.getByText("+1")).toBeInTheDocument();
-    expect(screen.getByTitle("1 more tool")).toBeInTheDocument();
+    // Should show +1 tag, with the singular "tool" wording in the tooltip
+    const overflow = screen.getByText("+1");
+    expect(overflow).toBeInTheDocument();
+    overflow.closest("button")?.focus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("1 more tool");
   });
 
   it("handles multiple gateways with different tool counts correctly", async () => {

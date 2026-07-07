@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { MessageSquareCode, MoreHorizontal, Plus } from "lucide-react";
 import { useIntl } from "react-intl";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { CardTag } from "@/components/ui/card-tag";
 import { Button } from "@/components/ui/button";
 import { useQuery } from "@/hooks/useQuery";
 import {
@@ -39,16 +40,20 @@ function buildPromptGroups(prompts: Prompt[], restPromptsLabel: string): PromptG
   const map = new Map<string, PromptGroup>();
 
   for (const prompt of prompts) {
-    const slug = prompt.gatewaySlug?.trim() || restPromptsLabel;
-    let group = map.get(slug);
+    const slug = prompt.gatewaySlug?.trim();
+    // Namespace the map key so gateway-less prompts (keyed "rest") can never
+    // merge into a real gateway whose slug happens to equal the localized
+    // "REST prompts" label. `label` stays purely for display.
+    const key = slug ? `gateway:${slug}` : "rest";
+    let group = map.get(key);
     if (!group) {
       group = {
-        key: slug,
-        label: slug,
+        key,
+        label: slug || restPromptsLabel,
         gatewayId: prompt.gatewayId,
         prompts: [],
       };
-      map.set(slug, group);
+      map.set(key, group);
     }
     group.prompts.push(prompt);
   }
@@ -102,24 +107,19 @@ function PromptGroupCard({ group }: { group: PromptGroup }) {
       <CardContent>
         <div className="flex flex-wrap gap-1">
           {visiblePrompts.map((prompt) => (
-            <span
-              key={prompt.id}
-              className="inline-flex items-center rounded bg-tool-badge-bg px-1.5 py-1 text-[10px] font-medium leading-none text-white"
-              title={getPromptDescription(prompt) ?? undefined}
-            >
+            <CardTag key={prompt.id} tooltip={getPromptDescription(prompt)}>
               {getPromptLabel(prompt)}
-            </span>
+            </CardTag>
           ))}
           {remainingCount > 0 && (
-            <span
-              className="inline-flex items-center rounded bg-tool-badge-bg px-1.5 py-1 text-[10px] font-medium leading-none text-white"
-              title={intl.formatMessage(
+            <CardTag
+              tooltip={intl.formatMessage(
                 { id: "prompts.card.morePromptsTitle" },
                 { count: remainingCount },
               )}
             >
               +{remainingCount}
-            </span>
+            </CardTag>
           )}
         </div>
       </CardContent>
