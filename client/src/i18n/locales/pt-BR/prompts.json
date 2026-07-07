@@ -4,6 +4,8 @@
   "prompts.error.loading": "Erro ao carregar prompts",
   "prompts.add.title": "Adicionar prompts",
   "prompts.add.description": "Conecte um servidor MCP para carregar prompts automaticamente ou crie um modelo reutilizável com argumentos nomeados.",
+  "prompts.restPromptsGroup": "Prompts REST",
   "prompts.card.moreOptionsFor": "Mais opções para {name}",
-  "prompts.card.viewDetails": "Ver detalhes"
+  "prompts.card.viewDetails": "Ver detalhes",
+  "prompts.card.morePromptsTitle": "{count, plural, one {mais # prompt} other {mais # prompts}}"
 }
