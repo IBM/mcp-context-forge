@@ -1,10 +1,17 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { screen, waitFor, within, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/mocks/server";
 import { renderWithProviders } from "@/test/test-utils";
+import { useAuthContext } from "@/auth/AuthContext";
 import { Prompts } from "./Prompts";
+
+vi.mock("@/auth/AuthContext", () => ({
+  useAuthContext: vi.fn(),
+}));
+
+const mockUseAuthContext = vi.mocked(useAuthContext);
 import type { Prompt } from "@/types/prompts";
 
 function createMockPrompt(overrides: Partial<Prompt> = {}): Prompt {
@@ -31,6 +38,7 @@ function getPromptCard(label: string): HTMLElement {
 describe("Prompts", () => {
   beforeEach(() => {
     server.resetHandlers();
+    mockUseAuthContext.mockReturnValue({ selectedTeamId: null } as ReturnType<typeof useAuthContext>);
   });
 
   it("renders the add prompts card", async () => {
