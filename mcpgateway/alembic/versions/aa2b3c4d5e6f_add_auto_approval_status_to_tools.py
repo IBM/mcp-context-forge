@@ -57,4 +57,4 @@ def downgrade() -> None:
     if "auto_approval_status" in columns:
         op.drop_column("tools", "auto_approval_status")
 
-# Made with Bob
+
