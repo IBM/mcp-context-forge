@@ -1,4 +1,3 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   createTeam,
   addTeamMember,
@@ -6,6 +5,7 @@ import {
   removeTeamMember,
   listTeamMembers,
   deleteTeam,
+  updateTeam,
 } from "./teams";
 import { api } from "./client";
 
@@ -44,6 +44,34 @@ describe("createTeam", () => {
     vi.mocked(api.post).mockRejectedValue(error);
 
     await expect(createTeam({ name: "X", visibility: "public" })).rejects.toThrow("boom");
+  });
+});
+
+describe("updateTeam", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("PUTs to the URL-encoded team id with the payload and returns the team", async () => {
+    const team = { id: "team-1", name: "Engineering" };
+    vi.mocked(api.put).mockResolvedValue(team);
+
+    const payload = {
+      name: "Engineering",
+      description: "Eng team",
+      visibility: "public" as const,
+      max_members: 50,
+    };
+    const result = await updateTeam("team/1", payload);
+
+    expect(api.put).toHaveBeenCalledWith("/teams/team%2F1", payload);
+    expect(result).toEqual(team);
+  });
+
+  it("propagates errors from the API", async () => {
+    vi.mocked(api.put).mockRejectedValue(new Error("boom"));
+
+    await expect(updateTeam("team-1", { name: "X" })).rejects.toThrow("boom");
   });
 });
 
