@@ -640,6 +640,70 @@ class TestTeamInvitationService:
                 with pytest.raises(TeamMemberLimitExceededError, match="maximum member limit"):
                     await service.accept_invitation("token")
 
+    @pytest.mark.asyncio
+    async def test_accept_invitation_reactivates_inactive_member(self, service, mock_invitation, mock_team, mock_db):
+        """Test accepting invitation reactivates a stale inactive membership row instead of inserting a duplicate (issue #5524)."""
+        inactive_member = MagicMock(spec=EmailTeamMember)
+        inactive_member.is_active = False
+        inactive_member.role = "member"
+
+        def query_side_effect(model):
+            mock_query = MagicMock()
+            if model == EmailTeam:
+                mock_query.filter.return_value.first.return_value = mock_team
+            elif model == EmailTeamMember:
+                if not hasattr(query_side_effect, "call_count"):
+                    query_side_effect.call_count = 0
+                query_side_effect.call_count += 1
+
+                if query_side_effect.call_count == 1:
+                    # "already an active member?" check -> no active row
+                    mock_query.filter.return_value.first.return_value = None
+                elif query_side_effect.call_count == 2:
+                    # capacity count()
+                    mock_query.filter.return_value.count.return_value = 0
+                else:
+                    # reuse lookup (any row, regardless of is_active) -> stale inactive row
+                    mock_query.filter.return_value.first.return_value = inactive_member
+            return mock_query
+
+        mock_db.query.side_effect = query_side_effect
+
+        with patch.object(service, "get_invitation_by_token", return_value=mock_invitation):
+            result = await service.accept_invitation("token")
+
+        assert result is inactive_member
+        assert inactive_member.is_active is True
+        assert inactive_member.role == mock_invitation.role
+        assert inactive_member.invited_by == mock_invitation.invited_by
+        mock_db.add.assert_not_called()
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_accept_invitation_integrity_error_translated(self, service, mock_invitation, mock_team, mock_db):
+        """Test a commit-time IntegrityError (concurrent accept race) is translated to a handled ValueError, not a 500."""
+        # Third-Party
+        from sqlalchemy.exc import IntegrityError
+
+        def query_side_effect(model):
+            mock_query = MagicMock()
+            if model == EmailTeam:
+                mock_query.filter.return_value.first.return_value = mock_team
+            elif model == EmailTeamMember:
+                # No active member found, and no stale row found either (both first() calls return None)
+                mock_query.filter.return_value.first.return_value = None
+                mock_query.filter.return_value.count.return_value = 0
+            return mock_query
+
+        mock_db.query.side_effect = query_side_effect
+        mock_db.commit.side_effect = IntegrityError("statement", {}, Exception("UNIQUE constraint failed"))
+
+        with patch.object(service, "get_invitation_by_token", return_value=mock_invitation):
+            with pytest.raises(ValueError, match="already a member of this team"):
+                await service.accept_invitation("token")
+
+        mock_db.rollback.assert_called()
+
     # =========================================================================
     # Invitation Decline Tests
     # =========================================================================

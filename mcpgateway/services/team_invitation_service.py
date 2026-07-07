@@ -23,6 +23,7 @@ import secrets
 from typing import Any, List, Optional
 
 # Third-Party
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -354,15 +355,29 @@ class TeamInvitationService:
             # Check team member limit (explicit per-team value or global default)
             check_team_member_capacity(self.db, team)
 
-            # Create team membership
-            membership = EmailTeamMember(team_id=invitation.team_id, user_email=invitation.email, role=invitation.role, joined_at=utc_now(), invited_by=invitation.invited_by, is_active=True)
+            # Reuse any prior (inactive) membership row for this (team_id, user_email) pair instead of
+            # inserting a duplicate: uq_team_member is unique regardless of is_active, so a stale row left
+            # behind by a previous removal from the team would otherwise collide on insert.
+            membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == invitation.team_id, EmailTeamMember.user_email == invitation.email).first()
 
-            self.db.add(membership)
+            if membership:
+                membership.role = invitation.role
+                membership.joined_at = utc_now()
+                membership.invited_by = invitation.invited_by
+                membership.is_active = True
+            else:
+                membership = EmailTeamMember(team_id=invitation.team_id, user_email=invitation.email, role=invitation.role, joined_at=utc_now(), invited_by=invitation.invited_by, is_active=True)
+                self.db.add(membership)
 
             # Deactivate the invitation
             invitation.is_active = False
 
-            self.db.commit()
+            try:
+                self.db.commit()
+            except IntegrityError as integrity_error:
+                self.db.rollback()
+                logger.warning("Concurrent accept detected for %s on team %s: %s", invitation.email, invitation.team_id, integrity_error)
+                raise ValueError("User is already a member of this team") from integrity_error
 
             # Invalidate auth cache for user's team membership
             try:
