@@ -159,7 +159,7 @@ export function PromptForm({ isOpen, onToggle, onSuccess }: PromptFormProps) {
     <div className="mx-auto mt-6 w-full max-w-3xl rounded-xl border border-neutral-200 bg-inherit p-0 shadow-[0_12px_40px_rgba(15,23,42,0.12)] dark:border-neutral-800">
       <div className="flex flex-col gap-6 p-6 sm:p-8">
         <div className="flex items-center gap-3">
-          <div className="flex h-6 w-6 items-center justify-center rounded bg-green-400">
+          <div className="flex h-6 w-6 items-center justify-center rounded bg-prompt-icon-bg">
             <MessageSquareCode className="h-4 w-4 text-black" />
           </div>
           <h2 className="text-base font-semibold text-foreground">
