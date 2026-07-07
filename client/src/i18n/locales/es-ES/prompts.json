@@ -25,7 +25,7 @@
   "prompts.add.visibility.public": "Público",
   "prompts.add.visibility.team": "Equipo",
   "prompts.add.visibility.private": "Privado",
-  "prompts.add.button.submit": "Añadir Herramienta",
+  "prompts.add.button.submit": "Añadir prompt",
   "prompts.add.required": "*",
   "prompts.add.success": "¡Prompt añadido exitosamente!",
   "prompts.add.error": "Error al añadir el prompt. Por favor, inténtelo de nuevo.",
