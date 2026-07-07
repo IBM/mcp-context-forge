@@ -20,6 +20,7 @@
   "teams.table.actions": "Ações",
   "teams.table.invalidDate": "Data inválida",
   "teams.table.actions.label": "Ações para {name}",
+  "teams.table.actions.manageMembers": "Gerenciar membros",
   "teams.table.actions.edit": "Editar",
   "teams.table.actions.delete": "Excluir",
   "teams.table.description.view": "Ver descrição de {name}",
