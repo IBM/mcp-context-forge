@@ -4,7 +4,6 @@ import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/mocks/server";
 import { renderWithProviders } from "@/test/test-utils";
-import { RouterProvider } from "@/router";
 import { Prompts } from "./Prompts";
 import type { Prompt } from "@/types/prompts";
 
@@ -29,15 +28,6 @@ function getPromptCard(label: string): HTMLElement {
   return card as HTMLElement;
 }
 
-function renderPrompts() {
-  window.history.pushState({}, "", "/app/prompts");
-  return renderWithProviders(
-    <RouterProvider>
-      <Prompts />
-    </RouterProvider>,
-  );
-}
-
 describe("Prompts", () => {
   beforeEach(() => {
     server.resetHandlers();
@@ -46,7 +36,7 @@ describe("Prompts", () => {
   it("renders the add prompts card", async () => {
     server.use(http.get("/prompts", () => HttpResponse.json([])));
 
-    renderPrompts();
+    renderWithProviders(<Prompts />);
 
     await waitFor(() => {
       expect(screen.getByText("Add prompts")).toBeInTheDocument();
@@ -58,20 +48,29 @@ describe("Prompts", () => {
     expect(screen.queryByRole("button", { name: /More options for/i })).not.toBeInTheDocument();
   });
 
-  it("exposes the add prompts card as a keyboard-accessible button", async () => {
+  it("shows the prompt form when the add card is clicked", async () => {
     const user = userEvent.setup();
     server.use(http.get("/prompts", () => HttpResponse.json([])));
 
-    renderPrompts();
+    renderWithProviders(<Prompts />);
+
+    const addPromptsButton = await screen.findByRole("button", { name: "Add prompts" });
+    await user.click(addPromptsButton);
+
+    expect(screen.getByText("Add prompt")).toBeInTheDocument();
+  });
+
+  it("shows the prompt form when the add card is activated by keyboard", async () => {
+    const user = userEvent.setup();
+    server.use(http.get("/prompts", () => HttpResponse.json([])));
+
+    renderWithProviders(<Prompts />);
 
     const addPromptsButton = await screen.findByRole("button", { name: "Add prompts" });
     addPromptsButton.focus();
-
-    expect(addPromptsButton).toHaveFocus();
-
     await user.keyboard("{Enter}");
 
-    expect(window.location.pathname).toBe("/app/prompts/add");
+    expect(screen.getByText("Add prompt")).toBeInTheDocument();
   });
 
   it("renders returned prompts as cards with descriptions and tags", async () => {
@@ -91,7 +90,7 @@ describe("Prompts", () => {
       ),
     );
 
-    renderPrompts();
+    renderWithProviders(<Prompts />);
 
     expect(await screen.findByText("Summarize document")).toBeInTheDocument();
     expect(screen.getByText("Turns long text into a short summary.")).toBeInTheDocument();
@@ -110,7 +109,7 @@ describe("Prompts", () => {
       }),
     );
 
-    renderPrompts();
+    renderWithProviders(<Prompts />);
 
     expect(screen.getByRole("status")).toBeInTheDocument();
     expect(screen.getByText("Loading prompts, please wait...")).toBeInTheDocument();
@@ -241,7 +240,7 @@ describe("Prompts", () => {
   it("renders error state when prompts fail to load", async () => {
     server.use(http.get("/prompts", () => HttpResponse.json({ detail: "Nope" }, { status: 500 })));
 
-    renderPrompts();
+    renderWithProviders(<Prompts />);
 
     await waitFor(() => {
       expect(screen.getByRole("alert")).toBeInTheDocument();
