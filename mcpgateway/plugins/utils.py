@@ -29,22 +29,26 @@ logger = logging.getLogger(__name__)
 #     names, resource ids, or OTel span/attribute names -- these are
 #     plugin-controlled and otherwise unvalidated.
 #   - Only scalar values (str, int, float, bool) are recorded as-is; strings
-#     must additionally match _SAFE_STRING_VALUE_RE (a low-cardinality,
-#     no-free-text charset) -- truncation alone bounds size, not sensitivity.
+#     must additionally be within _MAX_STRING_LENGTH and match
+#     _SAFE_STRING_VALUE_RE (a low-cardinality, no-free-text charset).
+#     Overlong values are rejected outright, not truncated -- truncation alone
+#     would bound size but not the sensitivity of what's exported (e.g. a
+#     truncated secret/token fragment is still a secret/token fragment).
 #   - A list[str] value (e.g. ["email", "ssn"]) is special-cased: joined into
 #     a single comma-separated string (OTel span attributes don't nest), then
 #     subject to the same string-value validation as any other string value.
 #   - Any other type (dict, mixed/non-str list, None, etc.) is dropped.
 #   - At most _MAX_PLUGIN_KEYS keys survive per plugin's metadata dict, and
-#     iteration stops (rather than merely skipping) once that cap is hit so a
-#     huge untrusted dict can't force a full scan.
+#     only the first _MAX_PLUGIN_KEYS items of the raw dict are ever inspected
+#     (via itertools.islice) -- not just accepted -- so a huge untrusted dict,
+#     even one front-loaded with invalid keys, can't force a full scan.
 #   - At most _MAX_PLUGINS_PER_CALL plugin namespaces are processed per call
 #     (result.metadata can in principle carry entries from every plugin that
 #     ran in the hook chain); the cap is applied before the full item list is
 #     materialized.
-#   - list[str] values are only checked for str-ness within the first
-#     _MAX_LIST_ITEMS items, so an oversized untrusted list can't force a full
-#     scan before it's bounded.
+#   - list[str] values are only checked for str-ness and per-item length
+#     within the first _MAX_LIST_ITEMS items, so an oversized untrusted list
+#     can't force a full scan or an unbounded join before it's bounded.
 # On drop, only the key name and a short reason are logged -- never the value
 # itself, since it may be malformed/oversized/adversarial plugin output.
 _MAX_PLUGIN_KEYS = 32
@@ -78,20 +82,23 @@ def _is_valid_identifier(name: Any) -> bool:
 
 
 def _validate_string_value(value: str) -> Optional[str]:
-    """Validate and bound a single string metadata value (S4).
+    """Validate a single string metadata value (S4).
 
     Args:
         value: Candidate string value.
 
     Returns:
-        The value truncated to ``_MAX_STRING_LENGTH`` if it matches the
-        low-cardinality safe-value charset, otherwise ``None`` (reject).
+        ``value`` unchanged if it is within ``_MAX_STRING_LENGTH`` and matches
+        the low-cardinality safe-value charset, otherwise ``None`` (reject).
+        Overlong values are rejected outright rather than truncated -- a
+        truncated secret/token/hash fragment is still sensitive, so length is
+        checked before the charset is even considered.
     """
+    if len(value) > _MAX_STRING_LENGTH:
+        return None
     if not _SAFE_STRING_VALUE_RE.match(value):
         return None
-    if len(value) <= _MAX_STRING_LENGTH:
-        return value
-    return value[:_MAX_STRING_LENGTH]
+    return value
 
 
 def _sanitize_plugin_metrics(plugin_name: str, raw_metrics: Any) -> Dict[str, Any]:
@@ -117,13 +124,13 @@ def _sanitize_plugin_metrics(plugin_name: str, raw_metrics: Any) -> Dict[str, An
         return {}
 
     sanitized: Dict[str, Any] = {}
-    for key, value in raw_metrics.items():
+    # Bound the scan itself (not just the accepted count): only the first
+    # _MAX_PLUGIN_KEYS items of the raw dict are ever inspected, so a dict
+    # front-loaded with invalid/dropped keys can't force an unbounded scan.
+    for key, value in itertools.islice(raw_metrics.items(), _MAX_PLUGIN_KEYS):
         if not _is_valid_identifier(key):
             logger.debug("Dropped a plugin metric key for %r: key is not a valid identifier", plugin_name)
             continue
-        if len(sanitized) >= _MAX_PLUGIN_KEYS:
-            logger.debug("Stopping metric scan for %r: key limit exceeded", plugin_name)
-            break
 
         if isinstance(value, bool):
             sanitized[key] = value
@@ -137,7 +144,10 @@ def _sanitize_plugin_metrics(plugin_name: str, raw_metrics: Any) -> Dict[str, An
                 logger.debug("Dropped plugin metric %r for %r: string value not in safe low-cardinality contract", key, plugin_name)
         elif isinstance(value, list):
             prefix = value[:_MAX_LIST_ITEMS]
-            if all(isinstance(item, str) for item in prefix):
+            # Reject any oversized item before joining, so the join itself
+            # (and the subsequent regex match) is always bounded by
+            # _MAX_LIST_ITEMS * _MAX_STRING_LENGTH, not by attacker input.
+            if all(isinstance(item, str) and len(item) <= _MAX_STRING_LENGTH for item in prefix):
                 joined = ",".join(prefix)
                 validated = _validate_string_value(joined)
                 if validated is not None:
@@ -145,7 +155,7 @@ def _sanitize_plugin_metrics(plugin_name: str, raw_metrics: Any) -> Dict[str, An
                 else:
                     logger.debug("Dropped plugin metric %r for %r: joined list value not in safe low-cardinality contract", key, plugin_name)
             else:
-                logger.debug("Dropped plugin metric %r for %r: list contains non-string items", key, plugin_name)
+                logger.debug("Dropped plugin metric %r for %r: list contains non-string or oversized items", key, plugin_name)
         else:
             logger.debug("Dropped plugin metric %r for %r: type not allowed", key, plugin_name)
 

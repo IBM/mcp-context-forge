@@ -20,7 +20,8 @@ Covers build_request_extensions() in isolation (no HTTP request or PluginManager
 Covers record_plugin_metrics() in isolation (ObservabilityService/SessionLocal mocked):
     - No-op (no DB/service touched) when trace_id or result_metadata is falsy.
     - S4: only scalar values + list[str] (joined) survive; other types are dropped;
-      oversized strings truncated, not dropped; key count capped; dropped values are
+      oversized strings rejected outright, not truncated; key count capped and the
+      scan itself is bounded (not just the accepted count); dropped values are
       never present in log output (only the key name/reason).
     - Primary path: start_span()/end_span() called once per plugin namespace with the
       validated attributes, sharing a single DB session (obs_db) across all plugins.
@@ -261,13 +262,68 @@ class TestRecordPluginMetricsS4Validation:
             assert "nested" not in msg
             assert "value" not in msg or "nested" not in msg
 
-    def test_oversized_string_is_truncated_not_dropped(self):
-        """An oversized string value is truncated to the bound, not dropped entirely."""
+    def test_oversized_string_is_rejected_not_truncated(self, caplog):
+        """An oversized string value is rejected outright, not truncated -- a truncated
+        secret/token/hash fragment would still be sensitive, so it must never be exported.
+        """
         mock_service = _make_observability_service_mock()
         mock_session = MagicMock()
 
         huge = "x" * 5000
-        metadata = {"some_plugin": {"huge_field": huge}}
+        metadata = {"some_plugin": {"huge_field": huge, "ok_field": "fine"}}
+
+        with (
+            patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
+            patch("mcpgateway.db.SessionLocal", return_value=mock_session),
+            caplog.at_level(logging.DEBUG),
+        ):
+            record_plugin_metrics("trace-1", metadata)
+
+        attrs = mock_service.start_span.call_args.kwargs["attributes"]
+        assert "huge_field" not in attrs
+        assert attrs["ok_field"] == "fine"
+        dropped_records = [r.getMessage() for r in caplog.records if "Dropped" in r.getMessage()]
+        assert any("huge_field" in msg for msg in dropped_records)
+        for msg in dropped_records:
+            assert huge not in msg
+
+    def test_oversized_list_item_is_rejected_before_join(self, caplog):
+        """A list item longer than _MAX_STRING_LENGTH is rejected before the list is
+        joined, so an oversized item can't force an unbounded join + regex scan.
+        """
+        mock_service = _make_observability_service_mock()
+        mock_session = MagicMock()
+
+        metadata = {"some_plugin": {"tags": ["ok", "x" * 5000], "ok_field": "fine"}}
+
+        with (
+            patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
+            patch("mcpgateway.db.SessionLocal", return_value=mock_session),
+            caplog.at_level(logging.DEBUG),
+        ):
+            record_plugin_metrics("trace-1", metadata)
+
+        attrs = mock_service.start_span.call_args.kwargs["attributes"]
+        assert "tags" not in attrs
+        assert attrs["ok_field"] == "fine"
+        dropped_records = [r.getMessage() for r in caplog.records if "Dropped" in r.getMessage()]
+        assert any("tags" in msg for msg in dropped_records)
+
+    def test_key_scan_is_bounded_not_just_accepted_count(self):
+        """Invalid keys don't get a free pass: only the first _MAX_PLUGIN_KEYS items of
+        the raw dict are ever inspected, so a valid key placed after that window is
+        never reached even though fewer than _MAX_PLUGIN_KEYS keys were accepted.
+        """
+        mock_service = _make_observability_service_mock()
+        mock_session = MagicMock()
+
+        # First 32 items: one valid key, then 31 invalid keys. A 33rd item (valid) follows
+        # but sits outside the inspected window and must never be reached.
+        raw = {"early_valid_key": 1}
+        raw.update({f"bad key {i}": i for i in range(31)})
+        raw["late_valid_key"] = 1
+        assert len(raw) == 33
+        metadata = {"some_plugin": raw}
 
         with (
             patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
@@ -276,9 +332,8 @@ class TestRecordPluginMetricsS4Validation:
             record_plugin_metrics("trace-1", metadata)
 
         attrs = mock_service.start_span.call_args.kwargs["attributes"]
-        assert "huge_field" in attrs
-        assert len(attrs["huge_field"]) == 64
-        assert attrs["huge_field"] == "x" * 64
+        assert attrs.get("early_valid_key") == 1
+        assert "late_valid_key" not in attrs
 
     def test_key_count_is_capped(self):
         """A plugin dict with more than the max allowed keys is truncated to the cap."""
