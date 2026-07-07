@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { toast } from "sonner";
 import { ConnectSourceCard } from "@/components/gateways/ConnectSourceCard";
@@ -27,11 +27,12 @@ function sortServersForLayout(servers: VirtualServer[]): VirtualServer[] {
 
 export function Gateways() {
   const intl = useIntl();
-  const { navigate } = useRouter();
+  const { navigate, path } = useRouter();
   const { data, error, isLoading, refetch } = useQuery<VirtualServersResponse>(SERVERS_QUERY_PATH);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const pendingDeleteServerIdRef = useRef<string | null>(null);
   const [detailsServer, setDetailsServer] = useState<VirtualServer | null>(null);
+  const [detailsServerId, setDetailsServerId] = useState<string | null>(null);
   const [isDetailsPanelOpen, setIsDetailsPanelOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteServer, setDeleteServer] = useState<VirtualServer | null>(null);
@@ -42,6 +43,10 @@ export function Gateways() {
     [data?.servers, deletedServerIds],
   );
   const layoutServers = useMemo(() => sortServersForLayout(servers), [servers]);
+  const selectedSearchServerId = useMemo(() => {
+    const queryString = path.split("?")[1] ?? "";
+    return new URLSearchParams(queryString).get("selected")?.trim() || null;
+  }, [path]);
   const isDeletePending = pendingDeleteServerId !== null;
 
   const handleDelete = useCallback(
@@ -65,6 +70,7 @@ export function Gateways() {
 
     const serverToDelete = deleteServer;
     const previousDetailsServer = detailsServer;
+    const previousDetailsServerId = detailsServerId;
     pendingDeleteServerIdRef.current = serverToDelete.id;
     setPendingDeleteServerId(serverToDelete.id);
     // Close dialog and clear form state immediately
@@ -72,6 +78,7 @@ export function Gateways() {
     setDeleteServer(null);
     // Remove the card from the grid right away for a snappy feel
     setDetailsServer((current) => (current?.id === serverToDelete.id ? null : current));
+    setDetailsServerId((current) => (current === serverToDelete.id ? null : current));
     setDeletedServerIds((previous) => {
       const next = new Set(previous);
       next.add(serverToDelete.id);
@@ -100,6 +107,7 @@ export function Gateways() {
         return next;
       });
       setDetailsServer(previousDetailsServer);
+      setDetailsServerId(previousDetailsServerId);
       const errorMessage = sanitizeError(err);
       toast.error(intl.formatMessage({ id: "gateways.delete.errorTitle" }), {
         description: errorMessage,
@@ -109,10 +117,11 @@ export function Gateways() {
       pendingDeleteServerIdRef.current = null;
       setPendingDeleteServerId(null);
     }
-  }, [deleteServer, detailsServer, intl, refetch]);
+  }, [deleteServer, detailsServer, detailsServerId, intl, refetch]);
 
   const openDetailsPanel = (server: VirtualServer) => {
     setDetailsServer(server);
+    setDetailsServerId(server.id);
     setIsDetailsPanelOpen(true);
   };
 
@@ -120,6 +129,14 @@ export function Gateways() {
     const params = new URLSearchParams({ [EDIT_SERVER_ID_QUERY_PARAM]: server.id });
     navigate(`${CREATE_SERVER_PATH}?${params.toString()}`);
   };
+
+  useEffect(() => {
+    if (!selectedSearchServerId) return;
+    const seedServer = servers.find((server) => server.id === selectedSearchServerId) ?? null;
+    setDetailsServer(seedServer);
+    setDetailsServerId(selectedSearchServerId);
+    setIsDetailsPanelOpen(true);
+  }, [selectedSearchServerId, servers]);
 
   if (isLoading) {
     return (
@@ -188,12 +205,13 @@ export function Gateways() {
         })}
       </div>
 
-      {detailsServer && (
+      {detailsServerId && (
         <VirtualServerDetailsPanelContainer
+          serverId={detailsServerId}
           server={detailsServer}
           open={isDetailsPanelOpen}
           onClose={() => setIsDetailsPanelOpen(false)}
-          onAddSources={() => openEditPanel(detailsServer)}
+          onAddSources={(server) => openEditPanel(server)}
         />
       )}
 
@@ -218,20 +236,26 @@ export function Gateways() {
 }
 
 function VirtualServerDetailsPanelContainer({
+  serverId,
   server,
   open,
   onClose,
   onAddSources,
 }: {
-  server: VirtualServer;
+  serverId: string;
+  server: VirtualServer | null;
   open: boolean;
   onClose: () => void;
-  onAddSources: () => void;
+  onAddSources: (server: VirtualServer) => void;
 }) {
   const { data: serverDetails, error } = useQuery<VirtualServer>(
-    `/servers/${encodeURIComponent(server.id)}`,
+    `/servers/${encodeURIComponent(serverId)}`,
   );
-  const hydratedServer = serverDetails?.id === server.id ? serverDetails : server;
+  const hydratedServer = serverDetails?.id === serverId ? serverDetails : server;
+
+  if (!hydratedServer) {
+    return null;
+  }
 
   return (
     <VirtualServerDetailsPanel
@@ -240,7 +264,7 @@ function VirtualServerDetailsPanelContainer({
       error={error}
       open={open}
       onClose={onClose}
-      onAddSources={onAddSources}
+      onAddSources={() => onAddSources(hydratedServer)}
     />
   );
 }

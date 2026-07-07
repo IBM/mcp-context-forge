@@ -11,6 +11,7 @@ import { MCPServerDetailsPanel } from "@/components/servers/MCPServerDetailsPane
 import { useQuery } from "@/hooks/useQuery";
 import { api } from "@/api/client";
 import { serversApi } from "@/api/servers";
+import { useRouter } from "@/router";
 import { sanitizeError } from "@/utils/errors";
 import type { MCPServer, ServersResponse } from "@/types/server";
 import { Loading } from "@/components/ui/loading";
@@ -22,6 +23,7 @@ const DEFAULT_PAGE_SIZE = 10;
 
 export function Servers() {
   const intl = useIntl();
+  const { path } = useRouter();
   const [limit, setLimit] = useState(DEFAULT_PAGE_SIZE);
   const [allServers, setAllServers] = useState<MCPServer[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -34,6 +36,10 @@ export function Servers() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [selectedServerIdForDetails, setSelectedServerIdForDetails] = useState<string | null>(null);
   const [isDetailsDrawerOpen, setIsDetailsDrawerOpen] = useState(false);
+  const selectedSearchServerId = useMemo(() => {
+    const queryString = path.split("?")[1] ?? "";
+    return new URLSearchParams(queryString).get("selected")?.trim() || null;
+  }, [path]);
 
   // Keep the primary list in sync with the selected page size
   const queryPath = useMemo(() => {
@@ -182,6 +188,12 @@ export function Servers() {
       setSelectedServerIdForDetails(null);
     }
   }, []);
+
+  useEffect(() => {
+    if (!selectedSearchServerId) return;
+    setSelectedServerIdForDetails(selectedSearchServerId);
+    setIsDetailsDrawerOpen(true);
+  }, [selectedSearchServerId]);
 
   const handleLoadMore = useCallback(async () => {
     if (!nextCursor || loadingMore) return;

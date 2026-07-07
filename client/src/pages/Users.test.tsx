@@ -41,17 +41,20 @@ vi.mock("sonner", () => ({
 
 vi.mock("@/components/users/UserForm", () => ({
   UserForm: ({
+    user,
     onToggle,
     onOptimisticCreate,
     onSuccess,
     onError,
   }: {
+    user?: { email: string };
     onToggle: () => void;
     onOptimisticCreate: (data: { email: string; full_name: string }) => void;
     onSuccess: () => void;
     onError: (data: { email: string }) => void;
   }) => (
     <div data-testid="mock-user-form">
+      {user ? <div>Edit user: {user.email}</div> : null}
       <button onClick={onToggle}>Cancel Form</button>
       <button onClick={() => onOptimisticCreate({ email: "opt@example.com", full_name: "Opt" })}>
         Optimistic Create
@@ -107,8 +110,8 @@ function createMockUsers(startIndex: number, count: number) {
   }));
 }
 
-function renderWithRouter(ui: ReactElement) {
-  window.history.pushState({}, "", "/app/users");
+function renderWithRouter(ui: ReactElement, path = "/app/users") {
+  window.history.pushState({}, "", path);
   return render(
     <RouterProvider>
       <I18nProvider>{ui}</I18nProvider>
@@ -177,6 +180,25 @@ describe("Users", () => {
     await waitFor(() => {
       expect(screen.getByText("Users")).toBeInTheDocument();
     });
+  });
+
+  it("opens the selected user from global search", async () => {
+    const selectedUser = {
+      ...createMockUsers(42, 1)[0],
+      email: "selected@example.com",
+      full_name: "Selected User",
+    };
+    vi.mocked(api.get).mockImplementation((path) => {
+      if (String(path).includes("/auth/email/admin/users/selected%40example.com")) {
+        return Promise.resolve(selectedUser);
+      }
+      return Promise.resolve({ users: createMockUsers(0, 1), nextCursor: null });
+    });
+
+    renderWithRouter(<Users />, "/app/users?selected=selected%40example.com&search=selected");
+
+    expect(await screen.findByTestId("mock-user-form")).toBeInTheDocument();
+    expect(screen.getByText("Edit user: selected@example.com")).toBeInTheDocument();
   });
 
   it("renders Create User button with correct aria-label", async () => {
