@@ -1,0 +1,12 @@
+{"id":"64312f63-3d6a-4413-9840-dd99a09f6588","ts":"2026-05-18T15:06:18.935Z","path":"mcpgateway/routers/app.py","version":"1.0.0","taskID":"d43d2d52-e2d7-4984-bfaa-6574d716ba21"}
+{"id":"fe428b6c-551f-4f2d-990f-15b5eb1c4075","ts":"2026-05-18T15:07:36.808Z","path":"mcpgateway/routers/app.py","version":"1.0.0","taskID":"d43d2d52-e2d7-4984-bfaa-6574d716ba21"}
+{"id":"dc86437d-b42c-4337-a830-bdc1171969e9","ts":"2026-05-18T15:09:11.696Z","path":"mcpgateway/routers/app.py","version":"1.0.0","taskID":"d43d2d52-e2d7-4984-bfaa-6574d716ba21"}
+
+{"id":"6ecb200c-c9af-47a3-a1b7-d28370c84ab4","ts":"2026-05-18T14:16:50.679Z","path":"mcpgateway/middleware/rbac.py","version":"1.0.0","taskID":"d43d2d52-e2d7-4984-bfaa-6574d716ba21"}
+{"id":"1b169c29-8599-4085-8325-1bae5752eecd","ts":"2026-05-18T14:18:53.714Z","path":"mcpgateway/routers/app.py","version":"1.0.0","taskID":"d43d2d52-e2d7-4984-bfaa-6574d716ba21"}
+{"id":"d3e3de2e-1959-42ba-8d41-e4b187c5d480","ts":"2026-05-18T14:19:04.599Z","path":"mcpgateway/routers/app.py","version":"1.0.0","taskID":"d43d2d52-e2d7-4984-bfaa-6574d716ba21"}
+{"id":"d41a0692-1428-407c-9667-432f58df9f3c","ts":"2026-05-18T14:20:23.657Z","path":"tests/e2e/test_app_auth_token_expiry.py","version":"1.0.0","taskID":"d43d2d52-e2d7-4984-bfaa-6574d716ba21"}
+{"id":"197b29d7-26af-4e9b-af98-63bd222fce05","ts":"2026-05-18T14:20:35.326Z","path":"tests/e2e/test_app_auth_token_expiry.py","version":"1.0.0","taskID":"d43d2d52-e2d7-4984-bfaa-6574d716ba21"}
+{"id":"ca6674de-8206-4882-bb99-49402e28b1f0","ts":"2026-05-18T14:21:45.498Z","path":"tests/e2e/test_app_auth.py","version":"1.0.0","taskID":"d43d2d52-e2d7-4984-bfaa-6574d716ba21"}
+{"id":"ce06ab55-af8d-4edc-b8f4-6e5b91866195","ts":"2026-05-18T14:21:51.917Z","path":"tests/e2e/test_app_auth.py","version":"1.0.0","taskID":"d43d2d52-e2d7-4984-bfaa-6574d716ba21"}
+{"id":"64498839-0c0c-40de-9de9-fb4b5221082f","ts":"2026-05-18T14:22:30.742Z","path":"tests/unit/mcpgateway/routers/test_app.py","version":"1.0.0","taskID":"d43d2d52-e2d7-4984-bfaa-6574d716ba21"}
