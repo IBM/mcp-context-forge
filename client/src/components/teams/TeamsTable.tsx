@@ -1,5 +1,5 @@
 import { useIntl } from "react-intl";
-import { MoreVertical, SquareMenu, Users } from "lucide-react";
+import { MoreVertical, SquareMenu } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -21,14 +21,25 @@ import type { Team } from "../../types/team";
 import { Loading } from "../ui/loading";
 import { formatLocalDateTime } from "../../utils/formatDate";
 
+function getTeamIcon(name: string): string {
+  return name.charAt(0).toUpperCase();
+}
+
 interface TeamsTableProps {
   teams: Team[];
   isLoading: boolean;
   onEdit?: (id: string) => void;
   onDelete?: (id: string) => void;
+  onManageMembers?: (id: string) => void;
 }
 
-export function TeamsTable({ teams, isLoading, onEdit, onDelete }: TeamsTableProps) {
+export function TeamsTable({
+  teams,
+  isLoading,
+  onEdit,
+  onDelete,
+  onManageMembers,
+}: TeamsTableProps) {
   const intl = useIntl();
   const invalidDateLabel = intl.formatMessage({ id: "teams.table.invalidDate" });
 
@@ -76,6 +87,8 @@ export function TeamsTable({ teams, isLoading, onEdit, onDelete }: TeamsTablePro
         </TableHeader>
         <TableBody>
           {teams.map((team) => {
+            const icon = getTeamIcon(team.name);
+
             return (
               <TableRow
                 key={team.id}
@@ -83,8 +96,8 @@ export function TeamsTable({ teams, isLoading, onEdit, onDelete }: TeamsTablePro
               >
                 <TableCell className="px-4 py-2.5">
                   <div className="flex items-center gap-3">
-                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm bg-yellow-400 shadow-sm">
-                      <Users className="h-4 w-4 text-neutral-900" />
+                    <div className="flex h-6 w-6 items-center justify-center rounded bg-yellow-500">
+                      <span className="text-xs font-semibold text-black">{icon}</span>
                     </div>
                     <span className="font-medium text-neutral-900 dark:text-neutral-100">
                       {team.name}
@@ -142,11 +155,28 @@ export function TeamsTable({ teams, isLoading, onEdit, onDelete }: TeamsTablePro
                           <MoreVertical className="h-4 w-4" />
                         </Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-40">
-                        <DropdownMenuItem onClick={() => onEdit?.(team.id)}>
+                      <DropdownMenuContent align="end" className="w-48">
+                        <DropdownMenuItem
+                          onClick={() => {
+                            // TODO: wire up edit team action
+                            onEdit?.(team.id);
+                          }}
+                        >
                           {intl.formatMessage({ id: "teams.table.actions.edit" })}
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => onDelete?.(team.id)}>
+                        <DropdownMenuItem
+                          onClick={() => {
+                            onManageMembers?.(team.id);
+                          }}
+                        >
+                          {intl.formatMessage({ id: "teams.table.actions.manageMembers" })}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => {
+                            // TODO: wire up delete team action
+                            onDelete?.(team.id);
+                          }}
+                        >
                           {intl.formatMessage({ id: "teams.table.actions.delete" })}
                         </DropdownMenuItem>
                       </DropdownMenuContent>
