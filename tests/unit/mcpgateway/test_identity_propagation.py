@@ -1125,7 +1125,7 @@ class TestOAuthTokenExchange:
         mock_client.post = AsyncMock(return_value=mock_response)
         manager._get_client = AsyncMock(return_value=mock_client)
 
-        with pytest.raises(OAuthError, match="Unsupported token_type"):
+        with pytest.raises(OAuthError, match="Unsupported or missing token_type"):
             await manager.token_exchange(
                 token_url="https://auth.example.com/token",
                 subject_token="token",
@@ -1134,10 +1134,11 @@ class TestOAuthTokenExchange:
             )
 
     @pytest.mark.asyncio
-    async def test_missing_token_type_defaults_to_bearer(self):
-        """Some ASes omit token_type despite it being REQUIRED; CF treats absence as Bearer."""
+    async def test_missing_token_type_raises(self):
+        """RFC 8693 §2.2.1: token_type is REQUIRED. An AS that omits it must fail
+        closed rather than have CF silently assume Bearer."""
         # First-Party
-        from mcpgateway.services.oauth_manager import OAuthManager
+        from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 
         manager = OAuthManager()
         mock_response = MagicMock()
@@ -1148,13 +1149,13 @@ class TestOAuthTokenExchange:
         mock_client.post = AsyncMock(return_value=mock_response)
         manager._get_client = AsyncMock(return_value=mock_client)
 
-        result = await manager.token_exchange(
-            token_url="https://auth.example.com/token",
-            subject_token="token",
-            client_id="client",
-            client_secret="",
-        )
-        assert result["access_token"] == "tok"
+        with pytest.raises(OAuthError, match="Unsupported or missing token_type"):
+            await manager.token_exchange(
+                token_url="https://auth.example.com/token",
+                subject_token="token",
+                client_id="client",
+                client_secret="",
+            )
 
     @pytest.mark.asyncio
     async def test_missing_access_token_raises(self):
@@ -1234,7 +1235,7 @@ class TestOAuthTokenExchange:
 
         manager = OAuthManager()
         mock_response = MagicMock()
-        mock_response.json.return_value = {"access_token": "tok"}
+        mock_response.json.return_value = {"access_token": "tok", "token_type": "Bearer"}
         mock_response.raise_for_status = MagicMock()
 
         mock_client = AsyncMock()
@@ -1261,7 +1262,7 @@ class TestOAuthTokenExchange:
 
         manager = OAuthManager()
         mock_response = MagicMock()
-        mock_response.json.return_value = {"access_token": "tok"}
+        mock_response.json.return_value = {"access_token": "tok", "token_type": "Bearer"}
         mock_response.raise_for_status = MagicMock()
 
         mock_client = AsyncMock()
@@ -1361,7 +1362,7 @@ class TestTokenExchangeEncryptedSecret:
         mock_encryption.decrypt_secret_async = AsyncMock(return_value="decrypted-secret")
 
         mock_response = MagicMock()
-        mock_response.json.return_value = {"access_token": "tok-123"}
+        mock_response.json.return_value = {"access_token": "tok-123", "token_type": "Bearer"}
         mock_response.raise_for_status = MagicMock()
 
         mock_client = AsyncMock()
