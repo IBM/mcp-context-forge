@@ -61,5 +61,10 @@
   "teams.members.success": "{count, plural, one {# alteração de membros da equipe salva} other {# alterações de membros da equipe salvas}} com sucesso",
   "teams.members.loading.sr": "Carregando membros da equipe, aguarde...",
   "teams.members.error.load": "Falha ao carregar os membros da equipe",
-  "teams.members.error.save": "Falha ao salvar os membros da equipe"
+  "teams.members.error.save": "Falha ao salvar os membros da equipe",
+  "teams.edit.title": "Editar equipe",
+  "teams.edit.description": "Atualize os detalhes e as configurações de visibilidade da sua equipe.",
+  "teams.edit.saving": "Salvando...",
+  "teams.edit.submit": "Salvar alterações",
+  "teams.edit.success": "Equipe atualizada com sucesso"
 }

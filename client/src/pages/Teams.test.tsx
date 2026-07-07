@@ -546,4 +546,30 @@ describe("Teams", () => {
     expect(dialog).toBeInTheDocument();
     expect(screen.getByText(/Are you sure you want to delete Team 0/)).toBeInTheDocument();
   });
+
+  it("opens the edit form pre-filled when Edit is clicked", async () => {
+    const user = userEvent.setup();
+
+    // The edit form mounts useTeamForm, which fetches the user directory, so the
+    // api.get mock must answer both the teams list and the users endpoint.
+    vi.mocked(api.get).mockImplementation((path: string) => {
+      if (path.includes("/auth/email/admin/users")) {
+        return Promise.resolve({ users: [] });
+      }
+      return Promise.resolve({ teams: createMockTeams(0, 1), nextCursor: null });
+    });
+
+    renderWithRouter(<Teams />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Team 0")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Actions for Team 0" }));
+    await user.click(await screen.findByRole("menuitem", { name: /^edit$/i }));
+
+    expect(await screen.findByRole("heading", { name: /edit team/i })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/add team name/i)).toHaveValue("Team 0");
+    expect(screen.getByRole("button", { name: /^save changes$/i })).toBeInTheDocument();
+  });
 });
