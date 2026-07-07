@@ -9,6 +9,7 @@
   "common.button.close": "Fechar",
   "common.button.confirm": "Confirmar",
   "common.button.back": "Voltar",
+  "common.button.submitting": "Enviando...",
   "common.loading": "Carregando...",
   "common.error": "Erro",
   "common.success": "Sucesso",
