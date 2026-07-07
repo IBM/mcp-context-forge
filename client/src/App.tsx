@@ -15,7 +15,6 @@ import { Tools } from "./pages/Tools";
 import { Resources } from "./pages/Resources";
 import { ServerCatalog } from "./pages/ServerCatalog";
 import { Prompts } from "./pages/Prompts";
-import { AddPrompt } from "./pages/AddPrompt";
 import { Agents } from "./pages/Agents";
 import { RestApi } from "./pages/RestApi";
 import { Grpc } from "./pages/Grpc";
@@ -60,7 +59,6 @@ function PrivateRoutes() {
         <Route path="/app/tools" component={Tools} />
         <Route path="/app/resources" component={Resources} />
         <Route path="/app/prompts" component={Prompts} />
-        <Route path="/app/prompts/add" component={AddPrompt} />
         <Route path="/app/agents" component={Agents} />
         <Route path="/app/rest-api" component={RestApi} />
         <Route path="/app/grpc" component={Grpc} />
