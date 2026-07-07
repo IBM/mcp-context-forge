@@ -1,5 +1,6 @@
 {
   "common.button.save": "Save",
+  "common.button.saving": "Saving...",
   "common.button.cancel": "Cancel",
   "common.button.delete": "Delete",
   "common.button.edit": "Edit",
@@ -8,6 +9,8 @@
   "common.button.close": "Close",
   "common.button.confirm": "Confirm",
   "common.button.back": "Back",
+  "common.button.remove": "Remove",
+  "common.button.submitting": "Submitting...",
   "common.loading": "Loading...",
   "common.error": "Error",
   "common.success": "Success",
@@ -21,6 +24,7 @@
   "common.actions": "Actions",
   "common.status": "Status",
   "common.name": "Name",
+  "common.role": "Role",
   "common.description": "Description",
   "common.createdAt": "Created At",
   "common.updatedAt": "Updated At",
