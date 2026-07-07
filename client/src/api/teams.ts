@@ -8,8 +8,19 @@ interface CreateTeamPayload {
   max_members?: number;
 }
 
+interface UpdateTeamPayload {
+  name?: string;
+  description?: string;
+  visibility?: "private" | "public";
+  max_members?: number;
+}
+
 export function createTeam(payload: CreateTeamPayload): Promise<Team> {
   return api.post<Team>("/teams", payload);
+}
+
+export function updateTeam(id: string, payload: UpdateTeamPayload): Promise<Team> {
+  return api.put<Team>(`/teams/${encodeURIComponent(id)}`, payload);
 }
 
 export function deleteTeam(id: string): Promise<void> {
