@@ -1820,6 +1820,12 @@ class Settings(BaseSettings):
     observability_sample_rate: float = Field(default=1.0, ge=0.0, le=1.0, description="Trace sampling rate (0.0-1.0)")
 
     # Include paths for tracing (regex patterns)
+    #
+    # The LLM proxy path is included so ObservabilityMiddleware sets a trace_id
+    # for /v1/chat/completions requests; llm_proxy_service.record_token_usage
+    # relies on that trace_id to attach usage metric rows. If LLM_API_PREFIX is
+    # overridden from the "/v1" default, operators must add the matching pattern
+    # to their own observability_include_paths override.
     observability_include_paths: List[str] = Field(
         default_factory=lambda: [
             r"^/rpc/?$",
@@ -1830,6 +1836,7 @@ class Settings(BaseSettings):
             r"^/servers/[^/]+/sse$",
             r"^/servers/[^/]+/message$",
             r"^/a2a(?:/|$)",
+            r"^/v1/chat/completions/?$",
         ],
         description="Regex patterns to include for tracing (when empty, all paths are eligible before excludes)",
     )

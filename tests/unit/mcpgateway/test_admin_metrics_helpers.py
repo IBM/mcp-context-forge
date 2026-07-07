@@ -96,6 +96,75 @@ def test_get_timeseries_metrics_python_buckets():
     assert result["error_count"] == [1]
 
 
+def test_get_token_spend_postgresql_results():
+    db = MagicMock()
+    row = SimpleNamespace(
+        bucket=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        input_tokens=1200,
+        output_tokens=800,
+        cost_usd=0.0123456789,
+    )
+    db.execute.return_value.fetchall.return_value = [row]
+
+    result = admin._get_token_spend_postgresql(db, datetime(2025, 1, 1, tzinfo=timezone.utc), 60)
+    assert result["timestamps"] == [row.bucket.isoformat()]
+    assert result["input_tokens"] == [1200]
+    assert result["output_tokens"] == [800]
+    # Cost rounded to 6 decimals
+    assert result["cost_usd"] == [0.012346]
+
+
+def test_get_token_spend_postgresql_empty():
+    db = MagicMock()
+    db.execute.return_value.fetchall.return_value = []
+    result = admin._get_token_spend_postgresql(db, datetime(2025, 1, 1, tzinfo=timezone.utc), 60)
+    assert result == {"timestamps": [], "input_tokens": [], "output_tokens": [], "cost_usd": []}
+
+
+def test_get_token_spend_python_buckets():
+    db = MagicMock()
+    start = datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc)
+    # Two rows in the same hourly bucket, one row in the next
+    rows = [
+        SimpleNamespace(name="llm.tokens.input", value=1000.0, timestamp=start),
+        SimpleNamespace(name="llm.tokens.output", value=500.0, timestamp=start + timedelta(minutes=5)),
+        SimpleNamespace(name="llm.cost", value=0.05, timestamp=start + timedelta(minutes=10)),
+        SimpleNamespace(name="llm.tokens.input", value=200.0, timestamp=start + timedelta(hours=1)),
+    ]
+    _mock_query(db, rows)
+
+    result = admin._get_token_spend_python(db, start - timedelta(hours=1), 60)
+    assert len(result["timestamps"]) == 2
+    assert result["input_tokens"] == [1000, 200]
+    assert result["output_tokens"] == [500, 0]
+    assert result["cost_usd"] == [0.05, 0.0]
+
+
+def test_get_token_spend_python_ignores_unrelated_names():
+    # in.filter is a MagicMock so it doesn't actually filter — the Python
+    # aggregation must itself route only known llm.* names into buckets and
+    # silently drop anything unexpected.
+    db = MagicMock()
+    start = datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc)
+    rows = [
+        SimpleNamespace(name="llm.tokens.input", value=100.0, timestamp=start),
+        SimpleNamespace(name="http.request.duration", value=42.0, timestamp=start),
+    ]
+    _mock_query(db, rows)
+
+    result = admin._get_token_spend_python(db, start - timedelta(hours=1), 60)
+    assert result["input_tokens"] == [100]
+    assert result["output_tokens"] == [0]
+    assert result["cost_usd"] == [0.0]
+
+
+def test_get_token_spend_python_empty():
+    db = MagicMock()
+    _mock_query(db, [])
+    result = admin._get_token_spend_python(db, datetime(2025, 1, 1, tzinfo=timezone.utc), 60)
+    assert result == {"timestamps": [], "input_tokens": [], "output_tokens": [], "cost_usd": []}
+
+
 def test_get_latency_heatmap_postgresql_shapes():
     db = MagicMock()
     stats_result = MagicMock()

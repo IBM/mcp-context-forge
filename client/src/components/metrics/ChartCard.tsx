@@ -13,13 +13,27 @@ interface ChartCardProps {
   isEmpty: boolean;
   onRetry: () => void;
   children: ReactNode;
+  /** Extra classes forwarded to the outer Card (e.g. `lg:col-span-2` in a grid). */
+  className?: string;
+  /** Optional caption rendered under the chart body — for coverage caveats
+   *  or scope notes that stay visible when the chart is populated. */
+  footer?: ReactNode;
 }
 
-export function ChartCard({ title, isLoading, error, isEmpty, onRetry, children }: ChartCardProps) {
+export function ChartCard({
+  title,
+  isLoading,
+  error,
+  isEmpty,
+  onRetry,
+  children,
+  className,
+  footer,
+}: ChartCardProps) {
   const intl = useIntl();
 
   return (
-    <Card>
+    <Card className={className}>
       <CardHeader>
         <CardTitle>{title}</CardTitle>
       </CardHeader>
@@ -47,6 +61,7 @@ export function ChartCard({ title, isLoading, error, isEmpty, onRetry, children 
         ) : (
           children
         )}
+        {footer ? <p className="mt-3 text-xs text-muted-foreground">{footer}</p> : null}
       </CardContent>
     </Card>
   );

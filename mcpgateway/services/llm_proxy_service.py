@@ -40,6 +40,7 @@ from mcpgateway.services.llm_provider_service import (
     LLMProviderNotFoundError,
 )
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.observability_service import ObservabilityService
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 
@@ -444,12 +445,17 @@ class LLMProxyService:
         self,
         db: Session,
         request: ChatCompletionRequest,
+        team_id: Optional[str] = None,
     ) -> ChatCompletionResponse:
         """Process a chat completion request (non-streaming).
 
         Args:
             db: Database session.
             request: Chat completion request.
+            team_id: Caller's team scope, propagated to usage metric attributes
+                for per-team drill-down. User email is intentionally omitted;
+                the metric row's trace_id links to observability_traces where
+                user_email is populated by the middleware.
 
         Returns:
             ChatCompletionResponse.
@@ -517,6 +523,23 @@ class LLMProxyService:
                         set_span_attribute(span, key, value)
                     if is_output_capture_enabled("llm.proxy"):
                         set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload(result))
+
+                # Best-effort token usage recording. Independent DB session per
+                # metric row via ObservabilityService; must never fail the completion.
+                # Requires the request path to be on observability_include_paths so
+                # ObservabilityMiddleware has set current_trace_id; otherwise the call
+                # logs a debug warning and returns without recording.
+                try:
+                    ObservabilityService().record_token_usage(
+                        model=result.model,
+                        input_tokens=result.usage.prompt_tokens,
+                        output_tokens=result.usage.completion_tokens,
+                        total_tokens=result.usage.total_tokens,
+                        provider=_provider_trace_system(provider),
+                        team_id=team_id,
+                    )
+                except Exception as record_err:
+                    logger.debug(f"record_token_usage failed (best-effort): {record_err}")
 
                 return result
 

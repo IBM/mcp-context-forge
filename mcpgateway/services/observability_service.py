@@ -920,6 +920,7 @@ class ObservabilityService:
         total_tokens: Optional[int] = None,
         estimated_cost_usd: Optional[float] = None,
         provider: Optional[str] = None,
+        team_id: Optional[str] = None,
     ) -> None:
         """Record token usage for LLM calls.
 
@@ -934,6 +935,11 @@ class ObservabilityService:
             total_tokens: Total tokens (calculated if not provided)
             estimated_cost_usd: Estimated cost in USD
             provider: LLM provider (openai, anthropic, etc.)
+            team_id: Team scope for the calling identity, stored on metric
+                attributes for per-team drill-down. User email is intentionally
+                omitted from metric attributes; join through trace_id to
+                observability_traces.user_email when per-user attribution
+                is needed.
 
         Note:
             Uses separate database session from main transaction (issue #3883).
@@ -999,7 +1005,7 @@ class ObservabilityService:
                 metric_type="counter",
                 unit="tokens",
                 trace_id=trace_id,
-                attributes={"model": model, "provider": provider},
+                attributes={"model": model, "provider": provider, "team_id": team_id},
             )
 
         if output_tokens > 0:
@@ -1009,7 +1015,7 @@ class ObservabilityService:
                 metric_type="counter",
                 unit="tokens",
                 trace_id=trace_id,
-                attributes={"model": model, "provider": provider},
+                attributes={"model": model, "provider": provider, "team_id": team_id},
             )
 
         if estimated_cost_usd:
@@ -1019,7 +1025,7 @@ class ObservabilityService:
                 metric_type="counter",
                 unit="usd",
                 trace_id=trace_id,
-                attributes={"model": model, "provider": provider},
+                attributes={"model": model, "provider": provider, "team_id": team_id},
             )
 
         logger.debug(f"Recorded token usage: {input_tokens} in, {output_tokens} out, ${estimated_cost_usd:.6f}")

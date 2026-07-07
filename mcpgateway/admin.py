@@ -95,7 +95,7 @@ from mcpgateway.config import settings, UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECT
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import EmailApiToken, EmailTeam, extract_json_field
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
+from mcpgateway.db import get_db, GlobalConfig, ObservabilityMetric, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
@@ -18816,6 +18816,167 @@ def _get_timeseries_metrics_python(db: Session, cutoff_time: datetime, interval_
         "success_count": success_counts,
         "error_count": error_counts,
         "error_rate": error_rates,
+    }
+
+
+@admin_router.get("/observability/metrics/token-spend", response_model=dict)
+@require_permission("admin.system_config", allow_admin_bypass=False)
+async def get_token_spend_metrics(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    interval_minutes: int = Query(60, ge=5, le=1440, description="Aggregation interval in minutes"),
+    _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+):
+    """Get time-bucketed LLM token consumption and estimated cost.
+
+    Aggregates rows from ``observability_metrics`` whose ``name`` is one of
+    ``llm.tokens.input``, ``llm.tokens.output``, or ``llm.cost`` into fixed-width
+    time buckets.
+
+    Writer: ``llm_proxy_service.chat_completion`` records usage via
+    ``ObservabilityService.record_token_usage`` on every non-streaming
+    ``POST /v1/chat/completions``. Streaming completions are not yet recorded
+    (follow-up); totals reflect non-streaming traffic only. Cost is the sum of
+    USD values recorded at ingest time (write-time pricing; not re-priced here).
+
+    Args:
+        request: FastAPI request object.
+        hours: Number of hours to look back (1-168).
+        interval_minutes: Aggregation bucket size in minutes (5-1440).
+        _user: Authenticated user (required by dependency).
+        db: Database session for permission checks.
+
+    Returns:
+        dict: ``{"timestamps": [...], "input_tokens": [...], "output_tokens": [...], "cost_usd": [...]}``
+
+    Raises:
+        HTTPException: 500 if calculation fails.
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+        # Use SQL aggregation for PostgreSQL, Python fallback for SQLite
+        dialect_name = db.get_bind().dialect.name
+        if dialect_name == "postgresql":
+            return _get_token_spend_postgresql(db, cutoff_time, interval_minutes)
+        return _get_token_spend_python(db, cutoff_time, interval_minutes)
+    except Exception as e:
+        LOGGER.error(f"Failed to calculate token spend metrics: {e}")
+        raise HTTPException(status_code=500, detail="Failed to calculate token spend metrics")
+    finally:
+        # Ensure close() always runs even if commit() fails
+        try:
+            db.commit()  # Commit read-only transaction to avoid implicit rollback
+        finally:
+            db.close()
+
+
+def _get_token_spend_postgresql(db: Session, cutoff_time: datetime, interval_minutes: int) -> dict:
+    """Compute time-bucketed token spend using PostgreSQL.
+
+    Args:
+        db: Database session.
+        cutoff_time: Start time for analysis.
+        interval_minutes: Bucket size in minutes.
+
+    Returns:
+        dict: Time-series token + cost data.
+    """
+    stats_sql = text("""
+        SELECT
+            TO_TIMESTAMP(FLOOR(EXTRACT(EPOCH FROM timestamp) / :interval_seconds) * :interval_seconds) as bucket,
+            COALESCE(SUM(value) FILTER (WHERE name = 'llm.tokens.input'), 0)  as input_tokens,
+            COALESCE(SUM(value) FILTER (WHERE name = 'llm.tokens.output'), 0) as output_tokens,
+            COALESCE(SUM(value) FILTER (WHERE name = 'llm.cost'), 0)          as cost_usd
+        FROM observability_metrics
+        WHERE timestamp >= :cutoff_time
+          AND name IN ('llm.tokens.input', 'llm.tokens.output', 'llm.cost')
+        GROUP BY bucket
+        ORDER BY bucket
+        """)
+
+    interval_seconds = interval_minutes * 60
+    results = db.execute(stats_sql, {"cutoff_time": cutoff_time, "interval_seconds": interval_seconds}).fetchall()
+
+    if not results:
+        return {"timestamps": [], "input_tokens": [], "output_tokens": [], "cost_usd": []}
+
+    timestamps: List[str] = []
+    input_tokens: List[int] = []
+    output_tokens: List[int] = []
+    cost_usd: List[float] = []
+
+    for row in results:
+        timestamps.append(row.bucket.isoformat() if row.bucket else "")
+        input_tokens.append(int(row.input_tokens or 0))
+        output_tokens.append(int(row.output_tokens or 0))
+        cost_usd.append(round(float(row.cost_usd or 0), 6))
+
+    return {
+        "timestamps": timestamps,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cost_usd": cost_usd,
+    }
+
+
+def _get_token_spend_python(db: Session, cutoff_time: datetime, interval_minutes: int) -> dict:
+    """Compute time-bucketed token spend using Python (fallback for SQLite).
+
+    Args:
+        db: Database session.
+        cutoff_time: Start time for analysis.
+        interval_minutes: Bucket size in minutes.
+
+    Returns:
+        dict: Time-series token + cost data.
+    """
+    llm_metric_names = ("llm.tokens.input", "llm.tokens.output", "llm.cost")
+    rows = (
+        db.query(ObservabilityMetric.name, ObservabilityMetric.value, ObservabilityMetric.timestamp)
+        .filter(ObservabilityMetric.timestamp >= cutoff_time, ObservabilityMetric.name.in_(llm_metric_names))
+        .order_by(ObservabilityMetric.timestamp)
+        .all()
+    )
+
+    if not rows:
+        return {"timestamps": [], "input_tokens": [], "output_tokens": [], "cost_usd": []}
+
+    interval_seconds = interval_minutes * 60
+    buckets: Dict[datetime, Dict[str, float]] = defaultdict(lambda: {"input": 0.0, "output": 0.0, "cost": 0.0})
+
+    for row in rows:
+        ts = row.timestamp
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        bucket_epoch = (ts.timestamp() // interval_seconds) * interval_seconds
+        bucket_time = datetime.fromtimestamp(bucket_epoch, tz=timezone.utc)
+        if row.name == "llm.tokens.input":
+            buckets[bucket_time]["input"] += float(row.value or 0)
+        elif row.name == "llm.tokens.output":
+            buckets[bucket_time]["output"] += float(row.value or 0)
+        elif row.name == "llm.cost":
+            buckets[bucket_time]["cost"] += float(row.value or 0)
+
+    timestamps: List[str] = []
+    input_tokens: List[int] = []
+    output_tokens: List[int] = []
+    cost_usd: List[float] = []
+
+    for bucket_time in sorted(buckets.keys()):
+        b = buckets[bucket_time]
+        timestamps.append(bucket_time.isoformat())
+        input_tokens.append(int(b["input"]))
+        output_tokens.append(int(b["output"]))
+        cost_usd.append(round(b["cost"], 6))
+
+    return {
+        "timestamps": timestamps,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cost_usd": cost_usd,
     }
 
 

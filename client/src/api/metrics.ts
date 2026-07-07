@@ -40,6 +40,14 @@ export interface PercentilesResponse {
   p99: number[];
 }
 
+export interface TokenSpendResponse {
+  timestamps: string[];
+  input_tokens: number[];
+  output_tokens: number[];
+  /** Estimated spend in USD per bucket, rounded to 6 decimals server-side. */
+  cost_usd: number[];
+}
+
 function clampInt(value: number | undefined, min: number, max: number): number | undefined {
   if (value === undefined) return undefined;
   if (!Number.isFinite(value)) return undefined;
@@ -76,6 +84,21 @@ export const metricsApi = {
   getPercentiles: (params: TimeseriesParams = {}): Promise<PercentilesResponse> => {
     return api.get<PercentilesResponse>(
       `/admin/observability/metrics/percentiles${buildQuery(params)}`,
+      undefined,
+      params.signal,
+    );
+  },
+
+  /**
+   * Get LLM token consumption (input/output) and estimated USD spend bucketed
+   * over time. Sources rows from observability_metrics whose name is one of
+   * llm.tokens.input, llm.tokens.output, llm.cost. Writer: the LLM proxy at
+   * POST /v1/chat/completions records usage for non-streaming completions;
+   * streaming coverage is a follow-up, so totals under-report until it lands.
+   */
+  getTokenSpend: (params: TimeseriesParams = {}): Promise<TokenSpendResponse> => {
+    return api.get<TokenSpendResponse>(
+      `/admin/observability/metrics/token-spend${buildQuery(params)}`,
       undefined,
       params.signal,
     );

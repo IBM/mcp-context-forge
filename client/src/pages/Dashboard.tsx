@@ -5,20 +5,25 @@ import { ExecutionsChart } from "@/components/metrics/ExecutionsChart";
 import { LastUpdated } from "@/components/metrics/LastUpdated";
 import { LatencyPercentilesChart } from "@/components/metrics/LatencyPercentilesChart";
 import { TimeRangeSelector } from "@/components/metrics/TimeRangeSelector";
+import { TokenSpendChart } from "@/components/metrics/TokenSpendChart";
 import { useMetrics, type TimeWindow } from "@/hooks/useMetrics";
+import { useTokenSpend } from "@/hooks/useTokenSpend";
 
 export function Dashboard() {
   const intl = useIntl();
   const [window, setWindow] = useState<TimeWindow>("day");
   const { timeseries, percentiles, isLoading, error, lastUpdated, refetch } = useMetrics(window);
+  const tokenSpend = useTokenSpend(window);
 
   // Loading is only "first load" — once we have data for any window, keep showing
   // it across window changes so the user sees the prior chart while the new one
   // is in flight.
   const showLoading = isLoading && !timeseries && !percentiles;
+  const showTokenSpendLoading = tokenSpend.isLoading && !tokenSpend.data;
 
   const timeseriesEmpty = !!timeseries && timeseries.timestamps.length === 0;
   const percentilesEmpty = !!percentiles && percentiles.timestamps.length === 0;
+  const tokenSpendEmpty = !!tokenSpend.data && tokenSpend.data.timestamps.length === 0;
 
   return (
     <div className="flex flex-col gap-4">
@@ -51,6 +56,18 @@ export function Dashboard() {
           onRetry={refetch}
         >
           {percentiles ? <LatencyPercentilesChart data={percentiles} window={window} /> : null}
+        </ChartCard>
+
+        <ChartCard
+          title={intl.formatMessage({ id: "dashboard.charts.tokenSpend.title" })}
+          isLoading={showTokenSpendLoading}
+          error={tokenSpend.error}
+          isEmpty={tokenSpendEmpty}
+          onRetry={tokenSpend.refetch}
+          className="lg:col-span-2"
+          footer={intl.formatMessage({ id: "dashboard.charts.tokenSpend.footer.nonStreamingOnly" })}
+        >
+          {tokenSpend.data ? <TokenSpendChart data={tokenSpend.data} window={window} /> : null}
         </ChartCard>
       </div>
     </div>

@@ -6,7 +6,8 @@ import { ChartCard } from "./ChartCard";
 
 const messages = {
   "dashboard.charts.empty.message": "No data in this window",
-  "dashboard.charts.empty.hint": "Charts show MCP/A2A gateway traffic (/mcp, /rpc, /sse). Admin UI requests are not traced. If you expect data, confirm OBSERVABILITY_ENABLED=true and restart the gateway.",
+  "dashboard.charts.empty.hint":
+    "Charts show MCP/A2A gateway traffic (/mcp, /rpc, /sse). Admin UI requests are not traced. If you expect data, confirm OBSERVABILITY_ENABLED=true and restart the gateway.",
   "dashboard.charts.error": "Failed to load metrics",
   "dashboard.charts.retry": "Retry",
 };

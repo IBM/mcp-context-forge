@@ -83,6 +83,12 @@ async def chat_completions(
             detail="Streaming is disabled in gateway configuration",
         )
 
+    # Primary team for attribution on usage metrics. Matches the "first team"
+    # convention used elsewhere (mcpgateway/auth.py resolve trace team helper).
+    # None for admin-bypass sessions and for callers with no team scope.
+    token_teams = current_user.get("token_teams") if isinstance(current_user, dict) else None
+    primary_team_id = token_teams[0] if token_teams else None
+
     try:
         if request.stream:
             # Return streaming response
@@ -97,7 +103,7 @@ async def chat_completions(
             )
         else:
             # Return regular response
-            return await llm_proxy_service.chat_completion(db, request)
+            return await llm_proxy_service.chat_completion(db, request, team_id=primary_team_id)
 
     except LLMModelNotFoundError as e:
         logger.warning(f"Model not found: {request.model}")

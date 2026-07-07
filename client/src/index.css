@@ -70,6 +70,9 @@
   --color-chart-latency-p50: var(--chart-latency-p50);
   --color-chart-latency-p95: var(--chart-latency-p95);
   --color-chart-latency-p99: var(--chart-latency-p99);
+  --color-chart-tokens-input: var(--chart-tokens-input);
+  --color-chart-tokens-output: var(--chart-tokens-output);
+  --color-chart-cost: var(--chart-cost);
   --radius-xl: calc(var(--radius) * 1.4);
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
@@ -130,6 +133,11 @@
   --chart-latency-p50: var(--color-violet-400);
   --chart-latency-p95: var(--color-violet-600);
   --chart-latency-p99: var(--color-violet-900);
+
+  /* Token spend palette — blue ramp for input/output tokens, amber for cost */
+  --chart-tokens-input: var(--color-blue-300);
+  --chart-tokens-output: var(--color-blue-500);
+  --chart-cost: var(--color-amber-500);
 }
 /*
  ---break---
@@ -164,6 +172,9 @@
   --chart-latency-p50: var(--color-violet-300);
   --chart-latency-p95: var(--color-violet-500);
   --chart-latency-p99: var(--color-violet-700);
+  --chart-tokens-input: var(--color-blue-200);
+  --chart-tokens-output: var(--color-blue-400);
+  --chart-cost: var(--color-amber-400);
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);

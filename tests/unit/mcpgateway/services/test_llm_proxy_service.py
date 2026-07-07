@@ -172,6 +172,73 @@ async def test_chat_completion_openai_success(service):
 
 
 @pytest.mark.asyncio
+async def test_chat_completion_records_token_usage_with_team_id(service):
+    """chat_completion calls ObservabilityService.record_token_usage with the
+    provider response's usage counts and the caller-supplied team_id."""
+    provider = _make_provider(provider_type=LLMProviderType.OPENAI)
+    model = _make_model()
+    service._resolve_model = MagicMock(return_value=(provider, model))
+
+    request = ChatCompletionRequest(model="gpt-4", messages=[ChatMessage(role="user", content="hi")])
+
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json.return_value = {
+        "id": "resp1",
+        "created": 1,
+        "model": "gpt-4",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 42, "completion_tokens": 17, "total_tokens": 59},
+    }
+
+    service._client = AsyncMock()
+    service._client.post = AsyncMock(return_value=response)
+
+    with patch("mcpgateway.services.llm_proxy_service.ObservabilityService") as ObsCtor:
+        recorder = ObsCtor.return_value
+        result = await service.chat_completion(MagicMock(), request, team_id="team-x")
+
+    assert result.id == "resp1"
+    recorder.record_token_usage.assert_called_once()
+    kwargs = recorder.record_token_usage.call_args.kwargs
+    assert kwargs["input_tokens"] == 42
+    assert kwargs["output_tokens"] == 17
+    assert kwargs["total_tokens"] == 59
+    assert kwargs["team_id"] == "team-x"
+    assert kwargs["provider"] == "openai"
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_swallows_record_token_usage_error(service):
+    """A failure in the best-effort recorder must not fail the completion."""
+    provider = _make_provider(provider_type=LLMProviderType.OPENAI)
+    model = _make_model()
+    service._resolve_model = MagicMock(return_value=(provider, model))
+
+    request = ChatCompletionRequest(model="gpt-4", messages=[ChatMessage(role="user", content="hi")])
+
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json.return_value = {
+        "id": "resp1",
+        "created": 1,
+        "model": "gpt-4",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+    }
+
+    service._client = AsyncMock()
+    service._client.post = AsyncMock(return_value=response)
+
+    with patch("mcpgateway.services.llm_proxy_service.ObservabilityService") as ObsCtor:
+        ObsCtor.return_value.record_token_usage.side_effect = RuntimeError("db down")
+        result = await service.chat_completion(MagicMock(), request)
+
+    # Completion still succeeds even though the recorder raised.
+    assert result.id == "resp1"
+
+
+@pytest.mark.asyncio
 async def test_chat_completion_http_error(service):
     provider = _make_provider(provider_type=LLMProviderType.OPENAI)
     model = _make_model()

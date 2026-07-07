@@ -101,4 +101,41 @@ describe("metrics API", () => {
       );
     });
   });
+
+  describe("metricsApi.getTokenSpend", () => {
+    it("hits the admin token-spend endpoint with clamped params", async () => {
+      const spy = vi.spyOn(api, "get").mockResolvedValue({
+        timestamps: [],
+        input_tokens: [],
+        output_tokens: [],
+        cost_usd: [],
+      });
+
+      await metricsApi.getTokenSpend({ hours: 24, intervalMinutes: 60 });
+
+      expect(spy).toHaveBeenCalledWith(
+        "/admin/observability/metrics/token-spend?hours=24&interval_minutes=60",
+        undefined,
+        undefined,
+      );
+    });
+
+    it("forwards the abort signal", async () => {
+      const spy = vi.spyOn(api, "get").mockResolvedValue({
+        timestamps: [],
+        input_tokens: [],
+        output_tokens: [],
+        cost_usd: [],
+      });
+      const controller = new AbortController();
+
+      await metricsApi.getTokenSpend({ signal: controller.signal });
+
+      expect(spy).toHaveBeenCalledWith(
+        "/admin/observability/metrics/token-spend",
+        undefined,
+        controller.signal,
+      );
+    });
+  });
 });

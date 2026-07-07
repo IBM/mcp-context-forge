@@ -118,6 +118,38 @@ def test_record_token_usage_with_and_without_span(mock_ctid, mock_session_factor
     assert service.record_metric.call_count >= 2
 
 
+@patch("mcpgateway.services.observability_service.current_trace_id")
+@patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock())
+def test_record_token_usage_forwards_team_id_on_attributes(mock_ctid, mock_session_factory):
+    """team_id lands on the attributes dict of each record_metric call so
+    per-team drill-down can filter on observability_metrics.attributes later.
+    user_email is intentionally NOT recorded on the attributes; per-user
+    attribution goes through trace_id -> observability_traces.user_email."""
+    _factory, _session = mock_session_factory
+    service = ObservabilityService()
+    mock_ctid.get.return_value = "traceid"
+    service.record_metric = MagicMock()
+
+    service.record_token_usage(
+        model="gpt-4o",
+        input_tokens=100,
+        output_tokens=50,
+        provider="openai",
+        team_id="team-42",
+    )
+
+    # Three record_metric calls expected: input, output, cost (cost derived
+    # from _estimate_token_cost since estimated_cost_usd was not passed).
+    assert service.record_metric.call_count == 3
+    for call in service.record_metric.call_args_list:
+        attrs = call.kwargs["attributes"]
+        assert attrs["team_id"] == "team-42"
+        assert attrs["model"] == "gpt-4o"
+        assert attrs["provider"] == "openai"
+        # user_email must not appear on the metric attribute payload.
+        assert "user_email" not in attrs
+
+
 @patch("mcpgateway.services.observability_service.ObservabilityMetric", MagicMock())
 def test_record_transport_activity_message_count_zero(mock_db):
     service = ObservabilityService()
