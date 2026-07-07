@@ -22,9 +22,6 @@ cpex-encoded-exfil-detection = "2026-06-29T23:59:59Z"
 cpex-pii-filter = "2026-06-29T23:59:59Z"
 cpex-retry-with-backoff = "2026-06-29T23:59:59Z"
 cpex-secrets-detection = "2026-06-29T23:59:59Z"
-langsmith = "2026-06-29T23:59:59Z"
-prometheus-fastapi-instrumentator = "2026-06-29T23:59:59Z"
-
 
 
 [tool.uv.sources]
@@ -35,7 +32,7 @@ compliance-reference-server = { path = "mcp-servers/python/compliance_reference_
 # ----------------------------------------------------------------
 [project]
 name = "mcp-contextforge-gateway"
-version = "1.0.4"
+version = "1.0.5"
 description = "ContextForge AI Gateway — an AI gateway, registry, and proxy for MCP, A2A, and REST/gRPC APIs. Exposes a unified control plane with centralized governance, discovery, and observability. Optimizes agent and tool calling, and supports plugins."
 keywords = ["MCP","API","gateway","proxy","tools",
   "agents","agentic ai","model context protocol","multi-agent","fastapi",
@@ -97,7 +94,7 @@ dependencies = [
     "psutil>=7.2.2",
     "pydantic>=2.13.4",
     "pydantic[email]>=2.13.4",
-    "pydantic-settings>=2.14.1",
+    "pydantic-settings>=2.14.2",
     "pyjwt>=2.13.0",
     "python-json-logger>=4.1.0",
     "python-multipart>=0.0.32", # Transitive pin (mcp, fastapi); dependabot/81
@@ -294,11 +291,11 @@ grpc = [
 
 # Convenience meta-extras
 all = [
-    "mcp-contextforge-gateway[redis]>=1.0.4",
+    "mcp-contextforge-gateway[redis]>=1.0.5",
 ]
 
 dev-all = [
-    "mcp-contextforge-gateway[redis,dev,plugins]>=1.0.4",
+    "mcp-contextforge-gateway[redis,dev,plugins]>=1.0.5",
 ]
 
 # --------------------------------------------------------------------

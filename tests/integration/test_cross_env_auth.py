@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Integration: cross-environment token rejection at the HTTP layer (GHSA-vgf8-3685-66j9)."""
+"""Location: ./tests/integration/test_cross_env_auth.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+
+Integration: cross-environment token rejection at the HTTP layer (GHSA-vgf8-3685-66j9).
+"""
 
 # Standard
 import datetime

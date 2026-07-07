@@ -16,6 +16,9 @@ SHELL := /bin/bash
 # Read values from .env.make
 -include .env.make
 
+# Prevent included sub-makefiles from overriding the default target
+.DEFAULT_GOAL := help
+
 # Plugin integration test targets (self-contained: boots gateway + fast-time-server)
 -include tests/live_gateway/plugins/Makefile.plugin-integration
 
@@ -260,7 +263,7 @@ export UV_BIN
 # targets (which use these pins via uvx) stay aligned.
 BLACK_VERSION           ?= 26.3.1
 ISORT_VERSION           ?= 6.1.0
-RUFF_VERSION            ?= 0.15.1
+RUFF_VERSION            ?= 0.15.20
 PYLINT_VERSION          ?= 3.3.9
 PYLINT_PYDANTIC_VERSION ?= 0.3.5
 VULTURE_VERSION         ?= 2.14
