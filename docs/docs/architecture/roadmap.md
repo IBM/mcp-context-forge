@@ -9,7 +9,7 @@
 | Release | Due Date    | Completion | Status       | Description |
 | ------- | ----------- | ---------- | ------------ | ----------- |
 | Future | Coming soon. | N/A | Planning | Future development plans |
-| 1.0.5         | - |   -      |    -         | - |
+| 1.0.5         | 07 Jul 2026 |   100%      |    **Closed**         | API Versioning, Auth Hardening, A2A Compatibility, and Build Consolidation |
 | 1.0.4         | 22 Jun 2026 |   100 %      | **Closed**           | Rust Server Migration, Security Fixes, and Build Hardening |
 | 1.0.3         | 10 Jun 2026 |   100 %      | **Closed**           | Documentation, Technical Debt, Bugfixes |
 | 1.0.2         | 26 May 2026 |   100 %      | **Closed**           | Technical Debt and Quality |
@@ -23,7 +23,7 @@
 
 ## Future release plans and roadmap are currently being worked on
 
-## Release 1.0.0 - 1.0.4 updates can be seen in the CHANGELOG.md
+## Release 1.0.0 - 1.0.5 updates can be seen in the CHANGELOG.md
 
 ## Release 1.0.0-RC3
 

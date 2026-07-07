@@ -2,25 +2,162 @@
 
 > All notable changes to this project will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project **adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)**.
 
-## [Unreleased]
-
-### Added
-
-- New REST API endpoint `POST /v1/tools/generate-schemas-from-openapi` for generating MCP tool schemas from OpenAPI specifications without admin UI dependencies (#5142)
-
-### Security
-
-- Fixed cross-environment JWT acceptance (GHSA-vgf8-3685-66j9, CVE pending). Gateway-issued tokens
-  now carry an `env` claim and reject environment mismatches by default (`EMBED_ENVIRONMENT_IN_TOKENS=true`,
-  `VALIDATE_TOKEN_ENVIRONMENT=true`). Added optional `DERIVE_KEY_PER_ENVIRONMENT` to bind the HS*
-  signing key (including explicit-secret mints) to the deployment environment, which also closes legacy
-  tokens lacking an `env` claim. **Upgrade:** use a distinct `JWT_SECRET_KEY` per environment and
-  rotate long-lived tokens; enabling `DERIVE_KEY_PER_ENVIRONMENT` invalidates tokens issued before it
-  was turned on. RS*/ES* deployments must use distinct key pairs per environment.
-
 ### Deprecation Notice
 
 - Rust MCP runtime sidecar, Rust A2A runtime sidecar, and ValidationMiddleware are deprecated as of 2026-06-11 and will sunset on 2026-07-07. Use the Python MCP transport path, the Python A2A invocation path, and endpoint-level Pydantic or protocol-specific validation instead. See [Deprecations](docs/docs/deprecations.md).
+
+## [1.0.5] - 2026-07-07 - API Versioning, Auth Hardening, A2A Compatibility, and Build Consolidation
+
+### Overview
+
+Release 1.0.5 consolidates **60 PRs** focused on **API versioning and schema generation**, **security and auth hardening**, **A2A and MCP transport compatibility**, **Admin UI stability**, and **container/CI reliability**. This release introduces the `/v1` API surface, improves external identity-provider token handling, tightens sensitive-header behavior, and consolidates image build paths:
+
+- **Security & Auth** - Environment-bound JWT validation, external OIDC bearer-token support, session-token admin bypass fixes, inbound passthrough-header denylist expansion, CSRF issuance fixes, and suppressed Pydantic validation details in HTTP responses.
+- **API & MCP** - `/v1` API prefix support with legacy route aliases, OpenAPI-to-MCP tool schema generation, MCP tool title serialization, gateway transport validation, and gateway refresh validation-error propagation.
+- **A2A & Transport** - JSON-RPC passthrough endpoint for SDK compatibility, A2A sensitive-header passthrough feature flag, A2A echo streaming and v1 agent card support, dataplane passthrough-header normalization, and MCP traceparent synchronization.
+- **Admin UI & Tests** - Fixes for Firefox blur handling, roots panel menu state, registry partial registrations, maintenance panel CSP parser errors, flaky iframe team-selector tests, and broader plugin E2E coverage.
+- **Build, Containers & CI** - Single Containerfile consolidation, UBI-minimal Rust runtime images, Python version updates, Rust lockfile checks, merge-queue Docker validation improvements, Slack merge-queue notifications, and package verification fixes.
+- **Dependencies & Release Maintenance** - NPM audit fixes, `undici` upgrade, `prometheus-fastapi-instrumentator` bump, CPEX plugin package updates, and 1.0.5 release package refresh.
+
+### Added
+
+#### **API & MCP**
+
+- **OpenAPI to MCP Tool Schema Generation** ([#5261](https://github.com/IBM/mcp-context-forge/pull/5261), [#5142](https://github.com/IBM/mcp-context-forge/issues/5142)) - Added `POST /v1/tools/generate-schemas-from-openapi` for generating MCP tool schemas from OpenAPI specifications without Admin UI dependencies.
+- **MCP Tool Title Serialization** ([#5019](https://github.com/IBM/mcp-context-forge/pull/5019)) - Added `title` field support to MCP tool serialization paths.
+- **Versioned API Prefix** ([#4403](https://github.com/IBM/mcp-context-forge/pull/4403)) - Served API endpoints under the `/v1` prefix, with compatibility work in follow-up fixes for legacy unversioned aliases.
+
+#### **A2A & Transport**
+
+- **A2A JSON-RPC Passthrough** ([#5313](https://github.com/IBM/mcp-context-forge/pull/5313)) - Added JSON-RPC passthrough endpoint for SDK compatibility.
+- **A2A Sensitive Header Passthrough Flag** ([#5183](https://github.com/IBM/mcp-context-forge/pull/5183)) - Added `ENABLE_SENSITIVE_HEADER_PASSTHROUGH` support for controlled A2A passthrough-header behavior.
+- **Fast-Time MCP Transport** ([#5299](https://github.com/IBM/mcp-context-forge/pull/5299)) - Added `rmcp` `/mcp` transport support plus a legacy SSE shim for the fast-time server.
+- **MCP Trace Context Sync** ([#5465](https://github.com/IBM/mcp-context-forge/pull/5465)) - Synchronized MCP `_meta` traceparent values with outbound trace headers.
+
+#### **Security & Auth**
+
+- **External OIDC Bearer Tokens** ([#5200](https://github.com/IBM/mcp-context-forge/pull/5200)) - Added support for trusted external OIDC bearer tokens on API and MCP endpoints.
+
+#### **Tests**
+
+- **CPEX Plugin Gateway E2E Tests** ([#5332](https://github.com/IBM/mcp-context-forge/pull/5332)) - Added end-to-end integration tests for CPEX plugins in the gateway.
+
+### Changed
+
+#### **Security**
+
+- **Environment-Bound JWTs** - Fixed cross-environment JWT acceptance (GHSA-vgf8-3685-66j9, CVE pending). Gateway-issued tokens now carry an `env` claim and reject environment mismatches by default (`EMBED_ENVIRONMENT_IN_TOKENS=true`, `VALIDATE_TOKEN_ENVIRONMENT=true`). Added optional `DERIVE_KEY_PER_ENVIRONMENT` to bind HS* signing keys to the deployment environment, including explicit-secret mints.
+- **Upgrade Guidance** - Use a distinct `JWT_SECRET_KEY` per environment and rotate long-lived tokens. Enabling `DERIVE_KEY_PER_ENVIRONMENT` invalidates tokens issued before it was turned on. RS*/ES* deployments must use distinct key pairs per environment.
+- **Inbound Passthrough Header Denylist** ([#4726](https://github.com/IBM/mcp-context-forge/pull/4726)) - Expanded inbound passthrough denylist to block protocol-level headers.
+- **Recursive Plugin Filter Scanning** ([#5243](https://github.com/IBM/mcp-context-forge/pull/5243)) - Added recursive scanning to `regex_filter` and `deny_filter`.
+
+#### **Build & Containers**
+
+- **Single Containerfile Consolidation** ([#5468](https://github.com/IBM/mcp-context-forge/pull/5468)) - Consolidated container builds to a single `Containerfile`.
+- **UBI-Minimal Rust Runtime Images** ([#5404](https://github.com/IBM/mcp-context-forge/pull/5404)) - Migrated Rust server runtime images from `debian:trixie-slim` to `ubi-minimal`.
+- **Python Version Updates** ([#5416](https://github.com/IBM/mcp-context-forge/pull/5416)) - Updated supported Python versions.
+- **Rust Lockfile CI Checks** ([#5381](https://github.com/IBM/mcp-context-forge/pull/5381)) - Enforced Rust lockfile checks in CI.
+- **Rust Workspace Coverage** ([#5305](https://github.com/IBM/mcp-context-forge/pull/5305)) - Added missing Rust crates to the workspace.
+
+#### **CI / DevOps**
+
+- **Merge Queue Docker Validation** ([#5371](https://github.com/IBM/mcp-context-forge/pull/5371)) - Sped up merge queue Docker validation.
+- **Merge Queue Architecture Scope** ([#5476](https://github.com/IBM/mcp-context-forge/pull/5476)) - Excluded `s390x` and `ppc64le` from the merge queue gate.
+- **Merge Queue Detection** ([#5483](https://github.com/IBM/mcp-context-forge/pull/5483)) - Detected queue merges by replaying PR timeline queue membership.
+- **Slack Merge Queue Notifications** ([#5479](https://github.com/IBM/mcp-context-forge/pull/5479), [#5480](https://github.com/IBM/mcp-context-forge/pull/5480)) - Added and fixed Slack notifications for merge-queue ejection and direct merges.
+- **Release Workflow Cleanup** ([#5423](https://github.com/IBM/mcp-context-forge/pull/5423)) - Removed redundant release workflows.
+
+#### **Dependencies**
+
+- **CPEX Plugin Packages** ([#5362](https://github.com/IBM/mcp-context-forge/pull/5362)) - Bumped CPEX plugin packages.
+- **NPM Packages for 1.0.5** ([#5494](https://github.com/IBM/mcp-context-forge/pull/5494)) - Updated NPM packages for the 1.0.5 release.
+- **Pre-commit Ruff Tooling** ([#5169](https://github.com/IBM/mcp-context-forge/pull/5169)) - Added Ruff check and formatter to pre-commit.
+
+### Fixed
+
+#### **Security & Auth**
+
+- **Session Token Admin Bypass** ([#5239](https://github.com/IBM/mcp-context-forge/pull/5239)) - Fixed session-token admin bypass in `get_rpc_filter_context`.
+- **Admin CSRF Issuance** ([#5497](https://github.com/IBM/mcp-context-forge/pull/5497)) - Fixed admin CSRF issuance for non-email platform-admin sessions.
+- **Pydantic Validation Detail Exposure** ([#5087](https://github.com/IBM/mcp-context-forge/pull/5087)) - Suppressed Pydantic validation error details in HTTP responses.
+- **Admin Personal Team Visibility** ([#5392](https://github.com/IBM/mcp-context-forge/pull/5392)) - Included an admin user's own personal team in `GET /teams`.
+
+#### **API & Gateway**
+
+- **Versioned Plugin Binding Routes** ([#5504](https://github.com/IBM/mcp-context-forge/pull/5504)) - Resolved double `/v1/v1` prefixes on tool plugin binding routes and restored legacy unversioned aliases.
+- **FastAPI Router Path Compatibility** ([#5447](https://github.com/IBM/mcp-context-forge/pull/5447)) - Fixed router path behavior after FastAPI 0.137 changes.
+- **Gateway Transport Validation** ([#5312](https://github.com/IBM/mcp-context-forge/pull/5312)) - Validated transport type on `GatewayCreate` and `GatewayUpdate`.
+- **Gateway Refresh Validation Errors** ([#5317](https://github.com/IBM/mcp-context-forge/pull/5317)) - Propagated tool validation errors in gateway refresh responses.
+- **Gateway Update Connection Errors** ([#5204](https://github.com/IBM/mcp-context-forge/pull/5204)) - Propagated connection errors during gateway update.
+- **Multi-worker Session Affinity** ([#5393](https://github.com/IBM/mcp-context-forge/pull/5393)) - Eliminated multi-worker session-affinity forward amplification.
+- **Dataplane Passthrough Headers** ([#5459](https://github.com/IBM/mcp-context-forge/pull/5459)) - Normalized dataplane passthrough headers.
+
+#### **Admin UI**
+
+- **Firefox Closest Blur Handling** ([#5315](https://github.com/IBM/mcp-context-forge/pull/5315)) - Fixed Firefox `closest` blur behavior.
+- **Roots Panel Open Menu State** ([#5291](https://github.com/IBM/mcp-context-forge/pull/5291)) - Fixed roots panel open-menu undefined behavior.
+- **MCP Registry Partial Registrations** ([#5197](https://github.com/IBM/mcp-context-forge/pull/5197)) - Restored missing `window.Admin` registrations in `mcp_registry_partial.html`.
+- **Maintenance Panel CSP Parser Errors** ([#5163](https://github.com/IBM/mcp-context-forge/pull/5163)) - Resolved CSP parser errors in the maintenance panel.
+
+#### **A2A & MCP Servers**
+
+- **A2A Echo Healthcheck and Streaming** ([#5360](https://github.com/IBM/mcp-context-forge/pull/5360)) - Dropped broken `wget` healthcheck and added SSE streaming plus a v1 agent card.
+- **Live Gateway IPv4 URLs** ([#5230](https://github.com/IBM/mcp-context-forge/pull/5230)) - Pinned MCP live-gateway client URLs to IPv4 to avoid localhost IPv6 stalls.
+
+#### **Database & Multi-tenancy**
+
+- **Tenant Isolation Constraints** ([#5161](https://github.com/IBM/mcp-context-forge/pull/5161)) - Removed global unique constraints that broke multi-tenant isolation.
+- **Audit Trail Session Handling** ([#3178](https://github.com/IBM/mcp-context-forge/pull/3178)) - Removed shared DB session usage from audit trail calls to prevent inactive transaction errors.
+
+#### **Build, Packaging & Dependencies**
+
+- **Package Verification** ([#5491](https://github.com/IBM/mcp-context-forge/pull/5491)) - Fixed package verification.
+- **Tagged Image Signing** ([#5363](https://github.com/IBM/mcp-context-forge/pull/5363)) - Fixed image signing on tagged versions.
+- **Plugin Shutdown** ([#5400](https://github.com/IBM/mcp-context-forge/pull/5400)) - Fixed failed plugin shutdown behavior.
+- **Admin Login Dependency Crash** ([#5397](https://github.com/IBM/mcp-context-forge/pull/5397)) - Bumped `prometheus-fastapi-instrumentator` to 8.0.1 to fix an admin login 500 crash.
+- **Undici NPM Audit Fix** ([#5464](https://github.com/IBM/mcp-context-forge/pull/5464)) - Upgraded `undici` to 7.28.0.
+- **Tailwind CDN Asset Removal** ([#5193](https://github.com/IBM/mcp-context-forge/pull/5193)) - Removed Tailwind CSS from `download-cdn-assets.sh`.
+- **Load Test Tooling** ([#5277](https://github.com/IBM/mcp-context-forge/pull/5277), [#5456](https://github.com/IBM/mcp-context-forge/pull/5456)) - Removed JMeter load testing in favor of Locust and eliminated harness false positives across 30+ admin endpoints.
+
+#### **Tests**
+
+- **Playwright HTMX Race** ([#5310](https://github.com/IBM/mcp-context-forge/pull/5310)) - Fixed `test_should_handle_object_parameter_validation` by resolving an HTMX race and async evaluate error.
+- **Iframe Team Selector Flake** ([#5444](https://github.com/IBM/mcp-context-forge/pull/5444)) - Stabilized flaky iframe team-selector tests.
+
+#### **CI**
+
+- **Anchore Scan Action** ([#5436](https://github.com/IBM/mcp-context-forge/pull/5436)) - Upgraded `anchore/scan-action` to v7.4.0 for Node 24 and skipped unfixable CVEs.
+
+### Deprecation Notice
+
+- Rust MCP runtime sidecar, Rust A2A runtime sidecar, and `ValidationMiddleware` are deprecated as of 2026-06-11 and will sunset on 2026-07-07. Use the Python MCP transport path, the Python A2A invocation path, and endpoint-level Pydantic or protocol-specific validation instead. See [Deprecations](../docs/docs/deprecations.md).
+
+### Documentation
+
+- **BeeAI Framework MCP Integration Guide** ([#5185](https://github.com/IBM/mcp-context-forge/pull/5185)) - Added BeeAI Framework MCP integration documentation.
+- **Session Affinity Alternatives** ([#5083](https://github.com/IBM/mcp-context-forge/pull/5083)) - Added architecture trade-off documentation for session-affinity alternatives.
+
+### Chores
+
+| PR | Description | Author |
+|----|-------------|--------|
+| [#4695](https://github.com/IBM/mcp-context-forge/pull/4695) | cleanup/2373-sonar-code-duplication-list-tools | Nayana-R-Gowda |
+| [#5354](https://github.com/IBM/mcp-context-forge/pull/5354) | Fix chores changelog | cafalchio |
+| [#5387](https://github.com/IBM/mcp-context-forge/pull/5387) | chore: rename .pre-commit-lite.yaml to .pre-commit-config.yaml | jonpspri |
+| [#5423](https://github.com/IBM/mcp-context-forge/pull/5423) | chore(ci): remove redundant release workflows | madhu-mohan-jaishankar |
+| [#5483](https://github.com/IBM/mcp-context-forge/pull/5483) | ci: detect queue merges by replaying PR timeline queue membership | madhu-mohan-jaishankar |
+| [#5480](https://github.com/IBM/mcp-context-forge/pull/5480) | Ci/slack merge queue fixes | madhu-mohan-jaishankar |
+| [#5479](https://github.com/IBM/mcp-context-forge/pull/5479) | ci: add Slack notifications for merge queue ejection and direct merges | madhu-mohan-jaishankar |
+| [#5476](https://github.com/IBM/mcp-context-forge/pull/5476) | ci: exclude s390x/ppc64le from merge queue gate | madhu-mohan-jaishankar |
+| [#5464](https://github.com/IBM/mcp-context-forge/pull/5464) | fix: upgrade undici to 7.28.0 (npm audit) | marekdano |
+| [#5416](https://github.com/IBM/mcp-context-forge/pull/5416) | update python versions | cafalchio |
+| [#5371](https://github.com/IBM/mcp-context-forge/pull/5371) | chore: speed up merge queue Docker validation | lucarlig |
+| [#5362](https://github.com/IBM/mcp-context-forge/pull/5362) | chore: bump cpex plugin packages | lucarlig |
+| [#5305](https://github.com/IBM/mcp-context-forge/pull/5305) | chore: add missing rust crates to workspace | lucarlig |
+| [#5277](https://github.com/IBM/mcp-context-forge/pull/5277) | Fix: Remove JMeter load testing to rely only on locust load testing | claudia-gray |
+| [#5169](https://github.com/IBM/mcp-context-forge/pull/5169) | Added ruff check and formatter to pre-commit | cafalchio |
+| [#5494](https://github.com/IBM/mcp-context-forge/pull/5494) | chore: update npm packages for 1.0.5 | cafalchio |
+
 
 ## [1.0.4] - 2026-06-23 - Rust Server Migration, Security Fixes, and Build Hardening
 
