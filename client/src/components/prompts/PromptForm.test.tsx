@@ -4,9 +4,8 @@ import userEvent from "@testing-library/user-event";
 import { ApiError } from "@/api/client";
 import { promptsApi } from "@/api/prompts";
 import { useAuthContext } from "@/auth/AuthContext";
-import { RouterProvider } from "@/router";
 import { renderWithProviders } from "@/test/test-utils";
-import { AddPrompt } from "./AddPrompt";
+import { PromptForm } from "./PromptForm";
 
 vi.mock("@/api/prompts", () => ({
   promptsApi: {
@@ -21,12 +20,13 @@ vi.mock("@/auth/AuthContext", () => ({
 const mockCreatePrompt = vi.mocked(promptsApi.create);
 const mockUseAuthContext = vi.mocked(useAuthContext);
 
-function renderAddPrompt() {
-  window.history.pushState({}, "", "/app/prompts/add");
+function renderPromptForm(props?: { onToggle?: () => void; onSuccess?: () => void }) {
   return renderWithProviders(
-    <RouterProvider>
-      <AddPrompt />
-    </RouterProvider>,
+    <PromptForm
+      isOpen={true}
+      onToggle={props?.onToggle ?? vi.fn()}
+      onSuccess={props?.onSuccess ?? vi.fn()}
+    />,
   );
 }
 
@@ -39,7 +39,7 @@ async function fillRequiredFields() {
   return user;
 }
 
-describe("AddPrompt", () => {
+describe("PromptForm", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockUseAuthContext.mockReturnValue({
@@ -53,7 +53,15 @@ describe("AddPrompt", () => {
     });
   });
 
-  it("submits valid prompt data and returns to the prompts page", async () => {
+  it("renders nothing when isOpen is false", () => {
+    renderWithProviders(
+      <PromptForm isOpen={false} onToggle={vi.fn()} onSuccess={vi.fn()} />,
+    );
+    expect(screen.queryByLabelText(/name/i)).not.toBeInTheDocument();
+  });
+
+  it("submits valid prompt data and calls onSuccess", async () => {
+    const onSuccess = vi.fn();
     mockUseAuthContext.mockReturnValue({
       selectedTeamId: "team-123",
       user: null,
@@ -68,7 +76,7 @@ describe("AddPrompt", () => {
       name: "Greeting prompt",
     });
 
-    renderAddPrompt();
+    renderPromptForm({ onSuccess });
     const user = await fillRequiredFields();
     await user.click(screen.getByRole("button", { name: "Add Tool" }));
 
@@ -83,7 +91,16 @@ describe("AddPrompt", () => {
         teamId: "team-123",
       });
     });
-    expect(window.location.pathname).toBe("/app/prompts");
+    expect(onSuccess).toHaveBeenCalled();
+  });
+
+  it("calls onToggle when cancel is clicked", async () => {
+    const onToggle = vi.fn();
+    renderPromptForm({ onToggle });
+
+    await userEvent.setup().click(screen.getByRole("button", { name: /cancel/i }));
+
+    expect(onToggle).toHaveBeenCalled();
   });
 
   it("renders create failures inline in the form", async () => {
@@ -91,7 +108,7 @@ describe("AddPrompt", () => {
       new ApiError(400, { detail: "Prompt name already exists" }, "HTTP 400"),
     );
 
-    renderAddPrompt();
+    renderPromptForm();
     const user = await fillRequiredFields();
     await user.click(screen.getByRole("button", { name: "Add Tool" }));
 
@@ -99,7 +116,7 @@ describe("AddPrompt", () => {
   });
 
   it("revalidates argument errors while the field is edited", async () => {
-    renderAddPrompt();
+    renderPromptForm();
     const argumentsField = screen.getByLabelText(/arguments/i);
 
     fireEvent.change(argumentsField, { target: { value: "{}" } });
