@@ -20,6 +20,7 @@
   "teams.table.actions": "Actions",
   "teams.table.invalidDate": "Invalid date",
   "teams.table.actions.label": "Actions for {name}",
+  "teams.table.actions.manageMembers": "Manage members",
   "teams.table.actions.edit": "Edit",
   "teams.table.actions.delete": "Delete",
   "teams.table.description.view": "View description for {name}",
@@ -51,5 +52,14 @@
   "teams.create.warning.membersFailed": "Team {name} created, but some members could not be added",
   "teams.create.creating": "Creating...",
   "teams.create.submit": "Create team",
-  "teams.create.success": "Team created successfully"
+  "teams.create.success": "Team created successfully",
+  "teams.members.dialog.title": "Manage team members",
+  "teams.members.dialog.description": "Add or remove team members and set their permission levels.",
+  "teams.members.email.placeholder": "Name or email...",
+  "teams.members.add": "Add member",
+  "teams.members.remove.aria": "Remove {email}",
+  "teams.members.success": "{count, plural, one {# team member change} other {# team member changes}} saved successfully",
+  "teams.members.loading.sr": "Loading team members, please wait...",
+  "teams.members.error.load": "Failed to load team members",
+  "teams.members.error.save": "Failed to save team members"
 }
