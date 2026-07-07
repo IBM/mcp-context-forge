@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { TeamsTable } from "@/components/teams/TeamsTable";
 import { TeamForm } from "@/components/teams/TeamForm";
 import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
+import { ManageTeamMembersDialog } from "@/components/teams/ManageTeamMembersDialog";
 import { useQuery } from "@/hooks/useQuery";
 import { api } from "@/api/client";
 import { deleteTeam } from "@/api/teams";
@@ -23,6 +24,8 @@ export function Teams() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [teamToDelete, setTeamToDelete] = useState<Team | null>(null);
   const [createFormOpen, setCreateFormOpen] = useState(false);
+  const [membersDialogOpen, setMembersDialogOpen] = useState(false);
+  const [teamForMembers, setTeamForMembers] = useState<Team | null>(null);
 
   const queryPath = useMemo(() => {
     const params = new URLSearchParams();
@@ -79,6 +82,25 @@ export function Teams() {
     },
     [allTeams],
   );
+
+  const handleManageMembers = useCallback(
+    (teamId: string) => {
+      const team = allTeams.find((t) => t.id === teamId);
+      if (team) {
+        setTeamForMembers(team);
+        setMembersDialogOpen(true);
+      }
+    },
+    [allTeams],
+  );
+
+  const handleMembersSuccess = useCallback(async () => {
+    try {
+      await refetch();
+    } catch (refreshErr) {
+      console.error("Failed to refresh teams after member changes:", sanitizeError(refreshErr));
+    }
+  }, [refetch]);
 
   const handleDeleteConfirm = useCallback(async () => {
     if (!teamToDelete) return;
@@ -170,7 +192,12 @@ export function Teams() {
                 </Button>
               </div>
 
-              <TeamsTable teams={allTeams} isLoading={false} onDelete={handleDelete} />
+              <TeamsTable
+                teams={allTeams}
+                isLoading={false}
+                onDelete={handleDelete}
+                onManageMembers={handleManageMembers}
+              />
 
               <div className="flex items-center justify-between mt-6">
                 <div className="flex items-center gap-4">
@@ -247,6 +274,16 @@ export function Teams() {
           cancelLabel={intl.formatMessage({ id: "common.button.cancel" })}
           variant="destructive"
           onConfirm={handleDeleteConfirm}
+        />
+      )}
+
+      {teamForMembers && (
+        <ManageTeamMembersDialog
+          open={membersDialogOpen}
+          onOpenChange={setMembersDialogOpen}
+          teamId={teamForMembers.id}
+          teamName={teamForMembers.name}
+          onSuccess={handleMembersSuccess}
         />
       )}
     </div>

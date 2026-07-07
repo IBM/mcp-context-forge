@@ -148,6 +148,39 @@ describe("TeamsTable", () => {
     expect(onDelete).toHaveBeenCalledWith("team-99");
   });
 
+  it("calls onManageMembers with the team id when Manage members is clicked", async () => {
+    const user = userEvent.setup();
+    const onManageMembers = vi.fn();
+    renderTable(
+      <TeamsTable
+        teams={[makeTeam({ id: "team-7", name: "Alpha" })]}
+        isLoading={false}
+        onManageMembers={onManageMembers}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Actions for Alpha/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /Manage members/i }));
+
+    expect(onManageMembers).toHaveBeenCalledWith("team-7");
+  });
+
+  it("orders the actions menu as Edit, Manage members, Delete", async () => {
+    const user = userEvent.setup();
+    renderTable(<TeamsTable teams={[makeTeam({ name: "Alpha" })]} isLoading={false} />);
+
+    await user.click(screen.getByRole("button", { name: /Actions for Alpha/i }));
+
+    const items = await screen.findAllByRole("menuitem");
+    expect(items.map((i) => i.textContent)).toEqual(["Edit", "Manage members", "Delete"]);
+  });
+
+  it("renders the team's uppercased initial as its icon", () => {
+    renderTable(<TeamsTable teams={[makeTeam({ name: "alpha" })]} isLoading={false} />);
+
+    expect(screen.getByText("A")).toBeInTheDocument();
+  });
+
   it("renders an accessible actions trigger per team", () => {
     const teams = [makeTeam({ id: "a", name: "Alpha" }), makeTeam({ id: "b", name: "Beta" })];
     renderTable(<TeamsTable teams={teams} isLoading={false} />);

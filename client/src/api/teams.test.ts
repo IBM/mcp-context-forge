@@ -1,10 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createTeam, addTeamMember, deleteTeam } from "./teams";
+import {
+  createTeam,
+  addTeamMember,
+  updateTeamMember,
+  removeTeamMember,
+  listTeamMembers,
+  deleteTeam,
+} from "./teams";
 import { api } from "./client";
 
 vi.mock("@/api/client", () => ({
   api: {
+    get: vi.fn(),
     post: vi.fn(),
+    put: vi.fn(),
     delete: vi.fn(),
   },
 }));
@@ -71,6 +80,102 @@ describe("addTeamMember", () => {
     await expect(
       addTeamMember("team-1", { email: "user@example.com", role: "member" }),
     ).rejects.toThrow("already a member");
+  });
+});
+
+describe("listTeamMembers", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("GETs the team's members endpoint and returns the array", async () => {
+    const members = [
+      { user_email: "a@example.com", role: "owner", joined_at: "2024-01-01T00:00:00Z" },
+    ];
+    vi.mocked(api.get).mockResolvedValue(members);
+
+    const result = await listTeamMembers("team-1");
+
+    expect(api.get).toHaveBeenCalledWith("/teams/team-1/members");
+    expect(result).toEqual(members);
+  });
+
+  it("URL-encodes the team id", async () => {
+    vi.mocked(api.get).mockResolvedValue([]);
+
+    await listTeamMembers("team/1");
+
+    expect(api.get).toHaveBeenCalledWith("/teams/team%2F1/members");
+  });
+
+  it("propagates errors from the API", async () => {
+    vi.mocked(api.get).mockRejectedValue(new Error("forbidden"));
+
+    await expect(listTeamMembers("team-1")).rejects.toThrow("forbidden");
+  });
+});
+
+describe("updateTeamMember", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("PUTs the role to the member endpoint", async () => {
+    vi.mocked(api.put).mockResolvedValue(undefined);
+
+    await updateTeamMember("team-1", "user@example.com", { role: "owner" });
+
+    expect(api.put).toHaveBeenCalledWith("/teams/team-1/members/user%40example.com", {
+      role: "owner",
+    });
+  });
+
+  it("URL-encodes both the team id and the user email", async () => {
+    vi.mocked(api.put).mockResolvedValue(undefined);
+
+    await updateTeamMember("team/1", "a b@example.com", { role: "member" });
+
+    expect(api.put).toHaveBeenCalledWith("/teams/team%2F1/members/a%20b%40example.com", {
+      role: "member",
+    });
+  });
+
+  it("propagates errors from the API", async () => {
+    vi.mocked(api.put).mockRejectedValue(new Error("not found"));
+
+    await expect(updateTeamMember("team-1", "user@example.com", { role: "owner" })).rejects.toThrow(
+      "not found",
+    );
+  });
+});
+
+describe("removeTeamMember", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("DELETEs the member endpoint", async () => {
+    vi.mocked(api.delete).mockResolvedValue(undefined);
+
+    await removeTeamMember("team-1", "user@example.com");
+
+    expect(api.delete).toHaveBeenCalledWith("/teams/team-1/members/user%40example.com");
+  });
+
+  it("URL-encodes both the team id and the user email", async () => {
+    vi.mocked(api.delete).mockResolvedValue(undefined);
+
+    await removeTeamMember("team/1", "a b@example.com");
+
+    expect(api.delete).toHaveBeenCalledWith("/teams/team%2F1/members/a%20b%40example.com");
+  });
+
+  it("propagates errors from the API", async () => {
+    vi.mocked(api.delete).mockRejectedValue(new Error("cannot remove last owner"));
+
+    await expect(removeTeamMember("team-1", "user@example.com")).rejects.toThrow(
+      "cannot remove last owner",
+    );
   });
 });
 

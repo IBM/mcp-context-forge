@@ -1,5 +1,5 @@
 import { api } from "@/api/client";
-import type { Team } from "@/types/team";
+import type { Team, TeamMember, AddTeamMemberRequest, UpdateTeamMemberRequest } from "@/types/team";
 
 interface CreateTeamPayload {
   name: string;
@@ -8,19 +8,37 @@ interface CreateTeamPayload {
   max_members?: number;
 }
 
-export interface TeamMemberPayload {
-  email: string;
-  role: "owner" | "member";
-}
-
 export function createTeam(payload: CreateTeamPayload): Promise<Team> {
   return api.post<Team>("/teams", payload);
 }
 
-export function addTeamMember(teamId: string, member: TeamMemberPayload): Promise<void> {
-  return api.post<void>(`/teams/${encodeURIComponent(teamId)}/members`, member);
-}
-
 export function deleteTeam(id: string): Promise<void> {
   return api.delete<void>(`/teams/${encodeURIComponent(id)}`);
+}
+
+export function listTeamMembers(teamId: string): Promise<TeamMember[]> {
+  // Default (no include_pagination) returns every team member as a bare array,
+  // with no cursor metadata.
+  return api.get<TeamMember[]>(`/teams/${encodeURIComponent(teamId)}/members`);
+}
+
+export function addTeamMember(teamId: string, data: AddTeamMemberRequest): Promise<void> {
+  return api.post<void>(`/teams/${encodeURIComponent(teamId)}/members`, data);
+}
+
+export function updateTeamMember(
+  teamId: string,
+  userEmail: string,
+  data: UpdateTeamMemberRequest,
+): Promise<void> {
+  return api.put<void>(
+    `/teams/${encodeURIComponent(teamId)}/members/${encodeURIComponent(userEmail)}`,
+    data,
+  );
+}
+
+export function removeTeamMember(teamId: string, userEmail: string): Promise<void> {
+  return api.delete<void>(
+    `/teams/${encodeURIComponent(teamId)}/members/${encodeURIComponent(userEmail)}`,
+  );
 }
