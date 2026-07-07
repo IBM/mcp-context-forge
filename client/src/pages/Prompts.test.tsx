@@ -169,12 +169,15 @@ describe("Prompts", () => {
     expect(within(card).queryByText("Prompt 8")).not.toBeInTheDocument();
     expect(within(card).getByText("+2")).toBeInTheDocument();
 
-    // A real description becomes the badge tooltip; filtered "None" descriptions do not.
-    expect(within(card).getByText("Prompt 0")).toHaveAttribute(
-      "title",
-      "First prompt description.",
-    );
-    expect(within(card).getByText("Prompt 1")).not.toHaveAttribute("title");
+    // A real description becomes an accessible tooltip; filtered "None" descriptions do not.
+    const describedTrigger = within(card).getByText("Prompt 0").closest("button");
+    expect(describedTrigger).not.toBeNull();
+    // Radix opens the tooltip on focus, giving keyboard users the description.
+    describedTrigger?.focus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("First prompt description.");
+
+    // "Prompt 1" has description "None", so it renders as a plain tag with no tooltip trigger.
+    expect(within(card).getByText("Prompt 1").closest("button")).toBeNull();
   });
 
   it("renders error state when prompts fail to load", async () => {
