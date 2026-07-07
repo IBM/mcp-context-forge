@@ -54,28 +54,6 @@ def admin_client(admin_token: str) -> Generator[httpx.Client, None, None]:
         yield client
 
 
-@pytest.fixture(scope="session", autouse=True)
-def _require_gateway_plugins(admin_client: httpx.Client) -> None:
-    """Skip the plugin E2E suites when the gateway has no plugins loaded.
-
-    These suites are designed for a gateway booted out-of-band with a
-    plugin enforce config (plugin-integration.yml workflow). Against a
-    general-purpose stack (e.g. docker-compose with PLUGINS_ENABLED=false)
-    every test failed at fixture setup instead of skipping. Probe
-    ``/admin/plugins`` once per session and skip cleanly unless the
-    subsystem is enabled and at least one plugin is loaded.
-    """
-    try:
-        resp = admin_client.get("/admin/plugins")
-    except httpx.HTTPError as exc:
-        pytest.skip(f"cannot probe gateway plugin state ({exc}); plugin E2E suites need a gateway booted with a plugin config")
-    if resp.status_code != 200:
-        pytest.skip(f"/admin/plugins returned HTTP {resp.status_code}; plugin E2E suites need a gateway booted with a plugin config")
-    payload = resp.json()
-    if not payload.get("plugins_globally_enabled", False) or not payload.get("enabled_count"):
-        pytest.skip("gateway has no enabled plugins; plugin E2E suites need a gateway booted with a plugin enforce config")
-
-
 @pytest.fixture(scope="session")
 def fast_time_server(admin_client: httpx.Client, admin_token: str) -> Generator[dict[str, str], None, None]:
     """Provision a virtual server exposing the fast-time ``echo`` tool.
