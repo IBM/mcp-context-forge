@@ -20,6 +20,7 @@
   "teams.table.actions": "Ações",
   "teams.table.invalidDate": "Data inválida",
   "teams.table.actions.label": "Ações para {name}",
+  "teams.table.actions.manageMembers": "Gerenciar membros",
   "teams.table.actions.edit": "Editar",
   "teams.table.actions.delete": "Excluir",
   "teams.table.description.view": "Ver descrição de {name}",
@@ -51,5 +52,14 @@
   "teams.create.warning.membersFailed": "Equipe {name} criada, mas não foi possível adicionar alguns membros",
   "teams.create.creating": "Criando...",
   "teams.create.submit": "Criar equipe",
-  "teams.create.success": "Equipe criada com sucesso"
+  "teams.create.success": "Equipe criada com sucesso",
+  "teams.members.dialog.title": "Gerenciar membros da equipe",
+  "teams.members.dialog.description": "Adicione ou remova membros da equipe e defina seus níveis de permissão.",
+  "teams.members.email.placeholder": "Nome ou e-mail...",
+  "teams.members.add": "Adicionar membro",
+  "teams.members.remove.aria": "Remover {email}",
+  "teams.members.success": "{count, plural, one {# alteração de membros da equipe salva} other {# alterações de membros da equipe salvas}} com sucesso",
+  "teams.members.loading.sr": "Carregando membros da equipe, aguarde...",
+  "teams.members.error.load": "Falha ao carregar os membros da equipe",
+  "teams.members.error.save": "Falha ao salvar os membros da equipe"
 }

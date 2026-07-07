@@ -1,5 +1,6 @@
 {
   "common.button.save": "Salvar",
+  "common.button.saving": "Salvando...",
   "common.button.cancel": "Cancelar",
   "common.button.delete": "Excluir",
   "common.button.edit": "Editar",
@@ -26,6 +27,7 @@
   "common.actions": "Ações",
   "common.status": "Status",
   "common.name": "Nome",
+  "common.role": "Função",
   "common.description": "Descrição",
   "common.createdAt": "Criado em",
   "common.updatedAt": "Atualizado em",
