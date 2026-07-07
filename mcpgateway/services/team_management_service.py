@@ -350,6 +350,12 @@ class TeamManagementService:
             role: Role at the time of action
             action: Action type ("added", "removed", "reactivated", "role_changed")
             action_by: Email of the user who performed the action
+
+        Examples:
+            >>> from mcpgateway.services.team_management_service import TeamManagementService
+            >>> from unittest.mock import Mock
+            >>> service = TeamManagementService(Mock())
+            >>> service.log_team_member_action("tm-123", "team-123", "user@example.com", "member", "reactivated", "admin@example.com")
         """
         self._log_team_member_action(team_member_id, team_id, user_email, role, action, action_by)
 
