@@ -669,6 +669,9 @@ describe("Resources", () => {
       await waitFor(() => {
         expect(getResourcesCallCount).toBeGreaterThan(initialCallCount);
       });
+      expect(toast.success).toHaveBeenCalledWith(
+        expect.stringContaining('Resource "Resource 1" updated successfully'),
+      );
     });
 
     it("shows submit error and keeps the form open on API failure", async () => {

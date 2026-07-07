@@ -42,6 +42,7 @@
   "resources.delete.confirm.title": "Delete resource",
   "resources.delete.confirm.description": "Are you sure you want to delete \"{name}\"? This action cannot be undone.",
   "resources.delete.confirm.button": "Delete",
+  "resources.edit.success": "Resource \"{name}\" updated successfully",
   "resources.delete.success": "Resource \"{name}\" deleted successfully",
   "resources.delete.error": "Failed to delete resource",
   "resources.delete.errorWithMessage": "Failed to delete resource: {message}",

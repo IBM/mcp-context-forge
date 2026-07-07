@@ -302,6 +302,11 @@ export function Resources() {
   const handleFormSuccess = async () => {
     setShouldRestoreFormCloseFocus(true);
     setShowForm(false);
+    if (editingResource) {
+      toast.success(
+        intl.formatMessage({ id: "resources.edit.success" }, { name: editingResource.name }),
+      );
+    }
     setEditingResource(null);
     await refetch();
   };

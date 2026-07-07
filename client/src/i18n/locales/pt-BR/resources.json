@@ -42,6 +42,7 @@
   "resources.delete.confirm.title": "Excluir recurso",
   "resources.delete.confirm.description": "Tem certeza de que deseja excluir \"{name}\"? Esta ação não pode ser desfeita.",
   "resources.delete.confirm.button": "Excluir",
+  "resources.edit.success": "Recurso \"{name}\" atualizado com sucesso",
   "resources.delete.success": "Recurso \"{name}\" excluído com sucesso",
   "resources.delete.error": "Falha ao excluir o recurso",
   "resources.delete.errorWithMessage": "Falha ao excluir o recurso: {message}",
