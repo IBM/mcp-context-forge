@@ -26,6 +26,7 @@ export function Teams() {
   const [createFormOpen, setCreateFormOpen] = useState(false);
   const [membersDialogOpen, setMembersDialogOpen] = useState(false);
   const [teamForMembers, setTeamForMembers] = useState<Team | null>(null);
+  const [teamToEdit, setTeamToEdit] = useState<Team | null>(null);
 
   const queryPath = useMemo(() => {
     const params = new URLSearchParams();
@@ -94,6 +95,17 @@ export function Teams() {
     [allTeams],
   );
 
+  const handleEdit = useCallback(
+    (teamId: string) => {
+      const team = allTeams.find((t) => t.id === teamId);
+      if (team) {
+        setCreateFormOpen(false);
+        setTeamToEdit(team);
+      }
+    },
+    [allTeams],
+  );
+
   const handleMembersSuccess = useCallback(async () => {
     try {
       await refetch();
@@ -142,13 +154,26 @@ export function Teams() {
     }
   }, [intl, refetch]);
 
+  const handleEditSuccess = useCallback(async () => {
+    toast.success(intl.formatMessage({ id: "teams.edit.success" }));
+    try {
+      await refetch();
+    } catch (refreshErr) {
+      console.error("Failed to refresh teams after update:", sanitizeError(refreshErr));
+    }
+  }, [intl, refetch]);
+
   return (
     <div className="p-6">
-      {createFormOpen ? (
+      {createFormOpen || teamToEdit ? (
         <TeamForm
-          isOpen={createFormOpen}
-          onToggle={() => setCreateFormOpen(false)}
-          onSuccess={handleCreateSuccess}
+          isOpen={createFormOpen || teamToEdit != null}
+          team={teamToEdit ?? undefined}
+          onToggle={() => {
+            setCreateFormOpen(false);
+            setTeamToEdit(null);
+          }}
+          onSuccess={teamToEdit ? handleEditSuccess : handleCreateSuccess}
         />
       ) : isLoading ? (
         <div
@@ -195,8 +220,9 @@ export function Teams() {
               <TeamsTable
                 teams={allTeams}
                 isLoading={false}
-                onDelete={handleDelete}
+                onEdit={handleEdit}
                 onManageMembers={handleManageMembers}
+                onDelete={handleDelete}
               />
 
               <div className="flex items-center justify-between mt-6">

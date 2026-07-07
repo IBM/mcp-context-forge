@@ -14,20 +14,25 @@ import {
 } from "@/components/ui/select";
 import { Combobox } from "@/components/ui/combobox";
 import { useTeamForm } from "@/hooks/useTeamForm";
+import type { Team } from "@/types/team";
 
-interface CreateTeamFormProps {
+interface TeamFormProps {
   isOpen: boolean;
   onToggle: () => void;
   onSuccess: () => void;
+  /** When provided, the form runs in edit mode, pre-populated with this team. */
+  team?: Team;
 }
 
-export function TeamForm({ isOpen, onToggle, onSuccess }: CreateTeamFormProps) {
+export function TeamForm({ isOpen, onToggle, onSuccess, team }: TeamFormProps) {
   const intl = useIntl();
   const {
+    isEditMode,
     name,
     description,
     visibility,
     maxMembers,
+    maxMembersOptions,
     members,
     memberOptions,
     error,
@@ -42,7 +47,7 @@ export function TeamForm({ isOpen, onToggle, onSuccess }: CreateTeamFormProps) {
     handleMemberRoleChange,
     resetForm,
     handleSubmit,
-  } = useTeamForm();
+  } = useTeamForm(team);
 
   const onSubmit = (e: React.FormEvent<HTMLFormElement>) =>
     handleSubmit(e, () => {
@@ -82,11 +87,13 @@ export function TeamForm({ isOpen, onToggle, onSuccess }: CreateTeamFormProps) {
                 id="create-team-form-title"
                 className="align-middle text-base font-semibold leading-6 tracking-normal text-neutral-950 dark:text-neutral-50"
               >
-                {intl.formatMessage({ id: "teams.create.title" })}
+                {intl.formatMessage({ id: isEditMode ? "teams.edit.title" : "teams.create.title" })}
               </h2>
             </div>
             <p className="text-sm leading-6 text-neutral-600 dark:text-neutral-400">
-              {intl.formatMessage({ id: "teams.create.description" })}
+              {intl.formatMessage({
+                id: isEditMode ? "teams.edit.description" : "teams.create.description",
+              })}
             </p>
           </div>
 
@@ -167,84 +174,89 @@ export function TeamForm({ isOpen, onToggle, onSuccess }: CreateTeamFormProps) {
               )}
             </div>
 
-            {/* Team Members */}
-            <div className="space-y-3">
-              <p className="text-sm text-neutral-600 dark:text-neutral-400">
-                {intl.formatMessage({ id: "teams.create.membersHint" })}
-              </p>
+            {/* Team Members — only when creating; membership is managed
+                separately once a team exists. */}
+            {!isEditMode && (
+              <div className="space-y-3">
+                <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                  {intl.formatMessage({ id: "teams.create.membersHint" })}
+                </p>
 
-              {/* Single grid — labels + member rows share the same column tracks so
+                {/* Single grid — labels + member rows share the same column tracks so
                   the auto Remove column is sized consistently across all rows */}
-              <div className="grid grid-cols-[2fr_1fr_auto] items-center gap-x-2 gap-y-2">
-                {/* Header labels */}
-                <Label className="text-sm font-medium text-neutral-950 dark:text-white">
-                  {intl.formatMessage({ id: "teams.create.memberName" })}
-                </Label>
-                <Label className="text-sm font-medium text-neutral-950 dark:text-white">
-                  {intl.formatMessage({ id: "teams.create.roleLabel" })}
-                </Label>
-                <div />
+                <div className="grid grid-cols-[2fr_1fr_auto] items-center gap-x-2 gap-y-2">
+                  {/* Header labels */}
+                  <Label className="text-sm font-medium text-neutral-950 dark:text-white">
+                    {intl.formatMessage({ id: "teams.create.memberName" })}
+                  </Label>
+                  <Label className="text-sm font-medium text-neutral-950 dark:text-white">
+                    {intl.formatMessage({ id: "teams.create.roleLabel" })}
+                  </Label>
+                  <div />
 
-                {/* One editable row per member */}
-                {members.map((member, index) => (
-                  <Fragment key={index}>
-                    <Combobox
-                      options={memberOptions}
-                      value={member.email}
-                      onValueChange={(v) => handleMemberEmailChange(index, v)}
-                      placeholder={intl.formatMessage({ id: "teams.create.memberPlaceholder" })}
-                      searchPlaceholder={intl.formatMessage({
-                        id: "teams.create.memberPlaceholder",
-                      })}
-                      emptyText={intl.formatMessage({ id: "teams.create.memberPlaceholder" })}
-                      allowCustomValue={false}
-                      disabled={isSubmitting}
-                      className="h-10 border-neutral-300 dark:border-neutral-700"
-                    />
-                    <Select
-                      value={member.role}
-                      onValueChange={(v) => handleMemberRoleChange(index, v as "member" | "owner")}
-                      disabled={isSubmitting}
-                    >
-                      <SelectTrigger className="h-10 w-full border-neutral-300 dark:border-neutral-700">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="member">
-                          {intl.formatMessage({ id: "teams.create.role.member" })}
-                        </SelectItem>
-                        <SelectItem value="owner">
-                          {intl.formatMessage({ id: "teams.create.role.owner" })}
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleRemoveMember(index)}
-                      disabled={isSubmitting}
-                      className="h-10 gap-1.5 px-2 text-red-500 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-950/30 dark:hover:text-red-300"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      {intl.formatMessage({ id: "common.button.remove" })}
-                    </Button>
-                  </Fragment>
-                ))}
+                  {/* One editable row per member */}
+                  {members.map((member, index) => (
+                    <Fragment key={index}>
+                      <Combobox
+                        options={memberOptions}
+                        value={member.email}
+                        onValueChange={(v) => handleMemberEmailChange(index, v)}
+                        placeholder={intl.formatMessage({ id: "teams.create.memberPlaceholder" })}
+                        searchPlaceholder={intl.formatMessage({
+                          id: "teams.create.memberPlaceholder",
+                        })}
+                        emptyText={intl.formatMessage({ id: "teams.create.memberPlaceholder" })}
+                        allowCustomValue={false}
+                        disabled={isSubmitting}
+                        className="h-10 border-neutral-300 dark:border-neutral-700"
+                      />
+                      <Select
+                        value={member.role}
+                        onValueChange={(v) =>
+                          handleMemberRoleChange(index, v as "member" | "owner")
+                        }
+                        disabled={isSubmitting}
+                      >
+                        <SelectTrigger className="h-10 w-full border-neutral-300 dark:border-neutral-700">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="member">
+                            {intl.formatMessage({ id: "teams.create.role.member" })}
+                          </SelectItem>
+                          <SelectItem value="owner">
+                            {intl.formatMessage({ id: "teams.create.role.owner" })}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleRemoveMember(index)}
+                        disabled={isSubmitting}
+                        className="h-10 gap-1.5 px-2 text-red-500 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-950/30 dark:hover:text-red-300"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        {intl.formatMessage({ id: "common.button.remove" })}
+                      </Button>
+                    </Fragment>
+                  ))}
+                </div>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleAddMember}
+                  disabled={isSubmitting}
+                  className="gap-1.5 border-neutral-200 dark:border-neutral-600"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  {intl.formatMessage({ id: "teams.create.addMemberButton" })}
+                </Button>
               </div>
-
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={handleAddMember}
-                disabled={isSubmitting}
-                className="gap-1.5 border-neutral-200 dark:border-neutral-600"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                {intl.formatMessage({ id: "teams.create.addMemberButton" })}
-              </Button>
-            </div>
+            )}
 
             {/* Maximum Members */}
             <div className="space-y-2">
@@ -262,12 +274,11 @@ export function TeamForm({ isOpen, onToggle, onSuccess }: CreateTeamFormProps) {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="10">10</SelectItem>
-                  <SelectItem value="25">25</SelectItem>
-                  <SelectItem value="50">50</SelectItem>
-                  <SelectItem value="100">100</SelectItem>
-                  <SelectItem value="250">250</SelectItem>
-                  <SelectItem value="500">500</SelectItem>
+                  {maxMembersOptions.map((value) => (
+                    <SelectItem key={value} value={value}>
+                      {value}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -287,8 +298,12 @@ export function TeamForm({ isOpen, onToggle, onSuccess }: CreateTeamFormProps) {
               </Button>
               <Button type="submit" disabled={isSubmitting || !name.trim()}>
                 {isSubmitting
-                  ? intl.formatMessage({ id: "teams.create.creating" })
-                  : intl.formatMessage({ id: "teams.create.submit" })}
+                  ? intl.formatMessage({
+                      id: isEditMode ? "teams.edit.saving" : "teams.create.creating",
+                    })
+                  : intl.formatMessage({
+                      id: isEditMode ? "teams.edit.submit" : "teams.create.submit",
+                    })}
               </Button>
             </div>
           </form>

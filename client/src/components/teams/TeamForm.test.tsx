@@ -5,7 +5,24 @@ import { http, HttpResponse } from "msw";
 import { server } from "@/test/mocks/server";
 import { I18nProvider } from "@/i18n";
 import { AuthProvider } from "@/auth/AuthContext";
+import type { Team } from "@/types/team";
 import { TeamForm } from "./TeamForm";
+
+const makeTeam = (overrides: Partial<Team> = {}): Team => ({
+  id: "team-9",
+  name: "Platform",
+  slug: "platform",
+  description: "Platform team",
+  created_by: "admin@example.com",
+  is_personal: false,
+  visibility: "public",
+  max_members: 50,
+  member_count: 4,
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+  is_active: true,
+  ...overrides,
+});
 
 function renderForm(props: Partial<React.ComponentProps<typeof TeamForm>> = {}) {
   return render(
@@ -167,6 +184,73 @@ describe("TeamForm", () => {
 
       await user.click(screen.getAllByRole("button", { name: /remove/i })[0]);
       expect(screen.getAllByRole("button", { name: /remove/i })).toHaveLength(1);
+    });
+  });
+
+  describe("Edit mode", () => {
+    it("pre-fills the team details and swaps to edit labels", () => {
+      renderForm({ team: makeTeam() });
+
+      expect(screen.getByRole("heading", { name: /edit team/i })).toBeInTheDocument();
+      expect(screen.getByPlaceholderText(/add team name/i)).toHaveValue("Platform");
+      expect(screen.getByRole("textbox", { name: /description/i })).toHaveValue("Platform team");
+      expect(screen.getByRole("radio", { name: /public/i })).toBeChecked();
+      expect(screen.getByRole("button", { name: /^save changes$/i })).toBeInTheDocument();
+    });
+
+    it("hides member management when editing", () => {
+      renderForm({ team: makeTeam() });
+
+      expect(screen.queryByRole("button", { name: /add team member/i })).not.toBeInTheDocument();
+      expect(screen.queryByPlaceholderText(/name or email/i)).not.toBeInTheDocument();
+    });
+
+    it("shows an off-list max_members value in the selector instead of rendering blank", () => {
+      renderForm({ team: makeTeam({ max_members: 75 }) });
+
+      // The trigger reflects the team's custom cap via the injected option.
+      expect(screen.getByRole("combobox", { name: /maximum members/i })).toHaveTextContent("75");
+    });
+
+    it("PUTs the update and calls onSuccess then onToggle", async () => {
+      let capturedBody: unknown;
+      server.use(
+        http.put("*/teams/team-9", async ({ request }) => {
+          capturedBody = await request.json();
+          return HttpResponse.json({ id: "team-9", name: "Platform Renamed" });
+        }),
+      );
+      const onSuccess = vi.fn();
+      const onToggle = vi.fn();
+      const user = userEvent.setup();
+      renderForm({ team: makeTeam(), onSuccess, onToggle });
+
+      const nameInput = screen.getByPlaceholderText(/add team name/i);
+      await user.clear(nameInput);
+      await user.type(nameInput, "Platform Renamed");
+      await user.click(screen.getByRole("button", { name: /^save changes$/i }));
+
+      await waitFor(() => expect(onSuccess).toHaveBeenCalledOnce());
+      expect(onToggle).toHaveBeenCalledOnce();
+      expect(capturedBody).toMatchObject({ name: "Platform Renamed", visibility: "public" });
+    });
+
+    it("shows an error and does not close when the update fails", async () => {
+      server.use(
+        http.put("*/teams/team-9", () =>
+          HttpResponse.json({ detail: "Access denied" }, { status: 403 }),
+        ),
+      );
+      const onSuccess = vi.fn();
+      const user = userEvent.setup();
+      renderForm({ team: makeTeam(), onSuccess });
+
+      await user.click(screen.getByRole("button", { name: /^save changes$/i }));
+
+      // A 403 is sanitized to a friendly, non-leaky message rather than echoing
+      // the raw backend detail.
+      await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/permission/i));
+      expect(onSuccess).not.toHaveBeenCalled();
     });
   });
 });
