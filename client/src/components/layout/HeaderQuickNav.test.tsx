@@ -339,6 +339,87 @@ describe("HeaderQuickNav", () => {
     expect(mockNavigate).toHaveBeenCalledWith("/app/resources?selected=resource-1&search=resource");
   });
 
+  it("navigates to the focused result with keyboard navigation", async () => {
+    vi.mocked(searchAdminEntities).mockResolvedValue({
+      query: "tool",
+      entity_types: ["tools"],
+      limit_per_type: 8,
+      results: {},
+      groups: [
+        {
+          entity_type: "tools",
+          count: 2,
+          items: [
+            { id: "tool-1", name: "Weather Tool" },
+            { id: "tool-2", name: "Calendar Tool" },
+          ],
+        },
+      ],
+      items: [],
+      count: 2,
+    });
+
+    renderQuickNav();
+
+    const input = screen.getByRole("searchbox", { name: "Search" });
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "tool" } });
+    await screen.findByText("Calendar Tool");
+
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+
+    const calendarOption = screen.getByRole("option", { name: /Calendar Tool/ });
+    expect(input).toHaveAttribute("aria-activedescendant", calendarOption.id);
+    expect(calendarOption).toHaveAttribute("aria-selected", "true");
+
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(mockNavigate).toHaveBeenCalledWith("/app/tools?selected=tool-2&search=tool");
+  });
+
+  it("keeps keyboard focus inside result boundaries", async () => {
+    vi.mocked(searchAdminEntities).mockResolvedValue({
+      query: "tool",
+      entity_types: ["tools"],
+      limit_per_type: 8,
+      results: {},
+      groups: [
+        {
+          entity_type: "tools",
+          count: 2,
+          items: [
+            { id: "tool-1", name: "Weather Tool" },
+            { id: "tool-2", name: "Calendar Tool" },
+          ],
+        },
+      ],
+      items: [],
+      count: 2,
+    });
+
+    renderQuickNav();
+
+    const input = screen.getByRole("searchbox", { name: "Search" });
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "tool" } });
+    await screen.findByText("Calendar Tool");
+
+    fireEvent.keyDown(input, { key: "ArrowUp" });
+    expect(screen.getByRole("option", { name: /Weather Tool/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(screen.getByRole("option", { name: /Calendar Tool/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
   it("shows an empty state when no results match", async () => {
     renderQuickNav();
 

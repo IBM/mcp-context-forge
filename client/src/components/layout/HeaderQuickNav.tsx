@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent } from "react";
+import type { FormEvent, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Search } from "lucide-react";
 import { useIntl } from "react-intl";
 import { searchAdminEntities } from "@/api/search";
@@ -61,6 +61,11 @@ interface VisibleSearchItem {
 interface VisibleSearchGroup {
   entity_type: SearchEntityType;
   items: VisibleSearchItem[];
+}
+
+interface VisibleSearchResult {
+  entityType: SearchEntityType;
+  item: VisibleSearchItem;
 }
 
 type ShortcutNavigator = Pick<Navigator, "platform" | "userAgent"> & {
@@ -133,6 +138,7 @@ export function HeaderQuickNav() {
   const [isPopoverOpen, setIsPopoverOpen] = useState(false);
   const [status, setStatus] = useState<SearchStatus>("idle");
   const [groups, setGroups] = useState<GlobalSearchGroup[]>([]);
+  const [focusedResultIndex, setFocusedResultIndex] = useState(-1);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const trimmedQuery = query.trim();
@@ -158,6 +164,20 @@ export function HeaderQuickNav() {
     [groups],
   );
   const hasResults = visibleGroups.length > 0;
+  const visibleResults = useMemo<VisibleSearchResult[]>(
+    () =>
+      visibleGroups.flatMap((group) =>
+        group.items.map((item) => ({
+          entityType: group.entity_type,
+          item,
+        })),
+      ),
+    [visibleGroups],
+  );
+  const activeResultId =
+    focusedResultIndex >= 0 && focusedResultIndex < visibleResults.length
+      ? `quick-nav-result-${focusedResultIndex}`
+      : undefined;
 
   const focusSearchInput = useCallback((select = false) => {
     setIsExpanded(true);
@@ -193,6 +213,10 @@ export function HeaderQuickNav() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [focusSearchInput]);
+
+  useEffect(() => {
+    setFocusedResultIndex(-1);
+  }, [trimmedQuery, visibleResults.length]);
 
   useEffect(() => {
     if (trimmedQuery.length < MIN_QUERY_LENGTH) {
@@ -250,6 +274,38 @@ export function HeaderQuickNav() {
   const firstResult = visibleGroups[0]?.items[0];
   const firstResultEntity = visibleGroups[0]?.entity_type;
 
+  const handleSearchKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Escape") {
+      setIsPopoverOpen(false);
+      setFocusedResultIndex(-1);
+      return;
+    }
+
+    if (visibleResults.length === 0) return;
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setIsPopoverOpen(true);
+      setFocusedResultIndex((prev) => Math.min(prev + 1, visibleResults.length - 1));
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setIsPopoverOpen(true);
+      setFocusedResultIndex((prev) => Math.max(prev - 1, 0));
+      return;
+    }
+
+    if (event.key === "Enter" && focusedResultIndex >= 0) {
+      const focusedResult = visibleResults[focusedResultIndex];
+      if (focusedResult) {
+        event.preventDefault();
+        handleResultSelect(focusedResult.entityType, focusedResult.item);
+      }
+    }
+  };
+
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (firstResult && firstResultEntity) {
@@ -304,11 +360,23 @@ export function HeaderQuickNav() {
         </div>
         <div className="pb-1">
           {group.items.map((item) => {
+            const resultIndex = visibleResults.findIndex(
+              (result) => result.entityType === group.entity_type && result.item.id === item.id,
+            );
+            const isFocused = resultIndex === focusedResultIndex;
+
             return (
               <button
+                id={`quick-nav-result-${resultIndex}`}
                 key={`${group.entity_type}-${item.id}`}
                 type="button"
-                className="flex w-full flex-col gap-0.5 px-3 py-2 text-left transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
+                role="option"
+                tabIndex={-1}
+                aria-selected={isFocused}
+                className={cn(
+                  "flex w-full flex-col gap-0.5 px-3 py-2 text-left transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:outline-none",
+                  isFocused ? "bg-muted" : "",
+                )}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => handleResultSelect(group.entity_type, item)}
               >
@@ -354,12 +422,16 @@ export function HeaderQuickNav() {
                 setQuery(event.target.value);
                 setIsPopoverOpen(true);
               }}
+              onKeyDown={handleSearchKeyDown}
               onFocus={() => {
                 setIsExpanded(true);
                 setIsPopoverOpen(true);
               }}
               onBlur={() => setIsExpanded(query.length > 0)}
               aria-label={intl.formatMessage({ id: "common.search" })}
+              aria-controls="quick-nav-results"
+              aria-activedescendant={activeResultId}
+              aria-expanded={isPopoverOpen && (isExpanded || query.length > 0)}
               data-expanded={isExpanded}
               autoComplete="off"
               placeholder={
@@ -387,7 +459,11 @@ export function HeaderQuickNav() {
           className="w-80 max-w-[calc(100vw-2rem)] p-0"
           onOpenAutoFocus={(event) => event.preventDefault()}
         >
-          <div role="listbox" aria-label={intl.formatMessage({ id: "common.search.results" })}>
+          <div
+            id="quick-nav-results"
+            role="listbox"
+            aria-label={intl.formatMessage({ id: "common.search.results" })}
+          >
             {renderSearchContent()}
           </div>
         </PopoverContent>
