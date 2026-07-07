@@ -46,19 +46,21 @@ function CopyValue({ label, value }: { label: string; value: string }) {
   );
 }
 
+interface ResourceDetailsPanelProps {
+  resources: NonNullable<ResourceRead>[];
+  gatewaySlug: string;
+  open: boolean;
+  onClose: () => void;
+  onDeleteResource?: (resourceId: string) => void;
+}
+
 export function ResourceDetailsPanel({
   resources,
   gatewaySlug,
   open,
   onClose,
   onDeleteResource,
-}: {
-  resources: NonNullable<ResourceRead>[];
-  gatewaySlug: string;
-  open: boolean;
-  onClose: () => void;
-  onDeleteResource?: (resourceId: string) => void;
-}) {
+}: ResourceDetailsPanelProps) {
   const intl = useIntl();
   const [selectedResource, setSelectedResource] = useState<NonNullable<ResourceRead> | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -103,43 +105,11 @@ export function ResourceDetailsPanel({
   useEffect(() => {
     if (!open) return;
     const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-        onClose();
-      }
+      if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
-
-  // Focus trap: keep focus within panel when open
-  useEffect(() => {
-    if (!open) return;
-
-    let isRedirecting = false;
-
-    const handleFocusTrap = (e: FocusEvent) => {
-      if (isRedirecting) return;
-
-      const panel = document.querySelector('[role="region"][aria-hidden="false"]');
-      const closeButton = closeButtonRef.current;
-      if (!panel || !closeButton) return;
-
-      const target = e.target as Element | null;
-      if (!target || panel.contains(target) || target === closeButton) return;
-      if (target.closest("[data-radix-popper-content-wrapper]")) return;
-
-      if (document.activeElement !== closeButton) {
-        isRedirecting = true;
-        closeButton.focus();
-        isRedirecting = false;
-      }
-    };
-
-    document.addEventListener("focusin", handleFocusTrap, true);
-    return () => document.removeEventListener("focusin", handleFocusTrap, true);
-  }, [open]);
 
   const getVisibilityLabel = useCallback(
     (value?: string | null) => {
@@ -169,6 +139,7 @@ export function ResourceDetailsPanel({
         role="region"
         aria-labelledby={headingId}
         aria-hidden={!open}
+        inert={!open}
         data-state={open ? "open" : "closed"}
         className={cn(
           "absolute inset-y-0 right-0 z-20 flex w-[min(1236px,calc(100%-2rem))] border-l border-border bg-popover text-[13px] shadow-lg",

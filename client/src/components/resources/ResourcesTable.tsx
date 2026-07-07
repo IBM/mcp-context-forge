@@ -53,7 +53,14 @@ export function ResourcesTable({
             key={resource.id}
             data-state={selectedResourceId === resource.id ? "selected" : undefined}
             onClick={() => onSelectResource(resource)}
-            className="cursor-pointer"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onSelectResource(resource);
+              }
+            }}
+            className="cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
           >
             <TableCell className="px-4 py-3 text-sm text-foreground">
               <span className="line-clamp-1">{resource.title || resource.name}</span>
@@ -69,8 +76,8 @@ export function ResourcesTable({
                   variant="ghost"
                   size="icon-xs"
                   aria-label={intl.formatMessage(
-                    { id: "resources.table.copyName" },
-                    { name: resource.uriTemplate || resource.uri },
+                    { id: "resources.table.copyUri" },
+                    { uri: resource.uriTemplate || resource.uri },
                   )}
                   className="ml-4 size-4 shrink-0 text-muted-foreground hover:text-foreground"
                   onClick={(e) => {

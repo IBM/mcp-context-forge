@@ -1,10 +1,8 @@
-import { useState, useMemo, useCallback, useRef, memo } from "react";
-import { useEffect } from "react";
+import { useState, useMemo, useCallback, useRef, useEffect, memo } from "react";
 import { useIntl } from "react-intl";
 import { Plus, EllipsisVertical, FileText } from "lucide-react";
 import { toast } from "sonner";
 import { useQuery } from "@/hooks/useQuery";
-import { useRouter } from "@/router";
 import { resourcesApi } from "@/api/resources";
 import { ApiError } from "@/api/client";
 import { extractApiErrorDetail, sanitizeError } from "@/utils/errors";
@@ -65,7 +63,7 @@ function buildGroups(
     }
 
     group.resources.push(resource);
-    group.isActive ||= resource.enabled; // Short-circuit OR
+    group.isActive = group.isActive || !!resource.enabled;
   }
   return Array.from(map.values());
 }
@@ -104,6 +102,12 @@ const ResourceGroupCard = memo(function ResourceGroupCard({
               )}
             </span>
             <span
+              role="img"
+              aria-label={intl.formatMessage({
+                id: group.isActive
+                  ? "resources.details.status.active"
+                  : "resources.details.status.inactive",
+              })}
               className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${group.isActive ? "bg-tool-status-active" : "bg-tool-status-inactive"}`}
             />
           </div>
@@ -199,7 +203,6 @@ function AddResourcesCard({ onAddResource }: { onAddResource: () => void }) {
 export function Resources() {
   const intl = useIntl();
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const { path } = useRouter();
   const [showForm, setShowForm] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<ResourceGroup | null>(null);
   const [isDetailsPanelOpen, setIsDetailsPanelOpen] = useState(false);
@@ -222,10 +225,6 @@ export function Resources() {
       enabled: !isLoading,
     },
   );
-  const selectedSearchResourceId = useMemo(() => {
-    const queryString = path.split("?")[1] ?? "";
-    return new URLSearchParams(queryString).get("selected")?.trim() || null;
-  }, [path]);
 
   const gatewayNameById = useMemo(() => {
     const gateways: NonNullable<GatewayRead>[] = (gatewaysData?.gateways ?? []).filter(
