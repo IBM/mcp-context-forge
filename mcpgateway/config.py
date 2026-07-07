@@ -445,6 +445,15 @@ class Settings(BaseSettings):
         description="Paths exempt from CSRF protection",
     )
 
+    @field_validator("csrf_exempt_paths", mode="after")
+    @classmethod
+    def ensure_internal_mcp_csrf_exempt(cls, v: List[str]) -> List[str]:
+        """Keep trusted loopback MCP dispatch CSRF-exempt even with env overrides."""
+        required_path = "/_internal/mcp/"
+        if required_path in v:
+            return v
+        return [*v, required_path]
+
     # JSON Schema Validation for registration (Tool Input Schemas, Prompt schemas, etc)
     json_schema_validation_strict: bool = Field(default=True, description="Strict schema validation mode - reject invalid JSON schemas")
 
