@@ -6,7 +6,24 @@ import { http, HttpResponse } from "msw";
 import { toast } from "sonner";
 import { server } from "@/test/mocks/server";
 import enMessages from "@/i18n/locales/en-US";
+import type { Team } from "@/types/team";
 import { useTeamForm } from "./useTeamForm";
+
+const makeTeam = (overrides: Partial<Team> = {}): Team => ({
+  id: "team-1",
+  name: "Engineering",
+  slug: "engineering",
+  description: "Eng team",
+  created_by: "admin@example.com",
+  is_personal: false,
+  visibility: "public",
+  max_members: 50,
+  member_count: 3,
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+  is_active: true,
+  ...overrides,
+});
 
 vi.mock("sonner", () => ({
   toast: {
@@ -243,6 +260,138 @@ describe("useTeamForm", () => {
       const { result } = renderHook(() => useTeamForm());
 
       act(() => result.current.setName("Engineering"));
+
+      await act(async () => {
+        await result.current.handleSubmit(fakeSubmit(), onSuccess);
+      });
+
+      await waitFor(() => expect(result.current.error).toBeTruthy());
+      expect(onSuccess).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("edit mode", () => {
+    it("pre-populates state from the team and flags edit mode", () => {
+      const team = makeTeam();
+      const { result } = renderHook(() => useTeamForm(team));
+
+      expect(result.current.isEditMode).toBe(true);
+      expect(result.current.name).toBe("Engineering");
+      expect(result.current.description).toBe("Eng team");
+      expect(result.current.visibility).toBe("public");
+      expect(result.current.maxMembers).toBe("50");
+    });
+
+    it("PUTs to the team endpoint and calls onSuccess without touching members", async () => {
+      let capturedBody: unknown;
+      const memberCalls: unknown[] = [];
+      server.use(
+        http.put("*/teams/team-1", async ({ request }) => {
+          capturedBody = await request.json();
+          return HttpResponse.json({ id: "team-1", name: "Renamed" });
+        }),
+        http.post("*/teams/team-1/members", async ({ request }) => {
+          memberCalls.push(await request.json());
+          return HttpResponse.json({}, { status: 201 });
+        }),
+      );
+
+      const onSuccess = vi.fn();
+      const { result } = renderHook(() => useTeamForm(makeTeam()));
+
+      act(() => {
+        result.current.setName("Renamed");
+        result.current.setVisibility("private");
+      });
+
+      await act(async () => {
+        await result.current.handleSubmit(fakeSubmit(), onSuccess);
+      });
+
+      await waitFor(() => expect(onSuccess).toHaveBeenCalledOnce());
+      expect(capturedBody).toMatchObject({ name: "Renamed", visibility: "private" });
+      // max_members was not touched, so it is omitted to preserve the team's value.
+      expect(capturedBody).not.toHaveProperty("max_members");
+      expect(memberCalls).toHaveLength(0);
+      // Edit mode leaves the entered values in place (no reset to create defaults).
+      expect(result.current.name).toBe("Renamed");
+    });
+
+    it("exposes an off-list max_members value as a selectable option", () => {
+      const { result } = renderHook(() => useTeamForm(makeTeam({ max_members: 75 })));
+
+      expect(result.current.maxMembers).toBe("75");
+      // The custom value is merged into the presets in ascending order.
+      expect(result.current.maxMembersOptions).toEqual([
+        "10",
+        "25",
+        "50",
+        "75",
+        "100",
+        "250",
+        "500",
+      ]);
+    });
+
+    it("keeps only the presets when max_members matches one", () => {
+      const { result } = renderHook(() => useTeamForm(makeTeam({ max_members: 100 })));
+
+      expect(result.current.maxMembersOptions).toEqual(["10", "25", "50", "100", "250", "500"]);
+    });
+
+    it("sends max_members only when the user changes it", async () => {
+      let capturedBody: Record<string, unknown> = {};
+      server.use(
+        http.put("*/teams/team-1", async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({ id: "team-1", name: "Engineering" });
+        }),
+      );
+
+      const { result } = renderHook(() => useTeamForm(makeTeam({ max_members: 50 })));
+
+      act(() => result.current.setMaxMembers("250"));
+
+      await act(async () => {
+        await result.current.handleSubmit(fakeSubmit());
+      });
+
+      await waitFor(() => expect(capturedBody).toHaveProperty("max_members"));
+      expect(capturedBody.max_members).toBe(250);
+    });
+
+    it("omits max_members for a team with no override so it stays unset", async () => {
+      let capturedBody: Record<string, unknown> = {};
+      server.use(
+        http.put("*/teams/team-1", async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({ id: "team-1", name: "Engineering" });
+        }),
+      );
+
+      // max_members undefined => the form shows the default ("100") but must not
+      // pin the team to it on save.
+      const { result } = renderHook(() => useTeamForm(makeTeam({ max_members: undefined })));
+
+      act(() => result.current.setName("Engineering Renamed"));
+
+      await act(async () => {
+        await result.current.handleSubmit(fakeSubmit());
+      });
+
+      await waitFor(() => expect(capturedBody).toHaveProperty("name"));
+      expect(capturedBody).not.toHaveProperty("max_members");
+    });
+
+    it("sets an error and skips onSuccess when the update fails", async () => {
+      server.use(
+        http.put("*/teams/team-1", () =>
+          HttpResponse.json({ detail: "Update failed" }, { status: 403 }),
+        ),
+      );
+
+      const onSuccess = vi.fn();
+      const { result } = renderHook(() => useTeamForm(makeTeam()));
 
       await act(async () => {
         await result.current.handleSubmit(fakeSubmit(), onSuccess);

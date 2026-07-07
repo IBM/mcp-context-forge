@@ -61,5 +61,10 @@
   "teams.members.success": "{count, plural, one {# team member change} other {# team member changes}} saved successfully",
   "teams.members.loading.sr": "Loading team members, please wait...",
   "teams.members.error.load": "Failed to load team members",
-  "teams.members.error.save": "Failed to save team members"
+  "teams.members.error.save": "Failed to save team members",
+  "teams.edit.title": "Edit team",
+  "teams.edit.description": "Update your team's details and visibility settings.",
+  "teams.edit.saving": "Saving...",
+  "teams.edit.submit": "Save changes",
+  "teams.edit.success": "Team updated successfully"
 }
