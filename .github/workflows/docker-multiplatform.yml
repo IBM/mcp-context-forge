@@ -149,9 +149,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: linux/s390x
-            runner: ubuntu-24.04-s390x
-            suffix: s390x
+          # s390x temporarily disabled on push due to runner capacity issues.
+          # Re-enable by uncommenting the entry below once runners are stable.
+          # - platform: linux/s390x
+          #   runner: ubuntu-24.04-s390x
+          #   suffix: s390x
           - platform: linux/ppc64le
             runner: ubuntu-24.04-ppc64le
             suffix: ppc64le
@@ -257,7 +259,8 @@ jobs:
             cache_mode: max
             qemu: false
             build_on_pr: false
-            build_on_merge_group: false   # push and workflow_dispatch only — not merge queue
+            build_on_merge_group: false   # not merge queue
+            build_on_push: false          # temporarily disabled — s390x runner capacity issues
           - platform: linux/ppc64le
             runner: ubuntu-24.04-ppc64le
             suffix: ppc64le
@@ -267,9 +270,9 @@ jobs:
             build_on_merge_group: false   # push and workflow_dispatch only — not merge queue
 
     # Use a cheap ubuntu-24.04 runner when this matrix entry's gate would skip all
-    # work steps anyway (merge_group or PR with build_on_merge_group/build_on_pr=false).
+    # work steps anyway (merge_group, PR, or push with the corresponding flag=false).
     # This avoids acquiring scarce s390x/ppc64le native runner slots for no-op jobs.
-    runs-on: ${{ (github.event_name == 'merge_group' && matrix.build_on_merge_group != true || github.event_name == 'pull_request' && matrix.build_on_pr != true) && 'ubuntu-24.04' || matrix.runner }}
+    runs-on: ${{ (github.event_name == 'merge_group' && matrix.build_on_merge_group != true || github.event_name == 'pull_request' && matrix.build_on_pr != true || github.event_name == 'push' && matrix.build_on_push == false) && 'ubuntu-24.04' || matrix.runner }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -294,6 +297,10 @@ jobs:
           fi
           if [[ "${{ github.event_name }}" == "merge_group" && "${{ matrix.build_on_merge_group }}" != "true" ]]; then
             echo "Skipping ${{ matrix.suffix }}: build_on_merge_group=false"
+            build="false"
+          fi
+          if [[ "${{ github.event_name }}" == "push" && "${{ matrix.build_on_push }}" == "false" ]]; then
+            echo "Skipping ${{ matrix.suffix }}: build_on_push=false"
             build="false"
           fi
           echo "build=${build}" >> "${GITHUB_OUTPUT}"
@@ -400,7 +407,7 @@ jobs:
           provenance: false
 
       - name: Export digest
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.gate.outputs.build == 'true'
         run: |
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
@@ -408,7 +415,7 @@ jobs:
           echo "Digest for ${{ matrix.suffix }}: $digest"
 
       - name: Upload digest
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.gate.outputs.build == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: digest-${{ matrix.suffix }}
@@ -455,11 +462,11 @@ jobs:
 
           echo "Creating multiplatform manifest..."
 
-          # All four architectures are built on every non-PR push
+          # s390x temporarily excluded from the manifest due to runner capacity issues.
+          # Re-add "${IMAGE}:s390x-${SHA}" once s390x builds are re-enabled.
           IMAGES=(
             "${IMAGE}:amd64-${SHA}"
             "${IMAGE}:arm64-${SHA}"
-            "${IMAGE}:s390x-${SHA}"
             "${IMAGE}:ppc64le-${SHA}"
           )
 
