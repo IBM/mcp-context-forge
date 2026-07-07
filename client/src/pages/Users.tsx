@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import { useIntl } from "react-intl";
 import { toast } from "sonner";
@@ -7,10 +7,12 @@ import { UserForm } from "@/components/users/UserForm";
 import { UsersTable } from "@/components/users/UsersTable";
 import { DeleteUserDialog } from "@/components/users/DeleteUserDialog";
 import { useUsersList } from "@/hooks/useUsersList";
+import { useQuery } from "@/hooks/useQuery";
 import { usersApi } from "@/api/users";
 import { ApiError } from "@/api/client";
 import { createOptimisticUser } from "@/hooks/useUserForm";
 import { useAuthContext } from "@/auth/AuthContext";
+import { useRouter } from "@/router";
 import type { User, CreateUserRequest, UpdateUserRequest } from "@/types/user";
 
 const DEFAULT_PAGE_SIZE = 10;
@@ -25,6 +27,7 @@ const ERROR_MESSAGES = {
 export function Users() {
   const intl = useIntl();
   const { user: currentUser } = useAuthContext();
+  const { path } = useRouter();
   const [limit, setLimit] = useState(DEFAULT_PAGE_SIZE);
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -32,11 +35,21 @@ export function Users() {
   const [userToEdit, setUserToEdit] = useState<User | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
+  const selectedSearchUserId = useMemo(() => {
+    const queryString = path.split("?")[1] ?? "";
+    return new URLSearchParams(queryString).get("selected")?.trim() || null;
+  }, [path]);
   const {
     data: response,
     error: queryError,
     isLoading,
   } = useUsersList({ limit: DEFAULT_PAGE_SIZE });
+  const selectedSearchUserPath = selectedSearchUserId
+    ? `/auth/email/admin/users/${encodeURIComponent(selectedSearchUserId)}`
+    : null;
+  const { data: selectedSearchUser } = useQuery<User>(selectedSearchUserPath, {
+    enabled: Boolean(selectedSearchUserId),
+  });
 
   const {
     execute: executeLoadMore,
@@ -56,6 +69,17 @@ export function Users() {
       console.error("Failed to load more users:", loadMoreError);
     }
   }, [loadMoreError]);
+
+  useEffect(() => {
+    if (!selectedSearchUserId) return;
+
+    const loadedUser = allUsers.find((user) => user.email === selectedSearchUserId);
+    const user = selectedSearchUser ?? loadedUser;
+    if (!user) return;
+
+    setUserToEdit(user);
+    setIsFormOpen(true);
+  }, [allUsers, selectedSearchUser, selectedSearchUserId]);
 
   const handleLoadMore = useCallback(async () => {
     if (!nextCursor || isLoadingMore) return;

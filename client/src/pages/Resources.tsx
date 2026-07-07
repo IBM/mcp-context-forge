@@ -1,8 +1,9 @@
-import { useState, useMemo, memo, useCallback, useRef } from "react";
+import { useState, useMemo, memo, useCallback, useEffect, useRef } from "react";
 import { useIntl } from "react-intl";
 import { Plus, EllipsisVertical, FileText } from "lucide-react";
 import { toast } from "sonner";
 import { useQuery } from "@/hooks/useQuery";
+import { useRouter } from "@/router";
 import { resourcesApi } from "@/api/resources";
 import { ApiError } from "@/api/client";
 import { extractApiErrorDetail } from "@/utils/errors";
@@ -152,6 +153,7 @@ function AddResourcesCard({ onAddResource }: { onAddResource: () => void }) {
 export function Resources() {
   const intl = useIntl();
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const { path } = useRouter();
   const [showForm, setShowForm] = useState(false);
   const [selectedResource, setSelectedResource] = useState<NonNullable<ResourceRead> | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -172,6 +174,10 @@ export function Resources() {
       enabled: !isLoading,
     },
   );
+  const selectedSearchResourceId = useMemo(() => {
+    const queryString = path.split("?")[1] ?? "";
+    return new URLSearchParams(queryString).get("selected")?.trim() || null;
+  }, [path]);
 
   const gatewayNameById = useMemo(() => {
     const gateways: NonNullable<GatewayRead>[] = (gatewaysData?.gateways ?? []).filter(
@@ -219,6 +225,16 @@ export function Resources() {
   const handleResourceClick = (resource: NonNullable<ResourceRead>) => {
     setSelectedResource(resource);
   };
+
+  useEffect(() => {
+    if (!selectedSearchResourceId) return;
+    const resource = data
+      ?.filter((item): item is NonNullable<ResourceRead> => item !== null)
+      .find((item) => item.id === selectedSearchResourceId);
+    if (resource) {
+      setSelectedResource(resource);
+    }
+  }, [data, selectedSearchResourceId]);
 
   const handleClosePanel = () => {
     setSelectedResource(null);
