@@ -66,6 +66,29 @@ def test_validate_extension_metadata_rejects_unsafe_csp() -> None:
         validate_extension_metadata({MCP_UI_EXTENSION: {"csp": {"resourceDomains": ["data:image/png;base64,abc"]}}})
 
 
+def test_validate_extension_metadata_applies_content_security_to_csp_sources(monkeypatch) -> None:
+    """MCP Apps CSP source validation should honor centralized content-security rules."""
+    # First-Party
+    from mcpgateway.services.content_security import ContentPatternError
+
+    class FakeContentSecurityService:
+        def __init__(self) -> None:
+            self.checked_sources = []
+
+        def detect_malicious_patterns(self, content, content_type="content", user_email=None, ip_address=None) -> None:
+            self.checked_sources.append((content, content_type))
+            if content == "https://blocked.example":
+                raise ContentPatternError("blocked.example", content_type=content_type, violation_type="custom_blocked_pattern")
+
+    fake_service = FakeContentSecurityService()
+    monkeypatch.setattr(mcp_apps_mod, "get_content_security_service", lambda: fake_service)
+
+    with pytest.raises(MCPAppsValidationError, match="MCP Apps CSP source"):
+        validate_extension_metadata({MCP_UI_EXTENSION: {"csp": {"connectDomains": ["https://blocked.example"]}}})
+
+    assert fake_service.checked_sources == [("https://blocked.example", "MCP Apps CSP source")]
+
+
 def test_validate_ui_resource_requires_text_html_when_enabled(monkeypatch) -> None:
     """ui:// resources must be MCP App HTML when MCP Apps are enabled."""
     monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
@@ -331,6 +354,26 @@ def test_cleanup_expired_sessions_rolls_back_on_failure() -> None:
         mcp_app_session_service.cleanup_expired_sessions(db)
 
     db.rollback.assert_called_once()
+
+
+def test_cleanup_expired_sessions_commits_each_deleted_batch() -> None:
+    """Cleanup should release each expired-session batch with its own commit."""
+    first_ids = MagicMock()
+    first_ids.scalars.return_value.all.return_value = ["session-1", "session-2"]
+    first_delete = MagicMock(rowcount=2)
+    second_ids = MagicMock()
+    second_ids.scalars.return_value.all.return_value = ["session-3", "session-4"]
+    second_delete = MagicMock(rowcount=2)
+    third_ids = MagicMock()
+    third_ids.scalars.return_value.all.return_value = []
+
+    db = MagicMock()
+    db.execute.side_effect = [first_ids, first_delete, second_ids, second_delete, third_ids]
+
+    deleted_count = mcp_app_session_service.cleanup_expired_sessions(db, batch_size=2)
+
+    assert deleted_count == 4
+    assert db.commit.call_count == 2
 
 
 @pytest.mark.asyncio

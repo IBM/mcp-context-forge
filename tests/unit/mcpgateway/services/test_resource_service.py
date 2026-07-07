@@ -17,6 +17,7 @@ This suite provides complete test coverage for:
 
 # Standard
 from datetime import datetime, timezone
+import logging
 import mimetypes
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -7429,7 +7430,7 @@ class TestInvokeResourceCoverageEdges:
         assert out == "ok"
 
     @pytest.mark.asyncio
-    async def test_invoke_resource_sse_returns_content_when_session_teardown_raises(self):
+    async def test_invoke_resource_sse_returns_content_when_session_teardown_raises(self, caplog):
         """A late SSE reader teardown error must not discard an already received resource."""
         # First-Party
         from mcpgateway.services.resource_service import ResourceService
@@ -7472,8 +7473,10 @@ class TestInvokeResourceCoverageEdges:
             MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             MockCS.return_value.__aexit__ = AsyncMock(side_effect=RuntimeError("unhandled errors in a TaskGroup"))
 
-            out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
+            with caplog.at_level(logging.WARNING, logger="mcpgateway.services.resource_service"):
+                out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
         assert out == "<html>ok</html>"
+        assert "Ignoring SSE teardown error after resource content was received" in caplog.text
 
     @pytest.mark.asyncio
     async def test_invoke_resource_sse_retries_once_when_first_read_returns_no_content(self):
@@ -7491,21 +7494,18 @@ class TestInvokeResourceCoverageEdges:
             id="gw-1", name="GW", url="http://gw.test", transport="sse", ca_certificate=None, ca_certificate_sig=None, auth_type=None, auth_value={}, oauth_config=None, auth_query_params=None
         )
 
-        first_session = AsyncMock()
-        first_session.initialize = AsyncMock(return_value=None)
-        first_session.read_resource = AsyncMock(side_effect=RuntimeError("upstream SSE closed"))
+        session = AsyncMock()
+        session.initialize = AsyncMock(return_value=None)
+        session.read_resource = AsyncMock(
+            side_effect=[
+                RuntimeError("upstream SSE closed"),
+                MagicMock(contents=[MagicMock(text="<html>retry-ok</html>", blob=None)]),
+            ]
+        )
 
-        second_session = AsyncMock()
-        second_session.initialize = AsyncMock(return_value=None)
-        second_session.read_resource = AsyncMock(return_value=MagicMock(contents=[MagicMock(text="<html>retry-ok</html>", blob=None)]))
-
-        first_context = MagicMock()
-        first_context.__aenter__ = AsyncMock(return_value=first_session)
-        first_context.__aexit__ = AsyncMock(return_value=False)
-
-        second_context = MagicMock()
-        second_context.__aenter__ = AsyncMock(return_value=second_session)
-        second_context.__aexit__ = AsyncMock(return_value=False)
+        session_context = MagicMock()
+        session_context.__aenter__ = AsyncMock(return_value=session)
+        session_context.__aexit__ = AsyncMock(return_value=False)
 
         with (
             patch(
@@ -7524,7 +7524,7 @@ class TestInvokeResourceCoverageEdges:
             patch("mcpgateway.services.resource_service.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
             patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
-            patch("mcpgateway.services.resource_service.ClientSession", side_effect=[first_context, second_context]),
+            patch("mcpgateway.services.resource_service.ClientSession", return_value=session_context) as mock_client_session,
         ):
             mock_trace.get = MagicMock(return_value=None)
             mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
@@ -7533,6 +7533,8 @@ class TestInvokeResourceCoverageEdges:
             out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
 
         assert out == "<html>retry-ok</html>"
+        mock_client_session.assert_called_once()
+        assert session.read_resource.await_count == 2
         mock_sleep.assert_awaited_once_with(0.05)
 
     @pytest.mark.asyncio

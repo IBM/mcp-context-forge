@@ -2107,6 +2107,28 @@ class ResourceService(BaseService):
                             if isinstance(user_identity, UserCtx):
                                 headers.update(build_identity_headers(user_identity))
 
+                        async def _read_resource_text_with_retry(session: "ClientSession", uri: str, transport_name: str) -> str:
+                            """Retry remote resource reads on an already established MCP session."""
+                            max_read_attempts = 2
+                            for attempt in range(1, max_read_attempts + 1):
+                                try:
+                                    resource_response = await _read_resource_with_meta(session, uri, meta_data)
+                                    return getattr(getattr(resource_response, "contents")[0], "text")
+                                except Exception as exc:
+                                    if attempt == max_read_attempts:
+                                        raise
+                                    sanitized_error = sanitize_exception_message(str(exc), auth_query_params_decrypted)
+                                    logger.debug(
+                                        "Retrying resource read after empty upstream response for %s over %s (attempt %d/%d): %s",
+                                        uri,
+                                        transport_name,
+                                        attempt + 1,
+                                        max_read_attempts,
+                                        sanitized_error,
+                                    )
+                                    await asyncio.sleep(0.05)
+                            raise RuntimeError("Resource read retry loop exhausted")
+
                         async def connect_to_sse_session(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
                             """
                             Connect to an SSE-based gateway and retrieve the text content of a resource.
@@ -2172,8 +2194,7 @@ class ResourceService(BaseService):
                                         transport_type=TransportType.SSE,
                                         httpx_client_factory=_get_httpx_client_factory,
                                     ) as upstream:
-                                        resource_response = await _read_resource_with_meta(upstream.session, uri, meta_data)
-                                        resource_text = getattr(getattr(resource_response, "contents")[0], "text")
+                                        resource_text = await _read_resource_text_with_retry(upstream.session, uri, "SSE")
                                         resource_received = True
                                 else:
                                     # Fallback: per-call session when no downstream session id is in scope.
@@ -2183,14 +2204,13 @@ class ResourceService(BaseService):
                                     ):
                                         async with ClientSession(read_stream, write_stream) as session:
                                             _ = await session.initialize()
-                                            resource_response = await _read_resource_with_meta(session, uri, meta_data)
-                                            resource_text = getattr(getattr(resource_response, "contents")[0], "text")
+                                            resource_text = await _read_resource_text_with_retry(session, uri, "SSE")
                                             resource_received = True
                             except Exception as e:
                                 # Sanitize error message to prevent URL secrets from leaking in logs
                                 sanitized_error = sanitize_exception_message(str(e), auth_query_params_decrypted)
                                 if resource_received:
-                                    logger.debug("Ignoring SSE teardown error after resource content was received: %s", sanitized_error)
+                                    logger.warning("Ignoring SSE teardown error after resource content was received: %s", sanitized_error)
                                     return resource_text
                                 logger.debug("Exception while connecting to sse gateway: %s", sanitized_error)
                                 return None
@@ -2258,8 +2278,7 @@ class ResourceService(BaseService):
                                         transport_type=TransportType.STREAMABLE_HTTP,
                                         httpx_client_factory=_get_httpx_client_factory,
                                     ) as upstream:
-                                        resource_response = await _read_resource_with_meta(upstream.session, uri, meta_data)
-                                        resource_text = getattr(getattr(resource_response, "contents")[0], "text")
+                                        resource_text = await _read_resource_text_with_retry(upstream.session, uri, "StreamableHTTP")
                                         resource_received = True
                                 else:
                                     # Fallback: per-call session when no downstream session id is in scope.
@@ -2270,14 +2289,13 @@ class ResourceService(BaseService):
                                     ):
                                         async with ClientSession(read_stream, write_stream) as session:
                                             _ = await session.initialize()
-                                            resource_response = await _read_resource_with_meta(session, uri, meta_data)
-                                            resource_text = getattr(getattr(resource_response, "contents")[0], "text")
+                                            resource_text = await _read_resource_text_with_retry(session, uri, "StreamableHTTP")
                                             resource_received = True
                             except Exception as e:
                                 # Sanitize error message to prevent URL secrets from leaking in logs
                                 sanitized_error = sanitize_exception_message(str(e), auth_query_params_decrypted)
                                 if resource_received:
-                                    logger.debug("Ignoring StreamableHTTP teardown error after resource content was received: %s", sanitized_error)
+                                    logger.warning("Ignoring StreamableHTTP teardown error after resource content was received: %s", sanitized_error)
                                     return resource_text
                                 logger.debug("Exception while connecting to streamablehttp gateway: %s", sanitized_error)
                                 return None
@@ -2287,19 +2305,10 @@ class ResourceService(BaseService):
                             set_span_attribute(span, "success", True)
                             set_span_attribute(span, "duration.ms", (time.monotonic() - start_time) * 1000)
 
-                        resource_text = None
-                        max_attempts = 2
-                        for attempt in range(1, max_attempts + 1):
-                            if (gateway_transport).lower() == "sse":
-                                # Note: meta_data not passed - MCP SDK 1.25.0 read_resource() doesn't support it
-                                resource_text = await connect_to_sse_session(server_url=gateway_url, authentication=headers, uri=uri)
-                            else:
-                                # Note: meta_data not passed - MCP SDK 1.25.0 read_resource() doesn't support it
-                                resource_text = await connect_to_streamablehttp_server(server_url=gateway_url, authentication=headers, uri=uri)
-                            if resource_text is not None or attempt == max_attempts:
-                                break
-                            logger.debug("Retrying resource invocation after empty upstream response for %s (attempt %d/%d)", uri, attempt + 1, max_attempts)
-                            await asyncio.sleep(0.05)
+                        if (gateway_transport).lower() == "sse":
+                            resource_text = await connect_to_sse_session(server_url=gateway_url, authentication=headers, uri=uri)
+                        else:
+                            resource_text = await connect_to_streamablehttp_server(server_url=gateway_url, authentication=headers, uri=uri)
                         if span and resource_text is not None and is_output_capture_enabled("resource.read"):
                             set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload({"content": resource_text}))
                         success = True  # Mark as successful before returning

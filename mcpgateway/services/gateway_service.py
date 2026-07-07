@@ -1717,40 +1717,45 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # receives the plain dict directly (see assignment above).
             tool_auth_value = encode_auth(auth_value) if isinstance(auth_value, dict) else auth_value
 
-            tools = [
-                DbTool(
-                    original_name=tool.name,
-                    custom_name=tool.name,
-                    custom_name_slug=slugify(tool.name),
-                    display_name=generate_display_name(tool.name),
-                    title=_resolve_tool_title(tool),
-                    url=preparation.normalized_url,
-                    original_description=tool.description,
-                    description=tool.description,
-                    integration_type="MCP",  # Gateway-discovered tools are MCP type
-                    request_type=tool.request_type,
-                    headers=tool.headers,
-                    input_schema=tool.input_schema,
-                    output_schema=tool.output_schema,
-                    annotations=tool.annotations,
-                    extension_metadata=_validated_tool_extension_metadata(getattr(tool, "extension_metadata", None)),
-                    jsonpath_filter=tool.jsonpath_filter,
-                    auth_type=auth_type,
-                    auth_value=tool_auth_value,
-                    # Federation metadata
-                    created_by=created_by or "system",
-                    created_from_ip=created_from_ip,
-                    created_via="federation",  # These are federated tools
-                    created_user_agent=created_user_agent,
-                    federation_source=gateway.name,
-                    version=1,
-                    # Inherit team assignment from gateway
-                    team_id=team_id,
-                    owner_email=owner_email,
-                    visibility=visibility,
-                )
-                for tool in tools
-            ]
+            db_tools = []
+            for tool in tools:
+                try:
+                    db_tools.append(
+                        DbTool(
+                            original_name=tool.name,
+                            custom_name=tool.name,
+                            custom_name_slug=slugify(tool.name),
+                            display_name=generate_display_name(tool.name),
+                            title=_resolve_tool_title(tool),
+                            url=preparation.normalized_url,
+                            original_description=tool.description,
+                            description=tool.description,
+                            integration_type="MCP",  # Gateway-discovered tools are MCP type
+                            request_type=tool.request_type,
+                            headers=tool.headers,
+                            input_schema=tool.input_schema,
+                            output_schema=tool.output_schema,
+                            annotations=tool.annotations,
+                            extension_metadata=_validated_tool_extension_metadata(getattr(tool, "extension_metadata", None)),
+                            jsonpath_filter=tool.jsonpath_filter,
+                            auth_type=auth_type,
+                            auth_value=tool_auth_value,
+                            # Federation metadata
+                            created_by=created_by or "system",
+                            created_from_ip=created_from_ip,
+                            created_via="federation",  # These are federated tools
+                            created_user_agent=created_user_agent,
+                            federation_source=gateway.name,
+                            version=1,
+                            # Inherit team assignment from gateway
+                            team_id=team_id,
+                            owner_email=owner_email,
+                            visibility=visibility,
+                        )
+                    )
+                except Exception as e:
+                    logger.warning("Failed to process tool %s during gateway registration: %s", getattr(tool, "name", "unknown"), e)
+                    continue
 
             # Create resource DB models with upsert logic for ORPHANED resources only
             # Query for existing ORPHANED resources (gateway_id IS NULL or points to non-existent gateway)
@@ -1784,71 +1789,75 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             db_resources = []
             for r in resources:
-                mime_type = getattr(r, "mime_type", None) or mimetypes.guess_type(r.uri)[0] or ("text/plain" if isinstance(r.content, str) else "application/octet-stream")
-                r_team_id = getattr(r, "team_id", None) or team_id
-                r_owner_email = getattr(r, "owner_email", None) or effective_owner
-                r_visibility = getattr(r, "visibility", None) or visibility
-                r_extension_metadata = _validated_resource_extension_metadata(r.uri, mime_type, getattr(r, "extension_metadata", None))
+                try:
+                    mime_type = getattr(r, "mime_type", None) or mimetypes.guess_type(r.uri)[0] or ("text/plain" if isinstance(r.content, str) else "application/octet-stream")
+                    r_team_id = getattr(r, "team_id", None) or team_id
+                    r_owner_email = getattr(r, "owner_email", None) or effective_owner
+                    r_visibility = getattr(r, "visibility", None) or visibility
+                    r_extension_metadata = _validated_resource_extension_metadata(r.uri, mime_type, getattr(r, "extension_metadata", None))
 
-                # Check if there's an orphaned resource with matching unique key
-                lookup_key = (r_team_id, r_owner_email, r.uri)
-                if lookup_key in orphaned_resources_map:
-                    # Update orphaned resource - reassign to new gateway
-                    existing = orphaned_resources_map[lookup_key]
-                    existing.name = r.name
-                    existing.description = r.description
-                    existing.mime_type = mime_type
-                    existing.uri_template = r.uri_template or None
-                    existing.extension_metadata = r_extension_metadata
-                    existing.text_content = r.content if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else None
-                    existing.binary_content = (
-                        r.content.encode() if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else r.content if isinstance(r.content, bytes) else None
-                    )
-                    existing.size = len(r.content) if r.content else 0
-                    existing.title = getattr(r, "title", None)
-                    existing.tags = getattr(r, "tags", []) or []
-                    existing.federation_source = gateway.name
-                    existing.modified_by = created_by
-                    existing.modified_from_ip = created_from_ip
-                    existing.modified_via = "federation"
-                    existing.modified_user_agent = created_user_agent
-                    existing.updated_at = datetime.now(timezone.utc)
-                    existing.visibility = r_visibility
-                    # Note: gateway_id will be set when gateway is created (relationship)
-                    db_resources.append(existing)
-                else:
-                    # Create new resource
-                    db_resources.append(
-                        DbResource(
-                            uri=r.uri,
-                            name=r.name,
-                            title=getattr(r, "title", None),
-                            description=r.description,
-                            mime_type=mime_type,
-                            uri_template=r.uri_template or None,
-                            extension_metadata=r_extension_metadata,
-                            text_content=r.content if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else None,
-                            binary_content=(
-                                r.content.encode()
-                                if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str)
-                                else r.content
-                                if isinstance(r.content, bytes)
-                                else None
-                            ),
-                            size=len(r.content) if r.content else 0,
-                            tags=getattr(r, "tags", []) or [],
-                            created_by=created_by or "system",
-                            created_from_ip=created_from_ip,
-                            created_via="federation",
-                            created_user_agent=created_user_agent,
-                            import_batch_id=None,
-                            federation_source=gateway.name,
-                            version=1,
-                            team_id=r_team_id,
-                            owner_email=r_owner_email,
-                            visibility=r_visibility,
+                    # Check if there's an orphaned resource with matching unique key
+                    lookup_key = (r_team_id, r_owner_email, r.uri)
+                    if lookup_key in orphaned_resources_map:
+                        # Update orphaned resource - reassign to new gateway
+                        existing = orphaned_resources_map[lookup_key]
+                        existing.name = r.name
+                        existing.description = r.description
+                        existing.mime_type = mime_type
+                        existing.uri_template = r.uri_template or None
+                        existing.extension_metadata = r_extension_metadata
+                        existing.text_content = r.content if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else None
+                        existing.binary_content = (
+                            r.content.encode() if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else r.content if isinstance(r.content, bytes) else None
                         )
-                    )
+                        existing.size = len(r.content) if r.content else 0
+                        existing.title = getattr(r, "title", None)
+                        existing.tags = getattr(r, "tags", []) or []
+                        existing.federation_source = gateway.name
+                        existing.modified_by = created_by
+                        existing.modified_from_ip = created_from_ip
+                        existing.modified_via = "federation"
+                        existing.modified_user_agent = created_user_agent
+                        existing.updated_at = datetime.now(timezone.utc)
+                        existing.visibility = r_visibility
+                        # Note: gateway_id will be set when gateway is created (relationship)
+                        db_resources.append(existing)
+                    else:
+                        # Create new resource
+                        db_resources.append(
+                            DbResource(
+                                uri=r.uri,
+                                name=r.name,
+                                title=getattr(r, "title", None),
+                                description=r.description,
+                                mime_type=mime_type,
+                                uri_template=r.uri_template or None,
+                                extension_metadata=r_extension_metadata,
+                                text_content=r.content if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else None,
+                                binary_content=(
+                                    r.content.encode()
+                                    if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str)
+                                    else r.content
+                                    if isinstance(r.content, bytes)
+                                    else None
+                                ),
+                                size=len(r.content) if r.content else 0,
+                                tags=getattr(r, "tags", []) or [],
+                                created_by=created_by or "system",
+                                created_from_ip=created_from_ip,
+                                created_via="federation",
+                                created_user_agent=created_user_agent,
+                                import_batch_id=None,
+                                federation_source=gateway.name,
+                                version=1,
+                                team_id=r_team_id,
+                                owner_email=r_owner_email,
+                                visibility=r_visibility,
+                            )
+                        )
+                except Exception as e:
+                    logger.warning("Failed to process resource %s during gateway registration: %s", getattr(r, "uri", "unknown"), e)
+                    continue
 
             # Create prompt DB models with upsert logic for ORPHANED prompts only
             # Query for existing ORPHANED prompts (gateway_id IS NULL or points to non-existent gateway)
@@ -1943,7 +1952,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 auth_query_params=preparation.auth_query_params_encrypted,  # Encrypted query param auth
                 oauth_config=oauth_config,
                 passthrough_headers=gateway.passthrough_headers,
-                tools=tools,
+                tools=db_tools,
                 resources=db_resources,
                 prompts=db_prompts,
                 # Gateway metadata

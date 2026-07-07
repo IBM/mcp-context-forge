@@ -213,6 +213,62 @@ class TestAppBridgeEndpoints:
         invoke_tool_mock.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_appbridge_create_session_denies_missing_resources_read_permission_before_resource_lookup(self, monkeypatch, mock_db):
+        """AppBridge session creation should enforce resources.read before resource visibility lookup."""
+        # First-Party
+        from mcpgateway import main as main_mod
+        from mcpgateway.middleware import rbac as rbac_mod
+
+        mock_permission_service = AsyncMock()
+        mock_permission_service.check_permission.return_value = False
+        monkeypatch.setattr(rbac_mod, "PermissionService", lambda _db: mock_permission_service)
+        monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", AsyncMock(return_value=None))
+
+        request = FakeRequest(
+            {"resourceUri": "ui://widgets/example", "serverId": "server-1"},
+            headers={"mcp-session-id": "mcp-session-1"},
+        )
+
+        with patch.object(main_mod.resource_service, "read_resource", new=AsyncMock()) as read_mock:
+            with pytest.raises(HTTPException) as excinfo:
+                await main_mod.create_mcp_app_session(request=request, db=mock_db, user={"email": "user@example.com"})
+
+        assert excinfo.value.status_code == 403
+        mock_permission_service.check_permission.assert_awaited_once()
+        assert mock_permission_service.check_permission.await_args.kwargs["permission"] == "resources.read"
+        read_mock.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_appbridge_rpc_denies_missing_tools_execute_permission_before_tool_call(self, monkeypatch, mock_db):
+        """AppBridge RPC should enforce tools.execute before session lookup or tool invocation."""
+        # First-Party
+        from mcpgateway import main as main_mod
+        from mcpgateway.middleware import rbac as rbac_mod
+
+        mock_permission_service = AsyncMock()
+        mock_permission_service.check_permission.return_value = False
+        monkeypatch.setattr(rbac_mod, "PermissionService", lambda _db: mock_permission_service)
+        monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", AsyncMock(return_value=None))
+
+        request = FakeRequest(
+            {"jsonrpc": "2.0", "id": "1", "method": "tools/call", "params": {"name": "helper"}},
+            headers={"mcp-session-id": "mcp-session-1"},
+        )
+
+        with (
+            patch.object(main_mod.mcp_app_session_service, "get_valid_session") as get_session_mock,
+            patch.object(main_mod.tool_service, "invoke_tool", new=AsyncMock()) as invoke_tool_mock,
+        ):
+            with pytest.raises(HTTPException) as excinfo:
+                await main_mod.handle_mcp_app_session_rpc("app-session-1", request=request, db=mock_db, user={"email": "user@example.com"})
+
+        assert excinfo.value.status_code == 403
+        mock_permission_service.check_permission.assert_awaited_once()
+        assert mock_permission_service.check_permission.await_args.kwargs["permission"] == "tools.execute"
+        get_session_mock.assert_not_called()
+        invoke_tool_mock.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_execute_rpc_initialize_advertises_authorized_extensions(self, monkeypatch, mock_db):
         """Initialize should include extension capabilities for authorized callers."""
         # First-Party
@@ -439,6 +495,34 @@ class TestAppBridgeEndpoints:
                 await main_mod.create_mcp_app_session.__wrapped__(request=request, db=mock_db, user={"email": "user@example.com"})
 
         read_mock.assert_awaited_once()
+        create_mock.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_create_session_denies_wrong_team_ui_resource_scope_without_persisting(self, monkeypatch, mock_db):
+        """App session creation should use token team scope when checking UI resource visibility."""
+        # First-Party
+        from mcpgateway import main as main_mod
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        request = FakeRequest(
+            {"resourceUri": "ui://widgets/team-a-only", "serverId": "server-1"},
+            headers={"mcp-session-id": "mcp-session-1"},
+        )
+
+        with (
+            patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
+            patch.object(main_mod, "get_rpc_filter_context", return_value=("user@example.com", ["team-b"], False)),
+            patch.object(main_mod.resource_service, "read_resource", new=AsyncMock(side_effect=ResourceNotFoundError("Resource not found"))) as read_mock,
+            patch.object(main_mod.mcp_app_session_service, "create_session") as create_mock,
+        ):
+            with pytest.raises(ResourceNotFoundError):
+                await main_mod.create_mcp_app_session.__wrapped__(request=request, db=mock_db, user={"email": "user@example.com", "token_teams": ["team-b"]})
+
+        read_mock.assert_awaited_once()
+        assert read_mock.await_args.kwargs["resource_uri"] == "ui://widgets/team-a-only"
+        assert read_mock.await_args.kwargs["server_id"] == "server-1"
+        assert read_mock.await_args.kwargs["user"] == "user@example.com"
+        assert read_mock.await_args.kwargs["token_teams"] == ["team-b"]
         create_mock.assert_not_called()
 
     @pytest.mark.asyncio

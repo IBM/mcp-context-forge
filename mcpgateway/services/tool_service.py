@@ -81,7 +81,7 @@ from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.content_security import ContentSecurityService
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.mcp_apps import is_app_visible_tool, is_model_visible_tool, optional_extension_metadata, validate_extension_metadata
+from mcpgateway.services.mcp_apps import is_app_visible_tool, is_model_visible_tool, mcp_apps_enabled, optional_extension_metadata, validate_extension_metadata
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.metrics_query_service import get_top_performers_combined
@@ -3104,7 +3104,7 @@ class ToolService(BaseService):
                     payload["title"] = row["title"]
                 if extension_metadata is not None:
                     payload["extensionMetadata"] = extension_metadata
-                if not is_model_visible_tool(payload):
+                if mcp_apps_enabled() and not is_model_visible_tool(payload):
                     continue
                 if row["output_schema"] is not None:
                     payload["outputSchema"] = row["output_schema"]
@@ -4194,19 +4194,20 @@ class ToolService(BaseService):
                 tool = tools[0]
             else:
                 visibility_priority = {"team": 0, "private": 1, "public": 2}
-                accessible_tools: list[tuple[int, Any]] = []
+                accessible_tools: list[tuple[int, int, Any]] = []
                 for candidate in tools:
                     tool_dict = {"visibility": candidate.visibility, "team_id": candidate.team_id, "owner_email": candidate.owner_email}
                     if await self._check_tool_access(db, tool_dict, user_email, token_teams):
+                        name_priority = 0 if getattr(candidate, "name", None) == name else 1
                         priority = visibility_priority.get(candidate.visibility, 99)
-                        accessible_tools.append((priority, candidate))
+                        accessible_tools.append((name_priority, priority, candidate))
 
                 if not accessible_tools:
                     raise ToolNotFoundError(f"Tool not found: {name}")
 
-                accessible_tools.sort(key=lambda item: item[0])
-                best_priority = accessible_tools[0][0]
-                best_tools = [candidate for priority, candidate in accessible_tools if priority == best_priority]
+                accessible_tools.sort(key=lambda item: (item[0], item[1]))
+                best_name_priority, best_visibility_priority = accessible_tools[0][0], accessible_tools[0][1]
+                best_tools = [candidate for name_priority, priority, candidate in accessible_tools if name_priority == best_name_priority and priority == best_visibility_priority]
                 if len(best_tools) > 1:
                     raise ToolInvocationError(f"Multiple tools found with name '{name}' at same priority level. Tool name is ambiguous.")
                 tool = best_tools[0]
@@ -4920,21 +4921,22 @@ class ToolService(BaseService):
                 # _check_tool_access (same rules as list_tools) and prioritize.
                 # Priority (lower is better): team (0) > private (1) > public (2)
                 visibility_priority = {"team": 0, "private": 1, "public": 2}
-                accessible_tools: list[tuple[int, Any]] = []
+                accessible_tools: list[tuple[int, int, Any]] = []
                 for t in tools:
                     tool_dict = {"visibility": t.visibility, "team_id": t.team_id, "owner_email": t.owner_email}
                     if await self._check_tool_access(db, tool_dict, user_email, token_teams):
+                        name_priority = 0 if getattr(t, "name", None) == name else 1
                         priority = visibility_priority.get(t.visibility, 99)
-                        accessible_tools.append((priority, t))
+                        accessible_tools.append((name_priority, priority, t))
 
                 if not accessible_tools:
                     raise ToolNotFoundError(f"Tool not found: {name}")
 
-                accessible_tools.sort(key=lambda x: x[0])
+                accessible_tools.sort(key=lambda x: (x[0], x[1]))
 
                 # Check for ambiguity at the highest priority level
-                best_priority = accessible_tools[0][0]
-                best_tools = [t for p, t in accessible_tools if p == best_priority]
+                best_name_priority, best_visibility_priority = accessible_tools[0][0], accessible_tools[0][1]
+                best_tools = [t for name_priority, p, t in accessible_tools if name_priority == best_name_priority and p == best_visibility_priority]
 
                 if len(best_tools) > 1:
                     raise ToolInvocationError(f"Multiple tools found with name '{name}' at same priority level. Tool name is ambiguous.")

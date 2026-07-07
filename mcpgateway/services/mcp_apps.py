@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import fresh_db_session
 from mcpgateway.db import MCPAppSession as DbMCPAppSession
+from mcpgateway.services.content_security import ContentPatternError, get_content_security_service
 
 logger = logging.getLogger(__name__)
 
@@ -187,6 +188,10 @@ def _validate_csp(csp: Any) -> None:
                 raise MCPAppsValidationError(f"{source_lower} is not allowed for MCP Apps CSP")
             if source_lower.startswith(_BLOCKED_SOURCE_PREFIXES):
                 raise MCPAppsValidationError(f"Blocked MCP Apps CSP source: {source}")
+            try:
+                get_content_security_service().detect_malicious_patterns(source, content_type="MCP Apps CSP source")
+            except ContentPatternError as exc:
+                raise MCPAppsValidationError(str(exc)) from exc
 
 
 def _validate_sandbox(sandbox: Any) -> None:
@@ -278,17 +283,25 @@ def tool_audience(extension_metadata: Optional[Dict[str, Any]], protocol_meta: A
     return _as_string_list(audience, field_name="visibility")
 
 
+def _tool_visibility_inputs(tool: Any) -> tuple[Any, Any]:
+    """Return extension metadata and protocol metadata from ORM rows or dict payloads."""
+    if isinstance(tool, dict):
+        return (
+            tool.get("extensionMetadata") or tool.get("extension_metadata"),
+            tool.get("_meta") or tool.get("meta"),
+        )
+    return getattr(tool, "extension_metadata", None), getattr(tool, "meta", None)
+
+
 def is_model_visible_tool(tool: Any) -> bool:
     """Return whether a tool should appear in model-facing tools/list."""
-    extension_metadata = getattr(tool, "extension_metadata", None) if not isinstance(tool, dict) else tool.get("extensionMetadata") or tool.get("extension_metadata")
-    protocol_meta = getattr(tool, "meta", None) if not isinstance(tool, dict) else tool.get("_meta") or tool.get("meta")
+    extension_metadata, protocol_meta = _tool_visibility_inputs(tool)
     return "model" in tool_audience(extension_metadata, protocol_meta)
 
 
 def is_app_visible_tool(tool: Any) -> bool:
     """Return whether a tool can be invoked through AppBridge."""
-    extension_metadata = getattr(tool, "extension_metadata", None) if not isinstance(tool, dict) else tool.get("extensionMetadata") or tool.get("extension_metadata")
-    protocol_meta = getattr(tool, "meta", None) if not isinstance(tool, dict) else tool.get("_meta") or tool.get("meta")
+    extension_metadata, protocol_meta = _tool_visibility_inputs(tool)
     return "app" in tool_audience(extension_metadata, protocol_meta)
 
 
@@ -508,9 +521,9 @@ class MCPAppSessionService:
                 result = db.execute(delete(DbMCPAppSession).where(DbMCPAppSession.id.in_(expired_ids)))
                 deleted_count = result.rowcount if isinstance(result.rowcount, int) else len(expired_ids)
                 total_deleted += deleted_count
+                db.commit()
                 if len(expired_ids) < effective_batch_size:
                     break
-            db.commit()
             return total_deleted
         except Exception:
             logger.exception("Failed to clean up expired MCP Apps sessions")

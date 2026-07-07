@@ -4213,6 +4213,15 @@ class TestCrudEndpoints:
             await create_resource(resource_input, request, db=MagicMock(), user={"email": "user@example.com"})
         assert excinfo.value.status_code == 422
 
+        # First-Party
+        from mcpgateway.services.mcp_apps import MCPAppsValidationError
+
+        monkeypatch.setattr("mcpgateway.main.resource_service.register_resource", AsyncMock(side_effect=MCPAppsValidationError("bad MCP Apps metadata")))
+        with pytest.raises(HTTPException) as excinfo:
+            await create_resource(resource_input, request, db=MagicMock(), user={"email": "user@example.com"})
+        assert excinfo.value.status_code == 422
+        assert excinfo.value.detail == "bad MCP Apps metadata"
+
         # Third-Party
         from sqlalchemy.exc import IntegrityError
 
@@ -4241,6 +4250,27 @@ class TestCrudEndpoints:
         with pytest.raises(HTTPException) as excinfo:
             await update_resource("res-1", ResourceUpdate(name="Res Updated"), request, db=MagicMock(), user={"email": "user@example.com"})
         assert excinfo.value.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_update_resource_mcp_apps_validation_error_maps_to_422(self, monkeypatch, allow_permission):
+        request = _make_request("/resources/res-1")
+        monkeypatch.setattr(
+            "mcpgateway.main.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {
+                "modified_by": "user",
+                "modified_from_ip": "127.0.0.1",
+                "modified_via": "api",
+                "modified_user_agent": "test",
+            },
+        )
+        # First-Party
+        from mcpgateway.services.mcp_apps import MCPAppsValidationError
+
+        monkeypatch.setattr("mcpgateway.main.resource_service.update_resource", AsyncMock(side_effect=MCPAppsValidationError("bad MCP Apps metadata")))
+        with pytest.raises(HTTPException) as excinfo:
+            await update_resource("res-1", ResourceUpdate(name="Res Updated"), request, db=MagicMock(), user={"email": "user@example.com"})
+        assert excinfo.value.status_code == 422
+        assert excinfo.value.detail == "bad MCP Apps metadata"
 
     @pytest.mark.asyncio
     async def test_delete_resource_permission_not_found_and_error(self, monkeypatch, allow_permission):

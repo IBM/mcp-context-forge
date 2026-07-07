@@ -5536,6 +5536,40 @@ class TestUpdateToolBranches:
         db.commit.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_list_server_mcp_tool_definitions_keeps_app_only_metadata_when_mcp_apps_disabled(self, tool_service, monkeypatch):
+        """Server MCP definitions should not apply MCP Apps visibility filtering when the feature is disabled."""
+        # First-Party
+        from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", False)
+        db = MagicMock()
+        rows = [
+            {
+                "name": "widget_helper",
+                "title": None,
+                "description": "Helper",
+                "input_schema": None,
+                "output_schema": None,
+                "annotations": {},
+                "extension_metadata": {MCP_UI_EXTENSION: {"audience": ["app"]}},
+            },
+        ]
+        db.execute.return_value.mappings.return_value.all.return_value = rows
+
+        result = await tool_service.list_server_mcp_tool_definitions(db, "server-1")
+
+        assert result == [
+            {
+                "name": "widget_helper",
+                "description": "Helper",
+                "inputSchema": {"type": "object", "properties": {}},
+                "annotations": {},
+                "extensionMetadata": {MCP_UI_EXTENSION: {"audience": ["app"]}},
+            }
+        ]
+        db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_update_multiple_fields(self, tool_service):
         """Updating multiple optional fields covers many branches."""
         tool = MagicMock(spec=DbTool)

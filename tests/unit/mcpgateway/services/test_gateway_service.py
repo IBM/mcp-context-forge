@@ -48,7 +48,7 @@ from mcpgateway.services.gateway_service import (
     GatewayService,
     OAuthToolValidationError,
 )
-from mcpgateway.services.mcp_apps import MCPAppsValidationError, MCP_UI_EXTENSION
+from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
 
 # ---------------------------------------------------------------------------
 # Helpers & global monkey-patches
@@ -621,39 +621,49 @@ class TestGatewayService:
         assert added_gateway.resources[0].extension_metadata == ui_resource_metadata
 
     @pytest.mark.asyncio
-    async def test_register_gateway_rejects_unsafe_federated_mcp_apps_metadata(self, gateway_service, monkeypatch):
-        """Initial gateway registration validates federated MCP Apps metadata."""
+    async def test_register_gateway_skips_unsafe_federated_mcp_apps_metadata(self, gateway_service, monkeypatch):
+        """Initial gateway registration skips invalid tool metadata and keeps valid tools."""
         # First-Party
         from mcpgateway.schemas import ToolCreate
 
-        tool = ToolCreate(
+        unsafe_tool = ToolCreate(
             name="unsafe_app_tool",
             description="Unsafe upstream metadata",
             input_schema={"type": "object", "properties": {}},
             extension_metadata={MCP_UI_EXTENSION: {"csp": {"resourceDomains": ["'unsafe-inline'"]}}},
         )
+        valid_tool = ToolCreate(
+            name="safe_tool",
+            description="Safe upstream metadata",
+            input_schema={"type": "object", "properties": {}},
+            extension_metadata={MCP_UI_EXTENSION: {"visibility": ["model"]}},
+        )
 
         db = MagicMock()
         db.execute = Mock(return_value=_make_execute_result(scalar=None, scalars_list=[]))
-        db.rollback = Mock()
 
         monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.GatewayRead.model_validate", lambda x: MagicMock(masked=lambda: x))
 
         gateway_service._check_gateway_uniqueness = MagicMock(return_value=None)
-        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {}, "resources": {}}, [tool], [], [], []))
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {}, "resources": {}}, [unsafe_tool, valid_tool], [], [], []))
+        gateway_service._notify_gateway_added = AsyncMock()
+        gateway_service.convert_gateway_to_read = MagicMock(return_value=MagicMock())
 
-        with pytest.raises(MCPAppsValidationError, match="'unsafe-inline' is not allowed"):
-            await gateway_service.register_gateway(db, _make_gateway())
+        await gateway_service.register_gateway(db, _make_gateway())
+
+        added_gateway = db.add.call_args[0][0]
+        assert [tool.original_name for tool in added_gateway.tools] == ["safe_tool"]
 
     @pytest.mark.asyncio
-    async def test_register_gateway_rejects_unsafe_federated_ui_resource_metadata(self, gateway_service, monkeypatch):
-        """Initial gateway registration validates federated ui:// resource policy."""
+    async def test_register_gateway_skips_unsafe_federated_ui_resource_metadata(self, gateway_service, monkeypatch):
+        """Initial gateway registration skips invalid UI resource metadata and keeps valid resources."""
         # First-Party
         from mcpgateway.schemas import ResourceCreate
 
         monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
 
-        resource = ResourceCreate(
+        unsafe_resource = ResourceCreate(
             uri="ui://apps/unsafe",
             name="Unsafe App UI",
             description="Unsafe upstream UI",
@@ -666,18 +676,35 @@ class TestGatewayService:
                 }
             },
         )
+        valid_resource = ResourceCreate(
+            uri="ui://apps/safe",
+            name="Safe App UI",
+            description="Safe upstream UI",
+            mime_type="text/html;profile=mcp-app",
+            content="",
+            extension_metadata={
+                MCP_UI_EXTENSION: {
+                    "csp": {"connectDomains": ["https://api.example.com"], "resourceDomains": ["https://cdn.example.com"]},
+                    "sandbox": ["allow-scripts"],
+                }
+            },
+        )
 
         db = MagicMock()
         db.execute = Mock(return_value=_make_execute_result(scalar=None, scalars_list=[]))
-        db.rollback = Mock()
 
         monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.GatewayRead.model_validate", lambda x: MagicMock(masked=lambda: x))
 
         gateway_service._check_gateway_uniqueness = MagicMock(return_value=None)
-        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {}, "resources": {}}, [], [resource], [], []))
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {}, "resources": {}}, [], [unsafe_resource, valid_resource], [], []))
+        gateway_service._notify_gateway_added = AsyncMock()
+        gateway_service.convert_gateway_to_read = MagicMock(return_value=MagicMock())
 
-        with pytest.raises(MCPAppsValidationError, match="Wildcard CSP sources"):
-            await gateway_service.register_gateway(db, _make_gateway())
+        await gateway_service.register_gateway(db, _make_gateway())
+
+        added_gateway = db.add.call_args[0][0]
+        assert [resource.uri for resource in added_gateway.resources] == ["ui://apps/safe"]
 
     @pytest.mark.asyncio
     async def test_register_gateway_inactive_name_conflict(self, gateway_service, test_db):

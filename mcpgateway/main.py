@@ -185,6 +185,7 @@ from mcpgateway.services.mcp_apps import (
     build_mcp_apps_capabilities,
     filter_model_visible_tools,
     get_mcp_app_session_cleanup_service,
+    MCPAppsValidationError,
     mcp_app_session_service,
     mcp_apps_enabled,
     serialize_resource_content_for_mcp,
@@ -6380,6 +6381,9 @@ async def create_resource(
         # Handle validation errors from Pydantic
         logger.error(f"Validation error while creating resource: {e}")
         raise HTTPException(status_code=422, detail=ErrorFormatter.format_validation_error(e))
+    except MCPAppsValidationError as e:
+        logger.error(f"MCP Apps validation error while creating resource: {e}")
+        raise HTTPException(status_code=422, detail=str(e))
     except IntegrityError as e:
         logger.error(f"Integrity error while creating resource: {e}")
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
@@ -6604,6 +6608,9 @@ async def update_resource(
     except ValidationError as e:
         logger.error(f"Validation error while updating resource {resource_id}: {e}")
         raise HTTPException(status_code=422, detail=ErrorFormatter.format_validation_error(e))
+    except MCPAppsValidationError as e:
+        logger.error(f"MCP Apps validation error while updating resource {resource_id}: {e}")
+        raise HTTPException(status_code=422, detail=str(e))
     except IntegrityError as e:
         logger.error(f"Integrity error while updating resource {resource_id}: {e}")
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
