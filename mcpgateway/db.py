@@ -3319,7 +3319,7 @@ class Tool(Base):
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
-
+    auto_approval_status: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # Relationship for loading team names (only active teams)
     # Uses default lazy loading - team name is only loaded when accessed
     # For list/admin views, use explicit joinedload(DbTool.email_team) for single-query loading
