@@ -4,6 +4,8 @@
   "prompts.error.loading": "Error loading prompts",
   "prompts.add.title": "Add prompts",
   "prompts.add.description": "Connect a MCP server to load prompts automatically, or build a reusable template with named arguments.",
+  "prompts.restPromptsGroup": "REST prompts",
   "prompts.card.moreOptionsFor": "More options for {name}",
-  "prompts.card.viewDetails": "View details"
+  "prompts.card.viewDetails": "View details",
+  "prompts.card.morePromptsTitle": "{count, plural, one {# more prompt} other {# more prompts}}"
 }
