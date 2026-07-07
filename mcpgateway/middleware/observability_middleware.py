@@ -152,6 +152,9 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         trace_id = None
         span_id = None
         start_time = time.time()
+        trace_id_token = None
+        plugins_trace_id_token = None
+        span_id_token = None
 
         try:
             # Start trace (creates independent observability session)
@@ -177,10 +180,12 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             # Store trace_id in request state for use in route handlers
             request.state.trace_id = trace_id
 
-            # Set trace_id in context variable for access throughout async call stack
-            current_trace_id.set(trace_id)
+            # Set trace_id in context variable for access throughout async call stack.
+            # Tokens are reset in the finally block below so stale trace/span context
+            # never bleeds into later requests that reuse the same task/context.
+            trace_id_token = current_trace_id.set(trace_id)
             # Bridge: also set the framework's ContextVar so the plugin executor sees it
-            plugins_trace_id.set(trace_id)
+            plugins_trace_id_token = plugins_trace_id.set(trace_id)
 
             # If another middleware created request session, attach trace for SQL instrumentation
             # SQL instrumentation creates its own observability sessions (instrumentation/sqlalchemy.py:58)
@@ -202,88 +207,101 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             # (mirrors current_trace_id.set() above) — deep service-layer call sites
             # (e.g. tool_service.py, prompt_service.py invoke_hook() sites) don't have
             # access to the Request object and read this instead.
-            current_span_id.set(span_id)
+            span_id_token = current_span_id.set(span_id)
 
         except Exception as e:
             # If trace setup failed, log and continue without tracing
             logger.warning(f"Failed to setup observability trace: {e}")
-            # Continue without tracing
+            # Reset whichever ContextVars were set before the failure, then continue without tracing
+            if span_id_token is not None:
+                current_span_id.reset(span_id_token)
+            if plugins_trace_id_token is not None:
+                plugins_trace_id.reset(plugins_trace_id_token)
+            if trace_id_token is not None:
+                current_trace_id.reset(trace_id_token)
             return await call_next(request)
 
         # Process request (trace is set up at this point)
         try:
-            response = await call_next(request)
-            status_code = response.status_code
+            try:
+                response = await call_next(request)
+                status_code = response.status_code
 
-            # End span successfully (creates independent observability session)
-            if span_id:
-                try:
-                    self.service.end_span(
-                        span_id,
-                        status="ok" if status_code < 400 else "error",
-                        attributes={
-                            "http.status_code": status_code,
-                            "http.response_size": response.headers.get("content-length"),
-                        },
-                    )
-                except Exception as end_span_error:
-                    logger.warning(f"Failed to end span {span_id}: {end_span_error}")
+                # End span successfully (creates independent observability session)
+                if span_id:
+                    try:
+                        self.service.end_span(
+                            span_id,
+                            status="ok" if status_code < 400 else "error",
+                            attributes={
+                                "http.status_code": status_code,
+                                "http.response_size": response.headers.get("content-length"),
+                            },
+                        )
+                    except Exception as end_span_error:
+                        logger.warning(f"Failed to end span {span_id}: {end_span_error}")
 
-            # End trace (creates independent observability session)
-            if trace_id:
-                duration_ms = (time.time() - start_time) * 1000
-                try:
-                    self.service.end_trace(
-                        trace_id,
-                        status="ok" if status_code < 400 else "error",
-                        http_status_code=status_code,
-                        attributes={"response_time_ms": duration_ms},
-                    )
-                except Exception as end_trace_error:
-                    logger.warning(f"Failed to end trace {trace_id}: {end_trace_error}")
+                # End trace (creates independent observability session)
+                if trace_id:
+                    duration_ms = (time.time() - start_time) * 1000
+                    try:
+                        self.service.end_trace(
+                            trace_id,
+                            status="ok" if status_code < 400 else "error",
+                            http_status_code=status_code,
+                            attributes={"response_time_ms": duration_ms},
+                        )
+                    except Exception as end_trace_error:
+                        logger.warning(f"Failed to end trace {trace_id}: {end_trace_error}")
 
-            return response
+                return response
 
-        except Exception as e:
-            # Log exception in span
-            if span_id:
-                try:
-                    sanitized_error = sanitize_for_log(sanitize_trace_text(str(e)))
-                    self.service.end_span(
-                        span_id,
-                        status="error",
-                        status_message=sanitized_error,
-                        attributes={
-                            "exception.type": type(e).__name__,
-                            "exception.message": sanitized_error,
-                        },
-                    )
+            except Exception as e:
+                # Log exception in span
+                if span_id:
+                    try:
+                        sanitized_error = sanitize_for_log(sanitize_trace_text(str(e)))
+                        self.service.end_span(
+                            span_id,
+                            status="error",
+                            status_message=sanitized_error,
+                            attributes={
+                                "exception.type": type(e).__name__,
+                                "exception.message": sanitized_error,
+                            },
+                        )
 
-                    # Add exception event (creates independent observability session)
-                    self.service.add_event(
-                        span_id,
-                        name="exception",
-                        severity="error",
-                        message=sanitized_error,
-                        exception_type=type(e).__name__,
-                        exception_message=sanitized_error,
-                        exception_stacktrace=traceback.format_exc(),
-                    )
-                except Exception as log_error:
-                    logger.warning(f"Failed to log exception in span: {log_error}")
+                        # Add exception event (creates independent observability session)
+                        self.service.add_event(
+                            span_id,
+                            name="exception",
+                            severity="error",
+                            message=sanitized_error,
+                            exception_type=type(e).__name__,
+                            exception_message=sanitized_error,
+                            exception_stacktrace=traceback.format_exc(),
+                        )
+                    except Exception as log_error:
+                        logger.warning(f"Failed to log exception in span: {log_error}")
 
-            # End trace with error (creates independent observability session)
-            if trace_id:
-                try:
-                    sanitized_error = sanitize_for_log(sanitize_trace_text(str(e)))
-                    self.service.end_trace(
-                        trace_id,
-                        status="error",
-                        status_message=sanitized_error,
-                        http_status_code=500,
-                    )
-                except Exception as trace_error:
-                    logger.warning(f"Failed to end trace: {trace_error}")
+                # End trace with error (creates independent observability session)
+                if trace_id:
+                    try:
+                        sanitized_error = sanitize_for_log(sanitize_trace_text(str(e)))
+                        self.service.end_trace(
+                            trace_id,
+                            status="error",
+                            status_message=sanitized_error,
+                            http_status_code=500,
+                        )
+                    except Exception as trace_error:
+                        logger.warning(f"Failed to end trace: {trace_error}")
 
-            # Re-raise the original exception
-            raise
+                # Re-raise the original exception
+                raise
+        finally:
+            # Always reset ContextVars so trace/span context never leaks into
+            # whatever request or task reuses this context next.
+            current_span_id.reset(span_id_token)
+            plugins_trace_id.reset(plugins_trace_id_token)
+            current_trace_id.reset(trace_id_token)

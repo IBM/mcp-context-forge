@@ -277,8 +277,8 @@ class TestRecordPluginMetricsS4Validation:
 
         attrs = mock_service.start_span.call_args.kwargs["attributes"]
         assert "huge_field" in attrs
-        assert len(attrs["huge_field"]) == 256
-        assert attrs["huge_field"] == "x" * 256
+        assert len(attrs["huge_field"]) == 64
+        assert attrs["huge_field"] == "x" * 64
 
     def test_key_count_is_capped(self):
         """A plugin dict with more than the max allowed keys is truncated to the cap."""
@@ -418,6 +418,7 @@ class TestRecordPluginMetricsG2OTelExport:
             patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
             patch("mcpgateway.db.SessionLocal", return_value=mock_session),
             patch("mcpgateway.observability.otel_tracing_enabled", return_value=True),
+            patch("mcpgateway.observability.otel_context_active", return_value=True),
             patch("mcpgateway.observability.create_span", mock_create_span),
         ):
             record_plugin_metrics("trace-1", metadata)
@@ -478,6 +479,7 @@ class TestRecordPluginMetricsG2OTelExport:
             patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
             patch("mcpgateway.db.SessionLocal", return_value=mock_session),
             patch("mcpgateway.observability.otel_tracing_enabled", return_value=True),
+            patch("mcpgateway.observability.otel_context_active", return_value=True),
             patch("mcpgateway.observability.create_span", mock_create_span),
         ):
             record_plugin_metrics("trace-1", metadata)  # should not raise
@@ -506,6 +508,7 @@ class TestRecordPluginMetricsG2OTelExport:
             patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
             patch("mcpgateway.db.SessionLocal", return_value=mock_session),
             patch("mcpgateway.observability.otel_tracing_enabled", return_value=True),
+            patch("mcpgateway.observability.otel_context_active", return_value=True),
             patch("mcpgateway.observability.create_span", mock_create_span),
         ):
             record_plugin_metrics("trace-1", metadata)  # should not raise

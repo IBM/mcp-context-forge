@@ -85,6 +85,8 @@ from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, fresh_db_session, SessionLocal
 from mcpgateway.plugins import get_plugin_manager
+from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
+from mcpgateway.services.observability_service import current_trace_id
 from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.redis_client import _build_ssl_kwargs, build_reatelimiter_ssl_kwargs
@@ -1484,7 +1486,9 @@ async def get_current_user(
                 global_context=global_context,
                 local_contexts=context_table,
                 violations_as_exceptions=True,  # Raise PluginViolationError for auth denials
+                extensions=build_request_extensions(),
             )
+            record_plugin_metrics(current_trace_id.get(), auth_result.metadata)
 
             # If plugin successfully authenticated user, return it
             if auth_result.modified_payload and isinstance(auth_result.modified_payload, dict):

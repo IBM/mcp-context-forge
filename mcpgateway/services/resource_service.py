@@ -60,6 +60,7 @@ from mcpgateway.db import ResourceMetric, ResourceMetricsHourly
 from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
+from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
@@ -2328,7 +2329,9 @@ class ResourceService(BaseService):
                         global_context,
                         local_contexts=plugin_context_table,  # Pass context from previous hooks
                         violations_as_exceptions=True,
+                        extensions=build_request_extensions(),
                     )
+                    record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
                     # Use modified URI if plugin changed it
                     if pre_result.modified_payload:
                         uri = pre_result.modified_payload.uri
@@ -2599,7 +2602,10 @@ class ResourceService(BaseService):
                 # ═══════════════════════════════════════════════════════════════════════════
                 if has_post_fetch:
                     post_payload = ResourcePostFetchPayload(uri=original_uri, content=content)
-                    post_result, _ = await plugin_manager.invoke_hook(ResourceHookType.RESOURCE_POST_FETCH, post_payload, global_context, contexts, violations_as_exceptions=True)
+                    post_result, _ = await plugin_manager.invoke_hook(
+                        ResourceHookType.RESOURCE_POST_FETCH, post_payload, global_context, contexts, violations_as_exceptions=True, extensions=build_request_extensions()
+                    )
+                    record_plugin_metrics(current_trace_id.get(), post_result.metadata)
                     if post_result.modified_payload:
                         content = post_result.modified_payload.content
 

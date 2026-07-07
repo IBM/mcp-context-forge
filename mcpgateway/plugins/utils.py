@@ -8,7 +8,9 @@ Gateway-side plugin utilities.
 """
 
 # Standard
+import itertools
 import logging
+import re
 from typing import Any, Dict, Optional
 
 # Third-Party
@@ -22,35 +24,71 @@ logger = logging.getLogger(__name__)
 #
 # S4 bounds (untrusted plugin output). These are deliberately conservative,
 # defensible defaults -- not a contract mandated by any single plugin:
-#   - Only scalar values (str, int, float, bool) are recorded as-is.
+#   - plugin_name and metric keys must match _IDENTIFIER_RE (bounded length,
+#     restricted charset) before they're allowed to flow into DB span/metric
+#     names, resource ids, or OTel span/attribute names -- these are
+#     plugin-controlled and otherwise unvalidated.
+#   - Only scalar values (str, int, float, bool) are recorded as-is; strings
+#     must additionally match _SAFE_STRING_VALUE_RE (a low-cardinality,
+#     no-free-text charset) -- truncation alone bounds size, not sensitivity.
 #   - A list[str] value (e.g. ["email", "ssn"]) is special-cased: joined into
 #     a single comma-separated string (OTel span attributes don't nest), then
-#     subject to the same string-length cap as any other string value.
+#     subject to the same string-value validation as any other string value.
 #   - Any other type (dict, mixed/non-str list, None, etc.) is dropped.
-#   - At most _MAX_PLUGIN_KEYS keys survive per plugin's metadata dict.
+#   - At most _MAX_PLUGIN_KEYS keys survive per plugin's metadata dict, and
+#     iteration stops (rather than merely skipping) once that cap is hit so a
+#     huge untrusted dict can't force a full scan.
 #   - At most _MAX_PLUGINS_PER_CALL plugin namespaces are processed per call
 #     (result.metadata can in principle carry entries from every plugin that
-#     ran in the hook chain).
-#   - String values (including the joined list form) are truncated to
-#     _MAX_STRING_LENGTH characters rather than dropped.
+#     ran in the hook chain); the cap is applied before the full item list is
+#     materialized.
+#   - list[str] values are only checked for str-ness within the first
+#     _MAX_LIST_ITEMS items, so an oversized untrusted list can't force a full
+#     scan before it's bounded.
 # On drop, only the key name and a short reason are logged -- never the value
 # itself, since it may be malformed/oversized/adversarial plugin output.
 _MAX_PLUGIN_KEYS = 32
-_MAX_STRING_LENGTH = 256
+_MAX_STRING_LENGTH = 64
 _MAX_PLUGINS_PER_CALL = 16
 _MAX_LIST_ITEMS = 32
 
+# Identifier contract for plugin_name / metric field names: these flow into DB
+# span/metric names, resource ids, and OTel span/attribute names, so they're
+# restricted to a short, safe charset rather than trusted as-is.
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 
-def _truncate_str(value: str) -> str:
-    """Truncate a string to the S4 bounded length.
+# Low-cardinality value contract for string metadata values: truncation alone
+# bounds size, not sensitivity, so free text (arbitrary PII, spaces, quotes,
+# etc.) is rejected outright rather than truncated. This intentionally only
+# admits short enum/status/type-name-like tokens.
+_SAFE_STRING_VALUE_RE = re.compile(r"^[A-Za-z0-9_.,:=/-]*$")
+
+
+def _is_valid_identifier(name: Any) -> bool:
+    """Check whether a plugin name or metric field name is safe to use as an identifier.
 
     Args:
-        value: The string to (possibly) truncate.
+        name: Candidate identifier (plugin name or metric field name); treated as untrusted.
 
     Returns:
-        The original string if within bounds, otherwise truncated to
-        ``_MAX_STRING_LENGTH`` characters.
+        True if ``name`` is a string matching the bounded, restricted-charset
+        identifier contract; False otherwise.
     """
+    return isinstance(name, str) and bool(_IDENTIFIER_RE.match(name))
+
+
+def _validate_string_value(value: str) -> Optional[str]:
+    """Validate and bound a single string metadata value (S4).
+
+    Args:
+        value: Candidate string value.
+
+    Returns:
+        The value truncated to ``_MAX_STRING_LENGTH`` if it matches the
+        low-cardinality safe-value charset, otherwise ``None`` (reject).
+    """
+    if not _SAFE_STRING_VALUE_RE.match(value):
+        return None
     if len(value) <= _MAX_STRING_LENGTH:
         return value
     return value[:_MAX_STRING_LENGTH]
@@ -61,8 +99,9 @@ def _sanitize_plugin_metrics(plugin_name: str, raw_metrics: Any) -> Dict[str, An
 
     Untrusted plugin output: only scalar (``str``/``int``/``float``/``bool``) values
     survive as-is; a ``list[str]`` value is joined into a single bounded string;
-    everything else is dropped. Key count and string length are capped. Dropped
-    values are never logged -- only the key name and a short reason.
+    everything else is dropped. Key names, key count, and string values are all
+    validated/capped. Dropped values are never logged -- only the key name and a
+    short reason.
 
     Args:
         plugin_name: Namespacing key this metadata was reported under (e.g. "pii_filter").
@@ -79,22 +118,34 @@ def _sanitize_plugin_metrics(plugin_name: str, raw_metrics: Any) -> Dict[str, An
 
     sanitized: Dict[str, Any] = {}
     for key, value in raw_metrics.items():
-        if not isinstance(key, str):
-            logger.debug("Dropped a plugin metric key for %r: key is not a string", plugin_name)
+        if not _is_valid_identifier(key):
+            logger.debug("Dropped a plugin metric key for %r: key is not a valid identifier", plugin_name)
             continue
         if len(sanitized) >= _MAX_PLUGIN_KEYS:
-            logger.debug("Dropped plugin metric %r for %r: key limit exceeded", key, plugin_name)
-            continue
+            logger.debug("Stopping metric scan for %r: key limit exceeded", plugin_name)
+            break
 
         if isinstance(value, bool):
             sanitized[key] = value
         elif isinstance(value, (int, float)):
             sanitized[key] = value
         elif isinstance(value, str):
-            sanitized[key] = _truncate_str(value)
-        elif isinstance(value, list) and all(isinstance(item, str) for item in value):
-            joined = ",".join(value[:_MAX_LIST_ITEMS])
-            sanitized[key] = _truncate_str(joined)
+            validated = _validate_string_value(value)
+            if validated is not None:
+                sanitized[key] = validated
+            else:
+                logger.debug("Dropped plugin metric %r for %r: string value not in safe low-cardinality contract", key, plugin_name)
+        elif isinstance(value, list):
+            prefix = value[:_MAX_LIST_ITEMS]
+            if all(isinstance(item, str) for item in prefix):
+                joined = ",".join(prefix)
+                validated = _validate_string_value(joined)
+                if validated is not None:
+                    sanitized[key] = validated
+                else:
+                    logger.debug("Dropped plugin metric %r for %r: joined list value not in safe low-cardinality contract", key, plugin_name)
+            else:
+                logger.debug("Dropped plugin metric %r for %r: list contains non-string items", key, plugin_name)
         else:
             logger.debug("Dropped plugin metric %r for %r: type not allowed", key, plugin_name)
 
@@ -140,18 +191,20 @@ def record_plugin_metrics(trace_id: Optional[str], result_metadata: Optional[Dic
     try:
         # First-Party (deferred to avoid a circular import with mcpgateway.services.__init__,
         # mirroring build_request_extensions() above).
+        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
         from mcpgateway.db import SessionLocal  # pylint: disable=import-outside-toplevel
         from mcpgateway.services.observability_service import ObservabilityService  # pylint: disable=import-outside-toplevel,cyclic-import
 
-        plugin_items = list(result_metadata.items())
-        if len(plugin_items) > _MAX_PLUGINS_PER_CALL:
-            logger.debug("Dropping %d plugin metadata entries beyond the per-call limit", len(plugin_items) - _MAX_PLUGINS_PER_CALL)
-            plugin_items = plugin_items[:_MAX_PLUGINS_PER_CALL]
+        # Bounded iteration: cap applied via islice over the dict's own view rather than
+        # materializing a full list of every entry first (result_metadata is untrusted).
+        if len(result_metadata) > _MAX_PLUGINS_PER_CALL:
+            logger.debug("Dropping %d plugin metadata entries beyond the per-call limit", len(result_metadata) - _MAX_PLUGINS_PER_CALL)
+        plugin_items = itertools.islice(result_metadata.items(), _MAX_PLUGINS_PER_CALL)
 
         sanitized_by_plugin: Dict[str, Dict[str, Any]] = {}
         for plugin_name, raw_metrics in plugin_items:
-            if not isinstance(plugin_name, str):
-                logger.debug("Dropped a plugin metadata entry: plugin name is not a string")
+            if not _is_valid_identifier(plugin_name):
+                logger.debug("Dropped a plugin metadata entry: plugin name is not a valid identifier")
                 continue
             sanitized = _sanitize_plugin_metrics(plugin_name, raw_metrics)
             if sanitized:
@@ -163,64 +216,82 @@ def record_plugin_metrics(trace_id: Optional[str], result_metadata: Optional[Dic
         service = ObservabilityService()
 
         # Primary: span attributes. Batch all plugins' spans into a single DB session.
-        db = None
-        try:
-            db = SessionLocal()
-            for plugin_name, sanitized in sanitized_by_plugin.items():
-                try:
-                    span_id = service.start_span(
-                        trace_id=trace_id,
-                        name=f"plugin.metrics.{plugin_name}",
-                        kind="internal",
-                        resource_type="plugin",
-                        resource_name=plugin_name,
-                        attributes=sanitized,
-                        commit=False,
-                        obs_db=db,
-                    )
-                    service.end_span(span_id, status="ok", commit=False, obs_db=db)
-                except Exception:  # noqa: BLE001 - one plugin's failure must not affect the others
-                    logger.debug("Failed to record span attributes for plugin %r", plugin_name, exc_info=True)
-            db.commit()
-        except Exception:  # noqa: BLE001
-            logger.debug("Failed to batch-commit plugin metric spans", exc_info=True)
-            if db is not None:
-                try:
-                    db.rollback()
-                except Exception:  # nosec B110
-                    pass
-        finally:
-            if db is not None:
-                try:
-                    db.close()
-                except Exception:  # nosec B110
-                    pass
+        # Independently toggleable from the numeric-metric-row and OTel export sinks below
+        # (DB growth, numeric-row amplification, and external-collector export are separate
+        # operational trade-offs).
+        if settings.plugin_metrics_db_spans_enabled:
+            db = None
+            try:
+                db = SessionLocal()
+                for plugin_name, sanitized in sanitized_by_plugin.items():
+                    try:
+                        span_id = service.start_span(
+                            trace_id=trace_id,
+                            name=f"plugin.metrics.{plugin_name}",
+                            kind="internal",
+                            resource_type="plugin",
+                            resource_name=plugin_name,
+                            attributes=sanitized,
+                            commit=False,
+                            obs_db=db,
+                        )
+                        service.end_span(span_id, status="ok", commit=False, obs_db=db)
+                    except Exception:  # noqa: BLE001 - one plugin's failure must not affect the others
+                        logger.debug("Failed to record span attributes for plugin %r", plugin_name, exc_info=True)
+                db.commit()
+            except Exception:  # noqa: BLE001
+                logger.debug("Failed to batch-commit plugin metric spans", exc_info=True)
+                if db is not None:
+                    try:
+                        db.rollback()
+                    except Exception:  # nosec B110
+                        pass
+            finally:
+                if db is not None:
+                    try:
+                        db.close()
+                    except Exception:  # nosec B110
+                        pass
 
-        # Secondary (optional): numeric fields also recorded as metrics.
-        for plugin_name, sanitized in sanitized_by_plugin.items():
-            for field_name, value in sanitized.items():
-                if isinstance(value, bool) or not isinstance(value, (int, float)):
-                    continue
-                try:
-                    service.record_metric(
-                        name=f"plugin.{plugin_name}.{field_name}",
-                        value=float(value),
-                        metric_type="gauge",
-                        resource_type="plugin",
-                        resource_id=plugin_name,
-                        trace_id=trace_id,
-                        attributes={"plugin": plugin_name, "field": field_name},
-                    )
-                except Exception:  # noqa: BLE001 - one metric's failure must not affect the others
-                    logger.debug("Failed to record numeric metric %r for plugin %r", field_name, plugin_name, exc_info=True)
+        # Secondary (optional): numeric fields also recorded as metrics. Each write opens its
+        # own independent session (record_metric() doesn't accept an external session), so this
+        # is additionally capped per-call (across all plugins) to bound DB write amplification,
+        # and can be disabled entirely via settings.
+        if settings.plugin_metrics_db_numeric_rows_enabled:
+            numeric_rows_written = 0
+            max_numeric = settings.plugin_metrics_max_numeric_per_call
+            for plugin_name, sanitized in sanitized_by_plugin.items():
+                if numeric_rows_written >= max_numeric:
+                    break
+                for field_name, value in sanitized.items():
+                    if isinstance(value, bool) or not isinstance(value, (int, float)):
+                        continue
+                    if numeric_rows_written >= max_numeric:
+                        logger.debug("Dropping remaining numeric plugin metrics beyond the per-call cap of %d", max_numeric)
+                        break
+                    try:
+                        service.record_metric(
+                            name=f"plugin.{plugin_name}.{field_name}",
+                            value=float(value),
+                            metric_type="gauge",
+                            resource_type="plugin",
+                            resource_id=plugin_name,
+                            trace_id=trace_id,
+                            attributes={"plugin": plugin_name, "field": field_name},
+                        )
+                        numeric_rows_written += 1
+                    except Exception:  # noqa: BLE001 - one metric's failure must not affect the others
+                        logger.debug("Failed to record numeric metric %r for plugin %r", field_name, plugin_name, exc_info=True)
 
         # G2: optional OTel-SDK export sink. Gateway is the export authority; this
         # re-emits the ALREADY-sanitized metrics through the gateway's existing OTel
-        # exporter. No-op when OTel tracing is unconfigured (create_span -> nullcontext).
+        # exporter. No-op when OTel tracing is unconfigured (create_span -> nullcontext),
+        # and also no-op when there's no active OTel context, so a configured-but-unused
+        # tracer doesn't turn these into orphan root spans.
         try:
-            from mcpgateway.observability import create_span, otel_tracing_enabled  # pylint: disable=import-outside-toplevel
+            from mcpgateway.observability import create_span, otel_context_active, otel_tracing_enabled  # pylint: disable=import-outside-toplevel
 
-            if otel_tracing_enabled():
+            if otel_tracing_enabled() and otel_context_active():
                 for plugin_name, sanitized in sanitized_by_plugin.items():
                     try:
                         with create_span(f"plugin.metrics.{plugin_name}", dict(sanitized)):
