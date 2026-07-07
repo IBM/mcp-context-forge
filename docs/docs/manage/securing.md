@@ -399,16 +399,6 @@ MCP Gateway implements Subresource Integrity for all external CDN resources to c
 - CodeMirror (5.65.18) - Code editor (7 files)
 - Font Awesome (6.4.0) - Icon library
 
-**Verification**:
-
-```bash
-# Verify all SRI hashes match current CDN content
-make sri-verify
-
-# Regenerate hashes (after updating CDN library versions)
-make sri-generate
-```
-
 **Updating Frontend Assets**:
 
 When updating Admin UI frontend dependencies:

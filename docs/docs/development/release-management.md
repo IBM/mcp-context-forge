@@ -1390,7 +1390,6 @@ make rust-vet
 npm update && npm audit && npm audit fix
 make lint-web test-js-coverage
 # Frontend deps: update package.json/package-lock.json and rebuild the Vite bundle
-make sri-generate sri-verify
 
 # 3. Rebuild after dep updates
 make docker-prod DOCKER_BUILD_ARGS="--no-cache"

@@ -242,10 +242,8 @@ As part of the security enhancements, Subresource Integrity (SRI) has been imple
 
 ### Implementation Overview
 
-1. **Hash Generation**: `scripts/generate-sri-hashes.py` generates SHA-384 hashes for all CDN resources
-2. **Hash Storage**: Hashes stored in `mcpgateway/sri_hashes.json` and loaded via `load_sri_hashes()` in `admin.py`
-3. **Template Integration**: All CDN resources in templates include `integrity` and `crossorigin` attributes
-4. **CI Verification**: `scripts/verify-sri-hashes.py` validates hashes match CDN content in CI pipeline
+1. **Hash Storage**: SHA-384 hashes for all CDN resources stored in `mcpgateway/sri_hashes.json` and loaded via `load_sri_hashes()` in `admin.py`
+2. **Template Integration**: All CDN resources in templates include `integrity` and `crossorigin` attributes
 
 ### Protected Resources
 
@@ -263,18 +261,6 @@ All external CDN resources are protected with SRI hashes:
 
 - **CDN Compromise Protection**: Hash mismatch blocks execution
 - **MITM Attack Prevention**: Tampered content detected
-- **Version Drift Detection**: CI catches unexpected changes
-- **Automated Verification**: Every CI run validates hashes
-
-### Usage
-
-```bash
-# Generate SRI hashes for all CDN resources
-make sri-generate
-
-# Verify hashes match current CDN content
-make sri-verify
-```
 
 ### Updating Frontend Assets
 
