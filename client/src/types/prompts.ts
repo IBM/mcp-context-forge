@@ -17,3 +17,12 @@ export interface PromptArgument {
 }
 
 export type PromptsResponse = Prompt[] | { prompts?: Prompt[] };
+
+export interface PromptGroup {
+  /** Stable key for React lists (gateway slug, or the REST-prompts label). */
+  key: string;
+  /** Card title: the gateway slug, or the REST-prompts label for gateway-less prompts. */
+  label: string;
+  gatewayId?: string | null;
+  prompts: Prompt[];
+}
