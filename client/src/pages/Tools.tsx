@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { useQuery } from "@/hooks/useQuery";
 import { toolsApi } from "@/api/tools";
 import { ApiError } from "@/api/client";
+import { useRouter } from "@/router";
 import { extractApiErrorDetail, sanitizeError } from "@/utils/errors";
 import type { Tool, ToolGroup } from "@/types/tool";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
@@ -158,14 +159,20 @@ function AddToolsCard({ onAddTool }: { onAddTool: () => void }) {
 
 export function Tools() {
   const intl = useIntl();
+  const { path } = useRouter();
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingTool, setEditingTool] = useState<Tool | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<ToolGroup | null>(null);
+  const [selectedToolIdForDetails, setSelectedToolIdForDetails] = useState<string | null>(null);
   const [isDetailsPanelOpen, setIsDetailsPanelOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
   const [selectedToolName, setSelectedToolName] = useState<string | null>(null);
   const [allTools, setAllTools] = useState<Tool[]>([]);
+  const selectedSearchToolId = useMemo(() => {
+    const queryString = path.split("?")[1] ?? "";
+    return new URLSearchParams(queryString).get("selected")?.trim() || null;
+  }, [path]);
 
   // include_inactive=true so deactivated tools stay listed (and re-activatable);
   // the backend filters them out by default.
@@ -213,13 +220,28 @@ export function Tools() {
   }, []);
 
   const handleViewGroup = (group: ToolGroup) => {
+    setSelectedToolIdForDetails(null);
     setSelectedGroup(group);
     setIsDetailsPanelOpen(true);
   };
 
   const handleCloseDetails = () => {
     setIsDetailsPanelOpen(false);
+    setSelectedToolIdForDetails(null);
   };
+
+  useEffect(() => {
+    if (!selectedSearchToolId) return;
+
+    const group = groups.find((candidate) =>
+      candidate.tools.some((tool) => tool.id === selectedSearchToolId),
+    );
+    if (!group) return;
+
+    setSelectedGroup(group);
+    setSelectedToolIdForDetails(selectedSearchToolId);
+    setIsDetailsPanelOpen(true);
+  }, [groups, selectedSearchToolId]);
 
   const handleToggleTool = useCallback(
     async (tool: Tool) => {
@@ -399,6 +421,7 @@ export function Tools() {
               tools={activeGroup.tools}
               gatewaySlug={activeGroup.gatewaySlug}
               open={isDetailsPanelOpen}
+              selectedToolId={selectedToolIdForDetails}
               onClose={handleCloseDetails}
               onDeleteTool={handleDelete}
               onEditTool={handleEditTool}

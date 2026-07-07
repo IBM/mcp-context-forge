@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { renderWithProviders } from "@/test/test-utils";
+import { RouterProvider } from "@/router";
 import { Agents } from "./Agents";
 import { ChangePassword } from "./ChangePassword";
 import { ForgotPassword } from "./ForgotPassword";
@@ -86,7 +87,11 @@ describe("Simple Page Components", () => {
   });
 
   it("renders Resources page", () => {
-    renderWithProviders(<Resources />);
+    renderWithProviders(
+      <RouterProvider>
+        <Resources />
+      </RouterProvider>,
+    );
     expect(document.body).toBeTruthy();
   });
 
