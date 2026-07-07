@@ -15,11 +15,11 @@
 #    JWT_SECRET_KEY      Must be >32 bytes              (default: see below)
 #    REDIS_HOST          Redis host for redis-requiring plugins  (default: 127.0.0.1)
 #    REDIS_PORT          Redis port                     (default: 6379)
-#    VENV_DIR            Path to project virtualenv     (default: .venv)
-#    FAST_TIME_BIN       Path to fast-time-server bin   (default: workspace target)
-#    FAST_TIME_PORT      fast-time-server port          (default: 8080)
-#    FAST_TIME_SERVER_URL  MCP URL registered with the gateway
-#                                                       (default: derived from FAST_TIME_PORT)
+#    VENV_DIR              Path to project virtualenv     (default: .venv)
+#    FAST_TIME_IMAGE       fast-time-server container image (default: ghcr.io/ibm/cfex-mcp-fast-time-server:5eac210da1c96a5fb2386c82a0c6f543b68fd76a)
+#    FAST_TIME_CONTAINER   docker container name            (default: mcpgw-plugin-test-fast-time)
+#    FAST_TIME_PORT        fast-time-server host port       (default: 9080)
+#    FAST_TIME_SERVER_URL  MCP URL registered with gateway  (default: derived from FAST_TIME_PORT)
 # ===========================================================================
 set -euo pipefail
 
@@ -39,13 +39,11 @@ JWT_SECRET="${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}"
 REDIS_HOST="${REDIS_HOST:-127.0.0.1}"
 REDIS_PORT="${REDIS_PORT:-6379}"
 VENV_DIR="${VENV_DIR:-${PROJECT_ROOT}/.venv}"
-FAST_TIME_PORT="${FAST_TIME_PORT:-8080}"
-# fast-time-server is a Cargo workspace member, so its binary is built into the
-# workspace-root target/ directory (not the crate's own target/).
-FAST_TIME_BIN="${FAST_TIME_BIN:-${PROJECT_ROOT}/target/debug/fast-time-server}"
+FAST_TIME_PORT="${FAST_TIME_PORT:-9080}"
+FAST_TIME_IMAGE="${FAST_TIME_IMAGE:-ghcr.io/ibm/cfex-mcp-fast-time-server:5eac210da1c96a5fb2386c82a0c6f543b68fd76a}"
+FAST_TIME_CONTAINER="${FAST_TIME_CONTAINER:-mcpgw-plugin-test-fast-time}"
 # URL the gateway federates to. Derived from FAST_TIME_PORT so a single override
-# moves both the bound port and the registered URL together (they must match, or
-# gateway registration fails with a 502).
+# moves both the bound port and the registered URL together.
 FAST_TIME_SERVER_URL="${FAST_TIME_SERVER_URL:-http://localhost:${FAST_TIME_PORT}/mcp}"
 export FAST_TIME_SERVER_URL
 
@@ -81,14 +79,13 @@ error()   { echo -e "${RED}[fail]${RESET} $*"; }
 # ---------------------------------------------------------------------------
 # Cleanup state
 # ---------------------------------------------------------------------------
-FAST_TIME_PID=""
 GATEWAY_PID=""
 REDIS_CONTAINER=""
 
 cleanup() {
     info "Cleaning up…"
     [[ -n "${GATEWAY_PID}"     ]] && kill -9 "${GATEWAY_PID}"     2>/dev/null || true
-    [[ -n "${FAST_TIME_PID}"   ]] && kill -9 "${FAST_TIME_PID}"   2>/dev/null || true
+    docker rm -f "${FAST_TIME_CONTAINER}" 2>/dev/null || true
     [[ -n "${REDIS_CONTAINER}" ]] && docker rm -f "${REDIS_CONTAINER}" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -114,34 +111,20 @@ wait_for_health() {
 }
 
 # ---------------------------------------------------------------------------
-# Step 1: Build fast-time-server if binary is missing
-# ---------------------------------------------------------------------------
-build_fast_time_server() {
-    if [[ -x "${FAST_TIME_BIN}" ]]; then
-        info "fast-time-server binary already exists — skipping build"
-        return 0
-    fi
-    info "Building fast-time-server (cargo build -p fast-time-server)…"
-    (cd "${PROJECT_ROOT}" && cargo build -p fast-time-server) || {
-        error "cargo build failed for fast-time-server"
-        return 1
-    }
-    info "fast-time-server built successfully"
-}
-
-# ---------------------------------------------------------------------------
-# Step 2: Start fast-time-server (once for the whole run)
+# Step 1: Start fast-time-server container (once for the whole run)
 # ---------------------------------------------------------------------------
 start_fast_time_server() {
-    # Kill any stale instance first
-    pkill -9 -f "target/debug/fast-time-server" 2>/dev/null || true
-    sleep 1
-    # Pass --port explicitly so the bound port matches FAST_TIME_SERVER_URL
-    # (the URL the gateway federates to); otherwise the binary's own default
-    # wins and the two silently diverge.
-    nohup "${FAST_TIME_BIN}" --port "${FAST_TIME_PORT}" > /tmp/fast-time-plugin-tests.log 2>&1 &
-    FAST_TIME_PID=$!
-    wait_for_health "http://localhost:${FAST_TIME_PORT}/health" "fast-time-server" 20
+    docker rm -f "${FAST_TIME_CONTAINER}" 2>/dev/null || true
+    info "Pulling fast-time-server image: ${FAST_TIME_IMAGE}"
+    docker pull "${FAST_TIME_IMAGE}" || {
+        error "docker pull failed for ${FAST_TIME_IMAGE}"
+        return 1
+    }
+    docker run --detach \
+        --name "${FAST_TIME_CONTAINER}" \
+        --publish "127.0.0.1:${FAST_TIME_PORT}:9080" \
+        "${FAST_TIME_IMAGE}"
+    wait_for_health "http://localhost:${FAST_TIME_PORT}/health" "fast-time-server" 30
 }
 
 # ---------------------------------------------------------------------------
@@ -256,8 +239,7 @@ main() {
     info "  Gateway        : ${GATEWAY_URL}"
     echo
 
-    # Build + start fast-time-server (stays up for the whole run)
-    build_fast_time_server
+    # Pull + start fast-time-server container (stays up for the whole run)
     start_fast_time_server
 
     RESULTS=()
