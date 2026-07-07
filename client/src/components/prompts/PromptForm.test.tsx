@@ -54,10 +54,14 @@ describe("PromptForm", () => {
   });
 
   it("renders nothing when isOpen is false", () => {
-    renderWithProviders(
-      <PromptForm isOpen={false} onToggle={vi.fn()} onSuccess={vi.fn()} />,
-    );
+    renderWithProviders(<PromptForm isOpen={false} onToggle={vi.fn()} onSuccess={vi.fn()} />);
     expect(screen.queryByLabelText(/name/i)).not.toBeInTheDocument();
+  });
+
+  it("renders an accessible description field label", () => {
+    renderPromptForm();
+
+    expect(screen.getByLabelText("Description")).toBeInTheDocument();
   });
 
   it("submits valid prompt data and calls onSuccess", async () => {
@@ -78,7 +82,7 @@ describe("PromptForm", () => {
 
     renderPromptForm({ onSuccess });
     const user = await fillRequiredFields();
-    await user.click(screen.getByRole("button", { name: "Add Tool" }));
+    await user.click(screen.getByRole("button", { name: "Add prompt" }));
 
     await waitFor(() => {
       expect(mockCreatePrompt).toHaveBeenCalledWith({
@@ -110,7 +114,7 @@ describe("PromptForm", () => {
 
     renderPromptForm();
     const user = await fillRequiredFields();
-    await user.click(screen.getByRole("button", { name: "Add Tool" }));
+    await user.click(screen.getByRole("button", { name: "Add prompt" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Prompt name already exists");
   });

@@ -184,7 +184,7 @@ export function PromptForm({ isOpen, onToggle, onSuccess }: PromptFormProps) {
           )}
 
           <div className="space-y-2.5">
-            <Label htmlFor="name" className="text-sm font-medium text-foreground">
+            <Label htmlFor="name" className="mb-2.5 block text-sm font-medium text-foreground">
               {intl.formatMessage({ id: "prompts.add.field.name" })}{" "}
               <span className="text-destructive">
                 {intl.formatMessage({ id: "prompts.add.required" })}
@@ -208,7 +208,10 @@ export function PromptForm({ isOpen, onToggle, onSuccess }: PromptFormProps) {
           </div>
 
           <div className="space-y-2.5">
-            <Label htmlFor="visibility" className="text-sm font-medium text-foreground">
+            <Label
+              htmlFor="visibility"
+              className="mb-2.5 block text-sm font-medium text-foreground"
+            >
               {intl.formatMessage({ id: "prompts.add.field.visibility" })}{" "}
               <span className="text-destructive">
                 {intl.formatMessage({ id: "prompts.add.required" })}
@@ -236,7 +239,7 @@ export function PromptForm({ isOpen, onToggle, onSuccess }: PromptFormProps) {
           </div>
 
           <div className="space-y-2.5">
-            <Label htmlFor="template" className="text-sm font-medium text-foreground">
+            <Label htmlFor="template" className="mb-2.5 block text-sm font-medium text-foreground">
               {intl.formatMessage({ id: "prompts.add.field.template" })}{" "}
               <span className="text-destructive">
                 {intl.formatMessage({ id: "prompts.add.required" })}
@@ -260,16 +263,14 @@ export function PromptForm({ isOpen, onToggle, onSuccess }: PromptFormProps) {
           </div>
 
           <div className="space-y-2.5">
-            <Label htmlFor="arguments" className="text-sm font-medium text-foreground">
+            <Label htmlFor="arguments" className="mb-2.5 block text-sm font-medium text-foreground">
               {intl.formatMessage({ id: "prompts.add.field.arguments" })}
             </Label>
             <Textarea
               id="arguments"
               value={formData.arguments}
               onChange={(e) => handleInputChange("arguments", e.target.value)}
-              onBlur={(e) =>
-                setFieldError("arguments", validateField("arguments", e.target.value))
-              }
+              onBlur={(e) => setFieldError("arguments", validateField("arguments", e.target.value))}
               placeholder={intl.formatMessage({ id: "prompts.add.placeholder.arguments" })}
               aria-invalid={!!errors.arguments}
               aria-describedby={errors.arguments ? "prompt-arguments-error" : undefined}
@@ -283,6 +284,12 @@ export function PromptForm({ isOpen, onToggle, onSuccess }: PromptFormProps) {
           </div>
 
           <div className="space-y-2.5">
+            <Label
+              htmlFor="description"
+              className="mb-2.5 block text-sm font-medium text-foreground"
+            >
+              {intl.formatMessage({ id: "prompts.add.field.description" })}
+            </Label>
             <Textarea
               id="description"
               value={formData.description}
@@ -293,7 +300,7 @@ export function PromptForm({ isOpen, onToggle, onSuccess }: PromptFormProps) {
           </div>
 
           <div className="space-y-2.5">
-            <Label htmlFor="tags" className="text-sm font-medium text-foreground">
+            <Label htmlFor="tags" className="mb-2.5 block text-sm font-medium text-foreground">
               {intl.formatMessage({ id: "prompts.add.field.tags" })}
             </Label>
             <Input
