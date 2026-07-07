@@ -9,6 +9,7 @@ import { useRouter } from "@/router";
 import { extractApiErrorDetail, sanitizeError } from "@/utils/errors";
 import type { Tool, ToolGroup } from "@/types/tool";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
+import { CardTag } from "@/components/ui/card-tag";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -103,24 +104,19 @@ function ToolGroupCard({
       <CardContent>
         <div className="flex flex-wrap gap-1">
           {visibleTools.map((tool) => (
-            <span
-              key={tool.id}
-              className="inline-flex items-center rounded bg-tool-badge-bg px-1.5 py-1 text-[10px] font-medium leading-none text-white"
-              title={tool.description}
-            >
+            <CardTag key={tool.id} tooltip={tool.description}>
               {tool.name}
-            </span>
+            </CardTag>
           ))}
           {remainingCount > 0 && (
-            <span
-              className="inline-flex items-center rounded bg-tool-badge-bg px-1.5 py-1 text-[10px] font-medium leading-none text-white"
-              title={intl.formatMessage(
+            <CardTag
+              tooltip={intl.formatMessage(
                 { id: "tools.card.moreToolsTitle" },
                 { count: remainingCount },
               )}
             >
               +{remainingCount}
-            </span>
+            </CardTag>
           )}
         </div>
       </CardContent>
