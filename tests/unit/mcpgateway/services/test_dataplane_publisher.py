@@ -191,7 +191,8 @@ async def test_full_payload_generation_with_mock_db():
 
     tool1 = Mock()
     tool1.id = "t1"
-    tool1.name = "public_tool"
+    tool1.name = "gw1-public_tool"
+    tool1.original_name = "public_tool"
     tool1.owner_email = "user1@example.com"
     tool1.team_id = "team1"
     tool1.visibility = "public"
@@ -199,7 +200,8 @@ async def test_full_payload_generation_with_mock_db():
 
     tool2 = Mock()
     tool2.id = "t2"
-    tool2.name = "private_tool"
+    tool2.name = "gw1-private_tool"
+    tool2.original_name = "private_tool"
     tool2.owner_email = "user1@example.com"
     tool2.team_id = "team1"
     tool2.visibility = "private"
@@ -207,7 +209,8 @@ async def test_full_payload_generation_with_mock_db():
 
     tool3 = Mock()
     tool3.id = "t3"
-    tool3.name = "team2_tool"
+    tool3.name = "gw1-team2_tool"
+    tool3.original_name = "team2_tool"
     tool3.owner_email = "user2@example.com"
     tool3.team_id = "team2"
     tool3.visibility = "team"
