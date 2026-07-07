@@ -663,13 +663,17 @@ class TestTeamInvitationService:
                     # capacity count()
                     mock_query.filter.return_value.count.return_value = 0
                 else:
-                    # reuse lookup (any row, regardless of is_active) -> stale inactive row
-                    mock_query.filter.return_value.first.return_value = inactive_member
+                    # reuse lookup (any row, regardless of is_active) -> stale inactive row,
+                    # locked via with_for_update() to close the concurrent-UPDATE race
+                    mock_query.filter.return_value.with_for_update.return_value.first.return_value = inactive_member
             return mock_query
 
         mock_db.query.side_effect = query_side_effect
 
-        with patch.object(service, "get_invitation_by_token", return_value=mock_invitation):
+        with (
+            patch.object(service, "get_invitation_by_token", return_value=mock_invitation),
+            patch("mcpgateway.services.team_invitation_service.TeamManagementService") as MockTMS,
+        ):
             result = await service.accept_invitation("token")
 
         assert result is inactive_member
@@ -678,6 +682,57 @@ class TestTeamInvitationService:
         assert inactive_member.invited_by == mock_invitation.invited_by
         mock_db.add.assert_not_called()
         mock_db.commit.assert_called_once()
+
+        # Reactivating a stale row must leave the same audit trail as a direct add_member_to_team reactivation.
+        MockTMS.assert_called_once_with(mock_db)
+        MockTMS.return_value.log_team_member_action.assert_called_once_with(
+            inactive_member.id, mock_invitation.team_id, mock_invitation.email, mock_invitation.role, "reactivated", mock_invitation.invited_by
+        )
+
+    @pytest.mark.asyncio
+    async def test_accept_invitation_inserts_new_member_when_no_prior_row(self, service, mock_invitation, mock_team, mock_db):
+        """Test accepting invitation inserts a brand-new membership row when no prior row exists at all (issue #5524)."""
+
+        def query_side_effect(model):
+            mock_query = MagicMock()
+            if model == EmailTeam:
+                mock_query.filter.return_value.first.return_value = mock_team
+            elif model == EmailTeamMember:
+                if not hasattr(query_side_effect, "call_count"):
+                    query_side_effect.call_count = 0
+                query_side_effect.call_count += 1
+
+                if query_side_effect.call_count == 1:
+                    # "already an active member?" check -> no active row
+                    mock_query.filter.return_value.first.return_value = None
+                elif query_side_effect.call_count == 2:
+                    # capacity count()
+                    mock_query.filter.return_value.count.return_value = 0
+                else:
+                    # reuse lookup, locked via with_for_update() -> no row at all, ever
+                    mock_query.filter.return_value.with_for_update.return_value.first.return_value = None
+            return mock_query
+
+        mock_db.query.side_effect = query_side_effect
+
+        with (
+            patch.object(service, "get_invitation_by_token", return_value=mock_invitation),
+            patch("mcpgateway.services.team_invitation_service.TeamManagementService") as MockTMS,
+        ):
+            result = await service.accept_invitation("token")
+
+        assert isinstance(result, EmailTeamMember)
+        assert result.team_id == mock_invitation.team_id
+        assert result.user_email == mock_invitation.email
+        assert result.role == mock_invitation.role
+        assert result.invited_by == mock_invitation.invited_by
+        assert result.is_active is True
+        mock_db.add.assert_called_once_with(result)
+        mock_db.commit.assert_called_once()
+
+        MockTMS.return_value.log_team_member_action.assert_called_once_with(
+            result.id, mock_invitation.team_id, mock_invitation.email, mock_invitation.role, "added", mock_invitation.invited_by
+        )
 
     @pytest.mark.asyncio
     async def test_accept_invitation_integrity_error_translated(self, service, mock_invitation, mock_team, mock_db):

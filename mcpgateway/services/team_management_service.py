@@ -340,6 +340,19 @@ class TeamManagementService:
                 close()
             raise
 
+    def log_team_member_action(self, team_member_id: str, team_id: str, user_email: str, role: str, action: str, action_by: Optional[str]):
+        """Public entry point for cross-service audit logging (e.g. from TeamInvitationService).
+
+        Args:
+            team_member_id: ID of the EmailTeamMember
+            team_id: Team ID
+            user_email: Email of the affected user
+            role: Role at the time of action
+            action: Action type ("added", "removed", "reactivated", "role_changed")
+            action_by: Email of the user who performed the action
+        """
+        self._log_team_member_action(team_member_id, team_id, user_email, role, action, action_by)
+
     def _log_team_member_action(self, team_member_id: str, team_id: str, user_email: str, role: str, action: str, action_by: Optional[str]):
         """
         Log a team member action to EmailTeamMemberHistory.

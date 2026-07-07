@@ -32,7 +32,7 @@ from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamMember, EmailUser, utc_now
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.team_management_service import check_team_member_capacity, get_user_team_count
+from mcpgateway.services.team_management_service import check_team_member_capacity, get_user_team_count, TeamManagementService
 
 # Initialize logging
 logging_service = LoggingService()
@@ -292,7 +292,8 @@ class TeamInvitationService:
             EmailTeamMember: The created team membership record
 
         Raises:
-            ValueError: If invitation is invalid or expired
+            ValueError: If invitation is invalid or expired, or if the user is already a member
+                (including the race where a concurrent accept commits first)
             Exception: If acceptance fails
 
         Examples:
@@ -358,8 +359,10 @@ class TeamInvitationService:
             # Reuse any prior (inactive) membership row for this (team_id, user_email) pair instead of
             # inserting a duplicate: uq_team_member is unique regardless of is_active, so a stale row left
             # behind by a previous removal from the team would otherwise collide on insert.
-            membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == invitation.team_id, EmailTeamMember.user_email == invitation.email).first()
+            # Row-lock the reused row so two concurrent accepts can't both UPDATE it and commit silently.
+            membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == invitation.team_id, EmailTeamMember.user_email == invitation.email).with_for_update().first()
 
+            reactivated = membership is not None
             if membership:
                 membership.role = invitation.role
                 membership.joined_at = utc_now()
@@ -378,6 +381,12 @@ class TeamInvitationService:
                 self.db.rollback()
                 logger.warning("Concurrent accept detected for %s on team %s: %s", invitation.email, invitation.team_id, integrity_error)
                 raise ValueError("User is already a member of this team") from integrity_error
+
+            # Write the same audit trail entry that TeamManagementService.add_member_to_team writes,
+            # so a membership reactivated via invitation-accept isn't invisible in EmailTeamMemberHistory.
+            TeamManagementService(self.db).log_team_member_action(
+                membership.id, invitation.team_id, invitation.email, invitation.role, "reactivated" if reactivated else "added", invitation.invited_by
+            )
 
             # Invalidate auth cache for user's team membership
             try:
