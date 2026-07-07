@@ -55,6 +55,7 @@ export function ToolDetailsPanel({
   tools,
   gatewaySlug,
   open,
+  selectedToolId,
   onClose,
   onDeleteTool,
   onEditTool,
@@ -63,6 +64,7 @@ export function ToolDetailsPanel({
   tools: Tool[];
   gatewaySlug: string;
   open: boolean;
+  selectedToolId?: string | null;
   onClose: () => void;
   onDeleteTool?: (toolId: string) => void;
   onEditTool?: (tool: Tool) => void;
@@ -74,12 +76,16 @@ export function ToolDetailsPanel({
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const headingId = useMemo(() => `tool-details-heading-${gatewaySlug}`, [gatewaySlug]);
 
-  // Select first tool when panel opens or tools change
+  // Select the requested tool when opened from global search; otherwise use the first tool.
   useEffect(() => {
-    if (open && tools.length > 0 && !selectedTool) {
-      setSelectedTool(tools[0]);
+    if (!open || tools.length === 0) return;
+
+    const requestedTool = selectedToolId ? tools.find((tool) => tool.id === selectedToolId) : null;
+    const nextTool = requestedTool ?? selectedTool ?? tools[0];
+    if (nextTool && selectedTool?.id !== nextTool.id) {
+      setSelectedTool(nextTool);
     }
-  }, [open, tools, selectedTool]);
+  }, [open, tools, selectedTool, selectedToolId]);
 
   // Reset selected tool when panel closes
   useEffect(() => {
