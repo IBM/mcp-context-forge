@@ -383,6 +383,29 @@ describe("useTeamForm", () => {
       expect(capturedBody).not.toHaveProperty("max_members");
     });
 
+    it("sends an empty description so clearing it is persisted, not ignored", async () => {
+      let capturedBody: Record<string, unknown> = {};
+      server.use(
+        http.put("*/teams/team-1", async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({ id: "team-1", name: "Engineering" });
+        }),
+      );
+
+      const { result } = renderHook(() => useTeamForm(makeTeam({ description: "Eng team" })));
+
+      act(() => result.current.setDescription(""));
+
+      await act(async () => {
+        await result.current.handleSubmit(fakeSubmit());
+      });
+
+      await waitFor(() => expect(capturedBody).toHaveProperty("description"));
+      // An empty string (not undefined) reaches the backend, which only
+      // overwrites the stored description when the field is present.
+      expect(capturedBody.description).toBe("");
+    });
+
     it("sets an error and skips onSuccess when the update fails", async () => {
       server.use(
         http.put("*/teams/team-1", () =>
