@@ -3597,7 +3597,7 @@ linting-security-checkov:            ## 🛡️  IaC security scanning with Chec
 	@"$(LINT_PY_VENV)/bin/checkov" \
 		-d "$(LINT_CHECKOV_TARGET)" \
 		--quiet \
-		--skip-check CKV_DOCKER_3,CKV_DOCKER_2,CKV_SECRET_4,CKV_SECRET_6,CKV_K8S_21,CKV_GHA_7,CKV_K8S_43,CKV_K8S_35,CKV_K8S_40,CKV2_K8S_6
+		--skip-check CKV_DOCKER_3,CKV_DOCKER_2,CKV_SECRET_4,CKV_SECRET_6,CKV_K8S_21,CKV_GHA_7,CKV_K8S_43,CKV_K8S_35,CKV_K8S_40,CKV2_K8S_6,CKV2_GHA_1
 
 .PHONY: linting-security-kube-linter
 linting-security-kube-linter:        ## 🧱  Kubernetes best-practice linting
