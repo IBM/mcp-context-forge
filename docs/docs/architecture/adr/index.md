@@ -29,7 +29,7 @@ This page tracks all significant design decisions made for ContextForge project,
 | 0022  | Elicitation Passthrough Implementation             | Accepted  | MCP Protocol   | 2025-10-26  |
 | 0023  | One-Time Authentication Servers                    | Accepted  | Security       | 2025-10-27  |
 | 0024  | Adopt **uvicorn[standard]** for Enhanced Server Performance | Accepted | Performance | 2025-12-21 |
-| 0025  | Adopt **Granian** as Alternative HTTP Server | Accepted | Performance | 2025-12-21 |
+| 0025  | Adopt **Granian** as Alternative HTTP Server | Superseded | Performance | 2025-12-21 |
 | 0026  | Add **Hiredis** as Default Redis Parser | Accepted | Performance | 2025-12-21 |
 | 0027  | Migrate from **Psycopg2** to **Psycopg3** | Accepted | Database | 2025-01-15 |
 | 0028  | Authentication Data Caching | Accepted | Performance | 2025-01-15 |

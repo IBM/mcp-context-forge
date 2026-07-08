@@ -43,7 +43,7 @@ class TestIsSSLEnabled:
         assert _is_ssl_enabled() is False
 
     def test_ssl_mixed_case_not_truthy(self, monkeypatch):
-        """Only exact lowercase 'true' enables SSL, matching run-gunicorn.sh / run-granian.sh."""
+        """Only exact lowercase 'true' enables SSL, matching run-gunicorn.sh."""
         monkeypatch.setenv("SSL", "True")
         assert _is_ssl_enabled() is False
 

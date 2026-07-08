@@ -511,24 +511,6 @@
             "GLOBAL_CONFIG_CACHE_TTL": {
               "type": "string"
             },
-            "GRANIAN_BACKLOG": {
-              "type": "string"
-            },
-            "GRANIAN_BACKPRESSURE": {
-              "type": "string"
-            },
-            "GRANIAN_BLOCKING_THREADS": {
-              "type": "string"
-            },
-            "GRANIAN_HTTP1_BUFFER_SIZE": {
-              "type": "string"
-            },
-            "GRANIAN_RESPAWN_FAILED": {
-              "type": "string"
-            },
-            "GRANIAN_WORKERS": {
-              "type": "string"
-            },
             "GUNICORN_DEV_MODE": {
               "type": "string",
               "description": "Developer mode with hot reload (not for production)",
@@ -630,9 +612,6 @@
               "type": "string"
             },
             "HTTPX_WRITE_TIMEOUT": {
-              "type": "string"
-            },
-            "HTTP_SERVER": {
               "type": "string"
             },
             "INSECURE_ALLOW_QUERYPARAM_AUTH": {

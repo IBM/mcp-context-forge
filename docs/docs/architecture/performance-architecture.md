@@ -44,13 +44,13 @@ This diagram showcases the performance-optimized architecture of ContextForge, h
 │  │  ┌────────────────────┐  │  │  ┌────────────────────┐  │  │  ┌────────────────────┐  │              │
 │  │  │  HTTP SERVER LAYER │  │  │  │  HTTP SERVER LAYER │  │  │  │  HTTP SERVER LAYER │  │              │
 │  │  │  ╔════════════════╗│  │  │  │  ╔════════════════╗│  │  │  │  ╔════════════════╗│  │              │
-│  │  │  ║    GRANIAN     ║│  │  │  │  ║    GRANIAN     ║│  │  │  │  ║    GRANIAN     ║│  │              │
-│  │  │  ║  (Rust HTTP)   ║│  │  │  │  ║  (Rust HTTP)   ║│  │  │  │  ║  (Rust HTTP)   ║│  │              │
-│  │  │  ║  +20-50% perf  ║│  │  │  │  ║  +20-50% perf  ║│  │  │  │  ║  +20-50% perf  ║│  │              │
+│  │  │  ║   GUNICORN    ║│  │  │  │  ║   GUNICORN    ║│  │  │  │  ║   GUNICORN    ║│  │              │
+│  │  │  ║  (Python HTTP) ║│  │  │  │  ║  (Python HTTP) ║│  │  │  │  ║  (Python HTTP) ║│  │              │
+│  │  │  ║  Battle-tested  ║│  │  │  │  ║  Battle-tested  ║│  │  │  │  ║  Battle-tested  ║│  │              │
 │  │  │  ╚════════════════╝│  │  │  │  ╚════════════════╝│  │  │  │  ╚════════════════╝│  │              │
 │  │  │  16 workers        │  │  │  │  16 workers        │  │  │  │  16 workers        │  │              │
 │  │  │  backlog: 4096     │  │  │  │  backlog: 4096     │  │  │  │  backlog: 4096     │  │              │
-│  │  │  backpressure: 64  │  │  │  │  backpressure: 64  │  │  │  │  backpressure: 64  │  │              │
+│  │  │  timeout: 600s  │  │  │  │  timeout: 600s  │  │  │  │  timeout: 600s  │  │              │
 │  │  └────────────────────┘  │  │  └────────────────────┘  │  │  └────────────────────┘  │              │
 │  │           │              │  │           │              │  │           │              │              │
 │  │           ▼              │  │           ▼              │  │           ▼              │              │
@@ -261,7 +261,6 @@ This means that scaling MCP throughput now depends on two different concerns:
 |-----------|------------|------------------|----------|
 | **Pydantic v2** | Rust core (`pydantic-core`) | 5-50x faster validation | Request/response schemas (5,463 lines) |
 | **orjson** | Rust JSON library | 3x faster serialization | All JSON encoding/decoding |
-| **Granian** | Rust HTTP server | +20-50% throughput | HTTP request handling |
 | **hiredis** | C-based Redis parser | Up to 83x faster | Large Redis response parsing |
 | **uvloop** | Cython/libuv event loop | 2-4x faster async I/O | Async event loop |
 
@@ -308,7 +307,6 @@ MCP throughput is lower because each request includes auth/RBAC database queries
 
 | Issue # | Feature | Impact |
 |---------|---------|--------|
-| #1695 | Granian HTTP server migration | +20-50% throughput |
 | #1696, #1692 | orjson throughout codebase | 3x JSON performance |
 | #1699 | uvicorn[standard] with uvloop/httptools | 15-30% faster async |
 | #1702 | hiredis Redis parser | Up to 83x Redis parsing |
@@ -332,7 +330,7 @@ Without exponential backoff, a dependency outage would cause:
 ```
 Worker starts → Connection fails after 3 attempts (6s) → Worker crashes
     ↓
-Granian respawns worker immediately → Worker starts → Connection fails → Crashes
+Gunicorn respawns worker immediately → Worker starts → Connection fails → Crashes
     ↓
 Tight crash-respawn loop → 500%+ CPU consumption → System destabilization
 ```

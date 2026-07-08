@@ -4244,7 +4244,7 @@ var ADRS = [
   { num:"022", title:"Elicitation Passthrough Implementation", status:"accepted", file:"docs/docs/architecture/adr/022-elicitation-passthrough-implementation.md" },
   { num:"023", title:"One-Time Authentication for Gateway Registration", status:"accepted", file:"docs/docs/architecture/adr/023-one-time-authentication-servers.md" },
   { num:"024", title:"Adopt uvicorn[standard] for Enhanced Server Performance", status:"accepted", file:"docs/docs/architecture/adr/024-uvicorn-standard-extras.md" },
-  { num:"025", title:"Add Granian as Alternative HTTP Server", status:"accepted", file:"docs/docs/architecture/adr/025-granian-http-server.md" },
+  { num:"025", title:"Add Granian as Alternative HTTP Server", status:"superseded", file:"docs/docs/architecture/adr/025-granian-http-server.md" },
   { num:"026", title:"Add Hiredis as Default Redis Parser", status:"accepted", file:"docs/docs/architecture/adr/026-hiredis-redis-parser.md" },
   { num:"027", title:"Migrate from Psycopg2 to Psycopg3", status:"accepted", file:"docs/docs/architecture/adr/027-migrate-psycopg3.md" },
   { num:"028", title:"Authentication Data Caching", status:"accepted", file:"docs/docs/architecture/adr/028-auth-caching.md" },
@@ -4325,8 +4325,7 @@ var TECH_STACK = [
   { category:"Web Framework", icon:"\u26A1", color:"var(--accent-blue)", deps:[
     { name:"FastAPI", ver:">= 0.135.1", note:"ASGI web framework" },
     { name:"Starlette", ver:">= 0.52.1", note:"ASGI toolkit" },
-    { name:"uvicorn[standard]", ver:">= 0.42.0", note:"Primary HTTP server" },
-    { name:"Granian", ver:">= 2.7.2", note:"Alternative HTTP server (ADR-025)" },
+     { name:"uvicorn[standard]", ver:">= 0.42.0", note:"Primary HTTP server (Gunicorn with Uvicorn workers)" },
     { name:"gunicorn", ver:">= 25.1.0", note:"Process manager" }
   ]},
   { category:"Data & ORM", icon:"\uD83D\uDDC4\uFE0F", color:"var(--accent-green)", deps:[
@@ -4709,7 +4708,6 @@ var CONFIG_CATEGORIES = [
     { name:"COMPRESSION_ZSTD_LEVEL", def:"3", desc:"Zstandard level (1-22)" }
   ]},
   { title:"Deployment & Runtime", icon:"\uD83D\uDE80", color:"var(--accent-orange)", desc:"HTTP server, workers, dev mode, and container settings.", vars:[
-    { name:"HTTP_SERVER", def:"uvicorn", desc:"HTTP server: uvicorn or granian" },
     { name:"GUNICORN_WORKERS", def:"(2*CPU+1)", desc:"Worker processes (auto-calculated)" },
     { name:"GUNICORN_TIMEOUT", def:"120", desc:"Worker timeout (seconds)" },
     { name:"RELOAD", def:"false", desc:"Auto-reload on file changes" },
