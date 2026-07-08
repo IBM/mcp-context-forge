@@ -24,6 +24,8 @@
   "prompts.add.placeholder.tags": "ej., saludo,plantilla,conversación (separados por comas)",
   "prompts.add.visibility.public": "Público",
   "prompts.add.visibility.team": "Equipo",
+  "prompts.add.visibility.team.selectedHint": "Este prompt se limitará al equipo seleccionado actualmente",
+  "prompts.add.visibility.team.selectFromSidebarHint": "Seleccione un equipo usando el selector de equipos en la barra lateral",
   "prompts.add.visibility.private": "Privado",
   "prompts.add.button.submit": "Añadir prompt",
   "prompts.add.required": "*",

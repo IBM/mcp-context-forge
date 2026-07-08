@@ -114,12 +114,40 @@ describe("PromptForm", () => {
     await user.click(screen.getByRole("option", { name: /^Team$/i }));
 
     expect(
+      screen.getByText("Please select a team using the team switcher in the sidebar"),
+    ).toBeInTheDocument();
+    expect(
       screen.getByText("Team selection is required when visibility is set to team"),
     ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Add prompt" }));
 
     expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("explains that team prompts use the currently selected sidebar team", async () => {
+    mockUseAuthContext.mockReturnValue({
+      selectedTeamId: "team-123",
+      user: null,
+      isAuthenticated: true,
+      isLoading: false,
+      login: vi.fn(),
+      logout: vi.fn(),
+      setSelectedTeamId: vi.fn(),
+    });
+
+    renderPromptForm();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("combobox", { name: /visibility/i }));
+    await user.click(screen.getByRole("option", { name: /^Team$/i }));
+
+    expect(
+      screen.getByText("This prompt will be scoped to your currently selected team"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Team selection is required when visibility is set to team"),
+    ).not.toBeInTheDocument();
   });
 
   it("calls onToggle when cancel is clicked", async () => {

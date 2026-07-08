@@ -57,6 +57,7 @@ describe("usePromptForm", () => {
 
     expect(result.current.name).toBe("");
     expect(result.current.visibility).toBe("public");
+    expect(result.current.teamId).toBeUndefined();
     expect(result.current.template).toBe("");
     expect(result.current.arguments).toBe("");
     expect(result.current.description).toBe("");
@@ -136,9 +137,10 @@ describe("usePromptForm", () => {
     expect(result.current.errors.visibility).toBe(
       "Team selection is required when visibility is set to team",
     );
+    expect(result.current.teamId).toBeUndefined();
   });
 
-  it("clears the team visibility error when a team becomes selected", async () => {
+  it("clears the team visibility error and exposes teamId when a team becomes selected", async () => {
     const { result, rerender } = renderHook(() => usePromptForm());
 
     act(() => {
@@ -152,7 +154,20 @@ describe("usePromptForm", () => {
 
     await waitFor(() => {
       expect(result.current.errors.visibility).toBeUndefined();
+      expect(result.current.teamId).toBe("team-123");
     });
+  });
+
+  it("does not set a team visibility error when the sidebar already has a team selected", () => {
+    mockAuth("team-123");
+    const { result } = renderHook(() => usePromptForm());
+
+    act(() => {
+      result.current.setVisibility("team");
+    });
+
+    expect(result.current.errors.visibility).toBeUndefined();
+    expect(result.current.teamId).toBe("team-123");
   });
 
   it("submits valid prompt data and calls onSuccess", async () => {
