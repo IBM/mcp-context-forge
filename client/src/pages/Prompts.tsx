@@ -212,17 +212,22 @@ export function Prompts() {
         </div>
       )}
 
-      <Button
-        type="button"
-        onClick={() => setOpen(true)}
-        disabled={isLoading || prompts.length === 0}
-      >
-        {isLoading
-          ? "Loading prompts..."
-          : prompts && prompts.length === 0
-            ? "No prompts available"
-            : "Open prompt details"}
-      </Button>
+      <div className="flex items-center gap-3">
+        <Button
+          type="button"
+          onClick={() => setOpen(true)}
+          disabled={isLoading || prompts.length === 0}
+        >
+          {isLoading
+            ? "Loading prompts..."
+            : prompts.length === 0
+              ? "No prompts available"
+              : "Open prompt details"}
+        </Button>
+        {error && (
+          <p className="text-[12px] text-destructive">Failed to load prompts: {error.message}</p>
+        )}
+      </div>
       <PromptDetailsPanel prompts={prompts} open={open} onClose={() => setOpen(false)} />
     </div>
   );
