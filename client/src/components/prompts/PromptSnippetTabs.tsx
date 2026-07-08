@@ -1,10 +1,8 @@
-import { useCallback, useMemo, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { useIntl } from "react-intl";
-import { toast } from "sonner";
 
 import { CodeBlock, type CodeBlockLanguage } from "@/components/ui/code-block";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { copyToClipboard } from "@/lib/clipboard";
 import { buildCurl } from "./snippets/buildCurl";
 import { buildJsonRpc } from "./snippets/buildJsonRpc";
 import { buildPython } from "./snippets/buildPython";
@@ -64,13 +62,7 @@ export function PromptSnippetTabs({ promptName, args, actions }: PromptSnippetTa
     [promptName, args],
   );
 
-  const makeCopyHandler = useCallback(
-    (language: string) => (code: string) => {
-      copyToClipboard(code);
-      toast.success(intl.formatMessage({ id: "prompts.details.code.copySuccess" }, { language }));
-    },
-    [intl],
-  );
+  const copiedLabel = intl.formatMessage({ id: "prompts.details.code.copySuccess" });
 
   return (
     <Tabs defaultValue="curl">
@@ -94,7 +86,7 @@ export function PromptSnippetTabs({ promptName, args, actions }: PromptSnippetTa
               { id: "prompts.details.code.copyAriaLabel" },
               { language: snippet.language },
             )}
-            onCopy={makeCopyHandler(snippet.language)}
+            copiedLabel={copiedLabel}
           />
         </TabsContent>
       ))}

@@ -56,6 +56,7 @@ export function PromptPreviewResult({ preview }: PromptPreviewResultProps) {
           code={JSON.stringify({ messages: result.rendered.messages ?? [] }, null, 2)}
           language="json"
           copyLabel="JSON"
+          copiedLabel={intl.formatMessage({ id: "prompts.details.code.copySuccess" })}
         />
       )}
 

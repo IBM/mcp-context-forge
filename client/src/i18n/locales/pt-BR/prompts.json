@@ -19,7 +19,7 @@
   "prompts.details.code.tab.typescript": "TypeScript",
   "prompts.details.code.copy": "Copiar trecho",
   "prompts.details.code.copyAriaLabel": "Copiar trecho em {language}",
-  "prompts.details.code.copySuccess": "Trecho em {language} copiado",
+  "prompts.details.code.copySuccess": "Copiado!",
   "prompts.details.preview.run": "Pré-visualizar",
   "prompts.details.preview.rerun": "Executar novamente",
   "prompts.details.preview.running": "Renderizando...",

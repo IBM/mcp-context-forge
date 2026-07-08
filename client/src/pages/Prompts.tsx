@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { MessageSquareCode, MoreHorizontal, Plus } from "lucide-react";
 import { useIntl } from "react-intl";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -11,20 +11,21 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { Prompt, PromptGroup, PromptsResponse } from "@/types/prompts";
+import type { CursorPaginatedPromptsResponse, PromptRead } from "@/generated/types";
+import type { PromptGroup } from "@/types/prompts";
+import { PromptDetailsPanel } from "@/components/prompts";
 
 const MAX_VISIBLE_PROMPTS = 8;
 
-function getPromptItems(data: PromptsResponse): Prompt[] {
-  if (Array.isArray(data)) return data;
-  return data?.prompts ?? [];
+function getPromptItems(data: CursorPaginatedPromptsResponse): NonNullable<PromptRead>[] {
+  return (data?.prompts ?? []).filter((p): p is NonNullable<PromptRead> => p !== null);
 }
 
-function getPromptLabel(prompt: Prompt): string {
-  return prompt.displayName || prompt.originalName || prompt.name;
+function getPromptLabel(prompt: NonNullable<PromptRead>): string {
+  return prompt.displayName ?? prompt.originalName ?? prompt.name ?? "";
 }
 
-function getPromptDescription(prompt: Prompt): string | null {
+function getPromptDescription(prompt: NonNullable<PromptRead>): string | null {
   const description = prompt.description;
   if (!description || description.trim() === "" || description.trim().toLowerCase() === "none") {
     return null;
@@ -36,8 +37,11 @@ function getPromptDescription(prompt: Prompt): string | null {
 // mirroring how the Tools page groups tools. Prompts without a gateway (local
 // templates) are collapsed into a single "REST prompts" card, matching the
 // "REST tools" grouping on the Tools page.
-function buildPromptGroups(prompts: Prompt[], restPromptsLabel: string): PromptGroup[] {
-  const map = new Map<string, PromptGroup>();
+function buildPromptGroups(
+  prompts: NonNullable<PromptRead>[],
+  restPromptsLabel: string,
+): PromptGroup<NonNullable<PromptRead>>[] {
+  const map = new Map<string, PromptGroup<NonNullable<PromptRead>>>();
 
   for (const prompt of prompts) {
     const slug = prompt.gatewaySlug?.trim();
@@ -45,23 +49,23 @@ function buildPromptGroups(prompts: Prompt[], restPromptsLabel: string): PromptG
     // merge into a real gateway whose slug happens to equal the localized
     // "REST prompts" label. `label` stays purely for display.
     const key = slug ? `gateway:${slug}` : "rest";
-    let group = map.get(key);
-    if (!group) {
-      group = {
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, {
         key,
         label: slug || restPromptsLabel,
         gatewayId: prompt.gatewayId,
-        prompts: [],
-      };
-      map.set(key, group);
+        prompts: [prompt],
+      });
+    } else {
+      existing.prompts.push(prompt);
     }
-    group.prompts.push(prompt);
   }
 
   return Array.from(map.values());
 }
 
-function PromptGroupCard({ group }: { group: PromptGroup }) {
+function PromptGroupCard({ group }: { group: PromptGroup<NonNullable<PromptRead>> }) {
   const intl = useIntl();
   const visiblePrompts = group.prompts.slice(0, MAX_VISIBLE_PROMPTS);
   const remainingCount = group.prompts.length - MAX_VISIBLE_PROMPTS;
@@ -106,7 +110,7 @@ function PromptGroupCard({ group }: { group: PromptGroup }) {
 
       <CardContent>
         <div className="flex flex-wrap gap-1">
-          {visiblePrompts.map((prompt) => (
+          {visiblePrompts.map((prompt: NonNullable<PromptRead>) => (
             <CardTag key={prompt.id} tooltip={getPromptDescription(prompt)}>
               {getPromptLabel(prompt)}
             </CardTag>
@@ -153,16 +157,19 @@ function AddPromptsCard() {
 
 export function Prompts() {
   const intl = useIntl();
+  const [open, setOpen] = useState(false);
+
   const {
     data: promptsData,
     error,
     isLoading,
-  } = useQuery<PromptsResponse>("/prompts?limit=1000&include_inactive=true");
+  } = useQuery<CursorPaginatedPromptsResponse>("/prompts?limit=1000&include_inactive=true");
 
+  const prompts = getPromptItems(promptsData ?? { prompts: [] });
   const restPromptsLabel = intl.formatMessage({ id: "prompts.restPromptsGroup" });
   const groups = useMemo(
-    () => buildPromptGroups(getPromptItems(promptsData ?? []), restPromptsLabel),
-    [promptsData, restPromptsLabel],
+    () => buildPromptGroups(prompts, restPromptsLabel),
+    [prompts, restPromptsLabel],
   );
 
   return (
@@ -204,6 +211,19 @@ export function Prompts() {
           ))}
         </div>
       )}
+
+      <Button
+        type="button"
+        onClick={() => setOpen(true)}
+        disabled={isLoading || prompts.length === 0}
+      >
+        {isLoading
+          ? "Loading prompts..."
+          : prompts && prompts.length === 0
+            ? "No prompts available"
+            : "Open prompt details"}
+      </Button>
+      <PromptDetailsPanel prompts={prompts} open={open} onClose={() => setOpen(false)} />
     </div>
   );
 }

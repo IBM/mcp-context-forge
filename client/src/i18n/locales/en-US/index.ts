@@ -11,7 +11,6 @@ import tools from "./tools.json";
 import resources from "./resources.json";
 import prompts from "./prompts.json";
 import mcpServer from "./mcpServer.json";
-import prompts from "./prompts.json";
 
 export default {
   ...common,
@@ -27,5 +26,4 @@ export default {
   ...resources,
   ...prompts,
   ...mcpServer,
-  ...prompts,
 };

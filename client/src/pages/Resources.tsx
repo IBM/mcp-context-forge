@@ -10,7 +10,7 @@ import type {
   ResourceRead,
   GatewayRead,
   CursorPaginatedGatewaysResponse,
-  BodyCreateResourceResourcesPost,
+  BodyCreateResourceV1ResourcesPost,
 } from "@/generated/types";
 import { ResourceReadVisibility } from "@/generated/types";
 import type { ResourceGroup } from "@/types/resource";
@@ -264,7 +264,7 @@ export function Resources() {
   );
 
   const handleOptimisticAdd = useCallback(
-    (formData: BodyCreateResourceResourcesPost) => {
+    (formData: BodyCreateResourceV1ResourcesPost) => {
       const { resource } = formData;
       const optimistic: NonNullable<ResourceRead> = {
         id: OPTIMISTIC_RESOURCE_ID,

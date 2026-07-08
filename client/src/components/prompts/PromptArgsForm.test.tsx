@@ -10,14 +10,14 @@ function arg(name: string, required = false, description?: string): NonNullable<
 }
 
 describe("PromptArgsForm", () => {
-  it("renders the empty-state message when the schema has no declared args", () => {
-    render(<PromptArgsForm args={{}} schema={[]} onChange={vi.fn()} />);
-    expect(screen.getByText(/no arguments/i)).toBeInTheDocument();
+  it("renders nothing when the schema has no declared args", () => {
+    const { container } = render(<PromptArgsForm args={{}} schema={[]} onChange={vi.fn()} />);
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("ignores null entries in the schema (orval emits them)", () => {
-    render(<PromptArgsForm args={{}} schema={[null]} onChange={vi.fn()} />);
-    expect(screen.getByText(/no arguments/i)).toBeInTheDocument();
+    const { container } = render(<PromptArgsForm args={{}} schema={[null]} onChange={vi.fn()} />);
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("renders one input per declared arg with required/optional badge", () => {

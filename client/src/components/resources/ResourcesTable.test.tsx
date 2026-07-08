@@ -3,7 +3,7 @@ import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders as render } from "@/test/test-utils";
 import { ResourcesTable } from "./ResourcesTable";
-import * as gatewayUtils from "@/components/gateways/utils";
+import * as clipboardUtils from "@/lib/clipboard";
 import type { ResourceRead } from "@/generated/types";
 
 type Resource = NonNullable<ResourceRead>;
@@ -36,7 +36,7 @@ describe("ResourcesTable", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockOnSelectResource.mockClear();
-    vi.spyOn(gatewayUtils, "copyToClipboard").mockImplementation(() => {});
+    vi.spyOn(clipboardUtils, "copyToClipboard").mockImplementation(() => {});
   });
 
   it("renders table with correct headers", () => {
@@ -143,7 +143,7 @@ describe("ResourcesTable", () => {
     const copyButton = screen.getByLabelText("Copy resource://my-uri");
     await user.click(copyButton);
 
-    expect(gatewayUtils.copyToClipboard).toHaveBeenCalledWith("resource://my-uri");
+    expect(clipboardUtils.copyToClipboard).toHaveBeenCalledWith("resource://my-uri");
   });
 
   it("does not trigger row selection when the URI copy button is clicked", async () => {
@@ -165,7 +165,7 @@ describe("ResourcesTable", () => {
     const copyButton = screen.getByLabelText("Copy resource ID");
     await user.click(copyButton);
 
-    expect(gatewayUtils.copyToClipboard).toHaveBeenCalledWith("resource-abc-123");
+    expect(clipboardUtils.copyToClipboard).toHaveBeenCalledWith("resource-abc-123");
   });
 
   it("renders empty table when no resources provided", () => {
