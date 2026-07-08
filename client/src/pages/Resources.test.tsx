@@ -268,8 +268,13 @@ describe("Resources", () => {
       expect(screen.getByText("Resource 1")).toBeInTheDocument();
     });
 
-    const resourceBadge = screen.getByText("Resource 1");
-    expect(resourceBadge).toHaveAttribute("title", "Description for resource 1");
+    // CardTag wraps content in a button when tooltip is provided
+    const resourceBadge = screen.getByText("Resource 1").closest("button");
+    expect(resourceBadge).not.toBeNull();
+
+    // Focus the badge to trigger tooltip (Radix UI behavior)
+    resourceBadge!.focus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Description for resource 1");
   });
 
   it("renders more options button for each resource group", async () => {
@@ -360,8 +365,17 @@ describe("Resources", () => {
     expect(screen.queryByText("Resource 9")).not.toBeInTheDocument();
     expect(screen.queryByText("Resource 12")).not.toBeInTheDocument();
 
-    expect(screen.getByText("+4")).toBeInTheDocument();
-    expect(screen.getByTitle("4 more resources")).toBeInTheDocument();
+    // Check for the +4 badge
+    const overflowBadge = screen.getByText("+4");
+    expect(overflowBadge).toBeInTheDocument();
+
+    // CardTag wraps content in a button when tooltip is provided
+    const badgeButton = overflowBadge.closest("button");
+    expect(badgeButton).not.toBeNull();
+
+    // Focus to trigger tooltip
+    badgeButton!.focus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("4 more resources");
   });
 
   it("displays all resources when count is 8 or less without +N tag", async () => {
@@ -396,8 +410,17 @@ describe("Resources", () => {
       expect(screen.getByText("gateway-with-nine-resources")).toBeInTheDocument();
     });
 
-    expect(screen.getByText("+1")).toBeInTheDocument();
-    expect(screen.getByTitle("1 more resource")).toBeInTheDocument();
+    // Check for the +1 badge
+    const overflowBadge = screen.getByText("+1");
+    expect(overflowBadge).toBeInTheDocument();
+
+    // CardTag wraps content in a button when tooltip is provided
+    const badgeButton = overflowBadge.closest("button");
+    expect(badgeButton).not.toBeNull();
+
+    // Focus to trigger tooltip
+    badgeButton!.focus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("1 more resource");
   });
 
   describe("Dropdown Menu and Details Panel", () => {
