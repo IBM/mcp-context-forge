@@ -491,4 +491,3 @@ export function Resources() {
     </div>
   );
 }
-
