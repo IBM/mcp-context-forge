@@ -31,6 +31,7 @@
   "prompts.add.error": "Falha ao adicionar prompt. Por favor, tente novamente.",
   "prompts.add.error.nameRequired": "O nome é obrigatório",
   "prompts.add.error.templateRequired": "O modelo é obrigatório",
+  "prompts.add.error.teamRequired": "A seleção de equipe é obrigatória quando a visibilidade está definida como equipe",
   "prompts.add.error.argumentsInvalidJson": "Formato JSON inválido",
   "prompts.add.error.argumentsArrayRequired": "Os argumentos devem ser um array JSON",
   "prompts.add.error.templateTooLong": "O modelo deve ter 65.536 caracteres ou menos",
