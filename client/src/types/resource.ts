@@ -2,6 +2,8 @@
  * Resource types for the Admin UI
  */
 
+import type { ResourceRead } from "@/generated/types";
+
 export interface Resource {
   id: string;
   uri: string;
@@ -55,7 +57,7 @@ export interface Resource {
 export interface ResourceGroup {
   gatewaySlug: string;
   gatewayId?: string;
-  resources: Resource[];
+  resources: NonNullable<ResourceRead>[];
   isActive: boolean; // At least one resource is enabled
 }
 
