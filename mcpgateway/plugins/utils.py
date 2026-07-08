@@ -29,14 +29,19 @@ logger = logging.getLogger(__name__)
 #     names, resource ids, or OTel span/attribute names -- these are
 #     plugin-controlled and otherwise unvalidated.
 #   - Only scalar values (str, int, float, bool) are recorded as-is; strings
-#     must additionally be within _MAX_STRING_LENGTH and match
-#     _SAFE_STRING_VALUE_RE (a low-cardinality, no-free-text charset).
-#     Overlong values are rejected outright, not truncated -- truncation alone
-#     would bound size but not the sensitivity of what's exported (e.g. a
-#     truncated secret/token fragment is still a secret/token fragment).
+#     must additionally have a field name in the explicit _SAFE_STRING_FIELD_NAMES
+#     allowlist and be within _MAX_STRING_LENGTH and match _SAFE_STRING_VALUE_RE
+#     (a low-cardinality, no-free-text charset). The charset alone bounds size and
+#     character set, not semantic sensitivity -- a short SSN- or token-shaped value
+#     (e.g. "123-45-6789") is charset-valid, so string values are deny-by-default
+#     and only accepted for field names known in advance to carry non-sensitive
+#     enum/status/type data. Overlong values are rejected outright, not truncated --
+#     truncation alone would bound size but not the sensitivity of what's exported
+#     (e.g. a truncated secret/token fragment is still a secret/token fragment).
 #   - A list[str] value (e.g. ["email", "ssn"]) is special-cased: joined into
 #     a single comma-separated string (OTel span attributes don't nest), then
-#     subject to the same string-value validation as any other string value.
+#     subject to the same field-name-allowlisted string-value validation as any
+#     other string value.
 #   - Any other type (dict, mixed/non-str list, None, etc.) is dropped.
 #   - At most _MAX_PLUGIN_KEYS keys survive per plugin's metadata dict, and
 #     only the first _MAX_PLUGIN_KEYS items of the raw dict are ever inspected
@@ -66,6 +71,17 @@ _IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 # etc.) is rejected outright rather than truncated. This intentionally only
 # admits short enum/status/type-name-like tokens.
 _SAFE_STRING_VALUE_RE = re.compile(r"^[A-Za-z0-9_.,:=/-]*$")
+
+# Deny-by-default field-name allowlist for string (and joined list[str]) values: the
+# charset above bounds size and character set, but not semantic sensitivity -- a short
+# SSN- or token-shaped value (e.g. "123-45-6789") is charset-valid and would otherwise
+# sail through untouched. A string value is therefore only accepted when its field name
+# is already known to carry non-sensitive enum/status/type data; every other field name
+# carrying a string is dropped regardless of its content. New plugins that add a
+# string-valued metadata field must extend this set explicitly -- see
+# https://github.com/IBM/mcp-context-forge/issues/5554 and
+# https://github.com/IBM/cpex-plugins/issues/129 for plugins still to be wired up.
+_SAFE_STRING_FIELD_NAMES = frozenset({"stage", "detection_types"})
 
 
 def _is_valid_identifier(name: Any) -> bool:
@@ -137,25 +153,31 @@ def _sanitize_plugin_metrics(plugin_name: str, raw_metrics: Any) -> Dict[str, An
         elif isinstance(value, (int, float)):
             sanitized[key] = value
         elif isinstance(value, str):
-            validated = _validate_string_value(value)
-            if validated is not None:
-                sanitized[key] = validated
+            if key not in _SAFE_STRING_FIELD_NAMES:
+                logger.debug("Dropped plugin metric %r for %r: field name not in the explicit string allowlist", key, plugin_name)
             else:
-                logger.debug("Dropped plugin metric %r for %r: string value not in safe low-cardinality contract", key, plugin_name)
-        elif isinstance(value, list):
-            prefix = value[:_MAX_LIST_ITEMS]
-            # Reject any oversized item before joining, so the join itself
-            # (and the subsequent regex match) is always bounded by
-            # _MAX_LIST_ITEMS * _MAX_STRING_LENGTH, not by attacker input.
-            if all(isinstance(item, str) and len(item) <= _MAX_STRING_LENGTH for item in prefix):
-                joined = ",".join(prefix)
-                validated = _validate_string_value(joined)
+                validated = _validate_string_value(value)
                 if validated is not None:
                     sanitized[key] = validated
                 else:
-                    logger.debug("Dropped plugin metric %r for %r: joined list value not in safe low-cardinality contract", key, plugin_name)
+                    logger.debug("Dropped plugin metric %r for %r: string value not in safe low-cardinality contract", key, plugin_name)
+        elif isinstance(value, list):
+            if key not in _SAFE_STRING_FIELD_NAMES:
+                logger.debug("Dropped plugin metric %r for %r: field name not in the explicit string allowlist", key, plugin_name)
             else:
-                logger.debug("Dropped plugin metric %r for %r: list contains non-string or oversized items", key, plugin_name)
+                prefix = value[:_MAX_LIST_ITEMS]
+                # Reject any oversized item before joining, so the join itself
+                # (and the subsequent regex match) is always bounded by
+                # _MAX_LIST_ITEMS * _MAX_STRING_LENGTH, not by attacker input.
+                if all(isinstance(item, str) and len(item) <= _MAX_STRING_LENGTH for item in prefix):
+                    joined = ",".join(prefix)
+                    validated = _validate_string_value(joined)
+                    if validated is not None:
+                        sanitized[key] = validated
+                    else:
+                        logger.debug("Dropped plugin metric %r for %r: joined list value not in safe low-cardinality contract", key, plugin_name)
+                else:
+                    logger.debug("Dropped plugin metric %r for %r: list contains non-string or oversized items", key, plugin_name)
         else:
             logger.debug("Dropped plugin metric %r for %r: type not allowed", key, plugin_name)
 

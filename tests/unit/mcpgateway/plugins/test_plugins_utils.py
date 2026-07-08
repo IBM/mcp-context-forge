@@ -268,7 +268,7 @@ class TestRecordPluginMetricsS4Validation:
 
         metadata = {
             "some_plugin": {
-                "good_str": "ok",
+                "stage": "ok",
                 "bad_dict": {"nested": "value"},
                 "bad_none": None,
                 "bad_mixed_list": ["a", 1, None],
@@ -283,7 +283,7 @@ class TestRecordPluginMetricsS4Validation:
             record_plugin_metrics("trace-1", metadata)
 
         attrs = mock_service.start_span.call_args.kwargs["attributes"]
-        assert attrs == {"good_str": "ok"}
+        assert attrs == {"stage": "ok"}
 
         # S4: dropped-value log lines must name the key but never the value.
         dropped_records = [r.getMessage() for r in caplog.records if "Dropped" in r.getMessage()]
@@ -302,7 +302,9 @@ class TestRecordPluginMetricsS4Validation:
         mock_session = MagicMock()
 
         huge = "x" * 5000
-        metadata = {"some_plugin": {"huge_field": huge, "ok_field": "fine"}}
+        # Use allowlisted field names so this test isolates the length check from the
+        # separate field-name allowlist check (test_string_value_field_name_not_in_allowlist_is_rejected).
+        metadata = {"some_plugin": {"stage": huge, "detection_types": "fine"}}
 
         with (
             patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
@@ -312,10 +314,10 @@ class TestRecordPluginMetricsS4Validation:
             record_plugin_metrics("trace-1", metadata)
 
         attrs = mock_service.start_span.call_args.kwargs["attributes"]
-        assert "huge_field" not in attrs
-        assert attrs["ok_field"] == "fine"
+        assert "stage" not in attrs
+        assert attrs["detection_types"] == "fine"
         dropped_records = [r.getMessage() for r in caplog.records if "Dropped" in r.getMessage()]
-        assert any("huge_field" in msg for msg in dropped_records)
+        assert any("stage" in msg for msg in dropped_records)
         for msg in dropped_records:
             assert huge not in msg
 
@@ -326,7 +328,8 @@ class TestRecordPluginMetricsS4Validation:
         mock_service = _make_observability_service_mock()
         mock_session = MagicMock()
 
-        metadata = {"some_plugin": {"bad_char_field": "has a space", "ok_field": "fine"}}
+        # Allowlisted field names, to isolate the charset check from the field-name allowlist check.
+        metadata = {"some_plugin": {"stage": "has a space", "detection_types": "fine"}}
 
         with (
             patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
@@ -336,10 +339,42 @@ class TestRecordPluginMetricsS4Validation:
             record_plugin_metrics("trace-1", metadata)
 
         attrs = mock_service.start_span.call_args.kwargs["attributes"]
-        assert "bad_char_field" not in attrs
-        assert attrs["ok_field"] == "fine"
+        assert "stage" not in attrs
+        assert attrs["detection_types"] == "fine"
         dropped_records = [r.getMessage() for r in caplog.records if "Dropped" in r.getMessage()]
-        assert any("bad_char_field" in msg for msg in dropped_records)
+        assert any("stage" in msg for msg in dropped_records)
+
+    def test_string_value_field_name_not_in_allowlist_is_rejected(self, caplog):
+        """A string value that is perfectly valid by charset AND length is still dropped
+        if its field name isn't in the explicit low-cardinality allowlist -- the charset
+        alone doesn't bound semantic sensitivity, so an SSN- or token-shaped value under
+        an arbitrary field name must never reach the DB/OTel sinks just because it
+        happens to be short and made of allowed characters.
+        """
+        mock_service = _make_observability_service_mock()
+        mock_session = MagicMock()
+
+        metadata = {
+            "some_plugin": {
+                "user_ssn": "123-45-6789",  # charset/length-valid, but not an allowlisted field name
+                "stage": "fine",
+            }
+        }
+
+        with (
+            patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
+            patch("mcpgateway.db.SessionLocal", return_value=mock_session),
+            caplog.at_level(logging.DEBUG),
+        ):
+            record_plugin_metrics("trace-1", metadata)
+
+        attrs = mock_service.start_span.call_args.kwargs["attributes"]
+        assert "user_ssn" not in attrs
+        assert attrs["stage"] == "fine"
+        dropped_records = [r.getMessage() for r in caplog.records if "Dropped" in r.getMessage()]
+        assert any("user_ssn" in msg and "not in the explicit string allowlist" in msg for msg in dropped_records)
+        for msg in dropped_records:
+            assert "123-45-6789" not in msg
 
     def test_non_dict_per_plugin_metadata_is_dropped(self):
         """A plugin namespace whose value isn't itself a dict is dropped; other,
@@ -388,7 +423,8 @@ class TestRecordPluginMetricsS4Validation:
         mock_service = _make_observability_service_mock()
         mock_session = MagicMock()
 
-        metadata = {"some_plugin": {"tags": ["ok", "bad@char"], "ok_field": "fine"}}
+        # Allowlisted field name, to isolate the charset check from the field-name allowlist check.
+        metadata = {"some_plugin": {"detection_types": ["ok", "bad@char"], "stage": "fine"}}
 
         with (
             patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
@@ -398,10 +434,10 @@ class TestRecordPluginMetricsS4Validation:
             record_plugin_metrics("trace-1", metadata)
 
         attrs = mock_service.start_span.call_args.kwargs["attributes"]
-        assert "tags" not in attrs
-        assert attrs["ok_field"] == "fine"
+        assert "detection_types" not in attrs
+        assert attrs["stage"] == "fine"
         dropped_records = [r.getMessage() for r in caplog.records if "Dropped" in r.getMessage()]
-        assert any("tags" in msg and "joined list value" in msg for msg in dropped_records)
+        assert any("detection_types" in msg and "joined list value" in msg for msg in dropped_records)
 
     def test_oversized_list_item_is_rejected_before_join(self, caplog):
         """A list item longer than _MAX_STRING_LENGTH is rejected before the list is
@@ -410,7 +446,8 @@ class TestRecordPluginMetricsS4Validation:
         mock_service = _make_observability_service_mock()
         mock_session = MagicMock()
 
-        metadata = {"some_plugin": {"tags": ["ok", "x" * 5000], "ok_field": "fine"}}
+        # Allowlisted field name, to isolate the size check from the field-name allowlist check.
+        metadata = {"some_plugin": {"detection_types": ["ok", "x" * 5000], "stage": "fine"}}
 
         with (
             patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
@@ -420,10 +457,33 @@ class TestRecordPluginMetricsS4Validation:
             record_plugin_metrics("trace-1", metadata)
 
         attrs = mock_service.start_span.call_args.kwargs["attributes"]
-        assert "tags" not in attrs
-        assert attrs["ok_field"] == "fine"
+        assert "detection_types" not in attrs
+        assert attrs["stage"] == "fine"
         dropped_records = [r.getMessage() for r in caplog.records if "Dropped" in r.getMessage()]
-        assert any("tags" in msg for msg in dropped_records)
+        assert any("detection_types" in msg for msg in dropped_records)
+
+    def test_list_value_field_name_not_in_allowlist_is_rejected(self, caplog):
+        """A list[str] value that is perfectly valid by charset/length is still dropped
+        if its field name isn't in the explicit allowlist -- the same deny-by-default
+        gate applies to joined list values as to plain string values.
+        """
+        mock_service = _make_observability_service_mock()
+        mock_session = MagicMock()
+
+        metadata = {"some_plugin": {"custom_tags": ["a", "b"], "stage": "fine"}}
+
+        with (
+            patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
+            patch("mcpgateway.db.SessionLocal", return_value=mock_session),
+            caplog.at_level(logging.DEBUG),
+        ):
+            record_plugin_metrics("trace-1", metadata)
+
+        attrs = mock_service.start_span.call_args.kwargs["attributes"]
+        assert "custom_tags" not in attrs
+        assert attrs["stage"] == "fine"
+        dropped_records = [r.getMessage() for r in caplog.records if "Dropped" in r.getMessage()]
+        assert any("custom_tags" in msg and "not in the explicit string allowlist" in msg for msg in dropped_records)
 
     def test_key_scan_is_bounded_not_just_accepted_count(self):
         """Invalid keys don't get a free pass: only the first _MAX_PLUGIN_KEYS items of
