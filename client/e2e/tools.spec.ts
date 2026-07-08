@@ -474,16 +474,18 @@ test.describe("Tools page", () => {
 
   test("card group disappears from grid when its only tool is deleted", async ({ page }) => {
     const SOLO = makeTool("lone_tool", "lone-gateway");
+    let toolDeleted = false;
 
     await page.route("**/tools?*", async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify([SOLO, TOOL_A1]),
+        body: JSON.stringify(toolDeleted ? [TOOL_A1] : [SOLO, TOOL_A1]),
       });
     });
     await page.route(`**/tools/${SOLO.id}`, async (route) => {
       if (route.request().method() === "DELETE") {
+        toolDeleted = true;
         await route.fulfill({ status: 204 });
       } else {
         await route.fallback();
