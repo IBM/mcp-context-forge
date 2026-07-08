@@ -26,9 +26,7 @@ describe("ToolBearerTokenAuth", () => {
   });
 
   it("shows current token value", () => {
-    renderWithProviders(
-      <ToolBearerTokenAuth token="my-secret-token" onTokenChange={vi.fn()} />
-    );
+    renderWithProviders(<ToolBearerTokenAuth token="my-secret-token" onTokenChange={vi.fn()} />);
     const input = screen.getByLabelText(/Token/i) as HTMLInputElement;
     expect(input.value).toBe("my-secret-token");
   });
@@ -105,16 +103,12 @@ describe("ToolAdvancedSettings", () => {
   });
 
   it("shows bearer token input for authType=bearer", () => {
-    renderWithProviders(
-      <ToolAdvancedSettings {...defaultAdvancedProps} authType="bearer" />
-    );
+    renderWithProviders(<ToolAdvancedSettings {...defaultAdvancedProps} authType="bearer" />);
     expect(screen.getByPlaceholderText(/Paste bearer token/i)).toBeTruthy();
   });
 
   it("shows basic auth fields for authType=basic", () => {
-    renderWithProviders(
-      <ToolAdvancedSettings {...defaultAdvancedProps} authType="basic" />
-    );
+    renderWithProviders(<ToolAdvancedSettings {...defaultAdvancedProps} authType="basic" />);
     // BasicAuth renders username and password fields
     expect(screen.getByLabelText(/username/i)).toBeTruthy();
   });
@@ -122,10 +116,7 @@ describe("ToolAdvancedSettings", () => {
   it("calls onAuthTypeChange when bearer radio is selected", () => {
     const onAuthTypeChange = vi.fn();
     renderWithProviders(
-      <ToolAdvancedSettings
-        {...defaultAdvancedProps}
-        onAuthTypeChange={onAuthTypeChange}
-      />
+      <ToolAdvancedSettings {...defaultAdvancedProps} onAuthTypeChange={onAuthTypeChange} />,
     );
     const bearerRadio = screen.getByLabelText("Bearer token");
     fireEvent.click(bearerRadio);
@@ -153,7 +144,7 @@ describe("ToolAdvancedSettings", () => {
       <ToolAdvancedSettings
         {...defaultAdvancedProps}
         onResponseFilterChange={onResponseFilterChange}
-      />
+      />,
     );
     const input = screen.getByLabelText("Response filter (jq)");
     fireEvent.change(input, { target: { value: ".data" } });
@@ -163,7 +154,7 @@ describe("ToolAdvancedSettings", () => {
   it("fires onTagsChange when tags input changes", () => {
     const onTagsChange = vi.fn();
     renderWithProviders(
-      <ToolAdvancedSettings {...defaultAdvancedProps} onTagsChange={onTagsChange} />
+      <ToolAdvancedSettings {...defaultAdvancedProps} onTagsChange={onTagsChange} />,
     );
     const input = screen.getByLabelText("Tags");
     fireEvent.change(input, { target: { value: "api, rest" } });
@@ -173,10 +164,7 @@ describe("ToolAdvancedSettings", () => {
   it("fires onDescriptionChange when description textarea changes", () => {
     const onDescriptionChange = vi.fn();
     renderWithProviders(
-      <ToolAdvancedSettings
-        {...defaultAdvancedProps}
-        onDescriptionChange={onDescriptionChange}
-      />
+      <ToolAdvancedSettings {...defaultAdvancedProps} onDescriptionChange={onDescriptionChange} />,
     );
     const textarea = screen.getByLabelText("Description");
     fireEvent.change(textarea, { target: { value: "My tool" } });
@@ -184,11 +172,9 @@ describe("ToolAdvancedSettings", () => {
   });
 
   it("shows team scope hint when visibility=team and selectedTeamId is set", () => {
-    renderWithProviders(
-      <ToolAdvancedSettings {...defaultAdvancedProps} visibility="team" />
-    );
+    renderWithProviders(<ToolAdvancedSettings {...defaultAdvancedProps} visibility="team" />);
     expect(
-      screen.getByText(/This tool will be scoped to your currently selected team/i)
+      screen.getByText(/This tool will be scoped to your currently selected team/i),
     ).toBeTruthy();
   });
 
@@ -200,7 +186,7 @@ describe("ToolAdvancedSettings", () => {
         visibility="team"
         teamId="team-1"
         onTeamIdChange={onTeamIdChange}
-      />
+      />,
     );
     // onTeamIdChange called with '' when visibility != "team" is handled by useEffect
     // Switching to public visibility is tested via re-render
@@ -210,7 +196,7 @@ describe("ToolAdvancedSettings", () => {
         visibility="public"
         teamId="team-1"
         onTeamIdChange={onTeamIdChange}
-      />
+      />,
     );
     // useEffect fires immediately on mount when visibility !== "team" but teamId is set
     expect(onTeamIdChange).toHaveBeenCalledWith("");

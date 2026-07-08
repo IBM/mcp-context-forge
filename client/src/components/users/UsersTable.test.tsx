@@ -163,7 +163,7 @@ describe("UsersTable", () => {
         users={[baseUser]}
         onDeleteClick={mockOnDeleteClick}
         onEditClick={mockOnEditClick}
-      />
+      />,
     );
 
     // Open the actions menu
@@ -181,7 +181,7 @@ describe("UsersTable", () => {
     await user.click(deleteItem);
     expect(mockOnDeleteClick).toHaveBeenCalledWith(baseUser);
   });
-  
+
   it("does not trigger delete if user email is not found", async () => {
     const user = userEvent.setup();
     renderWithIntl(
@@ -189,7 +189,7 @@ describe("UsersTable", () => {
         users={[baseUser]}
         onDeleteClick={mockOnDeleteClick}
         onEditClick={mockOnEditClick}
-      />
+      />,
     );
 
     // In a real scenario, the UsersTable looks up the user by email from the callback.

@@ -1,0 +1,202 @@
+[
+  {
+    "file": "src/auth/ailsPanel.tsx",
+    "stmts": 80,
+    "branch": 40,
+    "funcs": 50,
+    "linesPct": 80,
+    "uncov": "90-97,101-112"
+  },
+  {
+    "file": "src/components/ui/serDialog.tsx",
+    "stmts": 97.61,
+    "branch": 50,
+    "funcs": 50,
+    "linesPct": 97.61,
+    "uncov": "58"
+  },
+  {
+    "file": "src/auth/ionDialog.tsx",
+    "stmts": 87.9,
+    "branch": 65.11,
+    "funcs": 77.77,
+    "linesPct": 87.9,
+    "uncov": "...66-373,383-386"
+  },
+  {
+    "file": "src/auth/ToolForm.tsx",
+    "stmts": 88.86,
+    "branch": 65.11,
+    "funcs": 52.94,
+    "linesPct": 88.86,
+    "uncov": "...81-383,415-417"
+  },
+  {
+    "file": "src/auth/ents/resources",
+    "stmts": 92.35,
+    "branch": 79.31,
+    "funcs": 54.54,
+    "linesPct": 92.35,
+    "uncov": ""
+  },
+  {
+    "file": "src/App.tsx",
+    "stmts": 96.77,
+    "branch": 80,
+    "funcs": 100,
+    "linesPct": 96.77,
+    "uncov": "104-105"
+  },
+  {
+    "file": "src/auth/erverForm.tsx",
+    "stmts": 97.53,
+    "branch": 80.55,
+    "funcs": 100,
+    "linesPct": 97.53,
+    "uncov": "242-244,269-271"
+  },
+  {
+    "file": "src/auth/ailsPanel.tsx",
+    "stmts": 84.53,
+    "branch": 81.81,
+    "funcs": 47.05,
+    "linesPct": 84.53,
+    "uncov": "...48-553,563-566"
+  },
+  {
+    "file": "src/auth/Selection.tsx",
+    "stmts": 93.76,
+    "branch": 82.43,
+    "funcs": 86.66,
+    "linesPct": 93.76,
+    "uncov": "...17-218,317-319"
+  },
+  {
+    "file": "src/auth/mponents/tools",
+    "stmts": 95.55,
+    "branch": 83.18,
+    "funcs": 80.85,
+    "linesPct": 95.55,
+    "uncov": ""
+  },
+  {
+    "file": "src/auth/ofileMenu.tsx",
+    "stmts": 100,
+    "branch": 86.66,
+    "funcs": 100,
+    "linesPct": 100,
+    "uncov": "24"
+  },
+  {
+    "file": "src/auth/nents/gateways",
+    "stmts": 93.18,
+    "branch": 86.91,
+    "funcs": 81.42,
+    "linesPct": 93.18,
+    "uncov": ""
+  },
+  {
+    "file": "src/auth/erverForm.tsx",
+    "stmts": 95.18,
+    "branch": 87.27,
+    "funcs": 100,
+    "linesPct": 95.18,
+    "uncov": "...65-267,387-392"
+  },
+  {
+    "file": "src/auth/ResourceForm.tsx",
+    "stmts": 97.32,
+    "branch": 87.5,
+    "funcs": 55.55,
+    "linesPct": 97.32,
+    "uncov": "140-142,172-174"
+  },
+  {
+    "file": "src/api/servers.ts",
+    "stmts": 69.29,
+    "branch": 88,
+    "funcs": 70,
+    "linesPct": 69.29,
+    "uncov": "...,72-87,101-103"
+  },
+  {
+    "file": "src/api/users.ts",
+    "stmts": 92,
+    "branch": 88.88,
+    "funcs": 100,
+    "linesPct": 92,
+    "uncov": "29-30"
+  },
+  {
+    "file": "src/auth/onents/servers",
+    "stmts": 93.33,
+    "branch": 89.41,
+    "funcs": 84.78,
+    "linesPct": 93.33,
+    "uncov": ""
+  },
+  {
+    "file": "src/auth/nentsForm.tsx",
+    "stmts": 98.47,
+    "branch": 89.65,
+    "funcs": 87.5,
+    "linesPct": 98.47,
+    "uncov": "311-316"
+  },
+  {
+    "file": "src/auth/irmDialog.tsx",
+    "stmts": 94.44,
+    "branch": 90,
+    "funcs": 100,
+    "linesPct": 94.44,
+    "uncov": "42-44"
+  },
+  {
+    "file": "src/components/ui/sidebar.tsx",
+    "stmts": 100,
+    "branch": 91.42,
+    "funcs": 100,
+    "linesPct": 100,
+    "uncov": "...78,398,511,627"
+  },
+  {
+    "file": "src/auth/dSettings.tsx",
+    "stmts": 98.8,
+    "branch": 92.59,
+    "funcs": 100,
+    "linesPct": 98.8,
+    "uncov": "101,132"
+  },
+  {
+    "file": "src/auth/ailsPanel.tsx",
+    "stmts": 100,
+    "branch": 92.75,
+    "funcs": 83.33,
+    "linesPct": 100,
+    "uncov": "104,138,271-274"
+  },
+  {
+    "file": "src/api/client.ts",
+    "stmts": 95.04,
+    "branch": 92.85,
+    "funcs": 100,
+    "linesPct": 95.04,
+    "uncov": "...,62-63,121-122"
+  },
+  {
+    "file": "src/auth/ailsPanel.tsx",
+    "stmts": 92.64,
+    "branch": 93.61,
+    "funcs": 68.75,
+    "linesPct": 92.64,
+    "uncov": "271-281,550-576"
+  },
+  {
+    "file": "src/auth/ServersTable.tsx",
+    "stmts": 97.1,
+    "branch": 94.44,
+    "funcs": 100,
+    "linesPct": 97.1,
+    "uncov": "...38-139,142-143"
+  }
+]

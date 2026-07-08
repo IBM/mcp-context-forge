@@ -1569,7 +1569,10 @@ describe("useMCPServerForm", () => {
       });
       const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       vi.spyOn(serversApi, "toggleEnabled").mockRejectedValueOnce(new Error("Activation failed"));
-      vi.spyOn(serversApi, "fetchToolsAfterOAuth").mockResolvedValueOnce({ success: true, message: "ok" });
+      vi.spyOn(serversApi, "fetchToolsAfterOAuth").mockResolvedValueOnce({
+        success: true,
+        message: "ok",
+      });
 
       const { result } = renderHook(() => useMCPServerForm());
       const mockEvent = { preventDefault: vi.fn() } as unknown as React.FormEvent<HTMLFormElement>;
@@ -1584,7 +1587,10 @@ describe("useMCPServerForm", () => {
         await result.current.handleSubmit(mockEvent);
       });
 
-      expect(consoleErrorSpy).toHaveBeenCalledWith("Failed to activate gateway after OAuth:", "An error occurred. Please try again.");
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        "Failed to activate gateway after OAuth:",
+        "An error occurred. Please try again.",
+      );
     });
   });
 });

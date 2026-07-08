@@ -17,12 +17,7 @@ const mockUser: User = {
 describe("UserActionsMenu", () => {
   it("renders trigger button with aria-label", () => {
     renderWithProviders(
-      <UserActionsMenu
-        user={mockUser}
-        displayName="Alice"
-        onEdit={vi.fn()}
-        onDelete={vi.fn()}
-      />
+      <UserActionsMenu user={mockUser} displayName="Alice" onEdit={vi.fn()} onDelete={vi.fn()} />,
     );
     // The trigger button label comes from intl message id
     const trigger = screen.getByRole("button");
@@ -32,12 +27,7 @@ describe("UserActionsMenu", () => {
   it("opens dropdown and shows Edit and Delete options", async () => {
     const user = userEvent.setup();
     renderWithProviders(
-      <UserActionsMenu
-        user={mockUser}
-        displayName="Alice"
-        onEdit={vi.fn()}
-        onDelete={vi.fn()}
-      />
+      <UserActionsMenu user={mockUser} displayName="Alice" onEdit={vi.fn()} onDelete={vi.fn()} />,
     );
     const trigger = screen.getByRole("button");
     await user.click(trigger);
@@ -51,12 +41,7 @@ describe("UserActionsMenu", () => {
     const user = userEvent.setup();
     const onEdit = vi.fn();
     renderWithProviders(
-      <UserActionsMenu
-        user={mockUser}
-        displayName="Alice"
-        onEdit={onEdit}
-        onDelete={vi.fn()}
-      />
+      <UserActionsMenu user={mockUser} displayName="Alice" onEdit={onEdit} onDelete={vi.fn()} />,
     );
     await user.click(screen.getByRole("button"));
     const editItem = await screen.findByRole("menuitem", { name: /edit/i });
@@ -68,12 +53,7 @@ describe("UserActionsMenu", () => {
     const user = userEvent.setup();
     const onDelete = vi.fn();
     renderWithProviders(
-      <UserActionsMenu
-        user={mockUser}
-        displayName="Alice"
-        onEdit={vi.fn()}
-        onDelete={onDelete}
-      />
+      <UserActionsMenu user={mockUser} displayName="Alice" onEdit={vi.fn()} onDelete={onDelete} />,
     );
     await user.click(screen.getByRole("button"));
     const deleteItem = await screen.findByRole("menuitem", { name: /delete/i });
@@ -84,12 +64,7 @@ describe("UserActionsMenu", () => {
   it("delete menu item has red text class", async () => {
     const user = userEvent.setup();
     renderWithProviders(
-      <UserActionsMenu
-        user={mockUser}
-        displayName="Alice"
-        onEdit={vi.fn()}
-        onDelete={vi.fn()}
-      />
+      <UserActionsMenu user={mockUser} displayName="Alice" onEdit={vi.fn()} onDelete={vi.fn()} />,
     );
     await user.click(screen.getByRole("button"));
     const deleteItem = await screen.findByRole("menuitem", { name: /delete/i });

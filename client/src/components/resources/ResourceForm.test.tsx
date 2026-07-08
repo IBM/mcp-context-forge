@@ -169,19 +169,19 @@ describe("ResourceForm", () => {
       await user.type(screen.getByLabelText(/Content/), "content");
       await user.type(screen.getByPlaceholderText(/optional description/i), "Some description");
       await user.type(screen.getByLabelText(/Tags/), "tag1, tag2");
-      
+
       // Select MIME Type
       const mimeTypeSelect = screen.getByRole("combobox", { name: /MIME Type/i });
       await user.click(mimeTypeSelect);
       const mimeTypeOption = await screen.findByRole("option", { name: "application/json" });
       await user.click(mimeTypeOption);
-      
+
       // Select Visibility
       const visibilitySelect = screen.getByRole("combobox", { name: /Visibility/i });
       await user.click(visibilitySelect);
       const visibilityOption = await screen.findByRole("option", { name: /Public/i });
       await user.click(visibilityOption);
-      
+
       // Wait for select portal to close so it doesn't block clicks
       await waitFor(() => expect(screen.queryByRole("listbox")).not.toBeInTheDocument());
 
@@ -259,4 +259,3 @@ describe("ResourceForm", () => {
     });
   });
 });
-

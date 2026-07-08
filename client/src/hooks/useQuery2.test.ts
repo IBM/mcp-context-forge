@@ -13,7 +13,7 @@ describe("useQuery - additional coverage", () => {
         useQuery<{ updated: boolean }, { name: string }>("/test-put", {
           method: "PUT",
           enabled: false,
-        })
+        }),
       );
 
       await act(async () => {
@@ -29,7 +29,7 @@ describe("useQuery - additional coverage", () => {
         useQuery<{ patched: boolean }, { field: string }>("/test-patch", {
           method: "PATCH",
           enabled: false,
-        })
+        }),
       );
 
       await act(async () => {
@@ -45,7 +45,7 @@ describe("useQuery - additional coverage", () => {
         useQuery<{ deleted: boolean }>("/test-delete", {
           method: "DELETE",
           enabled: false,
-        })
+        }),
       );
 
       await act(async () => {
@@ -58,7 +58,7 @@ describe("useQuery - additional coverage", () => {
   describe("initialData option", () => {
     it("starts with initialData and does not set isLoading", () => {
       const { result } = renderHook(() =>
-        useQuery("/test-init", { initialData: { value: "preset" } })
+        useQuery("/test-init", { initialData: { value: "preset" } }),
       );
       // With initialData provided, isLoading should be false immediately
       expect(result.current.data).toEqual({ value: "preset" });
@@ -73,7 +73,7 @@ describe("useQuery - additional coverage", () => {
       const { result } = renderHook(() =>
         useQuery("/test-headers", {
           headers: { "X-Custom-Header": "value" },
-        })
+        }),
       );
 
       await waitFor(() => expect(result.current.data).toBeDefined());
@@ -85,12 +85,12 @@ describe("useQuery - additional coverage", () => {
     it("sets error state when execute fails", async () => {
       server.use(
         http.post("/test-exec-error", () =>
-          HttpResponse.json({ detail: "Server error" }, { status: 500 })
-        )
+          HttpResponse.json({ detail: "Server error" }, { status: 500 }),
+        ),
       );
 
       const { result } = renderHook(() =>
-        useQuery("/test-exec-error", { method: "POST", enabled: false })
+        useQuery("/test-exec-error", { method: "POST", enabled: false }),
       );
 
       await act(async () => {
@@ -103,9 +103,7 @@ describe("useQuery - additional coverage", () => {
 
   describe("immediate option", () => {
     it("does not auto-fetch when immediate is false and method is GET", () => {
-      const { result } = renderHook(() =>
-        useQuery("/test-no-immediate", { immediate: false })
-      );
+      const { result } = renderHook(() => useQuery("/test-no-immediate", { immediate: false }));
       expect(result.current.isLoading).toBe(false);
       expect(result.current.data).toBeUndefined();
     });
@@ -114,7 +112,7 @@ describe("useQuery - additional coverage", () => {
       server.use(http.post("/test-immediate-post", () => HttpResponse.json({ posted: true })));
 
       const { result } = renderHook(() =>
-        useQuery("/test-immediate-post", { method: "POST", immediate: true })
+        useQuery("/test-immediate-post", { method: "POST", immediate: true }),
       );
 
       await waitFor(() => expect(result.current.data).toBeDefined());
@@ -129,7 +127,7 @@ describe("useQuery - additional coverage", () => {
         http.get("/test-refetch", () => {
           callCount++;
           return HttpResponse.json({ count: callCount });
-        })
+        }),
       );
 
       const { result } = renderHook(() => useQuery<{ count: number }>("/test-refetch"));
@@ -152,7 +150,7 @@ describe("useQuery - additional coverage", () => {
         http.post("/test-override-body", async ({ request }) => {
           receivedBody = await request.json();
           return HttpResponse.json({ ok: true });
-        })
+        }),
       );
 
       const { result } = renderHook(() =>
@@ -160,7 +158,7 @@ describe("useQuery - additional coverage", () => {
           method: "POST",
           enabled: false,
           body: { name: "default" },
-        })
+        }),
       );
 
       await act(async () => {

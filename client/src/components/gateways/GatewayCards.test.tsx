@@ -88,48 +88,36 @@ const emptyServer: VirtualServer = {
 
 describe("VirtualServerCard", () => {
   it("renders the server name", () => {
-    renderWithProviders(
-      <VirtualServerCard server={mockServer} onViewDetails={vi.fn()} />
-    );
+    renderWithProviders(<VirtualServerCard server={mockServer} onViewDetails={vi.fn()} />);
     expect(screen.getByText("My Test Server")).toBeTruthy();
   });
 
   it("shows enabled indicator for enabled server", () => {
-    renderWithProviders(
-      <VirtualServerCard server={mockServer} onViewDetails={vi.fn()} />
-    );
+    renderWithProviders(<VirtualServerCard server={mockServer} onViewDetails={vi.fn()} />);
     expect(screen.getByTestId("enabled-indicator")).toBeTruthy();
   });
 
   it("does not show enabled indicator for disabled server", () => {
-    renderWithProviders(
-      <VirtualServerCard server={emptyServer} onViewDetails={vi.fn()} />
-    );
+    renderWithProviders(<VirtualServerCard server={emptyServer} onViewDetails={vi.fn()} />);
     expect(screen.queryByTestId("enabled-indicator")).toBeNull();
   });
 
   it("calls onViewDetails when card is clicked", () => {
     const onViewDetails = vi.fn();
-    renderWithProviders(
-      <VirtualServerCard server={mockServer} onViewDetails={onViewDetails} />
-    );
+    renderWithProviders(<VirtualServerCard server={mockServer} onViewDetails={onViewDetails} />);
     const card = screen.getByTestId("virtual-server-card");
     fireEvent.click(card);
     expect(onViewDetails).toHaveBeenCalledWith(mockServer);
   });
 
   it("shows tool count for non-empty server", () => {
-    renderWithProviders(
-      <VirtualServerCard server={mockServer} onViewDetails={vi.fn()} />
-    );
+    renderWithProviders(<VirtualServerCard server={mockServer} onViewDetails={vi.fn()} />);
     const toolCount = screen.getByTestId("tool-count");
     expect(toolCount.textContent).toContain("1");
   });
 
   it("shows Add Sources button for empty composition server", () => {
-    renderWithProviders(
-      <VirtualServerCard server={emptyServer} onViewDetails={vi.fn()} />
-    );
+    renderWithProviders(<VirtualServerCard server={emptyServer} onViewDetails={vi.fn()} />);
     // Empty server shows "Add sources" button - intl ID based text
     const buttons = screen.getAllByRole("button");
     expect(buttons.length).toBeGreaterThan(0);
@@ -142,7 +130,7 @@ describe("VirtualServerCard", () => {
         server={emptyServer}
         onViewDetails={vi.fn()}
         onAddComponents={onAddComponents}
-      />
+      />,
     );
     // Find the add sources/components button in the card content
     const addBtn = document.querySelector(".justify-start") as HTMLElement;
@@ -155,13 +143,15 @@ describe("VirtualServerCard", () => {
   it("shows dropdown menu with view details option", async () => {
     const onViewDetails = vi.fn();
     const user = userEvent.setup();
-    renderWithProviders(
-      <VirtualServerCard server={mockServer} onViewDetails={onViewDetails} />
-    );
+    renderWithProviders(<VirtualServerCard server={mockServer} onViewDetails={onViewDetails} />);
     const ellipsisBtn = screen.getByRole("button", { name: /Actions for/i });
     await user.click(ellipsisBtn);
     // After click, view details menu item appears
-    const viewDetailsItem = await screen.findByRole("menuitem", { name: /View details/i }, { timeout: 5000 });
+    const viewDetailsItem = await screen.findByRole(
+      "menuitem",
+      { name: /View details/i },
+      { timeout: 5000 },
+    );
     expect(viewDetailsItem).toBeTruthy();
   });
 
@@ -169,11 +159,15 @@ describe("VirtualServerCard", () => {
     const onEdit = vi.fn();
     const user = userEvent.setup();
     renderWithProviders(
-      <VirtualServerCard server={mockServer} onViewDetails={vi.fn()} onEdit={onEdit} />
+      <VirtualServerCard server={mockServer} onViewDetails={vi.fn()} onEdit={onEdit} />,
     );
     const ellipsisBtn = screen.getByRole("button", { name: /Actions for/i });
     await user.click(ellipsisBtn);
-    const editItem = await screen.findByRole("menuitem", { name: /Edit server/i }, { timeout: 5000 });
+    const editItem = await screen.findByRole(
+      "menuitem",
+      { name: /Edit server/i },
+      { timeout: 5000 },
+    );
     expect(editItem).toBeTruthy();
     await user.click(editItem);
     expect(onEdit).toHaveBeenCalledWith(mockServer);
@@ -183,7 +177,7 @@ describe("VirtualServerCard", () => {
     const onDelete = vi.fn();
     const user = userEvent.setup();
     renderWithProviders(
-      <VirtualServerCard server={mockServer} onViewDetails={vi.fn()} onDelete={onDelete} />
+      <VirtualServerCard server={mockServer} onViewDetails={vi.fn()} onDelete={onDelete} />,
     );
     const ellipsisBtn = screen.getByRole("button", { name: /Actions for/i });
     await user.click(ellipsisBtn);
@@ -196,11 +190,7 @@ describe("VirtualServerCard", () => {
   it("shows Activate/Deactivate toggle when onToggleStatus provided", async () => {
     const user = userEvent.setup();
     renderWithProviders(
-      <VirtualServerCard
-        server={mockServer}
-        onViewDetails={vi.fn()}
-        onToggleStatus={vi.fn()}
-      />
+      <VirtualServerCard server={mockServer} onViewDetails={vi.fn()} onToggleStatus={vi.fn()} />,
     );
     const ellipsisBtn = screen.getByRole("button", { name: /Actions for/i });
     await user.click(ellipsisBtn);
@@ -210,9 +200,7 @@ describe("VirtualServerCard", () => {
   });
 
   it("shows tags as badges for non-empty server", () => {
-    renderWithProviders(
-      <VirtualServerCard server={mockServer} onViewDetails={vi.fn()} />
-    );
+    renderWithProviders(<VirtualServerCard server={mockServer} onViewDetails={vi.fn()} />);
     // "api" and "test" tags should be rendered as badges
     expect(screen.getByText("api")).toBeTruthy();
     expect(screen.getByText("test")).toBeTruthy();
@@ -224,7 +212,7 @@ describe("VirtualServerCard", () => {
         server={mockServer}
         onViewDetails={vi.fn()}
         className="custom-card-class"
-      />
+      />,
     );
     const card = screen.getByTestId("virtual-server-card");
     expect(card.className).toContain("custom-card-class");

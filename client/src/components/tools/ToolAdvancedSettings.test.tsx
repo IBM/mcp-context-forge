@@ -105,7 +105,7 @@ describe("ToolAdvancedSettings", () => {
   it("calls onAuthTypeChange when radio changes to basic", () => {
     const onAuthTypeChange = vi.fn();
     renderWithProviders(
-      <ToolAdvancedSettings {...defaultProps} onAuthTypeChange={onAuthTypeChange} />
+      <ToolAdvancedSettings {...defaultProps} onAuthTypeChange={onAuthTypeChange} />,
     );
     const basicRadio = screen.getByRole("radio", { name: /Basic/i });
     fireEvent.click(basicRadio);
@@ -115,7 +115,7 @@ describe("ToolAdvancedSettings", () => {
   it("calls onAuthTypeChange when radio changes to bearer", () => {
     const onAuthTypeChange = vi.fn();
     renderWithProviders(
-      <ToolAdvancedSettings {...defaultProps} onAuthTypeChange={onAuthTypeChange} />
+      <ToolAdvancedSettings {...defaultProps} onAuthTypeChange={onAuthTypeChange} />,
     );
     const bearerRadio = screen.getByRole("radio", { name: /Bearer token/i });
     fireEvent.click(bearerRadio);
@@ -125,7 +125,7 @@ describe("ToolAdvancedSettings", () => {
   it("calls onAuthTypeChange when radio changes to custom", () => {
     const onAuthTypeChange = vi.fn();
     renderWithProviders(
-      <ToolAdvancedSettings {...defaultProps} onAuthTypeChange={onAuthTypeChange} />
+      <ToolAdvancedSettings {...defaultProps} onAuthTypeChange={onAuthTypeChange} />,
     );
     const customRadio = screen.getByRole("radio", { name: /Custom headers/i });
     fireEvent.click(customRadio);
@@ -134,7 +134,7 @@ describe("ToolAdvancedSettings", () => {
 
   it("shows BasicAuth component when authType is basic", () => {
     renderWithProviders(
-      <ToolAdvancedSettings {...defaultProps} authType="basic" basicAuthUsername="admin" />
+      <ToolAdvancedSettings {...defaultProps} authType="basic" basicAuthUsername="admin" />,
     );
     expect(screen.getByLabelText(/Username/i)).toBeTruthy();
     expect(screen.getByLabelText(/Password/i)).toBeTruthy();
@@ -142,23 +142,19 @@ describe("ToolAdvancedSettings", () => {
 
   it("shows ToolBearerTokenAuth when authType is bearer", () => {
     renderWithProviders(
-      <ToolAdvancedSettings {...defaultProps} authType="bearer" bearerToken="mytoken" />
+      <ToolAdvancedSettings {...defaultProps} authType="bearer" bearerToken="mytoken" />,
     );
     const input = screen.getByPlaceholderText(/Paste bearer token/i) as HTMLInputElement;
     expect(input.value).toBe("mytoken");
   });
 
   it("shows CustomHeadersAuth when authType is custom", () => {
-    renderWithProviders(
-      <ToolAdvancedSettings {...defaultProps} authType="custom" />
-    );
+    renderWithProviders(<ToolAdvancedSettings {...defaultProps} authType="custom" />);
     expect(screen.getByRole("button", { name: /Add header/i })).toBeTruthy();
   });
 
   it("renders no auth content when authType is none", () => {
-    renderWithProviders(
-      <ToolAdvancedSettings {...defaultProps} authType="none" />
-    );
+    renderWithProviders(<ToolAdvancedSettings {...defaultProps} authType="none" />);
     // No basic/bearer/custom fields should be visible
     expect(screen.queryByLabelText(/Username/i)).toBeNull();
     expect(screen.queryByPlaceholderText(/Paste bearer token/i)).toBeNull();
@@ -166,16 +162,14 @@ describe("ToolAdvancedSettings", () => {
   });
 
   it("shows team hint when visibility is team and selectedTeamId is set", () => {
-    renderWithProviders(
-      <ToolAdvancedSettings {...defaultProps} visibility="team" />
-    );
+    renderWithProviders(<ToolAdvancedSettings {...defaultProps} visibility="team" />);
     expect(screen.getByText(/currently selected team/i)).toBeTruthy();
   });
 
   it("calls onResponseFilterChange when response filter changes", () => {
     const onResponseFilterChange = vi.fn();
     renderWithProviders(
-      <ToolAdvancedSettings {...defaultProps} onResponseFilterChange={onResponseFilterChange} />
+      <ToolAdvancedSettings {...defaultProps} onResponseFilterChange={onResponseFilterChange} />,
     );
     const input = screen.getByLabelText(/Response filter/i);
     fireEvent.change(input, { target: { value: ".results" } });
@@ -184,9 +178,7 @@ describe("ToolAdvancedSettings", () => {
 
   it("calls onTagsChange when tags input changes", () => {
     const onTagsChange = vi.fn();
-    renderWithProviders(
-      <ToolAdvancedSettings {...defaultProps} onTagsChange={onTagsChange} />
-    );
+    renderWithProviders(<ToolAdvancedSettings {...defaultProps} onTagsChange={onTagsChange} />);
     const input = screen.getByLabelText(/Tags/i);
     fireEvent.change(input, { target: { value: "api,v2" } });
     expect(onTagsChange).toHaveBeenCalledWith("api,v2");
@@ -195,7 +187,7 @@ describe("ToolAdvancedSettings", () => {
   it("calls onDescriptionChange when description changes", () => {
     const onDescriptionChange = vi.fn();
     renderWithProviders(
-      <ToolAdvancedSettings {...defaultProps} onDescriptionChange={onDescriptionChange} />
+      <ToolAdvancedSettings {...defaultProps} onDescriptionChange={onDescriptionChange} />,
     );
     const input = screen.getByLabelText(/Description/i);
     fireEvent.change(input, { target: { value: "My tool" } });

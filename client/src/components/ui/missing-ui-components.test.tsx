@@ -20,7 +20,17 @@ vi.mock("react-intl", () => ({
 
 // Mock sonner library
 vi.mock("sonner", () => ({
-  Toaster: ({ children, ...props }: { children?: React.ReactNode; theme?: string; className?: string; icons?: Record<string, React.ReactNode>; style?: React.CSSProperties; toastOptions?: Record<string, unknown> }) => (
+  Toaster: ({
+    children,
+    ...props
+  }: {
+    children?: React.ReactNode;
+    theme?: string;
+    className?: string;
+    icons?: Record<string, React.ReactNode>;
+    style?: React.CSSProperties;
+    toastOptions?: Record<string, unknown>;
+  }) => (
     <div data-testid="sonner-toaster" data-theme={props.theme} className={props.className}>
       {children}
     </div>

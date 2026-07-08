@@ -21,7 +21,7 @@ describe("CreateServerForm", () => {
 
   it("renders custom description when provided", () => {
     renderWithProviders(
-      <CreateServerForm {...defaultProps} description="Create a new MCP server" />
+      <CreateServerForm {...defaultProps} description="Create a new MCP server" />,
     );
     expect(screen.getByText("Create a new MCP server")).toBeTruthy();
   });
@@ -47,7 +47,9 @@ describe("CreateServerForm", () => {
   });
 
   it("renders submitError when provided", () => {
-    renderWithProviders(<CreateServerForm {...defaultProps} submitError="Server creation failed" />);
+    renderWithProviders(
+      <CreateServerForm {...defaultProps} submitError="Server creation failed" />,
+    );
     expect(screen.getByRole("alert")).toBeTruthy();
     expect(screen.getByText("Server creation failed")).toBeTruthy();
   });
@@ -91,7 +93,7 @@ describe("CreateServerForm", () => {
     renderWithProviders(
       <CreateServerForm {...defaultProps}>
         <div data-testid="custom-child">Custom Child</div>
-      </CreateServerForm>
+      </CreateServerForm>,
     );
     expect(screen.getByTestId("custom-child")).toBeTruthy();
   });
@@ -101,7 +103,7 @@ describe("CreateServerForm", () => {
       <CreateServerForm
         {...defaultProps}
         initialValues={{ name: "Preset Server", visibility: "public" }}
-      />
+      />,
     );
     // The name input should be pre-filled
     const input = document.querySelector("input[value='Preset Server']");
@@ -140,10 +142,7 @@ describe("CreateServerForm", () => {
 
   it("pre-opens optional section when initial values have tags", () => {
     renderWithProviders(
-      <CreateServerForm
-        {...defaultProps}
-        initialValues={{ tags: ["api"], description: "" }}
-      />
+      <CreateServerForm {...defaultProps} initialValues={{ tags: ["api"], description: "" }} />,
     );
     // Optional section should be open
     expect(document.body).toBeTruthy();

@@ -96,7 +96,9 @@ describe("TeamsTable", () => {
 
     await user.click(screen.getByRole("button", { name: /Actions for Alpha/i }));
 
-    expect(await screen.findByRole("menuitem", { name: /Edit/i }, { timeout: 5000 })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("menuitem", { name: /Edit/i }, { timeout: 5000 }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: /Delete/i })).toBeInTheDocument();
   });
 
@@ -235,6 +237,8 @@ describe("TeamsTable", () => {
 
     await user.click(screen.getByRole("button", { name: "View description for Alpha" }));
 
-    expect(await screen.findByText("All org team for automation.", undefined, { timeout: 5000 })).toBeInTheDocument();
+    expect(
+      await screen.findByText("All org team for automation.", undefined, { timeout: 5000 }),
+    ).toBeInTheDocument();
   });
 });

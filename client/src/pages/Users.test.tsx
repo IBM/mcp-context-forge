@@ -947,7 +947,7 @@ describe("DeleteUserDialog", () => {
           onClose={vi.fn()}
           onConfirm={vi.fn()}
         />
-      </I18nProvider>
+      </I18nProvider>,
     );
     expect(screen.getByText("Deleting...")).toBeInTheDocument();
   });

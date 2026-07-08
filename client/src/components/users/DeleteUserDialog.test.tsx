@@ -13,7 +13,7 @@ describe("DeleteUserDialog", () => {
         userName="Test User"
         onConfirm={vi.fn()}
         onCancel={vi.fn()}
-      />
+      />,
     );
     expect(screen.getByRole("alertdialog")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Delete User" })).toBeInTheDocument(); // Title depends on i18n, but renderWithProviders might not mock translations identically to pure renderWithIntl. We will see.
@@ -29,7 +29,7 @@ describe("DeleteUserDialog", () => {
         userName="Test User"
         onConfirm={vi.fn()}
         onCancel={onCancel}
-      />
+      />,
     );
 
     const cancelBtn = screen.getByRole("button", { name: /Cancel/i });
@@ -47,7 +47,7 @@ describe("DeleteUserDialog", () => {
         userName="Test User"
         onConfirm={onConfirm}
         onCancel={vi.fn()}
-      />
+      />,
     );
 
     const confirmBtn = screen.getByRole("button", { name: /Delete/i }); // i18n key users.delete.dialog.confirm defaults to Delete usually
@@ -64,12 +64,12 @@ describe("DeleteUserDialog", () => {
         onConfirm={vi.fn()}
         onCancel={vi.fn()}
         isDeleting={true}
-      />
+      />,
     );
 
     const cancelBtn = screen.getByRole("button", { name: /Cancel/i });
     expect(cancelBtn).toBeDisabled();
-    
+
     // We expect the text to be "Deleting..." (users.delete.dialog.deleting)
     const deleteBtn = screen.getByRole("button", { name: /Deleting/i });
     expect(deleteBtn).toBeDisabled();
@@ -85,9 +85,9 @@ describe("DeleteUserDialog", () => {
         userName="Test User"
         onConfirm={vi.fn()}
         onCancel={onCancel}
-      />
+      />,
     );
-    
+
     await user.keyboard("{Escape}");
     expect(onCancel).toHaveBeenCalled();
   });

@@ -32,7 +32,7 @@ describe("useCreateServerForm", () => {
           tags: ["api", "v2"],
           description: "A great server",
         }),
-      { wrapper }
+      { wrapper },
     );
     expect(result.current.name).toBe("My Server");
     expect(result.current.visibility).toBe("public");

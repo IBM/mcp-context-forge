@@ -452,7 +452,9 @@ describe("useUserForm", () => {
         is_active: true,
         password_change_required: false,
       };
-      const { result } = renderHook(() => useUserForm({ initialUser: initialUser as any }), { wrapper });
+      const { result } = renderHook(() => useUserForm({ initialUser: initialUser as any }), {
+        wrapper,
+      });
       const onSuccess = vi.fn();
       const onOptimisticUpdate = vi.fn();
 
@@ -465,11 +467,20 @@ describe("useUserForm", () => {
       } as unknown as React.FormEvent<HTMLFormElement>;
 
       await act(async () => {
-        await result.current.handleSubmit(mockEvent, onSuccess, undefined, undefined, onOptimisticUpdate);
+        await result.current.handleSubmit(
+          mockEvent,
+          onSuccess,
+          undefined,
+          undefined,
+          onOptimisticUpdate,
+        );
       });
 
       expect(mockEvent.preventDefault).toHaveBeenCalled();
-      expect(onOptimisticUpdate).toHaveBeenCalledWith("edit@example.com", expect.objectContaining({ full_name: "Updated Name" }));
+      expect(onOptimisticUpdate).toHaveBeenCalledWith(
+        "edit@example.com",
+        expect.objectContaining({ full_name: "Updated Name" }),
+      );
       expect(onSuccess).toHaveBeenCalledWith({ email: "edit@example.com" });
     });
 
@@ -485,7 +496,9 @@ describe("useUserForm", () => {
         is_active: true,
         password_change_required: false,
       };
-      const { result } = renderHook(() => useUserForm({ initialUser: initialUser as any }), { wrapper });
+      const { result } = renderHook(() => useUserForm({ initialUser: initialUser as any }), {
+        wrapper,
+      });
       const onError = vi.fn();
 
       act(() => {
@@ -507,7 +520,7 @@ describe("useUserForm", () => {
 
     it("should clear timeouts on rapid validation", () => {
       const { result } = renderHook(() => useUserForm(), { wrapper });
-      const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
+      const clearTimeoutSpy = vi.spyOn(global, "clearTimeout");
 
       act(() => {
         result.current.validateField("email", "invalid1");

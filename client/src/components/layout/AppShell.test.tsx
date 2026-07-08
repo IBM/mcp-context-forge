@@ -43,7 +43,7 @@ describe("AppShell", () => {
     renderWithProviders(
       <AppShell>
         <div data-testid="page-content">Page Content</div>
-      </AppShell>
+      </AppShell>,
     );
     expect(screen.getByTestId("page-content")).toBeTruthy();
     expect(screen.getByText("Page Content")).toBeTruthy();
@@ -54,7 +54,7 @@ describe("AppShell", () => {
       <AppShell>
         <div>Child 1</div>
         <div>Child 2</div>
-      </AppShell>
+      </AppShell>,
     );
     expect(screen.getByText("Child 1")).toBeTruthy();
     expect(screen.getByText("Child 2")).toBeTruthy();

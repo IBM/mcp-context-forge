@@ -1012,7 +1012,9 @@ describe("Gateways", () => {
     renderWithProviders(<Gateways />);
 
     expect(screen.getByRole("alert")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Error loading virtual servers" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Error loading virtual servers" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Failed to fetch servers")).toBeInTheDocument();
   });
 
@@ -1061,7 +1063,9 @@ describe("Gateways", () => {
     renderWithProviders(<Gateways />);
 
     expect(screen.getByRole("alert")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Error loading virtual servers" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Error loading virtual servers" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Failed to fetch servers")).toBeInTheDocument();
     expect(screen.getByText(mockServer.name)).toBeInTheDocument();
   });

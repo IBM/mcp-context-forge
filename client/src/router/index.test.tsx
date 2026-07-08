@@ -200,9 +200,12 @@ describe("RouterProvider and useRouter", () => {
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
 
-    await waitFor(() => {
-      expect(screen.getByText(/path: \/app\/other/)).toBeInTheDocument();
-    }, { timeout: 5000 });
+    await waitFor(
+      () => {
+        expect(screen.getByText(/path: \/app\/other/)).toBeInTheDocument();
+      },
+      { timeout: 5000 },
+    );
   });
 });
 
@@ -296,9 +299,12 @@ describe("Redirect component", () => {
 
     renderWithRouter(<TestComponent />, "/app/test");
 
-    await waitFor(() => {
-      expect(window.location.pathname).toBe("/app/redirected");
-    }, { timeout: 5000 });
+    await waitFor(
+      () => {
+        expect(window.location.pathname).toBe("/app/redirected");
+      },
+      { timeout: 5000 },
+    );
   });
 
   it("does not redirect to invalid destination", () => {
@@ -328,9 +334,12 @@ describe("Destination validation", () => {
     const button = screen.getByRole("button", { name: "navigate" });
     await user.click(button);
 
-    await waitFor(() => {
-      expect(window.location.pathname).toBe("/app/test");
-    }, { timeout: 5000 });
+    await waitFor(
+      () => {
+        expect(window.location.pathname).toBe("/app/test");
+      },
+      { timeout: 5000 },
+    );
   });
 
   it("rejects paths with ..", () => {
@@ -393,9 +402,12 @@ describe("Destination validation", () => {
     const button = screen.getByRole("button", { name: "navigate" });
     await user.click(button);
 
-    await waitFor(() => {
-      expect(window.location.search).toContain("foo=bar");
-    }, { timeout: 5000 });
+    await waitFor(
+      () => {
+        expect(window.location.search).toContain("foo=bar");
+      },
+      { timeout: 5000 },
+    );
   });
 
   it("accepts exactly /app", async () => {
@@ -410,9 +422,12 @@ describe("Destination validation", () => {
     const button = screen.getByRole("button", { name: "navigate" });
     await user.click(button);
 
-    await waitFor(() => {
-      expect(window.location.pathname).toBe("/app");
-    }, { timeout: 5000 });
+    await waitFor(
+      () => {
+        expect(window.location.pathname).toBe("/app");
+      },
+      { timeout: 5000 },
+    );
   });
 
   it("accepts /app/", async () => {
@@ -427,9 +442,12 @@ describe("Destination validation", () => {
     const button = screen.getByRole("button", { name: "navigate" });
     await user.click(button);
 
-    await waitFor(() => {
-      expect(window.location.pathname).toBe("/app/");
-    }, { timeout: 5000 });
+    await waitFor(
+      () => {
+        expect(window.location.pathname).toBe("/app/");
+      },
+      { timeout: 5000 },
+    );
   });
 
   it("rejects non-string destinations", () => {

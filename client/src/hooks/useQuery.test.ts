@@ -88,20 +88,28 @@ describe("useQuery", () => {
 
   describe("validation and edge cases", () => {
     it("throws error for empty path string", () => {
-      expect(() => renderHook(() => useQuery(""))).toThrow("useQuery: path must be a non-empty string or null");
+      expect(() => renderHook(() => useQuery(""))).toThrow(
+        "useQuery: path must be a non-empty string or null",
+      );
     });
 
     it("throws error for non-string paths", () => {
-      expect(() => renderHook(() => useQuery(123 as any))).toThrow("useQuery: path must be a non-empty string or null");
+      expect(() => renderHook(() => useQuery(123 as any))).toThrow(
+        "useQuery: path must be a non-empty string or null",
+      );
     });
 
     it("throws error for paths starting with double slash", () => {
-      expect(() => renderHook(() => useQuery("//invalid"))).toThrow("useQuery: path must be relative (no protocol)");
+      expect(() => renderHook(() => useQuery("//invalid"))).toThrow(
+        "useQuery: path must be relative (no protocol)",
+      );
     });
 
     it("rejects execute call when path is null", async () => {
       const { result } = renderHook(() => useQuery(null));
-      await expect(result.current.execute()).rejects.toThrow("useQuery: cannot execute a query without a path");
+      await expect(result.current.execute()).rejects.toThrow(
+        "useQuery: cannot execute a query without a path",
+      );
     });
   });
 });

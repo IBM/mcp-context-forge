@@ -49,7 +49,7 @@ describe("ConfirmDialog", () => {
     const onConfirm = vi.fn();
     const onOpenChange = vi.fn();
     renderWithProviders(
-      <ConfirmDialog {...defaultProps} onConfirm={onConfirm} onOpenChange={onOpenChange} />
+      <ConfirmDialog {...defaultProps} onConfirm={onConfirm} onOpenChange={onOpenChange} />,
     );
     fireEvent.click(screen.getByText("Confirm"));
     expect(onConfirm).toHaveBeenCalledTimes(1);
@@ -58,7 +58,7 @@ describe("ConfirmDialog", () => {
   it("calls onOpenChange(false) when Confirm clicked with closeOnConfirm=true (default)", () => {
     const onOpenChange = vi.fn();
     renderWithProviders(
-      <ConfirmDialog {...defaultProps} onOpenChange={onOpenChange} closeOnConfirm={true} />
+      <ConfirmDialog {...defaultProps} onOpenChange={onOpenChange} closeOnConfirm={true} />,
     );
     fireEvent.click(screen.getByText("Confirm"));
     expect(onOpenChange).toHaveBeenCalledWith(false);
@@ -67,7 +67,7 @@ describe("ConfirmDialog", () => {
   it("does NOT call onOpenChange when Confirm clicked with closeOnConfirm=false", () => {
     const onOpenChange = vi.fn();
     renderWithProviders(
-      <ConfirmDialog {...defaultProps} onOpenChange={onOpenChange} closeOnConfirm={false} />
+      <ConfirmDialog {...defaultProps} onOpenChange={onOpenChange} closeOnConfirm={false} />,
     );
     fireEvent.click(screen.getByText("Confirm"));
     expect(onOpenChange).not.toHaveBeenCalled();
@@ -75,9 +75,7 @@ describe("ConfirmDialog", () => {
 
   it("calls onOpenChange(false) when Cancel is clicked", () => {
     const onOpenChange = vi.fn();
-    renderWithProviders(
-      <ConfirmDialog {...defaultProps} onOpenChange={onOpenChange} />
-    );
+    renderWithProviders(<ConfirmDialog {...defaultProps} onOpenChange={onOpenChange} />);
     fireEvent.click(screen.getByText("Cancel"));
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
@@ -85,16 +83,14 @@ describe("ConfirmDialog", () => {
   it("does not call onOpenChange when Cancel is clicked during loading", () => {
     const onOpenChange = vi.fn();
     renderWithProviders(
-      <ConfirmDialog {...defaultProps} onOpenChange={onOpenChange} isLoading={true} />
+      <ConfirmDialog {...defaultProps} onOpenChange={onOpenChange} isLoading={true} />,
     );
     fireEvent.click(screen.getByText("Cancel"));
     expect(onOpenChange).not.toHaveBeenCalled();
   });
 
   it("shows loading indicator when isLoading is true", () => {
-    renderWithProviders(
-      <ConfirmDialog {...defaultProps} isLoading={true} confirmLabel="Delete" />
-    );
+    renderWithProviders(<ConfirmDialog {...defaultProps} isLoading={true} confirmLabel="Delete" />);
     // role="status" from Loading component
     expect(screen.getByRole("status")).toBeTruthy();
   });
@@ -106,15 +102,13 @@ describe("ConfirmDialog", () => {
         isLoading={true}
         confirmLabel="Confirm"
         loadingLabel="Deleting..."
-      />
+      />,
     );
     expect(screen.getByText("Deleting...")).toBeTruthy();
   });
 
   it("disables both buttons when isLoading is true", () => {
-    renderWithProviders(
-      <ConfirmDialog {...defaultProps} isLoading={true} />
-    );
+    renderWithProviders(<ConfirmDialog {...defaultProps} isLoading={true} />);
     const buttons = screen.getAllByRole("button");
     // Filter to Cancel and Confirm buttons (dialog may have close button too)
     const cancelBtn = buttons.find((b) => b.textContent?.includes("Cancel"));
@@ -124,17 +118,13 @@ describe("ConfirmDialog", () => {
   });
 
   it("renders with destructive variant", () => {
-    renderWithProviders(
-      <ConfirmDialog {...defaultProps} variant="destructive" />
-    );
+    renderWithProviders(<ConfirmDialog {...defaultProps} variant="destructive" />);
     // Dialog still renders; variant mainly affects button styling
     expect(screen.getByText("Confirm")).toBeTruthy();
   });
 
   it("does not render dialog content when open is false", () => {
-    renderWithProviders(
-      <ConfirmDialog {...defaultProps} open={false} />
-    );
+    renderWithProviders(<ConfirmDialog {...defaultProps} open={false} />);
     expect(screen.queryByText("Delete Server")).toBeNull();
   });
 });

@@ -578,16 +578,16 @@ describe("CreateServer", () => {
   describe("Edit Mode", () => {
     it("renders loading state initially in edit mode", () => {
       routerMock.path = "/app/gateways/create-server?editServerId=gateway-1";
-      
+
       let resolvePromise: (value: any) => void;
       server.use(
         http.get("*/servers/gateway-1", () => {
           return new Promise((resolve) => {
             resolvePromise = resolve;
           });
-        })
+        }),
       );
-      
+
       renderWithProviders(<CreateServer />);
       expect(screen.getAllByRole("status").length).toBeGreaterThan(0);
       expect(screen.getByText("Loading...")).toBeInTheDocument();
@@ -598,11 +598,11 @@ describe("CreateServer", () => {
       server.use(
         http.get("*/servers/gateway-1", () => {
           return HttpResponse.json({ detail: "Not found" }, { status: 404 });
-        })
+        }),
       );
 
       renderWithProviders(<CreateServer />);
-      
+
       await waitFor(() => {
         expect(screen.getByRole("alert")).toBeInTheDocument();
       });
@@ -624,11 +624,11 @@ describe("CreateServer", () => {
         }),
         http.get("*/gateways", () => {
           return HttpResponse.json({ gateways: [] }, { status: 200 });
-        })
+        }),
       );
 
       renderWithProviders(<CreateServer />);
-      
+
       await waitFor(() => {
         // "Edit server" is the title in Edit mode
         expect(screen.getByRole("heading", { name: "Edit server" })).toBeInTheDocument();
@@ -671,18 +671,18 @@ describe("CreateServer", () => {
         }),
         http.get("*/prompts", () => {
           return HttpResponse.json({ prompts: [{ id: "prompt-1", name: "Test Prompt" }] });
-        })
+        }),
       );
 
       renderWithProviders(<CreateServer />);
-      
+
       await waitFor(() => {
         expect(screen.getByRole("heading", { name: "Edit server" })).toBeInTheDocument();
       });
 
       // It should display MCP servers section
       expect(screen.getByText("MCP server")).toBeInTheDocument();
-      
+
       // Wait for MCP Server to be loaded and rendered
       await waitFor(() => {
         expect(screen.getByText("MCP Server 1")).toBeInTheDocument();
@@ -700,7 +700,7 @@ describe("CreateServer", () => {
         expect(screen.getByText("Test Resource")).toBeInTheDocument();
         expect(screen.getByText("Test Prompt")).toBeInTheDocument();
       });
-      
+
       // Select a tool
       const toolCheckbox = screen.getByLabelText("Select Test Tool");
       act(() => {
@@ -726,7 +726,7 @@ describe("CreateServer", () => {
         }),
         http.get("*/gateways", () => {
           return HttpResponse.error();
-        })
+        }),
       );
 
       renderWithProviders(<CreateServer />);
@@ -764,11 +764,11 @@ describe("CreateServer", () => {
           return HttpResponse.json({ message: "Network Error" }, { status: 500 });
         }),
         http.get("*/resources", () => HttpResponse.json({ resources: [] })),
-        http.get("*/prompts", () => HttpResponse.json({ prompts: [] }))
+        http.get("*/prompts", () => HttpResponse.json({ prompts: [] })),
       );
 
       renderWithProviders(<CreateServer />);
-      
+
       await waitFor(() => {
         expect(screen.getByText("MCP Server Err")).toBeInTheDocument();
       });
@@ -791,7 +791,7 @@ describe("CreateServer", () => {
         }),
         http.get("*/gateways", () => {
           return HttpResponse.json({ gateways: [] });
-        })
+        }),
       );
 
       renderWithProviders(<CreateServer />);
@@ -816,7 +816,7 @@ describe("CreateServer", () => {
         }),
         http.get("*/gateways", () => {
           return HttpResponse.json({ gateways: [] });
-        })
+        }),
       );
 
       componentMockState.mockForm = true;
@@ -858,7 +858,7 @@ describe("CreateServer", () => {
         }),
         http.get("*/gateways", () => {
           return HttpResponse.json({ gateways: [] });
-        })
+        }),
       );
 
       mockUpdateVirtualServer.mockRejectedValueOnce(new Error("Update failed error"));
@@ -904,7 +904,7 @@ describe("CreateServer", () => {
         }),
         http.get("*/gateways", () => {
           return HttpResponse.json({ gateways: [] });
-        })
+        }),
       );
 
       renderWithProviders(<CreateServer />);

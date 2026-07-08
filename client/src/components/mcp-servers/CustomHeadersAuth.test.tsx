@@ -45,7 +45,9 @@ describe("CustomHeadersAuth", () => {
     render(<CustomHeadersAuth headers={headers} onHeadersChange={onHeadersChange} />);
     const keyInput = screen.getByLabelText(/Header key/i);
     fireEvent.change(keyInput, { target: { value: "Authorization" } });
-    expect(onHeadersChange).toHaveBeenCalledWith([expect.objectContaining({ key: "Authorization" })]);
+    expect(onHeadersChange).toHaveBeenCalledWith([
+      expect.objectContaining({ key: "Authorization" }),
+    ]);
   });
 
   it("calls onHeadersChange with updated value when header value changes", () => {
@@ -54,7 +56,9 @@ describe("CustomHeadersAuth", () => {
     render(<CustomHeadersAuth headers={headers} onHeadersChange={onHeadersChange} />);
     const valueInput = screen.getByLabelText(/^Value/i);
     fireEvent.change(valueInput, { target: { value: "Bearer token123" } });
-    expect(onHeadersChange).toHaveBeenCalledWith([expect.objectContaining({ value: "Bearer token123" })]);
+    expect(onHeadersChange).toHaveBeenCalledWith([
+      expect.objectContaining({ value: "Bearer token123" }),
+    ]);
   });
 
   it("calls onHeadersChange removing header when Remove is clicked", () => {

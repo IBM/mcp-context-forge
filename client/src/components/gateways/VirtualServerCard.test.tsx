@@ -65,31 +65,27 @@ describe("ConnectSourceCard", () => {
 // ─── VirtualServerCard ────────────────────────────────────────────────────────
 describe("VirtualServerCard", () => {
   it("renders server name", () => {
-    renderWithProviders(
-      <VirtualServerCard server={makeServer()} onViewDetails={vi.fn()} />
-    );
+    renderWithProviders(<VirtualServerCard server={makeServer()} onViewDetails={vi.fn()} />);
     expect(screen.getByText("My Server")).toBeTruthy();
   });
 
   it("calls onViewDetails when card is clicked", () => {
     const onViewDetails = vi.fn();
-    renderWithProviders(
-      <VirtualServerCard server={makeServer()} onViewDetails={onViewDetails} />
-    );
+    renderWithProviders(<VirtualServerCard server={makeServer()} onViewDetails={onViewDetails} />);
     fireEvent.click(screen.getByTestId("virtual-server-card"));
     expect(onViewDetails).toHaveBeenCalledWith(expect.objectContaining({ id: "vs-1" }));
   });
 
   it("shows enabled indicator for enabled server", () => {
     renderWithProviders(
-      <VirtualServerCard server={makeServer({ enabled: true })} onViewDetails={vi.fn()} />
+      <VirtualServerCard server={makeServer({ enabled: true })} onViewDetails={vi.fn()} />,
     );
     expect(screen.getByTestId("enabled-indicator")).toBeTruthy();
   });
 
   it("does not show enabled indicator for disabled server", () => {
     renderWithProviders(
-      <VirtualServerCard server={makeServer({ enabled: false })} onViewDetails={vi.fn()} />
+      <VirtualServerCard server={makeServer({ enabled: false })} onViewDetails={vi.fn()} />,
     );
     expect(screen.queryByTestId("enabled-indicator")).toBeNull();
   });
@@ -99,7 +95,7 @@ describe("VirtualServerCard", () => {
       <VirtualServerCard
         server={makeServer({ associatedTools: [], associatedResources: [], associatedPrompts: [] })}
         onViewDetails={vi.fn()}
-      />
+      />,
     );
     // Empty composition shows "Add sources" type button
     expect(screen.queryByTestId("tool-count")).toBeNull();
@@ -108,9 +104,13 @@ describe("VirtualServerCard", () => {
   it("renders tool/resource/prompt counts when components exist", () => {
     renderWithProviders(
       <VirtualServerCard
-        server={makeServer({ associatedTools: ["t1", "t2"], associatedResources: ["r1"], associatedPrompts: [] })}
+        server={makeServer({
+          associatedTools: ["t1", "t2"],
+          associatedResources: ["r1"],
+          associatedPrompts: [],
+        })}
         onViewDetails={vi.fn()}
-      />
+      />,
     );
     expect(screen.getByTestId("tool-count")).toBeTruthy();
     expect(screen.getByTestId("resource-count")).toBeTruthy();
@@ -122,7 +122,7 @@ describe("VirtualServerCard", () => {
       <VirtualServerCard
         server={makeServer({ associatedTools: ["t1"], tags: ["api", "v2"] })}
         onViewDetails={vi.fn()}
-      />
+      />,
     );
     expect(screen.getByText("api")).toBeTruthy();
     expect(screen.getByText("v2")).toBeTruthy();
@@ -133,15 +133,13 @@ describe("VirtualServerCard", () => {
       <VirtualServerCard
         server={makeServer({ associatedTools: ["t1"] })}
         onViewDetails={vi.fn()}
-      />
+      />,
     );
     expect(screen.getByTestId("last-updated")).toBeTruthy();
   });
 
   it("shows actions menu button", () => {
-    renderWithProviders(
-      <VirtualServerCard server={makeServer()} onViewDetails={vi.fn()} />
-    );
+    renderWithProviders(<VirtualServerCard server={makeServer()} onViewDetails={vi.fn()} />);
     expect(screen.getByRole("button", { name: /Actions for/i })).toBeTruthy();
   });
 
@@ -152,7 +150,7 @@ describe("VirtualServerCard", () => {
         server={makeServer()}
         onViewDetails={vi.fn()}
         onAddComponents={onAddComponents}
-      />
+      />,
     );
     // In empty state the "add components" button should be visible
     const btn = document.querySelector("button[type='button']");
@@ -166,7 +164,7 @@ describe("VirtualServerCard", () => {
         server={makeServer({ enabled: true })}
         onViewDetails={vi.fn()}
         onToggleStatus={vi.fn()}
-      />
+      />,
     );
     // open dropdown
     const trigger = screen.getByRole("button", { name: /Actions for/i });
@@ -181,7 +179,7 @@ describe("VirtualServerCard", () => {
         server={makeServer({ enabled: false })}
         onViewDetails={vi.fn()}
         onToggleStatus={vi.fn()}
-      />
+      />,
     );
     const trigger = screen.getByRole("button", { name: /Actions for/i });
     await user.click(trigger);
@@ -192,11 +190,7 @@ describe("VirtualServerCard", () => {
     const user = userEvent.setup();
     const onEdit = vi.fn();
     renderWithProviders(
-      <VirtualServerCard
-        server={makeServer()}
-        onViewDetails={vi.fn()}
-        onEdit={onEdit}
-      />
+      <VirtualServerCard server={makeServer()} onViewDetails={vi.fn()} onEdit={onEdit} />,
     );
     const trigger = screen.getByRole("button", { name: /Actions for/i });
     await user.click(trigger);
@@ -209,11 +203,7 @@ describe("VirtualServerCard", () => {
     const user = userEvent.setup();
     const onDelete = vi.fn();
     renderWithProviders(
-      <VirtualServerCard
-        server={makeServer()}
-        onViewDetails={vi.fn()}
-        onDelete={onDelete}
-      />
+      <VirtualServerCard server={makeServer()} onViewDetails={vi.fn()} onDelete={onDelete} />,
     );
     const trigger = screen.getByRole("button", { name: /Actions for/i });
     await user.click(trigger);
@@ -224,9 +214,7 @@ describe("VirtualServerCard", () => {
 
   it("does not render Edit or Delete menu items when callbacks not provided", async () => {
     const user = userEvent.setup();
-    renderWithProviders(
-      <VirtualServerCard server={makeServer()} onViewDetails={vi.fn()} />
-    );
+    renderWithProviders(<VirtualServerCard server={makeServer()} onViewDetails={vi.fn()} />);
     const trigger = screen.getByRole("button", { name: /Actions for/i });
     await user.click(trigger);
     expect(screen.queryByText(/^Edit/)).toBeNull();
@@ -235,11 +223,7 @@ describe("VirtualServerCard", () => {
 
   it("applies custom className", () => {
     renderWithProviders(
-      <VirtualServerCard
-        server={makeServer()}
-        onViewDetails={vi.fn()}
-        className="custom-class"
-      />
+      <VirtualServerCard server={makeServer()} onViewDetails={vi.fn()} className="custom-class" />,
     );
     expect(document.querySelector(".custom-class")).toBeTruthy();
   });
@@ -249,7 +233,7 @@ describe("VirtualServerCard", () => {
       <VirtualServerCard
         server={makeServer({ associatedTools: ["t1"] })}
         onViewDetails={vi.fn()}
-      />
+      />,
     );
     expect(screen.getByRole("button", { name: /Open.*coming soon/i })).toBeTruthy();
   });

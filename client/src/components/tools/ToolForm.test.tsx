@@ -245,7 +245,7 @@ describe("ToolForm", () => {
           <I18nProvider>
             <ToolForm isOpen={true} onToggle={onToggle} />
           </I18nProvider>
-        </AuthProvider>
+        </AuthProvider>,
       );
 
       await user.type(screen.getByLabelText(/Name/), "my-tool");
@@ -260,8 +260,8 @@ describe("ToolForm", () => {
 
     it("copies schemas to clipboard and shows copied message", async () => {
       const user = userEvent.setup();
-      const clipboardSpy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined);
-      
+      const clipboardSpy = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+
       renderForm();
 
       // Ensure manual schema mode
@@ -271,12 +271,12 @@ describe("ToolForm", () => {
       await user.click(copyInputBtn);
 
       expect(clipboardSpy).toHaveBeenCalledWith('{\n  "type": "object",\n  "properties": {}\n}');
-      
+
       const copyOutputBtn = screen.getByLabelText(/Copy output schema/i);
       await user.click(copyOutputBtn);
-      
+
       expect(clipboardSpy).toHaveBeenCalledTimes(2);
-      
+
       clipboardSpy.mockRestore();
     });
   });
@@ -502,8 +502,6 @@ describe("ToolForm", () => {
       expect(btn).toHaveAttribute("aria-expanded", "false");
     });
 
-
-
     it("calls onToggle when cancel is clicked", async () => {
       const user = userEvent.setup();
       const onToggle = vi.fn();
@@ -546,12 +544,12 @@ describe("ToolForm", () => {
           authType: "authheaders",
           authHeaders: [
             { key: "X-Header-1", value: "val1" },
-            { key: "X-Header-2", value: "val2" }
+            { key: "X-Header-2", value: "val2" },
           ],
-        } as any
+        } as any,
       });
       renderForm({ tool: toolWithHeadersAndTags });
-      
+
       // The tags should be joined by ", "
       expect(screen.getByDisplayValue("obj-tag")).toBeInTheDocument();
     });
@@ -561,8 +559,8 @@ describe("ToolForm", () => {
         auth: {
           authType: "authheaders",
           authHeaderKey: "Old-Header",
-          authHeaderValue: "old-val"
-        } as any
+          authHeaderValue: "old-val",
+        } as any,
       });
       renderForm({ tool: toolWithOldHeaders });
       expect(screen.getByDisplayValue("Old-Header")).toBeInTheDocument();
@@ -572,16 +570,16 @@ describe("ToolForm", () => {
     it("displays generating state when generateSchema is in progress", async () => {
       server.use(
         http.post("*/v1/tools/generate-schemas-from-openapi", async () => {
-          await new Promise(r => setTimeout(r, 200));
+          await new Promise((r) => setTimeout(r, 200));
           return HttpResponse.json({ success: true, input_schema: {}, output_schema: {} });
-        })
+        }),
       );
       const user = userEvent.setup();
       renderForm();
 
       await user.type(screen.getByLabelText(/URL/), "https://api.example.com");
       await user.click(screen.getByRole("button", { name: /Generate/i }));
-      
+
       expect(screen.getByRole("button", { name: /Generating/i })).toBeInTheDocument();
     });
 
@@ -589,14 +587,14 @@ describe("ToolForm", () => {
       server.use(
         http.post("*/v1/tools/generate-schemas-from-openapi", () => {
           return HttpResponse.json({ success: true, input_schema: {}, output_schema: {} });
-        })
+        }),
       );
       const user = userEvent.setup();
       renderForm();
 
       await user.type(screen.getByLabelText(/URL/), "https://api.example.com");
       await user.click(screen.getByRole("button", { name: /Generate/i }));
-      
+
       await waitFor(() => {
         expect(screen.getByRole("button", { name: /Regenerate/i })).toBeInTheDocument();
       });
@@ -628,7 +626,7 @@ describe("ToolForm", () => {
   describe("Schema Generation UI state", () => {
     it("shows generating schema text and spinner while generating", async () => {
       const user = userEvent.setup();
-      
+
       // Delay schema generation so we can observe the intermediate state
       let resolveGenerate!: (value: any) => void;
       server.use(
@@ -636,64 +634,68 @@ describe("ToolForm", () => {
           return new Promise((resolve) => {
             resolveGenerate = resolve;
           });
-        })
+        }),
       );
-      
+
       renderForm();
 
       // Fill valid URL to enable Generate button
       await user.type(screen.getByLabelText(/URL/), "https://api.example.com");
-      
+
       const generateBtn = screen.getByRole("button", { name: /Generate/i });
       await user.click(generateBtn);
 
       await waitFor(() => {
         expect(screen.getByText("Generating...")).toBeInTheDocument();
       });
-      
-      resolveGenerate(HttpResponse.json({ 
-        success: true,
-        input_schema: { type: "object" }, 
-        output_schema: { type: "object" } 
-      }));
+
+      resolveGenerate(
+        HttpResponse.json({
+          success: true,
+          input_schema: { type: "object" },
+          output_schema: { type: "object" },
+        }),
+      );
     });
   });
 
   describe("Copy Output Schema", () => {
     it("copies output schema to clipboard and shows Check icon", async () => {
       const user = userEvent.setup();
-      
+
       // Mock clipboard
       const originalClipboard = navigator.clipboard;
       const writeTextMock = vi.fn().mockResolvedValue(undefined);
-      Object.defineProperty(navigator, 'clipboard', {
+      Object.defineProperty(navigator, "clipboard", {
         value: { writeText: writeTextMock },
-        configurable: true
+        configurable: true,
       });
 
       renderForm({
         tool: createMockTool({
           outputSchema: { type: "string" },
-        })
+        }),
       });
 
       // Find the second copy button (Output schema)
       const copyButtons = screen.getAllByRole("button", { name: /Copy output schema/i });
-      const outputCopyBtn = copyButtons.find(btn => btn.getAttribute("aria-label")?.includes("Copy output schema")) || copyButtons[0];
-      
+      const outputCopyBtn =
+        copyButtons.find((btn) => btn.getAttribute("aria-label")?.includes("Copy output schema")) ||
+        copyButtons[0];
+
       await user.click(outputCopyBtn!);
 
       expect(writeTextMock).toHaveBeenCalledWith('{\n  "type": "string"\n}');
-      
+
       // Wait for Check icon (aria-label="Copied!") to appear
       await waitFor(() => {
         expect(screen.getByText(/copied/i)).toBeInTheDocument();
       });
 
       // Restore clipboard
-      Object.defineProperty(navigator, 'clipboard', {
+      Object.defineProperty(navigator, "clipboard", {
         value: originalClipboard,
-        configurable: true
+        configurable: true,
       });
     });
   });
