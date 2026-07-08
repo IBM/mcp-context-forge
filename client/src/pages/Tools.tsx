@@ -66,6 +66,12 @@ function ToolGroupCard({
               {intl.formatMessage({ id: "tools.card.toolCount" }, { count: group.tools.length })}
             </span>
             <span
+              role="img"
+              aria-label={intl.formatMessage({
+                id: group.isActive
+                  ? "tools.details.status.active"
+                  : "tools.details.status.inactive",
+              })}
               className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${group.isActive ? "bg-tool-status-active" : "bg-tool-status-inactive"}`}
             />
           </div>
