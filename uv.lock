@@ -8,7 +8,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-06-28T09:05:43.962549553Z"
+exclude-newer = "2026-06-28T09:46:01.556347993Z"
 exclude-newer-span = "P10D"
 
 [options.exclude-newer-package]
@@ -3237,7 +3237,7 @@ requires-dist = [
     { name = "cookiecutter", marker = "extra == 'templating'", specifier = ">=2.7.1" },
     { name = "cpex", specifier = ">=0.1.1" },
     { name = "cpex-encoded-exfil-detection", marker = "extra == 'plugins'", specifier = ">=0.3.5" },
-    { name = "cpex-pii-filter", marker = "extra == 'plugins'", specifier = ">=0.3.5" },
+    { name = "cpex-pii-filter", marker = "extra == 'plugins'", specifier = ">=0.3.6" },
     { name = "cpex-rate-limiter", marker = "extra == 'plugins'", specifier = ">=0.1.6" },
     { name = "cpex-retry-with-backoff", marker = "extra == 'plugins'", specifier = ">=0.3.1,<0.3.2" },
     { name = "cpex-secrets-detection", marker = "extra == 'plugins'", specifier = ">=0.3.6" },
