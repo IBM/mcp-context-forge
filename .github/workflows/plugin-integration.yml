@@ -38,7 +38,6 @@ on:
             # lives in the repo and must retrigger the suite when it changes.
             - "plugins/sql_sanitizer/**"
             - "tests/live_gateway/plugins/**"
-            - "mcp-servers/rust/fast-time-server/**"
             - ".github/workflows/plugin-integration.yml"
     workflow_dispatch:
 
@@ -48,10 +47,6 @@ permissions:
 concurrency:
     group: ${{ github.workflow }}-${{ github.ref }}
     cancel-in-progress: true
-
-env:
-    CARGO_TERM_COLOR: always
-    RUST_BACKTRACE: 1
 
 jobs:
     plugin-e2e:
@@ -177,26 +172,6 @@ jobs:
                       venv-${{ runner.os }}-python-3.12-
                       venv-${{ runner.os }}-
 
-            - name: Install Rust stable
-              run: |
-                  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-                  echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-                  source $HOME/.cargo/env
-                  rustup toolchain install stable
-                  rustup default stable
-                  rustc --version
-
-            - name: Cache Cargo
-              uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
-              with:
-                  path: |
-                      ~/.cargo/registry
-                      ~/.cargo/git
-                      target
-                  key: ${{ runner.os }}-cargo-fast-time-${{ hashFiles('Cargo.lock') }}
-                  restore-keys: |
-                      ${{ runner.os }}-cargo-fast-time-
-
             - name: Install gateway with plugins and test deps
               # install-dev installs the dev group plus the [plugins] extra, which
               # pulls the cpex wheels the gateway must import at boot.
@@ -209,21 +184,17 @@ jobs:
                   SECRET=$(openssl rand -base64 32)
                   echo "DYNAMIC_JWT_SECRET=$SECRET" >> "${GITHUB_ENV}"
 
-            - name: Build fast-time-server
-              working-directory: mcp-servers/rust/fast-time-server
-              run: cargo build
-
             - name: Start fast-time-server
               run: |
-                  pkill -9 -f "fast-time-server" 2>/dev/null || true
-                  sleep 1
-                  nohup target/debug/fast-time-server \
-                    > fast-time-server.log 2>&1 &
-                  echo $! > fast-time-server.pid
+                  docker rm -f fast-time-server 2>/dev/null || true
+                  docker run --detach \
+                    --name fast-time-server \
+                    --publish 127.0.0.1:9080:9080 \
+                    ghcr.io/ibm/cfex-mcp-fast-time-server:5eac210da1c96a5fb2386c82a0c6f543b68fd76a
 
                   echo "Waiting for fast-time-server..."
                   for i in {1..30}; do
-                    if curl -s http://localhost:8080/health >/dev/null 2>&1; then
+                    if curl -s http://localhost:9080/health >/dev/null 2>&1; then
                       echo "fast-time-server is up!"
                       break
                     fi
@@ -231,9 +202,9 @@ jobs:
                     sleep 2
                   done
 
-                  if ! curl -s http://localhost:8080/health >/dev/null 2>&1; then
+                  if ! curl -s http://localhost:9080/health >/dev/null 2>&1; then
                     echo "ERROR: fast-time-server failed to start"
-                    cat fast-time-server.log
+                    docker logs fast-time-server
                     exit 1
                   fi
 
@@ -320,6 +291,10 @@ jobs:
               run: |
                   . .venv/bin/activate
                   python -m pytest "${{ matrix.plugin.tests }}" -v
+
+            - name: Capture fast-time-server logs on failure
+              if: failure()
+              run: docker logs fast-time-server > fast-time-server.log 2>&1 || true
 
             - name: Upload logs on failure
               if: failure()

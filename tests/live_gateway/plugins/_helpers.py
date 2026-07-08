@@ -59,7 +59,9 @@ STATIC_CONFIG_PATH = Path(__file__).resolve().parents[3] / "plugins" / "config.y
 JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")  # pragma: allowlist secret
 
 # Where fast-time-server is reachable for federation registration.
-FAST_TIME_URL = os.getenv("FAST_TIME_SERVER_URL", "http://localhost:8080/mcp")
+# The cfex-mcp-fast-time-server image listens on port 9080; override via
+# FAST_TIME_SERVER_URL or run run_plugin_tests.sh which exports it automatically.
+FAST_TIME_URL = os.getenv("FAST_TIME_SERVER_URL", "http://localhost:9080/mcp")
 
 # Bounded polling budget for asynchronous tool federation sync.
 _TOOL_SYNC_ATTEMPTS = 30
@@ -255,7 +257,11 @@ def find_flaky_tool(tools: list[dict[str, Any]]) -> dict[str, Any]:
         AssertionError: If no flaky tool is present.
     """
     flaky = next((t for t in tools if t["name"].endswith("flaky") or t.get("originalName") == "flaky"), None)
-    assert flaky is not None, f"no flaky tool synced; available: {[t['name'] for t in tools]}"
+    assert flaky is not None, (
+        f"no 'flaky' tool synced from fast-time-server; available tools: {[t['name'] for t in tools]}. "
+        "Ensure the image referenced by FAST_TIME_IMAGE exposes the 'flaky' tool "
+        "(ghcr.io/ibm/cfex-mcp-fast-time-server:latest should include it)."
+    )
     return flaky
 
 
