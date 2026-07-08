@@ -70,7 +70,14 @@ export function ToolsTable({
               key={tool.id}
               data-state={selectedToolId === tool.id ? "selected" : undefined}
               onClick={() => onSelectTool(tool)}
-              className="cursor-pointer"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onSelectTool(tool);
+                }
+              }}
+              className="cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
             >
               <TableCell className="px-4 py-3 text-sm text-foreground">
                 <span className="line-clamp-1">{tool.displayName || tool.title || tool.name}</span>
