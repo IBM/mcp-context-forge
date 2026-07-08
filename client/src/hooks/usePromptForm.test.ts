@@ -125,6 +125,74 @@ describe("usePromptForm", () => {
     );
   });
 
+  it("rejects prompt template operators with the zod schema", () => {
+    const { result } = renderHook(() => usePromptForm());
+
+    act(() => {
+      result.current.setName("Unsafe prompt");
+      result.current.setTemplate("Hello {{ count + 1 }}");
+    });
+
+    act(() => {
+      result.current.validateForm();
+    });
+
+    expect(result.current.errors.template).toBe(
+      "Template expressions may only contain simple variable names — no operators, dot access, or built-in keywords",
+    );
+  });
+
+  it("rejects dangerous prompt template prefixes with the zod schema", () => {
+    const { result } = renderHook(() => usePromptForm());
+
+    act(() => {
+      result.current.setName("Unsafe prompt");
+      result.current.setTemplate("Hello ${name}");
+    });
+
+    act(() => {
+      result.current.validateForm();
+    });
+
+    expect(result.current.errors.template).toBe(
+      "Template expressions may only contain simple variable names — no operators, dot access, or built-in keywords",
+    );
+  });
+
+  it("rejects dangerous prompt template keywords with the zod schema", () => {
+    const { result } = renderHook(() => usePromptForm());
+
+    act(() => {
+      result.current.setName("Unsafe prompt");
+      result.current.setTemplate("Hello {{ config }}");
+    });
+
+    act(() => {
+      result.current.validateForm();
+    });
+
+    expect(result.current.errors.template).toBe(
+      "Template expressions may only contain simple variable names — no operators, dot access, or built-in keywords",
+    );
+  });
+
+  it("allows incomplete template expressions while drafting", () => {
+    const { result } = renderHook(() => usePromptForm());
+
+    act(() => {
+      result.current.setName("Draft prompt");
+      result.current.setTemplate("Hello {{ name");
+    });
+
+    let valid: boolean;
+    act(() => {
+      valid = result.current.validateForm();
+    });
+
+    expect(valid!).toBe(true);
+    expect(result.current.errors.template).toBeUndefined();
+  });
+
   it("shows a team visibility error immediately when no team is selected", () => {
     const { result } = renderHook(() => usePromptForm());
 
@@ -239,5 +307,102 @@ describe("usePromptForm", () => {
       }),
       expect.objectContaining({ signal: expect.any(Object) }),
     );
+  });
+
+  it("maps API team_id field errors onto visibility", async () => {
+    mockAuth("team-123");
+    const error = new Error("HTTP 422") as Error & {
+      body?: { field?: string; message?: string };
+    };
+    error.body = { field: "team_id", message: "Team is not available" };
+    mockPost.mockRejectedValue(error);
+    const { result } = renderHook(() => usePromptForm());
+
+    act(() => {
+      result.current.setName("Team prompt");
+      result.current.setVisibility("team");
+      result.current.setTemplate("Hello {{ name }}");
+    });
+
+    await waitFor(() => {
+      expect(result.current.isValid).toBe(true);
+    });
+
+    await act(async () => {
+      await result.current.handleSubmit(fakeSubmit());
+    });
+
+    expect(mockPost).toHaveBeenCalled();
+    await waitFor(() => {
+      expect(result.current.errors.visibility).toBe("Team is not available");
+    });
+  });
+
+  it("falls back to a submit error for unmapped API field errors", async () => {
+    const error = new Error("HTTP 422") as Error & {
+      body?: { field?: string; message?: string };
+    };
+    error.body = { field: "unknown_field", message: "Unknown field rejected" };
+    mockPost.mockRejectedValue(error);
+    const { result } = renderHook(() => usePromptForm());
+
+    act(() => {
+      result.current.setName("Public prompt");
+      result.current.setTemplate("Hello {{ name }}");
+    });
+
+    await act(async () => {
+      await result.current.handleSubmit(fakeSubmit());
+    });
+
+    expect(result.current.errors.submit).toBe("Unknown field rejected");
+  });
+
+  it("clears submit errors when fields change", async () => {
+    mockPost.mockRejectedValue(new Error("Network failed"));
+    const { result } = renderHook(() => usePromptForm());
+
+    act(() => {
+      result.current.setName("Public prompt");
+      result.current.setTemplate("Hello {{ name }}");
+    });
+
+    await act(async () => {
+      await result.current.handleSubmit(fakeSubmit());
+    });
+
+    expect(result.current.errors.submit).toBe("Failed to add prompt. Please try again.");
+
+    act(() => {
+      result.current.setName("Updated prompt");
+    });
+
+    await waitFor(() => {
+      expect(result.current.errors.submit).toBeUndefined();
+    });
+  });
+
+  it("clears submit errors when visibility changes", async () => {
+    mockPost.mockRejectedValue(new Error("Network failed"));
+    const { result } = renderHook(() => usePromptForm());
+
+    act(() => {
+      result.current.setName("Public prompt");
+      result.current.setTemplate("Hello {{ name }}");
+    });
+
+    await act(async () => {
+      await result.current.handleSubmit(fakeSubmit());
+    });
+
+    expect(result.current.errors.submit).toBe("Failed to add prompt. Please try again.");
+
+    act(() => {
+      result.current.setVisibility("private");
+    });
+
+    await waitFor(() => {
+      expect(result.current.errors.submit).toBeUndefined();
+    });
   });
 });

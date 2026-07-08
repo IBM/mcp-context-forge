@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { useIntl } from "react-intl";
 import { z } from "zod";
-import { buildCreatePromptPayload } from "@/api/prompts";
 import { useAuthContext } from "@/auth/AuthContext";
 import { useQuery } from "@/hooks/useQuery";
 import { parseApiError } from "@/lib/errorUtils";
-import type { Prompt, PromptFormData, PromptFormErrors } from "@/types/prompts";
+import type { Prompt, PromptArgument, PromptFormErrors } from "@/types/prompts";
 import type { Visibility } from "@/types/server";
 
 interface PromptFormValues {
@@ -16,6 +15,20 @@ interface PromptFormValues {
   description: string;
   tags: string;
   teamId?: string;
+}
+
+interface CreatePromptPayload {
+  prompt: {
+    name: string;
+    description?: string;
+    template: string;
+    arguments: PromptArgument[];
+    tags?: string[];
+    visibility: Visibility;
+    team_id: string | null;
+  };
+  team_id: string | null;
+  visibility: Visibility;
 }
 
 export interface UsePromptFormReturn {
@@ -38,7 +51,7 @@ export interface UsePromptFormReturn {
   validateField: (field: keyof PromptFormErrors, value: string) => void;
   validateForm: () => boolean;
   resetForm: () => void;
-  getFormData: () => PromptFormData;
+  getFormData: () => CreatePromptPayload;
   handleSubmit: (event: FormEvent<HTMLFormElement>, onSuccess?: () => void) => Promise<void>;
 }
 
@@ -54,6 +67,8 @@ const initialState: PromptFormValues = {
 const TEMPLATE_MAX_LENGTH = 65536;
 const DANGEROUS_HTML_TAGS_RE = /<(script|iframe|object|embed|link|meta|base|form)\b/i;
 const EVENT_HANDLER_RE = /on\w+\s*=/i;
+// Best-effort client mirror for instant feedback; the server is the source of truth.
+// Keep aligned with mcpgateway/services/content_security.py validate_prompt_template.
 const SSTI_SIMPLE_PREFIXES = ["${", "#{", "%{"];
 const SSTI_DANGEROUS_SUBSTRINGS = [
   "__",
@@ -120,6 +135,15 @@ function validateTemplateContent(value: string): string | null {
   return null;
 }
 
+function parseTags(value?: string): string[] | undefined {
+  const tags = value
+    ?.split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+
+  return tags && tags.length > 0 ? tags : undefined;
+}
+
 const createPromptFormSchema = (intl: ReturnType<typeof useIntl>) =>
   z
     .object({
@@ -137,8 +161,8 @@ const createPromptFormSchema = (intl: ReturnType<typeof useIntl>) =>
             });
           }
         }),
-      arguments: z.string().superRefine((value, ctx) => {
-        if (!value.trim()) return;
+      arguments: z.string().transform((value, ctx): PromptArgument[] => {
+        if (!value.trim()) return [];
 
         try {
           const parsedArguments = JSON.parse(value) as unknown;
@@ -147,16 +171,19 @@ const createPromptFormSchema = (intl: ReturnType<typeof useIntl>) =>
               code: z.ZodIssueCode.custom,
               message: intl.formatMessage({ id: "prompts.add.error.argumentsArrayRequired" }),
             });
+            return z.NEVER;
           }
+          return parsedArguments as PromptArgument[];
         } catch {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             message: intl.formatMessage({ id: "prompts.add.error.argumentsInvalidJson" }),
           });
+          return z.NEVER;
         }
       }),
       description: z.string().optional(),
-      tags: z.string().optional(),
+      tags: z.string().optional().transform(parseTags),
       teamId: z.string().optional(),
     })
     .superRefine((data, ctx) => {
@@ -167,6 +194,23 @@ const createPromptFormSchema = (intl: ReturnType<typeof useIntl>) =>
           path: ["visibility"],
         });
       }
+    })
+    .transform((data): CreatePromptPayload => {
+      const teamId = data.visibility === "team" && data.teamId ? data.teamId : null;
+
+      return {
+        prompt: {
+          name: data.name,
+          description: data.description || undefined,
+          template: data.template,
+          arguments: data.arguments,
+          tags: data.tags,
+          visibility: data.visibility,
+          team_id: teamId,
+        },
+        team_id: teamId,
+        visibility: data.visibility,
+      };
     });
 
 function toFieldErrors(error: z.ZodError): PromptFormErrors {
@@ -212,13 +256,13 @@ export function usePromptForm(): UsePromptFormReturn {
   const [tags, setTagsState] = useState(initialState.tags);
   const [errors, setErrors] = useState<PromptFormErrors>({});
   const teamId = visibility === "team" ? (selectedTeamId ?? undefined) : undefined;
-  const { execute: createPrompt, isLoading: isSubmitting } = useQuery<
-    Prompt,
-    ReturnType<typeof buildCreatePromptPayload>
-  >("/prompts", {
-    method: "POST",
-    enabled: false,
-  });
+  const { execute: createPrompt, isLoading: isSubmitting } = useQuery<Prompt, CreatePromptPayload>(
+    "/prompts",
+    {
+      method: "POST",
+      enabled: false,
+    },
+  );
 
   const getFormValues = useCallback(
     (): PromptFormValues => ({
@@ -350,18 +394,10 @@ export function usePromptForm(): UsePromptFormReturn {
     setErrors({});
   }, []);
 
-  const getFormData = useCallback((): PromptFormData => {
-    const parsed = schema.parse(getFormValues());
-    return {
-      name: parsed.name,
-      visibility: parsed.visibility,
-      template: parsed.template,
-      arguments: parsed.arguments,
-      description: parsed.description ?? "",
-      tags: parsed.tags ?? "",
-      teamId: parsed.visibility === "team" ? teamId : undefined,
-    };
-  }, [getFormValues, schema, teamId]);
+  const getFormData = useCallback(
+    (): CreatePromptPayload => schema.parse(getFormValues()),
+    [getFormValues, schema],
+  );
 
   const handleSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>, onSuccess?: () => void) => {
@@ -369,7 +405,7 @@ export function usePromptForm(): UsePromptFormReturn {
       if (!validateForm()) return;
 
       try {
-        await createPrompt(buildCreatePromptPayload(getFormData()));
+        await createPrompt(getFormData());
         setErrors({});
         resetForm();
         onSuccess?.();
@@ -388,10 +424,10 @@ export function usePromptForm(): UsePromptFormReturn {
   );
 
   useEffect(() => {
-    if (visibility === "team" || errors.visibility) {
+    if (visibility === "team") {
       validateField("visibility", visibility);
     }
-  }, [errors.visibility, validateField, visibility]);
+  }, [validateField, visibility]);
 
   const isValid = useMemo(() => schema.safeParse(getFormValues()).success, [getFormValues, schema]);
 
