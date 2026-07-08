@@ -188,7 +188,11 @@ export function useTeamForm(team?: Team): UseTeamFormReturn {
           const maxMembersChanged = maxMembers !== initialMaxMembers(team);
           await updateTeam(team.id, {
             name: name.trim(),
-            description: description.trim() || undefined,
+            // Send the trimmed value (an empty string when cleared) rather than
+            // `undefined`. The backend only overwrites the description when the
+            // field is present and non-null, so omitting it would silently keep
+            // the old value when a user intends to clear it.
+            description: description.trim(),
             visibility,
             ...(maxMembersChanged ? { max_members: parseInt(maxMembers, 10) } : {}),
           });
