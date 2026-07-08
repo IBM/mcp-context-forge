@@ -89,7 +89,7 @@ def _move_compat_to_409_detail(runtime: RuntimeKind, mode: OverrideMode, boot_mo
             "Boot with RUST_MCP_MODE='edge' to enable overrides without giving up the Rust ingress."
         )
     if compat == MoveCompatibility.EDGE_NEEDS_SAFETY_FLAG:
-        flag = "experimental_rust_mcp_session_auth_reuse_enabled" if runtime == RuntimeKind.MCP else "experimental_rust_a2a_runtime_delegate_enabled"
+        flag = "experimental_rust_mcp_session_auth_reuse_enabled"
         return (
             f"{runtime_label} runtime cannot be flipped to 'edge' when boot_mode={boot_mode!r}. "
             f"The edge override requires the {flag} safety flag, which only boot_mode='edge' deployments set. "

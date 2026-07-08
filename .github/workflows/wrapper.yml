@@ -127,7 +127,7 @@ jobs:
                   docker run --detach \
                     --publish 127.0.0.1:8080:9080 \
                     --name fast-time-server \
-                    ghcr.io/ibm/cfex-mcp-fast-time-server
+                    ghcr.io/ibm/cfex-mcp-fast-time-server:latest
 
                   echo "Waiting for fast-time-server..."
                   for i in {1..30}; do
